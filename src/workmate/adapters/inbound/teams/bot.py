@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from workmate.adapters.inbound.teams.responder import InboundMessage, Responder
+from workmate.adapters.inbound.responder import InboundMessage, Responder
 
 if TYPE_CHECKING:
     from workmate.config import TeamsSettings

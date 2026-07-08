@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from workmate.adapters.inbound.teams.responder import (
+from workmate.adapters.inbound.responder import (
     InboundMessage,
     RuntimeResponder,
     SaveNoteResponder,

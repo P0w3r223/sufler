@@ -10,8 +10,8 @@ from dataclasses import dataclass
 
 import pytest
 
+from workmate.adapters.inbound.responder import EchoResponder, InboundMessage
 from workmate.adapters.inbound.teams.bot import make_on_message
-from workmate.adapters.inbound.teams.responder import EchoResponder, InboundMessage
 
 
 @dataclass

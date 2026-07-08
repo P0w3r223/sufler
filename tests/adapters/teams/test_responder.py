@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from workmate.adapters.inbound.teams.responder import EchoResponder, InboundMessage
+from workmate.adapters.inbound.responder import EchoResponder, InboundMessage
 
 
 def test_echo_responder_confirms_receipt():

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from workmate.adapters.inbound.teams.responder import EchoResponder, Responder
+from workmate.adapters.inbound.responder import EchoResponder, Responder
 from workmate.config import TeamsSettings
 
 logger = logging.getLogger(__name__)
