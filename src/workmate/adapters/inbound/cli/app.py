@@ -32,10 +32,16 @@ def _apply_env_file(env_file: Path) -> None:
     ``utf-8-sig`` obsługuje UTF-8 z/bez BOM, gałąź UTF-16 — pliki z PowerShella.
     """
     data = env_file.read_bytes()
-    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        text = data.decode("utf-16")
-    else:
-        text = data.decode("utf-8-sig")
+    try:
+        if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = data.decode("utf-16")
+        else:
+            text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(
+            f"Nie udało się odczytać {env_file.name} — sprawdź kodowanie "
+            f"(zapisz jako UTF-8): {exc}"
+        ) from exc
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:

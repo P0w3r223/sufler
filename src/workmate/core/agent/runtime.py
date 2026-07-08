@@ -8,10 +8,9 @@ nieznany z narzędzia wypływa jako defekt kodu.
 """
 from __future__ import annotations
 
+import inspect
 import json
 from typing import TYPE_CHECKING
-
-from pydantic import ValidationError
 
 from workmate.core.agent.prompt import SYSTEM_PROMPT
 from workmate.core.ports.llm import (
@@ -65,17 +64,19 @@ class AgentRuntime:
         spec = self._by_name.get(call.name)
         if spec is None:
             return ToolOutput(call.id, f"Nieznane narzędzie: {call.name}", is_error=True)
-        # Argumenty pochodzą od modelu (dane niezaufane). Drzwi MCP walidują je
-        # schematem FastMCP przed wywołaniem; agent nie — więc zła/brakująca nazwa
-        # albo niepoprawny typ dają błąd wiązania. Zwracamy go jako ODZYSKIWALNY
-        # wynik narzędzia (model poprawi w kolejnej turze), zamiast wywracać całe
-        # zapytanie. Domenowe błędy narzędzie łapie samo i zwraca ``{"error": ...}``.
+        # Argumenty pochodzą od modelu (dane niezaufane). Sprawdzamy TYLKO ich
+        # wiązanie z sygnaturą (zła/brakująca/nadmiarowa nazwa) i zwracamy odzyskiwalny
+        # błąd — model poprawi w kolejnej turze, pętla się nie wywraca. Właściwe
+        # wywołanie jest POZA ``try``, więc wyjątek z ciała narzędzia (defekt kodu)
+        # wypływa głośno, zgodnie z kontraktem rdzenia; błędy domenowe narzędzie łapie
+        # samo i zwraca ``{"error": ...}``.
         try:
-            result = spec.fn(**call.arguments)
-        except (TypeError, ValidationError) as exc:
+            inspect.signature(spec.fn).bind(**call.arguments)
+        except TypeError as exc:
             return ToolOutput(
                 call.id,
                 f"Nieprawidłowe argumenty narzędzia {call.name}: {exc}",
                 is_error=True,
             )
+        result = spec.fn(**call.arguments)
         return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))

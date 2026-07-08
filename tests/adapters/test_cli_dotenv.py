@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from workmate.adapters.inbound.cli.app import _apply_env_file
 
 
@@ -50,3 +52,11 @@ def test_apply_env_file_skips_blank_and_comment_lines(tmp_path: Path, monkeypatc
     _apply_env_file(env)
 
     assert os.environ["WORKMATE_TEST_KEEP"] == "1"
+
+
+def test_apply_env_file_raises_clear_error_on_corrupt_encoding(tmp_path: Path):
+    env = tmp_path / ".env"
+    env.write_bytes(b"\xff\xfe\x41")  # BOM UTF-16 + niepełny bajt → błąd dekodowania
+
+    with pytest.raises(SystemExit, match="kodowanie"):
+        _apply_env_file(env)

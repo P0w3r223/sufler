@@ -4,7 +4,7 @@ Wewnętrzny asystent wiedzy pionu Inteligentnych Technologii. Daje Claude Code
 każdego developera dostęp do wspólnej bazy wiedzy — **notatek ze spotkań**
 i **statusu projektów** — przez wąskie, typowane narzędzia MCP.
 
-> **Status:** 🟢 **Faza 1 (MVP) domknięta** — serwer MCP: 4 narzędzia odczytu + zapis (`save_note`) + wdrożenie HTTP z uwierzytelnianiem (Bramka 3).
+> **Status:** 🟢 **Faza 1 (MVP) domknięta** — serwer MCP: 4 narzędzia odczytu + zapis (`save_note`) + gotowy kod wdrożenia HTTP z uwierzytelnianiem (Bramka 3; pozostaje samo wdrożenie).
 > 🔄 **Faza 2 w toku** — runtime agenta w rdzeniu (M1, `workmate-agent`) nad **tymi samymi** narzędziami ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)) + spike drzwi Teams (M2 echo). Faza 3 (GitHub) później. Patrz [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Architektura w jednym akapicie
