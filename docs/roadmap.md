@@ -8,7 +8,7 @@ Ten plik streszcza fazy i pokazuje, gdzie znajduje się kod w tym repozytorium.
 | Faza | Zakres | Status | Gdzie w kodzie |
 |------|--------|--------|----------------|
 | **Faza 1** | Serwer MCP tylko do odczytu dla Claude Code (4 narzędzia nad notatkami i statusem projektów). | 🟢 **Kod domknięty (3/3 bramki)** — pozostaje wdrożenie HTTP | `core/` + `adapters/inbound/mcp/` |
-| **Faza 2** | Drzwi Teams + **runtime agenta** w rdzeniu (model w pętli). Te same narzędzia. | ⏳ Zaplanowana | `adapters/teams/` (stub) |
+| **Faza 2** | Drzwi Teams + **runtime agenta** w rdzeniu (model w pętli). Te same narzędzia. | 🔄 **W toku** — M1 runtime (`core/agent/`, `workmate-agent`) + jednoźródłowy katalog narzędzi ([ADR 0008](adr/0008-agent-runtime-and-tool-catalog.md)); M2 spike Teams (echo). | `core/agent/`, `adapters/inbound/{teams,cli}`, `adapters/outbound/anthropic_llm.py` |
 | **Faza 3** | Drzwi GitHub Issues, lepszy retrieval / RAG, push zdarzeń. | ⏳ Później | `adapters/github/` (stub) |
 
 ## Faza 1 — kamienie milowe (tyg. 1–4)

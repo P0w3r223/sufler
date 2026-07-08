@@ -4,8 +4,8 @@ Wewnętrzny asystent wiedzy pionu Inteligentnych Technologii. Daje Claude Code
 każdego developera dostęp do wspólnej bazy wiedzy — **notatek ze spotkań**
 i **statusu projektów** — przez wąskie, typowane narzędzia MCP.
 
-> **Status:** 🟢 **Faza 1 (MVP) — serwer MCP: 4 narzędzia odczytu + zapis notatek (`save_note`).**
-> Fazy 2 (Teams) i 3 (GitHub) są zaplanowane. Patrz [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** 🟢 **Faza 1 (MVP) domknięta** — serwer MCP: 4 narzędzia odczytu + zapis (`save_note`) + wdrożenie HTTP z uwierzytelnianiem (Bramka 3).
+> 🔄 **Faza 2 w toku** — runtime agenta w rdzeniu (M1, `workmate-agent`) nad **tymi samymi** narzędziami ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)) + spike drzwi Teams (M2 echo). Faza 3 (GitHub) później. Patrz [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Architektura w jednym akapicie
 
@@ -53,7 +53,7 @@ Claude wywoła `search_notes` i odpowie na podstawie notatek.
 PROJEKT/
 ├── src/workmate/         # kod serwera
 │   ├── core/             # RDZEŃ — domena, porty, przypadki użycia (bez I/O, bez MCP)
-│   ├── adapters/         # DRZWI — inbound/mcp (Faza 1), teams/ github/ (stuby)
+│   ├── adapters/         # DRZWI — inbound/{mcp,teams,cli}, outbound/ (repozytoria + Claude API); github/ (stub)
 │   ├── config.py         # typowana konfiguracja ze zmiennych środowiskowych
 │   └── server.py         # punkt składania (wiring rdzenia z drzwiami)
 ├── data/                 # baza wiedzy: notatki notes/<firma>/<projekt>/*.md + rejestr projektów (.yaml)
