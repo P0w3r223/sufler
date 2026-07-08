@@ -11,7 +11,7 @@ katalog read-only, ADR 0006).
 """
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound.responder import InboundMessage, Responder
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from workmate.config import TelegramSettings
 
 
-def make_on_message(responder: Responder) -> Callable[[Any, Any], Awaitable[None]]:
+def make_on_message(responder: Responder) -> Callable[[Any, Any], Coroutine[Any, Any, None]]:
     """Zbuduj asynchroniczny handler wiadomości, wstrzykując responder (szew).
 
     ``update`` jest kaczo-typowany (``.effective_message.text``, ``.reply_text``),
