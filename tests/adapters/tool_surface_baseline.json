@@ -1,0 +1,194 @@
+{
+  "get_note": {
+    "description": "Pobierz pełną treść jednej notatki po jej identyfikatorze.\n\n        Identyfikator ma postać ``<firma>/<projekt>/<plik-bez-rozszerzenia>``,\n        np. 'mpwik/scada-integration/2025-06-12-przeglad-api-scada' (z wyników search_notes).\n        ",
+    "parameters": {
+      "properties": {
+        "note_id": {
+          "title": "Note Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "note_id"
+      ],
+      "title": "get_noteArguments",
+      "type": "object"
+    }
+  },
+  "get_project_status": {
+    "description": "Zwróć status projektu: stan zadeklarowany + syntezę z notatek.\n\n        ``project`` to klucz projektu (np. 'workmate'). W odpowiedzi m.in. firma,\n        zdrowie, faza, podsumowanie oraz liczba notatek i otwartych action items.\n        ",
+    "parameters": {
+      "properties": {
+        "project": {
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "title": "get_project_statusArguments",
+      "type": "object"
+    }
+  },
+  "list_projects": {
+    "description": "Wypisz projekty pionu dostępne w bazie wiedzy (klucz, nazwa, opis).",
+    "parameters": {
+      "properties": {},
+      "title": "list_projectsArguments",
+      "type": "object"
+    }
+  },
+  "save_note": {
+    "description": "Zapisz nową notatkę ze spotkania (ZAPIS — dodaje plik do bazy wiedzy).\n\n        Wylicza miejsce zapisu z metadanych: firma z rejestru projektu, dalej\n        <firma>/<projekt>/<data>-<slug tytułu>. Nigdy nie nadpisuje istniejącej\n        notatki (przy kolizji dokłada sufiks). ``date`` w formacie YYYY-MM-DD;\n        ``project`` musi istnieć w rejestrze (patrz list_projects).\n        ",
+    "parameters": {
+      "properties": {
+        "action_items": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action Items"
+        },
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "decisions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decisions"
+        },
+        "open_questions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Open Questions"
+        },
+        "participants": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participants"
+        },
+        "project": {
+          "title": "Project",
+          "type": "string"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tags"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "project",
+        "date",
+        "body"
+      ],
+      "title": "save_noteArguments",
+      "type": "object"
+    }
+  },
+  "search_notes": {
+    "description": "Przeszukaj notatki ze spotkań po słowach kluczowych i metadanych.\n\n        Zwraca listę dopasowań (metadane + fragment), posortowaną po trafności.\n        Opcjonalne filtry: ``project`` (klucz projektu, np. 'scada-integration') oraz\n        ``participant`` (fragment nazwiska uczestnika).\n        ",
+    "parameters": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "participant": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participant"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "search_notesArguments",
+      "type": "object"
+    }
+  }
+}
