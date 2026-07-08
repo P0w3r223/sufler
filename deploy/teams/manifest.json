@@ -1,0 +1,33 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.0",
+  "id": "c0ffee00-0000-4000-8000-000000000015",
+  "developer": {
+    "name": "BIAP",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/tos"
+  },
+  "name": {
+    "short": "WorkMate",
+    "full": "WorkMate (spike)"
+  },
+  "description": {
+    "short": "Bot echo WorkMate",
+    "full": "Spike M2: potwierdzenie odbioru notatki."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#2A6FF3",
+  "bots": [
+    {
+      "botId": "c0ffee00-0000-4000-8000-000000000015",
+      "scopes": ["personal", "team"]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}
