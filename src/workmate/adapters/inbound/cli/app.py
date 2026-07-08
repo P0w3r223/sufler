@@ -7,7 +7,9 @@ kończy się czytelnym komunikatem, nie surowym ``ImportError``.
 """
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
@@ -21,6 +23,38 @@ from workmate.core.application.services import (
 )
 from workmate.core.application.tools import build_tool_catalog
 from workmate.core.errors import LLMError
+
+
+def _apply_env_file(env_file: Path) -> None:
+    """Wczytaj plik ``.env`` do ``os.environ`` (``setdefault`` — realne env wygrywa).
+
+    Odporność na kodowanie: PowerShell domyślnie zapisuje UTF-16 LE z BOM;
+    ``utf-8-sig`` obsługuje UTF-8 z/bez BOM, gałąź UTF-16 — pliki z PowerShella.
+    """
+    data = env_file.read_bytes()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = data.decode("utf-16")
+    else:
+        text = data.decode("utf-8-sig")
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def _load_dotenv() -> None:
+    """Znajdź repo-lokalny ``.env`` (korzeń z ``pyproject.toml``) i wczytaj go, jeśli jest.
+
+    Wygoda deva: klucz i ustawienia agenta można trzymać w ``.env`` (w
+    ``.gitignore``) zamiast eksportować ręcznie. Realne zmienne środowiskowe
+    zawsze mają priorytet (patrz ``_apply_env_file``). Bez zależności zewnętrznej.
+    """
+    here = Path(__file__).resolve()
+    root = next((p for p in (here, *here.parents) if (p / "pyproject.toml").is_file()), None)
+    if root is not None and (root / ".env").is_file():
+        _apply_env_file(root / ".env")
 
 
 def _build_runtime(settings: Settings, agent_settings: AgentSettings) -> AgentRuntime:
@@ -39,6 +73,7 @@ def _build_runtime(settings: Settings, agent_settings: AgentSettings) -> AgentRu
 
 def main() -> None:
     """Uruchom runtime na zapytaniu z argv (albo stdin) i wypisz odpowiedź."""
+    _load_dotenv()
     settings = Settings.from_env()
     agent_settings = AgentSettings.from_env()
     agent_settings.validate()
