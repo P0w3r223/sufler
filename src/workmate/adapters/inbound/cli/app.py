@@ -20,6 +20,7 @@ from workmate.core.application.services import (
     ProjectsService,
 )
 from workmate.core.application.tools import build_tool_catalog
+from workmate.core.errors import LLMError
 
 
 def _build_runtime(settings: Settings, agent_settings: AgentSettings) -> AgentRuntime:
@@ -53,7 +54,11 @@ def main() -> None:
             "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
         ) from exc
 
-    print(runtime.run(query))
+    try:
+        print(runtime.run(query))
+    except LLMError as exc:
+        # Błąd sieci/limitu/auth Claude API → czytelny komunikat, nie surowy traceback.
+        raise SystemExit(f"Błąd komunikacji z Claude API: {exc}") from exc
 
 
 if __name__ == "__main__":

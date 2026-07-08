@@ -78,6 +78,27 @@ def test_runtime_marks_unknown_tool_as_error():
     assert outputs[0].is_error is True
 
 
+def test_runtime_returns_recoverable_error_for_bad_tool_arguments():
+    """Model podał złą nazwę argumentu → błąd narzędzia, pętla się NIE wywraca."""
+
+    def only_query(query: str) -> dict:
+        return {"ok": True}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "search", {"nieznany_arg": 1}),)),
+            LLMResponse(text="poprawiłem"),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("search", only_query)]).run("x")
+
+    assert result == "poprawiłem"  # zapytanie się nie wywróciło
+    outputs = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)][0].outputs
+    assert outputs[0].is_error is True
+    assert "search" in outputs[0].content
+
+
 def test_runtime_respects_iteration_budget():
     """Model zawsze chce narzędzia → pętla zatrzymuje się po budżecie iteracji."""
 

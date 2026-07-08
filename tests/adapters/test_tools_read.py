@@ -8,6 +8,7 @@ wyłącznie warstwę adaptera: tłumaczenie ``RepositoryError`` na ``{"error": .
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -126,3 +127,47 @@ def test_search_notes_happy_path_shape():
     result = search_notes(query="x")
 
     assert result == {"query": "x", "count": 0, "results": []}
+
+
+def test_read_tool_output_shapes_are_stable(sample_notes):
+    """Kontrakt WYJŚĆ (Bramka 1): pinujemy kształt odpowiedzi pozostałych narzędzi odczytu.
+
+    ``search_notes`` (wyżej) i ``save_note`` (test_tools_gating) już mają swoje
+    asercje; tu domykamy ``list_projects`` / ``get_note`` / ``get_project_status``.
+    """
+    projects_repo = FakeProjectsRepository(
+        [Project(key="scada-integration", company="mpwik", name="Integracja", description="d")],
+        {
+            "scada-integration": ProjectStatusRecord(
+                key="scada-integration",
+                status="active",
+                health="green",
+                phase="Faza 1",
+                summary="W toku",
+                last_updated=date(2025, 6, 26),
+            )
+        },
+    )
+    mcp = _register(FakeNotesRepository(sample_notes), projects_repo)
+
+    projects = _tool_fn(mcp, "list_projects")()
+    assert set(projects) == {"count", "projects"}
+    assert set(projects["projects"][0]) == {"key", "company", "name", "description"}
+
+    note = _tool_fn(mcp, "get_note")(note_id="mpwik/scada-integration/2025-06-12-api")
+    assert set(note) == {"id", "metadata", "body"}
+
+    status = _tool_fn(mcp, "get_project_status")(project="scada-integration")
+    assert set(status) == {
+        "key",
+        "company",
+        "name",
+        "status",
+        "health",
+        "phase",
+        "summary",
+        "last_updated",
+        "notes_count",
+        "latest_note_date",
+        "open_action_items",
+    }

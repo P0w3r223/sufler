@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from workmate.core.agent.prompt import SYSTEM_PROMPT
 from workmate.core.ports.llm import (
     AssistantTurn,
@@ -63,5 +65,17 @@ class AgentRuntime:
         spec = self._by_name.get(call.name)
         if spec is None:
             return ToolOutput(call.id, f"Nieznane narzędzie: {call.name}", is_error=True)
-        result = spec.fn(**call.arguments)
+        # Argumenty pochodzą od modelu (dane niezaufane). Drzwi MCP walidują je
+        # schematem FastMCP przed wywołaniem; agent nie — więc zła/brakująca nazwa
+        # albo niepoprawny typ dają błąd wiązania. Zwracamy go jako ODZYSKIWALNY
+        # wynik narzędzia (model poprawi w kolejnej turze), zamiast wywracać całe
+        # zapytanie. Domenowe błędy narzędzie łapie samo i zwraca ``{"error": ...}``.
+        try:
+            result = spec.fn(**call.arguments)
+        except (TypeError, ValidationError) as exc:
+            return ToolOutput(
+                call.id,
+                f"Nieprawidłowe argumenty narzędzia {call.name}: {exc}",
+                is_error=True,
+            )
         return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))

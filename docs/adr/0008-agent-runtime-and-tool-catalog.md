@@ -112,8 +112,10 @@ Envelope:
 
 - `adapters/inbound/mcp/tools.py` is rebuilt from five decorated functions into a
   thin loop over the catalog. This must not change the MCP-visible surface: a
-  characterization test snapshots each tool's FastMCP `parameters`, name,
-  description, and output shape before the refactor and asserts equality after.
+  characterization test snapshots each tool's FastMCP `parameters`, name, and
+  description before the refactor and asserts equality after (tool output shapes
+  are pinned separately by the read-tool and gating tests, since both doors share
+  one `fn` and cannot diverge).
   If the pinned `mcp` version cannot reproduce an identical schema from the
   lifted signatures, the MCP rebuild is a blocker and is deferred (agent-only
   catalog, MCP left as-is) until resolved — the frozen contract wins.

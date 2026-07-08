@@ -108,7 +108,15 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
 
 
 def _from_message(message: Any) -> LLMResponse:
-    """Zmapuj odpowiedź Anthropic na słownik domenowy (tekst + żądania narzędzi)."""
+    """Zmapuj odpowiedź Anthropic na słownik domenowy (tekst + żądania narzędzi).
+
+    Założenie M1: bierzemy bloki ``text`` i ``tool_use``; inne (np. ``thinking``)
+    świadomie pomijamy, a ``stop_reason`` nie jest inspekcjonowany — Haiku 4.5 bez
+    rozszerzonego myślenia ich nie zwraca, a przy małej bazie i domyślnym
+    ``max_tokens`` obcięcie jest mało prawdopodobne. Gdy kiedyś włączymy myślenie
+    lub inny model: bloki thinking trzeba będzie odsyłać z powrotem (echo), a
+    ``stop_reason == "max_tokens"`` traktować inaczej niż odpowiedź końcową.
+    """
     text_parts: list[str] = []
     calls: list[ToolCall] = []
     for block in message.content:

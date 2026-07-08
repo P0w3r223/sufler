@@ -222,9 +222,22 @@ class AgentSettings:
         )
 
     def validate(self) -> None:
-        """Twardy błąd startu, gdy brak klucza API — lepiej nie ruszać bez uwierzytelniania."""
+        """Twardy błąd startu, gdy konfiguracja jest niepełna albo bez sensu.
+
+        Lepiej nie ruszać bez uwierzytelniania; a niedodatnie limity dają cichy
+        no-op (pętla pomija model), więc też je odrzucamy fail-fast.
+        """
         if not self.api_key:
             raise ValueError(
                 "Runtime agenta wymaga klucza Claude API: ustaw ANTHROPIC_API_KEY "
                 "(lub WORKMATE_AGENT_API_KEY) w środowisku/.env."
+            )
+        if self.max_tool_iterations < 1:
+            raise ValueError(
+                "WORKMATE_AGENT_MAX_TOOL_ITERATIONS musi być >= 1, jest: "
+                f"{self.max_tool_iterations}."
+            )
+        if self.max_tokens < 1:
+            raise ValueError(
+                f"WORKMATE_AGENT_MAX_TOKENS musi być >= 1, jest: {self.max_tokens}."
             )
