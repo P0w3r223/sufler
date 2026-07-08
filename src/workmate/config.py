@@ -191,3 +191,40 @@ class TeamsSettings:
                 + ", ".join(missing)
                 + ". Do lokalnego testu w Emulatorze ustaw WORKMATE_TEAMS_ANONYMOUS=true."
             )
+
+
+@dataclass(frozen=True)
+class AgentSettings:
+    """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008).
+
+    Klucz Claude API to sekret — czytany z env, nigdy z repo ani z folderu
+    indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-haiku-4-5``
+    (koszt/latencja pętli tool-use), nadpisywalny przez ``WORKMATE_AGENT_MODEL``.
+    """
+
+    # Sekret: repr=False, żeby przypadkowe zalogowanie obiektu/traceback go nie ujawniło.
+    api_key: str = field(default="", repr=False)
+    model: str = "claude-haiku-4-5"
+    max_tokens: int = 4096
+    max_tool_iterations: int = 8
+
+    @classmethod
+    def from_env(cls) -> AgentSettings:
+        # Priorytet: WORKMATE_AGENT_API_KEY (jawnie dla WorkMate) > ANTHROPIC_API_KEY (nazwa SDK).
+        api_key = os.environ.get("WORKMATE_AGENT_API_KEY") or os.environ.get(
+            "ANTHROPIC_API_KEY", ""
+        )
+        return cls(
+            api_key=api_key,
+            model=os.environ.get("WORKMATE_AGENT_MODEL", "claude-haiku-4-5"),
+            max_tokens=_int_from_env("WORKMATE_AGENT_MAX_TOKENS", 4096),
+            max_tool_iterations=_int_from_env("WORKMATE_AGENT_MAX_TOOL_ITERATIONS", 8),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy brak klucza API — lepiej nie ruszać bez uwierzytelniania."""
+        if not self.api_key:
+            raise ValueError(
+                "Runtime agenta wymaga klucza Claude API: ustaw ANTHROPIC_API_KEY "
+                "(lub WORKMATE_AGENT_API_KEY) w środowisku/.env."
+            )

@@ -24,12 +24,19 @@ teams = [
     "microsoft-agents-activity>=1.1.0",
     "microsoft-agents-authentication-msal>=1.1.0",
 ]
+# Runtime agenta (Faza 2, M1 / ADR 0008) — oficjalny SDK Anthropic. Serwer MCP
+# zostaje lekki; runtime doinstalowuje się przez `uv sync --extra agent`.
+agent = [
+    "anthropic>=0.40",
+]
 
 [project.scripts]
 # Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
 workmate = "workmate.server:main"
 # Proces drzwi Teams (Faza 2), osobny od serwera MCP: `uv run workmate-teams`.
 workmate-teams = "workmate.adapters.inbound.teams.app:main"
+# Lokalny harness runtime'u agenta (Faza 2, M1): `uv run workmate-agent`.
+workmate-agent = "workmate.adapters.inbound.cli.app:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
@@ -75,6 +82,12 @@ ignore_missing_imports = true
 # mypy serwera MCP nie może się o nie wywrócić. Importy są i tak leniwe.
 [[tool.mypy.overrides]]
 module = ["microsoft_agents.*", "aiohttp.*"]
+ignore_missing_imports = true
+
+# Anthropic SDK jest opcjonalny (extra `agent`, ADR 0008) — import leniwy w
+# adapterze outbound, więc mypy rdzenia nie może się o niego wywrócić.
+[[tool.mypy.overrides]]
+module = ["anthropic.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
