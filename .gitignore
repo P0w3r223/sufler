@@ -20,3 +20,6 @@ dist/
 
 # Obce źródła narzędzi (pobrane lokalnie, nie część projektu)
 BotFramework-Emulator-main/
+
+# Tymczasowe worktree agentów Claude Code
+.claude/worktrees/
