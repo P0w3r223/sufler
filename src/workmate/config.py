@@ -241,3 +241,28 @@ class AgentSettings:
             raise ValueError(
                 f"WORKMATE_AGENT_MAX_TOKENS musi być >= 1, jest: {self.max_tokens}."
             )
+
+
+@dataclass(frozen=True)
+class TelegramSettings:
+    """Konfiguracja drzwi Telegram (Faza 2, spike echo) — long polling, bez tunelu.
+
+    Token bota to sekret (``repr=False``) — wyłącznie z env
+    ``WORKMATE_TELEGRAM_BOT_TOKEN`` (od @BotFather); nigdy w repo. ``validate`` to
+    twardy błąd startu, gdy brak — lepiej nie ruszać bez tokenu niż wołać API z pustym.
+    """
+
+    # Sekret: repr=False, żeby przypadkowe zalogowanie obiektu/traceback nie ujawniło tokenu.
+    bot_token: str = field(default="", repr=False)
+
+    @classmethod
+    def from_env(cls) -> TelegramSettings:
+        return cls(bot_token=os.environ.get("WORKMATE_TELEGRAM_BOT_TOKEN", ""))
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy brak tokenu — nie wołamy API Telegrama z pustym."""
+        if not self.bot_token:
+            raise ValueError(
+                "Drzwi Telegram wymagają WORKMATE_TELEGRAM_BOT_TOKEN (token z @BotFather) "
+                "w środowisku/.env."
+            )

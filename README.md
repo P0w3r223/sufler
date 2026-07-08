@@ -90,6 +90,18 @@ per osoba tokenami bearer i drzwi tylko do odczytu — patrz
 [`docs/how-to/deploy-http.md`](docs/how-to/deploy-http.md) oraz
 [ADR 0007](docs/adr/0007-gate-3-http-auth-deployment.md).
 
+## Drzwi Fazy 2 (spike, lokalnie)
+
+Poza serwerem MCP ten sam rdzeń napędza drzwi asynchroniczne (bot echo → docelowo
+runtime agenta nad tymi samymi narzędziami, przez wspólny szew `Responder`):
+
+- **Telegram** (long polling, bez tunelu): `uv sync --extra telegram`, token
+  `WORKMATE_TELEGRAM_BOT_TOKEN` w `.env`, `uv run workmate-telegram`. Kroki:
+  [`docs/how-to/telegram-bot.md`](docs/how-to/telegram-bot.md).
+- **Teams** (Bot Framework Emulator lokalnie): [`docs/how-to/teams-bot.md`](docs/how-to/teams-bot.md).
+- **Runtime agenta lokalnie**: `uv sync --extra agent`, `ANTHROPIC_API_KEY` w `.env`,
+  `uv run workmate-agent "…"`.
+
 ## Dalej
 
 - Chcesz coś zmienić? → [`CONTRIBUTING.md`](CONTRIBUTING.md)

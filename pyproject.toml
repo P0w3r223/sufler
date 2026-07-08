@@ -29,6 +29,12 @@ teams = [
 agent = [
     "anthropic>=0.40",
 ]
+# Drzwi Telegram (Faza 2, spike echo) — python-telegram-bot (long polling) +
+# python-dotenv do wczytania .env. Serwer MCP zostaje lekki.
+telegram = [
+    "python-telegram-bot>=21",
+    "python-dotenv>=1.0",
+]
 
 [project.scripts]
 # Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
@@ -37,6 +43,8 @@ workmate = "workmate.server:main"
 workmate-teams = "workmate.adapters.inbound.teams.app:main"
 # Lokalny harness runtime'u agenta (Faza 2, M1): `uv run workmate-agent`.
 workmate-agent = "workmate.adapters.inbound.cli.app:main"
+# Proces drzwi Telegram (Faza 2), long polling: `uv run workmate-telegram`.
+workmate-telegram = "workmate.adapters.inbound.telegram.app:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
@@ -88,6 +96,12 @@ ignore_missing_imports = true
 # adapterze outbound, więc mypy rdzenia nie może się o niego wywrócić.
 [[tool.mypy.overrides]]
 module = ["anthropic.*"]
+ignore_missing_imports = true
+
+# Telegram (python-telegram-bot) i python-dotenv są opcjonalne (extra `telegram`) —
+# importy leniwe, więc mypy rdzenia nie może się o nie wywrócić.
+[[tool.mypy.overrides]]
+module = ["telegram.*", "dotenv.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

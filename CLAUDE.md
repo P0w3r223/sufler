@@ -9,11 +9,12 @@ agenta** (drzwi Teams/CLI) — jedno źródło narzędzi, wiele drzwi.
 - `src/workmate/core/` — RDZEŃ: domena (`domain/`), porty (`ports/`: repozytoria +
   `llm.py`), przypadki użycia (`application/services.py` + `application/tools.py` —
   jednoźródłowy katalog narzędzi), runtime agenta (`agent/`). Bez I/O, bez SDK.
-- `src/workmate/adapters/` — DRZWI: `inbound/mcp/tools.py` (Faza 1 — cienka pętla po
-  katalogu narzędzi); `inbound/teams/` (Faza 2 spike M2 echo + szew `RuntimeResponder`;
-  extra `teams`); `inbound/cli/app.py` (Faza 2 — harness `workmate-agent`);
-  `outbound/` (repozytoria danych + `anthropic_llm.py` — Claude API, extra `agent`);
-  `github/` to pusty stub (Faza 3).
+- `src/workmate/adapters/` — DRZWI: wspólny szew `inbound/responder.py` (`Responder`,
+  `EchoResponder`, `RuntimeResponder`, …) reużywany przez drzwi async; `inbound/mcp/tools.py`
+  (Faza 1 — cienka pętla po katalogu narzędzi); `inbound/teams/` (Faza 2 spike echo,
+  extra `teams`); `inbound/telegram/` (Faza 2 spike echo, long polling, extra `telegram`);
+  `inbound/cli/app.py` (Faza 2 — harness `workmate-agent`); `outbound/` (repozytoria +
+  `anthropic_llm.py` — Claude API, extra `agent`); `github/` to pusty stub (Faza 3).
 - `src/workmate/server.py` — punkt składania (wiring). `config.py` — ustawienia.
 - `data/` — notatki `.md` w układzie `notes/<firma>/<projekt>/` (frontmatter YAML)
   + `data/projects/registry.yaml` (z polem `company` na projekt).
