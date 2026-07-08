@@ -1,0 +1,106 @@
+"""Testy zapisu notatek do plików Markdown (``MarkdownNotesWriter``).
+
+Weryfikuje odwrotność ``MarkdownNotesRepository``: roundtrip zapis→odczyt,
+kontrolę kolizji (``exists``), atomowość (brak pliku ``.tmp`` po zapisie i brak
+częściowego pliku przy awarii podmiany) oraz tworzenie brakujących katalogów
+firmy/projektu. Adapter dotyka dysku, więc testy działają na ``tmp_path``.
+"""
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from workmate.adapters.outbound import markdown_notes_writer as writer_module
+from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from workmate.core.domain.models import Note, NoteMetadata
+from workmate.core.errors import WriteError
+
+
+def _note(note_id: str, *, body: str = "Treść notatki.") -> Note:
+    return Note(
+        id=note_id,
+        metadata=NoteMetadata(
+            title="Przegląd integracji",
+            project="scada-integration",
+            date=date(2025, 6, 12),
+            participants=["Anna Kowalska", "Marek Nowak"],
+            action_items=["Wdrożyć walidację"],
+            tags=["api"],
+        ),
+        body=body,
+    )
+
+
+def test_write_then_read_roundtrips_through_repository(tmp_path: Path):
+    note = _note("mpwik/scada-integration/2025-06-12-przeglad")
+    MarkdownNotesWriter(tmp_path).write(note)
+
+    loaded = MarkdownNotesRepository(tmp_path).get(note.id)
+
+    assert loaded is not None
+    assert loaded.id == note.id
+    assert loaded.metadata == note.metadata  # polskie znaki i listy zachowane
+    assert loaded.body == note.body
+
+
+def test_write_creates_missing_company_and_project_dirs(tmp_path: Path):
+    note = _note("biap/workmate/2025-06-10-schemat")
+    MarkdownNotesWriter(tmp_path).write(note)
+
+    assert (tmp_path / "biap" / "workmate" / "2025-06-10-schemat.md").is_file()
+
+
+def test_exists_reflects_written_note(tmp_path: Path):
+    writer = MarkdownNotesWriter(tmp_path)
+    note = _note("mpwik/scada-integration/2025-06-12-przeglad")
+
+    assert writer.exists(note.id) is False
+
+    writer.write(note)
+
+    assert writer.exists(note.id) is True
+
+
+def test_write_leaves_no_tmp_file(tmp_path: Path):
+    note = _note("mpwik/scada-integration/2025-06-12-przeglad")
+    MarkdownNotesWriter(tmp_path).write(note)
+
+    # Zapis atomowy: plik tymczasowy '.tmp' nie może zostać po udanym zapisie.
+    assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_failed_link_raises_write_error_and_leaves_no_partial_note(
+    tmp_path: Path, monkeypatch
+):
+    note = _note("mpwik/scada-integration/2025-06-12-przeglad")
+
+    def boom(src, dst):
+        raise OSError("symulowana awaria I/O")
+
+    monkeypatch.setattr(writer_module.os, "link", boom)
+
+    # Błąd I/O jest opakowany w WriteError (granica MCP degraduje łagodnie).
+    with pytest.raises(WriteError):
+        MarkdownNotesWriter(tmp_path).write(note)
+
+    # Czytelnik zachłanny (all()) nie może zobaczyć częściowego pliku notatki:
+    # docelowa ścieżka nie powstaje, a plik tymczasowy jest sprzątany.
+    assert not (tmp_path / f"{note.id}.md").exists()
+    assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_write_never_overwrites_existing_note(tmp_path: Path):
+    writer = MarkdownNotesWriter(tmp_path)
+    note_id = "mpwik/scada-integration/2025-06-12-przeglad"
+    writer.write(_note(note_id, body="pierwsza wersja"))
+
+    # Create-only: druga notatka pod tym samym id to błąd, nie ciche nadpisanie.
+    with pytest.raises(WriteError):
+        writer.write(_note(note_id, body="druga wersja"))
+
+    loaded = MarkdownNotesRepository(tmp_path).get(note_id)
+    assert loaded is not None
+    assert loaded.body == "pierwsza wersja"  # oryginał nietknięty

@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Środowiska i narzędzia
+.venv/
+.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# IDE / system
+.idea/
+.vscode/
+.DS_Store
+
+# Obce źródła narzędzi (pobrane lokalnie, nie część projektu)
+BotFramework-Emulator-main/

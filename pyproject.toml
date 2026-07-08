@@ -1,0 +1,83 @@
+[project]
+name = "workmate"
+version = "0.1.0"
+description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code. Faza 1: narzędzia tylko do odczytu."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    # server.py importuje uvicorn wprost w gałęzi HTTP (streamable-http, ADR 0007);
+    # deklarujemy go jawnie, nie polegając na tranzytywności przez mcp[cli].
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+# Drzwi Teams (Faza 2) — ciężki Microsoft 365 Agents SDK (następca zarchiwizowanego
+# Bot Framework SDK, patrz docs/research/teams-bot-setup-2026.md). Instalacja
+# serwera MCP zostaje lekka; Teams doinstalowuje się przez `uv sync --extra teams`.
+teams = [
+    "microsoft-agents-hosting-aiohttp>=1.1.0",
+    "microsoft-agents-hosting-core>=1.1.0",
+    "microsoft-agents-activity>=1.1.0",
+    "microsoft-agents-authentication-msal>=1.1.0",
+]
+
+[project.scripts]
+# Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
+workmate = "workmate.server:main"
+# Proces drzwi Teams (Faza 2), osobny od serwera MCP: `uv run workmate-teams`.
+workmate-teams = "workmate.adapters.inbound.teams.app:main"
+
+# Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
+# Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/workmate"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+disallow_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+warn_unused_configs = true
+
+# Serwer MCP/FastMCP bywa różnie otypowany między wersjami — nie wywracaj typów
+# przez brak stubów zależności zewnętrznej.
+[[tool.mypy.overrides]]
+module = ["mcp.*"]
+ignore_missing_imports = true
+
+# Agents SDK i aiohttp są opcjonalne (extra `teams`) — bez zainstalowanego extra
+# mypy serwera MCP nie może się o nie wywrócić. Importy są i tak leniwe.
+[[tool.mypy.overrides]]
+module = ["microsoft_agents.*", "aiohttp.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"

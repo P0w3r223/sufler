@@ -1,0 +1,56 @@
+# Rejestr projektów pionu — zadeklarowane źródło prawdy o statusie.
+# Hierarchia (ADR 0005): firma (company) → projekt (key) → notatki.
+# `company` jest jedynym źródłem prawdy o firmie — notatki go nie duplikują;
+# ścieżka notatki to data/notes/<company>/<key>/<data>-<slug>.md.
+# Część "żywa" (liczba notatek, otwarte action items) jest dowyliczana przez
+# rdzeń z notatek. Utrzymuj ręcznie, jeden wpis na projekt.
+projects:
+  - key: scada-integration
+    company: mpwik
+    name: Integracja SCADA MPWiK
+    description: "Integracja z systemami MPWiK — odczyt danych pomiarowych ze SCADA przez wąskie API."
+    status: active
+    health: green
+    phase: "Faza 1 — MVP odczytowy, przygotowanie do wdrożenia testowego"
+    summary: "Kontrakt API v1 zatwierdzony, integracja pomiarów na ukończeniu; ryzyko po stronie rotacji kluczy API."
+    last_updated: 2025-06-26
+
+  - key: workmate
+    company: biap
+    name: WorkMate
+    description: "Wewnętrzny asystent bazy wiedzy WorkMate w architekturze jeden rdzeń, wiele drzwi."
+    status: active
+    health: green
+    phase: "Faza 1 — serwer MCP tylko do odczytu dla Claude Code"
+    summary: "Bramka 1 domknięta (schemat notatki i kontrakt narzędzi); trwają testy i przygotowanie wdrożenia HTTP."
+    last_updated: 2025-06-24
+
+  - key: smart-metering
+    company: enerkom
+    name: Smart Metering EnerKom
+    description: "Integracja odczytów z inteligentnych liczników energii i platforma prognozowania zużycia dla dystrybutora EnerKom."
+    status: active
+    health: yellow
+    phase: "Faza analizy — warsztaty wymagań i PoC odczytu z koncentratorów"
+    summary: "Zakres i harmonogram SoW uzgodnione; ryzyko po stronie wolumenu danych z liczników i braków w oknie serwisowym koncentratorów."
+    last_updated: 2025-06-18
+
+  - key: omnichannel
+    company: nordmarket
+    name: Omnichannel NordMarket
+    description: "Ujednolicenie stanów magazynowych online i offline oraz asystent obsługi klienta dla sieci handlowej NordMarket."
+    status: active
+    health: green
+    phase: "Wdrożenie — pilotaż w 3 sklepach i sklepie internetowym"
+    summary: "Pilotaż synchronizacji stanów magazynowych ruszył, warunki SLA podpisane; trwa strojenie kolejek po incydencie z importem nocnym."
+    last_updated: 2025-06-20
+
+  - key: track-and-trace
+    company: translog
+    name: Track & Trace TransLog
+    description: "Integracja z systemami TMS przewoźników i śledzenie przesyłek w czasie zbliżonym do rzeczywistego dla operatora TransLog."
+    status: active
+    health: red
+    phase: "Integracja — łączenie z TMS przewoźników podwykonawców"
+    summary: "Integracja bazowa działa, ale termin zagrożony — dwaj podwykonawcy nie udostępnili dostępu do TMS; eskalacja u klienta, rozważane uruchomienie częściowe."
+    last_updated: 2025-06-24
