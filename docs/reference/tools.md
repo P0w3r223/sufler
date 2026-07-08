@@ -11,7 +11,7 @@ Szuka notatek po słowach kluczowych (metadane + treść), z opcjonalnymi filtra
 | Parametr | Typ | Domyślnie | Opis |
 |----------|-----|-----------|------|
 | `query` | `str` | — | Fraza do wyszukania (bez rozróżniania wielkości liter). Pusta = wszystkie. |
-| `project` | `str \| None` | `None` | Filtr po kluczu projektu (np. `mpwik`). |
+| `project` | `str \| None` | `None` | Filtr po kluczu projektu (np. `scada-integration`). |
 | `participant` | `str \| None` | `None` | Filtr po fragmencie nazwiska uczestnika. |
 | `limit` | `int` | `10` | Maksymalna liczba wyników. |
 
