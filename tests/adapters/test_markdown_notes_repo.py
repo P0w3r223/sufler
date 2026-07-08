@@ -104,3 +104,17 @@ def test_missing_notes_dir_raises(tmp_path: Path):
 
     with pytest.raises(RepositoryError):
         repo.all()
+
+
+def test_parse_error_message_uses_relative_path_not_absolute(tmp_path: Path):
+    # Brak wymaganego 'title' → NoteParseError. Komunikat musi wskazać notatkę
+    # ścieżką WZGLĘDNĄ, bez ujawniania bezwzględnej struktury serwera.
+    _write(tmp_path, "mpwik/bad.md", "---\nproject: mpwik\ndate: 2025-06-12\n---\nTreść\n")
+    repo = MarkdownNotesRepository(tmp_path)
+
+    with pytest.raises(NoteParseError) as exc:
+        repo.all()
+
+    msg = str(exc.value)
+    assert "mpwik/bad.md" in msg
+    assert str(tmp_path) not in msg

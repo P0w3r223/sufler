@@ -64,22 +64,29 @@ class MarkdownNotesRepository:
 
     def _load(self, path: Path) -> Note:
         raw = path.read_text(encoding="utf-8")
-        meta_dict, body = _split_frontmatter(raw, path)
+        # Ścieżka WZGLĘDNA wobec katalogu notatek w komunikatach błędów: nie ujawnia
+        # bezwzględnej struktury serwera (drzwi HTTP) i jest przenośna między maszynami.
+        location = path.relative_to(self._notes_dir).as_posix()
+        meta_dict, body = _split_frontmatter(raw, location)
         try:
             metadata = NoteMetadata.model_validate(meta_dict)
         except ValidationError as exc:
             raise NoteParseError(
-                f"{path}: nieprawidłowy frontmatter notatki: {exc}"
+                f"{location}: nieprawidłowy frontmatter notatki: {exc}"
             ) from exc
         note_id = path.relative_to(self._notes_dir).with_suffix("").as_posix()
         return Note(id=note_id, metadata=metadata, body=body.strip())
 
 
-def _split_frontmatter(raw: str, path: Path) -> tuple[dict[str, Any], str]:
-    """Rozdziel plik na słownik frontmatter (YAML) i treść (Markdown)."""
+def _split_frontmatter(raw: str, location: str) -> tuple[dict[str, Any], str]:
+    """Rozdziel plik na słownik frontmatter (YAML) i treść (Markdown).
+
+    ``location`` to ścieżka względna notatki — trafia do komunikatów błędów, więc
+    musi być bezpieczna do pokazania klientowi (bez bezwzględnej ścieżki serwera).
+    """
     if not raw.lstrip().startswith(_FRONTMATTER_FENCE):
         raise NoteParseError(
-            f"{path}: brak bloku frontmatter ('---') na początku pliku"
+            f"{location}: brak bloku frontmatter ('---') na początku pliku"
         )
 
     # maxsplit=2: dzielimy tylko na pierwszych dwóch '---', ewentualne '---'
@@ -87,13 +94,15 @@ def _split_frontmatter(raw: str, path: Path) -> tuple[dict[str, Any], str]:
     _, _, remainder = raw.partition(_FRONTMATTER_FENCE)
     front, fence, body = remainder.partition(f"\n{_FRONTMATTER_FENCE}")
     if not fence:
-        raise NoteParseError(f"{path}: brak zamykającego '---' frontmatter")
+        raise NoteParseError(f"{location}: brak zamykającego '---' frontmatter")
 
     try:
         meta = yaml.safe_load(front)
     except yaml.YAMLError as exc:
-        raise NoteParseError(f"{path}: błąd składni YAML we frontmatter: {exc}") from exc
+        raise NoteParseError(
+            f"{location}: błąd składni YAML we frontmatter: {exc}"
+        ) from exc
 
     if not isinstance(meta, dict):
-        raise NoteParseError(f"{path}: frontmatter musi być mapą klucz-wartość")
+        raise NoteParseError(f"{location}: frontmatter musi być mapą klucz-wartość")
     return meta, body
