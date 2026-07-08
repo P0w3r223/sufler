@@ -11,17 +11,8 @@ import os
 import sys
 from pathlib import Path
 
-from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+from workmate.adapters.inbound.agent_wiring import build_agent_runtime
 from workmate.config import AgentSettings, Settings
-from workmate.core.agent.runtime import AgentRuntime
-from workmate.core.application.services import (
-    NotesService,
-    NotesWriteService,
-    ProjectsService,
-)
-from workmate.core.application.tools import build_tool_catalog
 from workmate.core.errors import LLMError
 
 
@@ -63,20 +54,6 @@ def _load_dotenv() -> None:
         _apply_env_file(root / ".env")
 
 
-def _build_runtime(settings: Settings, agent_settings: AgentSettings) -> AgentRuntime:
-    """Zbuduj runtime: repozytoria → serwisy → katalog read+write → klient LLM."""
-    from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
-
-    notes_repo = MarkdownNotesRepository(settings.notes_dir)
-    projects_repo = YamlProjectsRepository(settings.projects_registry)
-    notes_service = NotesService(notes_repo)
-    projects_service = ProjectsService(projects_repo, notes_repo)
-    write_service = NotesWriteService(MarkdownNotesWriter(settings.notes_dir), projects_repo)
-    catalog = build_tool_catalog(notes_service, projects_service, write_service=write_service)
-    llm = AnthropicLLMClient(agent_settings)
-    return AgentRuntime(llm, catalog, max_tool_iterations=agent_settings.max_tool_iterations)
-
-
 def main() -> None:
     """Uruchom runtime na zapytaniu z argv (albo stdin) i wypisz odpowiedź."""
     _load_dotenv()
@@ -89,7 +66,7 @@ def main() -> None:
         raise SystemExit('Podaj zapytanie, np.: uv run workmate-agent "co ustalono z mpwik?"')
 
     try:
-        runtime = _build_runtime(settings, agent_settings)
+        runtime = build_agent_runtime(settings, agent_settings, enable_write=True)
     except ImportError as exc:
         raise SystemExit(
             "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
