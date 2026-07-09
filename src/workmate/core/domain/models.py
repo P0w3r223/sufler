@@ -48,6 +48,24 @@ class NoteSummary(BaseModel):
     score: int
 
 
+class MeetingSummary(BaseModel):
+    """Wynik streszczenia transkryptu (Faza 2, M3 / ADR 0009) — etap pośredni.
+
+    Zawiera WYŁĄCZNIE pola wyprowadzone z transkryptu (dane niezaufane). ``project``
+    i ``date`` NIE należą tu celowo: o miejscu zapisu (firma/projekt/data) decyduje
+    przepływ (``MeetingNoteService``), nie treść streszczana z transkryptu. To nie
+    jest zamrożony schemat notatki — z niego dopiero składany jest ``NoteMetadata``.
+    """
+
+    title: str
+    participants: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    action_items: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    body: str = ""
+
+
 class Project(BaseModel):
     """Pozycja w rejestrze projektów pionu.
 
