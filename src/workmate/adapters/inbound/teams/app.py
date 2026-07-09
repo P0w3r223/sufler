@@ -17,8 +17,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from workmate.adapters.inbound.responder import Responder, RuntimeResponder
-from workmate.config import AgentSettings, Settings, TeamsSettings
+from workmate.adapters.inbound.responder import ConversationalResponder, Responder
+from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.config import (
+    AgentSettings,
+    ConversationSettings,
+    Settings,
+    TeamsSettings,
+)
+from workmate.core.application.conversations import ConversationService
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +79,16 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
 
-    responder: Responder = RuntimeResponder(runtime)
+    # Pamięć rozmów (ADR 0010): wątkowość per rozmowa Teams + limit kontekstu z rollover.
+    conversation_settings = ConversationSettings.from_env()
+    conversation_settings.validate()
+    conversations = ConversationService(
+        SqliteConversationStore(conversation_settings.db_path),
+        max_context_tokens=conversation_settings.max_context_tokens,
+    )
+    responder: Responder = ConversationalResponder(
+        runtime, conversations, channel="teams"
+    )
 
     try:
         from aiohttp import web
