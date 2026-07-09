@@ -54,9 +54,29 @@ class AnthropicMeetingSummarizer:
         except anthropic.APIError as exc:
             raise LLMError(f"Błąd Claude API (streszczenie spotkania): {exc}") from exc
 
-        text = "".join(block.text for block in message.content if block.type == "text")
+        text = _extract_json(
+            "".join(block.text for block in message.content if block.type == "text")
+        )
         try:
             return MeetingSummary.model_validate_json(text)
         except ValueError as exc:
             # Pydantic ValidationError dziedziczy po ValueError; łapiemy też zły JSON.
             raise LLMError(f"Model nie zwrócił poprawnego JSON notatki: {exc}") from exc
+
+
+def _extract_json(text: str) -> str:
+    """Zdejmij otok ``` ```json … ``` ``` / ``` ``` … ``` ```, jeśli model go dodał.
+
+    Robustness (uwaga z przeglądu): modele często owijają JSON w blok markdown, co
+    wywracałoby ``model_validate_json``. Docelowo warto przejść na structured outputs
+    (``output_config.format``) — to zostawiamy jako świadomy follow-up.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()

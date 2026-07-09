@@ -24,10 +24,13 @@ def reject_dangerous_content(*fields: str) -> None:
     """
     for field in fields:
         for ch in field:
-            if ch == "\x00":
-                raise WriteError("treść zawiera bajt zerowy (NUL) — zapis odrzucony")
-            if ch < " " and ch not in _ALLOWED_CONTROL:
+            if ch in _ALLOWED_CONTROL:
+                continue
+            code = ord(ch)
+            # NUL i C0 (<0x20), DEL (0x7F) oraz C1 (0x80–0x9F): brak legalnego
+            # zastosowania w notatce, klasyczny wektor wstrzyknięć (terminal/log/ścieżka).
+            if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
                 raise WriteError(
-                    f"treść zawiera niedozwolony znak sterujący (U+{ord(ch):04X}) — "
+                    f"treść zawiera niedozwolony znak sterujący (U+{code:04X}) — "
                     "zapis odrzucony"
                 )

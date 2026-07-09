@@ -52,9 +52,13 @@ def test_title_yaml_payload_roundtrips_as_plain_string(tmp_path: Path):
 
 def test_reject_dangerous_content_blocks_nul_and_control_chars():
     with pytest.raises(WriteError):
-        reject_dangerous_content("ok", "zla\x00tresc")  # bajt zerowy
+        reject_dangerous_content("ok", "zla\x00tresc")  # bajt zerowy (NUL)
     with pytest.raises(WriteError):
-        reject_dangerous_content("ty\x07tul")  # znak sterujący (bell)
+        reject_dangerous_content("ty\x07tul")  # C0 (bell)
+    with pytest.raises(WriteError):
+        reject_dangerous_content("del\x7ftest")  # DEL
+    with pytest.raises(WriteError):
+        reject_dangerous_content("c1\x85test")  # C1 (0x80–0x9F)
 
 
 def test_reject_dangerous_content_allows_normal_whitespace():

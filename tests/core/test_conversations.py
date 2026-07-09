@@ -99,7 +99,7 @@ def test_estimate_tokens_is_deterministic_and_positive():
     assert estimate_tokens("12345678") == 2  # 8 // 4
 
 
-def test_first_message_opens_conversation_with_empty_history():
+def test_first_message_opens_empty_conversation_and_record_turn_persists():
     store = _FakeStore()
     service = ConversationService(store, max_context_tokens=1000)
 
@@ -107,8 +107,14 @@ def test_first_message_opens_conversation_with_empty_history():
 
     assert history == []
     assert rolled_over is False
-    # Wiadomość użytkownika trafiła do magazynu.
-    assert [m.text for m in store.msgs[conv_id]] == ["czesc"]
+    # prepare_turn NIE utrwala tury (brak sieroty przy błędzie runtime) — pusto do record_turn.
+    assert store.msgs[conv_id] == []
+
+    service.record_turn(conv_id, "czesc", "hej")
+    assert [(m.role, m.text) for m in store.msgs[conv_id]] == [
+        ("user", "czesc"),
+        ("assistant", "hej"),
+    ]
 
 
 def test_history_returns_prior_turns_not_current_message():
@@ -116,7 +122,7 @@ def test_history_returns_prior_turns_not_current_message():
     service = ConversationService(store, max_context_tokens=1000)
 
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "pierwsza")
-    service.record_reply(cid1, "odpowiedz-1")
+    service.record_turn(cid1, "pierwsza", "odpowiedz-1")
     cid2, history, rolled_over = service.prepare_turn("telegram", "chat1", "druga")
 
     assert cid2 == cid1  # ten sam wątek (limit nieprzekroczony)
@@ -132,7 +138,7 @@ def test_rollover_starts_new_conversation_on_limit():
     service = ConversationService(store, max_context_tokens=3)
 
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "12345678")  # est 2
-    service.record_reply(cid1, "87654321")  # est 2 → suma 4 (> limit 3)
+    service.record_turn(cid1, "12345678", "87654321")  # user est2 + assistant est2 → suma 4
     cid2, history, rolled_over = service.prepare_turn("telegram", "chat1", "1234")
 
     assert rolled_over is True

@@ -60,6 +60,12 @@ class SqliteConversationStore:
             Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # busy_timeout: gdy inny PROCES (drugie drzwi) trzyma zapis, poczekaj zamiast
+        # natychmiastowego SQLITE_BUSY → OperationalError. WAL: lepsza współbieżność
+        # czytelnik/zapisujący dla bazy plikowej, bo Teams i Telegram (osobne procesy)
+        # domyślnie dzielą ten sam plik. Na ``:memory:`` WAL jest no-op — nieszkodliwe.
+        self._conn.execute("PRAGMA busy_timeout = 5000")
+        self._conn.execute("PRAGMA journal_mode = WAL")
         self._lock = threading.Lock()
         self._fts = self._init_schema()
 
@@ -208,13 +214,16 @@ class SqliteConversationStore:
     def _search_like(
         self, query: str, filters: str, params: list[Any], limit: int
     ) -> list[ConversationSearchHit]:
-        like = f"%{query}%"
+        # Escapuj wieloznaczniki LIKE (\ % _), żeby wejście użytkownika nie działało
+        # jak wzorzec — poprawność wyszukiwania (nie SQLi: zapytanie sparametryzowane).
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
         sql = (
             "SELECT m.conversation_id AS conversation_id, c.channel AS channel, "
             "c.external_id AS external_id, m.role AS role, m.text AS text, "
             "m.created_at AS created_at "
             "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
-            "WHERE m.text LIKE ?" + filters + " ORDER BY m.id DESC LIMIT ?"
+            "WHERE m.text LIKE ? ESCAPE '\\'" + filters + " ORDER BY m.id DESC LIMIT ?"
         )
         rows = self._conn.execute(sql, [like, *params, limit]).fetchall()
         return [

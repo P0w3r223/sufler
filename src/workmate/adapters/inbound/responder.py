@@ -16,6 +16,7 @@ w testach).
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -112,6 +113,11 @@ class ConversationalResponder:
         self._runtime = runtime
         self._conversations = conversations
         self._channel = channel
+        # Serializuje SZYBKIE operacje na magazynie (wybór wątku, utrwalenie tury),
+        # bo drzwi async wołają respond() z puli wątków (run_in_executor) i dwie tury
+        # naraz mogłyby podwójnie otworzyć/osierocić rozmowę. Wolne wywołanie LLM
+        # zostaje POZA zamkiem — równoległość między rozmowami zachowana.
+        self._store_lock = threading.Lock()
 
     async def respond(self, message: InboundMessage) -> str:
         loop = asyncio.get_running_loop()
@@ -120,11 +126,14 @@ class ConversationalResponder:
     def _respond_sync(self, message: InboundMessage) -> str:
         # Klucz wątku: rozmowa z kanału (czat/wątek), a gdy jej brak — nadawca.
         external_id = message.conversation_id or message.sender or "default"
-        conversation_id, history, rolled_over = self._conversations.prepare_turn(
-            self._channel, external_id, message.text
-        )
+        with self._store_lock:
+            conversation_id, history, rolled_over = self._conversations.prepare_turn(
+                self._channel, external_id, message.text
+            )
+        # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
         reply = self._runtime.run(message.text, history=_to_transcript(history))
-        self._conversations.record_reply(conversation_id, reply)
+        with self._store_lock:
+            self._conversations.record_turn(conversation_id, message.text, reply)
         if rolled_over:
             return (
                 "(Poprzednia rozmowa osiągnęła limit kontekstu — zaczynam nową.)\n\n"

@@ -50,7 +50,12 @@ class ConversationService:
         """Przygotuj turę: (id rozmowy, historia SPRZED tej wiadomości, czy rollover).
 
         Rollover: gdy aktywna rozmowa + nowa tura przekroczyłaby limit, domyka ją i
-        otwiera nową (świeży kontekst). Nową wiadomość użytkownika dokłada do rozmowy.
+        otwiera nową (świeży kontekst). Wiadomości NIE utrwala — robi to ``record_turn``
+        po uzyskaniu odpowiedzi, więc błąd runtime nie zostawia osieroconej tury.
+
+        Uwaga (miękka bramka): pierwsza wiadomość dłuższa niż limit i tak otwiera
+        rozmowę (gałąź ``active is None`` nie sprawdza limitu) — rollover nastąpi
+        dopiero przy kolejnej turze. To akceptowalne dla przybliżonego limitu.
         """
         estimate = estimate_tokens(user_text)
         active = self._store.active_conversation(channel, external_id)
@@ -64,11 +69,17 @@ class ConversationService:
             rolled_over = True
 
         prior = self._store.messages(active.id)
-        self._store.append_message(active.id, "user", user_text, estimate)
         return active.id, prior, rolled_over
 
-    def record_reply(self, conversation_id: str, reply_text: str) -> None:
-        """Dołóż odpowiedź asystenta do rozmowy (po uzyskaniu jej od runtime'u)."""
+    def record_turn(self, conversation_id: str, user_text: str, reply_text: str) -> None:
+        """Utrwal parę (wiadomość użytkownika, odpowiedź) — wołane PO odpowiedzi runtime'u.
+
+        Rozdzielenie od ``prepare_turn`` sprawia, że gdy runtime rzuci błąd, w bazie
+        nie zostaje tura użytkownika bez odpowiedzi (licząca się do limitu kontekstu).
+        """
+        self._store.append_message(
+            conversation_id, "user", user_text, estimate_tokens(user_text)
+        )
         self._store.append_message(
             conversation_id, "assistant", reply_text, estimate_tokens(reply_text)
         )

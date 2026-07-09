@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from workmate.adapters.inbound.responder import ConversationalResponder, InboundMessage
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.conversations import ConversationService
@@ -23,6 +25,13 @@ class _FakeRuntime:
     def run(self, query: str, *, history: object = ()) -> str:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         return self.reply
+
+
+class _FailingRuntime:
+    """Atrapa runtime, która rzuca — symuluje przejściowy błąd Claude API."""
+
+    def run(self, query: str, *, history: object = ()) -> str:
+        raise RuntimeError("runtime padł")
 
 
 def test_second_turn_receives_prior_history_and_reply_is_recorded():
@@ -61,3 +70,20 @@ def test_rollover_prefixes_notice_on_context_limit():
     )
 
     assert reply2.startswith("(Poprzednia rozmowa osiągnęła limit kontekstu")
+
+
+def test_runtime_error_leaves_no_orphan_turn():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    responder = ConversationalResponder(_FailingRuntime(), service, channel="telegram")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            responder.respond(InboundMessage(text="czesc", conversation_id="chat1"))
+        )
+
+    # prepare_turn otworzyło rozmowę, ale błąd runtime → NIC nie utrwalono (brak sieroty).
+    active = store.active_conversation("telegram", "chat1")
+    assert active is not None
+    assert store.messages(active.id) == []
+    assert active.token_estimate == 0
