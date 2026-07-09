@@ -17,7 +17,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from workmate.adapters.inbound.responder import ConversationalResponder, Responder
+from workmate.adapters.inbound.responder import (
+    ConversationalResponder,
+    Responder,
+    SafeResponder,
+)
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.config import (
     AgentSettings,
@@ -86,8 +90,9 @@ def main() -> None:
         SqliteConversationStore(conversation_settings.db_path),
         max_context_tokens=conversation_settings.max_context_tokens,
     )
-    responder: Responder = ConversationalResponder(
-        runtime, conversations, channel="teams"
+    # SafeResponder: łagodna degradacja przy błędach runtime/infra (odporność drzwi).
+    responder: Responder = SafeResponder(
+        ConversationalResponder(runtime, conversations, channel="teams")
     )
 
     try:

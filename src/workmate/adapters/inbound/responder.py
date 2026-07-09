@@ -16,10 +16,12 @@ w testach).
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import AssistantTurn, UserText
 
 if TYPE_CHECKING:
@@ -28,6 +30,8 @@ if TYPE_CHECKING:
     from workmate.core.application.services import NotesWriteService
     from workmate.core.domain.conversation import ConversationMessage
     from workmate.core.ports.llm import TranscriptEntry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,51 @@ class ConversationalResponder:
                 f"{reply}"
             )
         return reply
+
+
+class SafeResponder:
+    """Dekorator responder'a: łagodna degradacja przy błędach (odporność drzwi async).
+
+    Owija dowolny ``Responder`` i łapie błędy, żeby wdrożony bot nie odpowiadał ciszą
+    ani tracebackiem, gdy runtime/narzędzie/infrastruktura zawiedzie:
+
+    - ``WorkMateError`` (LLM, repozytorium, zapis) — błąd oczekiwany (np. przejściowy
+      błąd Claude API): log WARNING + przyjazny komunikat.
+    - dowolny inny wyjątek — defekt kodu: log z pełnym tracebackiem (``exception``),
+      ale i tak zwracamy komunikat zamiast wywracać proces bota (jedna zła tura nie
+      kładzie usługi). Błąd NIE jest połykany po cichu — ląduje w logu ze szczegółami.
+
+    Analogicznie do granicy MCP (która zamienia błąd na ``{"error": ...}``) — ten szew
+    daje tę granicę drzwiom async (Teams, Telegram). Kontekst (nadawca, rozmowa) w logu.
+    """
+
+    _FALLBACK = (
+        "Przepraszam, wystąpił chwilowy błąd po mojej stronie. "
+        "Spróbuj ponownie za chwilę."
+    )
+
+    def __init__(self, inner: Responder, *, fallback: str = _FALLBACK) -> None:
+        self._inner = inner
+        self._fallback = fallback
+
+    async def respond(self, message: InboundMessage) -> str:
+        try:
+            return await self._inner.respond(message)
+        except WorkMateError as exc:
+            logger.warning(
+                "Błąd obsługi wiadomości (nadawca=%r, rozmowa=%r): %s",
+                message.sender,
+                message.conversation_id,
+                exc,
+            )
+            return self._fallback
+        except Exception:
+            logger.exception(
+                "Nieoczekiwany błąd obsługi wiadomości (nadawca=%r, rozmowa=%r)",
+                message.sender,
+                message.conversation_id,
+            )
+            return self._fallback
 
 
 def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]:
