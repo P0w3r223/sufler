@@ -48,13 +48,13 @@ def test_from_env_prefers_workmate_key_then_anthropic(monkeypatch):
     assert AgentSettings.from_env().api_key == "w-key"  # WORKMATE ma priorytet
 
 
-def test_from_env_defaults_to_haiku_model(monkeypatch):
+def test_from_env_defaults_to_sonnet_model(monkeypatch):
     for var in _AGENT_VARS:
         monkeypatch.delenv(var, raising=False)
 
     settings = AgentSettings.from_env()
 
-    assert settings.model == "claude-haiku-4-5"
+    assert settings.model == "claude-sonnet-5"
     assert (settings.max_tokens, settings.max_tool_iterations) == (4096, 8)
 
 

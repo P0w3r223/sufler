@@ -16,8 +16,15 @@ from __future__ import annotations
 
 import logging
 
-from workmate.adapters.inbound.responder import Responder, RuntimeResponder
-from workmate.config import AgentSettings, Settings, TelegramSettings
+from workmate.adapters.inbound.responder import ConversationalResponder, Responder
+from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.config import (
+    AgentSettings,
+    ConversationSettings,
+    Settings,
+    TelegramSettings,
+)
+from workmate.core.application.conversations import ConversationService
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +56,16 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
 
-    # Punkt szwu: RuntimeResponder(runtime); powrót do echa to EchoResponder().
-    responder: Responder = RuntimeResponder(runtime)
+    # Pamięć rozmów (ADR 0010): wątkowość per czat + limit kontekstu z rollover.
+    conversation_settings = ConversationSettings.from_env()
+    conversation_settings.validate()
+    conversations = ConversationService(
+        SqliteConversationStore(conversation_settings.db_path),
+        max_context_tokens=conversation_settings.max_context_tokens,
+    )
+    responder: Responder = ConversationalResponder(
+        runtime, conversations, channel="telegram"
+    )
 
     from workmate.adapters.inbound.telegram.bot import build_application
 

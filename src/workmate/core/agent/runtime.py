@@ -21,6 +21,8 @@ from workmate.core.ports.llm import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.llm import LLMClient, ToolCall, TranscriptEntry
 
@@ -44,9 +46,13 @@ class AgentRuntime:
         self._system_prompt = system_prompt
         self._max_tool_iterations = max_tool_iterations
 
-    def run(self, query: str) -> str:
-        """Zwróć odpowiedź na zapytanie w języku naturalnym, wołając narzędzia w pętli."""
-        transcript: list[TranscriptEntry] = [UserText(query)]
+    def run(self, query: str, *, history: Sequence[TranscriptEntry] = ()) -> str:
+        """Zwróć odpowiedź na zapytanie, wołając narzędzia w pętli.
+
+        ``history`` to wcześniejsze tury bieżącej rozmowy (pamięć, ADR 0010) —
+        poprzedzają nową wiadomość jako kontekst. Puste dla drzwi bezstanowych.
+        """
+        transcript: list[TranscriptEntry] = [*history, UserText(query)]
         last_text = ""
         for _ in range(self._max_tool_iterations):
             response = self._llm.complete(

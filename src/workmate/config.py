@@ -19,6 +19,11 @@ _ALLOWED_TRANSPORTS = ("stdio", "streamable-http")
 # sekrety były poza zasięgiem narzędzi. Nadpisywalny przez WORKMATE_TOKENS_FILE.
 _DEFAULT_TOKENS_FILE = Path("C:/ProgramData/WorkMate/tokens.json")
 
+# Domyślna baza rozmów (SQLite, ADR 0010): POZA repo i poza data/ — to dane
+# operacyjne (historia czatu), nie baza wiedzy. Katalog domowy (pisemny bez
+# uprawnień administratora — drzwi lokalne). Nadpisywalna przez WORKMATE_CONVERSATIONS_DB.
+_DEFAULT_CONVERSATIONS_DB = Path.home() / ".workmate" / "conversations.db"
+
 # Domyślne allowed_hosts trybu HTTP: wyłącznie loopback. Wdrożenie za IIS MUSI
 # dołożyć publiczny host (np. "workmate.firma.pl:*") przez WORKMATE_ALLOWED_HOSTS —
 # inaczej realny nagłówek Host daje 421 (ochrona przed DNS-rebinding).
@@ -198,13 +203,13 @@ class AgentSettings:
     """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008).
 
     Klucz Claude API to sekret — czytany z env, nigdy z repo ani z folderu
-    indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-haiku-4-5``
-    (koszt/latencja pętli tool-use), nadpisywalny przez ``WORKMATE_AGENT_MODEL``.
+    indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-sonnet-5``
+    (większe wymagania projektu wobec syntezy), nadpisywalny przez ``WORKMATE_AGENT_MODEL``.
     """
 
     # Sekret: repr=False, żeby przypadkowe zalogowanie obiektu/traceback go nie ujawniło.
     api_key: str = field(default="", repr=False)
-    model: str = "claude-haiku-4-5"
+    model: str = "claude-sonnet-5"
     max_tokens: int = 4096
     max_tool_iterations: int = 8
 
@@ -216,7 +221,7 @@ class AgentSettings:
         )
         return cls(
             api_key=api_key,
-            model=os.environ.get("WORKMATE_AGENT_MODEL", "claude-haiku-4-5"),
+            model=os.environ.get("WORKMATE_AGENT_MODEL", "claude-sonnet-5"),
             max_tokens=_int_from_env("WORKMATE_AGENT_MAX_TOKENS", 4096),
             max_tool_iterations=_int_from_env("WORKMATE_AGENT_MAX_TOOL_ITERATIONS", 8),
         )
@@ -265,4 +270,35 @@ class TelegramSettings:
             raise ValueError(
                 "Drzwi Telegram wymagają WORKMATE_TELEGRAM_BOT_TOKEN (token z @BotFather) "
                 "w środowisku/.env."
+            )
+
+
+@dataclass(frozen=True)
+class ConversationSettings:
+    """Konfiguracja pamięci rozmów (wątkowość + limit kontekstu, Faza 2 / ADR 0010).
+
+    Baza SQLite leży poza ``data/`` (folder indeksowany przez rdzeń) i poza repo —
+    to dane operacyjne, nie baza wiedzy. Limit kontekstu jest modestny i wymusza
+    rollover do nowej rozmowy po jego osiągnięciu (ograniczony, tani kontekst per
+    wywołanie modelu). Nadpisywalny przez ``WORKMATE_CONV_MAX_TOKENS``.
+    """
+
+    db_path: Path
+    max_context_tokens: int = 6000
+
+    @classmethod
+    def from_env(cls) -> ConversationSettings:
+        return cls(
+            db_path=_path_from_env(
+                "WORKMATE_CONVERSATIONS_DB", _DEFAULT_CONVERSATIONS_DB
+            ),
+            max_context_tokens=_int_from_env("WORKMATE_CONV_MAX_TOKENS", 6000),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy limit kontekstu jest bezsensowny."""
+        if self.max_context_tokens < 1:
+            raise ValueError(
+                "WORKMATE_CONV_MAX_TOKENS musi być >= 1, jest: "
+                f"{self.max_context_tokens}."
             )

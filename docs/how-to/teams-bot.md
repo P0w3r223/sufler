@@ -1,13 +1,19 @@
-# How-to: bot Teams (Faza 2, spike M2 „echo")
+# How-to: bot Teams (Faza 2, M2 — Teams na runtime agenta)
 
-Ten przewodnik prowadzi od zera do bota, który w Microsoft Teams odbiera wiadomość
-i odpisuje „Odebrałem notatkę: …". To spike M2 — dowód, że round-trip Teams działa.
-Bot NIE dotyka jeszcze rdzenia WorkMate (zapis/agent to kolejne warstwy na tym
-samym szwie). Stos: Microsoft 365 Agents SDK for Python (patrz
+Ten przewodnik prowadzi od zera do bota w Microsoft Teams. Stos: Microsoft 365
+Agents SDK for Python (patrz
 [`docs/research/teams-bot-setup-2026.md`](../research/teams-bot-setup-2026.md)).
 
 Kolejność jest celowa: **najpierw test lokalny bez Azure** (Etap A — kilka minut),
 potem Azure + Teams (Etapy B–F). Każdy etap ma punkt „gotowe, gdy".
+
+> **Aktualny stan (M2 code-complete):** drzwi Teams domyślnie odpowiadają **runtime
+> agenta** rdzenia (katalog READ-ONLY, ADR 0006) — nie samym echem. Etapy B–F
+> (Azure/tunel/manifest) są identyczne; zmienia się tylko treść odpowiedzi: zamiast
+> „Odebrałem notatkę: …" bot zwraca odpowiedź agenta opartą o notatki. Runtime wymaga
+> `uv sync --extra teams --extra agent` + `ANTHROPIC_API_KEY` (brak → twardy błąd
+> startu). Aby izolować **sam transport**, w `app.py` można chwilowo wrócić na
+> `EchoResponder()` (jedna linia) — wtedy obowiązują dosłowne „echo" punkty niżej.
 
 ## Wymagania
 
@@ -174,11 +180,16 @@ line spike'u M2.
 
 ---
 
-## Co dalej (poza spike'em M2)
+## Co dalej (po M2)
 
-Echo to dowód transportu. Wpięcie rdzenia to **szew bez przepisania**: w
-[`app.py`](../../src/workmate/adapters/inbound/teams/app.py) jedna linia
-`responder = EchoResponder()` zmienia się na `RuntimeResponder(runtime_rdzenia)`
-(M1 — runtime agenta) lub responder zapisujący przez `save_note`. Handler i `bot.py`
-zostają bez zmian. Profil uprawnień per drzwi (Teams = mniej zaufane, ADR 0006)
-wchodzi przez to, z jakim serwisem rdzenia zbudujesz responder.
+Wpięcie rdzenia jest **zrobione**:
+[`app.py`](../../src/workmate/adapters/inbound/teams/app.py) buduje runtime agenta
+na katalogu READ-ONLY (`build_agent_runtime(..., enable_write=False)`) i podaje go
+jako `RuntimeResponder` — handler i `bot.py` bez zmian. Profil uprawnień per drzwi
+(Teams = mniej zaufane, ADR 0006) wchodzi przez `enable_write=False`. Powrót do echa
+to nadal jedna linia (`EchoResponder()`).
+
+Dalej (Faza 2, M3–M4): przepływ „nowa notatka" przez Microsoft Graph (transkrypt →
+streszczenie wg zamrożonego schematu → zapis przez bramkowany `save_note`) oraz
+twarde tematy async (zadania w tle, tożsamość Entra/AD). Włączenie zapisu z Teams
+(`enable_write=True`) to decyzja Bramki 2 (ADR 0006) — nie domyślnie.

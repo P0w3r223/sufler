@@ -15,6 +15,7 @@ from workmate.core.domain.models import (
     ProjectStatus,
 )
 from workmate.core.domain.paths import note_id as build_note_id
+from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
 from workmate.core.ports.repositories import (
     NotesRepository,
@@ -141,6 +142,17 @@ class NotesWriteService:
 
     def save_note(self, metadata: NoteMetadata, body: str) -> Note:
         """Zapisz nową notatkę i zwróć ją z nadanym identyfikatorem."""
+        # Strażnik wstrzyknięć (obrona w głąb): odrzuć NUL/znaki sterujące w polach
+        # tekstowych, zanim cokolwiek trafi do pliku bazy.
+        reject_dangerous_content(
+            metadata.title,
+            body,
+            *metadata.participants,
+            *metadata.decisions,
+            *metadata.action_items,
+            *metadata.open_questions,
+            *metadata.tags,
+        )
         project = self._projects.get(metadata.project)
         if project is None:
             raise WriteError(f"projekt nie istnieje w rejestrze: {metadata.project!r}")

@@ -97,9 +97,11 @@ Envelope:
   `WORKMATE_AGENT_MAX_TOOL_ITERATIONS`; `api_key` uses `field(repr=False)` and
   `validate()` fails fast when empty. The key never lands in the repo or under
   `data/` (the tool-indexed folder), consistent with ADR 0007. The default model
-  is `claude-haiku-4-5` — chosen for the tool-dispatch loop's cost and latency
-  over a small knowledge base — and is overridable via `WORKMATE_AGENT_MODEL`
-  (e.g. an Opus id for harder synthesis). The default lives in config, not logic.
+  is `claude-sonnet-5` — chosen for the project's stronger synthesis requirements —
+  and is overridable via `WORKMATE_AGENT_MODEL` (e.g. a Haiku id for cheaper
+  dispatch, or an Opus id for harder synthesis). The default lives in config, not
+  logic. Extended thinking is disabled explicitly in the LLM adapter, because the
+  tool-dispatch loop replays assistant turns without `thinking` blocks.
 - **Per-door trust profile.** The local CLI door (trusted, like the stdio dev
   door) builds a read+write catalog; the Teams door (less trusted, ADR 0006)
   builds a read-only catalog, so the agent over Teams cannot `save_note` until a
