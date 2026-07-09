@@ -27,6 +27,20 @@ def test_search_matches_title_and_ranks_it_higher(sample_notes):
     assert results[0].score > results[1].score
 
 
+def test_search_multiword_matches_regardless_of_order_and_ranks_by_coverage(sample_notes):
+    service = NotesService(FakeNotesRepository(sample_notes))
+
+    # "SCADA API": słowa nie sąsiadują w żadnej notatce — stara metoda (cała fraza)
+    # dałaby 0 wyników. Teraz tokenizacja je znajduje.
+    results = service.search_notes("SCADA API")
+
+    assert results, "wielosłowne zapytanie powinno coś znaleźć"
+    # Notatka z OBOMA słowami (kickoff: 'odczyt danych ze SCADA przez API') przed
+    # notatką z samym 'API' — pokrycie ma priorytet nad ważeniem pola.
+    assert results[0].id == "mpwik/scada-integration/2025-05-14-kickoff"
+    assert results[0].score > results[1].score
+
+
 def test_search_filters_by_project(sample_notes):
     service = NotesService(FakeNotesRepository(sample_notes))
 

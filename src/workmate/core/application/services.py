@@ -27,6 +27,11 @@ from workmate.core.ports.repositories import (
 _SNIPPET_LENGTH = 200
 # Tytuł waży więcej niż pozostałe pola przy ustalaniu trafności.
 _TITLE_WEIGHT = 3
+# Pokrycie (ile RÓŻNYCH słów zapytania w ogóle trafiło) dominuje nad ważeniem pól:
+# notatka z większą liczbą słów zapytania jest trafniejsza niż taka, która wielokrotnie
+# trafia jedno słowo w polu o wysokiej wadze. Stała > maks. ważenia pól dla realnych
+# zapytań (suma wag pól ≈ 9 na słowo, więc bezpieczne do ~100 słów w zapytaniu).
+_COVERAGE_WEIGHT = 1000
 
 
 class NotesService:
@@ -45,19 +50,20 @@ class NotesService:
     ) -> list[NoteSummary]:
         """Znajdź notatki pasujące do zapytania, z opcjonalnymi filtrami.
 
-        Dopasowanie jest po metadanych i treści (bez rozróżniania wielkości
-        liter). Wyniki są sortowane malejąco po trafności, a przy remisie —
-        po dacie (najnowsze pierwsze).
+        Zapytanie jest tokenizowane na słowa (nie traktowane jako jedna fraza), więc
+        „koszt integracji" trafia notatkę z oboma słowami w dowolnej kolejności.
+        Dopasowanie jest po metadanych i treści (bez rozróżniania wielkości liter).
+        Wyniki są sortowane malejąco po trafności, a przy remisie — po dacie.
         """
-        query_norm = query.strip().lower()
+        terms = query.lower().split()
         candidates = self._filtered(project=project, participant=participant)
 
         summaries: list[NoteSummary] = []
         for note in candidates:
-            score = _score(note, query_norm) if query_norm else 1
+            score = _score(note, terms) if terms else 1
             if score == 0:
                 continue
-            summaries.append(_summarize(note, query_norm, score))
+            summaries.append(_summarize(note, terms, score))
 
         summaries.sort(key=lambda s: (s.score, s.date), reverse=True)
         return summaries[: max(0, limit)]
@@ -177,22 +183,33 @@ class NotesWriteService:
         return f"{base_id}-{suffix}"
 
 
-def _score(note: Note, query_norm: str) -> int:
-    """Policz trafność notatki względem znormalizowanego zapytania."""
+def _score(note: Note, terms: list[str]) -> int:
+    """Trafność = pokrycie (różne słowa zapytania) × waga + ważenie pól.
+
+    Pokrycie dominuje (``_COVERAGE_WEIGHT``): notatka trafiająca więcej różnych słów
+    zapytania jest wyżej niż taka, która wielokrotnie trafia jedno słowo w tytule.
+    """
     meta = note.metadata
     weighted_fields = [
-        (meta.title, _TITLE_WEIGHT),
-        (note.body, 1),
-        (" ".join(meta.decisions), 1),
-        (" ".join(meta.open_questions), 1),
-        (" ".join(meta.action_items), 1),
-        (" ".join(meta.tags), 1),
-        (" ".join(meta.participants), 1),
+        (meta.title.lower(), _TITLE_WEIGHT),
+        (note.body.lower(), 1),
+        (" ".join(meta.decisions).lower(), 1),
+        (" ".join(meta.open_questions).lower(), 1),
+        (" ".join(meta.action_items).lower(), 1),
+        (" ".join(meta.tags).lower(), 1),
+        (" ".join(meta.participants).lower(), 1),
     ]
-    return sum(weight for text, weight in weighted_fields if query_norm in text.lower())
+    matched: set[str] = set()
+    field_bonus = 0
+    for term in terms:
+        for text, weight in weighted_fields:
+            if term in text:
+                matched.add(term)
+                field_bonus += weight
+    return len(matched) * _COVERAGE_WEIGHT + field_bonus
 
 
-def _summarize(note: Note, query_norm: str, score: int) -> NoteSummary:
+def _summarize(note: Note, terms: list[str], score: int) -> NoteSummary:
     """Zbuduj lekki wynik wyszukiwania z fragmentem wokół dopasowania."""
     return NoteSummary(
         id=note.id,
@@ -200,17 +217,23 @@ def _summarize(note: Note, query_norm: str, score: int) -> NoteSummary:
         project=note.metadata.project,
         date=note.metadata.date,
         participants=note.metadata.participants,
-        snippet=_make_snippet(note.body, query_norm),
+        snippet=_make_snippet(note.body, terms),
         score=score,
     )
 
 
-def _make_snippet(body: str, query_norm: str) -> str:
-    """Wytnij fragment treści wokół pierwszego trafienia (albo początek)."""
+def _make_snippet(body: str, terms: list[str]) -> str:
+    """Wytnij fragment treści wokół pierwszego trafionego słowa (albo początek)."""
     text = " ".join(body.split())
     if not text:
         return ""
-    position = text.lower().find(query_norm) if query_norm else -1
+    low = text.lower()
+    position = -1
+    for term in terms:
+        found = low.find(term)
+        if found != -1:
+            position = found
+            break
     if position == -1:
         snippet = text[:_SNIPPET_LENGTH]
         return snippet + ("…" if len(text) > _SNIPPET_LENGTH else "")
