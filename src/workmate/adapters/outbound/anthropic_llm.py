@@ -56,6 +56,11 @@ class AnthropicLLMClient:
                 model=self._settings.model,
                 max_tokens=self._settings.max_tokens,
                 system=system,
+                # Myślenie WYŁĄCZONE jawnie: w Sonnet 5 adaptive thinking jest domyślnie
+                # włączone, gdy pominąć ``thinking`` — a nasza pętla odsyła tury asystenta
+                # bez bloków ``thinking`` (patrz ``_from_message``), więc API odrzuciłoby
+                # turę z ``tool_use`` błędem 400. Echo bloków thinking to osobny temat (M2+).
+                thinking={"type": "disabled"},
                 messages=_to_messages(transcript),
                 tools=[_to_tool_def(spec) for spec in tools],
             )
@@ -111,11 +116,12 @@ def _from_message(message: Any) -> LLMResponse:
     """Zmapuj odpowiedź Anthropic na słownik domenowy (tekst + żądania narzędzi).
 
     Założenie M1: bierzemy bloki ``text`` i ``tool_use``; inne (np. ``thinking``)
-    świadomie pomijamy, a ``stop_reason`` nie jest inspekcjonowany — Haiku 4.5 bez
-    rozszerzonego myślenia ich nie zwraca, a przy małej bazie i domyślnym
-    ``max_tokens`` obcięcie jest mało prawdopodobne. Gdy kiedyś włączymy myślenie
-    lub inny model: bloki thinking trzeba będzie odsyłać z powrotem (echo), a
-    ``stop_reason == "max_tokens"`` traktować inaczej niż odpowiedź końcową.
+    świadomie pomijamy, a ``stop_reason`` nie jest inspekcjonowany — myślenie jest
+    wyłączone jawnie w ``complete`` (Sonnet 5 domyślnie by je włączył), więc bloków
+    ``thinking`` nie ma, a przy małej bazie i domyślnym ``max_tokens`` obcięcie jest
+    mało prawdopodobne. Gdy kiedyś włączymy myślenie: bloki thinking trzeba będzie
+    odsyłać z powrotem (echo), a ``stop_reason == "max_tokens"`` traktować inaczej
+    niż odpowiedź końcową.
     """
     text_parts: list[str] = []
     calls: list[ToolCall] = []

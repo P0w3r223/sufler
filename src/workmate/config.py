@@ -198,13 +198,13 @@ class AgentSettings:
     """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008).
 
     Klucz Claude API to sekret — czytany z env, nigdy z repo ani z folderu
-    indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-haiku-4-5``
-    (koszt/latencja pętli tool-use), nadpisywalny przez ``WORKMATE_AGENT_MODEL``.
+    indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-sonnet-5``
+    (większe wymagania projektu wobec syntezy), nadpisywalny przez ``WORKMATE_AGENT_MODEL``.
     """
 
     # Sekret: repr=False, żeby przypadkowe zalogowanie obiektu/traceback go nie ujawniło.
     api_key: str = field(default="", repr=False)
-    model: str = "claude-haiku-4-5"
+    model: str = "claude-sonnet-5"
     max_tokens: int = 4096
     max_tool_iterations: int = 8
 
@@ -216,7 +216,7 @@ class AgentSettings:
         )
         return cls(
             api_key=api_key,
-            model=os.environ.get("WORKMATE_AGENT_MODEL", "claude-haiku-4-5"),
+            model=os.environ.get("WORKMATE_AGENT_MODEL", "claude-sonnet-5"),
             max_tokens=_int_from_env("WORKMATE_AGENT_MAX_TOKENS", 4096),
             max_tool_iterations=_int_from_env("WORKMATE_AGENT_MAX_TOOL_ITERATIONS", 8),
         )
