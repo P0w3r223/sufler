@@ -1,10 +1,14 @@
-"""Runtime agenta (Faza 2, M1 / ADR 0008) — ograniczona pętla tool-use nad katalogiem.
+"""Runtime agenta (Faza 2, M1 / ADR 0008; ADR 0011) — ograniczona pętla tool-use.
 
 Zależy tylko od portu ``LLMClient`` i katalogu ``ToolSpec``; Anthropic i FastMCP tu
 nie wchodzą, więc runtime testujemy atrapą LLM bez sieci. Pętla jest ograniczona
 (``max_tool_iterations``) — chroni koszt i latencję. Błąd narzędzia wraca do modelu
 jako ``ToolOutput`` (narzędzia zwracają ``{"error": ...}``, nie rzucają); wyjątek
 nieznany z narzędzia wypływa jako defekt kodu.
+
+``run_turn`` (ADR 0011) zwraca ``AgentResult`` z REPLAYOWALNYMI wpisami tej tury do
+zapisu w pamięci: tura ucięta na ``max_tokens`` jest wykluczana z zapisu (jej
+odtworzenie dałoby API 400). ``run`` to cienka nakładka zwracająca sam tekst.
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from workmate.core.agent.prompt import SYSTEM_PROMPT
 from workmate.core.ports.llm import (
+    AgentResult,
     AssistantTurn,
     ToolOutput,
     ToolResults,
@@ -27,6 +32,10 @@ if TYPE_CHECKING:
     from workmate.core.ports.llm import LLMClient, ToolCall, TranscriptEntry
 
 _DEFAULT_MAX_TOOL_ITERATIONS = 8
+# ``stop_reason`` sygnalizujący UCIĘCIE odpowiedzi (thinking + tekst dzielą max_tokens):
+# tura niepełna, więc niereplayowalna (niepełny thinking/tool_use → API 400).
+_TRUNCATED = "max_tokens"
+_ITERATIONS_EXHAUSTED = "max_tool_iterations"
 
 
 class AgentRuntime:
@@ -47,24 +56,64 @@ class AgentRuntime:
         self._max_tool_iterations = max_tool_iterations
 
     def run(self, query: str, *, history: Sequence[TranscriptEntry] = ()) -> str:
-        """Zwróć odpowiedź na zapytanie, wołając narzędzia w pętli.
+        """Zwróć sam tekst odpowiedzi — cienka nakładka na ``run_turn`` (drzwi bezstanowe)."""
+        return self.run_turn(query, history=history).reply
+
+    def run_turn(
+        self, query: str, *, history: Sequence[TranscriptEntry] = ()
+    ) -> AgentResult:
+        """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
 
         ``history`` to wcześniejsze tury bieżącej rozmowy (pamięć, ADR 0010) —
         poprzedzają nową wiadomość jako kontekst. Puste dla drzwi bezstanowych.
+        INWARIANT ZAPISU (ADR 0011): zapisujemy TYLKO turę domkniętą końcową odpowiedzią
+        asystenta. Tura, która nie dobiła do czystej odpowiedzi — ucięta na ``max_tokens``
+        albo z wyczerpanym limitem iteracji — zwraca ``entries=()`` (nic do zapisu). Dzięki
+        temu w pamięci są WYŁĄCZNIE pełne wymiany kończące się turą asystenta, więc historia
+        zawsze alternuje poprawnie (kolejna wiadomość użytkownika nie tworzy dwóch tur user
+        z rzędu) i żadna niereplayowalna tura (niepełny thinking/tool_use) nie trafia do API.
+        Turę traktujemy jak przejściową porażkę: użytkownik dostaje częściową/zastępczą
+        odpowiedź, a pamięć zostaje spójna (bez sieroty).
         """
         transcript: list[TranscriptEntry] = [*history, UserText(query)]
+        new_entries: list[TranscriptEntry] = [UserText(query)]
         last_text = ""
         for _ in range(self._max_tool_iterations):
             response = self._llm.complete(
                 system=self._system_prompt, transcript=transcript, tools=self._catalog
             )
             last_text = response.text or last_text
+
+            if response.stop_reason == _TRUNCATED:
+                # Tura ucięta: NIE dispatchujemy (tool_use bywa niepełny) i NIC nie
+                # zapisujemy (patrz inwariant wyżej). Zwracamy to, co model zdążył napisać.
+                return AgentResult(
+                    reply=response.text or last_text, entries=(), stop_reason=_TRUNCATED
+                )
+
             if not response.wants_tools:
-                return response.text
-            transcript.append(AssistantTurn(response.text, response.tool_calls))
-            outputs = tuple(self._dispatch(call) for call in response.tool_calls)
-            transcript.append(ToolResults(outputs))
-        return last_text or "Przekroczono limit iteracji narzędzi bez odpowiedzi."
+                assistant = AssistantTurn(response.text, (), response.blocks)
+                new_entries.append(assistant)
+                return AgentResult(
+                    reply=response.text,
+                    entries=tuple(new_entries),
+                    stop_reason=response.stop_reason,
+                    thinking=response.thinking_text,
+                )
+
+            assistant = AssistantTurn(response.text, response.tool_calls, response.blocks)
+            transcript.append(assistant)
+            new_entries.append(assistant)
+            results = ToolResults(tuple(self._dispatch(c) for c in response.tool_calls))
+            transcript.append(results)
+            new_entries.append(results)
+
+        # Wyczerpany limit iteracji bez czystej odpowiedzi: nic nie zapisujemy (inwariant).
+        return AgentResult(
+            reply=last_text or "Przekroczono limit iteracji narzędzi bez odpowiedzi.",
+            entries=(),
+            stop_reason=_ITERATIONS_EXHAUSTED,
+        )
 
     def _dispatch(self, call: ToolCall) -> ToolOutput:
         spec = self._by_name.get(call.name)

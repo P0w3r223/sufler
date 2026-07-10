@@ -7,7 +7,7 @@ i identyfikatory nadaje implementacja, nie rdzeń.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from workmate.core.domain.conversation import (
@@ -33,13 +33,36 @@ class ConversationStore(Protocol):
         ...
 
     def append_message(
-        self, conversation_id: str, role: str, text: str, token_estimate: int
+        self,
+        conversation_id: str,
+        role: str,
+        text: str,
+        token_estimate: int,
+        *,
+        blocks: list[dict[str, Any]] | None = None,
+        stop_reason: str | None = None,
     ) -> ConversationMessage:
-        """Dołóż turę do rozmowy i zwróć ją (z nadanym id i znacznikiem czasu)."""
+        """Dołóż turę do rozmowy i zwróć ją (z nadanym id i znacznikiem czasu).
+
+        ``blocks`` (ADR 0011) to VERBATIM sekwencja bloków treści tury zapisywana bez
+        zmian (dla asystenta bloki dostawcy z ``signature``); ``None`` → wiersz text-only.
+        ``text`` jest indeksowane w FTS; puste (tury narzędziowe) poza indeksem.
+        """
         ...
 
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
         """Zwróć tury rozmowy w kolejności chronologicznej."""
+        ...
+
+    def list_conversations(
+        self, *, channel: str | None = None, limit: int = 50
+    ) -> list[Conversation]:
+        """Zwróć rozmowy (najnowsze pierwsze) do podglądu historii, opcjonalnie po kanale.
+
+        Odczyt niezależny od aktywnego wątku i od treści (inaczej niż ``search``):
+        listuje CAŁE archiwum — aktywne i domknięte — z sumą tokenów per rozmowa.
+        ``limit`` chroni podgląd przed nieograniczonym wypisem długiej historii.
+        """
         ...
 
     def search(

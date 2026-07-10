@@ -19,12 +19,31 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
 from workmate.core.errors import WorkMateError
-from workmate.core.ports.llm import AssistantTurn, UserText
+from workmate.core.ports.llm import (
+    AssistantTurn,
+    RawTurn,
+    ToolOutput,
+    ToolResults,
+    UserText,
+)
+
+# ``stop_reason`` oznaczający uciętą odpowiedź (ADR 0011) — drzwi dokładają notkę.
+_TRUNCATED_STOP = "max_tokens"
+
+# Komendy jawnego startu nowego wątku (ADR 0012 — granica wątku NA ŻĄDANIE). Rozpoznawane
+# po PIERWSZYM tokenie (z ukośnikiem), jednakowo na wszystkich drzwiach — logika żyje tu,
+# w wspólnym szwie, a nie w kodzie pojedynczych drzwi.
+_NEW_THREAD_COMMANDS = frozenset({"/nowa", "/nowy", "/new"})
+_NEW_THREAD_ACK = "Zaczynam nową rozmowę. Poprzednia została zapisana w archiwum."
+_NEW_THREAD_ALREADY_FRESH = "Jesteś już w nowej, pustej rozmowie — nie ma czego rozdzielać."
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from workmate.core.agent.runtime import AgentRuntime
     from workmate.core.application.conversations import ConversationService
     from workmate.core.application.services import NotesWriteService
@@ -32,6 +51,17 @@ if TYPE_CHECKING:
     from workmate.core.ports.llm import TranscriptEntry
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Bieżąca chwila jako NAIVE UTC — spójna z timestampami bazy rozmów.
+
+    Magazyn zapisuje ``updated_at`` przez ``CURRENT_TIMESTAMP`` (UTC, bez strefy),
+    a serwis liczy bezczynność jako ``now - updated_at`` (ADR 0012). ``now`` musi
+    więc być w tej samej postaci (naive UTC), inaczej odejmowanie aware−naive rzuca
+    ``TypeError``. Zegar jest w adapterze — rdzeń nie woła zegara.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @dataclass(frozen=True)
@@ -113,10 +143,19 @@ class ConversationalResponder:
         conversations: ConversationService,
         *,
         channel: str,
+        clock: Callable[[], datetime] = _utcnow,
+        show_thinking: bool = False,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
         self._channel = channel
+        # Źródło „teraz" dla kryterium bezczynności (ADR 0012); wstrzykiwalne, by testy
+        # mogły symulować upływ czasu bez realnego zegara. Domyślnie naive UTC.
+        self._clock = clock
+        # Czy dołączać podsumowanie rozumowania modelu do odpowiedzi. TYLKO drzwi zaufane
+        # (CLI) — domyślnie False, żeby async drzwi (Telegram/Teams) nie wysyłały rozumowania
+        # użytkownikom (treść wewnętrzna, nie część odpowiedzi).
+        self._show_thinking = show_thinking
         # Serializuje SZYBKIE operacje na magazynie (wybór wątku, utrwalenie tury),
         # bo drzwi async wołają respond() z puli wątków (run_in_executor) i dwie tury
         # naraz mogłyby podwójnie otworzyć/osierocić rozmowę. Wolne wywołanie LLM
@@ -130,19 +169,30 @@ class ConversationalResponder:
     def _respond_sync(self, message: InboundMessage) -> str:
         # Klucz wątku: rozmowa z kanału (czat/wątek), a gdy jej brak — nadawca.
         external_id = message.conversation_id or message.sender or "default"
+        # Komenda jawnego startu wątku: domknij bieżący wątek i potwierdź — bez wołania
+        # LLM i bez zapisu tury (sama komenda nie jest treścią rozmowy).
+        if _is_new_thread_command(message.text):
+            with self._store_lock:
+                started = self._conversations.start_new_thread(self._channel, external_id)
+            return _NEW_THREAD_ACK if started else _NEW_THREAD_ALREADY_FRESH
+        now = self._clock()  # dla kryterium bezczynności (ADR 0012)
         with self._store_lock:
             conversation_id, history, rolled_over = self._conversations.prepare_turn(
-                self._channel, external_id, message.text
+                self._channel, external_id, message.text, now=now
             )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
-        reply = self._runtime.run(message.text, history=_to_transcript(history))
+        result = self._runtime.run_turn(message.text, history=_to_transcript(history))
+        # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
+        # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
         with self._store_lock:
-            self._conversations.record_turn(conversation_id, message.text, reply)
-        if rolled_over:
-            return (
-                "(Poprzednia rozmowa osiągnęła limit kontekstu — zaczynam nową.)\n\n"
-                f"{reply}"
+            self._conversations.record_run(
+                conversation_id, result.entries, stop_reason=result.stop_reason
             )
+        reply = _with_notices(
+            result.reply, rolled_over=rolled_over, stop_reason=result.stop_reason
+        )
+        if self._show_thinking:
+            reply = _with_thinking(reply, result.thinking)
         return reply
 
 
@@ -191,14 +241,80 @@ class SafeResponder:
             return self._fallback
 
 
+def _is_new_thread_command(text: str) -> bool:
+    """Czy wiadomość to komenda jawnego startu wątku (pierwszy token, np. ``/nowa``).
+
+    Wymaga ukośnika (komendy w ``_NEW_THREAD_COMMANDS``), więc zwykłe zdanie zaczynające
+    się od słowa „nowa" nie zostanie pomylone z komendą. Ewentualne argumenty po komendzie
+    są ignorowane (liczy się pierwszy token). W czacie GRUPOWYM Telegram dokleja do komendy
+    sufiks ``@nazwa_bota`` (np. ``/nowa@WorkMateBot``) — obcinamy go przed dopasowaniem,
+    żeby rozpoznanie zostało w jednym miejscu (szew), bez wiedzy o SDK drzwi.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    token = stripped.split()[0].split("@", 1)[0].lower()
+    return token in _NEW_THREAD_COMMANDS
+
+
+def _with_thinking(reply: str, thinking: str) -> str:
+    """Poprzedź odpowiedź podsumowaniem rozumowania modelu (tylko drzwi zaufane — CLI).
+
+    ``thinking`` (gdy ``display=summarized``) to czytelne streszczenie toku myślenia.
+    Pokazujemy je nad odpowiedzią, wyraźnie oznaczone; puste — nic nie dodajemy.
+    """
+    if not thinking.strip():
+        return reply
+    return f"[rozumowanie modelu]\n{thinking.strip()}\n\n{reply}"
+
+
+def _with_notices(reply: str, *, rolled_over: bool, stop_reason: str) -> str:
+    """Dołóż notki systemowe przed odpowiedź (rollover rozmowy, ucięcie na limicie).
+
+    Notka rolloveru jest NEUTRALNA co do powodu: nowy wątek startuje albo po limicie
+    kontekstu, albo po dłuższej przerwie (bezczynność, ADR 0012) — ``prepare_turn`` nie
+    rozróżnia tych przyczyn, a użytkownikowi wystarczy wiedza, że zaczęła się nowa rozmowa.
+    """
+    notices: list[str] = []
+    if rolled_over:
+        notices.append(
+            "(Zaczynam nową rozmowę — poprzednia dobiegła limitu kontekstu "
+            "albo minęła dłuższa przerwa.)"
+        )
+    if stop_reason == _TRUNCATED_STOP:
+        notices.append("(Odpowiedź została ucięta — przekroczyła limit długości.)")
+    if not notices:
+        return reply
+    return "\n".join(notices) + "\n\n" + reply
+
+
 def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]:
-    """Zmapuj tury rozmowy na wpisy transkryptu LLM (pomija puste tury)."""
+    """Zmapuj tury rozmowy na wpisy transkryptu LLM — bezstratnie (ADR 0011).
+
+    Tury asystenta z zapisanymi blokami odtwarzamy jako ``RawTurn`` (bloki dostawcy
+    VERBATIM — thinking z ``signature`` wraca 1:1); tury ``tool`` jako ``ToolResults``
+    z formy domenowej. Wiersze sprzed 0011 (bez bloków) degradują do text-only
+    ``AssistantTurn`` / ``UserText`` — zawsze poprawne do odesłania do API.
+    """
     entries: list[TranscriptEntry] = []
     for msg in messages:
-        if not msg.text:
-            continue
         if msg.role == "assistant":
-            entries.append(AssistantTurn(msg.text, ()))
-        else:
+            if msg.blocks:
+                entries.append(RawTurn("assistant", tuple(msg.blocks)))
+            elif msg.text:
+                entries.append(AssistantTurn(msg.text, ()))
+        elif msg.role == "tool":
+            if msg.blocks:
+                entries.append(
+                    ToolResults(
+                        tuple(
+                            ToolOutput(
+                                b["call_id"], b["content"], b.get("is_error", False)
+                            )
+                            for b in msg.blocks
+                        )
+                    )
+                )
+        elif msg.text:
             entries.append(UserText(msg.text))
     return entries

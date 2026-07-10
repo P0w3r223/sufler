@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.tools import ToolSpec
-from workmate.core.ports.llm import LLMResponse, ToolCall, ToolResults
+from workmate.core.ports.llm import (
+    AssistantTurn,
+    LLMResponse,
+    ToolCall,
+    ToolResults,
+    UserText,
+)
 
 
 def _spec(name: str, fn) -> ToolSpec:
@@ -118,3 +124,92 @@ def test_runtime_respects_iteration_budget():
 
     assert llm.calls == 3
     assert result == "myślę"  # ostatni tekst zwrócony po wyczerpaniu budżetu
+
+
+# --- run_turn: wpisy DO ZAPISU + stop_reason (ADR 0011) ------------------------
+
+
+def test_run_turn_truncated_turn_persists_nothing():
+    """``max_tokens`` = tura niedomknięta: NIC nie zapisujemy (inwariant zapisu, ADR 0011).
+
+    Pamięć trzyma tylko pełne wymiany kończące się turą asystenta — dzięki temu historia
+    nie kończy się turą user (brak dwóch tur user z rzędu na kolejnej wiadomości).
+    """
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                text="czę", blocks=({"type": "text", "text": "czę"},), stop_reason="max_tokens"
+            )
+        ]
+    )
+
+    result = AgentRuntime(llm, []).run_turn("pytanie")
+
+    assert result.stop_reason == "max_tokens"
+    assert result.reply == "czę"  # zwracamy to, co model zdążył napisać
+    assert result.entries == ()  # niedomknięta tura → pusto (bez sieroty)
+
+
+def test_run_turn_final_turn_carries_blocks_verbatim():
+    """Zwykła odpowiedź końcowa: entries = user + assistant z blokami VERBATIM."""
+    blocks = ({"type": "thinking", "signature": "S"}, {"type": "text", "text": "gotowe"})
+    llm = _ScriptedLLM([LLMResponse(text="gotowe", blocks=blocks, stop_reason="end_turn")])
+
+    result = AgentRuntime(llm, []).run_turn("pytanie")
+
+    assert result.stop_reason == "end_turn"
+    assert result.entries == (UserText("pytanie"), AssistantTurn("gotowe", (), blocks))
+
+
+def test_run_turn_surfaces_thinking_summary_on_final_answer():
+    """``AgentResult.thinking`` niesie podsumowanie rozumowania końcowej tury (summarized)."""
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                text="gotowe",
+                thinking_text="Rozważam notatki mpwik.",
+                blocks=({"type": "text", "text": "gotowe"},),
+                stop_reason="end_turn",
+            )
+        ]
+    )
+
+    result = AgentRuntime(llm, []).run_turn("pytanie")
+
+    assert result.thinking == "Rozważam notatki mpwik."
+    assert result.reply == "gotowe"
+
+
+def test_run_turn_persists_paired_tool_cycle_entries():
+    """Cykl tool_use utrwala SPAROWANE wpisy: user, assistant(+tool), tool, assistant."""
+
+    def search(query: str) -> dict:
+        return {"count": 1}
+
+    assistant_blocks = ({"type": "text", "text": "szukam"},)
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                text="szukam",
+                tool_calls=(ToolCall("t1", "search_notes", {"query": "mpwik"}),),
+                blocks=assistant_blocks,
+                stop_reason="tool_use",
+            ),
+            LLMResponse(text="Znalazłem 1.", stop_reason="end_turn"),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("search_notes", search)]).run_turn("co z mpwik?")
+
+    assert result.stop_reason == "end_turn"
+    kinds = [type(e).__name__ for e in result.entries]
+    assert kinds == ["UserText", "AssistantTurn", "ToolResults", "AssistantTurn"]
+    # Tura z tool_use niesie bloki VERBATIM i żądanie narzędzia.
+    first_assistant = result.entries[1]
+    assert isinstance(first_assistant, AssistantTurn)
+    assert first_assistant.blocks == assistant_blocks
+    assert first_assistant.tool_calls[0].name == "search_notes"
+    # Wynik narzędzia sparowany po turze asystenta.
+    tool_entry = result.entries[2]
+    assert isinstance(tool_entry, ToolResults)
+    assert '"count": 1' in tool_entry.outputs[0].content

@@ -15,6 +15,7 @@ _AGENT_VARS = (
     "WORKMATE_AGENT_MODEL",
     "WORKMATE_AGENT_MAX_TOKENS",
     "WORKMATE_AGENT_MAX_TOOL_ITERATIONS",
+    "WORKMATE_AGENT_THINKING",
 )
 
 
@@ -37,6 +38,23 @@ def test_validate_accepts_sane_config():
     AgentSettings(api_key="k", max_tokens=4096, max_tool_iterations=8).validate()  # nie rzuca
 
 
+def test_validate_rejects_unknown_thinking_type():
+    with pytest.raises(ValueError, match="THINKING"):
+        AgentSettings(api_key="k", thinking_type="on").validate()
+
+
+def test_validate_accepts_disabled_thinking():
+    AgentSettings(api_key="k", thinking_type="disabled").validate()  # nie rzuca
+
+
+def test_from_env_reads_thinking_type(monkeypatch):
+    for var in _AGENT_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("WORKMATE_AGENT_THINKING", "disabled")
+
+    assert AgentSettings.from_env().thinking_type == "disabled"
+
+
 def test_from_env_prefers_workmate_key_then_anthropic(monkeypatch):
     for var in _AGENT_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -55,7 +73,8 @@ def test_from_env_defaults_to_sonnet_model(monkeypatch):
     settings = AgentSettings.from_env()
 
     assert settings.model == "claude-sonnet-5"
-    assert (settings.max_tokens, settings.max_tool_iterations) == (4096, 8)
+    assert (settings.max_tokens, settings.max_tool_iterations) == (128000, 8)
+    assert settings.thinking_type == "adaptive"
 
 
 def test_api_key_absent_from_repr():
