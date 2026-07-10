@@ -7,6 +7,7 @@ Sprawdzamy tu tylko, że bloki przechodzą VERBATIM i w oryginalnej kolejności.
 """
 from __future__ import annotations
 
+import types
 from typing import Any
 
 from workmate.adapters.outbound.anthropic_llm import (
@@ -14,6 +15,7 @@ from workmate.adapters.outbound.anthropic_llm import (
     _thinking_config,
     _to_messages,
 )
+from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
     RawTurn,
@@ -177,6 +179,40 @@ def test_thinking_config_adds_summarized_display_only_for_adaptive():
     assert _thinking_config("adaptive") == {"type": "adaptive", "display": "summarized"}
     # disabled: myślenia nie ma → bez ``display`` (zachowana konfigurowalność trybu).
     assert _thinking_config("disabled") == {"type": "disabled"}
+
+
+# --- _from_message: przechwycenie realnego usage (Design 2) ---------------------
+
+
+def test_from_message_captures_real_usage():
+    message = _FakeMessage(
+        content=[_FakeBlock({"type": "text", "text": "ok"}, type="text", text="ok")],
+        stop_reason="end_turn",
+    )
+    message.usage = types.SimpleNamespace(  # type: ignore[attr-defined]
+        input_tokens=100,
+        output_tokens=20,
+        cache_read_input_tokens=5,
+        cache_creation_input_tokens=0,
+    )
+
+    response = _from_message(message)
+
+    assert response.usage == TokenUsage(
+        input_tokens=100, output_tokens=20, cache_read_input_tokens=5
+    )
+
+
+def test_from_message_usage_defaults_to_zero_when_absent():
+    """Atrapa/legacy bez pola ``usage`` → puste ``TokenUsage`` (koszt 0), bez wywrotki."""
+    message = _FakeMessage(
+        content=[_FakeBlock({"type": "text", "text": "ok"}, type="text", text="ok")],
+        stop_reason="end_turn",
+    )
+
+    response = _from_message(message)
+
+    assert response.usage == TokenUsage()
 
 
 def test_from_message_defaults_missing_stop_reason_to_empty_string():

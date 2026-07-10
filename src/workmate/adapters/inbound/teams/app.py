@@ -76,24 +76,34 @@ def main() -> None:
     agent_settings = AgentSettings.from_env()
     agent_settings.validate()
 
-    from workmate.adapters.inbound.agent_wiring import build_agent_runtime
+    from workmate.adapters.inbound.agent_wiring import (
+        build_agent_runtime,
+        build_compaction_service,
+    )
 
     try:
         runtime = build_agent_runtime(core_settings, agent_settings, enable_write=False)
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
 
-    # Pamięć rozmów (ADR 0010): wątkowość per rozmowa Teams + limit kontekstu z rollover.
+    # Pamięć rozmów (ADR 0010): wątkowość per rozmowa Teams + limit kontekstu. Kompaktowanie
+    # (ADR 0014), gdy włączone, ZASTĘPUJE rollover-na-rozmiarze (``size_rollover=False``).
+    # Store współdzielony przez serwis rozmów i kompaktowanie (ta sama baza).
     conversation_settings = ConversationSettings.from_env()
     conversation_settings.validate()
+    store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
-        SqliteConversationStore(conversation_settings.db_path),
+        store,
         max_context_tokens=conversation_settings.max_context_tokens,
         idle_timeout=conversation_settings.idle_timeout(),
+        size_rollover=not conversation_settings.compaction_enabled,
     )
+    compaction = build_compaction_service(agent_settings, conversation_settings, store)
     # SafeResponder: łagodna degradacja przy błędach runtime/infra (odporność drzwi).
     responder: Responder = SafeResponder(
-        ConversationalResponder(runtime, conversations, channel="teams")
+        ConversationalResponder(
+            runtime, conversations, channel="teams", compaction=compaction
+        )
     )
 
     try:

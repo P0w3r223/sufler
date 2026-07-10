@@ -15,8 +15,10 @@ niezmienione). Rdzeń tych bloków NIGDY nie interpretuje — tylko je przenosi
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
+
+from workmate.core.domain.pricing import TokenUsage
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -63,6 +65,9 @@ class AssistantTurn:
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
     blocks: tuple[Mapping[str, Any], ...] = ()
+    # Rzeczywiste użycie tokenów wywołania API, które wyprodukowało tę turę (Design 2) —
+    # zapisywane per tura asystenta; puste dla atrap/wierszy legacy.
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 @dataclass(frozen=True)
@@ -102,8 +107,10 @@ class LLMResponse:
     blocks: tuple[Mapping[str, Any], ...] = ()
     stop_reason: str = ""
     # Podsumowanie rozumowania z bloków ``thinking`` (gdy ``display=summarized``); trzymane
-    # OSOBNO od ``text``, by NIE wchodziło do projekcji FTS ani do szacunku tokenów (ADR 0011).
+    # OSOBNO od ``text``, by NIE wchodziło do projekcji FTS ani do rozliczenia tokenów.
     thinking_text: str = ""
+    # Rzeczywiste użycie tokenów tego wywołania API (Design 2) — z pola ``usage`` odpowiedzi.
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
     @property
     def wants_tools(self) -> bool:
@@ -127,6 +134,8 @@ class AgentResult:
     # Podsumowanie rozumowania końcowej tury (gdy ``display=summarized``) — do pokazania na
     # zaufanych drzwiach (CLI). Puste, gdy myślenie wyłączone albo tura ucięta/bez odpowiedzi.
     thinking: str = ""
+    # Zsumowane realne użycie tokenów CAŁEJ tury (wszystkie wywołania pętli tool-use).
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 class LLMClient(Protocol):

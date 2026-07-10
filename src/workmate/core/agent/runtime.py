@@ -17,6 +17,7 @@ import json
 from typing import TYPE_CHECKING
 
 from workmate.core.agent.prompt import SYSTEM_PROMPT
+from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AgentResult,
     AssistantTurn,
@@ -78,30 +79,41 @@ class AgentRuntime:
         transcript: list[TranscriptEntry] = [*history, UserText(query)]
         new_entries: list[TranscriptEntry] = [UserText(query)]
         last_text = ""
+        # Realne ``usage`` sumowane po WSZYSTKICH wywołaniach API tej tury (pętla tool-use);
+        # ``AgentResult.usage`` = koszt całej tury, a każda ``AssistantTurn`` niesie usage
+        # swojego wywołania (Design 2 — do rozliczenia i do bramki rolloveru na ostatniej turze).
+        run_usage = TokenUsage()
         for _ in range(self._max_tool_iterations):
             response = self._llm.complete(
                 system=self._system_prompt, transcript=transcript, tools=self._catalog
             )
+            run_usage = run_usage + response.usage
             last_text = response.text or last_text
 
             if response.stop_reason == _TRUNCATED:
                 # Tura ucięta: NIE dispatchujemy (tool_use bywa niepełny) i NIC nie
                 # zapisujemy (patrz inwariant wyżej). Zwracamy to, co model zdążył napisać.
                 return AgentResult(
-                    reply=response.text or last_text, entries=(), stop_reason=_TRUNCATED
+                    reply=response.text or last_text,
+                    entries=(),
+                    stop_reason=_TRUNCATED,
+                    usage=run_usage,
                 )
 
             if not response.wants_tools:
-                assistant = AssistantTurn(response.text, (), response.blocks)
+                assistant = AssistantTurn(response.text, (), response.blocks, usage=response.usage)
                 new_entries.append(assistant)
                 return AgentResult(
                     reply=response.text,
                     entries=tuple(new_entries),
                     stop_reason=response.stop_reason,
                     thinking=response.thinking_text,
+                    usage=run_usage,
                 )
 
-            assistant = AssistantTurn(response.text, response.tool_calls, response.blocks)
+            assistant = AssistantTurn(
+                response.text, response.tool_calls, response.blocks, usage=response.usage
+            )
             transcript.append(assistant)
             new_entries.append(assistant)
             results = ToolResults(tuple(self._dispatch(c) for c in response.tool_calls))
@@ -113,6 +125,7 @@ class AgentRuntime:
             reply=last_text or "Przekroczono limit iteracji narzędzi bez odpowiedzi.",
             entries=(),
             stop_reason=_ITERATIONS_EXHAUSTED,
+            usage=run_usage,
         )
 
     def _dispatch(self, call: ToolCall) -> ToolOutput:

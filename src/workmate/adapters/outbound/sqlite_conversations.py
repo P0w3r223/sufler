@@ -25,7 +25,9 @@ from workmate.core.domain.conversation import (
     Conversation,
     ConversationMessage,
     ConversationSearchHit,
+    ConversationSummary,
 )
+from workmate.core.domain.pricing import TokenUsage
 
 
 def _messages_ddl(table: str, *, if_not_exists: bool = False) -> str:
@@ -37,16 +39,45 @@ def _messages_ddl(table: str, *, if_not_exists: bool = False) -> str:
     stała modułu (nie dane użytkownika), więc interpolacja nazwy jest bezpieczna.
     """
     guard = "IF NOT EXISTS " if if_not_exists else ""
+    # Kolumny ``*_tokens`` (Design 2) — realne ``usage`` z odpowiedzi API, na wierszu
+    # asystenta (NULL dla user/tool). ``token_estimate`` WYGASZONE (zawsze 0) — kolumnę
+    # zostawiamy dla zgodności/uniknięcia rebuildu, ale nie liczymy już estymaty.
     return f"""
     CREATE TABLE {guard}{table} (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        role            TEXT NOT NULL,
-        text            TEXT NOT NULL,
-        token_estimate  INTEGER NOT NULL,
-        blocks_json     TEXT,
-        stop_reason     TEXT,
-        created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id             TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role                        TEXT NOT NULL,
+        text                        TEXT NOT NULL,
+        token_estimate              INTEGER NOT NULL,
+        blocks_json                 TEXT,
+        stop_reason                 TEXT,
+        input_tokens                INTEGER,
+        output_tokens               INTEGER,
+        cache_read_input_tokens     INTEGER,
+        cache_creation_input_tokens INTEGER,
+        archived                    INTEGER NOT NULL DEFAULT 0,
+        created_at                  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+    """
+
+
+# Tabela podsumowań kompaktowania (ADR 0014). Osobno od ``messages`` — podsumowanie to
+# NIE tura rozmowy, tylko skrót zastępujący zarchiwizowane tury. ``status`` = ``active``
+# / ``superseded`` (aktywne zawsze co najwyżej jedno na wątek). FK + CASCADE jak w
+# ``messages``: usunięcie wątku zabiera jego podsumowania. Kolumny ``*_tokens`` to koszt
+# wywołania modelu podsumowującego (Design 2, NULL gdy nie zmierzono).
+_SUMMARIES_DDL = """
+    CREATE TABLE IF NOT EXISTS conversation_summaries (
+        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id             TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        summary                     TEXT NOT NULL,
+        covers_through_message_id   INTEGER NOT NULL,
+        status                      TEXT NOT NULL DEFAULT 'active',
+        input_tokens                INTEGER,
+        output_tokens               INTEGER,
+        cache_read_input_tokens     INTEGER,
+        cache_creation_input_tokens INTEGER,
+        created_at                  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
     );
     """
 
@@ -65,20 +96,35 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS idx_conv_lookup ON conversations(channel, external_id, status);",
     _messages_ddl("messages", if_not_exists=True),
     "CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, id);",
+    _SUMMARIES_DDL,
+    "CREATE INDEX IF NOT EXISTS idx_summary_conv "
+    "ON conversation_summaries(conversation_id, status);",
 )
 
 # Kolumny dodane w ADR 0011 (bezstratna pamięć). Migracja jest ADDYTYWNA: dla baz
 # sprzed 0011 (bez tych kolumn) dokładamy je przez ALTER; istniejące wiersze mają
 # w nich NULL i przy odczycie degradują do text-only. ``CREATE TABLE IF NOT EXISTS``
 # nie dodaje kolumn do istniejącej tabeli, więc migracja jest konieczna osobno.
-_MESSAGES_ADDED_COLUMNS = {"blocks_json": "TEXT", "stop_reason": "TEXT"}
+_MESSAGES_ADDED_COLUMNS = {
+    "blocks_json": "TEXT",
+    "stop_reason": "TEXT",
+    # Design 2: realne ``usage`` per tura asystenta (addytywnie, jak kolumny z ADR 0011).
+    "input_tokens": "INTEGER",
+    "output_tokens": "INTEGER",
+    "cache_read_input_tokens": "INTEGER",
+    "cache_creation_input_tokens": "INTEGER",
+    # ADR 0014: flaga zarchiwizowania tury przez kompaktowanie. DEFAULT 0 → istniejące
+    # wiersze są „nie zarchiwizowane" (pełny replay), zanim padnie pierwsze kompaktowanie.
+    "archived": "INTEGER NOT NULL DEFAULT 0",
+}
 
 # Jawna lista kolumn messages (kolejność DDL) do ``INSERT ... SELECT`` przy rebuildzie
-# migracji FK (ADR 0012). Jawne nazwy są odporne na RÓŻNĄ fizyczną kolejność kolumn:
-# baza sprzed 0011 ma ``created_at`` przed dołożonymi (ALTER) ``blocks_json``/``stop_reason``,
-# nowa baza — po nich. ``SELECT *`` mieszałby wtedy kolumny; nazwana lista nie.
+# migracji FK (ADR 0012). Jawne nazwy są odporne na RÓŻNĄ fizyczną kolejność kolumn
+# (ALTER dokłada na końcu), więc ``SELECT *`` mieszałby kolumny; nazwana lista nie.
 _MESSAGES_COLUMN_LIST = (
-    "id, conversation_id, role, text, token_estimate, blocks_json, stop_reason, created_at"
+    "id, conversation_id, role, text, token_estimate, blocks_json, stop_reason, "
+    "input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, "
+    "archived, created_at"
 )
 
 
@@ -183,12 +229,12 @@ class SqliteConversationStore:
             ).fetchone()
             if row is None:
                 return None
-            total = self._conn.execute(
-                "SELECT COALESCE(SUM(token_estimate), 0) FROM messages "
-                "WHERE conversation_id=?",
-                (row["id"],),
-            ).fetchone()[0]
-        return _conversation(row, int(total))
+            usage = _conversation_usage(self._conn, row["id"])
+            last_ctx = _last_context_tokens(self._conn, row["id"])
+            count = _message_count(self._conn, row["id"])
+        # ``last_input_tokens`` (trigger kompaktowania) czytamy przez ``get`` tuż przed
+        # kompaktowaniem — nie tu, żeby nie płacić zapytania na każdej turze (domyślne 0).
+        return _conversation(row, usage, last_ctx, count)
 
     def open_conversation(self, channel: str, external_id: str) -> Conversation:
         conv_id = uuid.uuid4().hex
@@ -202,7 +248,7 @@ class SqliteConversationStore:
             row = self._conn.execute(
                 "SELECT * FROM conversations WHERE id=?", (conv_id,)
             ).fetchone()
-        return _conversation(row, 0)
+        return _conversation(row, TokenUsage(), 0, 0)
 
     def close_conversation(self, conversation_id: str) -> None:
         with self._lock:
@@ -218,20 +264,29 @@ class SqliteConversationStore:
         conversation_id: str,
         role: str,
         text: str,
-        token_estimate: int,
         *,
         blocks: list[dict[str, Any]] | None = None,
         stop_reason: str | None = None,
+        usage: TokenUsage | None = None,
     ) -> ConversationMessage:
         blocks_json = (
             json.dumps(blocks, ensure_ascii=False) if blocks is not None else None
         )
+        u = usage  # realne usage (Design 2) — tylko na turze asystenta; NULL inaczej
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO messages("
-                "conversation_id, role, text, token_estimate, blocks_json, stop_reason) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (conversation_id, role, text, token_estimate, blocks_json, stop_reason),
+                "conversation_id, role, text, token_estimate, blocks_json, stop_reason, "
+                "input_tokens, output_tokens, cache_read_input_tokens, "
+                "cache_creation_input_tokens) "
+                "VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",  # token_estimate WYGASZONE (0)
+                (
+                    conversation_id, role, text, blocks_json, stop_reason,
+                    u.input_tokens if u else None,
+                    u.output_tokens if u else None,
+                    u.cache_read_input_tokens if u else None,
+                    u.cache_creation_input_tokens if u else None,
+                ),
             )
             msg_id = cur.lastrowid
             # Tury narzędziowe mają pusty ``text`` — poza indeksem FTS (nic do dopasowania).
@@ -258,24 +313,109 @@ class SqliteConversationStore:
             ).fetchall()
         return [_message(r) for r in rows]
 
+    # --- Kompaktowanie (ADR 0014) -------------------------------------------------
+
+    def get(self, conversation_id: str) -> Conversation | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM conversations WHERE id=?", (conversation_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            usage = _conversation_usage(self._conn, conversation_id)
+            last_ctx = _last_context_tokens(self._conn, conversation_id)
+            last_in = _last_input_tokens(self._conn, conversation_id)
+            count = _message_count(self._conn, conversation_id)
+        return _conversation(row, usage, last_ctx, count, last_input_tokens=last_in)
+
+    def replay_messages(self, conversation_id: str) -> list[ConversationMessage]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM messages WHERE conversation_id=? AND archived=0 ORDER BY id",
+                (conversation_id,),
+            ).fetchall()
+        return [_message(r) for r in rows]
+
+    def archive_through(self, conversation_id: str, message_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE messages SET archived=1 WHERE conversation_id=? AND id<=?",
+                (conversation_id, message_id),
+            )
+            self._conn.commit()
+
+    def save_summary(
+        self,
+        conversation_id: str,
+        summary: str,
+        covers_through_message_id: int,
+        *,
+        usage: TokenUsage | None = None,
+    ) -> ConversationSummary:
+        u = usage
+        with self._lock:
+            # Aktywne zawsze co najwyżej JEDNO — poprzednie oznacz jako zastąpione.
+            self._conn.execute(
+                "UPDATE conversation_summaries SET status='superseded' "
+                "WHERE conversation_id=? AND status='active'",
+                (conversation_id,),
+            )
+            cur = self._conn.execute(
+                "INSERT INTO conversation_summaries("
+                "conversation_id, summary, covers_through_message_id, status, "
+                "input_tokens, output_tokens, cache_read_input_tokens, "
+                "cache_creation_input_tokens) "
+                "VALUES (?, ?, ?, 'active', ?, ?, ?, ?)",
+                (
+                    conversation_id, summary, covers_through_message_id,
+                    u.input_tokens if u else None,
+                    u.output_tokens if u else None,
+                    u.cache_read_input_tokens if u else None,
+                    u.cache_creation_input_tokens if u else None,
+                ),
+            )
+            sid = cur.lastrowid
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM conversation_summaries WHERE id=?", (sid,)
+            ).fetchone()
+        return _summary(row)
+
+    def active_summary(self, conversation_id: str) -> ConversationSummary | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM conversation_summaries "
+                "WHERE conversation_id=? AND status='active' ORDER BY id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _summary(row)
+
     def list_conversations(
         self, *, channel: str | None = None, limit: int = 50
     ) -> list[Conversation]:
-        # Sumę tokenów per rozmowa liczy skorelowane podzapytanie (jak w
-        # ``active_conversation``); ``updated_at`` (TEXT ISO) sortuje leksykograficznie
-        # = chronologicznie, ``rowid`` rozstrzyga remisy przy równym znaczniku.
+        # Realne usage + kontekst ostatniej tury liczymy per rozmowa (Design 2), pod jednym
+        # zamkiem; ``updated_at`` (TEXT ISO) sortuje leksykograficznie = chronologicznie,
+        # ``rowid`` rozstrzyga remisy przy równym znaczniku. ``limit`` chroni przed
+        # nieograniczonym wypisem, więc pętla po (≤limit) rozmowach jest tania.
         clause = " WHERE channel=?" if channel is not None else ""
         params: list[Any] = [channel] if channel is not None else []
         with self._lock:
             rows = self._conn.execute(
-                "SELECT *, COALESCE("
-                "(SELECT SUM(token_estimate) FROM messages m "
-                "WHERE m.conversation_id = conversations.id), 0) AS token_total "
-                "FROM conversations" + clause + " "
+                "SELECT * FROM conversations" + clause + " "
                 "ORDER BY updated_at DESC, rowid DESC LIMIT ?",
                 [*params, limit],
             ).fetchall()
-        return [_conversation(row, int(row["token_total"])) for row in rows]
+            return [
+                _conversation(
+                    row,
+                    _conversation_usage(self._conn, row["id"]),
+                    _last_context_tokens(self._conn, row["id"]),
+                    _message_count(self._conn, row["id"]),
+                )
+                for row in rows
+            ]
 
     def search(
         self,
@@ -364,15 +504,88 @@ def _parse_ts(value: Any) -> datetime:
     return datetime.fromisoformat(str(value).replace(" ", "T"))
 
 
-def _conversation(row: Any, token_estimate: int) -> Conversation:
+def _conversation(
+    row: Any,
+    usage: TokenUsage,
+    last_context_tokens: int,
+    message_count: int,
+    last_input_tokens: int = 0,
+) -> Conversation:
     return Conversation(
         id=row["id"],
         channel=row["channel"],
         external_id=row["external_id"],
         status=row["status"],
-        token_estimate=token_estimate,
+        usage=usage,
+        last_context_tokens=last_context_tokens,
+        last_input_tokens=last_input_tokens,
+        message_count=message_count,
         created_at=_parse_ts(row["created_at"]),
         updated_at=_parse_ts(row["updated_at"]),
+    )
+
+
+def _conversation_usage(conn: Any, conv_id: str) -> TokenUsage:
+    """Zsumowane realne usage rozmowy (Design 2) — wołane POD zamkiem magazynu."""
+    r = conn.execute(
+        "SELECT COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o, "
+        "COALESCE(SUM(cache_read_input_tokens),0) AS cr, "
+        "COALESCE(SUM(cache_creation_input_tokens),0) AS cc "
+        "FROM messages WHERE conversation_id=?",
+        (conv_id,),
+    ).fetchone()
+    return TokenUsage(
+        input_tokens=int(r["i"]),
+        output_tokens=int(r["o"]),
+        cache_read_input_tokens=int(r["cr"]),
+        cache_creation_input_tokens=int(r["cc"]),
+    )
+
+
+def _last_context_tokens(conn: Any, conv_id: str) -> int:
+    """Rozmiar kontekstu OSTATNIEJ tury asystenta (wejście + cache + wyjście) — do rolloveru.
+
+    Bierze najnowszy wiersz asystenta z zapisanym usage; ≈ ile następna tura wyśle
+    ponownie. 0, gdy brak tury z usage (świeży/legacy wątek) — wtedy rollover nie odpala.
+    """
+    r = conn.execute(
+        "SELECT input_tokens AS i, output_tokens AS o, cache_read_input_tokens AS cr, "
+        "cache_creation_input_tokens AS cc FROM messages "
+        "WHERE conversation_id=? AND role='assistant' AND input_tokens IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1",
+        (conv_id,),
+    ).fetchone()
+    if r is None:
+        return 0
+    return (r["i"] or 0) + (r["o"] or 0) + (r["cr"] or 0) + (r["cc"] or 0)
+
+
+def _last_input_tokens(conn: Any, conv_id: str) -> int:
+    """Rozmiar WEJŚCIA ostatniej tury asystenta (input + cache, BEZ wyjścia) — trigger
+    kompaktowania (ADR 0014).
+
+    To ile tokenów wejściowych model zobaczył w ostatnim wywołaniu — bez ``output_tokens``
+    (odpowiedź nie wraca do kontekstu jako wejście). Gdy > próg, serwis kompaktuje. 0, gdy
+    brak tury z usage (świeży/legacy wątek) — kompaktowanie nie odpala.
+    """
+    r = conn.execute(
+        "SELECT input_tokens AS i, cache_read_input_tokens AS cr, "
+        "cache_creation_input_tokens AS cc FROM messages "
+        "WHERE conversation_id=? AND role='assistant' AND input_tokens IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1",
+        (conv_id,),
+    ).fetchone()
+    if r is None:
+        return 0
+    return (r["i"] or 0) + (r["cr"] or 0) + (r["cc"] or 0)
+
+
+def _message_count(conn: Any, conv_id: str) -> int:
+    """Liczba tur rozmowy — sygnał „niepusty" dla bramek idle/``/nowa`` (POD zamkiem)."""
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id=?", (conv_id,)
+        ).fetchone()[0]
     )
 
 
@@ -383,10 +596,38 @@ def _message(row: Any) -> ConversationMessage:
         conversation_id=row["conversation_id"],
         role=row["role"],
         text=row["text"],
-        token_estimate=row["token_estimate"],
         created_at=_parse_ts(row["created_at"]),
         blocks=json.loads(raw_blocks) if raw_blocks else None,
         stop_reason=row["stop_reason"],
+        usage=_message_usage(row),
+        archived=bool(row["archived"]),
+    )
+
+
+def _summary(row: Any) -> ConversationSummary:
+    """Rekord podsumowania z wiersza ``conversation_summaries`` (ADR 0014). ``usage`` z tych
+    samych 4 kolumn tokenów co tura — reużywamy ``_message_usage``."""
+    return ConversationSummary(
+        id=row["id"],
+        conversation_id=row["conversation_id"],
+        summary=row["summary"],
+        covers_through_message_id=row["covers_through_message_id"],
+        created_at=_parse_ts(row["created_at"]),
+        usage=_message_usage(row),
+    )
+
+
+def _message_usage(row: Any) -> TokenUsage | None:
+    """TokenUsage z kolumn usage wiersza; ``None`` dla user/tool/legacy (brak usage)."""
+    it, ot = row["input_tokens"], row["output_tokens"]
+    cr, cc = row["cache_read_input_tokens"], row["cache_creation_input_tokens"]
+    if it is None and ot is None and cr is None and cc is None:
+        return None
+    return TokenUsage(
+        input_tokens=it or 0,
+        output_tokens=ot or 0,
+        cache_read_input_tokens=cr or 0,
+        cache_creation_input_tokens=cc or 0,
     )
 
 

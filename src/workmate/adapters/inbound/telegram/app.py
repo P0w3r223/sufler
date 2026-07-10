@@ -53,24 +53,35 @@ def main() -> None:
     agent_settings.validate()
 
     # Telegram = drzwi MNIEJ ZAUFANE (ADR 0006): runtime na katalogu READ-ONLY.
-    from workmate.adapters.inbound.agent_wiring import build_agent_runtime
+    from workmate.adapters.inbound.agent_wiring import (
+        build_agent_runtime,
+        build_compaction_service,
+    )
 
     try:
         runtime = build_agent_runtime(settings, agent_settings, enable_write=False)
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
 
-    # Pamięć rozmów (ADR 0010): wątkowość per czat + limit kontekstu z rollover.
+    # Pamięć rozmów (ADR 0010): wątkowość per czat + limit kontekstu. Kompaktowanie (ADR
+    # 0014), gdy włączone, ZASTĘPUJE rollover-na-rozmiarze (``size_rollover=False``) — stare
+    # tury streszczamy zamiast startować nowy wątek. Store współdzielony: serwis rozmów i
+    # kompaktowanie piszą do tej samej bazy.
     conversation_settings = ConversationSettings.from_env()
     conversation_settings.validate()
+    store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
-        SqliteConversationStore(conversation_settings.db_path),
+        store,
         max_context_tokens=conversation_settings.max_context_tokens,
         idle_timeout=conversation_settings.idle_timeout(),
+        size_rollover=not conversation_settings.compaction_enabled,
     )
+    compaction = build_compaction_service(agent_settings, conversation_settings, store)
     # SafeResponder: łagodna degradacja przy błędach runtime/infra (odporność drzwi).
     responder: Responder = SafeResponder(
-        ConversationalResponder(runtime, conversations, channel="telegram")
+        ConversationalResponder(
+            runtime, conversations, channel="telegram", compaction=compaction
+        )
     )
 
     from workmate.adapters.inbound.telegram.bot import build_application

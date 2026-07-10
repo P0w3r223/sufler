@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from workmate.core.domain.pricing import TokenUsage
 
 
 class ConversationMessage(BaseModel):
@@ -28,27 +30,58 @@ class ConversationMessage(BaseModel):
     conversation_id: str
     role: str
     text: str
-    token_estimate: int
     created_at: datetime
     blocks: list[dict[str, Any]] | None = None
     stop_reason: str | None = None
+    # Realne użycie tokenów tej tury (Design 2) — z pola ``usage`` odpowiedzi API. Na
+    # wierszu ``assistant``; ``None`` dla user/tool oraz wierszy legacy (brak usage).
+    usage: TokenUsage | None = None
+    # Czy tura jest ZARCHIWIZOWANA przez kompaktowanie (ADR 0014) — oryginał zostaje w
+    # bazie, ale wypada z replayu do API (zastąpiona podsumowaniem).
+    archived: bool = False
 
 
 class Conversation(BaseModel):
     """Wątek rozmowy per (kanał, rozmowa zewnętrzna). Sekwencja tur do limitu kontekstu.
 
-    ``token_estimate`` to suma przybliżeń tur — na jej podstawie serwis decyduje
-    o rollover (nowa rozmowa po osiągnięciu limitu). ``status``: ``active`` albo
-    ``closed`` (domknięta rollover-em, nadal wyszukiwalna).
+    ``usage`` to ZSUMOWANE realne użycie tokenów rozmowy (Design 2) — na jego podstawie
+    liczymy realną liczbę tokenów i KOSZT w podglądzie. ``last_context_tokens`` to rozmiar
+    kontekstu OSTATNIEJ tury (wejście + cache + wyjście) — na jego podstawie serwis decyduje
+    o rollover na LIMICIE. ``message_count`` (liczba tur) to sygnał „niepusty" dla bramek
+    bezczynności i komendy ``/nowa`` — niezależny od usage (wątek z ``record_turn`` też
+    jest niepusty). ``status``: ``active`` albo ``closed`` (domknięta, nadal wyszukiwalna).
     """
 
     id: str
     channel: str
     external_id: str
     status: str
-    token_estimate: int
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    last_context_tokens: int = 0
+    # Rozmiar WEJŚCIA ostatniej tury (input + cache, BEZ wyjścia) — trigger kompaktowania
+    # (ADR 0014): gdy > próg, stare tury zastępujemy podsumowaniem.
+    last_input_tokens: int = 0
+    message_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationSummary(BaseModel):
+    """Podsumowanie zarchiwizowanej części wątku (kompaktowanie, ADR 0014).
+
+    Osobny rekord powiązany z wątkiem: ``summary`` (tekst), ``covers_through_message_id``
+    (obejmuje wszystkie wiadomości o ``id`` <= temu), ``usage`` (koszt wywołania modelu
+    podsumowującego — Design 2). Aktywne jest zawsze co najwyżej JEDNO na wątek; kolejne
+    kompaktowanie tworzy nowe (obejmujące poprzednie + nowe tury), a stare oznacza jako
+    zastąpione (``superseded``) — nie jest wtedy zwracane.
+    """
+
+    id: int
+    conversation_id: str
+    summary: str
+    covers_through_message_id: int
+    created_at: datetime
+    usage: TokenUsage | None = None
 
 
 class ConversationSearchHit(BaseModel):

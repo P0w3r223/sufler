@@ -1,7 +1,7 @@
-"""Testy magazynu rozmów SQLite (``SqliteConversationStore``, ADR 0010).
+"""Testy magazynu rozmów SQLite (``SqliteConversationStore``, ADR 0010/0012, Design 2).
 
 Prawdziwy SQLite w pamięci (``:memory:``) — bez sieci, bez plików w repo. Sprawdzamy
-zapis/odczyt tur, sumę tokenów aktywnej rozmowy, domknięcie (znika z „aktywnych",
+zapis/odczyt tur, REALNE usage aktywnej rozmowy (Design 2), domknięcie (znika z „aktywnych",
 zostaje w archiwum) oraz wyszukiwanie po treści (FTS5 albo fallback LIKE — test jest
 niezależny od trybu).
 """
@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.core.domain.pricing import TokenUsage
 
 # Schemat sprzed 0012 (ADR 0011): messages BEZ FK conversation_id → conversations(id).
 # Używany w testach migracji, by odtworzyć bazę, którą rebuild ma uszczelnić.
@@ -72,8 +73,8 @@ def test_append_and_read_messages_in_order():
     store = _store()
     conv = store.open_conversation("telegram", "chat1")
 
-    store.append_message(conv.id, "user", "czesc", 1)
-    store.append_message(conv.id, "assistant", "hej, w czym pomoc?", 5)
+    store.append_message(conv.id, "user", "czesc")
+    store.append_message(conv.id, "assistant", "hej, w czym pomoc?")
 
     msgs = store.messages(conv.id)
     assert [(m.role, m.text) for m in msgs] == [
@@ -82,22 +83,48 @@ def test_append_and_read_messages_in_order():
     ]
 
 
-def test_active_conversation_sums_token_estimate():
+def test_active_conversation_sums_real_usage():
     store = _store()
     conv = store.open_conversation("teams", "conv-9")
-    store.append_message(conv.id, "user", "a", 3)
-    store.append_message(conv.id, "assistant", "b", 4)
+    store.append_message(conv.id, "user", "a")
+    store.append_message(
+        conv.id, "assistant", "b", usage=TokenUsage(input_tokens=3, output_tokens=4)
+    )
 
     active = store.active_conversation("teams", "conv-9")
     assert active is not None
     assert active.id == conv.id
-    assert active.token_estimate == 7
+    assert active.usage.total_tokens == 7  # realne 3 + 4 (nie estymata)
+
+
+def test_active_conversation_reports_context_and_message_count():
+    """Design 2: kontekst OSTATNIEJ tury (do rolloveru) + liczba tur (do bramek)."""
+    store = _store()
+    conv = store.open_conversation("telegram", "chat1")
+    store.append_message(conv.id, "user", "q")
+    store.append_message(
+        conv.id,
+        "assistant",
+        "a",
+        usage=TokenUsage(input_tokens=100, output_tokens=20, cache_read_input_tokens=5),
+    )
+
+    active = store.active_conversation("telegram", "chat1")
+    assert active is not None
+    assert active.last_context_tokens == 125  # context(100+5) + output(20)
+    assert active.message_count == 2
+    # Wiersz asystenta niesie usage; user → None (bez rozliczenia).
+    msgs = store.messages(conv.id)
+    assert msgs[0].usage is None
+    assert msgs[1].usage == TokenUsage(
+        input_tokens=100, output_tokens=20, cache_read_input_tokens=5
+    )
 
 
 def test_close_removes_from_active_but_keeps_history():
     store = _store()
     conv = store.open_conversation("telegram", "chat2")
-    store.append_message(conv.id, "user", "raport budzetowy", 3)
+    store.append_message(conv.id, "user", "raport budzetowy")
 
     store.close_conversation(conv.id)
 
@@ -117,8 +144,8 @@ def test_search_finds_across_conversations_with_filters():
     store = _store()
     c1 = store.open_conversation("telegram", "chatA")
     c2 = store.open_conversation("teams", "convB")
-    store.append_message(c1.id, "user", "kiedy raport dla mpwik", 4)
-    store.append_message(c2.id, "assistant", "status projektu enerkom", 4)
+    store.append_message(c1.id, "user", "kiedy raport dla mpwik")
+    store.append_message(c2.id, "assistant", "status projektu enerkom")
 
     # Znajduje po słowie w dowolnej rozmowie.
     hits = store.search("raport")
@@ -142,27 +169,26 @@ def test_list_conversations_empty_db_returns_empty_list():
     assert _store().list_conversations() == []
 
 
-def test_list_conversations_sums_tokens_per_conversation():
-    """Suma tokenów jest liczona PER rozmowa (skorelowane podzapytanie nie miesza tur)."""
+def test_list_conversations_sums_real_usage_per_conversation():
+    """Realne usage liczone PER rozmowa (nie miesza tur między rozmowami)."""
     store = _store()
     a = store.open_conversation("telegram", "chatA")
     b = store.open_conversation("teams", "convB")
-    store.append_message(a.id, "user", "x", 5)
-    store.append_message(a.id, "assistant", "y", 7)
-    store.append_message(b.id, "user", "z", 3)
+    store.append_message(a.id, "assistant", "y", usage=TokenUsage(input_tokens=5, output_tokens=7))
+    store.append_message(b.id, "assistant", "z", usage=TokenUsage(input_tokens=3))
 
     by_id = {c.id: c for c in store.list_conversations()}
-    assert by_id[a.id].token_estimate == 12  # 5 + 7, tylko rozmowa A
-    assert by_id[b.id].token_estimate == 3  # bez doliczania cudzych tur
+    assert by_id[a.id].usage.total_tokens == 12  # 5 + 7, tylko rozmowa A
+    assert by_id[b.id].usage.total_tokens == 3  # bez doliczania cudzych tur
 
 
 def test_list_conversations_without_messages_reports_zero_tokens():
-    """Świeżo otwarta rozmowa bez tur → suma 0 (COALESCE, nie NULL/błąd)."""
+    """Świeżo otwarta rozmowa bez tur → suma usage 0 (COALESCE, nie NULL/błąd)."""
     store = _store()
     conv = store.open_conversation("cli", "pusta")
 
     result = store.list_conversations()
-    assert [(c.id, c.token_estimate) for c in result] == [(conv.id, 0)]
+    assert [(c.id, c.usage.total_tokens) for c in result] == [(conv.id, 0)]
 
 
 def test_list_conversations_filters_by_channel():
@@ -226,7 +252,7 @@ def test_blocks_and_stop_reason_round_trip_verbatim():
         {"type": "tool_use", "id": "t1", "name": "search_notes", "input": {"q": "x"}},
     ]
     store.append_message(
-        conv.id, "assistant", "cześć — ąęłń", 3, blocks=blocks, stop_reason="end_turn"
+        conv.id, "assistant", "cześć — ąęłń", blocks=blocks, stop_reason="end_turn"
     )
 
     msg = store.messages(conv.id)[0]
@@ -238,22 +264,23 @@ def test_blocks_and_stop_reason_round_trip_verbatim():
 
 
 def test_message_without_blocks_reads_as_text_only():
-    """Ścieżka text-only (ADR 0010): brak bloków → ``blocks``/``stop_reason`` None."""
+    """Ścieżka text-only (ADR 0010): brak bloków → ``blocks``/``stop_reason``/``usage`` None."""
     store = _store()
     conv = store.open_conversation("telegram", "chat1")
 
-    store.append_message(conv.id, "user", "pytanie", 2)
+    store.append_message(conv.id, "user", "pytanie")
 
     msg = store.messages(conv.id)[0]
     assert msg.blocks is None
     assert msg.stop_reason is None
+    assert msg.usage is None
     assert msg.text == "pytanie"
 
 
 def test_pre_0011_db_migrates_additively_and_reads_legacy_rows(tmp_path: Path):
     """Baza SPRZED 0011 (bez nowych kolumn): ALTER dokłada je, stare wiersze → text-only."""
     db_path = tmp_path / "legacy.db"
-    # Schemat sprzed 0011: tabela messages BEZ blocks_json/stop_reason.
+    # Schemat sprzed 0011: tabela messages BEZ blocks_json/stop_reason/usage.
     legacy = sqlite3.connect(str(db_path))
     legacy.executescript(
         """
@@ -284,15 +311,18 @@ def test_pre_0011_db_migrates_additively_and_reads_legacy_rows(tmp_path: Path):
     assert old.text == "stara odpowiedz"
     assert old.blocks is None  # stary wiersz degraduje do text-only
     assert old.stop_reason is None
+    assert old.usage is None  # brak kolumn usage w legacy → None
 
-    # Po migracji nowy zapis z blokami działa na tej samej (zmigrowanej) bazie.
+    # Po migracji nowy zapis z blokami/usage działa na tej samej (zmigrowanej) bazie.
     store.append_message(
-        "c-old", "assistant", "nowa", 1,
+        "c-old", "assistant", "nowa",
         blocks=[{"type": "text", "text": "nowa"}], stop_reason="end_turn",
+        usage=TokenUsage(input_tokens=10, output_tokens=2),
     )
     fresh = store.messages("c-old")[1]
     assert fresh.blocks == [{"type": "text", "text": "nowa"}]
     assert fresh.stop_reason == "end_turn"
+    assert fresh.usage == TokenUsage(input_tokens=10, output_tokens=2)
 
 
 # --- Wymuszona integralność wątku: FK messages → conversations (ADR 0012) -------
@@ -303,7 +333,7 @@ def test_new_db_enforces_fk_message_needs_existing_thread():
     store = _store()
     assert _messages_has_fk(store)
     with pytest.raises(sqlite3.IntegrityError):
-        store.append_message("brak-takiego-watku", "user", "x", 1)
+        store.append_message("brak-takiego-watku", "user", "x")
 
 
 def test_pre_0012_db_migrates_to_enforced_fk_preserving_data_and_fts(tmp_path: Path):
@@ -331,7 +361,7 @@ def test_pre_0012_db_migrates_to_enforced_fk_preserving_data_and_fts(tmp_path: P
     assert any("raport" in hit.text for hit in store.search("raport"))
     # Integralność faktycznie egzekwowana na zmigrowanej bazie.
     with pytest.raises(sqlite3.IntegrityError):
-        store.append_message("ghost", "user", "x", 1)
+        store.append_message("ghost", "user", "x")
 
 
 def test_migration_drops_orphan_messages_before_applying_fk(tmp_path: Path):
@@ -394,7 +424,7 @@ def test_pre_0012_db_with_existing_fts_migrates_and_keeps_search(tmp_path: Path)
     # Indeks przeliczony — znajduje treść zaindeksowaną jeszcze przed migracją.
     assert any("mpwik" in hit.text for hit in store.search("mpwik"))
     # Nowy zapis też się indeksuje na zmigrowanej bazie.
-    store.append_message("c1", "assistant", "odpowiedz o enerkom", 4)
+    store.append_message("c1", "assistant", "odpowiedz o enerkom")
     assert any("enerkom" in hit.text for hit in store.search("enerkom"))
 
 
@@ -419,3 +449,117 @@ def test_reopening_migrated_db_is_idempotent(tmp_path: Path):
 
     assert _messages_has_fk(reopened)
     assert reopened.messages("c1")[0].text == "zachowana tresc"
+
+
+# --- Kompaktowanie: archiwizacja tur + podsumowania (ADR 0014) -------------------
+
+
+def test_replay_excludes_archived_but_messages_keeps_all():
+    """``replay_messages`` pomija zarchiwizowane; ``messages`` zwraca pełną historię."""
+    store = _store()
+    conv = store.open_conversation("cli", "chat")
+    m1 = store.append_message(conv.id, "user", "pierwsze")
+    store.append_message(conv.id, "assistant", "odp pierwsze")
+    store.append_message(conv.id, "user", "drugie")
+    store.append_message(conv.id, "assistant", "odp drugie")
+
+    store.archive_through(conv.id, m1.id + 1)  # archiwizuj pierwszą wymianę (2 tury)
+
+    replay = store.replay_messages(conv.id)
+    assert [m.text for m in replay] == ["drugie", "odp drugie"]
+    assert all(not m.archived for m in replay)
+    # Pełna historia nietknięta; pierwsze dwie tury oznaczone jako zarchiwizowane.
+    full = store.messages(conv.id)
+    assert len(full) == 4
+    assert [m.archived for m in full] == [True, True, False, False]
+
+
+def test_archive_through_is_idempotent():
+    store = _store()
+    conv = store.open_conversation("cli", "chat")
+    m1 = store.append_message(conv.id, "user", "x")
+    store.append_message(conv.id, "assistant", "y")
+
+    store.archive_through(conv.id, m1.id)
+    store.archive_through(conv.id, m1.id)  # ponownie — bez zmian
+
+    assert [m.archived for m in store.messages(conv.id)] == [True, False]
+
+
+def test_save_and_read_active_summary_with_usage():
+    store = _store()
+    conv = store.open_conversation("cli", "chat")
+    m = store.append_message(conv.id, "user", "coś")
+
+    rec = store.save_summary(
+        conv.id, "skrót rozmowy", m.id, usage=TokenUsage(input_tokens=40, output_tokens=10)
+    )
+
+    assert rec.summary == "skrót rozmowy"
+    assert rec.covers_through_message_id == m.id
+    assert rec.usage == TokenUsage(input_tokens=40, output_tokens=10)
+    active = store.active_summary(conv.id)
+    assert active is not None and active.id == rec.id
+
+
+def test_active_summary_none_before_any_compaction():
+    store = _store()
+    conv = store.open_conversation("cli", "chat")
+    assert store.active_summary(conv.id) is None
+
+
+def test_save_summary_supersedes_previous_active():
+    """Kolejne podsumowanie zastępuje poprzednie — aktywne zawsze co najwyżej jedno."""
+    store = _store()
+    conv = store.open_conversation("cli", "chat")
+    m = store.append_message(conv.id, "user", "coś")
+
+    store.save_summary(conv.id, "pierwsze", m.id)
+    second = store.save_summary(conv.id, "drugie", m.id)
+
+    active = store.active_summary(conv.id)
+    assert active is not None
+    assert active.summary == "drugie"
+    assert active.id == second.id
+
+
+def test_pre_0014_db_migrates_archived_column_and_summaries_table(tmp_path: Path):
+    """Baza SPRZED 0014: ALTER dokłada ``archived`` (stare wiersze → 0), a tabela podsumowań
+    powstaje przez ``CREATE TABLE IF NOT EXISTS`` — otwarcie nie rzuca, dane przeżywają."""
+    db_path = tmp_path / "pre_compaction.db"
+    # Schemat 0012/0013 (FK + kolumny usage), ale BEZ archived i BEZ conversation_summaries.
+    legacy = sqlite3.connect(str(db_path))
+    legacy.executescript(
+        """
+        CREATE TABLE conversations (
+            id TEXT PRIMARY KEY, channel TEXT NOT NULL, external_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            role TEXT NOT NULL, text TEXT NOT NULL, token_estimate INTEGER NOT NULL,
+            blocks_json TEXT, stop_reason TEXT,
+            input_tokens INTEGER, output_tokens INTEGER,
+            cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        );
+        INSERT INTO conversations(id, channel, external_id, status)
+            VALUES ('c1', 'cli', 'chat1', 'active');
+        INSERT INTO messages(conversation_id, role, text, token_estimate)
+            VALUES ('c1', 'assistant', 'stara tresc', 3);
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    store = SqliteConversationStore(db_path)
+
+    # Stary wiersz czyta się z archived=False; podsumowania działają na zmigrowanej bazie.
+    old = store.messages("c1")[0]
+    assert old.text == "stara tresc"
+    assert old.archived is False
+    rec = store.save_summary("c1", "skrót", old.id)
+    assert store.active_summary("c1").id == rec.id

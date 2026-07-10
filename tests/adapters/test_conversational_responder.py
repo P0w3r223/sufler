@@ -21,11 +21,14 @@ from workmate.adapters.inbound.responder import (
     _with_notices,
 )
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
 from workmate.core.domain.conversation import ConversationMessage
+from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AgentResult,
     AssistantTurn,
+    LLMResponse,
     RawTurn,
     ToolResults,
     UserText,
@@ -40,23 +43,28 @@ def _msg(role: str, text: str, *, blocks=None) -> ConversationMessage:
         conversation_id="c",
         role=role,
         text=text,
-        token_estimate=1,
         created_at=_TS,
         blocks=blocks,
     )
 
 
 class _FakeRuntime:
-    """Atrapa runtime — notuje ``(query, history)`` i zwraca stały ``AgentResult``."""
+    """Atrapa runtime — notuje ``(query, history)`` i zwraca stały ``AgentResult``.
 
-    def __init__(self, reply: str) -> None:
+    ``usage`` (Design 2) niesie realne tokeny tury — do bramki rolloveru na limicie kontekstu.
+    """
+
+    def __init__(self, reply: str, usage: TokenUsage | None = None) -> None:
         self.reply = reply
+        self.usage = usage or TokenUsage()
         self.calls: list[tuple[str, list[object]]] = []
 
     def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
-        entries = (UserText(query), AssistantTurn(self.reply, ()))
-        return AgentResult(reply=self.reply, entries=entries, stop_reason="end_turn")
+        entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
+        return AgentResult(
+            reply=self.reply, entries=entries, stop_reason="end_turn", usage=self.usage
+        )
 
 
 class _FailingRuntime:
@@ -117,13 +125,14 @@ def test_second_turn_receives_prior_history_and_reply_is_recorded():
 
 def test_rollover_prefixes_notice_on_context_limit():
     store = SqliteConversationStore(":memory:")
-    service = ConversationService(store, max_context_tokens=3)
-    runtime = _FakeRuntime("12345678")  # est 2 → z turą usera przekracza limit 3
+    service = ConversationService(store, max_context_tokens=5)
+    # Realne usage tury: kontekst 10 ≥ próg 5 → kolejna tura startuje nowy wątek (Design 2).
+    runtime = _FakeRuntime("ok", usage=TokenUsage(input_tokens=10))
     responder = ConversationalResponder(runtime, service, channel="telegram")
 
-    asyncio.run(responder.respond(InboundMessage(text="12345678", conversation_id="c")))
+    asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="c")))
     reply2 = asyncio.run(
-        responder.respond(InboundMessage(text="1234", conversation_id="c"))
+        responder.respond(InboundMessage(text="druga", conversation_id="c"))
     )
 
     assert reply2.startswith("(Zaczynam nową rozmowę")
@@ -176,7 +185,8 @@ def test_runtime_error_leaves_no_orphan_turn():
     active = store.active_conversation("telegram", "chat1")
     assert active is not None
     assert store.messages(active.id) == []
-    assert active.token_estimate == 0
+    assert active.message_count == 0
+    assert active.usage.total_tokens == 0
 
 
 # --- _to_transcript: odtworzenie historii z wierszy magazynu (ADR 0011) --------
@@ -340,3 +350,70 @@ def test_with_notices_combines_rollover_and_truncation():
     assert "nową rozmowę" in out
     assert "ucięta" in out
     assert out.endswith("odp")
+
+
+# --- Kompaktowanie wpięte w szew (ADR 0014) ------------------------------------
+
+
+class _FakeSummarizer:
+    """Atrapa ``LLMClient`` modelu podsumowującego — zwraca stały skrót."""
+
+    def __init__(self, text: str = "SKRÓT") -> None:
+        self.text = text
+
+    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+        return LLMResponse(text=self.text, usage=TokenUsage(input_tokens=10, output_tokens=5))
+
+
+def test_compaction_archives_old_turns_and_injects_summary():
+    store = SqliteConversationStore(":memory:")
+    # Kompaktowanie zastępuje rollover rozmiaru: size_rollover=False, duży limit.
+    service = ConversationService(
+        store, max_context_tokens=1_000_000, size_rollover=False
+    )
+    # Każda tura raportuje input 500 > próg 100 → po zebraniu dość wymian kompaktuje.
+    runtime = _FakeRuntime("odp", usage=TokenUsage(input_tokens=500))
+    compaction = CompactionService(
+        store, _FakeSummarizer(), threshold_tokens=100, keep_turns=2
+    )
+    responder = ConversationalResponder(
+        runtime, service, channel="cli", compaction=compaction
+    )
+
+    for i in range(4):
+        asyncio.run(responder.respond(InboundMessage(text=f"q{i}", conversation_id="chat")))
+
+    active = store.active_conversation("cli", "chat")
+    assert active is not None
+    # Powstało podsumowanie, a najstarsze tury są zarchiwizowane (nie usunięte).
+    summary = store.active_summary(active.id)
+    assert summary is not None and summary.summary == "SKRÓT"
+    assert any(m.archived for m in store.messages(active.id))
+    # Runtime OSTATNIEJ tury dostał historię z doklejonym podsumowaniem w pierwszej turze user.
+    _query, history = runtime.calls[-1]
+    assert isinstance(history[0], UserText)
+    assert history[0].text.startswith("[Podsumowanie wcześniejszej rozmowy]")
+    assert "SKRÓT" in history[0].text
+
+
+def test_no_compaction_keeps_full_history_in_replay():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(
+        store, max_context_tokens=1_000_000, size_rollover=False
+    )
+    # Wejście poniżej progu — kompaktowanie nie odpala, replay = pełna historia.
+    runtime = _FakeRuntime("odp", usage=TokenUsage(input_tokens=10))
+    compaction = CompactionService(
+        store, _FakeSummarizer(), threshold_tokens=10_000, keep_turns=2
+    )
+    responder = ConversationalResponder(
+        runtime, service, channel="cli", compaction=compaction
+    )
+
+    for i in range(3):
+        asyncio.run(responder.respond(InboundMessage(text=f"q{i}", conversation_id="chat")))
+
+    active = store.active_conversation("cli", "chat")
+    assert active is not None
+    assert store.active_summary(active.id) is None
+    assert all(not m.archived for m in store.messages(active.id))

@@ -45,10 +45,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from workmate.core.agent.runtime import AgentRuntime
+    from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
     from workmate.core.application.services import NotesWriteService
-    from workmate.core.domain.conversation import ConversationMessage
+    from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
     from workmate.core.ports.llm import TranscriptEntry
+
+# Prefiks wiadomości z podsumowaniem kompaktowania (ADR 0014). Sonnet 5 nie ma systemowych
+# wiadomości w środku rozmowy, więc podsumowanie idzie jako treść użytkownika z tym nagłówkiem.
+_SUMMARY_PREFIX = "[Podsumowanie wcześniejszej rozmowy]"
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +150,15 @@ class ConversationalResponder:
         channel: str,
         clock: Callable[[], datetime] = _utcnow,
         show_thinking: bool = False,
+        compaction: CompactionService | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
         self._channel = channel
+        # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
+        # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
+        # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
+        self._compaction = compaction
         # Źródło „teraz" dla kryterium bezczynności (ADR 0012); wstrzykiwalne, by testy
         # mogły symulować upływ czasu bez realnego zegara. Domyślnie naive UTC.
         self._clock = clock
@@ -180,8 +190,9 @@ class ConversationalResponder:
             conversation_id, history, rolled_over = self._conversations.prepare_turn(
                 self._channel, external_id, message.text, now=now
             )
+        transcript = self._build_transcript(conversation_id, history, rolled_over)
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
-        result = self._runtime.run_turn(message.text, history=_to_transcript(history))
+        result = self._runtime.run_turn(message.text, history=transcript)
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
         with self._store_lock:
@@ -194,6 +205,29 @@ class ConversationalResponder:
         if self._show_thinking:
             reply = _with_thinking(reply, result.thinking)
         return reply
+
+    def _build_transcript(
+        self,
+        conversation_id: str,
+        history: list[ConversationMessage],
+        rolled_over: bool,
+    ) -> list[TranscriptEntry]:
+        """Złóż kontekst dla runtime'u; z kompaktowaniem (ADR 0014) — streść i doklej skrót.
+
+        Bez kompaktowania: transkrypt = pełna historia. Z kompaktowaniem: gdy wejście
+        ostatniej tury przekroczyło próg, ``maybe_compact`` streszcza starą część (woła LLM,
+        więc POZA ``_store_lock``); potem pobieramy skrócony replay i aktywne podsumowanie i
+        doklejamy je na początek kontekstu. Po rolloverze wątek jest świeży — nie kompaktujemy
+        (podsumowania i tak nie ma).
+        """
+        if self._compaction is None:
+            return _to_transcript(history)
+        if not rolled_over:
+            self._compaction.maybe_compact(conversation_id)
+        with self._store_lock:
+            replay = self._conversations.replay_messages(conversation_id)
+            summary = self._conversations.active_summary(conversation_id)
+        return _to_transcript_with_summary(summary, replay)
 
 
 class SafeResponder:
@@ -318,3 +352,23 @@ def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]
         elif msg.text:
             entries.append(UserText(msg.text))
     return entries
+
+
+def _to_transcript_with_summary(
+    summary: ConversationSummary | None, messages: list[ConversationMessage]
+) -> list[TranscriptEntry]:
+    """Jak ``_to_transcript``, ale z doklejonym aktywnym podsumowaniem (ADR 0014).
+
+    Podsumowanie idzie jako treść UŻYTKOWNIKA z prefiksem (Sonnet 5 nie ma systemowych
+    wiadomości w środku rozmowy). Doklejamy je do PIERWSZEJ tury użytkownika w replayu —
+    po kompaktowaniu replay zaczyna się właśnie turą użytkownika — zamiast wstawiać osobną
+    wiadomość, żeby nie powstały dwie tury ``user`` z rzędu. Gdy replay nie zaczyna się od
+    użytkownika (sytuacja defensywna), podsumowanie idzie jako osobna wiadomość na początku.
+    """
+    entries = _to_transcript(messages)
+    if summary is None:
+        return entries
+    header = f"{_SUMMARY_PREFIX}\n{summary.summary}"
+    if entries and isinstance(entries[0], UserText):
+        return [UserText(f"{header}\n\n{entries[0].text}"), *entries[1:]]
+    return [UserText(header), *entries]
