@@ -8,12 +8,21 @@ i pozostaje deterministyczny w testach.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
 
 class ConversationMessage(BaseModel):
-    """Pojedyncza tura w rozmowie: rola (``user``/``assistant``) i tekst."""
+    """Pojedyncza tura w rozmowie (ADR 0010, wzbogacona w ADR 0011).
+
+    ``role`` ∈ ``user`` / ``assistant`` / ``tool``. ``text`` to płaska projekcja
+    (do FTS/podglądu i liczenia tokenów). ``blocks`` to VERBATIM sekwencja bloków
+    treści tury — dla ``assistant`` nieprzezroczyste bloki dostawcy (z ``signature``
+    thinking), dla ``tool`` forma domenowa ``[{call_id, content, is_error}]``.
+    ``None`` dla wierszy sprzed ADR 0011 (odczyt degraduje do text-only).
+    Rdzeń bloków NIE interpretuje — tylko je przenosi (opaque passthrough, ADR 0011).
+    """
 
     id: int
     conversation_id: str
@@ -21,6 +30,8 @@ class ConversationMessage(BaseModel):
     text: str
     token_estimate: int
     created_at: datetime
+    blocks: list[dict[str, Any]] | None = None
+    stop_reason: str | None = None
 
 
 class Conversation(BaseModel):

@@ -1,9 +1,15 @@
 # 0010 — Conversation threading, history, and context limit
 
 Date: 2026-07-09
-Status: accepted
+Status: accepted (amended by [ADR 0011](0011-stateful-lossless-conversation-memory.md))
 Author: P0w3r223
 Related to: [ADR 0006](0006-write-capability-gate-2.md), [ADR 0008](0008-agent-runtime-and-tool-catalog.md)
+
+> **Amended by [ADR 0011](0011-stateful-lossless-conversation-memory.md):** the
+> message storage model (flat `text` → verbatim `blocks_json` per turn), token
+> accounting (still text-based, thinking excluded), and the responder mapping
+> (`record_reply`/`record_turn` → `record_run` over full transcript entries) are
+> superseded to make memory lossless and round-trip extended-thinking blocks.
 
 ---
 

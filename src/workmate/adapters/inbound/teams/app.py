@@ -89,6 +89,7 @@ def main() -> None:
     conversations = ConversationService(
         SqliteConversationStore(conversation_settings.db_path),
         max_context_tokens=conversation_settings.max_context_tokens,
+        idle_timeout=conversation_settings.idle_timeout(),
     )
     # SafeResponder: łagodna degradacja przy błędach runtime/infra (odporność drzwi).
     responder: Responder = SafeResponder(

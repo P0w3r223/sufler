@@ -13,6 +13,7 @@ rdzeń nie woła zegara ani losowości.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import uuid
@@ -26,6 +27,30 @@ from workmate.core.domain.conversation import (
     ConversationSearchHit,
 )
 
+
+def _messages_ddl(table: str, *, if_not_exists: bool = False) -> str:
+    """DDL tabeli wiadomości. FK ``conversation_id`` → ``conversations(id)`` (ADR 0012)
+    egzekwuje na poziomie bazy „każda wiadomość należy do dokładnie jednego ISTNIEJĄCEGO
+    wątku"; ``ON DELETE CASCADE`` domyka semantykę (usunięcie wątku zabiera jego
+    wiadomości). Ta sama definicja służy tworzeniu tabeli dla nowej bazy oraz tabeli
+    ``messages_new`` przy rebuildzie migracji FK — jedno źródło schematu. ``table`` to
+    stała modułu (nie dane użytkownika), więc interpolacja nazwy jest bezpieczna.
+    """
+    guard = "IF NOT EXISTS " if if_not_exists else ""
+    return f"""
+    CREATE TABLE {guard}{table} (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role            TEXT NOT NULL,
+        text            TEXT NOT NULL,
+        token_estimate  INTEGER NOT NULL,
+        blocks_json     TEXT,
+        stop_reason     TEXT,
+        created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+    """
+
+
 _SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS conversations (
@@ -38,17 +63,22 @@ _SCHEMA = (
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_conv_lookup ON conversations(channel, external_id, status);",
-    """
-    CREATE TABLE IF NOT EXISTS messages (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        conversation_id TEXT NOT NULL,
-        role            TEXT NOT NULL,
-        text            TEXT NOT NULL,
-        token_estimate  INTEGER NOT NULL,
-        created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
-    );
-    """,
+    _messages_ddl("messages", if_not_exists=True),
     "CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, id);",
+)
+
+# Kolumny dodane w ADR 0011 (bezstratna pamięć). Migracja jest ADDYTYWNA: dla baz
+# sprzed 0011 (bez tych kolumn) dokładamy je przez ALTER; istniejące wiersze mają
+# w nich NULL i przy odczycie degradują do text-only. ``CREATE TABLE IF NOT EXISTS``
+# nie dodaje kolumn do istniejącej tabeli, więc migracja jest konieczna osobno.
+_MESSAGES_ADDED_COLUMNS = {"blocks_json": "TEXT", "stop_reason": "TEXT"}
+
+# Jawna lista kolumn messages (kolejność DDL) do ``INSERT ... SELECT`` przy rebuildzie
+# migracji FK (ADR 0012). Jawne nazwy są odporne na RÓŻNĄ fizyczną kolejność kolumn:
+# baza sprzed 0011 ma ``created_at`` przed dołożonymi (ALTER) ``blocks_json``/``stop_reason``,
+# nowa baza — po nich. ``SELECT *`` mieszałby wtedy kolumny; nazwana lista nie.
+_MESSAGES_COLUMN_LIST = (
+    "id, conversation_id, role, text, token_estimate, blocks_json, stop_reason, created_at"
 )
 
 
@@ -73,6 +103,8 @@ class SqliteConversationStore:
         with self._lock:
             for stmt in _SCHEMA:
                 self._conn.execute(stmt)
+            self._add_missing_columns("messages", _MESSAGES_ADDED_COLUMNS)
+            migrated_fk = self._migrate_messages_add_fk()
             fts = True
             try:
                 self._conn.execute(
@@ -81,8 +113,64 @@ class SqliteConversationStore:
                 )
             except sqlite3.OperationalError:
                 fts = False  # build Pythona bez FTS5 — użyjemy LIKE
+            # Migracja FK przebudowuje tabelę messages (drop→rename), więc zewnętrzny
+            # indeks FTS trzeba przeliczyć od zera z aktualnej treści.
+            if fts and migrated_fk:
+                self._conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
             self._conn.commit()
+            # Egzekwuj FK dopiero PO migracji: rebuild (DROP/RENAME) wymaga foreign_keys
+            # OFF (stan domyślny po connect). Od teraz każdy zapis do messages jest
+            # sprawdzany — wiadomość do nieistniejącego wątku → IntegrityError (fail fast).
+            self._conn.execute("PRAGMA foreign_keys = ON")
         return fts
+
+    def _migrate_messages_add_fk(self) -> bool:
+        """Dołóż FK ``messages.conversation_id`` → ``conversations(id)`` (ADR 0012).
+
+        SQLite nie potrafi dodać więzu FK przez ``ALTER`` — trzeba przebudować tabelę
+        (utwórz nową → skopiuj → usuń starą → zmień nazwę). Idempotentne: gdy FK już
+        istnieje (nowa baza z ``_messages_ddl`` albo baza już zmigrowana), zwraca
+        ``False`` i nie rusza danych. Uruchamiane przy ``foreign_keys = OFF`` (domyślny
+        stan po connect; ON włączamy dopiero po migracji), więc DROP/RENAME są bezpieczne.
+        Osierocone wiersze (bez istniejącej rozmowy) usuwamy PRZED założeniem więzu —
+        inaczej rebuild zostawiłby dane łamiące FK. Zwraca, czy przebudowa zaszła.
+        """
+        has_fk = any(
+            row["table"] == "conversations"
+            for row in self._conn.execute("PRAGMA foreign_key_list(messages)")
+        )
+        if has_fk:
+            return False
+        # Indeks FTS jest ZEWNĘTRZNY wobec messages (content='messages') — zrzucamy go,
+        # by DROP starej tabeli nie kolidował; _init_schema odtworzy go i przeliczy.
+        self._conn.execute("DROP TABLE IF EXISTS messages_fts")
+        self._conn.execute(
+            "DELETE FROM messages WHERE conversation_id NOT IN (SELECT id FROM conversations)"
+        )
+        self._conn.execute(_messages_ddl("messages_new"))
+        self._conn.execute(
+            f"INSERT INTO messages_new ({_MESSAGES_COLUMN_LIST}) "
+            f"SELECT {_MESSAGES_COLUMN_LIST} FROM messages"
+        )
+        self._conn.execute("DROP TABLE messages")
+        self._conn.execute("ALTER TABLE messages_new RENAME TO messages")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, id)"
+        )
+        return True
+
+    def _add_missing_columns(self, table: str, columns: dict[str, str]) -> None:
+        """Dołóż brakujące kolumny (ALTER ADD COLUMN) — migracja addytywna, ADR 0011.
+
+        ``table``/``columns`` to stałe modułu (nie dane użytkownika), więc interpolacja
+        nazwy jest bezpieczna. SQLite ADD COLUMN jest online i niedestrukcyjne.
+        """
+        existing = {
+            row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")
+        }
+        for name, decl in columns.items():
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     def active_conversation(
         self, channel: str, external_id: str
@@ -126,16 +214,28 @@ class SqliteConversationStore:
             self._conn.commit()
 
     def append_message(
-        self, conversation_id: str, role: str, text: str, token_estimate: int
+        self,
+        conversation_id: str,
+        role: str,
+        text: str,
+        token_estimate: int,
+        *,
+        blocks: list[dict[str, Any]] | None = None,
+        stop_reason: str | None = None,
     ) -> ConversationMessage:
+        blocks_json = (
+            json.dumps(blocks, ensure_ascii=False) if blocks is not None else None
+        )
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO messages(conversation_id, role, text, token_estimate) "
-                "VALUES (?, ?, ?, ?)",
-                (conversation_id, role, text, token_estimate),
+                "INSERT INTO messages("
+                "conversation_id, role, text, token_estimate, blocks_json, stop_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (conversation_id, role, text, token_estimate, blocks_json, stop_reason),
             )
             msg_id = cur.lastrowid
-            if self._fts:
+            # Tury narzędziowe mają pusty ``text`` — poza indeksem FTS (nic do dopasowania).
+            if self._fts and text:
                 self._conn.execute(
                     "INSERT INTO messages_fts(rowid, text) VALUES (?, ?)",
                     (msg_id, text),
@@ -157,6 +257,25 @@ class SqliteConversationStore:
                 (conversation_id,),
             ).fetchall()
         return [_message(r) for r in rows]
+
+    def list_conversations(
+        self, *, channel: str | None = None, limit: int = 50
+    ) -> list[Conversation]:
+        # Sumę tokenów per rozmowa liczy skorelowane podzapytanie (jak w
+        # ``active_conversation``); ``updated_at`` (TEXT ISO) sortuje leksykograficznie
+        # = chronologicznie, ``rowid`` rozstrzyga remisy przy równym znaczniku.
+        clause = " WHERE channel=?" if channel is not None else ""
+        params: list[Any] = [channel] if channel is not None else []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT *, COALESCE("
+                "(SELECT SUM(token_estimate) FROM messages m "
+                "WHERE m.conversation_id = conversations.id), 0) AS token_total "
+                "FROM conversations" + clause + " "
+                "ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+                [*params, limit],
+            ).fetchall()
+        return [_conversation(row, int(row["token_total"])) for row in rows]
 
     def search(
         self,
@@ -258,6 +377,7 @@ def _conversation(row: Any, token_estimate: int) -> Conversation:
 
 
 def _message(row: Any) -> ConversationMessage:
+    raw_blocks = row["blocks_json"]
     return ConversationMessage(
         id=row["id"],
         conversation_id=row["conversation_id"],
@@ -265,6 +385,8 @@ def _message(row: Any) -> ConversationMessage:
         text=row["text"],
         token_estimate=row["token_estimate"],
         created_at=_parse_ts(row["created_at"]),
+        blocks=json.loads(raw_blocks) if raw_blocks else None,
+        stop_reason=row["stop_reason"],
     )
 
 

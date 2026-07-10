@@ -65,10 +65,13 @@ def build_application(settings: TelegramSettings, responder: Responder) -> Any:
     Rejestruje handler na wiadomościach tekstowych (bez komend). Zwrócony obiekt
     ``Application`` uruchamia się przez ``app.run_polling()`` (patrz ``app.py``).
     """
-    from telegram.ext import Application, MessageHandler, filters
+    from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
     application = Application.builder().token(settings.bot_token).build()
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, make_on_message(responder))
-    )
+    on_message = make_on_message(responder)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    # Komendy startu wątku (/nowa, /nowy, /new): MessageHandler celowo pomija komendy
+    # (~COMMAND), więc rejestrujemy je osobno na TEN SAM handler — rozpoznanie i tak żyje
+    # w responderze (jedno źródło logiki), tu tylko dostarczamy komendę do szwu.
+    application.add_handler(CommandHandler(["nowa", "nowy", "new"], on_message))
     return application

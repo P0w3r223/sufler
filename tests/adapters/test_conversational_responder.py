@@ -7,31 +7,88 @@ dostaje historię poprzednich, odpowiedź jest zapisywana, a rollover dokłada n
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 
 import pytest
 
-from workmate.adapters.inbound.responder import ConversationalResponder, InboundMessage
+from workmate.adapters.inbound.responder import (
+    _NEW_THREAD_ACK,
+    _NEW_THREAD_ALREADY_FRESH,
+    ConversationalResponder,
+    InboundMessage,
+    _is_new_thread_command,
+    _to_transcript,
+    _with_notices,
+)
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.conversations import ConversationService
+from workmate.core.domain.conversation import ConversationMessage
+from workmate.core.ports.llm import (
+    AgentResult,
+    AssistantTurn,
+    RawTurn,
+    ToolResults,
+    UserText,
+)
+
+_TS = datetime(2025, 1, 1, 12, 0, 0)
+
+
+def _msg(role: str, text: str, *, blocks=None) -> ConversationMessage:
+    return ConversationMessage(
+        id=1,
+        conversation_id="c",
+        role=role,
+        text=text,
+        token_estimate=1,
+        created_at=_TS,
+        blocks=blocks,
+    )
 
 
 class _FakeRuntime:
-    """Atrapa runtime — notuje ``(query, history)`` i zwraca stałą odpowiedź."""
+    """Atrapa runtime — notuje ``(query, history)`` i zwraca stały ``AgentResult``."""
 
     def __init__(self, reply: str) -> None:
         self.reply = reply
         self.calls: list[tuple[str, list[object]]] = []
 
-    def run(self, query: str, *, history: object = ()) -> str:
+    def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
-        return self.reply
+        entries = (UserText(query), AssistantTurn(self.reply, ()))
+        return AgentResult(reply=self.reply, entries=entries, stop_reason="end_turn")
 
 
 class _FailingRuntime:
     """Atrapa runtime, która rzuca — symuluje przejściowy błąd Claude API."""
 
-    def run(self, query: str, *, history: object = ()) -> str:
+    def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
         raise RuntimeError("runtime padł")
+
+
+class _FakeClock:
+    """Zegar testowy: oddaje kolejne z góry zadane chwile (symuluje upływ czasu)."""
+
+    def __init__(self, times: list[datetime]) -> None:
+        self._times = times
+        self._i = 0
+
+    def __call__(self) -> datetime:
+        value = self._times[min(self._i, len(self._times) - 1)]
+        self._i += 1
+        return value
+
+
+class _ThinkingRuntime:
+    """Atrapa runtime: tura niesie podsumowanie rozumowania (``display=summarized``)."""
+
+    def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
+        return AgentResult(
+            reply="odpowiedz",
+            entries=(UserText(query), AssistantTurn("odpowiedz", ())),
+            stop_reason="end_turn",
+            thinking="Analizuję pytanie.",
+        )
 
 
 def test_second_turn_receives_prior_history_and_reply_is_recorded():
@@ -69,7 +126,40 @@ def test_rollover_prefixes_notice_on_context_limit():
         responder.respond(InboundMessage(text="1234", conversation_id="c"))
     )
 
-    assert reply2.startswith("(Poprzednia rozmowa osiągnęła limit kontekstu")
+    assert reply2.startswith("(Zaczynam nową rozmowę")
+
+
+def test_idle_gap_starts_new_thread_via_responder():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(
+        store, max_context_tokens=1000, idle_timeout=timedelta(minutes=30)
+    )
+    runtime = _FakeRuntime("ok")
+    # Pierwsza tura o _TS, druga 31 min później → przekroczona bezczynność → nowy wątek.
+    clock = _FakeClock([_TS, _TS + timedelta(minutes=31)])
+    responder = ConversationalResponder(
+        runtime, service, channel="telegram", clock=clock
+    )
+
+    asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1")))
+    # Po zapisie updated_at to realny CURRENT_TIMESTAMP — przypnij do _TS, by bezczynność
+    # liczyła się względem testowego zegara (deterministycznie, nie względem zegara systemu).
+    active = store.active_conversation("telegram", "chat1")
+    assert active is not None
+    store._conn.execute(
+        "UPDATE conversations SET updated_at=? WHERE id=?",
+        (_TS.isoformat(sep=" "), active.id),
+    )
+    store._conn.commit()
+
+    reply2 = asyncio.run(
+        responder.respond(InboundMessage(text="druga", conversation_id="chat1"))
+    )
+
+    assert reply2.startswith("(Zaczynam nową rozmowę")
+    # Druga tura poszła do NOWEGO wątku — dostała pustą historię (świeży kontekst).
+    _, history2 = runtime.calls[1]
+    assert history2 == []
 
 
 def test_runtime_error_leaves_no_orphan_turn():
@@ -87,3 +177,166 @@ def test_runtime_error_leaves_no_orphan_turn():
     assert active is not None
     assert store.messages(active.id) == []
     assert active.token_estimate == 0
+
+
+# --- _to_transcript: odtworzenie historii z wierszy magazynu (ADR 0011) --------
+
+
+def test_to_transcript_rebuilds_assistant_blocks_as_raw_turn():
+    blocks = [
+        {"type": "thinking", "thinking": "", "signature": "SIG=="},
+        {"type": "text", "text": "cześć"},
+    ]
+    entries = _to_transcript([_msg("assistant", "cześć", blocks=blocks)])
+
+    assert len(entries) == 1
+    raw = entries[0]
+    assert isinstance(raw, RawTurn)
+    assert raw.role == "assistant"
+    assert raw.blocks == tuple(blocks)  # bloki VERBATIM (signature 1:1)
+
+
+def test_to_transcript_rebuilds_tool_row_as_tool_results():
+    blocks = [{"call_id": "t1", "content": '{"count": 1}', "is_error": False}]
+    entries = _to_transcript([_msg("tool", "", blocks=blocks)])
+
+    assert len(entries) == 1
+    results = entries[0]
+    assert isinstance(results, ToolResults)
+    out = results.outputs[0]
+    assert (out.call_id, out.content, out.is_error) == ("t1", '{"count": 1}', False)
+
+
+def test_to_transcript_degrades_legacy_row_without_blocks_to_text_only():
+    """Wiersz sprzed 0011 (blocks None): assistant → AssistantTurn text-only, user → UserText."""
+    entries = _to_transcript(
+        [
+            _msg("user", "pytanie"),
+            _msg("assistant", "stara odpowiedz"),
+        ]
+    )
+
+    assert entries[0] == UserText("pytanie")
+    legacy_assistant = entries[1]
+    assert isinstance(legacy_assistant, AssistantTurn)
+    assert legacy_assistant.text == "stara odpowiedz"
+    assert legacy_assistant.blocks == ()  # brak bloków → składane z tekstu przy odsyłaniu
+
+
+def test_to_transcript_preserves_turn_order():
+    blocks = [{"type": "text", "text": "a"}]
+    tool_blocks = [{"call_id": "t1", "content": "{}", "is_error": False}]
+    entries = _to_transcript(
+        [
+            _msg("user", "q"),
+            _msg("assistant", "a", blocks=blocks),
+            _msg("tool", "", blocks=tool_blocks),
+            _msg("assistant", "b", blocks=[{"type": "text", "text": "b"}]),
+        ]
+    )
+
+    assert [type(e).__name__ for e in entries] == [
+        "UserText",
+        "RawTurn",
+        "ToolResults",
+        "RawTurn",
+    ]
+
+
+# --- Pokazywanie rozumowania modelu (display=summarized): show_thinking ---------
+
+
+def test_show_thinking_prepends_reasoning_summary_on_trusted_door():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    responder = ConversationalResponder(
+        _ThinkingRuntime(), service, channel="cli", show_thinking=True
+    )
+
+    reply = asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="c")))
+
+    assert reply.startswith("[rozumowanie modelu]")
+    assert "Analizuję pytanie." in reply
+    assert reply.endswith("odpowiedz")  # rozumowanie NAD odpowiedzią
+
+
+def test_thinking_hidden_by_default_on_async_doors():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    # Bez show_thinking (domyślnie False) — async drzwi nie wysyłają rozumowania userowi.
+    responder = ConversationalResponder(_ThinkingRuntime(), service, channel="telegram")
+
+    reply = asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="c")))
+
+    assert reply == "odpowiedz"
+    assert "rozumowanie" not in reply
+
+
+# --- Komenda jawnego startu wątku /nowa (ADR 0012) -----------------------------
+
+
+def test_is_new_thread_command_matches_slash_variants_only():
+    assert _is_new_thread_command("/nowa")
+    assert _is_new_thread_command("  /NOWA  ")  # strip + case-insensitive
+    assert _is_new_thread_command("/new pominięty argument")  # liczy się 1. token
+    assert _is_new_thread_command("/nowa@WorkMateBot")  # sufiks @bot z grup Telegrama
+    assert not _is_new_thread_command("nowa rozmowa")  # bez ukośnika → zwykły tekst
+    assert not _is_new_thread_command("chcę /nowa")  # komenda musi być na początku
+    assert not _is_new_thread_command("")
+
+
+def test_new_thread_command_closes_thread_without_calling_runtime():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    runtime = _FakeRuntime("odpowiedz")
+    responder = ConversationalResponder(runtime, service, channel="telegram")
+
+    # Zbuduj niepusty wątek (jedna realna tura).
+    asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1")))
+
+    ack = asyncio.run(
+        responder.respond(InboundMessage(text="/nowa", conversation_id="chat1"))
+    )
+
+    assert ack == _NEW_THREAD_ACK
+    assert len(runtime.calls) == 1  # komenda NIE poszła do runtime (wciąż 1 wywołanie)
+    assert store.active_conversation("telegram", "chat1") is None  # wątek domknięty
+
+    # Kolejna wiadomość otwiera nowy wątek — model dostaje świeżą (pustą) historię.
+    asyncio.run(responder.respond(InboundMessage(text="druga", conversation_id="chat1")))
+    _, history = runtime.calls[1]
+    assert history == []
+
+
+def test_new_thread_command_on_empty_conversation_reports_already_fresh():
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    runtime = _FakeRuntime("x")
+    responder = ConversationalResponder(runtime, service, channel="telegram")
+
+    ack = asyncio.run(
+        responder.respond(InboundMessage(text="/nowa", conversation_id="chat1"))
+    )
+
+    assert ack == _NEW_THREAD_ALREADY_FRESH
+    assert runtime.calls == []  # nic nie trafiło do runtime
+
+
+# --- _with_notices: notki systemowe przed odpowiedzią (ADR 0011) ---------------
+
+
+def test_with_notices_returns_reply_unchanged_when_no_signals():
+    assert _with_notices("odp", rolled_over=False, stop_reason="end_turn") == "odp"
+
+
+def test_with_notices_prefixes_truncation_on_max_tokens():
+    out = _with_notices("czesciowa", rolled_over=False, stop_reason="max_tokens")
+    assert out.startswith("(Odpowiedź została ucięta")
+    assert out.endswith("czesciowa")
+
+
+def test_with_notices_combines_rollover_and_truncation():
+    out = _with_notices("odp", rolled_over=True, stop_reason="max_tokens")
+    assert "nową rozmowę" in out
+    assert "ucięta" in out
+    assert out.endswith("odp")

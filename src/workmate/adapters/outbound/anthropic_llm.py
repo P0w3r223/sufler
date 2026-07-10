@@ -14,6 +14,7 @@ from workmate.core.errors import LLMError
 from workmate.core.ports.llm import (
     AssistantTurn,
     LLMResponse,
+    RawTurn,
     ToolCall,
     ToolResults,
     UserText,
@@ -51,22 +52,47 @@ class AnthropicLLMClient:
     ) -> LLMResponse:
         import anthropic
 
+        messages = _to_messages(transcript)
+        tool_defs = [_to_tool_def(spec) for spec in tools]
+
         try:
-            message = self._client.messages.create(
+            # STREAMING (ADR 0011, rewizja): przy dużym ``max_tokens`` (domyślnie 128k —
+            # pełny sufit modelu) tryb non-streaming (``messages.create``) jest ODRZUCANY
+            # przez SDK (szacowany czas > limitu, zrywane bezczynne połączenie). Streaming
+            # tego nie ma; ``get_final_message`` zwraca tę samą ``Message`` co ``create``
+            # (pełna lista bloków + ``stop_reason``), więc ``_from_message`` działa bez zmian.
+            with self._client.messages.stream(
                 model=self._settings.model,
                 max_tokens=self._settings.max_tokens,
                 system=system,
-                # Myślenie WYŁĄCZONE jawnie: w Sonnet 5 adaptive thinking jest domyślnie
-                # włączone, gdy pominąć ``thinking`` — a nasza pętla odsyła tury asystenta
-                # bez bloków ``thinking`` (patrz ``_from_message``), więc API odrzuciłoby
-                # turę z ``tool_use`` błędem 400. Echo bloków thinking to osobny temat (M2+).
-                thinking={"type": "disabled"},
-                messages=_to_messages(transcript),
-                tools=[_to_tool_def(spec) for spec in tools],
-            )
+                # Adaptive thinking (ADR 0011): w Sonnet 5 to jedyny tryb „on" — model
+                # sam decyduje, ile myśleć. Bloki ``thinking`` (z ``signature``) są
+                # przechwytywane w ``_from_message`` i odsyłane VERBATIM w ``_to_messages``,
+                # więc tura z ``tool_use`` nie jest już odrzucana (400). ``display=summarized``
+                # każe modelowi zwrócić CZYTELNE podsumowanie rozumowania (domyślnie ``omitted``
+                # = pusty tekst; ``signature`` i tak obecna do round-tripu). Dokładamy je tylko
+                # dla ``adaptive`` — przy ``disabled`` (``WORKMATE_AGENT_THINKING=disabled``)
+                # myślenia nie ma, więc pole jest bez znaczenia (patrz ``_thinking_config``).
+                thinking=_thinking_config(self._settings.thinking_type),
+                messages=messages,
+                tools=tool_defs,
+            ) as stream:
+                message = stream.get_final_message()
         except anthropic.APIError as exc:
             raise LLMError(f"Błąd Claude API: {exc}") from exc
         return _from_message(message)
+
+
+def _thinking_config(thinking_type: str) -> dict[str, str]:
+    """Parametr ``thinking`` dla Claude API; ``display=summarized`` tylko dla ``adaptive``.
+
+    ``summarized`` włącza czytelne podsumowanie rozumowania (domyślnie ``omitted`` = pusty
+    tekst thinking). Dla ``disabled`` myślenia nie ma, więc ``display`` byłby bez znaczenia
+    (i potencjalnie odrzucony) — pomijamy go, zachowując konfigurowalność trybu.
+    """
+    if thinking_type == "adaptive":
+        return {"type": "adaptive", "display": "summarized"}
+    return {"type": thinking_type}
 
 
 def _to_tool_def(spec: ToolSpec) -> dict[str, Any]:
@@ -78,24 +104,35 @@ def _to_tool_def(spec: ToolSpec) -> dict[str, Any]:
 
 
 def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
-    """Zmapuj słownik domenowy na listę wiadomości Anthropic."""
+    """Zmapuj słownik domenowy na listę wiadomości Anthropic.
+
+    Tury z blokami (``RawTurn`` z pamięci, ``AssistantTurn`` z bieżącego przebiegu)
+    odsyłamy VERBATIM — bez filtrowania i bez zmiany kolejności bloków (thinking MUSI
+    poprzedzać ``tool_use`` i wrócić z niezmienioną ``signature``, inaczej API 400).
+    ``AssistantTurn`` bez bloków (atrapy, wiersze legacy) składamy z ``text``/``tool_calls``.
+    """
     messages: list[dict[str, Any]] = []
     for entry in transcript:
         if isinstance(entry, UserText):
             messages.append({"role": "user", "content": entry.text})
+        elif isinstance(entry, RawTurn):
+            messages.append({"role": entry.role, "content": [dict(b) for b in entry.blocks]})
         elif isinstance(entry, AssistantTurn):
-            content: list[dict[str, Any]] = []
-            if entry.text:
-                content.append({"type": "text", "text": entry.text})
-            for call in entry.tool_calls:
-                content.append(
-                    {
-                        "type": "tool_use",
-                        "id": call.id,
-                        "name": call.name,
-                        "input": call.arguments,
-                    }
-                )
+            if entry.blocks:
+                content: list[dict[str, Any]] = [dict(b) for b in entry.blocks]
+            else:
+                content = []
+                if entry.text:
+                    content.append({"type": "text", "text": entry.text})
+                for call in entry.tool_calls:
+                    content.append(
+                        {
+                            "type": "tool_use",
+                            "id": call.id,
+                            "name": call.name,
+                            "input": call.arguments,
+                        }
+                    )
             messages.append({"role": "assistant", "content": content})
         elif isinstance(entry, ToolResults):
             results: list[dict[str, Any]] = []
@@ -113,21 +150,35 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
 
 
 def _from_message(message: Any) -> LLMResponse:
-    """Zmapuj odpowiedź Anthropic na słownik domenowy (tekst + żądania narzędzi).
+    """Zmapuj odpowiedź Anthropic na słownik domenowy (ADR 0011).
 
-    Założenie M1: bierzemy bloki ``text`` i ``tool_use``; inne (np. ``thinking``)
-    świadomie pomijamy, a ``stop_reason`` nie jest inspekcjonowany — myślenie jest
-    wyłączone jawnie w ``complete`` (Sonnet 5 domyślnie by je włączył), więc bloków
-    ``thinking`` nie ma, a przy małej bazie i domyślnym ``max_tokens`` obcięcie jest
-    mało prawdopodobne. Gdy kiedyś włączymy myślenie: bloki thinking trzeba będzie
-    odsyłać z powrotem (echo), a ``stop_reason == "max_tokens"`` traktować inaczej
-    niż odpowiedź końcową.
+    Bloki treści przechwytujemy VERBATIM (``model_dump(mode="json")``) w oryginalnej
+    kolejności — łącznie z ``thinking``/``redacted_thinking`` i ich ``signature`` — żeby
+    pamięć mogła odesłać je bajt-w-bajt (API odrzuca bloki ZMODYFIKOWANE, nie odczytane).
+    Z tych samych bloków wyprowadzamy pola semantyczne: ``text`` (konkatenacja bloków
+    ``text``, bez thinking) steruje projekcją do FTS i odpowiedzią; ``thinking_text``
+    (konkatenacja bloków ``thinking`` — podsumowanie, gdy ``display=summarized``) służy do
+    pokazania rozumowania; ``tool_calls`` steruje dispatchem. ``stop_reason`` steruje pętlą
+    (``max_tokens`` = tura ucięta, niereplayowalna).
     """
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     calls: list[ToolCall] = []
+    blocks: list[dict[str, Any]] = []
     for block in message.content:
+        blocks.append(block.model_dump(mode="json"))
         if block.type == "text":
             text_parts.append(block.text)
+        elif block.type == "thinking":
+            # ``display=summarized`` → czytelne podsumowanie; ``omitted`` → pusty tekst.
+            # Osobno od ``text`` (nie wchodzi do FTS ani do szacunku tokenów — ADR 0011).
+            thinking_parts.append(block.thinking)
         elif block.type == "tool_use":
             calls.append(ToolCall(id=block.id, name=block.name, arguments=dict(block.input)))
-    return LLMResponse(text="".join(text_parts), tool_calls=tuple(calls))
+    return LLMResponse(
+        text="".join(text_parts),
+        thinking_text="".join(thinking_parts),
+        tool_calls=tuple(calls),
+        blocks=tuple(blocks),
+        stop_reason=message.stop_reason or "",
+    )

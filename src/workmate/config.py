@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 
 # Dozwolone transporty serwera MCP. "stdio" to lokalny tryb dla Claude Code
@@ -200,18 +201,24 @@ class TeamsSettings:
 
 @dataclass(frozen=True)
 class AgentSettings:
-    """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008).
+    """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008; ADR 0011).
 
     Klucz Claude API to sekret — czytany z env, nigdy z repo ani z folderu
     indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-sonnet-5``
     (większe wymagania projektu wobec syntezy), nadpisywalny przez ``WORKMATE_AGENT_MODEL``.
+    ``thinking_type`` steruje rozszerzonym myśleniem (ADR 0011): ``adaptive`` (domyślnie,
+    model sam decyduje ile myśleć) albo ``disabled`` (np. dla ograniczenia kosztu).
+    ``max_tokens`` (128000 — pełny sufit wyjścia modelu) dzieli budżet między myślenie
+    i odpowiedź; adapter woła Claude API STREAMINGIEM (``messages.stream``), więc duży
+    sufit nie odpala limitu czasu SDK, który odrzuca duże żądania non-streaming.
     """
 
     # Sekret: repr=False, żeby przypadkowe zalogowanie obiektu/traceback go nie ujawniło.
     api_key: str = field(default="", repr=False)
     model: str = "claude-sonnet-5"
-    max_tokens: int = 4096
+    max_tokens: int = 128000
     max_tool_iterations: int = 8
+    thinking_type: str = "adaptive"
 
     @classmethod
     def from_env(cls) -> AgentSettings:
@@ -222,8 +229,9 @@ class AgentSettings:
         return cls(
             api_key=api_key,
             model=os.environ.get("WORKMATE_AGENT_MODEL", "claude-sonnet-5"),
-            max_tokens=_int_from_env("WORKMATE_AGENT_MAX_TOKENS", 4096),
+            max_tokens=_int_from_env("WORKMATE_AGENT_MAX_TOKENS", 128000),
             max_tool_iterations=_int_from_env("WORKMATE_AGENT_MAX_TOOL_ITERATIONS", 8),
+            thinking_type=os.environ.get("WORKMATE_AGENT_THINKING", "adaptive"),
         )
 
     def validate(self) -> None:
@@ -245,6 +253,11 @@ class AgentSettings:
         if self.max_tokens < 1:
             raise ValueError(
                 f"WORKMATE_AGENT_MAX_TOKENS musi być >= 1, jest: {self.max_tokens}."
+            )
+        if self.thinking_type not in ("adaptive", "disabled"):
+            raise ValueError(
+                "WORKMATE_AGENT_THINKING musi być 'adaptive' albo 'disabled', jest: "
+                f"{self.thinking_type!r}."
             )
 
 
@@ -275,16 +288,22 @@ class TelegramSettings:
 
 @dataclass(frozen=True)
 class ConversationSettings:
-    """Konfiguracja pamięci rozmów (wątkowość + limit kontekstu, Faza 2 / ADR 0010).
+    """Konfiguracja pamięci rozmów (wątkowość + limit kontekstu, Faza 2 / ADR 0010, 0012).
 
     Baza SQLite leży poza ``data/`` (folder indeksowany przez rdzeń) i poza repo —
     to dane operacyjne, nie baza wiedzy. Limit kontekstu jest modestny i wymusza
     rollover do nowej rozmowy po jego osiągnięciu (ograniczony, tani kontekst per
     wywołanie modelu). Nadpisywalny przez ``WORKMATE_CONV_MAX_TOKENS``.
+
+    ``idle_timeout_minutes`` (ADR 0012) domyka wątkowość w czasie: po tylu minutach
+    bezczynności kolejna wiadomość zaczyna NOWY wątek (osobne rozmowy = osobne wątki,
+    zamiast jednej ciągnącej się nici). ``0`` wyłącza to kryterium (zostaje sam limit
+    kontekstu). Nadpisywalny przez ``WORKMATE_CONV_IDLE_MINUTES``.
     """
 
     db_path: Path
     max_context_tokens: int = 6000
+    idle_timeout_minutes: int = 30
 
     @classmethod
     def from_env(cls) -> ConversationSettings:
@@ -293,12 +312,27 @@ class ConversationSettings:
                 "WORKMATE_CONVERSATIONS_DB", _DEFAULT_CONVERSATIONS_DB
             ),
             max_context_tokens=_int_from_env("WORKMATE_CONV_MAX_TOKENS", 6000),
+            idle_timeout_minutes=_int_from_env("WORKMATE_CONV_IDLE_MINUTES", 30),
         )
 
     def validate(self) -> None:
-        """Twardy błąd startu, gdy limit kontekstu jest bezsensowny."""
+        """Twardy błąd startu, gdy limit kontekstu albo próg bezczynności jest bezsensowny."""
         if self.max_context_tokens < 1:
             raise ValueError(
                 "WORKMATE_CONV_MAX_TOKENS musi być >= 1, jest: "
                 f"{self.max_context_tokens}."
             )
+        # 0 = kryterium bezczynności wyłączone; ujemne nie ma sensu (fail fast).
+        if self.idle_timeout_minutes < 0:
+            raise ValueError(
+                "WORKMATE_CONV_IDLE_MINUTES musi być >= 0 (0 wyłącza), jest: "
+                f"{self.idle_timeout_minutes}."
+            )
+
+    def idle_timeout(self) -> timedelta | None:
+        """Próg bezczynności jako ``timedelta`` do wstrzyknięcia w ``ConversationService``.
+
+        ``0`` (wyłączone) mapujemy na ``None`` — jedno miejsce konwersji dla wszystkich
+        drzwi, żeby wiring nie powtarzał warunku ``> 0``.
+        """
+        return timedelta(minutes=self.idle_timeout_minutes) if self.idle_timeout_minutes else None
