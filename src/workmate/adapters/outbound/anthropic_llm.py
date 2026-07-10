@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from workmate.core.domain.pricing import TokenUsage
 from workmate.core.errors import LLMError
 from workmate.core.ports.llm import (
     AssistantTurn,
@@ -181,4 +182,22 @@ def _from_message(message: Any) -> LLMResponse:
         tool_calls=tuple(calls),
         blocks=tuple(blocks),
         stop_reason=message.stop_reason or "",
+        usage=_usage_of(message),
+    )
+
+
+def _usage_of(message: Any) -> TokenUsage:
+    """Wyciągnij REALNE ``usage`` z odpowiedzi API (Design 2) — 0, gdy brak.
+
+    Pola ``cache_*`` bywają ``None``, gdy prompt caching nie jest użyty (``or 0``).
+    Atrapy/legacy bez ``usage`` → puste ``TokenUsage`` (koszt 0), bez wywracania mapowania.
+    """
+    u = getattr(message, "usage", None)
+    if u is None:
+        return TokenUsage()
+    return TokenUsage(
+        input_tokens=getattr(u, "input_tokens", 0) or 0,
+        output_tokens=getattr(u, "output_tokens", 0) or 0,
+        cache_read_input_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
+        cache_creation_input_tokens=getattr(u, "cache_creation_input_tokens", 0) or 0,
     )

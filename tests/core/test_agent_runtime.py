@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.tools import ToolSpec
+from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
     LLMResponse,
@@ -178,6 +179,34 @@ def test_run_turn_surfaces_thinking_summary_on_final_answer():
 
     assert result.thinking == "Rozważam notatki mpwik."
     assert result.reply == "gotowe"
+
+
+def test_run_turn_accumulates_real_usage_across_tool_loop():
+    """Design 2: ``AgentResult.usage`` = suma usage wszystkich wywołań; każda tura niesie swoje."""
+
+    def search(query: str) -> dict:
+        return {"count": 1}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                tool_calls=(ToolCall("t1", "search_notes", {"query": "x"}),),
+                usage=TokenUsage(input_tokens=100, output_tokens=10),
+            ),
+            LLMResponse(
+                text="ok",
+                stop_reason="end_turn",
+                usage=TokenUsage(input_tokens=150, output_tokens=20),
+            ),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("search_notes", search)]).run_turn("q")
+
+    assert result.usage == TokenUsage(input_tokens=250, output_tokens=30)  # suma dwóch wywołań
+    assistants = [e for e in result.entries if isinstance(e, AssistantTurn)]
+    assert assistants[0].usage == TokenUsage(input_tokens=100, output_tokens=10)
+    assert assistants[1].usage == TokenUsage(input_tokens=150, output_tokens=20)
 
 
 def test_run_turn_persists_paired_tool_cycle_entries():

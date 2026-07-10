@@ -14,7 +14,9 @@ if TYPE_CHECKING:
         Conversation,
         ConversationMessage,
         ConversationSearchHit,
+        ConversationSummary,
     )
+    from workmate.core.domain.pricing import TokenUsage
 
 
 class ConversationStore(Protocol):
@@ -25,7 +27,7 @@ class ConversationStore(Protocol):
         ...
 
     def open_conversation(self, channel: str, external_id: str) -> Conversation:
-        """Utwórz nową aktywną rozmowę i zwróć ją (pusta, ``token_estimate=0``)."""
+        """Utwórz nową aktywną rozmowę i zwróć ją (pusta — bez tur, ``usage`` 0)."""
         ...
 
     def close_conversation(self, conversation_id: str) -> None:
@@ -37,21 +39,70 @@ class ConversationStore(Protocol):
         conversation_id: str,
         role: str,
         text: str,
-        token_estimate: int,
         *,
         blocks: list[dict[str, Any]] | None = None,
         stop_reason: str | None = None,
+        usage: TokenUsage | None = None,
     ) -> ConversationMessage:
         """Dołóż turę do rozmowy i zwróć ją (z nadanym id i znacznikiem czasu).
 
         ``blocks`` (ADR 0011) to VERBATIM sekwencja bloków treści tury zapisywana bez
         zmian (dla asystenta bloki dostawcy z ``signature``); ``None`` → wiersz text-only.
         ``text`` jest indeksowane w FTS; puste (tury narzędziowe) poza indeksem.
+        ``usage`` (Design 2) to REALNE użycie tokenów tury asystenta (z pola ``usage``
+        odpowiedzi API); ``None`` dla user/tool/legacy — do rozliczenia i bramki rolloveru.
         """
         ...
 
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
-        """Zwróć tury rozmowy w kolejności chronologicznej."""
+        """Zwróć tury rozmowy w kolejności chronologicznej (także zarchiwizowane)."""
+        ...
+
+    # --- Kompaktowanie (ADR 0014) -------------------------------------------------
+
+    def get(self, conversation_id: str) -> Conversation | None:
+        """Zwróć rozmowę po id (niezależnie od statusu) albo ``None``.
+
+        Kompaktowanie potrzebuje świeżego ``last_input_tokens`` po dopisaniu tury,
+        gdy referencja do aktywnej rozmowy jest już nieaktualna.
+        """
+        ...
+
+    def replay_messages(self, conversation_id: str) -> list[ConversationMessage]:
+        """Zwróć tury do REPLAYU do API — tylko NIEzarchiwizowane, chronologicznie.
+
+        Inaczej niż ``messages`` (pełna historia do podglądu), pomija tury zastąpione
+        podsumowaniem (``archived``). Serwis dokleja przed nimi aktywne podsumowanie.
+        """
+        ...
+
+    def archive_through(self, conversation_id: str, message_id: int) -> None:
+        """Oznacz jako zarchiwizowane wszystkie tury rozmowy o ``id`` <= ``message_id``.
+
+        Nie usuwa wierszy (historia i wyszukiwanie pozostają nienaruszone) — jedynie
+        wypycha je z replayu do API. Idempotentne.
+        """
+        ...
+
+    def save_summary(
+        self,
+        conversation_id: str,
+        summary: str,
+        covers_through_message_id: int,
+        *,
+        usage: TokenUsage | None = None,
+    ) -> ConversationSummary:
+        """Zapisz nowe podsumowanie wątku i zwróć je (z nadanym id i znacznikiem czasu).
+
+        Poprzednie aktywne podsumowanie wątku oznacza jako zastąpione (``superseded``),
+        tak by aktywne pozostało zawsze co najwyżej JEDNO. ``usage`` to koszt wywołania
+        modelu podsumowującego (Design 2). ``covers_through_message_id`` obejmuje
+        wszystkie tury o ``id`` <= wartości.
+        """
+        ...
+
+    def active_summary(self, conversation_id: str) -> ConversationSummary | None:
+        """Zwróć aktywne podsumowanie wątku albo ``None`` (jeszcze nie kompaktowano)."""
         ...
 
     def list_conversations(

@@ -12,8 +12,9 @@ atrapie w pamięci. Dwie odpowiedzialności:
    wiadomość — drzwi podają je runtime'owi jako kontekst, po czym ``record_reply``
    dokłada odpowiedź.
 
-Przybliżenie tokenów jest celowo deterministyczne (``len(text) // 4``), bez wołania
-API — do bramkowania długości kontekstu wystarczy, a testy są powtarzalne.
+Rozliczenie tokenów jest REALNE (Design 2): z pola ``usage`` odpowiedzi API, przenoszone
+przez ``AgentResult``/``AssistantTurn`` do magazynu. Rollover bramkuje realny rozmiar
+kontekstu OSTATNIEJ tury (``last_context_tokens``), nie estymatę tekstu.
 """
 from __future__ import annotations
 
@@ -29,17 +30,11 @@ if TYPE_CHECKING:
         Conversation,
         ConversationMessage,
         ConversationSearchHit,
+        ConversationSummary,
     )
+    from workmate.core.domain.pricing import TokenUsage
     from workmate.core.ports.conversations import ConversationStore
     from workmate.core.ports.llm import TranscriptEntry
-
-# Przybliżenie: średnio ~4 znaki na token. Zaniża/zawyża, ale jest tanie i stałe.
-_CHARS_PER_TOKEN = 4
-
-
-def estimate_tokens(text: str) -> int:
-    """Przybliż liczbę tokenów tekstu (deterministycznie, bez wołania API)."""
-    return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
 class ConversationService:
@@ -51,6 +46,7 @@ class ConversationService:
         *,
         max_context_tokens: int,
         idle_timeout: timedelta | None = None,
+        size_rollover: bool = True,
     ) -> None:
         if max_context_tokens < 1:
             raise ValueError("max_context_tokens musi być >= 1")
@@ -58,6 +54,10 @@ class ConversationService:
         self._max = max_context_tokens
         # None → kryterium bezczynności wyłączone (zachowanie sprzed ADR 0012).
         self._idle_timeout = idle_timeout
+        # ADR 0014: gdy działa kompaktowanie, rollover NA LIMICIE jest wyłączony
+        # (kompaktowanie ZASTĘPUJE rollover rozmiaru — stare tury streszczamy, nie
+        # zaczynamy nowego wątku). Rollover bezczynności i komenda ``/nowa`` działają dalej.
+        self._size_rollover = size_rollover
 
     def prepare_turn(
         self,
@@ -75,51 +75,50 @@ class ConversationService:
         uzyskaniu odpowiedzi, więc błąd runtime nie zostawia osieroconej tury.
 
         ``now`` (znacznik chwili, zwykle podany przez adapter — rdzeń nie woła zegara)
-        włącza kryterium bezczynności; ``None`` je pomija. Uwaga (miękka bramka):
-        pierwsza wiadomość dłuższa niż limit i tak otwiera rozmowę (gałąź
-        ``active is None`` nie sprawdza limitu) — rollover nastąpi dopiero przy kolejnej
-        turze. To akceptowalne dla przybliżonego limitu. Od ADR 0011 do sumy tokenów
-        rozmowy wliczają się też WYNIKI narzędzi (pełne tury zapisuje ``record_run``),
-        więc duży wynik (np. ``get_note``) wcześniej wywoła rollover na KOLEJNEJ turze.
+        włącza kryterium bezczynności; ``None`` je pomija. ``user_text`` nie wpływa już na
+        rollover (Design 2 bramkuje realny kontekst ostatniej tury, nie estymatę tekstu) —
+        pozostaje w sygnaturze dla zgodności wywołań drzwi.
         """
-        estimate = estimate_tokens(user_text)
         active = self._store.active_conversation(channel, external_id)
         rolled_over = False
 
         if active is None:
             active = self._store.open_conversation(channel, external_id)
-        elif self._should_roll_over(active, estimate, now):
+        elif self._should_roll_over(active, now):
             self._store.close_conversation(active.id)
             active = self._store.open_conversation(channel, external_id)
             rolled_over = True
 
-        prior = self._store.messages(active.id)
+        # Replay do API pomija tury zarchiwizowane przez kompaktowanie (ADR 0014) —
+        # zastępuje je podsumowanie, które drzwi doklejają przed historią. Bez kompaktowania
+        # replay = pełna historia (nic nie jest zarchiwizowane).
+        prior = self._store.replay_messages(active.id)
         return active.id, prior, rolled_over
 
-    def _should_roll_over(
-        self, active: Conversation, estimate: int, now: datetime | None
-    ) -> bool:
+    def _should_roll_over(self, active: Conversation, now: datetime | None) -> bool:
         """Czy dołożenie tury ma domknąć bieżącą rozmowę i zacząć nowy wątek (rollover).
 
-        Dwa NIEZALEŻNE kryteria:
+        Dwa NIEZALEŻNE kryteria (Design 2 — na REALNYCH tokenach z ``usage``):
 
-        - **limit kontekstu** (ADR 0010): suma tokenów rozmowy + szacunek nowej tury
-          przekroczyłaby ``max_context_tokens`` — ogranicza (i potania) każdy kontekst.
-        - **bezczynność** (ADR 0012): od ostatniej aktywności (``updated_at``) minęło
-          więcej niż ``idle_timeout`` — dzięki temu osobne w czasie rozmowy stają się
-          osobnymi wątkami, a historia jednego rozmówcy nie zlewa się w jedną nić.
+        - **limit kontekstu**: rozmiar kontekstu OSTATNIEJ tury (``last_context_tokens`` =
+          wejście + cache + wyjście) osiągnął ``max_context_tokens`` — kolejna tura wyśle
+          ponownie ~tyle samo, więc czas na świeży (tańszy) wątek.
+        - **bezczynność** (ADR 0012): od ostatniej aktywności minęło więcej niż
+          ``idle_timeout`` — osobne w czasie rozmowy stają się osobnymi wątkami.
 
-        Bezczynność liczymy tylko dla rozmowy Z TURAMI (``token_estimate > 0``): świeżo
-        otwartego, pustego wątku nie ma po co rollować (brak historii do odcięcia) —
-        uniknięcie osieroconej, pustej rozmowy. Wyłączona, gdy ``idle_timeout`` albo
-        ``now`` to ``None`` (zachowanie sprzed ADR 0012).
+        Bezczynność liczymy tylko dla rozmowy Z TURAMI (``message_count > 0``, niezależnie
+        od usage): pustego, świeżo otwartego wątku nie ma po co rollować. Wyłączona, gdy
+        ``idle_timeout`` albo ``now`` to ``None``.
+
+        Kryterium limitu jest wyłączane (``size_rollover=False``), gdy działa kompaktowanie
+        (ADR 0014) — wtedy przepełniony kontekst streszczamy, a nie zaczynamy nowy wątek.
         """
-        if active.token_estimate + estimate > self._max:
+        if self._size_rollover and active.last_context_tokens >= self._max:
             return True
         return (
             self._idle_timeout is not None
             and now is not None
-            and active.token_estimate > 0
+            and active.message_count > 0
             and now - active.updated_at > self._idle_timeout
         )
 
@@ -132,11 +131,11 @@ class ConversationService:
         ``prepare_turn``), spójnie z resztą logiki i bez tworzenia pustego wątku, gdyby
         użytkownik nic już nie napisał.
 
-        Pustego, świeżo otwartego wątku (``token_estimate == 0``) nie zamyka — nie ma
+        Pustego, świeżo otwartego wątku (``message_count == 0``) nie zamyka — nie ma
         historii do odcięcia (jak przy bezczynności). Zwraca, czy faktycznie coś domknięto.
         """
         active = self._store.active_conversation(channel, external_id)
-        if active is None or active.token_estimate == 0:
+        if active is None or active.message_count == 0:
             return False
         self._store.close_conversation(active.id)
         return True
@@ -147,14 +146,11 @@ class ConversationService:
         Rozdzielenie od ``prepare_turn`` sprawia, że gdy runtime rzuci błąd, w bazie
         nie zostaje tura użytkownika bez odpowiedzi (licząca się do limitu kontekstu).
         Zastąpiona przez ``record_run`` w bezstratnej ścieżce z pełnym transkryptem
-        (ADR 0011); zostaje dla prostych, bezstanowych wywołań.
+        (ADR 0011); zostaje dla prostych, bezstanowych wywołań. Ścieżka TEXT-ONLY nie ma
+        realnego ``usage`` — wiersze idą bez rozliczenia (koszt 0, nie wpływają na rollover).
         """
-        self._store.append_message(
-            conversation_id, "user", user_text, estimate_tokens(user_text)
-        )
-        self._store.append_message(
-            conversation_id, "assistant", reply_text, estimate_tokens(reply_text)
-        )
+        self._store.append_message(conversation_id, "user", user_text)
+        self._store.append_message(conversation_id, "assistant", reply_text)
 
     def record_run(
         self,
@@ -166,21 +162,21 @@ class ConversationService:
         """Utrwal PEŁNĄ, bezstratną sekwencję tury (ADR 0011) — wołane PO odpowiedzi.
 
         ``entries`` to nowe, REPLAYOWALNE wpisy z ``AgentResult`` (wiadomość
-        użytkownika + tury assistant/tool). Bloki zapisujemy VERBATIM; ``token_estimate``
-        liczymy nad płaskim tekstem (thinking wykluczony — patrz ADR 0011). ``stop_reason``
+        użytkownika + tury assistant/tool). Bloki zapisujemy VERBATIM; REALNE ``usage``
+        (Design 2) niesie każda ``AssistantTurn`` i trafia na jej wiersz. ``stop_reason``
         (jeśli podany) trafia na OSTATNIĄ turę asystenta jako informacja.
         """
         last_assistant = _last_index(entries, AssistantTurn)
         for index, entry in enumerate(entries):
-            role, text, blocks, token_source = _row_of(entry)
+            role, text, blocks, usage = _row_of(entry)
             entry_stop = stop_reason if (index == last_assistant and stop_reason) else None
             self._store.append_message(
                 conversation_id,
                 role,
                 text,
-                estimate_tokens(token_source),
                 blocks=blocks,
                 stop_reason=entry_stop,
+                usage=usage,
             )
 
     def search(
@@ -206,33 +202,49 @@ class ConversationService:
         """Zwróć tury rozmowy w kolejności chronologicznej (delegacja do magazynu)."""
         return self._store.messages(conversation_id)
 
+    def replay_messages(self, conversation_id: str) -> list[ConversationMessage]:
+        """Zwróć tury do replayu (bez zarchiwizowanych, ADR 0014) — delegacja do magazynu.
+
+        Drzwi wołają po kompaktowaniu, by pobrać skróconą historię (bez tur zastąpionych
+        podsumowaniem), którą łączą z aktywnym podsumowaniem.
+        """
+        return self._store.replay_messages(conversation_id)
+
+    def active_summary(self, conversation_id: str) -> ConversationSummary | None:
+        """Zwróć aktywne podsumowanie wątku albo ``None`` (delegacja do magazynu, ADR 0014)."""
+        return self._store.active_summary(conversation_id)
+
 
 def _last_index(entries: Sequence[TranscriptEntry], cls: type) -> int:
     """Indeks OSTATNIEGO wpisu danego typu (albo -1)."""
     return max((i for i, e in enumerate(entries) if isinstance(e, cls)), default=-1)
 
 
-def _row_of(entry: TranscriptEntry) -> tuple[str, str, list[dict[str, Any]] | None, str]:
-    """Zmapuj wpis transkryptu na wiersz magazynu: (rola, tekst, bloki, źródło tokenów).
+def _row_of(
+    entry: TranscriptEntry,
+) -> tuple[str, str, list[dict[str, Any]] | None, TokenUsage | None]:
+    """Zmapuj wpis transkryptu na wiersz magazynu: (rola, tekst, bloki, usage).
 
     „Tekst" to płaska projekcja do FTS/podglądu (pusta dla tur narzędziowych — poza
     indeksem). „Bloki" trzymane VERBATIM: dla asystenta bloki dostawcy (z ``signature``),
-    dla narzędzia forma domenowa. „Źródło tokenów" to treść wliczana do limitu kontekstu
-    (thinking celowo pominięty — patrz ADR 0011).
+    dla narzędzia forma domenowa. ``usage`` (Design 2) tylko dla tury asystenta z realnym
+    użyciem (``> 0``); ``None`` dla user/tool i atrap/legacy (usage puste) → wiersz bez
+    rozliczenia.
     """
     if isinstance(entry, UserText):
-        return "user", entry.text, None, entry.text
+        return "user", entry.text, None, None
     if isinstance(entry, AssistantTurn):
         blocks = [dict(b) for b in entry.blocks] or None
-        return "assistant", entry.text, blocks, entry.text
+        usage = entry.usage if entry.usage.total_tokens > 0 else None
+        return "assistant", entry.text, blocks, usage
     if isinstance(entry, ToolResults):
         blocks = [
             {"call_id": o.call_id, "content": o.content, "is_error": o.is_error}
             for o in entry.outputs
         ]
-        return "tool", "", blocks, "".join(o.content for o in entry.outputs)
+        return "tool", "", blocks, None
     # RawTurn: odtworzona tura z pamięci — nie powinna trafić do zapisu nowej tury,
     # ale gdyby, zachowujemy jej bloki bezstratnie (pusta projekcja tekstu).
     if isinstance(entry, RawTurn):
-        return entry.role, "", [dict(b) for b in entry.blocks] or None, ""
+        return entry.role, "", [dict(b) for b in entry.blocks] or None, None
     raise TypeError(f"Nieobsługiwany wpis transkryptu: {type(entry).__name__}")

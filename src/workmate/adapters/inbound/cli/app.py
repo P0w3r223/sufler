@@ -23,16 +23,24 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from workmate.adapters.inbound.agent_wiring import build_agent_runtime
+from workmate.adapters.inbound.agent_wiring import (
+    build_agent_runtime,
+    build_compaction_service,
+)
 from workmate.adapters.inbound.responder import ConversationalResponder, InboundMessage
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.config import AgentSettings, ConversationSettings, Settings
 from workmate.core.application.conversations import ConversationService
+from workmate.core.domain.pricing import cost_usd
 from workmate.core.errors import LLMError, WorkMateError
 
 if TYPE_CHECKING:
     from workmate.core.agent.runtime import AgentRuntime
-    from workmate.core.domain.conversation import Conversation, ConversationMessage
+    from workmate.core.domain.conversation import (
+        Conversation,
+        ConversationMessage,
+        ConversationSummary,
+    )
 
 _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 _USAGE = 'Podaj zapytanie, np.: uv run workmate-agent "co ustalono z mpwik?"'
@@ -131,7 +139,7 @@ def main() -> None:
         _run_once(runtime, piped)
     else:
         # Terminal bez argumentu — interaktywny czat z pamięcią rozmowy.
-        _run_chat(runtime)
+        _run_chat(runtime, agent_settings)
 
 
 def _run_once(runtime: AgentRuntime, query: str) -> None:
@@ -143,26 +151,33 @@ def _run_once(runtime: AgentRuntime, query: str) -> None:
         raise SystemExit(f"Błąd komunikacji z Claude API: {exc}") from exc
 
 
-def _run_chat(runtime: AgentRuntime) -> None:
+def _run_chat(runtime: AgentRuntime, agent_settings: AgentSettings) -> None:
     """Interaktywny czat: pętla wiadomość↔odpowiedź nad jedną, trwałą rozmową.
 
     Pamięć (SQLite, ADR 0010/0011) wątkuje kanał ``cli`` — rozmowa jest CIĄGŁA także
-    między uruchomieniami (do rolloveru na limicie kontekstu). Każdą wiadomość obsługuje
-    ``ConversationalResponder`` (to samo źródło logiki pamięci co drzwi async), odpalany
-    per linia przez ``asyncio.run``. Oczekiwany błąd tury (API/repo) nie kładzie czatu:
-    łapiemy go, wypisujemy i czekamy na kolejną wiadomość.
+    między uruchomieniami (do rolloveru na limicie kontekstu albo kompaktowania, ADR 0014).
+    Każdą wiadomość obsługuje ``ConversationalResponder`` (to samo źródło logiki pamięci co
+    drzwi async), odpalany per linia przez ``asyncio.run``. Oczekiwany błąd tury (API/repo)
+    nie kładzie czatu: łapiemy go, wypisujemy i czekamy na kolejną wiadomość. ``agent_settings``
+    niesie model podsumowań kompaktowania (domyślnie = model agenta).
     """
     conv_settings = ConversationSettings.from_env()
     conv_settings.validate()
+    # Store współdzielony przez serwis rozmów i kompaktowanie (ADR 0014). Gdy kompaktowanie
+    # włączone, ZASTĘPUJE rollover-na-rozmiarze (``size_rollover=False``) — na kanale CLI
+    # rozmowa bywa długa, więc streszczamy zamiast startować nowy wątek.
+    store = SqliteConversationStore(conv_settings.db_path)
     conversations = ConversationService(
-        SqliteConversationStore(conv_settings.db_path),
+        store,
         max_context_tokens=conv_settings.max_context_tokens,
         idle_timeout=conv_settings.idle_timeout(),
+        size_rollover=not conv_settings.compaction_enabled,
     )
+    compaction = build_compaction_service(agent_settings, conv_settings, store)
     # CLI to drzwi ZAUFANE (lokalne) — pokazujemy podsumowanie rozumowania modelu
     # (display=summarized); async drzwi zostają czyste (show_thinking domyślnie False).
     responder = ConversationalResponder(
-        runtime, conversations, channel="cli", show_thinking=True
+        runtime, conversations, channel="cli", show_thinking=True, compaction=compaction
     )
 
     print(_BANNER)
@@ -227,17 +242,31 @@ def _print_history(*, channel: str | None = None) -> None:
 
     print(f"Historia rozmów — {len(conversations)} rozmów (baza: {conv_settings.db_path})\n")
     for conversation in conversations:
-        _print_conversation(conversation, service.messages(conversation.id))
+        _print_conversation(
+            conversation,
+            service.messages(conversation.id),
+            service.active_summary(conversation.id),
+        )
 
 
 def _print_conversation(
-    conversation: Conversation, messages: list[ConversationMessage]
+    conversation: Conversation,
+    messages: list[ConversationMessage],
+    summary: ConversationSummary | None = None,
 ) -> None:
+    # Realne tokeny + KOSZT (Design 2) z ``usage``; cennik wg dnia utworzenia rozmowy
+    # (rozmowa jest krótka — rollover ją bramkuje — więc jednodniowy cennik wystarcza).
+    cost = cost_usd(conversation.usage, on=conversation.created_at.date())
     print(
         f"━━ [{conversation.channel}] {conversation.external_id} · {conversation.status} · "
-        f"{conversation.updated_at:%Y-%m-%d %H:%M} UTC · ~{conversation.token_estimate} tok · "
-        f"id={conversation.id[:8]}"
+        f"{conversation.updated_at:%Y-%m-%d %H:%M} UTC · {conversation.usage.total_tokens} tok · "
+        f"${cost:.4f} · id={conversation.id[:8]}"
     )
+    # Podsumowanie kompaktowania (ADR 0014): zastępuje w kontekście tury oznaczone [zarch.].
+    if summary is not None:
+        archived = sum(1 for m in messages if m.archived)
+        body = _shorten(" ".join(summary.summary.split()), 800)
+        print(f"  ▤ podsumowanie ({archived} tur zarchiwizowanych): {body}")
     shown = messages
     if len(messages) > _MAX_TURNS_PER_CONV:
         omitted = len(messages) - _MAX_TURNS_PER_CONV
@@ -245,7 +274,8 @@ def _print_conversation(
         shown = messages[-_MAX_TURNS_PER_CONV:]
     for message in shown:
         label = _ROLE_LABEL.get(message.role, message.role)
-        print(f"  {label}: {_format_body(message)}")
+        mark = " [zarch.]" if message.archived else ""
+        print(f"  {label}{mark}: {_format_body(message)}")
     print()
 
 

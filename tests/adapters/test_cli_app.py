@@ -14,6 +14,7 @@ import pytest
 
 from workmate.adapters.inbound.cli import app
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.core.domain.pricing import TokenUsage
 
 
 def _fake_build(reply: str):
@@ -52,7 +53,7 @@ def test_interactive_tty_enters_chat(monkeypatch):
     monkeypatch.setattr(app, "build_agent_runtime", lambda *a, **k: sentinel)
     monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(isatty=lambda: True))
     entered: list[object] = []
-    monkeypatch.setattr(app, "_run_chat", entered.append)
+    monkeypatch.setattr(app, "_run_chat", lambda runtime, _settings: entered.append(runtime))
 
     app.main()
 
@@ -108,8 +109,10 @@ def test_history_renders_conversations_from_shared_db(monkeypatch, capsys, tmp_p
     db = tmp_path / "conv.db"
     store = SqliteConversationStore(db)
     conv = store.open_conversation("telegram", "chat-42")
-    store.append_message(conv.id, "user", "kiedy raport dla mpwik", 5)
-    store.append_message(conv.id, "assistant", "w piatek", 3)
+    store.append_message(conv.id, "user", "kiedy raport dla mpwik")
+    store.append_message(
+        conv.id, "assistant", "w piatek", usage=TokenUsage(input_tokens=5, output_tokens=3)
+    )
 
     monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(db))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -122,7 +125,8 @@ def test_history_renders_conversations_from_shared_db(monkeypatch, capsys, tmp_p
     assert "[telegram] chat-42" in out  # nagłówek rozmowy (kanał + external_id)
     assert "kiedy raport dla mpwik" in out  # tura użytkownika
     assert "w piatek" in out  # tura asystenta
-    assert "~8 tok" in out  # suma tokenów 5 + 3
+    assert "8 tok" in out  # REALNE tokeny 5 + 3 (Design 2)
+    assert "$0.0000" in out  # KOSZT (drobny — 4 miejsca po przecinku)
 
 
 # --- Formatowanie podglądu (czyste funkcje) ------------------------------------

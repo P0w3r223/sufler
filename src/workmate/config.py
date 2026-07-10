@@ -65,6 +65,16 @@ def _int_from_env(name: str, default: int) -> int:
         raise ValueError(f"{name} musi być liczbą całkowitą, jest: {value!r}") from exc
 
 
+def _float_from_env(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} musi być liczbą, jest: {value!r}") from exc
+
+
 def _list_from_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     value = os.environ.get(name)
     if value is None:
@@ -291,19 +301,31 @@ class ConversationSettings:
     """Konfiguracja pamięci rozmów (wątkowość + limit kontekstu, Faza 2 / ADR 0010, 0012).
 
     Baza SQLite leży poza ``data/`` (folder indeksowany przez rdzeń) i poza repo —
-    to dane operacyjne, nie baza wiedzy. Limit kontekstu jest modestny i wymusza
-    rollover do nowej rozmowy po jego osiągnięciu (ograniczony, tani kontekst per
-    wywołanie modelu). Nadpisywalny przez ``WORKMATE_CONV_MAX_TOKENS``.
+    to dane operacyjne, nie baza wiedzy. Limit kontekstu bramkuje REALNY rozmiar kontekstu
+    ostatniej tury (z pola ``usage`` odpowiedzi, Design 2) — po osiągnięciu rollover startuje
+    nowy, tańszy wątek. Domyślnie 128000 (przy 1M oknie): realne ``input_tokens`` (system +
+    schematy narzędzi + cała historia wysyłana ponownie co turę) są O RZĘDY większe niż dawna
+    estymata, więc próg musi być duży. Nadpisywalny przez ``WORKMATE_CONV_MAX_TOKENS``.
 
     ``idle_timeout_minutes`` (ADR 0012) domyka wątkowość w czasie: po tylu minutach
     bezczynności kolejna wiadomość zaczyna NOWY wątek (osobne rozmowy = osobne wątki,
-    zamiast jednej ciągnącej się nici). ``0`` wyłącza to kryterium (zostaje sam limit
-    kontekstu). Nadpisywalny przez ``WORKMATE_CONV_IDLE_MINUTES``.
+    zamiast jednej ciągnącej się nici). ``0`` wyłącza to kryterium. Nadpisywalny przez
+    ``WORKMATE_CONV_IDLE_MINUTES``.
+
+    Kompaktowanie (ADR 0014) ZASTĘPUJE rollover-na-rozmiarze, gdy włączone: przy
+    ``last_input_tokens`` > ``compaction_threshold_tokens()`` (domyślnie 70% okna modelu)
+    stare tury zastępujemy podsumowaniem (osobne wywołanie modelu ``compaction_model``,
+    domyślnie = model agenta), zachowując ostatnie ``compaction_keep_turns`` verbatim.
     """
 
     db_path: Path
-    max_context_tokens: int = 6000
+    max_context_tokens: int = 128000
     idle_timeout_minutes: int = 30
+    compaction_enabled: bool = True
+    context_window_tokens: int = 1_000_000  # okno Sonnet 5
+    compaction_threshold_fraction: float = 0.70
+    compaction_keep_turns: int = 4
+    compaction_model: str = ""  # "" → użyj modelu agenta (Sonnet 5)
 
     @classmethod
     def from_env(cls) -> ConversationSettings:
@@ -311,12 +333,19 @@ class ConversationSettings:
             db_path=_path_from_env(
                 "WORKMATE_CONVERSATIONS_DB", _DEFAULT_CONVERSATIONS_DB
             ),
-            max_context_tokens=_int_from_env("WORKMATE_CONV_MAX_TOKENS", 6000),
+            max_context_tokens=_int_from_env("WORKMATE_CONV_MAX_TOKENS", 128000),
             idle_timeout_minutes=_int_from_env("WORKMATE_CONV_IDLE_MINUTES", 30),
+            compaction_enabled=_bool_from_env("WORKMATE_COMPACTION_ENABLED", default=True),
+            context_window_tokens=_int_from_env("WORKMATE_CONTEXT_WINDOW_TOKENS", 1_000_000),
+            compaction_threshold_fraction=_float_from_env(
+                "WORKMATE_COMPACTION_THRESHOLD_FRACTION", 0.70
+            ),
+            compaction_keep_turns=_int_from_env("WORKMATE_COMPACTION_KEEP_TURNS", 4),
+            compaction_model=os.environ.get("WORKMATE_COMPACTION_MODEL", ""),
         )
 
     def validate(self) -> None:
-        """Twardy błąd startu, gdy limit kontekstu albo próg bezczynności jest bezsensowny."""
+        """Twardy błąd startu, gdy limit, próg bezczynności lub kompaktowanie są bez sensu."""
         if self.max_context_tokens < 1:
             raise ValueError(
                 "WORKMATE_CONV_MAX_TOKENS musi być >= 1, jest: "
@@ -328,6 +357,21 @@ class ConversationSettings:
                 "WORKMATE_CONV_IDLE_MINUTES musi być >= 0 (0 wyłącza), jest: "
                 f"{self.idle_timeout_minutes}."
             )
+        if self.context_window_tokens < 1:
+            raise ValueError(
+                "WORKMATE_CONTEXT_WINDOW_TOKENS musi być >= 1, jest: "
+                f"{self.context_window_tokens}."
+            )
+        if not 0.0 < self.compaction_threshold_fraction <= 1.0:
+            raise ValueError(
+                "WORKMATE_COMPACTION_THRESHOLD_FRACTION musi być w (0, 1], jest: "
+                f"{self.compaction_threshold_fraction}."
+            )
+        if self.compaction_keep_turns < 1:
+            raise ValueError(
+                "WORKMATE_COMPACTION_KEEP_TURNS musi być >= 1, jest: "
+                f"{self.compaction_keep_turns}."
+            )
 
     def idle_timeout(self) -> timedelta | None:
         """Próg bezczynności jako ``timedelta`` do wstrzyknięcia w ``ConversationService``.
@@ -336,3 +380,7 @@ class ConversationSettings:
         drzwi, żeby wiring nie powtarzał warunku ``> 0``.
         """
         return timedelta(minutes=self.idle_timeout_minutes) if self.idle_timeout_minutes else None
+
+    def compaction_threshold_tokens(self) -> int:
+        """Próg triggera kompaktowania w tokenach = ułamek okna kontekstu modelu (ADR 0014)."""
+        return int(self.context_window_tokens * self.compaction_threshold_fraction)

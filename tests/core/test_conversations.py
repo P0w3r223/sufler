@@ -1,19 +1,22 @@
-"""Testy serwisu rozmów (``ConversationService``, ADR 0010) — wątek, historia, rollover.
+"""Testy serwisu rozmów (``ConversationService``, ADR 0010/0012, Design 2).
 
-Logika bez I/O: atrapa ``ConversationStore`` w pamięci. Sprawdzamy trzy rzeczy:
-otwieranie wątku, zwracanie historii SPRZED bieżącej wiadomości oraz rollover do
-nowej rozmowy po przekroczeniu limitu kontekstu.
+Logika bez I/O: atrapa ``ConversationStore`` w pamięci. Rozliczenie tokenów jest REALNE
+(z ``usage``), a rollover bramkuje realny kontekst OSTATNIEJ tury (``last_context_tokens``).
+Atrapa liczy agregaty jak prawdziwy magazyn: sumę usage, kontekst ostatniej tury asystenta
+oraz liczbę tur (sygnał „niepusty" dla bramek idle/``/nowa``).
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from workmate.core.application.conversations import ConversationService, estimate_tokens
+from workmate.core.application.conversations import ConversationService
 from workmate.core.domain.conversation import (
     Conversation,
     ConversationMessage,
     ConversationSearchHit,
+    ConversationSummary,
 )
+from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
     ToolCall,
@@ -31,8 +34,39 @@ class _FakeStore:
     def __init__(self) -> None:
         self.conversations: dict[str, Conversation] = {}
         self.msgs: dict[str, list[ConversationMessage]] = {}
+        self.summaries: dict[str, list[ConversationSummary]] = {}
         self._conv_seq = 0
         self._msg_seq = 0
+        self._sum_seq = 0
+
+    def _enrich(self, conv: Conversation) -> Conversation:
+        """Dolicz realne agregaty (jak prawdziwy magazyn): usage, kontekst ost. tury, count."""
+        msgs = self.msgs[conv.id]
+        usage = TokenUsage()
+        for m in msgs:
+            if m.usage is not None:
+                usage = usage + m.usage
+        last_ctx = 0
+        last_in = 0
+        for m in reversed(msgs):
+            if m.role == "assistant" and m.usage is not None:
+                # kontekst ost. tury = input + cache + output (jak realny _last_context_tokens);
+                # wejście ost. tury = input + cache, BEZ output (jak _last_input_tokens, ADR 0014).
+                last_ctx = m.usage.total_tokens
+                last_in = (
+                    m.usage.input_tokens
+                    + m.usage.cache_read_input_tokens
+                    + m.usage.cache_creation_input_tokens
+                )
+                break
+        return conv.model_copy(
+            update={
+                "usage": usage,
+                "last_context_tokens": last_ctx,
+                "last_input_tokens": last_in,
+                "message_count": len(msgs),
+            }
+        )
 
     def active_conversation(
         self, channel: str, external_id: str
@@ -44,11 +78,7 @@ class _FakeStore:
             and c.external_id == external_id
             and c.status == "active"
         ]
-        if not actives:
-            return None
-        conv = actives[-1]
-        total = sum(m.token_estimate for m in self.msgs[conv.id])
-        return conv.model_copy(update={"token_estimate": total})
+        return self._enrich(actives[-1]) if actives else None
 
     def open_conversation(self, channel: str, external_id: str) -> Conversation:
         self._conv_seq += 1
@@ -58,12 +88,12 @@ class _FakeStore:
             channel=channel,
             external_id=external_id,
             status="active",
-            token_estimate=0,
             created_at=_TS,
             updated_at=_TS,
         )
         self.conversations[cid] = conv
         self.msgs[cid] = []
+        self.summaries[cid] = []
         return conv
 
     def close_conversation(self, conversation_id: str) -> None:
@@ -77,10 +107,10 @@ class _FakeStore:
         conversation_id: str,
         role: str,
         text: str,
-        token_estimate: int,
         *,
         blocks: list[dict] | None = None,
         stop_reason: str | None = None,
+        usage: TokenUsage | None = None,
     ) -> ConversationMessage:
         self._msg_seq += 1
         msg = ConversationMessage(
@@ -88,16 +118,54 @@ class _FakeStore:
             conversation_id=conversation_id,
             role=role,
             text=text,
-            token_estimate=token_estimate,
             created_at=_TS,
             blocks=blocks,
             stop_reason=stop_reason,
+            usage=usage,
         )
         self.msgs[conversation_id].append(msg)
         return msg
 
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
         return list(self.msgs[conversation_id])
+
+    def get(self, conversation_id: str) -> Conversation | None:
+        conv = self.conversations.get(conversation_id)
+        return self._enrich(conv) if conv is not None else None
+
+    def replay_messages(self, conversation_id: str) -> list[ConversationMessage]:
+        return [m for m in self.msgs[conversation_id] if not m.archived]
+
+    def archive_through(self, conversation_id: str, message_id: int) -> None:
+        for m in self.msgs[conversation_id]:
+            if m.id <= message_id:
+                m.archived = True
+
+    def save_summary(
+        self,
+        conversation_id: str,
+        summary: str,
+        covers_through_message_id: int,
+        *,
+        usage: TokenUsage | None = None,
+    ) -> ConversationSummary:
+        # Zastąp poprzednie aktywne (jak w prawdziwym magazynie — aktywne co najwyżej jedno).
+        self.summaries[conversation_id] = []
+        self._sum_seq += 1
+        rec = ConversationSummary(
+            id=self._sum_seq,
+            conversation_id=conversation_id,
+            summary=summary,
+            covers_through_message_id=covers_through_message_id,
+            created_at=_TS,
+            usage=usage,
+        )
+        self.summaries[conversation_id].append(rec)
+        return rec
+
+    def active_summary(self, conversation_id: str) -> ConversationSummary | None:
+        recs = self.summaries.get(conversation_id, [])
+        return recs[-1] if recs else None
 
     def list_conversations(
         self, *, channel: str | None = None, limit: int = 50
@@ -108,13 +176,7 @@ class _FakeStore:
             for c in reversed(self.conversations.values())
             if channel is None or c.channel == channel
         ][:limit]
-        # Suma tokenów per rozmowa (jak w adapterze) — z utrwalonych tur.
-        return [
-            c.model_copy(
-                update={"token_estimate": sum(m.token_estimate for m in self.msgs[c.id])}
-            )
-            for c in picked
-        ]
+        return [self._enrich(c) for c in picked]
 
     def search(
         self,
@@ -127,9 +189,9 @@ class _FakeStore:
         return []
 
 
-def test_estimate_tokens_is_deterministic_and_positive():
-    assert estimate_tokens("") == 1
-    assert estimate_tokens("12345678") == 2  # 8 // 4
+def _assistant_turn(text: str, usage: TokenUsage) -> AssistantTurn:
+    """Tura asystenta niosąca realne ``usage`` (jak z runtime po odpowiedzi API)."""
+    return AssistantTurn(text, (), ({"type": "text", "text": text},), usage=usage)
 
 
 def test_first_message_opens_empty_conversation_and_record_turn_persists():
@@ -166,22 +228,41 @@ def test_history_returns_prior_turns_not_current_message():
     ]
 
 
-def test_rollover_starts_new_conversation_on_limit():
+def test_rollover_on_real_context_limit():
+    """Design 2: rollover, gdy REALNY kontekst ostatniej tury (usage) osiągnął próg."""
     store = _FakeStore()
-    service = ConversationService(store, max_context_tokens=3)
+    service = ConversationService(store, max_context_tokens=100)
 
-    cid1, _, _ = service.prepare_turn("telegram", "chat1", "12345678")  # est 2
-    service.record_turn(cid1, "12345678", "87654321")  # user est2 + assistant est2 → suma 4
-    cid2, history, rolled_over = service.prepare_turn("telegram", "chat1", "1234")
+    cid1, _, _ = service.prepare_turn("telegram", "chat1", "q")
+    # Tura z realnym usage: kontekst = input(200)+output(10) = 210 ≥ próg 100.
+    service.record_run(
+        cid1,
+        (UserText("q"), _assistant_turn("a", TokenUsage(input_tokens=200, output_tokens=10))),
+    )
+    cid2, history, rolled_over = service.prepare_turn("telegram", "chat1", "q2")
 
     assert rolled_over is True
     assert cid2 != cid1
     assert history == []  # świeży kontekst nowej rozmowy
-    # Stara rozmowa domknięta (nadal w magazynie, wyszukiwalna).
     assert store.conversations[cid1].status == "closed"
 
 
-# --- Rollover po bezczynności (ADR 0012) ---------------------------------------
+def test_no_rollover_below_real_context_limit():
+    store = _FakeStore()
+    service = ConversationService(store, max_context_tokens=1000)
+
+    cid1, _, _ = service.prepare_turn("telegram", "chat1", "q")
+    service.record_run(
+        cid1,
+        (UserText("q"), _assistant_turn("a", TokenUsage(input_tokens=50, output_tokens=5))),
+    )
+    cid2, _, rolled_over = service.prepare_turn("telegram", "chat1", "q2")
+
+    assert rolled_over is False  # kontekst 55 < próg 1000
+    assert cid2 == cid1
+
+
+# --- Rollover po bezczynności (ADR 0012) — na message_count, niezależnie od usage -----
 # _FakeStore.open_conversation nadaje updated_at=_TS i append go nie zmienia, więc
 # „bezczynność" symulujemy przez ``now`` odległe od _TS — deterministycznie, bez zegara.
 
@@ -193,7 +274,7 @@ def test_rollover_starts_new_thread_after_idle_gap():
     )
 
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "czesc", now=_TS)
-    service.record_turn(cid1, "czesc", "hej")  # token_estimate > 0 (wątek niepusty)
+    service.record_turn(cid1, "czesc", "hej")  # message_count > 0 (wątek niepusty)
     later = _TS + timedelta(minutes=31)  # 31 min bezczynności > próg 30 min
     cid2, history, rolled_over = service.prepare_turn(
         "telegram", "chat1", "wracam", now=later
@@ -244,7 +325,7 @@ def test_empty_thread_not_rolled_over_on_idle():
         store, max_context_tokens=1000, idle_timeout=timedelta(minutes=30)
     )
 
-    # Pierwsza tura otwiera PUSTY wątek (prepare_turn nie utrwala) — brak tur do odcięcia.
+    # Pierwsza tura otwiera PUSTY wątek (message_count=0) — brak tur do odcięcia.
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "czesc", now=_TS)
     later = _TS + timedelta(minutes=31)
     cid2, _, rolled_over = service.prepare_turn(
@@ -262,7 +343,7 @@ def test_start_new_thread_closes_active_nonempty_and_next_turn_opens_fresh():
     store = _FakeStore()
     service = ConversationService(store, max_context_tokens=1000)
     cid, _, _ = service.prepare_turn("telegram", "chat1", "czesc")
-    service.record_turn(cid, "czesc", "hej")  # wątek niepusty
+    service.record_turn(cid, "czesc", "hej")  # wątek niepusty (message_count > 0)
 
     started = service.start_new_thread("telegram", "chat1")
 
@@ -294,18 +375,20 @@ def test_start_new_thread_is_noop_without_active_thread():
 # --- Podgląd historii: delegacje list_conversations / messages -----------------
 
 
-def test_list_conversations_delegates_with_channel_filter_and_token_sum():
+def test_list_conversations_delegates_with_channel_filter_and_real_usage_sum():
     store = _FakeStore()
     service = ConversationService(store, max_context_tokens=1000)
 
     tg = store.open_conversation("telegram", "chat1")
     store.open_conversation("teams", "conv1")
-    store.append_message(tg.id, "user", "12345678", 2)  # 8 znaków → est 2
+    store.append_message(
+        tg.id, "assistant", "odp", usage=TokenUsage(input_tokens=5, output_tokens=7)
+    )
 
     result = service.list_conversations(channel="telegram")
 
     assert [c.id for c in result] == [tg.id]  # filtr kanału przekazany do magazynu
-    assert result[0].token_estimate == 2  # suma tur rozmowy
+    assert result[0].usage.total_tokens == 12  # realna suma usage rozmowy (5 + 7)
 
 
 def test_list_conversations_newest_first():
@@ -324,8 +407,8 @@ def test_messages_delegates_to_store_in_order():
     service = ConversationService(store, max_context_tokens=1000)
 
     conv = store.open_conversation("cli", "a")
-    store.append_message(conv.id, "user", "pytanie", 2)
-    store.append_message(conv.id, "assistant", "odpowiedz", 3)
+    store.append_message(conv.id, "user", "pytanie")
+    store.append_message(conv.id, "assistant", "odpowiedz")
 
     got = service.messages(conv.id)
     assert [(m.role, m.text) for m in got] == [
@@ -334,7 +417,7 @@ def test_messages_delegates_to_store_in_order():
     ]
 
 
-# --- record_run: bezstratne mapowanie wpisów na wiersze (ADR 0011) -------------
+# --- record_run: bezstratne mapowanie wpisów na wiersze (ADR 0011 + usage) ------
 
 
 def _record(entries, *, stop_reason=""):
@@ -385,14 +468,24 @@ def test_record_run_attaches_stop_reason_only_to_last_assistant():
     assert rows[3].stop_reason == "max_tokens"
 
 
-def test_record_run_token_estimate_ignores_thinking_content():
-    """``token_estimate`` liczony po płaskim tekście — długi thinking go NIE zawyża."""
-    long_thinking = {"type": "thinking", "thinking": "x" * 4000, "signature": "S"}
-    short_text = {"type": "text", "text": "ok"}
-    entries = (AssistantTurn("ok", (), (long_thinking, short_text)),)
+def test_record_run_stores_real_usage_only_on_assistant_row():
+    """Design 2: realne ``usage`` trafia na wiersz asystenta; user/tool → None."""
+    usage = TokenUsage(input_tokens=100, output_tokens=20, cache_read_input_tokens=5)
+    entries = (
+        UserText("q"),
+        AssistantTurn("ok", (), ({"type": "text", "text": "ok"},), usage=usage),
+    )
 
     rows = _record(entries)
 
-    # Estymata z tekstu "ok" (2 znaki → 1 token), nie z 4000 znaków thinking.
-    assert rows[0].token_estimate == estimate_tokens("ok")
-    assert rows[0].token_estimate == 1
+    assert rows[0].usage is None  # user — bez rozliczenia
+    assert rows[1].usage == usage  # assistant — realne usage zapisane
+
+
+def test_record_run_drops_empty_usage_to_none():
+    """Tura asystenta bez realnego usage (atrapa/legacy) → wiersz bez rozliczenia (None)."""
+    entries = (AssistantTurn("ok", (), ({"type": "text", "text": "ok"},)),)  # usage domyślne 0
+
+    rows = _record(entries)
+
+    assert rows[0].usage is None
