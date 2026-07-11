@@ -1,0 +1,85 @@
+"""Logowanie do Microsoft Graph przez device-code flow (delegowane, jako użytkownik).
+
+- Pierwsze uruchomienie: logujesz się RAZ w przeglądarce (kod + microsoft.com/devicelogin).
+- Kolejne: ``acquire_token_silent`` odświeża token po cichu z refresh tokenu z cache.
+- Cache tokenu jest SEKRETEM — trzymany poza repo i ``data/`` (patrz ``TeamsGraphSettings``).
+
+Import ``msal`` jest LENIWY (w ``build_token_provider``), więc sam import modułu i testy
+wyższych warstw nie wymagają extra ``teams-graph``.
+"""
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import os
+import sys
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import msal  # type: ignore[import-untyped]  # msal nie dostarcza py.typed/stubów
+
+    from workmate.config import TeamsGraphSettings
+
+logger = logging.getLogger(__name__)
+
+
+def build_token_provider(settings: TeamsGraphSettings) -> Callable[[], str]:
+    """Zbuduj dostawcę tokenu: cichy refresh z cache, device-code przy pierwszym użyciu.
+
+    Zwraca synchroniczną funkcję ``() -> str`` (MSAL jest synchroniczny) — warstwa Graph
+    woła ją w puli wątków, żeby nie blokować pętli async.
+    """
+    import msal
+
+    cache_path = settings.token_cache_path
+    scopes = list(settings.scopes)
+
+    def _load_cache() -> msal.SerializableTokenCache:
+        cache = msal.SerializableTokenCache()
+        if cache_path.exists():
+            cache.deserialize(cache_path.read_text())
+        return cache
+
+    def _save_cache(cache: msal.SerializableTokenCache) -> None:
+        if not cache.has_state_changed:
+            return
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(cache.serialize())
+        # Ogranicz dostęp do pliku (Linux/macOS; na Windows ignorowane).
+        with contextlib.suppress(OSError):
+            os.chmod(cache_path, 0o600)
+
+    def get_token() -> str:
+        cache = _load_cache()
+        app = msal.PublicClientApplication(
+            settings.client_id, authority=settings.authority, token_cache=cache
+        )
+
+        result: dict[str, Any] | None = None
+        accounts = app.get_accounts()
+        if accounts:
+            # Znane konto → MSAL odświeży token po cichu bez pytania.
+            result = app.acquire_token_silent(scopes, account=accounts[0])
+
+        if not result:
+            flow = app.initiate_device_flow(scopes=scopes)
+            if "user_code" not in flow:
+                raise RuntimeError(
+                    "Nie udało się rozpocząć device flow: "
+                    + json.dumps(flow, ensure_ascii=False)
+                )
+            print(flow["message"])  # „wejdź na adres i wpisz kod"
+            sys.stdout.flush()
+            result = app.acquire_token_by_device_flow(flow)  # blokuje aż do zalogowania
+
+        _save_cache(cache)
+
+        if not result or "access_token" not in result:
+            error = (result or {}).get("error")
+            description = (result or {}).get("error_description")
+            raise RuntimeError(f"Logowanie nie powiodło się: {error} — {description}")
+        return str(result["access_token"])
+
+    return get_token

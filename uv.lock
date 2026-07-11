@@ -2369,6 +2369,10 @@ teams = [
     { name = "microsoft-agents-hosting-aiohttp" },
     { name = "microsoft-agents-hosting-core" },
 ]
+teams-graph = [
+    { name = "httpx" },
+    { name = "msal" },
+]
 telegram = [
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
@@ -2385,18 +2389,20 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.40" },
+    { name = "httpx", marker = "extra == 'teams-graph'", specifier = ">=0.28.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
     { name = "microsoft-agents-activity", marker = "extra == 'teams'", specifier = ">=1.1.0" },
     { name = "microsoft-agents-authentication-msal", marker = "extra == 'teams'", specifier = ">=1.1.0" },
     { name = "microsoft-agents-hosting-aiohttp", marker = "extra == 'teams'", specifier = ">=1.1.0" },
     { name = "microsoft-agents-hosting-core", marker = "extra == 'teams'", specifier = ">=1.1.0" },
+    { name = "msal", marker = "extra == 'teams-graph'", specifier = ">=1.37.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "python-dotenv", marker = "extra == 'telegram'", specifier = ">=1.0" },
     { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=21" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
-provides-extras = ["teams", "agent", "telegram"]
+provides-extras = ["teams", "agent", "telegram", "teams-graph"]
 
 [package.metadata.requires-dev]
 dev = [
