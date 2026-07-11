@@ -60,6 +60,31 @@ def test_to_messages_sends_raw_turn_blocks_verbatim_and_in_order():
     assert [b["type"] for b in messages[0]["content"]] == ["thinking", "text", "tool_use"]
 
 
+def test_to_messages_strips_output_only_none_fields_from_replayed_blocks():
+    """REGRESJA (wielotura): bloki z pamięci niosą pola WYJŚCIOWE z ``model_dump`` — np.
+
+    ``parsed_output=None`` na bloku ``text`` — których wejściowy schemat API nie przyjmuje
+    (400 „Extra inputs are not permitted"), co psuło każdą turę 2+. Odtwarzając, usuwamy
+    pola ``None``; pola wymagane (``text``; ``thinking`` + ``signature``) zostają nietknięte.
+    """
+    blocks = (
+        {"type": "thinking", "thinking": "", "signature": "SIG==", "cache_control": None},
+        {"type": "text", "text": "cześć", "parsed_output": None, "citations": None},
+    )
+
+    messages = _to_messages([RawTurn("assistant", blocks)])
+
+    assert messages == [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "", "signature": "SIG=="},
+                {"type": "text", "text": "cześć"},
+            ],
+        }
+    ]
+
+
 def test_to_messages_uses_blocks_when_assistant_turn_carries_them():
     blocks = (
         {"type": "thinking", "thinking": "", "signature": "ABC"},
