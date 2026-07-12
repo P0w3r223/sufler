@@ -19,6 +19,7 @@ from workmate.core.domain.conversation import (
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
+    Attachment,
     ToolCall,
     ToolOutput,
     ToolResults,
@@ -489,3 +490,46 @@ def test_record_run_drops_empty_usage_to_none():
     rows = _record(entries)
 
     assert rows[0].usage is None
+
+
+# --- record_run: załączniki użytkownika w blocks, base64 poza projekcją FTS (ADR 0016) ---
+
+
+def test_record_run_serializes_user_attachments_into_blocks_not_text():
+    """UserText z załącznikami: caption idzie do ``text`` (FTS/podgląd), a NEUTRALNA forma
+    załączników do ``blocks``. base64 NIGDY nie wchodzi do projekcji tekstu."""
+    img = Attachment("image", "image/png", "zrzut.png", data_base64="QUJDUE5H")
+    entries = (UserText("opis obrazu", (img,)),)
+
+    rows = _record(entries)
+
+    assert rows[0].role == "user"
+    assert rows[0].text == "opis obrazu"  # tylko caption w projekcji tekstu
+    assert "QUJDUE5H" not in rows[0].text  # base64 poza FTS
+    assert rows[0].blocks == [
+        {
+            "kind": "image",
+            "media_type": "image/png",
+            "name": "zrzut.png",
+            "data_base64": "QUJDUE5H",
+            "text": "",
+        }
+    ]
+
+
+def test_record_run_user_without_attachments_has_none_blocks():
+    """Brak załączników → ``blocks`` None (wiersz text-only, jak dotąd)."""
+    rows = _record((UserText("czysty tekst"),))
+
+    assert rows[0].blocks is None
+    assert rows[0].text == "czysty tekst"
+
+
+def test_record_run_attachment_only_message_keeps_blocks_with_empty_text():
+    """Wiadomość z SAMYM załącznikiem (pusty caption) — blocks obecne, text pusty."""
+    pdf = Attachment("document", "application/pdf", "umowa.pdf", data_base64="UERG")
+    rows = _record((UserText("", (pdf,)),))
+
+    assert rows[0].text == ""
+    assert rows[0].blocks is not None
+    assert rows[0].blocks[0]["kind"] == "document"

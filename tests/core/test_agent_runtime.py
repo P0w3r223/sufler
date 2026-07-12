@@ -11,6 +11,7 @@ from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
+    Attachment,
     LLMResponse,
     ToolCall,
     ToolResults,
@@ -207,6 +208,34 @@ def test_run_turn_accumulates_real_usage_across_tool_loop():
     assistants = [e for e in result.entries if isinstance(e, AssistantTurn)]
     assert assistants[0].usage == TokenUsage(input_tokens=100, output_tokens=10)
     assert assistants[1].usage == TokenUsage(input_tokens=150, output_tokens=20)
+
+
+def test_run_turn_wraps_attachments_into_user_text_in_transcript_and_entries():
+    """``attachments`` trafiają do ``UserText(query, attachments)`` — w transkrypcie do
+    modelu ORAZ w zapisanych ``entries`` (bezstratna pamięć multimodalna, ADR 0016)."""
+    att = Attachment("image", "image/png", "z.png", data_base64="QUJD")
+    llm = _ScriptedLLM(
+        [LLMResponse(text="widzę obraz", blocks=({"type": "text", "text": "widzę obraz"},),
+                     stop_reason="end_turn")]
+    )
+    runtime = AgentRuntime(llm, [])
+
+    result = runtime.run_turn("co tu jest?", attachments=(att,))
+
+    # Wiadomość użytkownika w transkrypcie wysłanym do modelu niesie załącznik.
+    user_turn = llm.transcripts[0][-1]
+    assert user_turn == UserText("co tu jest?", (att,))
+    # ...i ta sama forma trafia do entries do zapisu (pierwszy wpis).
+    assert result.entries[0] == UserText("co tu jest?", (att,))
+
+
+def test_run_defaults_to_no_attachments():
+    """``run``/``run_turn`` bez ``attachments`` → pusta krotka (zgodność wsteczna)."""
+    llm = _ScriptedLLM([LLMResponse(text="ok", stop_reason="end_turn")])
+
+    result = AgentRuntime(llm, []).run_turn("pytanie")
+
+    assert result.entries[0] == UserText("pytanie", ())
 
 
 def test_run_turn_persists_paired_tool_cycle_entries():

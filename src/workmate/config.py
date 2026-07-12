@@ -384,3 +384,159 @@ class ConversationSettings:
     def compaction_threshold_tokens(self) -> int:
         """Próg triggera kompaktowania w tokenach = ułamek okna kontekstu modelu (ADR 0014)."""
         return int(self.context_window_tokens * self.compaction_threshold_fraction)
+
+
+# Domyślne ścieżki drzwi Teams w trybie delegowanym (ADR 0015): POZA repo i data/.
+# Cache tokenu MSAL to SEKRET; plik stanu (watermark wątków) — dane operacyjne, nie sekret.
+_DEFAULT_TEAMS_GRAPH_CACHE = Path.home() / ".workmate" / "teams_token_cache.bin"
+_DEFAULT_TEAMS_GRAPH_STATE = Path.home() / ".workmate" / "teams_graph_state.json"
+# Zakresy delegowane, których potrzebuje poller kanału (wymagają zgody admina). NIE wpisuj
+# offline_access/openid/profile — MSAL dokłada je sam (inaczej błąd "reserved scope").
+_DEFAULT_TEAMS_GRAPH_SCOPES = (
+    "ChannelMessage.Read.All",
+    "ChannelMessage.Send",
+    "Team.ReadBasic.All",
+    "Channel.ReadBasic.All",
+    "User.Read",
+    # Pobieranie plików-załączników (PDF/Word/obrazy) leżących w SharePoint (ADR 0016).
+    # Obrazy wklejane inline (hostedContents) NIE wymagają tych zakresów.
+    "Files.Read.All",
+    "Sites.Read.All",
+)
+# Sufit rozmiaru (RAW) załącznika. Request API to max 32 MB, ale base64 puchnie ~1.33×,
+# więc 24 MB surowych ≈ 32 MB zakodowane — twardy limit, by pojedynczy blok nie przekroczył
+# żądania. Domyślne wartości (8/20 MB) zostawiają zapas na historię.
+_MAX_ATTACHMENT_MB_CEILING = 24
+# Górny cap liczby załączników na wiadomość (chroni przed absurdalną wartością operatora).
+_MAX_ATTACHMENTS_PER_MESSAGE_CEILING = 20
+
+
+def _parse_watch_pairs(value: str) -> tuple[tuple[str, str], ...]:
+    """Sparsuj ``team:channel,team:channel`` na krotki par (pomija niepełne wpisy)."""
+    pairs: list[tuple[str, str]] = []
+    for part in value.split(","):
+        team, _, channel = part.strip().partition(":")
+        if team.strip() and channel.strip():
+            pairs.append((team.strip(), channel.strip()))
+    return tuple(pairs)
+
+
+@dataclass(frozen=True)
+class TeamsGraphSettings:
+    """Konfiguracja drzwi Teams w trybie DELEGOWANYM (ADR 0015) — polling kanału przez Graph.
+
+    Bot działa jako ZALOGOWANY UŻYTKOWNIK (device-code MSAL), bez publicznego endpointu i
+    bez rejestracji bota. ``client_id``/``tenant_id`` (ze strony aplikacji w Entra) są
+    wymagane — ``validate`` odrzuca brak (koniec z placeholderem w kodzie). Sam obiekt nie
+    trzyma sekretu (sekretem jest CACHE tokenu na dysku), więc bez pola ``repr=False``.
+
+    ``watch`` (pary ``team_id:channel_id``) wyznacza nasłuchiwane kanały; pusty → tryb
+    odkrywania (wypisz zespoły/kanały i zakończ). ``top_roots``/``top_replies`` ograniczają
+    koszt API na rundę; wątek bez aktywności dłużej niż ``active_idle_hours`` przestaje być
+    odpytywany o odpowiedzi (eksmisja).
+    """
+
+    client_id: str = ""
+    tenant_id: str = ""
+    scopes: tuple[str, ...] = _DEFAULT_TEAMS_GRAPH_SCOPES
+    token_cache_path: Path = _DEFAULT_TEAMS_GRAPH_CACHE
+    state_path: Path = _DEFAULT_TEAMS_GRAPH_STATE
+    watch: tuple[tuple[str, str], ...] = ()
+    poll_interval_s: int = 10
+    top_roots: int = 20
+    top_replies: int = 50
+    active_idle_hours: int = 24
+    # Limity załączników (ADR 0016): rozmiar pliku, liczba i ŁĄCZNY budżet na wiadomość.
+    max_attachment_mb: int = 8
+    max_attachments_per_message: int = 5
+    max_total_attachment_mb: int = 20  # sumaryczny budżet — chroni sufit 32 MB żądania API
+
+    @property
+    def authority(self) -> str:
+        """URL authority MSAL dla aplikacji single-tenant (z ``tenant_id``)."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}"
+
+    @classmethod
+    def from_env(cls) -> TeamsGraphSettings:
+        return cls(
+            client_id=os.environ.get("WORKMATE_TEAMS_GRAPH_CLIENT_ID", ""),
+            tenant_id=os.environ.get("WORKMATE_TEAMS_GRAPH_TENANT_ID", ""),
+            scopes=_list_from_env(
+                "WORKMATE_TEAMS_GRAPH_SCOPES", _DEFAULT_TEAMS_GRAPH_SCOPES
+            ),
+            token_cache_path=_path_from_env(
+                "WORKMATE_TEAMS_GRAPH_TOKEN_CACHE", _DEFAULT_TEAMS_GRAPH_CACHE
+            ),
+            state_path=_path_from_env(
+                "WORKMATE_TEAMS_GRAPH_STATE", _DEFAULT_TEAMS_GRAPH_STATE
+            ),
+            watch=_parse_watch_pairs(os.environ.get("WORKMATE_TEAMS_GRAPH_WATCH", "")),
+            poll_interval_s=_int_from_env("WORKMATE_TEAMS_GRAPH_POLL_INTERVAL", 10),
+            top_roots=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_ROOTS", 20),
+            top_replies=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_REPLIES", 50),
+            active_idle_hours=_int_from_env("WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", 24),
+            max_attachment_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", 8),
+            max_attachments_per_message=_int_from_env(
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 5
+            ),
+            max_total_attachment_mb=_int_from_env(
+                "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", 20
+            ),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy brak tożsamości aplikacji albo bezsensowne limity."""
+        missing = [
+            name
+            for name, value in (
+                ("WORKMATE_TEAMS_GRAPH_CLIENT_ID", self.client_id),
+                ("WORKMATE_TEAMS_GRAPH_TENANT_ID", self.tenant_id),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Drzwi Teams (delegowane) wymagają tożsamości aplikacji Entra: brakuje "
+                + ", ".join(missing)
+                + " w środowisku/.env."
+            )
+        if not self.scopes:
+            raise ValueError("WORKMATE_TEAMS_GRAPH_SCOPES nie może być puste.")
+        if self.poll_interval_s < 1:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_POLL_INTERVAL musi być >= 1, jest: "
+                f"{self.poll_interval_s}."
+            )
+        if self.top_roots < 1:
+            raise ValueError(
+                f"WORKMATE_TEAMS_GRAPH_TOP_ROOTS musi być >= 1, jest: {self.top_roots}."
+            )
+        if self.top_replies < 1:
+            raise ValueError(
+                f"WORKMATE_TEAMS_GRAPH_TOP_REPLIES musi być >= 1, jest: {self.top_replies}."
+            )
+        # 0 eksmitowałoby każdy wątek natychmiast (koniec wielotury) — wymagamy >= 1.
+        if self.active_idle_hours < 1:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS musi być >= 1, jest: "
+                f"{self.active_idle_hours}."
+            )
+        if not 1 <= self.max_attachment_mb <= _MAX_ATTACHMENT_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB musi być w zakresie "
+                f"1..{_MAX_ATTACHMENT_MB_CEILING} (sufit API), jest: {self.max_attachment_mb}."
+            )
+        # Górny cap liczby chroni przed absurdalną wartością operatora (np. 1000).
+        if not 1 <= self.max_attachments_per_message <= _MAX_ATTACHMENTS_PER_MESSAGE_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS musi być w zakresie "
+                f"1..{_MAX_ATTACHMENTS_PER_MESSAGE_CEILING}, jest: "
+                f"{self.max_attachments_per_message}."
+            )
+        # Łączny budżet też w 1..32 (sufit żądania API). Nie wiążemy go z ``max_attachment_mb``:
+        # plik większy niż budżet materializer i tak łagodnie zdegraduje do notki.
+        if not 1 <= self.max_total_attachment_mb <= _MAX_ATTACHMENT_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB musi być w zakresie "
+                f"1..{_MAX_ATTACHMENT_MB_CEILING}, jest: {self.max_total_attachment_mb}."
+            )

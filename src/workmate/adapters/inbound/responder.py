@@ -25,10 +25,12 @@ from typing import TYPE_CHECKING, Protocol
 from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
     AssistantTurn,
+    Attachment,
     RawTurn,
     ToolOutput,
     ToolResults,
     UserText,
+    attachment_from_row,
 )
 
 # ``stop_reason`` oznaczający uciętą odpowiedź (ADR 0011) — drzwi dokładają notkę.
@@ -74,12 +76,14 @@ class InboundMessage:
     """Wiadomość z drzwi, znormalizowana do postaci niezależnej od SDK.
 
     ``text`` wystarcza echu; ``sender``/``conversation_id`` niosą atrybucję, której
-    przyszłe ``save_note`` użyje bez zmiany sygnatury szwu (pola addytywne).
+    przyszłe ``save_note`` użyje bez zmiany sygnatury szwu (pola addytywne). ``attachments``
+    (addytywne, domyślnie puste) niosą treść multimodalną z drzwi, które ją materializują.
     """
 
     text: str
     sender: str = ""
     conversation_id: str = ""
+    attachments: tuple[Attachment, ...] = ()
 
 
 class Responder(Protocol):
@@ -111,7 +115,10 @@ class RuntimeResponder:
 
     async def respond(self, message: InboundMessage) -> str:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._runtime.run, message.text)
+        return await loop.run_in_executor(
+            None,
+            lambda: self._runtime.run(message.text, attachments=message.attachments),
+        )
 
 
 class SaveNoteResponder:
@@ -192,7 +199,9 @@ class ConversationalResponder:
             )
         transcript = self._build_transcript(conversation_id, history, rolled_over)
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
-        result = self._runtime.run_turn(message.text, history=transcript)
+        result = self._runtime.run_turn(
+            message.text, attachments=message.attachments, history=transcript
+        )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
         with self._store_lock:
@@ -349,8 +358,12 @@ def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]
                         )
                     )
                 )
-        elif msg.text:
-            entries.append(UserText(msg.text))
+        elif msg.text or msg.blocks:
+            # Wiersz użytkownika: ``blocks`` (gdy są) to NEUTRALNA forma załączników —
+            # odtwarzamy je, by replay był bezstratny. Warunek ``or msg.blocks`` pilnuje,
+            # by wiadomość z SAMYM plikiem (pusty caption) nie wypadła z transkryptu.
+            attachments = tuple(attachment_from_row(b) for b in (msg.blocks or []))
+            entries.append(UserText(msg.text, attachments))
     return entries
 
 
@@ -370,5 +383,7 @@ def _to_transcript_with_summary(
         return entries
     header = f"{_SUMMARY_PREFIX}\n{summary.summary}"
     if entries and isinstance(entries[0], UserText):
-        return [UserText(f"{header}\n\n{entries[0].text}"), *entries[1:]]
+        first = entries[0]
+        # Doklejamy nagłówek do tekstu, ale ZACHOWUJEMY załączniki pierwszej tury.
+        return [UserText(f"{header}\n\n{first.text}", first.attachments), *entries[1:]]
     return [UserText(header), *entries]

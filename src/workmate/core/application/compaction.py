@@ -12,10 +12,10 @@ następnej wiadomości użytkownika (tak odmierzamy N tur do zachowania verbatim
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from workmate.core.agent.prompt import SUMMARY_SYSTEM_PROMPT
-from workmate.core.ports.llm import UserText
+from workmate.core.ports.llm import UserText, attachment_from_row
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -114,14 +114,26 @@ class CompactionService:
         messages: Sequence[ConversationMessage],
     ) -> str:
         """Złóż streszczaną część w jeden tekst dla modelu: poprzednie podsumowanie (jeśli
-        jest) + tury z etykietą roli. Tury bez tekstu (narzędziowe) pomijamy."""
+        jest) + tury z etykietą roli. Tury narzędziowe (bez tekstu i bez załączników)
+        pomijamy. Załączniki użytkownika opisujemy TEKSTOWO — base64 obrazu/PDF NIGDY nie
+        wchodzi do streszczacza (tylko nazwa+typ; dla .docx pełny wyekstrahowany tekst)."""
         lines: list[str] = []
         if previous is not None:
             lines.append("[Dotychczasowe podsumowanie]")
             lines.append(previous.summary)
             lines.append("")
         for m in messages:
-            if not m.text:
-                continue
-            lines.append(f"{_ROLE_LABELS.get(m.role, m.role)}: {m.text}")
+            label = _ROLE_LABELS.get(m.role, m.role)
+            if m.text:
+                lines.append(f"{label}: {m.text}")
+            if m.role == "user" and m.blocks:
+                lines.extend(_describe_attachment(b) for b in m.blocks)
         return "\n".join(lines)
+
+
+def _describe_attachment(block: dict[str, Any]) -> str:
+    """Tekstowy opis załącznika do streszczacza (bez base64); dla .docx dołącza treść."""
+    att = attachment_from_row(block)
+    if att.kind == "text" and att.text:
+        return f"[Załącznik {att.name} ({att.media_type})]\n{att.text}"
+    return f"[Załącznik {att.name} ({att.media_type})]"

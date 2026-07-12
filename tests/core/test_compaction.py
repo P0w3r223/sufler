@@ -8,10 +8,15 @@ za mało tur, pusty wynik modelu. Prawdziwy store daje pewność, że ``last_inp
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.application.compaction import CompactionService
+from workmate.core.application.compaction import CompactionService, _describe_attachment
+from workmate.core.domain.conversation import ConversationMessage
 from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import LLMResponse, UserText
+from workmate.core.ports.llm import Attachment, LLMResponse, UserText, attachment_to_row
+
+_TS = datetime(2025, 1, 1, 12, 0, 0)
 
 
 class _FakeLLM:
@@ -168,3 +173,45 @@ def test_missing_conversation_returns_none():
     store = _store()
     service = CompactionService(store, _FakeLLM(), threshold_tokens=100, keep_turns=2)
     assert service.maybe_compact("nie-ma-takiej") is None
+
+
+# --- Załączniki w streszczaczu: opis tekstowy, base64 NIGDY nie wchodzi (ADR 0016) ---
+
+
+def _user_msg(text: str, blocks: list[dict]) -> ConversationMessage:
+    return ConversationMessage(
+        id=1, conversation_id="c", role="user", text=text, created_at=_TS, blocks=blocks
+    )
+
+
+def test_describe_attachment_image_is_label_only_without_base64():
+    row = attachment_to_row(Attachment("image", "image/png", "zrzut.png", data_base64="QUJDUE5H"))
+
+    desc = _describe_attachment(row)
+
+    assert desc == "[Załącznik zrzut.png (image/png)]"
+    assert "QUJDUE5H" not in desc  # base64 obrazu NIGDY do streszczacza
+
+
+def test_describe_attachment_docx_includes_extracted_text():
+    row = attachment_to_row(
+        Attachment("text", "text/plain", "notatka.docx", text="Ustalenia ze spotkania")
+    )
+
+    desc = _describe_attachment(row)
+
+    assert desc == "[Załącznik notatka.docx (text/plain)]\nUstalenia ze spotkania"
+
+
+def test_flatten_describes_user_attachments_and_excludes_base64():
+    """Spłaszczenie do modelu podsumowującego: opis tekstowy załącznika, bez base64."""
+    store = _store()
+    service = CompactionService(store, _FakeLLM(), threshold_tokens=100, keep_turns=2)
+    img = attachment_to_row(Attachment("image", "image/png", "z.png", data_base64="TEEJBUE5H"))
+    messages = [_user_msg("zobacz zrzut", [img])]
+
+    flat = service._flatten(None, messages)
+
+    assert "Użytkownik: zobacz zrzut" in flat
+    assert "[Załącznik z.png (image/png)]" in flat
+    assert "TEEJBUE5H" not in flat  # base64 poza streszczaczem

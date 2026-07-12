@@ -22,7 +22,7 @@ class _FakeRuntime:
     def __init__(self) -> None:
         self.seen: str | None = None
 
-    def run(self, query: str) -> str:
+    def run(self, query: str, *, attachments: object = ()) -> str:
         self.seen = query
         return f"odpowiedź na: {query}"
 

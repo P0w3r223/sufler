@@ -22,11 +22,11 @@ from workmate.core.ports.llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from workmate.config import AgentSettings
     from workmate.core.application.tools import ToolSpec
-    from workmate.core.ports.llm import TranscriptEntry
+    from workmate.core.ports.llm import Attachment, TranscriptEntry
 
 
 class AnthropicLLMClient:
@@ -104,23 +104,83 @@ def _to_tool_def(spec: ToolSpec) -> dict[str, Any]:
     return {"name": spec.name, "description": spec.description, "input_schema": schema}
 
 
+def _replayable_block(block: Mapping[str, Any]) -> dict[str, Any]:
+    """Oczyść zapamiętany blok przed odesłaniem do API: usuń pola o wartości ``None``.
+
+    ``_from_message`` zrzuca CAŁY blok odpowiedzi (``model_dump``), w tym pola WYJŚCIOWE,
+    których wejściowy schemat API nie przyjmuje — np. ``parsed_output`` na bloku ``text``
+    (odpowiedź modelu ma je jako ``None``) → API 400 „Extra inputs are not permitted",
+    co psuło każdą turę 2+ (odtworzenie zapisanego bloku tekstowego z poprzedniej tury).
+    Pola WYMAGANE na wejściu (``text``; ``thinking`` + ``signature``; ``id``/``name``/``input``)
+    są zawsze nie-``None``, więc zostają — round-trip thinking (ADR 0011) nienaruszony.
+    Czyścimy przy ODTWARZANIU (nie przy zapisie), więc leczymy też już zapisaną historię.
+    """
+    return {key: value for key, value in block.items() if value is not None}
+
+
+def _attachment_block(att: Attachment) -> dict[str, Any]:
+    """Zmapuj neutralny ``Attachment`` na blok treści Anthropic — format żyje TU, nie w rdzeniu.
+
+    ``image``/``document`` idą jako base64 (PDF: ``application/pdf``); ``.docx`` po ekstrakcji
+    (``kind="text"``) jako blok tekstowy z etykietą pliku. Treść to DANE, nie polecenia.
+    """
+    if att.kind == "image":
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": att.media_type,
+                "data": att.data_base64,
+            },
+        }
+    if att.kind == "document":
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": att.data_base64,
+            },
+        }
+    return {"type": "text", "text": f"[Plik: {att.name}]\n{att.text}"}
+
+
+def _user_message(entry: UserText) -> dict[str, Any]:
+    """Zbuduj wiadomość ``user``: goły string bez załączników, inaczej lista bloków.
+
+    Bez załączników zwracamy string (jak wcześniej — golden-testy niezmienione). Z
+    załącznikami: bloki mediów (``image``/``document``) MUSZĄ poprzedzać blok tekstowy
+    (wymóg API dla PDF), więc caption idzie na końcu — i tylko gdy niepusty (API odrzuca
+    pusty blok ``text``).
+    """
+    if not entry.attachments:
+        return {"role": "user", "content": entry.text}
+    content: list[dict[str, Any]] = [_attachment_block(att) for att in entry.attachments]
+    if entry.text:
+        content.append({"type": "text", "text": entry.text})
+    return {"role": "user", "content": content}
+
+
 def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
     """Zmapuj słownik domenowy na listę wiadomości Anthropic.
 
     Tury z blokami (``RawTurn`` z pamięci, ``AssistantTurn`` z bieżącego przebiegu)
-    odsyłamy VERBATIM — bez filtrowania i bez zmiany kolejności bloków (thinking MUSI
-    poprzedzać ``tool_use`` i wrócić z niezmienioną ``signature``, inaczej API 400).
-    ``AssistantTurn`` bez bloków (atrapy, wiersze legacy) składamy z ``text``/``tool_calls``.
+    odsyłamy w oryginalnej KOLEJNOŚCI bloków (thinking MUSI poprzedzać ``tool_use`` i wrócić
+    z niezmienioną ``signature``, inaczej API 400), oczyszczając jedynie puste pola wyjściowe
+    przez ``_replayable_block`` (patrz jego docstring). ``AssistantTurn`` bez bloków (atrapy,
+    wiersze legacy) składamy z ``text``/``tool_calls``.
     """
     messages: list[dict[str, Any]] = []
     for entry in transcript:
         if isinstance(entry, UserText):
-            messages.append({"role": "user", "content": entry.text})
+            messages.append(_user_message(entry))
         elif isinstance(entry, RawTurn):
-            messages.append({"role": entry.role, "content": [dict(b) for b in entry.blocks]})
+            messages.append(
+                {"role": entry.role, "content": [_replayable_block(b) for b in entry.blocks]}
+            )
         elif isinstance(entry, AssistantTurn):
             if entry.blocks:
-                content: list[dict[str, Any]] = [dict(b) for b in entry.blocks]
+                content: list[dict[str, Any]] = [_replayable_block(b) for b in entry.blocks]
             else:
                 content = []
                 if entry.text:

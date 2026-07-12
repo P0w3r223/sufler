@@ -30,7 +30,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from workmate.core.application.tools import ToolSpec
-    from workmate.core.ports.llm import LLMClient, ToolCall, TranscriptEntry
+    from workmate.core.ports.llm import (
+        Attachment,
+        LLMClient,
+        ToolCall,
+        TranscriptEntry,
+    )
 
 _DEFAULT_MAX_TOOL_ITERATIONS = 8
 # ``stop_reason`` sygnalizujący UCIĘCIE odpowiedzi (thinking + tekst dzielą max_tokens):
@@ -56,12 +61,22 @@ class AgentRuntime:
         self._system_prompt = system_prompt
         self._max_tool_iterations = max_tool_iterations
 
-    def run(self, query: str, *, history: Sequence[TranscriptEntry] = ()) -> str:
+    def run(
+        self,
+        query: str,
+        *,
+        attachments: Sequence[Attachment] = (),
+        history: Sequence[TranscriptEntry] = (),
+    ) -> str:
         """Zwróć sam tekst odpowiedzi — cienka nakładka na ``run_turn`` (drzwi bezstanowe)."""
-        return self.run_turn(query, history=history).reply
+        return self.run_turn(query, attachments=attachments, history=history).reply
 
     def run_turn(
-        self, query: str, *, history: Sequence[TranscriptEntry] = ()
+        self,
+        query: str,
+        *,
+        attachments: Sequence[Attachment] = (),
+        history: Sequence[TranscriptEntry] = (),
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
 
@@ -76,8 +91,9 @@ class AgentRuntime:
         Turę traktujemy jak przejściową porażkę: użytkownik dostaje częściową/zastępczą
         odpowiedź, a pamięć zostaje spójna (bez sieroty).
         """
-        transcript: list[TranscriptEntry] = [*history, UserText(query)]
-        new_entries: list[TranscriptEntry] = [UserText(query)]
+        user_turn = UserText(query, tuple(attachments))
+        transcript: list[TranscriptEntry] = [*history, user_turn]
+        new_entries: list[TranscriptEntry] = [user_turn]
         last_text = ""
         # Realne ``usage`` sumowane po WSZYSTKICH wywołaniach API tej tury (pętla tool-use);
         # ``AgentResult.usage`` = koszt całej tury, a każda ``AssistantTurn`` niesie usage
