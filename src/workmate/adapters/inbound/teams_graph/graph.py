@@ -8,6 +8,7 @@ Implementuje port ``poller.GraphChannelClient`` strukturalnie (duck typing): obs
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Callable
 from typing import Any
 
@@ -66,9 +67,41 @@ class HttpxGraphChannelClient:
             pages += 1
         return items
 
+    async def _get_bytes(self, url: str, *, follow_redirects: bool = False) -> bytes:
+        """Pobierz surowe bajty (załącznik) z obsługą 429; ``follow_redirects`` dla /shares."""
+        attempts = 0
+        while True:
+            response = await self._client.get(url, follow_redirects=follow_redirects)
+            if response.status_code == 429 and attempts < _MAX_429_RETRIES:
+                attempts += 1
+                await asyncio.sleep(_retry_after(response))
+                continue
+            response.raise_for_status()
+            return response.content
+
     async def get_me_id(self) -> str:
         data = await self._get(f"{GRAPH}/me")
         return str(data["id"])
+
+    async def get_hosted_content(
+        self, team_id: str, channel_id: str, message_id: str, hosted_id: str
+    ) -> bytes:
+        """Bajty obrazu wklejonego inline (hostedContents) — na obecnym zakresie kanału."""
+        url = (
+            f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{message_id}"
+            f"/hostedContents/{hosted_id}/$value"
+        )
+        return await self._get_bytes(url)
+
+    async def download_shared_url(self, url: str) -> bytes:
+        """Bajty pliku z SharePoint po ``contentUrl`` (driveItem via /shares).
+
+        Wymaga zakresów ``Files.Read.All``/``Sites.Read.All``. ``/driveItem/content``
+        zwraca 302 do wstępnie uwierzytelnionego URL-a SharePointu — podążamy za nim;
+        httpx zdejmuje nagłówek ``Authorization`` przy przekierowaniu na inny host.
+        """
+        endpoint = f"{GRAPH}/shares/{_encode_share_id(url)}/driveItem/content"
+        return await self._get_bytes(endpoint, follow_redirects=True)
 
     async def list_root_messages(
         self, team_id: str, channel_id: str, *, top: int
@@ -107,6 +140,12 @@ class HttpxGraphChannelClient:
     async def list_channels(self, team_id: str) -> list[dict[str, Any]]:
         """Kanały zespołu (tryb odkrywania)."""
         return await self._get_all(f"{GRAPH}/teams/{team_id}/channels", max_pages=20)
+
+
+def _encode_share_id(url: str) -> str:
+    """Zakoduj URL udostępnienia na Graph share id: ``u!`` + base64url bez dopełnienia."""
+    encoded = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"u!{encoded}"
 
 
 def _retry_after(response: httpx.Response) -> int:

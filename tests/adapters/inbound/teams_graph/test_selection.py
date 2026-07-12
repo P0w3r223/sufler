@@ -14,7 +14,9 @@ import pytest
 
 from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import (
+    AttachmentRef,
     ChannelMessage,
+    _parse_refs,
     iso_gt,
     normalize,
     parse_iso,
@@ -160,6 +162,109 @@ def test_normalize_bot_message_has_empty_sender_id():
 
     assert msg is not None
     assert msg.sender_id == ""
+
+
+# --- _parse_refs / normalize: załączniki (ADR 0016) -------------------------
+
+
+def _hosted_html(hosted_id: str, *, caption: str = "") -> str:
+    """HTML wiadomości z obrazem inline (``hostedContents/{id}/$value``) i opcjonalnym podpisem."""
+    img = f'<img src="https://graph/…/hostedContents/{hosted_id}/$value">'
+    return f"<p>{caption}</p>{img}" if caption else img
+
+
+def test_parse_refs_maps_file_attachment_of_type_reference():
+    """Plik w SharePoint: ``attachments`` z ``contentType='reference'`` + ``contentUrl``."""
+    raw = {
+        "attachments": [
+            {
+                "contentType": "reference",
+                "name": "umowa.pdf",
+                "contentUrl": "https://sharepoint/…/umowa.pdf",
+            }
+        ]
+    }
+
+    refs = _parse_refs(raw, body_html=None)
+
+    assert refs == (
+        AttachmentRef(kind="file", name="umowa.pdf", url="https://sharepoint/…/umowa.pdf"),
+    )
+
+
+def test_parse_refs_ignores_non_reference_or_urlless_attachments():
+    """Załącznik bez ``contentUrl`` albo innego typu niż reference nie daje referencji pliku."""
+    raw = {
+        "attachments": [
+            {"contentType": "reference", "name": "brak-url.pdf"},  # bez contentUrl
+            {"contentType": "messageReference", "contentUrl": "x"},  # inny typ
+        ]
+    }
+
+    assert _parse_refs(raw, body_html=None) == ()
+
+
+def test_parse_refs_extracts_inline_hosted_image_from_body_html():
+    refs = _parse_refs({}, body_html=_hosted_html("hosted-abc"))
+
+    assert refs == (AttachmentRef(kind="hosted", name="obraz", hosted_id="hosted-abc"),)
+
+
+def test_parse_refs_dedups_repeated_hosted_id():
+    """Ten sam ``hosted_id`` powtórzony w HTML → jedna referencja (dedup)."""
+    html = _hosted_html("dup") + _hosted_html("dup")
+
+    refs = _parse_refs({}, body_html=html)
+
+    assert refs == (AttachmentRef(kind="hosted", name="obraz", hosted_id="dup"),)
+
+
+def test_normalize_keeps_message_with_only_file_and_no_text():
+    """REGRESJA: wiadomość z SAMYM plikiem (bez podpisu) NIE jest odrzucana (dziś byłaby)."""
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="")
+    raw["body"]["content"] = "<p></p>"  # pusto po strip HTML
+    raw["attachments"] = [
+        {"contentType": "reference", "name": "plik.pdf", "contentUrl": "u://plik"}
+    ]
+
+    msg = normalize(raw)
+
+    assert msg is not None
+    assert msg.text == ""
+    assert msg.attachment_refs == (
+        AttachmentRef(kind="file", name="plik.pdf", url="u://plik"),
+    )
+
+
+def test_normalize_keeps_message_with_only_inline_image():
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z")
+    raw["body"]["content"] = _hosted_html("h1")  # sam obraz, bez tekstu
+
+    msg = normalize(raw)
+
+    assert msg is not None
+    assert msg.text == ""
+    assert msg.attachment_refs == (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),)
+
+
+def test_normalize_keeps_caption_alongside_inline_image():
+    """Podpis (tekst po rozebraniu HTML) zachowany OBOK referencji obrazu inline."""
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z")
+    raw["body"]["content"] = _hosted_html("h1", caption="Rzuć okiem na to")
+
+    msg = normalize(raw)
+
+    assert msg is not None
+    assert msg.text == "Rzuć okiem na to"
+    assert msg.attachment_refs == (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),)
+
+
+def test_normalize_still_rejects_empty_message_without_text_or_attachments():
+    """Pusto = brak tekstu ORAZ brak załączników — nadal odrzucone (nie ma na co odpowiadać)."""
+    raw = _raw_message(msg_id="m", created="t")
+    raw["body"]["content"] = "<p></p>"
+
+    assert normalize(raw) is None
 
 
 # --- roots_to_poll ----------------------------------------------------------

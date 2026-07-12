@@ -12,10 +12,29 @@ import html
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
+
+from workmate.core.ports.llm import Attachment
 
 # Watermark „od zawsze" dla wątku bez zapisanej pozycji — starszy niż jakikolwiek Graph.
 _EPOCH_ISO = datetime.min.replace(tzinfo=timezone.utc).isoformat()
+
+# Inline obrazy w HTML wiadomości: <img src=".../hostedContents/{id}/$value">.
+_HOSTED_RE = re.compile(r"hostedContents/([^/\"'\s]+)/\$value")
+
+
+@dataclass(frozen=True)
+class AttachmentRef:
+    """Lekka REFERENCJA do załącznika (bez bajtów) — materializuje ją adapter I/O.
+
+    ``file`` → plik w SharePoint (``url`` = ``contentUrl``); ``hosted`` → obraz wklejony
+    inline (``hosted_id`` w ``/messages/{id}/hostedContents/{hosted_id}/$value``).
+    """
+
+    kind: Literal["file", "hosted"]
+    name: str
+    url: str = ""  # dla file: contentUrl (SharePoint)
+    hosted_id: str = ""  # dla hosted: id hostedContent
 
 
 @dataclass(frozen=True)
@@ -30,6 +49,10 @@ class ChannelMessage:
     sender_id: str  # ``from.user.id``; puste dla botów/aplikacji/zdarzeń systemowych
     sender_name: str
     text: str  # treść po rozebraniu HTML
+    # REFERENCJE do załączników (sparsowane z payloadu Graph, bez I/O) — poller je materializuje.
+    attachment_refs: tuple[AttachmentRef, ...] = ()
+    # MATERIALIZOWANE załączniki (base64/tekst) — dokłada je poller przez adapter I/O.
+    attachments: tuple[Attachment, ...] = ()
 
 
 def parse_iso(value: str) -> datetime:
@@ -60,12 +83,15 @@ def normalize(raw: dict[str, Any]) -> ChannelMessage | None:
     """Zmapuj surową wiadomość Graph; ``None`` gdy to nie treść do odpowiedzi.
 
     Odrzucamy zdarzenia systemowe (``messageType != 'message'``), skasowane i puste —
-    nie ma na co odpowiadać.
+    nie ma na co odpowiadać. „Puste" to brak tekstu ORAZ brak załączników: wiadomość
+    z samym plikiem/obrazem (bez podpisu) NADAL wymaga odpowiedzi.
     """
     if raw.get("messageType") != "message" or raw.get("deletedDateTime"):
         return None
-    text = _strip_html((raw.get("body") or {}).get("content"))
-    if not text:
+    body_html = (raw.get("body") or {}).get("content")
+    text = _strip_html(body_html)
+    refs = _parse_refs(raw, body_html)
+    if not text and not refs:
         return None
     user = (raw.get("from") or {}).get("user") or {}
     msg_id = raw.get("id") or ""
@@ -76,7 +102,27 @@ def normalize(raw: dict[str, Any]) -> ChannelMessage | None:
         sender_id=user.get("id") or "",
         sender_name=user.get("displayName") or "?",
         text=text,
+        attachment_refs=refs,
     )
+
+
+def _parse_refs(raw: dict[str, Any], body_html: str | None) -> tuple[AttachmentRef, ...]:
+    """Wyłuskaj referencje załączników: pliki (``attachments`` typu reference) + obrazy
+    inline (``hostedContents`` z HTML). Sama referencja, bez bajtów — I/O robi materializer."""
+    refs: list[AttachmentRef] = []
+    for att in raw.get("attachments") or []:
+        if att.get("contentType") == "reference" and att.get("contentUrl"):
+            refs.append(
+                AttachmentRef(
+                    kind="file", name=att.get("name") or "plik", url=att["contentUrl"]
+                )
+            )
+    seen: set[str] = set()
+    for hosted_id in _HOSTED_RE.findall(body_html or ""):
+        if hosted_id not in seen:
+            seen.add(hosted_id)
+            refs.append(AttachmentRef(kind="hosted", name="obraz", hosted_id=hosted_id))
+    return tuple(refs)
 
 
 def _from_other_human(msg: ChannelMessage, me_id: str) -> bool:

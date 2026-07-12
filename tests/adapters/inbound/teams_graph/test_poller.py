@@ -17,6 +17,7 @@ import pytest
 
 from workmate.adapters.inbound.teams_graph import poller as poller_module
 from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
+from workmate.core.ports.llm import Attachment
 
 _ME = "me-bot"
 _STARTUP = "2024-01-01T11:00:00Z"
@@ -299,6 +300,64 @@ def test_is_permanent_classifies_only_non_429_4xx_as_permanent():
     assert poller_module._is_permanent(_HttpError(429)) is False  # przejściowy → ponów
     assert poller_module._is_permanent(_HttpError(500)) is False  # przejściowy → ponów
     assert poller_module._is_permanent(RuntimeError("bez response")) is False
+
+
+# --- _poll_channel: materializacja załączników ------------------------------
+
+
+class _FakeMaterializer:
+    """Atrapa materializera — nagrywa wywołania, zwraca ustalone załączniki."""
+
+    def __init__(self, attachments: tuple[Attachment, ...]) -> None:
+        self._attachments = attachments
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def materialize(
+        self, team_id: str, channel_id: str, msg: Any
+    ) -> tuple[Attachment, ...]:
+        self.calls.append((team_id, channel_id, msg.id))
+        return self._attachments
+
+
+def test_poll_channel_materializes_attachment_refs_and_passes_them_to_handler():
+    """Wiadomość z referencją pliku → materializer wywołany, handler dostaje bajty."""
+    root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z", text="zobacz plik")
+    root["attachments"] = [
+        {"contentType": "reference", "contentUrl": "https://sp/f.pdf", "name": "f.pdf"}
+    ]
+    client = FakeGraphClient([{"roots": [root], "replies": {}}])
+    seen: dict[str, Any] = {}
+
+    async def handler(message: Any, conversation_id: str) -> str:
+        seen["attachments"] = message.attachments
+        seen["text"] = message.text
+        return "odp"
+
+    attachments = (Attachment("document", "application/pdf", "f.pdf", data_base64="QQ=="),)
+    materializer = _FakeMaterializer(attachments)
+    poller, _ = _make_poller(client, handler)
+    poller._materializer = materializer  # wstrzyknięcie (jak w app.py)
+    poller._seed(_STARTUP)
+
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert materializer.calls == [("team", "chan", "root-1")]
+    assert seen["attachments"] == attachments
+    assert seen["text"] == "zobacz plik"
+
+
+def test_poll_channel_skips_materializer_when_no_attachment_refs():
+    """Bez referencji materializer NIE jest wołany (brak zbędnego I/O)."""
+    root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
+    client = FakeGraphClient([{"roots": [root], "replies": {}}])
+    materializer = _FakeMaterializer(())
+    poller, _ = _make_poller(client, RecordingHandler("odp"))
+    poller._materializer = materializer
+    poller._seed(_STARTUP)
+
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert materializer.calls == []
 
 
 # --- _seed + _mark_replied --------------------------------------------------

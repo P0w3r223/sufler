@@ -28,6 +28,7 @@ def make_handle_message(
                 text=message.text,
                 sender=message.sender_name,
                 conversation_id=conversation_id,
+                attachments=message.attachments,
             )
         )
         return reply or None

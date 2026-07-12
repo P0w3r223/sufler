@@ -18,20 +18,23 @@ from workmate.adapters.inbound.responder import (
     InboundMessage,
     _is_new_thread_command,
     _to_transcript,
+    _to_transcript_with_summary,
     _with_notices,
 )
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
-from workmate.core.domain.conversation import ConversationMessage
+from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AgentResult,
     AssistantTurn,
+    Attachment,
     LLMResponse,
     RawTurn,
     ToolResults,
     UserText,
+    attachment_to_row,
 )
 
 _TS = datetime(2025, 1, 1, 12, 0, 0)
@@ -59,7 +62,9 @@ class _FakeRuntime:
         self.usage = usage or TokenUsage()
         self.calls: list[tuple[str, list[object]]] = []
 
-    def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
+    def run_turn(
+        self, query: str, *, attachments: object = (), history: object = ()
+    ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
         return AgentResult(
@@ -70,7 +75,9 @@ class _FakeRuntime:
 class _FailingRuntime:
     """Atrapa runtime, która rzuca — symuluje przejściowy błąd Claude API."""
 
-    def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
+    def run_turn(
+        self, query: str, *, attachments: object = (), history: object = ()
+    ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
 
@@ -90,7 +97,9 @@ class _FakeClock:
 class _ThinkingRuntime:
     """Atrapa runtime: tura niesie podsumowanie rozumowania (``display=summarized``)."""
 
-    def run_turn(self, query: str, *, history: object = ()) -> AgentResult:
+    def run_turn(
+        self, query: str, *, attachments: object = (), history: object = ()
+    ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",
             entries=(UserText(query), AssistantTurn("odpowiedz", ())),
@@ -251,6 +260,62 @@ def test_to_transcript_preserves_turn_order():
         "ToolResults",
         "RawTurn",
     ]
+
+
+# --- _to_transcript: round-trip załączników użytkownika (ADR 0016) --------------
+
+
+def _summary(text: str) -> ConversationSummary:
+    return ConversationSummary(
+        id=1,
+        conversation_id="c",
+        summary=text,
+        covers_through_message_id=1,
+        created_at=_TS,
+    )
+
+
+def test_to_transcript_rebuilds_user_attachments_from_blocks():
+    """Round-trip pamięci: wiersz user z NEUTRALNYMI blokami załączników → identyczny
+    ``UserText`` z załącznikami (jak zapisał ``_row_of`` przez ``attachment_to_row``)."""
+    img = Attachment("image", "image/png", "zrzut.png", data_base64="QUJD")
+    pdf = Attachment("document", "application/pdf", "umowa.pdf", data_base64="UERG")
+    blocks = [attachment_to_row(img), attachment_to_row(pdf)]
+
+    entries = _to_transcript([_msg("user", "zobacz", blocks=blocks)])
+
+    assert entries == [UserText("zobacz", (img, pdf))]
+
+
+def test_to_transcript_keeps_attachment_only_user_message():
+    """Wiadomość z SAMYM załącznikiem (pusty caption) NIE wypada z transkryptu
+    (warunek ``msg.text or msg.blocks``)."""
+    img = Attachment("image", "image/png", "zrzut.png", data_base64="QUJD")
+
+    entries = _to_transcript([_msg("user", "", blocks=[attachment_to_row(img)])])
+
+    assert entries == [UserText("", (img,))]
+
+
+def test_to_transcript_with_summary_preserves_first_turn_attachments():
+    """Doklejenie podsumowania do PIERWSZEJ tury user ZACHOWUJE jej załączniki."""
+    img = Attachment("image", "image/png", "zrzut.png", data_base64="QUJD")
+    messages = [_msg("user", "pierwsza", blocks=[attachment_to_row(img)])]
+
+    entries = _to_transcript_with_summary(_summary("STRESZCZENIE"), messages)
+
+    first = entries[0]
+    assert isinstance(first, UserText)
+    assert first.text.startswith("[Podsumowanie wcześniejszej rozmowy]")
+    assert "pierwsza" in first.text
+    assert first.attachments == (img,)  # załączniki pierwszej tury nietknięte
+
+
+def test_to_transcript_with_summary_without_summary_is_plain_transcript():
+    img = Attachment("image", "image/png", "z.png", data_base64="QUJD")
+    messages = [_msg("user", "q", blocks=[attachment_to_row(img)])]
+
+    assert _to_transcript_with_summary(None, messages) == [UserText("q", (img,))]
 
 
 # --- Pokazywanie rozumowania modelu (display=summarized): show_thinking ---------

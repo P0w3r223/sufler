@@ -139,11 +139,23 @@ async def _run(
     except ImportError as exc:
         raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
     from workmate.adapters.inbound.teams_graph import state as state_store
+    from workmate.adapters.inbound.teams_graph.attachments import (
+        AttachmentLimits,
+        AttachmentMaterializer,
+    )
     from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
 
     initial_state = state_store.load(settings.state_path)
     async with httpx.AsyncClient(timeout=30) as http:
         client = HttpxGraphChannelClient(http, token_provider)
+        materializer = AttachmentMaterializer(
+            client,
+            limits=AttachmentLimits(
+                max_bytes=settings.max_attachment_mb * 1024 * 1024,
+                max_count=settings.max_attachments_per_message,
+                max_total_bytes=settings.max_total_attachment_mb * 1024 * 1024,
+            ),
+        )
         poller = ChannelPoller(
             client,
             handle,
@@ -154,6 +166,7 @@ async def _run(
             top_replies=settings.top_replies,
             poll_interval=settings.poll_interval_s,
             active_idle=timedelta(hours=settings.active_idle_hours),
+            materializer=materializer,
         )
         await poller.run()
 

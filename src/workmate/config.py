@@ -398,7 +398,17 @@ _DEFAULT_TEAMS_GRAPH_SCOPES = (
     "Team.ReadBasic.All",
     "Channel.ReadBasic.All",
     "User.Read",
+    # Pobieranie plików-załączników (PDF/Word/obrazy) leżących w SharePoint (ADR 0016).
+    # Obrazy wklejane inline (hostedContents) NIE wymagają tych zakresów.
+    "Files.Read.All",
+    "Sites.Read.All",
 )
+# Sufit rozmiaru (RAW) załącznika. Request API to max 32 MB, ale base64 puchnie ~1.33×,
+# więc 24 MB surowych ≈ 32 MB zakodowane — twardy limit, by pojedynczy blok nie przekroczył
+# żądania. Domyślne wartości (8/20 MB) zostawiają zapas na historię.
+_MAX_ATTACHMENT_MB_CEILING = 24
+# Górny cap liczby załączników na wiadomość (chroni przed absurdalną wartością operatora).
+_MAX_ATTACHMENTS_PER_MESSAGE_CEILING = 20
 
 
 def _parse_watch_pairs(value: str) -> tuple[tuple[str, str], ...]:
@@ -436,6 +446,10 @@ class TeamsGraphSettings:
     top_roots: int = 20
     top_replies: int = 50
     active_idle_hours: int = 24
+    # Limity załączników (ADR 0016): rozmiar pliku, liczba i ŁĄCZNY budżet na wiadomość.
+    max_attachment_mb: int = 8
+    max_attachments_per_message: int = 5
+    max_total_attachment_mb: int = 20  # sumaryczny budżet — chroni sufit 32 MB żądania API
 
     @property
     def authority(self) -> str:
@@ -461,6 +475,13 @@ class TeamsGraphSettings:
             top_roots=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_ROOTS", 20),
             top_replies=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_REPLIES", 50),
             active_idle_hours=_int_from_env("WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", 24),
+            max_attachment_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", 8),
+            max_attachments_per_message=_int_from_env(
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 5
+            ),
+            max_total_attachment_mb=_int_from_env(
+                "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", 20
+            ),
         )
 
     def validate(self) -> None:
@@ -499,4 +520,23 @@ class TeamsGraphSettings:
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS musi być >= 1, jest: "
                 f"{self.active_idle_hours}."
+            )
+        if not 1 <= self.max_attachment_mb <= _MAX_ATTACHMENT_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB musi być w zakresie "
+                f"1..{_MAX_ATTACHMENT_MB_CEILING} (sufit API), jest: {self.max_attachment_mb}."
+            )
+        # Górny cap liczby chroni przed absurdalną wartością operatora (np. 1000).
+        if not 1 <= self.max_attachments_per_message <= _MAX_ATTACHMENTS_PER_MESSAGE_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS musi być w zakresie "
+                f"1..{_MAX_ATTACHMENTS_PER_MESSAGE_CEILING}, jest: "
+                f"{self.max_attachments_per_message}."
+            )
+        # Łączny budżet też w 1..32 (sufit żądania API). Nie wiążemy go z ``max_attachment_mb``:
+        # plik większy niż budżet materializer i tak łagodnie zdegraduje do notki.
+        if not 1 <= self.max_total_attachment_mb <= _MAX_ATTACHMENT_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB musi być w zakresie "
+                f"1..{_MAX_ATTACHMENT_MB_CEILING}, jest: {self.max_total_attachment_mb}."
             )

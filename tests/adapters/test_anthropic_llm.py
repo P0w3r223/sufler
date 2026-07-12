@@ -11,13 +11,16 @@ import types
 from typing import Any
 
 from workmate.adapters.outbound.anthropic_llm import (
+    _attachment_block,
     _from_message,
     _thinking_config,
     _to_messages,
+    _user_message,
 )
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
+    Attachment,
     RawTurn,
     ToolCall,
     ToolOutput,
@@ -143,6 +146,81 @@ def test_to_messages_maps_user_text_and_tool_results():
     # is_error dokładane tylko dla błędu (nie zaśmiecamy sukcesu).
     assert "is_error" not in tool_msg["content"][0]
     assert tool_msg["content"][1]["is_error"] is True
+
+
+# --- _user_message / _attachment_block: załączniki multimodalne (ADR 0016) -----
+
+
+def test_user_message_without_attachments_is_bare_string_regression():
+    """GOLDEN (regresja): bez załączników ``content`` to nadal goły string, nie lista."""
+    msg = _user_message(UserText("pytanie"))
+
+    assert msg == {"role": "user", "content": "pytanie"}
+    # ta sama forma przez pełne _to_messages (żaden inny kształt się nie przemknął)
+    assert _to_messages([UserText("pytanie")]) == [{"role": "user", "content": "pytanie"}]
+
+
+def test_user_message_with_attachments_puts_media_blocks_before_caption():
+    """Z załącznikami ``content`` to LISTA: bloki mediów PRZED tekstem (wymóg API dla PDF)."""
+    img = Attachment("image", "image/png", "zrzut.png", data_base64="QUJD")
+    pdf = Attachment("document", "application/pdf", "umowa.pdf", data_base64="UERG")
+    msg = _user_message(UserText("zobacz to", (img, pdf)))
+
+    content = msg["content"]
+    assert isinstance(content, list)
+    assert [b["type"] for b in content] == ["image", "document", "text"]
+    # Caption (blok tekstowy) idzie na KOŃCU, po blokach mediów.
+    assert content[-1] == {"type": "text", "text": "zobacz to"}
+
+
+def test_user_message_empty_caption_omits_empty_text_block():
+    """Pusty caption → BRAK bloku ``text`` (API odrzuca pusty text)."""
+    img = Attachment("image", "image/png", "zrzut.png", data_base64="QUJD")
+    msg = _user_message(UserText("", (img,)))
+
+    content = msg["content"]
+    assert [b["type"] for b in content] == ["image"]  # żadnego pustego text
+    assert all(b.get("text") != "" for b in content if b["type"] == "text")
+
+
+def test_attachment_block_image_carries_base64_source_and_media_type():
+    block = _attachment_block(Attachment("image", "image/jpeg", "foto.jpg", data_base64="/9j/PQ=="))
+
+    assert block == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/PQ=="},
+    }
+
+
+def test_attachment_block_document_is_pdf_base64():
+    block = _attachment_block(
+        Attachment("document", "application/pdf", "umowa.pdf", data_base64="UERG")
+    )
+
+    assert block == {
+        "type": "document",
+        "source": {"type": "base64", "media_type": "application/pdf", "data": "UERG"},
+    }
+
+
+def test_attachment_block_docx_text_becomes_text_block_with_file_label():
+    """.docx (kind=text) → blok tekstowy z ETYKIETĄ pliku + wyekstrahowaną treścią."""
+    block = _attachment_block(
+        Attachment("text", "text/plain", "notatka.docx", text="Ustalenia\nZadanie | Termin")
+    )
+
+    assert block["type"] == "text"
+    assert block["text"] == "[Plik: notatka.docx]\nUstalenia\nZadanie | Termin"
+    assert "source" not in block  # tekst nie ma base64 source
+
+
+def test_to_messages_user_text_with_attachments_produces_block_list():
+    """Pełna ścieżka ``_to_messages``: UserText z załącznikiem → wiadomość user z listą bloków."""
+    img = Attachment("image", "image/png", "z.png", data_base64="QUJD")
+    messages = _to_messages([UserText("caption", (img,))])
+
+    assert messages[0]["role"] == "user"
+    assert [b["type"] for b in messages[0]["content"]] == ["image", "text"]
 
 
 # --- _from_message: przychodząca odpowiedź -------------------------------------

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from workmate.config import AgentSettings
     from workmate.core.application.tools import ToolSpec
-    from workmate.core.ports.llm import TranscriptEntry
+    from workmate.core.ports.llm import Attachment, TranscriptEntry
 
 
 class AnthropicLLMClient:
@@ -118,6 +118,49 @@ def _replayable_block(block: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in block.items() if value is not None}
 
 
+def _attachment_block(att: Attachment) -> dict[str, Any]:
+    """Zmapuj neutralny ``Attachment`` na blok treści Anthropic — format żyje TU, nie w rdzeniu.
+
+    ``image``/``document`` idą jako base64 (PDF: ``application/pdf``); ``.docx`` po ekstrakcji
+    (``kind="text"``) jako blok tekstowy z etykietą pliku. Treść to DANE, nie polecenia.
+    """
+    if att.kind == "image":
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": att.media_type,
+                "data": att.data_base64,
+            },
+        }
+    if att.kind == "document":
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": att.data_base64,
+            },
+        }
+    return {"type": "text", "text": f"[Plik: {att.name}]\n{att.text}"}
+
+
+def _user_message(entry: UserText) -> dict[str, Any]:
+    """Zbuduj wiadomość ``user``: goły string bez załączników, inaczej lista bloków.
+
+    Bez załączników zwracamy string (jak wcześniej — golden-testy niezmienione). Z
+    załącznikami: bloki mediów (``image``/``document``) MUSZĄ poprzedzać blok tekstowy
+    (wymóg API dla PDF), więc caption idzie na końcu — i tylko gdy niepusty (API odrzuca
+    pusty blok ``text``).
+    """
+    if not entry.attachments:
+        return {"role": "user", "content": entry.text}
+    content: list[dict[str, Any]] = [_attachment_block(att) for att in entry.attachments]
+    if entry.text:
+        content.append({"type": "text", "text": entry.text})
+    return {"role": "user", "content": content}
+
+
 def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
     """Zmapuj słownik domenowy na listę wiadomości Anthropic.
 
@@ -130,7 +173,7 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for entry in transcript:
         if isinstance(entry, UserText):
-            messages.append({"role": "user", "content": entry.text})
+            messages.append(_user_message(entry))
         elif isinstance(entry, RawTurn):
             messages.append(
                 {"role": entry.role, "content": [_replayable_block(b) for b in entry.blocks]}

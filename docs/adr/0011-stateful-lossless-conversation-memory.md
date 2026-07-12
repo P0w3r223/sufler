@@ -5,6 +5,7 @@ Status: accepted
 Author: P0w3r223
 Related to: [ADR 0010](0010-conversation-threading-and-context-limit.md), [ADR 0008](0008-agent-runtime-and-tool-catalog.md)
 Amends: ADR 0010 (message storage model, token accounting, responder mapping)
+Amended by: [ADR 0016](0016-user-multimodal-attachments.md) — user rows may now carry `blocks` (neutral attachment records), replayed losslessly each turn
 
 ---
 

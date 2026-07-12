@@ -4,6 +4,7 @@ Date: 2026-07-11
 Status: proposed
 Author: P0w3r223
 Related to: [ADR 0006](0006-write-capability-gate-2.md), [ADR 0008](0008-agent-runtime-and-tool-catalog.md), [ADR 0010](0010-conversation-threading-and-context-limit.md)
+Amended by: [ADR 0016](0016-user-multimodal-attachments.md) — adds `Files.Read.All` + `Sites.Read.All` scopes (one-time device-code re-consent) for attachment download
 
 ---
 

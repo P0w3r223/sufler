@@ -21,6 +21,9 @@ _TEAMS_GRAPH_VARS = (
     "WORKMATE_TEAMS_GRAPH_TOP_ROOTS",
     "WORKMATE_TEAMS_GRAPH_TOP_REPLIES",
     "WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS",
+    "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB",
+    "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS",
+    "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB",
 )
 
 
@@ -93,6 +96,83 @@ def test_validate_rejects_zero_active_idle_because_it_kills_multiturn():
     """0 h eksmitowałoby każdy wątek natychmiast po rundzie — koniec wielotury."""
     with pytest.raises(ValueError, match="ACTIVE_IDLE_HOURS"):
         _valid(active_idle_hours=0).validate()
+
+
+# --- validate: limity załączników (ADR 0016) --------------------------------
+
+
+@pytest.mark.parametrize("mb", [0, 25, -1], ids=["zero", "above_ceiling", "negative"])
+def test_validate_rejects_attachment_mb_out_of_range(mb):
+    """Rozmiar pojedynczego pliku musi mieścić się w 1..24 MB (base64 ≈ 32 MB request)."""
+    with pytest.raises(ValueError, match="MAX_ATTACHMENT_MB"):
+        _valid(max_attachment_mb=mb).validate()
+
+
+@pytest.mark.parametrize("mb", [1, 8, 24], ids=["min", "default", "ceiling"])
+def test_validate_accepts_attachment_mb_within_range(mb):
+    _valid(max_attachment_mb=mb).validate()  # nie rzuca
+
+
+def test_validate_rejects_zero_attachments_per_message():
+    with pytest.raises(ValueError, match="MAX_ATTACHMENTS"):
+        _valid(max_attachments_per_message=0).validate()
+
+
+def test_validate_accepts_one_attachment_per_message():
+    _valid(max_attachments_per_message=1).validate()  # nie rzuca
+
+
+def test_validate_rejects_attachments_count_above_ceiling():
+    """Górny cap chroni przed absurdalną wartością operatora (np. 1000)."""
+    with pytest.raises(ValueError, match="MAX_ATTACHMENTS"):
+        _valid(max_attachments_per_message=21).validate()
+
+
+@pytest.mark.parametrize("mb", [0, 25, -1], ids=["zero", "above_ceiling", "negative"])
+def test_validate_rejects_total_attachment_mb_out_of_range(mb):
+    """Łączny budżet też musi mieścić się w 1..24 MB (base64 ≈ 32 MB request)."""
+    with pytest.raises(ValueError, match="MAX_TOTAL_ATTACHMENT_MB"):
+        _valid(max_total_attachment_mb=mb).validate()
+
+
+def test_validate_accepts_total_attachment_mb_within_range():
+    _valid(max_total_attachment_mb=24).validate()  # nie rzuca
+
+
+# --- domyślne zakresy: pobieranie plików z SharePoint (ADR 0016) ------------
+
+
+def test_default_scopes_include_file_and_site_read():
+    """Pobranie plików-załączników w SharePoint wymaga ``Files.Read.All``/``Sites.Read.All``."""
+    scopes = TeamsGraphSettings().scopes
+
+    assert "Files.Read.All" in scopes
+    assert "Sites.Read.All" in scopes
+
+
+def test_from_env_defaults_attachment_limits(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+    settings = TeamsGraphSettings.from_env()
+
+    assert settings.max_attachment_mb == 8
+    assert settings.max_attachments_per_message == 5
+    assert settings.max_total_attachment_mb == 20
+
+
+def test_from_env_reads_attachment_limits(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", "16")
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", "3")
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", "24")
+
+    settings = TeamsGraphSettings.from_env()
+
+    assert settings.max_attachment_mb == 16
+    assert settings.max_attachments_per_message == 3
+    assert settings.max_total_attachment_mb == 24
 
 
 # --- from_env ---------------------------------------------------------------

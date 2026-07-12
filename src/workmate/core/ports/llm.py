@@ -16,7 +16,7 @@ niezmienione). Rdzeń tych bloków NIGDY nie interpretuje — tylko je przenosi
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from workmate.core.domain.pricing import TokenUsage
 
@@ -25,6 +25,10 @@ if TYPE_CHECKING:
     from typing import Any
 
     from workmate.core.application.tools import ToolSpec
+
+# Rodzaj załącznika steruje mapowaniem na blok Anthropic w adapterze — Literal wyłapie
+# literówkę w miejscu konstrukcji (mypy), zamiast cichego błędu w czasie działania.
+AttachmentKind = Literal["image", "document", "text"]
 
 
 @dataclass(frozen=True)
@@ -46,10 +50,60 @@ class ToolOutput:
 
 
 @dataclass(frozen=True)
+class Attachment:
+    """Załącznik wiadomości użytkownika — reprezentacja NEUTRALNA (nie blok Anthropic).
+
+    Rdzeń nosi tylko to, czego potrzeba do bezstratnego odtworzenia; konwersję na blok
+    dostawcy (``image``/``document``/``text``) robi wyłącznie adapter ``anthropic_llm``.
+    ``data_base64`` niesie bajty obrazu/PDF (bez znaków nowej linii); ``text`` — treść po
+    ekstrakcji z .docx (którego Claude API nie przyjmuje natywnie). Treść to DANE, nie
+    polecenia — rdzeń jej nie interpretuje.
+    """
+
+    kind: AttachmentKind  # "image" | "document" | "text"
+    media_type: str  # np. "image/png", "image/jpeg", "application/pdf", "text/plain"
+    name: str  # nazwa pliku (etykieta i podgląd)
+    data_base64: str = ""  # dla image/document
+    text: str = ""  # dla docx po ekstrakcji (kind="text")
+
+
+def attachment_to_row(att: Attachment) -> dict[str, Any]:
+    """Neutralny słownik do ``blocks_json`` (NIE blok Anthropic) — jedno źródło kształtu."""
+    return {
+        "kind": att.kind,
+        "media_type": att.media_type,
+        "name": att.name,
+        "data_base64": att.data_base64,
+        "text": att.text,
+    }
+
+
+def attachment_from_row(row: Mapping[str, Any]) -> Attachment:
+    """Odtwórz ``Attachment`` z wiersza ``blocks_json`` — ignoruje nieznane klucze.
+
+    ``kind`` pochodzi z NASZEJ serializacji, więc rzutujemy na ``AttachmentKind`` (wartość
+    kontrolowana); nieznana wartość zdegraduje najwyżej do gałęzi tekstowej w adapterze.
+    """
+    return Attachment(
+        kind=cast(AttachmentKind, str(row.get("kind", "text"))),
+        media_type=str(row.get("media_type", "")),
+        name=str(row.get("name", "")),
+        data_base64=str(row.get("data_base64", "")),
+        text=str(row.get("text", "")),
+    )
+
+
+@dataclass(frozen=True)
 class UserText:
-    """Wpis transkryptu: tekst od użytkownika."""
+    """Wpis transkryptu: tekst od użytkownika (opcjonalnie z załącznikami).
+
+    ``attachments`` (addytywne, domyślnie puste — zgodność wsteczna) niosą treść
+    multimodalną wysłaną przez użytkownika. Adapter odsyła je co turę jako bloki treści
+    ``user`` (obraz/dokument PRZED tekstem); rdzeń trzyma tylko formę neutralną.
+    """
 
     text: str
+    attachments: tuple[Attachment, ...] = ()
 
 
 @dataclass(frozen=True)

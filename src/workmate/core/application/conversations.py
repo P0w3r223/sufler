@@ -20,7 +20,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from workmate.core.ports.llm import AssistantTurn, RawTurn, ToolResults, UserText
+from workmate.core.ports.llm import (
+    AssistantTurn,
+    RawTurn,
+    ToolResults,
+    UserText,
+    attachment_to_row,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -232,7 +238,10 @@ def _row_of(
     rozliczenia.
     """
     if isinstance(entry, UserText):
-        return "user", entry.text, None, None
+        # Załączniki użytkownika zapisujemy w ``blocks`` jako formę NEUTRALNĄ (nie bloki
+        # Anthropic); base64 NIGDY nie idzie do ``text``/FTS — tam tylko caption użytkownika.
+        blocks = [attachment_to_row(a) for a in entry.attachments] or None
+        return "user", entry.text, blocks, None
     if isinstance(entry, AssistantTurn):
         blocks = [dict(b) for b in entry.blocks] or None
         usage = entry.usage if entry.usage.total_tokens > 0 else None

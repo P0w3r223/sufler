@@ -10,11 +10,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import ChannelMessage
+
+if TYPE_CHECKING:
+    from workmate.adapters.inbound.teams_graph.attachments import AttachmentMaterializer
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,12 @@ class GraphChannelClient(Protocol):
         self, team_id: str, channel_id: str, root_id: str, text: str
     ) -> None: ...
 
+    async def get_hosted_content(
+        self, team_id: str, channel_id: str, message_id: str, hosted_id: str
+    ) -> bytes: ...
+
+    async def download_shared_url(self, url: str) -> bytes: ...
+
 
 HandleMessage = Callable[[ChannelMessage, str], Awaitable[str | None]]
 
@@ -89,6 +99,7 @@ class ChannelPoller:
         poll_interval: int,
         active_idle: timedelta,
         clock: Callable[[], datetime] = _utcnow,
+        materializer: AttachmentMaterializer | None = None,
     ) -> None:
         self._client = client
         self._handle = handle
@@ -100,6 +111,9 @@ class ChannelPoller:
         self._poll_interval = poll_interval
         self._active_idle = active_idle
         self._clock = clock
+        # Materializacja załączników (I/O) — ``None`` wyłącza obsługę plików/obrazów
+        # (drzwi tekstowe, testy bez sieci); wpięta w ``app.py`` na kliencie Graph.
+        self._materializer = materializer
 
     async def run(self) -> None:
         """Pętla główna: co ``poll_interval`` odpytaj każdy kanał i odpowiedz na nowe wpisy."""
@@ -154,6 +168,13 @@ class ChannelPoller:
 
         for msg in messages:
             conversation_id = f"{team_id}/{channel_id}/{msg.thread_root_id}"
+            # Materializuj załączniki (I/O) tuż przed obsługą — bajty trafiają na kopię
+            # wiadomości, którą handler przekłada na treść multimodalną dla agenta.
+            if self._materializer is not None and msg.attachment_refs:
+                attachments = await self._materializer.materialize(
+                    team_id, channel_id, msg
+                )
+                msg = replace(msg, attachments=attachments)
             reply = await self._handle(msg, conversation_id)
             if reply:
                 # Log bez TREŚCI (treść kanału to dane) — sam fakt odpowiedzi: obserwowalność.
