@@ -65,7 +65,12 @@ class _FakeRuntime:
         self.calls: list[tuple[str, list[object]]] = []
 
     def run_turn(
-        self, query: str, *, attachments: object = (), history: object = ()
+        self,
+        query: str,
+        *,
+        attachments: object = (),
+        history: object = (),
+        extra_tools: object = (),
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -78,7 +83,12 @@ class _FailingRuntime:
     """Atrapa runtime, która rzuca — symuluje przejściowy błąd Claude API."""
 
     def run_turn(
-        self, query: str, *, attachments: object = (), history: object = ()
+        self,
+        query: str,
+        *,
+        attachments: object = (),
+        history: object = (),
+        extra_tools: object = (),
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -100,7 +110,12 @@ class _ThinkingRuntime:
     """Atrapa runtime: tura niesie podsumowanie rozumowania (``display=summarized``)."""
 
     def run_turn(
-        self, query: str, *, attachments: object = (), history: object = ()
+        self,
+        query: str,
+        *,
+        attachments: object = (),
+        history: object = (),
+        extra_tools: object = (),
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",

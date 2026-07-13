@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
 from workmate.adapters.inbound.commands import CommandContext
+from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
     AssistantTurn,
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
     from workmate.core.application.services import NotesWriteService
+    from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
     from workmate.core.ports.llm import TranscriptEntry
 
@@ -154,10 +156,14 @@ class ConversationalResponder:
         show_thinking: bool = False,
         compaction: CompactionService | None = None,
         commands: CommandRouter | None = None,
+        workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
         self._channel = channel
+        # Fabryka narzędzi KATALOGU ROBOCZEGO per rozmowa (ADR 0018); ``None`` → brak zapisu plików.
+        # Scope budujemy z ZAUFANEGO (kanał, external_id), nie od modelu — rozmowy są izolowane.
+        self._workspace_catalog_factory = workspace_catalog_factory
         # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
         # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
         self._commands = commands
@@ -201,9 +207,19 @@ class ConversationalResponder:
                 self._channel, external_id, message.text, now=now
             )
         transcript = self._build_transcript(conversation_id, history, rolled_over)
+        # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
+        # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
+        extra_tools = (
+            self._workspace_catalog_factory(WorkspaceScope(self._channel, external_id))
+            if self._workspace_catalog_factory is not None
+            else ()
+        )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
         result = self._runtime.run_turn(
-            message.text, attachments=message.attachments, history=transcript
+            message.text,
+            attachments=message.attachments,
+            history=transcript,
+            extra_tools=extra_tools,
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.

@@ -18,17 +18,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound import env
 from workmate.adapters.inbound.agent_wiring import build_conversational_responder
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
+from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
     AgentSettings,
     ConversationSettings,
     Settings,
     TeamsGraphSettings,
+    WorkspaceSettings,
 )
 
 if TYPE_CHECKING:
@@ -69,7 +71,20 @@ def main() -> None:
     agent_settings.validate()
     conv_settings = ConversationSettings.from_env()
     conv_settings.validate()
-    responder = _build_responder(core_settings, agent_settings, conv_settings)
+    workspace_settings = WorkspaceSettings.from_env()
+    workspace_settings.validate(data_dir=core_settings.data_dir)
+    if workspace_settings.enabled:
+        # TTL sprzątanie katalogu roboczego (ADR 0018) — raz na starcie, backstop przeciw rośnięciu.
+        removed = prune_stale(
+            workspace_settings.workspace_dir,
+            older_than=timedelta(days=workspace_settings.retention_days),
+            now=datetime.now(tz=timezone.utc),
+        )
+        if removed:
+            logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
+    responder = _build_responder(
+        core_settings, agent_settings, conv_settings, workspace_settings
+    )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
 
@@ -78,10 +93,13 @@ def _build_responder(
     core_settings: Settings,
     agent_settings: AgentSettings,
     conv_settings: ConversationSettings,
+    workspace_settings: WorkspaceSettings,
 ) -> Responder:
-    """Złóż respondera wspólnym builderem: katalog READ-ONLY (``enable_write=False``, ADR 0006),
-    ``SafeResponder`` (async), komendy read-only, kompaktowanie. ``channel="teams_graph"`` trzyma
-    pamięć tych drzwi osobno od drzwi bota (``"teams"``)."""
+    """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
+    ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
+    (ADR 0018) włącza OSOBNA bramka ``enable_workspace`` (env ``WORKMATE_ENABLE_WORKSPACE``),
+    niezależna od zapisu notatek. ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi
+    osobno od drzwi bota (``"teams"``)."""
     return build_conversational_responder(
         core_settings,
         agent_settings,
@@ -89,6 +107,8 @@ def _build_responder(
         channel="teams_graph",
         enable_write=False,
         safe=True,
+        enable_workspace=workspace_settings.enabled,
+        workspace_settings=workspace_settings,
     )
 
 

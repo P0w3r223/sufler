@@ -86,6 +86,33 @@ def test_runtime_marks_unknown_tool_as_error():
     assert outputs[0].is_error is True
 
 
+def test_runtime_merges_extra_tools_for_the_turn():
+    """``extra_tools`` (katalog roboczy, ADR 0018) — widoczne modelowi i dispatchowane w turze."""
+    created: list[str] = []
+
+    def create_file(name: str, content: str) -> dict:
+        created.append(name)
+        return {"created": True, "name": name}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                tool_calls=(ToolCall("t1", "create_file", {"name": "r.md", "content": "x"}),)
+            ),
+            LLMResponse(text="Zapisałem plik."),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("search_notes", lambda query: {})]).run(
+        "zapisz plik", extra_tools=[_spec("create_file", create_file)]
+    )
+
+    assert result == "Zapisałem plik."
+    assert created == ["r.md"]  # narzędzie dodane per turę zostało wykonane
+    # Model widział ZARÓWNO bazowe, jak i dodane narzędzie w tej turze.
+    assert "create_file" in llm.tools_seen[0] and "search_notes" in llm.tools_seen[0]
+
+
 def test_runtime_returns_recoverable_error_for_bad_tool_arguments():
     """Model podał złą nazwę argumentu → błąd narzędzia, pętla się NIE wywraca."""
 

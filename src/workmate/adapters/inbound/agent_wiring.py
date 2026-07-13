@@ -18,6 +18,10 @@ from workmate.adapters.inbound.responder import (
     Responder,
     SafeResponder,
 )
+from workmate.adapters.outbound.filesystem_workspace import (
+    FilesystemWorkspaceRepository,
+    FilesystemWorkspaceWriter,
+)
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
@@ -30,11 +34,24 @@ from workmate.core.application.services import (
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import build_tool_catalog
+from workmate.core.application.tools import build_tool_catalog, build_workspace_catalog
+from workmate.core.application.workspace import (
+    WorkspaceLimits,
+    WorkspaceService,
+    WorkspaceWriteService,
+)
 
 if TYPE_CHECKING:
-    from workmate.config import AgentSettings, ConversationSettings, Settings
+    from collections.abc import Callable
+
+    from workmate.config import (
+        AgentSettings,
+        ConversationSettings,
+        Settings,
+        WorkspaceSettings,
+    )
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.conversations import ConversationStore
 
 # Jedno źródło komunikatu o brakującym extra ``agent`` (dawniej powielone w 4 ``app.py``).
@@ -99,6 +116,32 @@ def build_read_catalog(settings: Settings) -> list[ToolSpec]:
     return build_tool_catalog(notes, projects, write_service=None)
 
 
+def _build_workspace_factory(
+    workspace_settings: WorkspaceSettings,
+) -> Callable[[WorkspaceScope], list[ToolSpec]]:
+    """Fabryka narzędzi KATALOGU ROBOCZEGO (ADR 0018) wiążących je ze scope rozmowy.
+
+    Serwisy (read/write) budujemy RAZ; fabryka na turę tylko domyka je scope'em rozmowy —
+    izolacja per rozmowa bez współdzielonego stanu w runtime.
+    """
+    repo = FilesystemWorkspaceRepository(workspace_settings.workspace_dir)
+    limits = WorkspaceLimits(
+        max_file_bytes=workspace_settings.max_file_mb * 1024 * 1024,
+        max_files_per_scope=workspace_settings.max_files_per_scope,
+        max_total_bytes=workspace_settings.max_total_mb * 1024 * 1024,
+        allowed_ext=frozenset(workspace_settings.allowed_ext),
+    )
+    read_service = WorkspaceService(repo)
+    write_service = WorkspaceWriteService(
+        FilesystemWorkspaceWriter(workspace_settings.workspace_dir), repo, limits
+    )
+
+    def factory(scope: WorkspaceScope) -> list[ToolSpec]:
+        return build_workspace_catalog(scope, read_service, write_service)
+
+    return factory
+
+
 def build_conversational_responder(
     settings: Settings,
     agent_settings: AgentSettings,
@@ -108,12 +151,15 @@ def build_conversational_responder(
     enable_write: bool,
     safe: bool,
     show_thinking: bool = False,
+    enable_workspace: bool = False,
+    workspace_settings: WorkspaceSettings | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
     Jedno źródło recepty ``SafeResponder(ConversationalResponder(...))`` (dawniej skopiowanej
     w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``show_thinking`` tylko
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
+    ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
     """
     runtime = build_agent_runtime_or_exit(
         settings, agent_settings, enable_write=enable_write
@@ -129,6 +175,11 @@ def build_conversational_responder(
     router = CommandRouter(
         conversations, {spec.name: spec.fn for spec in build_read_catalog(settings)}
     )
+    workspace_factory = (
+        _build_workspace_factory(workspace_settings)
+        if enable_workspace and workspace_settings is not None
+        else None
+    )
     inner = ConversationalResponder(
         runtime,
         conversations,
@@ -136,6 +187,7 @@ def build_conversational_responder(
         show_thinking=show_thinking,
         compaction=compaction,
         commands=router,
+        workspace_catalog_factory=workspace_factory,
     )
     return SafeResponder(inner) if safe else inner
 
