@@ -219,6 +219,56 @@ def test_parse_refs_dedups_repeated_hosted_id():
     assert refs == (AttachmentRef(kind="hosted", name="obraz", hosted_id="dup"),)
 
 
+def test_parse_refs_extracts_public_giphy_image_as_url():
+    """GIF z Giphy (host allowlistowany) → referencja ``url`` (pobierana zwykłym HTTP)."""
+    body = '<img src="https://media.giphy.com/media/abc123/giphy.gif" alt="gif">'
+
+    refs = _parse_refs({}, body_html=body)
+
+    assert refs == (
+        AttachmentRef(kind="url", name="obraz", url="https://media.giphy.com/media/abc123/giphy.gif"),
+    )
+
+
+def test_parse_refs_extracts_teams_cdn_emoji_as_url():
+    """Emoji/naklejka z teams.cdn.office.net (host allowlistowany) → referencja ``url``."""
+    body = "<img src='https://statics.teams.cdn.office.net/evergreen-assets/emoji/x.png'>"
+
+    refs = _parse_refs({}, body_html=body)
+
+    assert refs == (
+        AttachmentRef(
+            kind="url",
+            name="obraz",
+            url="https://statics.teams.cdn.office.net/evergreen-assets/emoji/x.png",
+        ),
+    )
+
+
+def test_parse_refs_ignores_non_allowlisted_image_host_ssrf_guard():
+    """Obraz spoza allowlisty (dowolny host) NIE jest pobierany — bariera SSRF."""
+    body = '<img src="https://internal.service.local/secret.png">'
+
+    assert _parse_refs({}, body_html=body) == ()
+
+
+def test_parse_refs_ignores_non_https_public_image():
+    """Nawet host z allowlisty, ale po ``http`` (nie https) → pomijamy."""
+    body = '<img src="http://media.giphy.com/media/abc/giphy.gif">'
+
+    assert _parse_refs({}, body_html=body) == ()
+
+
+def test_parse_refs_asyncgw_direct_src_is_not_fetched():
+    """Bezpośredni obraz AMS/asyncgw (nie hostedContents, nie allowlista) → brak referencji."""
+    body = (
+        '<img itemtype="http://schema.skype.com/AMSImage" '
+        'src="https://pl-prod.asyncgw.teams.microsoft.com/v1/objects/0-plc/views/imgo">'
+    )
+
+    assert _parse_refs({}, body_html=body) == ()
+
+
 def test_normalize_keeps_message_with_only_file_and_no_text():
     """REGRESJA: wiadomość z SAMYM plikiem (bez podpisu) NIE jest odrzucana (dziś byłaby)."""
     raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="")

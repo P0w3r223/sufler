@@ -1,7 +1,7 @@
 """Testy dispatchu trybu w drzwiach CLI (``workmate-agent``) — bez sieci, bez klucza.
 
 Sprawdzamy WYBÓR trybu (argv jednorazowo / potok jednorazowo / TTY → czat), nie samo
-wywołanie API: ``build_agent_runtime`` i ``_run_chat`` podmieniamy atrapami. Klucz
+wywołanie API: ``build_agent_runtime_or_exit`` i ``_run_chat`` podmieniamy atrapami. Klucz
 ustawiamy w env, żeby ``AgentSettings.validate`` przeszło bez sekretu w repo.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _no_runtime(*args, **kwargs):
 def test_argv_query_runs_once_and_prints(monkeypatch, capsys):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setattr(sys, "argv", ["workmate-agent", "co", "z", "mpwik?"])
-    monkeypatch.setattr(app, "build_agent_runtime", _fake_build("ODP"))
+    monkeypatch.setattr(app, "build_agent_runtime_or_exit", _fake_build("ODP"))
 
     app.main()
 
@@ -39,7 +39,7 @@ def test_argv_query_runs_once_and_prints(monkeypatch, capsys):
 def test_empty_piped_input_raises_usage(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setattr(sys, "argv", ["workmate-agent"])
-    monkeypatch.setattr(app, "build_agent_runtime", lambda *a, **k: object())
+    monkeypatch.setattr(app, "build_agent_runtime_or_exit", lambda *a, **k: object())
     monkeypatch.setattr("sys.stdin", io.StringIO("   "))  # potok (nie-TTY), puste
 
     with pytest.raises(SystemExit):
@@ -49,15 +49,15 @@ def test_empty_piped_input_raises_usage(monkeypatch):
 def test_interactive_tty_enters_chat(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setattr(sys, "argv", ["workmate-agent"])
-    sentinel = object()
-    monkeypatch.setattr(app, "build_agent_runtime", lambda *a, **k: sentinel)
     monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(isatty=lambda: True))
-    entered: list[object] = []
-    monkeypatch.setattr(app, "_run_chat", lambda runtime, _settings: entered.append(runtime))
+    # Runtime buduje dopiero ``_run_chat`` (przez wspólny builder), nie ``main``; więc
+    # atrapujemy sam ``_run_chat`` i sprawdzamy, że TTY-bez-argumentu wybiera tryb czatu.
+    entered: list[bool] = []
+    monkeypatch.setattr(app, "_run_chat", lambda *a, **k: entered.append(True))
 
     app.main()
 
-    assert entered == [sentinel]  # bez argumentu w TTY → tryb czatu
+    assert entered == [True]  # bez argumentu w TTY → tryb czatu
 
 
 # --- Tryb --history: dispatch na podgląd (czysty odczyt, bez klucza API) --------
@@ -70,7 +70,7 @@ def test_history_flag_dispatches_to_preview_without_api_key(monkeypatch, flag):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("WORKMATE_AGENT_API_KEY", raising=False)
     monkeypatch.setattr(sys, "argv", ["workmate-agent", flag])
-    monkeypatch.setattr(app, "build_agent_runtime", _no_runtime)
+    monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
     captured: list[str | None] = []
     monkeypatch.setattr(app, "_print_history", lambda *, channel=None: captured.append(channel))
 
@@ -82,7 +82,7 @@ def test_history_flag_dispatches_to_preview_without_api_key(monkeypatch, flag):
 def test_history_flag_passes_channel_filter(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history", "telegram"])
-    monkeypatch.setattr(app, "build_agent_runtime", _no_runtime)
+    monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
     captured: list[str | None] = []
     monkeypatch.setattr(app, "_print_history", lambda *, channel=None: captured.append(channel))
 
@@ -96,7 +96,7 @@ def test_history_empty_db_reports_no_conversations(monkeypatch, capsys, tmp_path
     monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(db))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history"])
-    monkeypatch.setattr(app, "build_agent_runtime", _no_runtime)
+    monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
 
     app.main()
 
@@ -117,7 +117,7 @@ def test_history_renders_conversations_from_shared_db(monkeypatch, capsys, tmp_p
     monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(db))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history"])
-    monkeypatch.setattr(app, "build_agent_runtime", _no_runtime)
+    monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
 
     app.main()
 

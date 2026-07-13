@@ -83,7 +83,12 @@ def test_append_and_read_messages_in_order():
     ]
 
 
-def test_active_conversation_sums_real_usage():
+def test_active_conversation_reports_context_not_usage_sum():
+    """Optymalizacja: ``active_conversation`` NIE liczy już SUM(usage) (martwy w gorącej ścieżce).
+
+    Rollover czyta tylko ``last_context_tokens``/``message_count``/``updated_at``, więc usage tu
+    jest 0; realne rozliczenie żyje w ``get``/``list_conversations`` (podgląd historii).
+    """
     store = _store()
     conv = store.open_conversation("teams", "conv-9")
     store.append_message(conv.id, "user", "a")
@@ -94,7 +99,8 @@ def test_active_conversation_sums_real_usage():
     active = store.active_conversation("teams", "conv-9")
     assert active is not None
     assert active.id == conv.id
-    assert active.usage.total_tokens == 7  # realne 3 + 4 (nie estymata)
+    assert active.usage.total_tokens == 0  # SUM usunięty z tej ścieżki
+    assert active.last_context_tokens == 7  # kontekst nadal liczony (sygnał rolloveru)
 
 
 def test_active_conversation_reports_context_and_message_count():
@@ -159,6 +165,37 @@ def test_search_finds_across_conversations_with_filters():
 
     # Brak trafień → pusta lista (nie błąd).
     assert store.search("nieistniejace-slowo-xyz") == []
+
+
+# --- get(): pełny odczyt jednej rozmowy (usage + konteksty + liczba tur) --------
+
+
+def test_get_reports_full_usage_and_context_and_input_tokens():
+    """``get`` scala usage, kontekst i wejście ostatniej tury oraz liczbę tur (Design 2/0014).
+
+    Osłania scalenie bliźniaczych SELECT-ów w ``_last_assistant_tokens`` (kontekst = +output,
+    wejście = bez output) i ścieżkę czytaną tuż przed kompaktowaniem.
+    """
+    store = _store()
+    conv = store.open_conversation("cli", "chat")
+    store.append_message(conv.id, "user", "pytanie")
+    store.append_message(
+        conv.id,
+        "assistant",
+        "odpowiedz",
+        usage=TokenUsage(input_tokens=100, output_tokens=20, cache_read_input_tokens=5),
+    )
+
+    got = store.get(conv.id)
+    assert got is not None
+    assert got.usage.total_tokens == 125  # suma realnego usage (100 + 20 + 5)
+    assert got.last_context_tokens == 125  # wejście + cache + wyjście (trigger rolloveru)
+    assert got.last_input_tokens == 105  # wejście + cache BEZ wyjścia (trigger kompaktowania)
+    assert got.message_count == 2
+
+
+def test_get_missing_conversation_returns_none():
+    assert _store().get("nie-istnieje") is None
 
 
 # --- Podgląd historii: list_conversations --------------------------------------

@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
+from workmate.adapters.inbound.commands import telegram_command_names
 from workmate.adapters.inbound.responder import InboundMessage, Responder
 
 if TYPE_CHECKING:
@@ -70,8 +71,8 @@ def build_application(settings: TelegramSettings, responder: Responder) -> Any:
     application = Application.builder().token(settings.bot_token).build()
     on_message = make_on_message(responder)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-    # Komendy startu wątku (/nowa, /nowy, /new): MessageHandler celowo pomija komendy
+    # Komendy read-only (/pomoc, /nowa, /szukaj, …): MessageHandler celowo pomija komendy
     # (~COMMAND), więc rejestrujemy je osobno na TEN SAM handler — rozpoznanie i tak żyje
-    # w responderze (jedno źródło logiki), tu tylko dostarczamy komendę do szwu.
-    application.add_handler(CommandHandler(["nowa", "nowy", "new"], on_message))
+    # w routerze komend (jedno źródło ``COMMAND_SPECS``), tu tylko dostarczamy je do szwu.
+    application.add_handler(CommandHandler(telegram_command_names(), on_message))
     return application

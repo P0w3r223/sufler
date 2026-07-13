@@ -409,6 +409,15 @@ _DEFAULT_TEAMS_GRAPH_SCOPES = (
 _MAX_ATTACHMENT_MB_CEILING = 24
 # Górny cap liczby załączników na wiadomość (chroni przed absurdalną wartością operatora).
 _MAX_ATTACHMENTS_PER_MESSAGE_CEILING = 20
+# Sufit dłuższej krawędzi obrazu (px). 2576 to maksymalna użyteczna rozdzielczość modeli
+# high-res (Sonnet 5) — powyżej model i tak skaluje po stronie serwera, więc nie ma sensu
+# wysyłać więcej. Domyślne 2048 zostawia zapas na koszt tokenów (bloki wracają co turę).
+_MAX_IMAGE_EDGE_PX_CEILING = 2576
+_MIN_IMAGE_EDGE_PX = 256
+# Sufit rozmiaru pliku EKSTRAHOWANEGO do tekstu (docx/xlsx/pptx/txt). Nie wysyłamy z nich
+# bajtów do API (tylko tekst), więc sufit 32 MB base64 ich nie dotyczy — limit jest tylko
+# barierą na ekstrakcję/pamięć. Prezentacje z obrazkami rutynowo mają 10–50 MB.
+_MAX_EXTRACT_MB_CEILING = 100
 
 
 def _parse_watch_pairs(value: str) -> tuple[tuple[str, str], ...]:
@@ -449,7 +458,9 @@ class TeamsGraphSettings:
     # Limity załączników (ADR 0016): rozmiar pliku, liczba i ŁĄCZNY budżet na wiadomość.
     max_attachment_mb: int = 8
     max_attachments_per_message: int = 5
-    max_total_attachment_mb: int = 20  # sumaryczny budżet — chroni sufit 32 MB żądania API
+    max_total_attachment_mb: int = 20  # sumaryczny budżet base64 — chroni sufit 32 MB żądania API
+    max_extract_mb: int = 50  # sufit pliku ekstrahowanego do tekstu (docx/xlsx/pptx/txt)
+    max_image_edge_px: int = 2048  # dłuższa krawędź obrazu (px) — powyżej downscaling
 
     @property
     def authority(self) -> str:
@@ -482,6 +493,8 @@ class TeamsGraphSettings:
             max_total_attachment_mb=_int_from_env(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", 20
             ),
+            max_extract_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB", 50),
+            max_image_edge_px=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE", 2048),
         )
 
     def validate(self) -> None:
@@ -539,4 +552,18 @@ class TeamsGraphSettings:
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB musi być w zakresie "
                 f"1..{_MAX_ATTACHMENT_MB_CEILING}, jest: {self.max_total_attachment_mb}."
+            )
+        # Pliki ekstrahowane do tekstu nie zjadają budżetu base64, ale trzymamy górną barierę.
+        if not 1 <= self.max_extract_mb <= _MAX_EXTRACT_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB musi być w zakresie "
+                f"1..{_MAX_EXTRACT_MB_CEILING}, jest: {self.max_extract_mb}."
+            )
+        # Próg downscalingu obrazu: poniżej 256 px obraz byłby nieczytelny, powyżej 2576 px
+        # model i tak skaluje po swojej stronie — trzymamy się użytecznego zakresu.
+        if not _MIN_IMAGE_EDGE_PX <= self.max_image_edge_px <= _MAX_IMAGE_EDGE_PX_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE musi być w zakresie "
+                f"{_MIN_IMAGE_EDGE_PX}..{_MAX_IMAGE_EDGE_PX_CEILING} (px), jest: "
+                f"{self.max_image_edge_px}."
             )

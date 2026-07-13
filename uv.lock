@@ -2502,6 +2502,7 @@ teams = [
 ]
 teams-graph = [
     { name = "httpx" },
+    { name = "markdown-it-py" },
     { name = "msal" },
     { name = "python-docx" },
     { name = "python-dotenv" },
@@ -2523,6 +2524,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.40" },
     { name = "httpx", marker = "extra == 'teams-graph'", specifier = ">=0.28.1" },
+    { name = "markdown-it-py", marker = "extra == 'teams-graph'", specifier = ">=3.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
     { name = "microsoft-agents-activity", marker = "extra == 'teams'", specifier = ">=1.1.0" },
     { name = "microsoft-agents-authentication-msal", marker = "extra == 'teams'", specifier = ">=1.1.0" },

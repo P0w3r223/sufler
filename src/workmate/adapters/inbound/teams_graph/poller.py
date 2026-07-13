@@ -73,6 +73,8 @@ class GraphChannelClient(Protocol):
 
     async def download_shared_url(self, url: str) -> bytes: ...
 
+    async def download_public_url(self, url: str) -> bytes: ...
+
 
 HandleMessage = Callable[[ChannelMessage, str], Awaitable[str | None]]
 

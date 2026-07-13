@@ -18,16 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from workmate.adapters.inbound import env
 from workmate.adapters.inbound.agent_wiring import (
-    build_agent_runtime,
-    build_compaction_service,
+    build_agent_runtime_or_exit,
+    build_conversational_responder,
 )
-from workmate.adapters.inbound.responder import ConversationalResponder, InboundMessage
+from workmate.adapters.inbound.responder import InboundMessage
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.config import AgentSettings, ConversationSettings, Settings
 from workmate.core.application.conversations import ConversationService
@@ -42,52 +41,13 @@ if TYPE_CHECKING:
         ConversationSummary,
     )
 
-_MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 _USAGE = 'Podaj zapytanie, np.: uv run workmate-agent "co ustalono z mpwik?"'
 _EXIT_WORDS = ("exit", "quit", ":q", "wyjdz", "wyjdź")
 _BANNER = (
     "WorkMate — czat z Claude (pamięć rozmowy włączona, katalog read+write).\n"
-    "Pisz i naciśnij Enter. Nowy wątek: '/nowa'. "
+    "Pisz i naciśnij Enter. Komendy: '/pomoc'. Nowy wątek: '/nowa'. "
     "Zakończ: Ctrl-D (Ctrl-Z+Enter na Windows) albo 'exit'.\n"
 )
-
-
-def _apply_env_file(env_file: Path) -> None:
-    """Wczytaj plik ``.env`` do ``os.environ`` (``setdefault`` — realne env wygrywa).
-
-    Odporność na kodowanie: PowerShell domyślnie zapisuje UTF-16 LE z BOM;
-    ``utf-8-sig`` obsługuje UTF-8 z/bez BOM, gałąź UTF-16 — pliki z PowerShella.
-    """
-    data = env_file.read_bytes()
-    try:
-        if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
-            text = data.decode("utf-16")
-        else:
-            text = data.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise SystemExit(
-            f"Nie udało się odczytać {env_file.name} — sprawdź kodowanie "
-            f"(zapisz jako UTF-8): {exc}"
-        ) from exc
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-def _load_dotenv() -> None:
-    """Znajdź repo-lokalny ``.env`` (korzeń z ``pyproject.toml``) i wczytaj go, jeśli jest.
-
-    Wygoda deva: klucz i ustawienia agenta można trzymać w ``.env`` (w
-    ``.gitignore``) zamiast eksportować ręcznie. Realne zmienne środowiskowe
-    zawsze mają priorytet (patrz ``_apply_env_file``). Bez zależności zewnętrznej.
-    """
-    here = Path(__file__).resolve()
-    root = next((p for p in (here, *here.parents) if (p / "pyproject.toml").is_file()), None)
-    if root is not None and (root / ".env").is_file():
-        _apply_env_file(root / ".env")
 
 
 def _force_utf8_io() -> None:
@@ -112,7 +72,7 @@ def main() -> None:
     API ani runtime, więc rozgałęziamy przed ich budową i walidacją sekretu.
     """
     _force_utf8_io()
-    _load_dotenv()
+    env.load_dotenv()
 
     argv = sys.argv[1:]
     if argv and argv[0] in ("--history", "history"):
@@ -123,23 +83,20 @@ def main() -> None:
     agent_settings = AgentSettings.from_env()
     agent_settings.validate()
 
-    try:
-        runtime = build_agent_runtime(settings, agent_settings, enable_write=True)
-    except ImportError as exc:
-        raise SystemExit(_MISSING_AGENT) from exc
-
     argv_query = " ".join(argv).strip()
     if argv_query:
+        runtime = build_agent_runtime_or_exit(settings, agent_settings, enable_write=True)
         _run_once(runtime, argv_query)
     elif not sys.stdin.isatty():
         # Wejście z potoku (nie-TTY) — jednorazowe zapytanie z stdin.
         piped = sys.stdin.read().strip()
         if not piped:
             raise SystemExit(_USAGE)
+        runtime = build_agent_runtime_or_exit(settings, agent_settings, enable_write=True)
         _run_once(runtime, piped)
     else:
         # Terminal bez argumentu — interaktywny czat z pamięcią rozmowy.
-        _run_chat(runtime, agent_settings)
+        _run_chat(settings, agent_settings)
 
 
 def _run_once(runtime: AgentRuntime, query: str) -> None:
@@ -151,33 +108,25 @@ def _run_once(runtime: AgentRuntime, query: str) -> None:
         raise SystemExit(f"Błąd komunikacji z Claude API: {exc}") from exc
 
 
-def _run_chat(runtime: AgentRuntime, agent_settings: AgentSettings) -> None:
+def _run_chat(settings: Settings, agent_settings: AgentSettings) -> None:
     """Interaktywny czat: pętla wiadomość↔odpowiedź nad jedną, trwałą rozmową.
 
     Pamięć (SQLite, ADR 0010/0011) wątkuje kanał ``cli`` — rozmowa jest CIĄGŁA także
     między uruchomieniami (do rolloveru na limicie kontekstu albo kompaktowania, ADR 0014).
-    Każdą wiadomość obsługuje ``ConversationalResponder`` (to samo źródło logiki pamięci co
-    drzwi async), odpalany per linia przez ``asyncio.run``. Oczekiwany błąd tury (API/repo)
-    nie kładzie czatu: łapiemy go, wypisujemy i czekamy na kolejną wiadomość. ``agent_settings``
-    niesie model podsumowań kompaktowania (domyślnie = model agenta).
+    Recepta ``ConversationalResponder`` (z komendami read-only i kompaktowaniem) składana jest
+    wspólnym builderem — CLI to drzwi ZAUFANE (``enable_write=True``, ``show_thinking=True``),
+    ale niewłożone w ``SafeResponder`` (błąd tury łapiemy lokalnie i kontynuujemy czat).
     """
     conv_settings = ConversationSettings.from_env()
     conv_settings.validate()
-    # Store współdzielony przez serwis rozmów i kompaktowanie (ADR 0014). Gdy kompaktowanie
-    # włączone, ZASTĘPUJE rollover-na-rozmiarze (``size_rollover=False``) — na kanale CLI
-    # rozmowa bywa długa, więc streszczamy zamiast startować nowy wątek.
-    store = SqliteConversationStore(conv_settings.db_path)
-    conversations = ConversationService(
-        store,
-        max_context_tokens=conv_settings.max_context_tokens,
-        idle_timeout=conv_settings.idle_timeout(),
-        size_rollover=not conv_settings.compaction_enabled,
-    )
-    compaction = build_compaction_service(agent_settings, conv_settings, store)
-    # CLI to drzwi ZAUFANE (lokalne) — pokazujemy podsumowanie rozumowania modelu
-    # (display=summarized); async drzwi zostają czyste (show_thinking domyślnie False).
-    responder = ConversationalResponder(
-        runtime, conversations, channel="cli", show_thinking=True, compaction=compaction
+    responder = build_conversational_responder(
+        settings,
+        agent_settings,
+        conv_settings,
+        channel="cli",
+        enable_write=True,
+        safe=False,
+        show_thinking=True,
     )
 
     print(_BANNER)

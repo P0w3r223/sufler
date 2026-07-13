@@ -25,7 +25,7 @@ from workmate.core.application.services import (
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.domain.models import NoteMetadata
+from workmate.core.domain.notes import build_note_metadata
 from workmate.core.errors import RepositoryError, WorkMateError
 
 
@@ -36,6 +36,23 @@ class ToolSpec:
     name: str
     description: str
     fn: Callable[..., dict[str, Any]]
+
+
+def _envelope(
+    build: Callable[[], dict[str, Any]],
+    *,
+    errors: tuple[type[Exception], ...] = (RepositoryError,),
+) -> dict[str, Any]:
+    """Wykonaj ``build`` i oddaj jego wynik; złap wskazane błędy → ``{"error": str(exc)}``.
+
+    Jedno miejsce koperty błędów narzędzi. Narzędzie owija ciało w ``build()`` i oddaje je tu —
+    dzięki temu jego NAGŁÓWEK/docstring/adnotacje zostają nietknięte (opis=docstring,
+    schemat=sygnatura są ZAMROŻONE golden-testem, więc koperty NIE robimy dekoratorem na ``fn``).
+    """
+    try:
+        return build()
+    except errors as exc:
+        return {"error": str(exc)}
 
 
 def build_tool_catalog(
@@ -63,17 +80,18 @@ def build_tool_catalog(
         Opcjonalne filtry: ``project`` (klucz projektu, np. 'scada-integration') oraz
         ``participant`` (fragment nazwiska uczestnika).
         """
-        try:
+
+        def build() -> dict[str, Any]:
             results = notes.search_notes(
                 query, project=project, participant=participant, limit=limit
             )
-        except RepositoryError as exc:
-            return {"error": str(exc)}
-        return {
-            "query": query,
-            "count": len(results),
-            "results": [r.model_dump(mode="json") for r in results],
-        }
+            return {
+                "query": query,
+                "count": len(results),
+                "results": [r.model_dump(mode="json") for r in results],
+            }
+
+        return _envelope(build)
 
     def get_note(note_id: str) -> dict[str, Any]:
         """Pobierz pełną treść jednej notatki po jej identyfikatorze.
@@ -81,24 +99,26 @@ def build_tool_catalog(
         Identyfikator ma postać ``<firma>/<projekt>/<plik-bez-rozszerzenia>``,
         np. 'mpwik/scada-integration/2025-06-12-przeglad-api-scada' (z wyników search_notes).
         """
-        try:
+
+        def build() -> dict[str, Any]:
             note = notes.get_note(note_id)
-        except RepositoryError as exc:
-            return {"error": str(exc)}
-        if note is None:
-            return {"error": f"Notatka nie istnieje: {note_id}"}
-        return note.model_dump(mode="json")
+            if note is None:
+                return {"error": f"Notatka nie istnieje: {note_id}"}
+            return note.model_dump(mode="json")
+
+        return _envelope(build)
 
     def list_projects() -> dict[str, Any]:
         """Wypisz projekty pionu dostępne w bazie wiedzy (klucz, nazwa, opis)."""
-        try:
+
+        def build() -> dict[str, Any]:
             items = projects.list_projects()
-        except RepositoryError as exc:
-            return {"error": str(exc)}
-        return {
-            "count": len(items),
-            "projects": [p.model_dump(mode="json") for p in items],
-        }
+            return {
+                "count": len(items),
+                "projects": [p.model_dump(mode="json") for p in items],
+            }
+
+        return _envelope(build)
 
     def get_project_status(project: str) -> dict[str, Any]:
         """Zwróć status projektu: stan zadeklarowany + syntezę z notatek.
@@ -106,13 +126,14 @@ def build_tool_catalog(
         ``project`` to klucz projektu (np. 'workmate'). W odpowiedzi m.in. firma,
         zdrowie, faza, podsumowanie oraz liczba notatek i otwartych action items.
         """
-        try:
+
+        def build() -> dict[str, Any]:
             status = projects.get_project_status(project)
-        except RepositoryError as exc:
-            return {"error": str(exc)}
-        if status is None:
-            return {"error": f"Projekt nie istnieje: {project}"}
-        return status.model_dump(mode="json")
+            if status is None:
+                return {"error": f"Projekt nie istnieje: {project}"}
+            return status.model_dump(mode="json")
+
+        return _envelope(build)
 
     catalog = [
         ToolSpec("search_notes", search_notes.__doc__ or "", search_notes),
@@ -142,21 +163,22 @@ def build_tool_catalog(
         notatki (przy kolizji dokłada sufiks). ``date`` w formacie YYYY-MM-DD;
         ``project`` musi istnieć w rejestrze (patrz list_projects).
         """
-        try:
-            metadata = NoteMetadata(
+
+        def build() -> dict[str, Any]:
+            metadata = build_note_metadata(
                 title=title,
                 project=project,
                 date=date,
-                participants=participants or [],
-                decisions=decisions or [],
-                action_items=action_items or [],
-                open_questions=open_questions or [],
-                tags=tags or [],
+                participants=participants,
+                decisions=decisions,
+                action_items=action_items,
+                open_questions=open_questions,
+                tags=tags,
             )
             note = write_service.save_note(metadata, body)
-        except (WorkMateError, ValidationError) as exc:
-            return {"error": str(exc)}
-        return {"saved": True, "id": note.id, "path": f"{note.id}.md"}
+            return {"saved": True, "id": note.id, "path": f"{note.id}.md"}
+
+        return _envelope(build, errors=(WorkMateError, ValidationError))
 
     catalog.append(ToolSpec("save_note", save_note.__doc__ or "", save_note))
     return catalog

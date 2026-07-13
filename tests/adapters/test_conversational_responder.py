@@ -11,12 +11,14 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from workmate.adapters.inbound.responder import (
+from workmate.adapters.inbound.commands import (
     _NEW_THREAD_ACK,
     _NEW_THREAD_ALREADY_FRESH,
+    CommandRouter,
+)
+from workmate.adapters.inbound.responder import (
     ConversationalResponder,
     InboundMessage,
-    _is_new_thread_command,
     _to_transcript,
     _to_transcript_with_summary,
     _with_notices,
@@ -347,24 +349,17 @@ def test_thinking_hidden_by_default_on_async_doors():
     assert "rozumowanie" not in reply
 
 
-# --- Komenda jawnego startu wątku /nowa (ADR 0012) -----------------------------
-
-
-def test_is_new_thread_command_matches_slash_variants_only():
-    assert _is_new_thread_command("/nowa")
-    assert _is_new_thread_command("  /NOWA  ")  # strip + case-insensitive
-    assert _is_new_thread_command("/new pominięty argument")  # liczy się 1. token
-    assert _is_new_thread_command("/nowa@WorkMateBot")  # sufiks @bot z grup Telegrama
-    assert not _is_new_thread_command("nowa rozmowa")  # bez ukośnika → zwykły tekst
-    assert not _is_new_thread_command("chcę /nowa")  # komenda musi być na początku
-    assert not _is_new_thread_command("")
+# --- Komenda jawnego startu wątku /nowa przez router komend (ADR 0012) ---------
+# (Parsowanie tokenów komend testuje osobno tests/adapters/inbound/test_commands.py.)
 
 
 def test_new_thread_command_closes_thread_without_calling_runtime():
     store = SqliteConversationStore(":memory:")
     service = ConversationService(store, max_context_tokens=1000)
     runtime = _FakeRuntime("odpowiedz")
-    responder = ConversationalResponder(runtime, service, channel="telegram")
+    responder = ConversationalResponder(
+        runtime, service, channel="telegram", commands=CommandRouter(service, {})
+    )
 
     # Zbuduj niepusty wątek (jedna realna tura).
     asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1")))
@@ -387,7 +382,9 @@ def test_new_thread_command_on_empty_conversation_reports_already_fresh():
     store = SqliteConversationStore(":memory:")
     service = ConversationService(store, max_context_tokens=1000)
     runtime = _FakeRuntime("x")
-    responder = ConversationalResponder(runtime, service, channel="telegram")
+    responder = ConversationalResponder(
+        runtime, service, channel="telegram", commands=CommandRouter(service, {})
+    )
 
     ack = asyncio.run(
         responder.respond(InboundMessage(text="/nowa", conversation_id="chat1"))

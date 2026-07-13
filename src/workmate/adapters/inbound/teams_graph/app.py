@@ -21,22 +21,18 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from workmate.adapters.inbound.responder import (
-    ConversationalResponder,
-    Responder,
-    SafeResponder,
-)
+from workmate.adapters.inbound import env
+from workmate.adapters.inbound.agent_wiring import build_conversational_responder
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.config import (
     AgentSettings,
     ConversationSettings,
     Settings,
     TeamsGraphSettings,
 )
-from workmate.core.application.conversations import ConversationService
 
 if TYPE_CHECKING:
+    from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
 
 logger = logging.getLogger(__name__)
@@ -45,13 +41,12 @@ _MISSING_TEAMS_GRAPH = (
     "Drzwi Teams (delegowane) wymagają extra 'teams-graph'. "
     "Zainstaluj: uv sync --extra teams-graph"
 )
-_MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 
 
 def main() -> None:
     """Uruchom proces drzwi Teams (delegowany polling) z runtime agenta (read-only)."""
     logging.basicConfig(level=logging.INFO)
-    _load_dotenv()
+    env.load_dotenv()
 
     settings = TeamsGraphSettings.from_env()
     settings.validate()
@@ -79,51 +74,21 @@ def main() -> None:
     asyncio.run(_run(settings, token_provider, handle))
 
 
-def _load_dotenv() -> None:
-    """Wczytaj zmienne z ``.env``, gdy python-dotenv jest dostępny (miękko — brak nie boli).
-
-    Spójnie z drzwiami Telegram/CLI; operatorzy mogą też eksportować zmienne w powłoce.
-    """
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    load_dotenv()
-
-
 def _build_responder(
     core_settings: Settings,
     agent_settings: AgentSettings,
     conv_settings: ConversationSettings,
 ) -> Responder:
-    """Złóż ``SafeResponder(ConversationalResponder(...))`` — recepta jak w Telegramie/bocie.
-
-    Katalog READ-ONLY (``enable_write=False``, ADR 0006). Store rozmów współdzielony przez
-    serwis rozmów i kompaktowanie (ta sama baza SQLite). ``channel="teams_graph"`` trzyma
-    pamięć tych drzwi osobno od drzwi bota (``"teams"``).
-    """
-    from workmate.adapters.inbound.agent_wiring import (
-        build_agent_runtime,
-        build_compaction_service,
-    )
-
-    try:
-        runtime = build_agent_runtime(core_settings, agent_settings, enable_write=False)
-    except ImportError as exc:
-        raise SystemExit(_MISSING_AGENT) from exc
-
-    store = SqliteConversationStore(conv_settings.db_path)
-    conversations = ConversationService(
-        store,
-        max_context_tokens=conv_settings.max_context_tokens,
-        idle_timeout=conv_settings.idle_timeout(),
-        size_rollover=not conv_settings.compaction_enabled,
-    )
-    compaction = build_compaction_service(agent_settings, conv_settings, store)
-    return SafeResponder(
-        ConversationalResponder(
-            runtime, conversations, channel="teams_graph", compaction=compaction
-        )
+    """Złóż respondera wspólnym builderem: katalog READ-ONLY (``enable_write=False``, ADR 0006),
+    ``SafeResponder`` (async), komendy read-only, kompaktowanie. ``channel="teams_graph"`` trzyma
+    pamięć tych drzwi osobno od drzwi bota (``"teams"``)."""
+    return build_conversational_responder(
+        core_settings,
+        agent_settings,
+        conv_settings,
+        channel="teams_graph",
+        enable_write=False,
+        safe=True,
     )
 
 
@@ -154,6 +119,8 @@ async def _run(
                 max_bytes=settings.max_attachment_mb * 1024 * 1024,
                 max_count=settings.max_attachments_per_message,
                 max_total_bytes=settings.max_total_attachment_mb * 1024 * 1024,
+                max_extract_bytes=settings.max_extract_mb * 1024 * 1024,
+                max_image_edge=settings.max_image_edge_px,
             ),
         )
         poller = ChannelPoller(

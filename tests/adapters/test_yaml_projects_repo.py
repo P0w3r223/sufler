@@ -1,10 +1,12 @@
-"""Testy repozytorium projektów opartego na rejestrze YAML."""
+"""Testy repozytorium projektów opartego na rejestrze YAML (parsowanie, błędy, cache)."""
 from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 import pytest
+import yaml
 
 from workmate.adapters.outbound.yaml_projects_repo import (
     ProjectsRegistryError,
@@ -89,3 +91,48 @@ def test_malformed_registry_raises(tmp_path: Path):
 
     with pytest.raises(ProjectsRegistryError):
         repo.all()
+
+
+# --- Cache parsowania z unieważnianiem fingerprintem ----------------------------
+
+
+def test_all_get_and_status_parse_registry_exactly_once(tmp_path: Path):
+    """``all()`` + ``get()`` + ``status_record()`` po kolei → JEDNO parsowanie YAML.
+
+    Dowodzi eliminacji re-parsu przy cache oraz braku podwójnego parse w drodze
+    ``get_project_status`` (get + status_record na tym samym rejestrze).
+    """
+    repo = YamlProjectsRepository(_registry(tmp_path))
+
+    with mock.patch(
+        "workmate.adapters.outbound.yaml_projects_repo.yaml.safe_load",
+        wraps=yaml.safe_load,
+    ) as spy:
+        repo.all()
+        repo.get("workmate")
+        repo.status_record("workmate")
+        assert spy.call_count == 1
+
+
+def test_modified_registry_is_reparsed_on_next_call(tmp_path: Path):
+    """Ręczna edycja rejestru (inny rozmiar) unieważnia cache — kolejne wywołanie widzi zmianę."""
+    path = _registry(tmp_path)
+    repo = YamlProjectsRepository(path)
+
+    assert {p.key for p in repo.all()} == {"scada-integration", "workmate"}
+
+    path.write_text(
+        REGISTRY
+        + "  - key: enerkom\n"
+        "    company: enerkom\n"
+        "    name: Enerkom\n"
+        "    description: Nowy projekt\n"
+        "    status: active\n"
+        "    health: green\n"
+        "    phase: Faza 1\n"
+        "    summary: Start\n"
+        "    last_updated: 2025-07-01\n",
+        encoding="utf-8",
+    )
+
+    assert {p.key for p in repo.all()} == {"scada-integration", "workmate", "enerkom"}

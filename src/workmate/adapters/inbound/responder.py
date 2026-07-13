@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
+from workmate.adapters.inbound.commands import CommandContext
 from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
     AssistantTurn,
@@ -36,16 +37,10 @@ from workmate.core.ports.llm import (
 # ``stop_reason`` oznaczający uciętą odpowiedź (ADR 0011) — drzwi dokładają notkę.
 _TRUNCATED_STOP = "max_tokens"
 
-# Komendy jawnego startu nowego wątku (ADR 0012 — granica wątku NA ŻĄDANIE). Rozpoznawane
-# po PIERWSZYM tokenie (z ukośnikiem), jednakowo na wszystkich drzwiach — logika żyje tu,
-# w wspólnym szwie, a nie w kodzie pojedynczych drzwi.
-_NEW_THREAD_COMMANDS = frozenset({"/nowa", "/nowy", "/new"})
-_NEW_THREAD_ACK = "Zaczynam nową rozmowę. Poprzednia została zapisana w archiwum."
-_NEW_THREAD_ALREADY_FRESH = "Jesteś już w nowej, pustej rozmowie — nie ma czego rozdzielać."
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from workmate.adapters.inbound.commands import CommandRouter
     from workmate.core.agent.runtime import AgentRuntime
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
@@ -158,10 +153,14 @@ class ConversationalResponder:
         clock: Callable[[], datetime] = _utcnow,
         show_thinking: bool = False,
         compaction: CompactionService | None = None,
+        commands: CommandRouter | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
         self._channel = channel
+        # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
+        # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
+        self._commands = commands
         # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
         # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
         # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
@@ -186,12 +185,16 @@ class ConversationalResponder:
     def _respond_sync(self, message: InboundMessage) -> str:
         # Klucz wątku: rozmowa z kanału (czat/wątek), a gdy jej brak — nadawca.
         external_id = message.conversation_id or message.sender or "default"
-        # Komenda jawnego startu wątku: domknij bieżący wątek i potwierdź — bez wołania
-        # LLM i bez zapisu tury (sama komenda nie jest treścią rozmowy).
-        if _is_new_thread_command(message.text):
+        # Komenda read-only (``/pomoc``, ``/nowa``, ``/szukaj``, …): wykonaj i zwróć odpowiedź
+        # PRZED pętlą agenta — bez wołania LLM i bez ``record_run`` (komenda ≠ tura rozmowy,
+        # nie liczy się do limitu kontekstu ani FTS). ``dispatch`` = ``None`` → to zwykła wiadomość.
+        if self._commands is not None:
             with self._store_lock:
-                started = self._conversations.start_new_thread(self._channel, external_id)
-            return _NEW_THREAD_ACK if started else _NEW_THREAD_ALREADY_FRESH
+                reply = self._commands.dispatch(
+                    message.text, CommandContext(self._channel, external_id)
+                )
+            if reply is not None:
+                return reply
         now = self._clock()  # dla kryterium bezczynności (ADR 0012)
         with self._store_lock:
             conversation_id, history, rolled_over = self._conversations.prepare_turn(
@@ -282,22 +285,6 @@ class SafeResponder:
                 message.conversation_id,
             )
             return self._fallback
-
-
-def _is_new_thread_command(text: str) -> bool:
-    """Czy wiadomość to komenda jawnego startu wątku (pierwszy token, np. ``/nowa``).
-
-    Wymaga ukośnika (komendy w ``_NEW_THREAD_COMMANDS``), więc zwykłe zdanie zaczynające
-    się od słowa „nowa" nie zostanie pomylone z komendą. Ewentualne argumenty po komendzie
-    są ignorowane (liczy się pierwszy token). W czacie GRUPOWYM Telegram dokleja do komendy
-    sufiks ``@nazwa_bota`` (np. ``/nowa@WorkMateBot``) — obcinamy go przed dopasowaniem,
-    żeby rozpoznanie zostało w jednym miejscu (szew), bez wiedzy o SDK drzwi.
-    """
-    stripped = text.strip()
-    if not stripped:
-        return False
-    token = stripped.split()[0].split("@", 1)[0].lower()
-    return token in _NEW_THREAD_COMMANDS
 
 
 def _with_thinking(reply: str, thinking: str) -> str:

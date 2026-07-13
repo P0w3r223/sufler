@@ -15,26 +15,23 @@ czytelnym komunikatem, nie surowym ``ImportError``.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from workmate.adapters.inbound.responder import (
-    ConversationalResponder,
-    Responder,
-    SafeResponder,
-)
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.adapters.inbound import env
+from workmate.adapters.inbound.agent_wiring import build_conversational_responder
 from workmate.config import (
     AgentSettings,
     ConversationSettings,
     Settings,
     TeamsSettings,
 )
-from workmate.core.application.conversations import ConversationService
+
+if TYPE_CHECKING:
+    from workmate.adapters.inbound.responder import Responder
 
 logger = logging.getLogger(__name__)
 
 _MISSING_TEAMS = "Drzwi Teams wymagają extra 'teams'. Zainstaluj: uv sync --extra teams"
-_MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 
 
 def build_web_app(settings: TeamsSettings, responder: Responder) -> Any:
@@ -65,45 +62,25 @@ def build_web_app(settings: TeamsSettings, responder: Responder) -> Any:
 def main() -> None:
     """Uruchom proces drzwi Teams z runtime agenta (katalog read-only)."""
     logging.basicConfig(level=logging.INFO)
+    env.load_dotenv()
     settings = TeamsSettings.from_env()
     settings.validate()
 
-    # Teams = drzwi MNIEJ ZAUFANE (ADR 0006): runtime na katalogu READ-ONLY (jak
-    # Telegram) — agent czyta notatki i status, nie zapisuje. Wymaga ANTHROPIC_API_KEY
-    # (twardy błąd bez klucza). Powrót do samego echa (bez API/klucza) to jedna linia:
-    # RuntimeResponder(runtime) → EchoResponder() (patrz adapters/inbound/responder.py).
+    # Teams = drzwi MNIEJ ZAUFANE (ADR 0006): katalog READ-ONLY (``enable_write=False``) —
+    # agent czyta notatki i status, nie zapisuje. Wymaga ANTHROPIC_API_KEY (brak → czytelny
+    # SystemExit z buildera). Recepta pamięci + komend read-only ze wspólnego buildera.
     core_settings = Settings.from_env()
     agent_settings = AgentSettings.from_env()
     agent_settings.validate()
-
-    from workmate.adapters.inbound.agent_wiring import (
-        build_agent_runtime,
-        build_compaction_service,
-    )
-
-    try:
-        runtime = build_agent_runtime(core_settings, agent_settings, enable_write=False)
-    except ImportError as exc:
-        raise SystemExit(_MISSING_AGENT) from exc
-
-    # Pamięć rozmów (ADR 0010): wątkowość per rozmowa Teams + limit kontekstu. Kompaktowanie
-    # (ADR 0014), gdy włączone, ZASTĘPUJE rollover-na-rozmiarze (``size_rollover=False``).
-    # Store współdzielony przez serwis rozmów i kompaktowanie (ta sama baza).
     conversation_settings = ConversationSettings.from_env()
     conversation_settings.validate()
-    store = SqliteConversationStore(conversation_settings.db_path)
-    conversations = ConversationService(
-        store,
-        max_context_tokens=conversation_settings.max_context_tokens,
-        idle_timeout=conversation_settings.idle_timeout(),
-        size_rollover=not conversation_settings.compaction_enabled,
-    )
-    compaction = build_compaction_service(agent_settings, conversation_settings, store)
-    # SafeResponder: łagodna degradacja przy błędach runtime/infra (odporność drzwi).
-    responder: Responder = SafeResponder(
-        ConversationalResponder(
-            runtime, conversations, channel="teams", compaction=compaction
-        )
+    responder: Responder = build_conversational_responder(
+        core_settings,
+        agent_settings,
+        conversation_settings,
+        channel="teams",
+        enable_write=False,
+        safe=True,
     )
 
     try:

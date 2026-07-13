@@ -229,12 +229,14 @@ class SqliteConversationStore:
             ).fetchone()
             if row is None:
                 return None
-            usage = _conversation_usage(self._conn, row["id"])
-            last_ctx = _last_context_tokens(self._conn, row["id"])
+            # Martwy SUM(usage) usunięty z TEJ ścieżki (najgorętszej — każda tura): rollover
+            # czyta wyłącznie last_context_tokens, message_count i updated_at. usage=0 tu,
+            # a realne usage żyje w ``get``/``list_conversations`` (podgląd historii CLI).
+            last_ctx, _ = _last_assistant_tokens(self._conn, row["id"])
             count = _message_count(self._conn, row["id"])
         # ``last_input_tokens`` (trigger kompaktowania) czytamy przez ``get`` tuż przed
         # kompaktowaniem — nie tu, żeby nie płacić zapytania na każdej turze (domyślne 0).
-        return _conversation(row, usage, last_ctx, count)
+        return _conversation(row, TokenUsage(), last_ctx, count)
 
     def open_conversation(self, channel: str, external_id: str) -> Conversation:
         conv_id = uuid.uuid4().hex
@@ -323,8 +325,7 @@ class SqliteConversationStore:
             if row is None:
                 return None
             usage = _conversation_usage(self._conn, conversation_id)
-            last_ctx = _last_context_tokens(self._conn, conversation_id)
-            last_in = _last_input_tokens(self._conn, conversation_id)
+            last_ctx, last_in = _last_assistant_tokens(self._conn, conversation_id)
             count = _message_count(self._conn, conversation_id)
         return _conversation(row, usage, last_ctx, count, last_input_tokens=last_in)
 
@@ -411,7 +412,7 @@ class SqliteConversationStore:
                 _conversation(
                     row,
                     _conversation_usage(self._conn, row["id"]),
-                    _last_context_tokens(self._conn, row["id"]),
+                    _last_assistant_tokens(self._conn, row["id"])[0],
                     _message_count(self._conn, row["id"]),
                 )
                 for row in rows
@@ -542,11 +543,14 @@ def _conversation_usage(conn: Any, conv_id: str) -> TokenUsage:
     )
 
 
-def _last_context_tokens(conn: Any, conv_id: str) -> int:
-    """Rozmiar kontekstu OSTATNIEJ tury asystenta (wejście + cache + wyjście) — do rolloveru.
+def _last_assistant_tokens(conn: Any, conv_id: str) -> tuple[int, int]:
+    """(kontekst, wejście) OSTATNIEJ tury asystenta z JEDNEGO wiersza — rollover i kompaktowanie.
 
-    Bierze najnowszy wiersz asystenta z zapisanym usage; ≈ ile następna tura wyśle
-    ponownie. 0, gdy brak tury z usage (świeży/legacy wątek) — wtedy rollover nie odpala.
+    ``kontekst`` = input+output+cache (≈ ile następna tura wyśle ponownie; trigger rolloveru),
+    ``wejście`` = input+cache BEZ output (ile tokenów wejściowych model zobaczył; trigger
+    kompaktowania, ADR 0014). Bierze najnowszy wiersz asystenta z zapisanym usage; ``(0, 0)``,
+    gdy brak (świeży/legacy wątek) — wtedy ani rollover, ani kompaktowanie nie odpala. Jeden
+    skan zamiast dwóch bliźniaczych SELECT-ów (identyczny ``WHERE/ORDER BY/LIMIT``).
     """
     r = conn.execute(
         "SELECT input_tokens AS i, output_tokens AS o, cache_read_input_tokens AS cr, "
@@ -556,28 +560,9 @@ def _last_context_tokens(conn: Any, conv_id: str) -> int:
         (conv_id,),
     ).fetchone()
     if r is None:
-        return 0
-    return (r["i"] or 0) + (r["o"] or 0) + (r["cr"] or 0) + (r["cc"] or 0)
-
-
-def _last_input_tokens(conn: Any, conv_id: str) -> int:
-    """Rozmiar WEJŚCIA ostatniej tury asystenta (input + cache, BEZ wyjścia) — trigger
-    kompaktowania (ADR 0014).
-
-    To ile tokenów wejściowych model zobaczył w ostatnim wywołaniu — bez ``output_tokens``
-    (odpowiedź nie wraca do kontekstu jako wejście). Gdy > próg, serwis kompaktuje. 0, gdy
-    brak tury z usage (świeży/legacy wątek) — kompaktowanie nie odpala.
-    """
-    r = conn.execute(
-        "SELECT input_tokens AS i, cache_read_input_tokens AS cr, "
-        "cache_creation_input_tokens AS cc FROM messages "
-        "WHERE conversation_id=? AND role='assistant' AND input_tokens IS NOT NULL "
-        "ORDER BY id DESC LIMIT 1",
-        (conv_id,),
-    ).fetchone()
-    if r is None:
-        return 0
-    return (r["i"] or 0) + (r["cr"] or 0) + (r["cc"] or 0)
+        return 0, 0
+    i, o, cr, cc = (r["i"] or 0), (r["o"] or 0), (r["cr"] or 0), (r["cc"] or 0)
+    return i + o + cr + cc, i + cr + cc
 
 
 def _message_count(conn: Any, conv_id: str) -> int:

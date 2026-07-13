@@ -5,9 +5,17 @@ ale kodowanie share id dla pobrania pliku z SharePoint to czysta, łatwa do pomy
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 
-from workmate.adapters.inbound.teams_graph.graph import _encode_share_id
+import httpx
+import pytest
+
+from workmate.adapters.inbound.teams_graph.graph import (
+    HttpxGraphChannelClient,
+    _encode_share_id,
+)
 
 
 def test_encode_share_id_uses_u_prefix_urlsafe_base64_without_padding():
@@ -22,3 +30,73 @@ def test_encode_share_id_uses_u_prefix_urlsafe_base64_without_padding():
     # Dekodowalne z powrotem do oryginalnego URL-a (po uzupełnieniu paddingu).
     padded = body + "=" * (-len(body) % 4)
     assert base64.urlsafe_b64decode(padded).decode("utf-8") == url
+
+
+def test_post_reply_sends_rendered_html_not_plain_markdown():
+    """Egress renderuje Markdown do HTML i wysyła jako ``contentType: html``.
+
+    Bez sieci: ``httpx.MockTransport`` przechwytuje żądanie i pozwala sprawdzić body.
+    """
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "r-1"})
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            await client.post_reply("team", "chan", "root-1", "**ważne** ustalenie")
+
+    asyncio.run(run())
+
+    body = captured["body"]["body"]  # type: ignore[index]
+    assert body["contentType"] == "html"
+    assert "<strong>ważne</strong>" in body["content"]
+    assert "**" not in body["content"]  # surowy Markdown nie wychodzi dosłownie
+
+
+def test_get_hosted_content_falls_back_to_listing_on_404():
+    """Body-id z <img> zwraca 404 → listujemy hostedContents i bierzemy autorytatywne id."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/hostedContents/good/$value"):
+            return httpx.Response(200, content=b"IMG-BYTES")
+        if url.endswith("/hostedContents"):  # listowanie
+            return httpx.Response(200, json={"value": [{"id": "bad"}, {"id": "good"}]})
+        return httpx.Response(404)  # body-id /$value (i cokolwiek innego)
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            return await client.get_hosted_content("t", "c", "m", "bad")
+
+    assert asyncio.run(run()) == b"IMG-BYTES"  # „bad" pominięte, „good" pobrane z listowania
+
+
+def test_download_public_url_does_not_follow_redirects(monkeypatch):
+    """SSRF: publiczny obraz przekierowujący (np. na metadata) NIE jest podążany — bariera."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def with_mock_transport(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", with_mock_transport)
+    client = HttpxGraphChannelClient(httpx.AsyncClient(), token_provider=lambda: "tok")
+
+    async def run() -> None:
+        await client.download_public_url("https://media.giphy.com/media/abc/giphy.gif")
+
+    with pytest.raises(RuntimeError):  # przekierowanie → RuntimeError, nie pobranie metadata
+        asyncio.run(run())

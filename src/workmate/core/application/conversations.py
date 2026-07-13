@@ -204,6 +204,12 @@ class ConversationService:
         """Wylistuj rozmowy do podglądu historii (delegacja do magazynu)."""
         return self._store.list_conversations(channel=channel, limit=limit)
 
+    def active_conversation(
+        self, channel: str, external_id: str
+    ) -> Conversation | None:
+        """Aktywny wątek (kanał, rozmowa) albo ``None`` — generyczny odczyt (delegacja)."""
+        return self._store.active_conversation(channel, external_id)
+
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
         """Zwróć tury rozmowy w kolejności chronologicznej (delegacja do magazynu)."""
         return self._store.messages(conversation_id)
