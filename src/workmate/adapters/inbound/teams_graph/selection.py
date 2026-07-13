@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from workmate.core.ports.llm import Attachment
 
@@ -21,6 +22,11 @@ _EPOCH_ISO = datetime.min.replace(tzinfo=timezone.utc).isoformat()
 
 # Inline obrazy w HTML wiadomości: <img src=".../hostedContents/{id}/$value">.
 _HOSTED_RE = re.compile(r"hostedContents/([^/\"'\s]+)/\$value")
+# src dowolnego <img> — do rozgałęzienia po hoście (hostedContents Graph vs publiczny URL).
+_IMG_SRC_RE = re.compile(r"""<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
+# Publiczne hosty obrazów Teams (GIF/Giphy, emoji, naklejki) — pobieralne zwykłym HTTP, bez
+# tokenu. WĄSKA allowlista jest barierą SSRF: nie pobieramy dowolnego URL z treści wiadomości.
+_PUBLIC_IMAGE_HOSTS = (".giphy.com", ".teams.cdn.office.net")
 
 
 @dataclass(frozen=True)
@@ -28,12 +34,13 @@ class AttachmentRef:
     """Lekka REFERENCJA do załącznika (bez bajtów) — materializuje ją adapter I/O.
 
     ``file`` → plik w SharePoint (``url`` = ``contentUrl``); ``hosted`` → obraz wklejony
-    inline (``hosted_id`` w ``/messages/{id}/hostedContents/{hosted_id}/$value``).
+    inline (``hosted_id`` w ``/messages/{id}/hostedContents/{hosted_id}/$value``); ``url`` →
+    publiczny obraz (GIF/emoji) pobierany zwykłym HTTP z ``url``.
     """
 
-    kind: Literal["file", "hosted"]
+    kind: Literal["file", "hosted", "url"]
     name: str
-    url: str = ""  # dla file: contentUrl (SharePoint)
+    url: str = ""  # dla file: contentUrl (SharePoint); dla url: publiczny URL obrazu
     hosted_id: str = ""  # dla hosted: id hostedContent
 
 
@@ -122,7 +129,32 @@ def _parse_refs(raw: dict[str, Any], body_html: str | None) -> tuple[AttachmentR
         if hosted_id not in seen:
             seen.add(hosted_id)
             refs.append(AttachmentRef(kind="hosted", name="obraz", hosted_id=hosted_id))
+    # Publiczne obrazy (GIF/Giphy, emoji) — src spoza hostedContents, na allowliście hostów.
+    seen_url: set[str] = set()
+    for src in _IMG_SRC_RE.findall(body_html or ""):
+        url = _public_image_url(src)
+        if url and url not in seen_url:
+            seen_url.add(url)
+            refs.append(AttachmentRef(kind="url", name="obraz", url=url))
     return tuple(refs)
+
+
+def _public_image_url(src: str) -> str | None:
+    """Zwróć URL obrazu, jeśli host jest publiczny i na allowliście (GIF/emoji); inaczej ``None``.
+
+    Wymóg ``https`` + wąska allowlista hostów to bariera SSRF — nie pobieramy dowolnego URL z
+    treści wiadomości (np. adresu wewnętrznej usługi). hostedContents (Graph) łapie inna ścieżka.
+    """
+    url = html.unescape(src)
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return None
+    if not url.lower().startswith("https://") or not host:
+        return None
+    if any(host == h.lstrip(".") or host.endswith(h) for h in _PUBLIC_IMAGE_HOSTS):
+        return url
+    return None
 
 
 def _from_other_human(msg: ChannelMessage, me_id: str) -> bool:

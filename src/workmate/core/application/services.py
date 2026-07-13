@@ -14,6 +14,7 @@ from workmate.core.domain.models import (
     Project,
     ProjectStatus,
 )
+from workmate.core.domain.notes import notes_of_project
 from workmate.core.domain.paths import note_id as build_note_id
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
@@ -77,8 +78,7 @@ class NotesService:
     ) -> list[Note]:
         notes = self._notes.all()
         if project:
-            key = project.lower()
-            notes = [n for n in notes if n.metadata.project.lower() == key]
+            notes = notes_of_project(notes, project)
         if participant:
             needle = participant.lower()
             notes = [
@@ -111,9 +111,7 @@ class ProjectsService:
         if project is None or record is None:
             return None
 
-        project_notes = [
-            n for n in self._notes.all() if n.metadata.project.lower() == key.lower()
-        ]
+        project_notes = notes_of_project(self._notes.all(), key)
         note_dates = [n.metadata.date for n in project_notes]
         open_action_items = sum(len(n.metadata.action_items) for n in project_notes)
 

@@ -22,6 +22,7 @@ danymi, więc błędny plik = błąd danych: podnosimy ``NoteParseError`` z kont
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -39,15 +40,36 @@ class NoteParseError(RepositoryError):
 
 
 class MarkdownNotesRepository:
-    """Ładuje notatki z drzewa katalogów ``notes_dir/<firma>/<projekt>/<plik>.md``."""
+    """Ładuje notatki z drzewa katalogów ``notes_dir/<firma>/<projekt>/<plik>.md``.
+
+    ``all()`` cache'uje sparsowane notatki PER PLIK i unieważnia je fingerprintem
+    ``(st_mtime_ns, st_size)``: spacer ``rglob`` i ``stat`` wykonujemy zawsze (tanie), ale
+    drogie ``read_text``+parse tylko dla plików nowych/zmienionych — więc świeżo zapisana
+    notatka (także z innego procesu) jest widziana, a usunięta eksmitowana. ``Lock``, bo
+    repozytorium bywa wołane z pul wątków. ``get()`` zostaje bez cache (jeden plik, zawsze świeży).
+    """
 
     def __init__(self, notes_dir: Path) -> None:
         self._notes_dir = notes_dir
+        self._lock = threading.Lock()
+        self._cache: dict[Path, tuple[tuple[int, int], Note]] = {}
 
     def all(self) -> list[Note]:
         if not self._notes_dir.is_dir():
             raise RepositoryError(f"Katalog notatek nie istnieje: {self._notes_dir}")
-        return [self._load(path) for path in sorted(self._notes_dir.rglob("*.md"))]
+        notes: list[Note] = []
+        fresh: dict[Path, tuple[tuple[int, int], Note]] = {}
+        with self._lock:
+            for path in sorted(self._notes_dir.rglob("*.md")):
+                stat = path.stat()
+                fingerprint = (stat.st_mtime_ns, stat.st_size)
+                cached = self._cache.get(path)
+                # Plik wadliwy rzuca w ``_load`` PRZED zapisem cache — jak dziś rzuca co wywołanie.
+                note = cached[1] if cached and cached[0] == fingerprint else self._load(path)
+                fresh[path] = (fingerprint, note)
+                notes.append(note)
+            self._cache = fresh  # tylko aktualne ścieżki → usunięte pliki eksmitowane
+        return notes
 
     def get(self, note_id: str) -> Note | None:
         path = self._notes_dir / f"{note_id}.md"

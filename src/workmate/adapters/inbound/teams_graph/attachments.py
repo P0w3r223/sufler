@@ -1,8 +1,10 @@
 """Materializacja załączników Teams: referencja → bajty → ``Attachment`` (base64/tekst).
 
-Tu żyje I/O (pobranie z Graph przez wstrzyknięty port) + kodowanie base64 + ekstrakcja
-tekstu z ``.docx`` (Claude API nie przyjmuje docx natywnie) + walidacja limitów. ``python-docx``
-importowany LENIWIE (extra ``teams-graph``). Błąd/limit/nieobsługiwany typ NIE kładzie pollera
+Tu żyje I/O (pobranie z Graph przez wstrzyknięty port) + kodowanie base64 + rozpoznanie i
+przetworzenie obrazów (sniff po ZAWARTOŚCI + downscaling) + ekstrakcja tekstu z dokumentów
+(``.docx``/``.xlsx``/``.pptx`` i plików tekstowych — Claude API nie przyjmuje ich natywnie) +
+walidacja limitów. Biblioteki (``python-docx``/``openpyxl``/``python-pptx``/``Pillow``)
+importowane LENIWIE (extra ``teams-graph``). Błąd/limit/nieobsługiwany typ NIE kładzie pollera
 — zamiast bajtów wstawiamy krótką notkę tekstową (agent poinformuje użytkownika). Treść
 załącznika to DANE, nie polecenia — nie interpretujemy jej tutaj.
 """
@@ -27,15 +29,41 @@ logger = logging.getLogger(__name__)
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
+# Formaty obrazów akceptowane przez blok ``image`` API → nasz media_type.
+_SUPPORTED_IMAGE = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "GIF": "image/gif",
+    "WEBP": "image/webp",
+}
+# Rozszerzenia traktowane jako czysty tekst (dekodowanie UTF-8, bez base64).
+_TEXT_EXTS = {"txt", "md", "csv", "log", "json", "xml", "yaml", "yml"}
+# Górne capy ekstrakcji — chronią przed absurdalnie dużym plikiem (bloki wracają co turę).
+_MAX_TEXT_CHARS = 200_000
+_MAX_SHEET_ROWS = 2000
+# Sufit liczby pikseli obrazu do LOKALNEGO dekodowania (downscaling). Powyżej nie dekodujemy
+# (bomba dekompresji / wielki skan mógłby zjeść setki MB RAM i położyć pollera) — oddajemy
+# oryginał (Anthropic skaluje serwerowo) albo degradujemy do notki. 40 MP ≈ 160 MB RGBA.
+_MAX_IMAGE_PIXELS = 40_000_000
 
 
 @dataclass(frozen=True)
 class AttachmentLimits:
-    """Granice materializacji: rozmiar pliku, liczba i ŁĄCZNY budżet bajtów na wiadomość."""
+    """Granice materializacji: rozmiary, liczba, ŁĄCZNY budżet base64 i próg downscalingu.
 
-    max_bytes: int  # pojedynczy plik
+    Rozróżniamy dwie klasy: pliki wysyłane jako BASE64 (obraz/PDF) obowiązuje ``max_bytes`` i
+    ŁĄCZNY ``max_total_bytes`` (sufit 32 MB żądania API); pliki EKSTRAHOWANE do tekstu
+    (docx/xlsx/pptx/txt) dostają wyższy ``max_extract_bytes`` i NIE liczą się do budżetu API
+    (wysyłamy z nich sam tekst, nie bajty). ``max_extract_bytes`` jest zarazem UNIWERSALNYM
+    twardym capem surowego pobrania (pierwsza bramka dla każdego typu). Budżet liczymy w bajtach
+    SUROWYCH — przeliczik na base64 (~1.33×) siedzi w suficie configu (24 MB raw ≈ 32 MB API).
+    """
+
+    max_bytes: int  # pojedynczy plik base64 (obraz/PDF), w bajtach surowych
     max_count: int  # liczba na wiadomość
-    max_total_bytes: int  # łączny budżet surowych bajtów na wiadomość (sufit 32 MB API)
+    max_total_bytes: int  # łączny budżet base64 (bajty surowe; sufit 24 MB ≈ 32 MB API)
+    max_extract_bytes: int = 50 * 1024 * 1024  # sufit tekstu ORAZ uniwersalny cap pobrania
+    max_image_edge: int = 2048  # dłuższa krawędź obrazu (px) — powyżej skalujemy w dół
 
 
 class AttachmentMaterializer:
@@ -85,63 +113,150 @@ class AttachmentMaterializer:
         *,
         budget: int,
     ) -> tuple[Attachment, int]:
-        """Pobierz i zbuduj załącznik; zwróć (Attachment, liczba_zaliczonych_bajtów).
+        """Pobierz i zbuduj załącznik; zwróć (Attachment, bajty_zaliczone_do_budżetu_API).
 
-        Pobranie ORAZ budowanie (w tym ekstrakcja .docx, która rzuca na uszkodzonym pliku)
-        są w JEDNYM ``try`` — każdy błąd degraduje do notki, nigdy nie zapętla pollera.
-        Notka/limit → 0 bajtów zaliczonych (nie zjada budżetu).
+        Pobranie i budowanie mają osobne ``try``: błąd POBRANIA (np. 404 wklejonego obrazu AMS)
+        to stan oczekiwany → ``warning`` + rzeczowa notka (bez straszącego tracebacku); błąd
+        BUDOWANIA (uszkodzony plik) → ``exception`` + notka. Każdy błąd degraduje do notki, nigdy
+        nie zapętla pollera. Limit base64 liczymy na WYNIKU (po downscalingu obrazu); pliki
+        ekstrahowane do tekstu podlegają wyższemu ``max_extract_bytes`` i zaliczają 0 do budżetu.
         """
         try:
             if ref.kind == "hosted":
                 data = await self._client.get_hosted_content(
                     team_id, channel_id, message_id, ref.hosted_id
                 )
+            elif ref.kind == "url":
+                data = await self._client.download_public_url(ref.url)
             else:
                 data = await self._client.download_shared_url(ref.url)
-            if len(data) > self._limits.max_bytes:
-                return _note(f"Pominięto załącznik {ref.name}: przekracza limit rozmiaru."), 0
-            if len(data) > budget:
-                return (
-                    _note(f"Pominięto załącznik {ref.name}: przekroczony łączny limit wiadomości."),
-                    0,
-                )
-            built = _build(ref, data)
+        except Exception as exc:
+            logger.warning("Nie pobrano załącznika %s (status %s).", ref.name, _http_status(exc))
+            if ref.kind == "hosted":
+                return _note(
+                    f"Załącznika „{ref.name}” (obraz wklejony w treści wiadomości) nie udało się "
+                    "pobrać. Można go wysłać ponownie jako osobny plik."
+                ), 0
+            return _note(f"Załącznika „{ref.name}” nie udało się pobrać."), 0
+
+        try:
+            if len(data) > self._limits.max_extract_bytes:
+                return _note(
+                    f"Załącznika „{ref.name}” nie udało się odczytać: plik jest za duży."
+                ), 0
+            result = _build(ref, data, max_image_edge=self._limits.max_image_edge)
         except Exception:
             logger.exception("Nie udało się przetworzyć załącznika %s", ref.name)
-            return _note(f"Nie udało się przetworzyć załącznika: {ref.name}."), 0
-        if built is None:
-            return _note(f"Pominięto załącznik {ref.name}: nieobsługiwany typ."), 0
-        return built, len(data)
+            return _note(f"Załącznika „{ref.name}” nie udało się przetworzyć."), 0
+
+        if result is None:
+            return _note(
+                f"Załącznika „{ref.name}” nie udało się odczytać: nieobsługiwany typ pliku."
+            ), 0
+        built, sent = result
+        if sent > self._limits.max_bytes:
+            return _note(
+                f"Załącznika „{ref.name}” nie udało się odczytać: przekracza limit rozmiaru."
+            ), 0
+        if sent > budget:
+            return _note(
+                f"Załącznika „{ref.name}” nie udało się odczytać: przekroczony łączny limit "
+                "załączników wiadomości."
+            ), 0
+        return built, sent
 
 
-def _build(ref: AttachmentRef, data: bytes) -> Attachment | None:
-    """Zbuduj ``Attachment`` z bajtów; ``None`` gdy typ nieobsługiwany."""
+def _build(
+    ref: AttachmentRef, data: bytes, *, max_image_edge: int
+) -> tuple[Attachment, int] | None:
+    """Zbuduj ``(Attachment, bajty_base64)`` z bajtów; ``None`` gdy typ nieobsługiwany.
+
+    Drugi element to liczba bajtów, które FAKTYCZNIE pójdą do API jako base64 (obraz PO
+    downscalingu, PDF w całości) — 0 dla plików ekstrahowanych do tekstu (nie wysyłamy z nich
+    bajtów). Kolejność: najpierw OBRAZ po ZAWARTOŚCI (nie po rozszerzeniu) — łapie png/jpg/gif/
+    webp wklejone inline ORAZ załączone jako plik, niezależnie od nazwy. Dopiero potem plik po
+    rozszerzeniu (dokumenty/tekst). Obrazy inline (hosted) mogą być WYŁĄCZNIE obrazem.
+    """
+    image = _process_image(data, max_image_edge)
+    if image is not None:
+        media_type, out = image
+        return Attachment("image", media_type, ref.name, data_base64=_b64(out)), len(out)
     if ref.kind == "hosted":
-        media_type = _image_media_type(data)
-        if media_type is None:
-            return None
-        return Attachment("image", media_type, ref.name, data_base64=_b64(data))
+        return None  # inline, ale nie rozpoznany jako obraz
     ext = ref.name.rsplit(".", 1)[-1].lower() if "." in ref.name else ""
     if ext == "pdf":
-        return Attachment("document", "application/pdf", ref.name, data_base64=_b64(data))
-    if ext in ("png", "jpg", "jpeg"):
-        media_type = "image/png" if ext == "png" else "image/jpeg"
-        return Attachment("image", media_type, ref.name, data_base64=_b64(data))
+        pdf = Attachment("document", "application/pdf", ref.name, data_base64=_b64(data))
+        return pdf, len(data)
     if ext == "docx":
-        return Attachment("text", "text/plain", ref.name, text=_extract_docx(data))
+        return Attachment("text", "text/plain", ref.name, text=_extract_docx(data)), 0
+    if ext == "xlsx":
+        return Attachment("text", "text/plain", ref.name, text=_extract_xlsx(data)), 0
+    if ext == "pptx":
+        return Attachment("text", "text/plain", ref.name, text=_extract_pptx(data)), 0
+    if ext in _TEXT_EXTS:
+        return Attachment("text", "text/plain", ref.name, text=_extract_text(data)), 0
     return None
 
 
-def _image_media_type(data: bytes) -> str | None:
-    """Rozpoznaj typ obrazu po magicznych bajtach (obrazy inline nie mają rozszerzenia)."""
+def _process_image(data: bytes, max_edge: int) -> tuple[str, bytes] | None:
+    """Rozpoznaj i przetwórz obraz: ``(media_type, bajty)`` albo ``None`` (to nie obraz).
+
+    Pillow (jeśli dostępny) otwiera bajty — to sniff po ZAWARTOŚCI, a nie po rozszerzeniu.
+    Gdy dłuższa krawędź > ``max_edge`` → skalujemy w dół (koszt tokenów; bloki wracają co turę).
+    Format nieobsługiwany przez API (np. BMP/TIFF), ale otwieralny → konwersja do PNG. Gdy
+    Pillow brak/nie otworzy → fallback na sniff magicznych bajtów (bez downscalingu), a gdy i to
+    nie rozpozna → ``None``. Nigdy nie rzuca (egress nie może paść).
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return _sniff_image(data)
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            # Rozmiar czytamy z NAGŁÓWKA (bez dekodowania). Zbyt duży obraz nie jest dekodowany
+            # lokalnie — oddajemy oryginał (Anthropic skaluje serwerowo) albo później zejdzie
+            # notką na limicie rozmiaru; chroni pollera przed skokiem pamięci / bombą dekompresji.
+            if img.width * img.height > _MAX_IMAGE_PIXELS:
+                return _sniff_image(data)
+            img.load()  # wymuś dekodowanie — atrapy/uszkodzone tu rzucą (→ fallback)
+            fmt = img.format or ""
+            width, height = img.size
+            media_type = _SUPPORTED_IMAGE.get(fmt)
+            longest = max(width, height)
+            if media_type is not None and longest <= max_edge:
+                return media_type, data  # bez zmian (zachowaj oryginał/animację)
+            out_format = fmt if media_type is not None else "PNG"
+            out_media = media_type or "image/png"
+            scaled: Image.Image = img
+            if longest > max_edge:
+                ratio = max_edge / longest
+                scaled = img.resize(
+                    (max(1, int(width * ratio)), max(1, int(height * ratio))),
+                    Image.Resampling.LANCZOS,
+                )
+            # JPEG nie zapisze trybu z alfą/paletą; PNG nie zapisze CMYK — ujednolić do RGB.
+            if (out_format == "JPEG" and scaled.mode not in ("RGB", "L")) or (
+                out_format == "PNG" and scaled.mode == "CMYK"
+            ):
+                scaled = scaled.convert("RGB")
+            buffer = io.BytesIO()
+            scaled.save(buffer, format=out_format)
+            return out_media, buffer.getvalue()
+    except Exception:
+        return _sniff_image(data)
+
+
+def _sniff_image(data: bytes) -> tuple[str, bytes] | None:
+    """Fallback bez Pillow: rozpoznaj typ obrazu po magicznych bajtach (bez downscalingu)."""
     if data.startswith(_PNG_MAGIC):
-        return "image/png"
+        return "image/png", data
     if data.startswith(_JPEG_MAGIC):
-        return "image/jpeg"
+        return "image/jpeg", data
     if data[:4] == b"GIF8":
-        return "image/gif"
+        return "image/gif", data
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
+        return "image/webp", data
     return None
 
 
@@ -159,11 +274,69 @@ def _extract_docx(data: bytes) -> str:
     return "\n".join(parts).strip()
 
 
+def _extract_xlsx(data: bytes) -> str:
+    """Wyciągnij tekst z .xlsx: per arkusz nagłówek + wiersze (``openpyxl``, import leniwy)."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        parts: list[str] = []
+        for sheet in workbook.worksheets:
+            parts.append(f"# Arkusz: {sheet.title}")
+            rows = 0
+            for row in sheet.iter_rows(values_only=True):
+                cells = [str(value) for value in row if value is not None]
+                if not cells:
+                    continue
+                parts.append(" | ".join(cells))
+                rows += 1
+                if rows >= _MAX_SHEET_ROWS:
+                    parts.append("… (obcięto wiersze)")
+                    break
+        return "\n".join(parts).strip()
+    finally:
+        workbook.close()
+
+
+def _extract_pptx(data: bytes) -> str:
+    """Wyciągnij tekst z .pptx: per slajd tekst z kształtów (``python-pptx``, import leniwy)."""
+    from pptx import Presentation
+
+    prs = Presentation(io.BytesIO(data))
+    parts: list[str] = []
+    for index, slide in enumerate(prs.slides, start=1):
+        parts.append(f"# Slajd {index}")
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                text = shape.text_frame.text.strip()
+                if text:
+                    parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _extract_text(data: bytes) -> str:
+    """Zdekoduj plik tekstowy (UTF-8, nieznane bajty zastąpione) z górnym capem długości."""
+    text = data.decode("utf-8", errors="replace")
+    if len(text) > _MAX_TEXT_CHARS:
+        text = text[:_MAX_TEXT_CHARS] + "\n… (obcięto)"
+    return text.strip()
+
+
 def _b64(data: bytes) -> str:
     """Base64 bez znaków nowej linii (wymóg bloków ``image``/``document`` API)."""
     return base64.standard_b64encode(data).decode("ascii")
 
 
+def _http_status(exc: Exception) -> int | None:
+    """Kod HTTP z wyjątku httpx (duck typing, bez importu httpx) — do logu, ``None`` gdy brak."""
+    return getattr(getattr(exc, "response", None), "status_code", None)
+
+
 def _note(message: str) -> Attachment:
-    """Notka tekstowa zamiast bajtów (limit/błąd/nieobsługiwany typ) — widzi ją agent."""
-    return Attachment("text", "text/plain", "uwaga systemowa", text=f"[Uwaga systemowa] {message}")
+    """Rzeczowa notka o statusie załącznika zamiast bajtów (limit/błąd/nieobsługiwany typ).
+
+    Sformułowana jak FAKT o załączniku, nie jak „instrukcja systemowa": agent czyta treść
+    wiadomości jak dane (granica z prompt-injection), więc notka udająca instrukcję systemową
+    była odrzucana i piętnowana. Neutralny opis statusu jest po prostu relacjonowany użytkownikowi.
+    """
+    return Attachment("text", "text/plain", "status załącznika", text=message)

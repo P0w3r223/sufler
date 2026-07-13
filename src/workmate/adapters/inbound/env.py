@@ -1,0 +1,50 @@
+"""Wspólne wczytywanie ``.env`` dla drzwi inbound (CLI, Telegram, Teams, Teams-Graph).
+
+Jedno, odporne na kodowanie źródło zamiast czterech różnych podejść w ``*/app.py``.
+Bez zależności zewnętrznej (nie ``python-dotenv``): realne zmienne środowiskowe zawsze
+mają priorytet (``setdefault``). PowerShell domyślnie zapisuje UTF-16 LE z BOM — obsługujemy
+oba warianty, żeby ``.env`` z Windowsa działał tak samo jak z powłoki uniksowej.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+def apply_env_file(env_file: Path) -> None:
+    """Wczytaj plik ``.env`` do ``os.environ`` (``setdefault`` — realne env wygrywa).
+
+    Odporność na kodowanie: ``utf-8-sig`` obsługuje UTF-8 z/bez BOM, gałąź UTF-16 —
+    pliki zapisane przez PowerShell (UTF-16 LE z BOM).
+    """
+    data = env_file.read_bytes()
+    try:
+        if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = data.decode("utf-16")
+        else:
+            text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(
+            f"Nie udało się odczytać {env_file.name} — sprawdź kodowanie "
+            f"(zapisz jako UTF-8): {exc}"
+        ) from exc
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def load_dotenv() -> None:
+    """Znajdź repo-lokalny ``.env`` (korzeń z ``pyproject.toml``) i wczytaj go, jeśli jest.
+
+    Wygoda deva: klucz i ustawienia można trzymać w ``.env`` (w ``.gitignore``) zamiast
+    eksportować ręcznie. Brak pliku nie jest błędem (operator może eksportować w powłoce).
+    """
+    here = Path(__file__).resolve()
+    root = next(
+        (p for p in (here, *here.parents) if (p / "pyproject.toml").is_file()), None
+    )
+    if root is not None and (root / ".env").is_file():
+        apply_env_file(root / ".env")

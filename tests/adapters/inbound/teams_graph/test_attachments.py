@@ -1,18 +1,23 @@
 """Testy materializacji załączników Teams (ADR 0016) — referencja → bajty → ``Attachment``.
 
 I/O portu ``GraphChannelClient`` jest wstrzykiwane, więc pełną materializację testujemy
-ATRAPĄ portu — bez ``httpx``, bez MSAL, bez sieci. Sedno: sniff obrazu inline po magicznych
-bajtach, mapowanie rozszerzeń plików (pdf/obrazy/docx), ekstrakcja tekstu z .docx oraz
-łagodna degradacja (limit rozmiaru/liczby, nieobsługiwany typ, błąd pobrania → NOTKA, a nie
-wyjątek na zewnątrz).
+ATRAPĄ portu — bez ``httpx``, bez MSAL, bez sieci. Sedno: sniff obrazu po ZAWARTOŚCI
+(magic/Pillow, nie po rozszerzeniu) + downscaling, ekstrakcja tekstu z dokumentów
+(docx/xlsx/pptx/pliki tekstowe) oraz łagodna degradacja (limit rozmiaru/liczby, nieobsługiwany
+typ, błąd pobrania/uszkodzony plik → NOTKA, a nie wyjątek na zewnątrz).
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 from typing import Any
 
 from docx import Document
+from openpyxl import Workbook
+from PIL import Image
+from pptx import Presentation
+from pptx.util import Inches
 
 from workmate.adapters.inbound.teams_graph.attachments import (
     AttachmentLimits,
@@ -20,8 +25,12 @@ from workmate.adapters.inbound.teams_graph.attachments import (
 )
 from workmate.adapters.inbound.teams_graph.selection import AttachmentRef, ChannelMessage
 
+# Atrapy: prefiks magic + zera. Pillow ich nie otworzy → fallback na sniff magicznych bajtów
+# (rozpoznaje typ, bez downscalingu) — dokładnie ścieżka dla obrazów inline z Teams.
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 _JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 16
+_GIF = b"GIF89a" + b"\x00" * 16
+_WEBP = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 16
 
 _TEAM = "team-1"
 _CHAN = "chan-1"
@@ -39,11 +48,14 @@ class _FakeGraphClient:
         *,
         hosted: dict[str, bytes | Exception] | None = None,
         files: dict[str, bytes | Exception] | None = None,
+        public: dict[str, bytes | Exception] | None = None,
     ) -> None:
         self._hosted = hosted or {}
         self._files = files or {}
+        self._public = public or {}
         self.hosted_calls: list[tuple[str, str, str, str]] = []
         self.file_calls: list[str] = []
+        self.public_calls: list[str] = []
 
     async def get_hosted_content(
         self, team_id: str, channel_id: str, message_id: str, hosted_id: str
@@ -54,6 +66,10 @@ class _FakeGraphClient:
     async def download_shared_url(self, url: str) -> bytes:
         self.file_calls.append(url)
         return _resolve(self._files[url])
+
+    async def download_public_url(self, url: str) -> bytes:
+        self.public_calls.append(url)
+        return _resolve(self._public[url])
 
 
 def _resolve(value: bytes | Exception) -> bytes:
@@ -78,14 +94,20 @@ def _materialize(
     client: Any,
     refs: tuple[AttachmentRef, ...],
     *,
-    max_bytes: int = 1_000_000,
+    max_bytes: int = 5_000_000,
     max_count: int = 5,
-    max_total: int = 1_000_000,
+    max_total: int = 5_000_000,
+    max_extract: int = 50_000_000,
+    max_image_edge: int = 2048,
 ) -> tuple:
     materializer = AttachmentMaterializer(
         client,
         limits=AttachmentLimits(
-            max_bytes=max_bytes, max_count=max_count, max_total_bytes=max_total
+            max_bytes=max_bytes,
+            max_count=max_count,
+            max_total_bytes=max_total,
+            max_extract_bytes=max_extract,
+            max_image_edge=max_image_edge,
         ),
     )
     return asyncio.run(materializer.materialize(_TEAM, _CHAN, _msg(refs)))
@@ -104,7 +126,38 @@ def _docx_bytes(*, paragraph: str, table_cells: list[list[str]]) -> bytes:
     return buffer.getvalue()
 
 
-# --- hosted (obrazy inline): sniff po magicznych bajtach ---------------------
+def _xlsx_bytes(*, sheet: str, rows: list[list[str]]) -> bytes:
+    """Zbuduj mały .xlsx w pamięci: jeden arkusz z wierszami — do testu ekstrakcji tekstu."""
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet
+    for row in rows:
+        worksheet.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def _pptx_bytes(*, texts: list[str]) -> bytes:
+    """Zbuduj mały .pptx w pamięci: jeden slajd z polami tekstowymi — do testu ekstrakcji."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # pusty układ
+    for index, text in enumerate(texts):
+        box = slide.shapes.add_textbox(Inches(1), Inches(1 + index), Inches(4), Inches(1))
+        box.text_frame.text = text
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def _image_bytes(*, size: tuple[int, int], fmt: str = "PNG") -> bytes:
+    """Zbuduj PRAWDZIWY obraz danego rozmiaru/formatu (Pillow) — do testu sniffu i downscalingu."""
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (123, 200, 50)).save(buffer, format=fmt)
+    return buffer.getvalue()
+
+
+# --- hosted (obrazy inline): sniff po zawartości -----------------------------
 
 
 def test_hosted_png_sniffed_as_image_png():
@@ -151,27 +204,97 @@ def test_file_pdf_becomes_document():
     assert att.data_base64
 
 
-def test_file_png_extension_becomes_image_even_without_sniff():
-    client = _FakeGraphClient(files={"u://foto": b"whatever-bytes"})
-    # rozszerzenie rozpoznawane case-insensitive (.PNG == .png)
-    ref = AttachmentRef(kind="file", name="foto.PNG", url="u://foto")
+def test_file_image_media_type_from_content_overrides_extension():
+    """Typ obrazu bierzemy z ZAWARTOŚCI, nie z rozszerzenia — plik JPEG nazwany .png → jpeg."""
+    client = _FakeGraphClient(files={"u://foto": _JPEG})
+    ref = AttachmentRef(kind="file", name="foto.png", url="u://foto")
 
     (att,) = _materialize(client, (ref,))
 
-    assert (att.kind, att.media_type) == ("image", "image/png")
+    assert (att.kind, att.media_type) == ("image", "image/jpeg")
 
 
-def test_file_jpg_and_jpeg_map_to_image_jpeg():
-    client = _FakeGraphClient(files={"u://a": b"x", "u://b": b"y"})
+def test_file_gif_and_webp_become_image():
+    """REGRESJA symetrii: .gif/.webp jako PLIK też są obrazem (dawniej degradowały)."""
+    client = _FakeGraphClient(files={"u://g": _GIF, "u://w": _WEBP})
     refs = (
-        AttachmentRef(kind="file", name="a.jpg", url="u://a"),
-        AttachmentRef(kind="file", name="b.jpeg", url="u://b"),
+        AttachmentRef(kind="file", name="anim.gif", url="u://g"),
+        AttachmentRef(kind="file", name="logo.webp", url="u://w"),
     )
 
-    a, b = _materialize(client, refs)
+    gif, webp = _materialize(client, refs)
 
-    assert a.media_type == "image/jpeg"
-    assert b.media_type == "image/jpeg"
+    assert (gif.kind, gif.media_type) == ("image", "image/gif")
+    assert (webp.kind, webp.media_type) == ("image", "image/webp")
+
+
+def test_file_garbage_named_image_yields_note():
+    """Plik nazwany .png, ale treść to nie obraz → notka (nie wysyłamy fałszywego image/png)."""
+    client = _FakeGraphClient(files={"u://z": b"whatever-bytes-not-image"})
+    ref = AttachmentRef(kind="file", name="foto.png", url="u://z")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.kind == "text"
+    assert "nieobsługiwany typ" in att.text
+
+
+# --- obrazy: downscaling i przepuszczenie ------------------------------------
+
+
+def test_large_image_is_downscaled_to_max_edge():
+    """Duży obraz → przeskalowany tak, że dłuższa krawędź ≤ próg (koszt tokenów)."""
+    data = _image_bytes(size=(4000, 3000), fmt="PNG")
+    client = _FakeGraphClient(files={"u://big": data})
+    ref = AttachmentRef(kind="file", name="wielki.png", url="u://big")
+
+    (att,) = _materialize(client, (ref,), max_image_edge=1024)
+
+    assert (att.kind, att.media_type) == ("image", "image/png")
+    out = Image.open(io.BytesIO(base64.b64decode(att.data_base64)))
+    assert max(out.size) <= 1024
+    assert out.size == (1024, 768)  # proporcje zachowane
+
+
+def test_small_image_passes_through_unchanged():
+    """Obraz poniżej progu → bajty przepuszczone bez re-enkodowania (oryginał zachowany)."""
+    data = _image_bytes(size=(320, 240), fmt="PNG")
+    client = _FakeGraphClient(files={"u://small": data})
+    ref = AttachmentRef(kind="file", name="male.png", url="u://small")
+
+    (att,) = _materialize(client, (ref,), max_image_edge=2048)
+
+    assert att.media_type == "image/png"
+    assert base64.b64decode(att.data_base64) == data
+
+
+def test_url_ref_fetched_via_public_download_and_sniffed():
+    """Referencja ``url`` (GIF/emoji) pobierana przez ``download_public_url`` → obraz po sniffie."""
+    data = _image_bytes(size=(64, 64), fmt="PNG")
+    url = "https://media.giphy.com/media/abc/giphy.gif"
+    client = _FakeGraphClient(public={url: data})
+    ref = AttachmentRef(kind="url", name="obraz", url=url)
+
+    (att,) = _materialize(client, (ref,))
+
+    assert (att.kind, att.media_type) == ("image", "image/png")  # typ z ZAWARTOŚCI (sniff)
+    assert client.public_calls == [url]  # poszło publiczną ścieżką (bez tokenu Graph)
+
+
+def test_oversized_pixel_image_not_decoded_locally(monkeypatch):
+    """Obraz ponad sufit PIKSELI nie jest dekodowany lokalnie (ochrona pamięci)."""
+    from workmate.adapters.inbound.teams_graph import attachments as attachments_mod
+
+    monkeypatch.setattr(attachments_mod, "_MAX_IMAGE_PIXELS", 1000)  # 320×240 = 76800 > 1000
+    data = _image_bytes(size=(320, 240), fmt="PNG")
+    client = _FakeGraphClient(files={"u://big": data})
+    ref = AttachmentRef(kind="file", name="wielki.png", url="u://big")
+
+    # max_image_edge=100 zwykle by przeskalowało; sufit pikseli krótkozwiera PRZED downscalingiem.
+    (att,) = _materialize(client, (ref,), max_image_edge=100)
+
+    assert att.media_type == "image/png"
+    assert base64.b64decode(att.data_base64) == data  # oryginał, bez lokalnego dekodowania
 
 
 def test_file_docx_extracts_paragraphs_and_table_text():
@@ -192,6 +315,74 @@ def test_file_docx_extracts_paragraphs_and_table_text():
     # Sedno: tekst TABELI też jest wyekstrahowany (nie tylko akapity).
     assert "Wdrożenie SCADA" in att.text
     assert "Termin" in att.text
+
+
+def test_file_xlsx_extracts_cell_text_with_sheet_name():
+    """.xlsx → kind=text z tekstem komórek i nazwą arkusza (Claude nie przyjmuje Excela)."""
+    data = _xlsx_bytes(
+        sheet="Budżet",
+        rows=[["Pozycja", "Kwota"], ["Licencje SCADA", "12000"]],
+    )
+    client = _FakeGraphClient(files={"u://x": data})
+    ref = AttachmentRef(kind="file", name="budzet.xlsx", url="u://x")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert (att.kind, att.media_type) == ("text", "text/plain")
+    assert att.data_base64 == ""  # tekst, nie base64
+    assert "Budżet" in att.text  # nazwa arkusza
+    assert "Licencje SCADA" in att.text
+    assert "12000" in att.text
+
+
+def test_file_pptx_extracts_slide_text():
+    """.pptx → kind=text z tekstem slajdów (Claude nie przyjmuje PowerPointa)."""
+    data = _pptx_bytes(texts=["Integracja MPWiK", "Kamień milowy: marzec"])
+    client = _FakeGraphClient(files={"u://p": data})
+    ref = AttachmentRef(kind="file", name="prezentacja.pptx", url="u://p")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.kind == "text"
+    assert "Integracja MPWiK" in att.text
+    assert "Kamień milowy: marzec" in att.text
+
+
+def test_file_text_formats_decoded_as_text():
+    """.txt/.csv/.md → kind=text z zdekodowaną treścią UTF-8 (z polskimi znakami)."""
+    data = "firma;projekt\nmpwik;scada-integration\nżółć\n".encode()
+    client = _FakeGraphClient(files={"u://c": data})
+    ref = AttachmentRef(kind="file", name="dane.csv", url="u://c")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert (att.kind, att.media_type) == ("text", "text/plain")
+    assert "scada-integration" in att.text
+    assert "żółć" in att.text  # UTF-8 zachowane
+
+
+def test_corrupt_xlsx_yields_note_not_raised():
+    """Uszkodzony .xlsx (ekstrakcja rzuca) degraduje do notki — nie kładzie pollera."""
+    client = _FakeGraphClient(files={"u://bad": b"not a valid xlsx package"})
+    ref = AttachmentRef(kind="file", name="uszkodzony.xlsx", url="u://bad")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.kind == "text"
+    assert "nie udało się przetworzyć" in att.text
+    assert "uszkodzony.xlsx" in att.text
+
+
+def test_corrupt_pptx_yields_note_not_raised():
+    """Uszkodzony .pptx (ekstrakcja rzuca) degraduje do notki — nie kładzie pollera."""
+    client = _FakeGraphClient(files={"u://bad": b"not a valid pptx package"})
+    ref = AttachmentRef(kind="file", name="uszkodzony.pptx", url="u://bad")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.kind == "text"
+    assert "nie udało się przetworzyć" in att.text
+    assert "uszkodzony.pptx" in att.text
 
 
 def test_file_unsupported_extension_yields_note():
@@ -247,8 +438,47 @@ def test_download_exception_yields_note_not_raised():
     (att,) = _materialize(client, (ref,))
 
     assert att.kind == "text"
-    assert "Nie udało się przetworzyć" in att.text
+    assert "nie udało się pobrać" in att.text
     assert "feler.pdf" in att.text
+
+
+def test_hosted_download_404_hint_to_send_as_file():
+    """Wklejony obraz (hosted/AMS) z błędem pobrania → notka z radą wysłania jako plik."""
+    client = _FakeGraphClient(hosted={"h1": RuntimeError("404 Not Found")})
+    ref = AttachmentRef(kind="hosted", name="obraz", hosted_id="h1")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.kind == "text"
+    assert "jako osobny plik" in att.text  # rada dla użytkownika
+
+
+def test_large_extracted_file_ignores_base64_limit():
+    """Plik ekstrahowany do tekstu (docx) NIE podlega limitowi base64 — liczy się max_extract."""
+    data = _docx_bytes(paragraph="Duża notatka", table_cells=[["a", "b"]])
+    client = _FakeGraphClient(files={"u://doc": data})
+    ref = AttachmentRef(kind="file", name="duza.docx", url="u://doc")
+
+    # max_bytes (base64) drastycznie mały — gdyby docx mu podlegał, odpadłby na rozmiarze.
+    (att,) = _materialize(client, (ref,), max_bytes=10, max_extract=1_000_000)
+
+    assert att.kind == "text"
+    assert "Duża notatka" in att.text  # wyekstrahowany mimo maleńkiego max_bytes
+
+
+def test_extracted_file_does_not_consume_api_budget():
+    """Ekstrakcja do tekstu zalicza 0 do budżetu base64 — PDF po niej wciąż się mieści."""
+    docx = _docx_bytes(paragraph="Notatka", table_cells=[["x", "y"]])
+    client = _FakeGraphClient(files={"u://d": docx, "u://p": b"%PDF" + b"a" * 96})
+    refs = (
+        AttachmentRef(kind="file", name="a.docx", url="u://d"),  # tekst → 0 do budżetu
+        AttachmentRef(kind="file", name="b.pdf", url="u://p"),   # 100 B base64
+    )
+
+    doc_text, pdf = _materialize(client, refs, max_bytes=1000, max_total=150)
+
+    assert doc_text.kind == "text"  # docx wyekstrahowany
+    assert pdf.kind == "document"   # PDF się zmieścił (docx nie zjadł budżetu)
 
 
 def test_corrupt_docx_yields_note_not_raised():
@@ -262,7 +492,7 @@ def test_corrupt_docx_yields_note_not_raised():
     (att,) = _materialize(client, (ref,))
 
     assert att.kind == "text"
-    assert "Nie udało się przetworzyć" in att.text
+    assert "nie udało się przetworzyć" in att.text
     assert "uszkodzony.docx" in att.text
 
 
@@ -298,4 +528,4 @@ def test_mixed_refs_materialize_independently():
 
     assert img.kind == "image"
     assert good.kind == "document"
-    assert bad.kind == "text" and "Nie udało się przetworzyć" in bad.text
+    assert bad.kind == "text" and "nie udało się pobrać" in bad.text

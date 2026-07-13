@@ -409,6 +409,15 @@ _DEFAULT_TEAMS_GRAPH_SCOPES = (
 _MAX_ATTACHMENT_MB_CEILING = 24
 # Górny cap liczby załączników na wiadomość (chroni przed absurdalną wartością operatora).
 _MAX_ATTACHMENTS_PER_MESSAGE_CEILING = 20
+# Sufit dłuższej krawędzi obrazu (px). 2576 to maksymalna użyteczna rozdzielczość modeli
+# high-res (Sonnet 5) — powyżej model i tak skaluje po stronie serwera, więc nie ma sensu
+# wysyłać więcej. Domyślne 2048 zostawia zapas na koszt tokenów (bloki wracają co turę).
+_MAX_IMAGE_EDGE_PX_CEILING = 2576
+_MIN_IMAGE_EDGE_PX = 256
+# Sufit rozmiaru pliku EKSTRAHOWANEGO do tekstu (docx/xlsx/pptx/txt). Nie wysyłamy z nich
+# bajtów do API (tylko tekst), więc sufit 32 MB base64 ich nie dotyczy — limit jest tylko
+# barierą na ekstrakcję/pamięć. Prezentacje z obrazkami rutynowo mają 10–50 MB.
+_MAX_EXTRACT_MB_CEILING = 100
 
 
 def _parse_watch_pairs(value: str) -> tuple[tuple[str, str], ...]:
@@ -449,7 +458,9 @@ class TeamsGraphSettings:
     # Limity załączników (ADR 0016): rozmiar pliku, liczba i ŁĄCZNY budżet na wiadomość.
     max_attachment_mb: int = 8
     max_attachments_per_message: int = 5
-    max_total_attachment_mb: int = 20  # sumaryczny budżet — chroni sufit 32 MB żądania API
+    max_total_attachment_mb: int = 20  # sumaryczny budżet base64 — chroni sufit 32 MB żądania API
+    max_extract_mb: int = 50  # sufit pliku ekstrahowanego do tekstu (docx/xlsx/pptx/txt)
+    max_image_edge_px: int = 2048  # dłuższa krawędź obrazu (px) — powyżej downscaling
 
     @property
     def authority(self) -> str:
@@ -482,6 +493,8 @@ class TeamsGraphSettings:
             max_total_attachment_mb=_int_from_env(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", 20
             ),
+            max_extract_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB", 50),
+            max_image_edge_px=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE", 2048),
         )
 
     def validate(self) -> None:
@@ -539,4 +552,110 @@ class TeamsGraphSettings:
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB musi być w zakresie "
                 f"1..{_MAX_ATTACHMENT_MB_CEILING}, jest: {self.max_total_attachment_mb}."
+            )
+        # Pliki ekstrahowane do tekstu nie zjadają budżetu base64, ale trzymamy górną barierę.
+        if not 1 <= self.max_extract_mb <= _MAX_EXTRACT_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB musi być w zakresie "
+                f"1..{_MAX_EXTRACT_MB_CEILING}, jest: {self.max_extract_mb}."
+            )
+        # Próg downscalingu obrazu: poniżej 256 px obraz byłby nieczytelny, powyżej 2576 px
+        # model i tak skaluje po swojej stronie — trzymamy się użytecznego zakresu.
+        if not _MIN_IMAGE_EDGE_PX <= self.max_image_edge_px <= _MAX_IMAGE_EDGE_PX_CEILING:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE musi być w zakresie "
+                f"{_MIN_IMAGE_EDGE_PX}..{_MAX_IMAGE_EDGE_PX_CEILING} (px), jest: "
+                f"{self.max_image_edge_px}."
+            )
+
+
+# Katalog roboczy agenta (ADR 0018): POZA repo i data/ — dane operacyjne/scratch, nie baza wiedzy.
+_DEFAULT_WORKSPACE_DIR = Path.home() / ".workmate" / "workspace"
+# Domyślna biała lista rozszerzeń: wyłącznie tekstowe. Wykonywalne (exe/bat/ps1/sh/py/js…) są
+# świadomie poza listą — pliki tworzy niezaufany model z niezaufanych drzwi.
+_DEFAULT_WORKSPACE_ALLOWED_EXT = ("md", "txt", "csv", "json")
+# Twarda deny-lista: rozszerzenia wykonywalne/skryptowe NIGDY nie mogą być na białej liście,
+# nawet gdy operator poda je w env — pliki tworzy niezaufany model z niezaufanych drzwi.
+_DANGEROUS_WORKSPACE_EXT = frozenset(
+    {"exe", "bat", "cmd", "com", "ps1", "sh", "py", "js", "vbs", "scr", "msi", "dll", "jar"}
+)
+_MAX_WORKSPACE_FILE_MB_CEILING = 24
+_MAX_WORKSPACE_TOTAL_MB_CEILING = 200
+_MAX_WORKSPACE_FILES_CEILING = 500
+
+
+@dataclass(frozen=True)
+class WorkspaceSettings:
+    """Konfiguracja katalogu roboczego agenta (ADR 0018) — tworzenie plików per rozmowa.
+
+    Osobna bramka ``enabled`` (``WORKMATE_ENABLE_WORKSPACE``), NIEZALEŻNA od ``enable_write``
+    (notatki bazy wiedzy) — inny profil zaufania (scratch vs baza). Limity chronią przed DoS
+    z niezaufanych drzwi; biała lista rozszerzeń wyklucza pliki wykonywalne.
+    """
+
+    enabled: bool = False
+    workspace_dir: Path = _DEFAULT_WORKSPACE_DIR
+    max_file_mb: int = 5
+    max_files_per_scope: int = 50
+    max_total_mb: int = 50
+    allowed_ext: tuple[str, ...] = _DEFAULT_WORKSPACE_ALLOWED_EXT
+    retention_days: int = 30  # TTL sprzątania katalogów rozmów bez aktywności
+
+    @classmethod
+    def from_env(cls) -> WorkspaceSettings:
+        return cls(
+            enabled=_bool_from_env("WORKMATE_ENABLE_WORKSPACE", default=False),
+            workspace_dir=_path_from_env("WORKMATE_WORKSPACE_DIR", _DEFAULT_WORKSPACE_DIR),
+            max_file_mb=_int_from_env("WORKMATE_WORKSPACE_MAX_FILE_MB", 5),
+            max_files_per_scope=_int_from_env("WORKMATE_WORKSPACE_MAX_FILES", 50),
+            max_total_mb=_int_from_env("WORKMATE_WORKSPACE_MAX_TOTAL_MB", 50),
+            allowed_ext=tuple(
+                e.lower().lstrip(".")
+                for e in _list_from_env(
+                    "WORKMATE_WORKSPACE_ALLOWED_EXT", _DEFAULT_WORKSPACE_ALLOWED_EXT
+                )
+            ),
+            retention_days=_int_from_env("WORKMATE_WORKSPACE_RETENTION_DAYS", 30),
+        )
+
+    def validate(self, *, data_dir: Path) -> None:
+        """Twardy błąd startu przy bezsensownych limitach albo złej lokalizacji katalogu roboczego.
+
+        ``data_dir`` wstrzykiwany, by wymusić inwariant bezpieczeństwa z ADR 0018: katalog roboczy
+        (scratch, pliki od niezaufanego modelu) MUSI leżeć POZA bazą wiedzy — inaczej poisoned
+        artefakt trafiłby do notatek, które agent czyta (wzorzec ``TokenVerifier.from_file``).
+        """
+        resolved_ws = self.workspace_dir.resolve()
+        resolved_data = data_dir.resolve()
+        if resolved_ws == resolved_data or resolved_data in resolved_ws.parents:
+            raise ValueError(
+                f"WORKMATE_WORKSPACE_DIR nie może leżeć wewnątrz katalogu danych ({resolved_data}) "
+                f"— katalog roboczy to scratch poza bazą wiedzy, jest: {resolved_ws}."
+            )
+        dangerous = set(self.allowed_ext) & _DANGEROUS_WORKSPACE_EXT
+        if dangerous:
+            raise ValueError(
+                "WORKMATE_WORKSPACE_ALLOWED_EXT zawiera niedozwolone (wykonywalne) rozszerzenia: "
+                f"{sorted(dangerous)}."
+            )
+        if not 1 <= self.max_file_mb <= _MAX_WORKSPACE_FILE_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_WORKSPACE_MAX_FILE_MB musi być w zakresie "
+                f"1..{_MAX_WORKSPACE_FILE_MB_CEILING}, jest: {self.max_file_mb}."
+            )
+        if not 1 <= self.max_total_mb <= _MAX_WORKSPACE_TOTAL_MB_CEILING:
+            raise ValueError(
+                "WORKMATE_WORKSPACE_MAX_TOTAL_MB musi być w zakresie "
+                f"1..{_MAX_WORKSPACE_TOTAL_MB_CEILING}, jest: {self.max_total_mb}."
+            )
+        if not 1 <= self.max_files_per_scope <= _MAX_WORKSPACE_FILES_CEILING:
+            raise ValueError(
+                "WORKMATE_WORKSPACE_MAX_FILES musi być w zakresie "
+                f"1..{_MAX_WORKSPACE_FILES_CEILING}, jest: {self.max_files_per_scope}."
+            )
+        if not self.allowed_ext:
+            raise ValueError("WORKMATE_WORKSPACE_ALLOWED_EXT nie może być puste.")
+        if self.retention_days < 1:
+            raise ValueError(
+                f"WORKMATE_WORKSPACE_RETENTION_DAYS musi być >= 1, jest: {self.retention_days}."
             )

@@ -44,6 +44,12 @@ teams-graph = [
     "python-dotenv>=1.0",
     # Ekstrakcja tekstu z .docx (Claude API nie przyjmuje Worda natywnie) — ADR 0016.
     "python-docx>=1.1",
+    # Render Markdown→HTML odpowiedzi agenta na kanale (contentType html); import leniwy.
+    "markdown-it-py>=3.0",
+    # Ekstrakcja tekstu z Excela/PowerPointa oraz sniff/downscaling obrazów; import leniwy.
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
+    "pillow>=10",
 ]
 
 [project.scripts]
@@ -114,6 +120,12 @@ ignore_missing_imports = true
 # importy leniwe, więc mypy rdzenia nie może się o nie wywrócić.
 [[tool.mypy.overrides]]
 module = ["telegram.*", "dotenv.*"]
+ignore_missing_imports = true
+
+# Załączniki drzwi teams_graph (extra `teams-graph`, ADR 0016) — python-docx, openpyxl,
+# python-pptx i Pillow importowane leniwie w adapterze; mypy rdzenia nie może się o nie wywrócić.
+[[tool.mypy.overrides]]
+module = ["docx.*", "openpyxl.*", "pptx.*", "PIL.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

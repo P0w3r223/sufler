@@ -67,9 +67,12 @@ class AgentRuntime:
         *,
         attachments: Sequence[Attachment] = (),
         history: Sequence[TranscriptEntry] = (),
+        extra_tools: Sequence[ToolSpec] = (),
     ) -> str:
         """Zwróć sam tekst odpowiedzi — cienka nakładka na ``run_turn`` (drzwi bezstanowe)."""
-        return self.run_turn(query, attachments=attachments, history=history).reply
+        return self.run_turn(
+            query, attachments=attachments, history=history, extra_tools=extra_tools
+        ).reply
 
     def run_turn(
         self,
@@ -77,6 +80,7 @@ class AgentRuntime:
         *,
         attachments: Sequence[Attachment] = (),
         history: Sequence[TranscriptEntry] = (),
+        extra_tools: Sequence[ToolSpec] = (),
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
 
@@ -91,6 +95,11 @@ class AgentRuntime:
         Turę traktujemy jak przejściową porażkę: użytkownik dostaje częściową/zastępczą
         odpowiedź, a pamięć zostaje spójna (bez sieroty).
         """
+        # ``extra_tools`` (ADR 0018): narzędzia dokładane per turę, np. katalog roboczy związany z
+        # rozmową (scope domknięty w closurze). Scalamy z bazowym katalogiem TYLKO na to wywołanie
+        # — runtime pozostaje współdzielony i bezstanowy, a izolacja scope jest per tura.
+        catalog = (*self._catalog, *extra_tools)
+        by_name = {**self._by_name, **{spec.name: spec for spec in extra_tools}}
         user_turn = UserText(query, tuple(attachments))
         transcript: list[TranscriptEntry] = [*history, user_turn]
         new_entries: list[TranscriptEntry] = [user_turn]
@@ -101,7 +110,7 @@ class AgentRuntime:
         run_usage = TokenUsage()
         for _ in range(self._max_tool_iterations):
             response = self._llm.complete(
-                system=self._system_prompt, transcript=transcript, tools=self._catalog
+                system=self._system_prompt, transcript=transcript, tools=catalog
             )
             run_usage = run_usage + response.usage
             last_text = response.text or last_text
@@ -132,7 +141,7 @@ class AgentRuntime:
             )
             transcript.append(assistant)
             new_entries.append(assistant)
-            results = ToolResults(tuple(self._dispatch(c) for c in response.tool_calls))
+            results = ToolResults(tuple(self._dispatch(c, by_name) for c in response.tool_calls))
             transcript.append(results)
             new_entries.append(results)
 
@@ -144,8 +153,8 @@ class AgentRuntime:
             usage=run_usage,
         )
 
-    def _dispatch(self, call: ToolCall) -> ToolOutput:
-        spec = self._by_name.get(call.name)
+    def _dispatch(self, call: ToolCall, by_name: dict[str, ToolSpec]) -> ToolOutput:
+        spec = by_name.get(call.name)
         if spec is None:
             return ToolOutput(call.id, f"Nieznane narzędzie: {call.name}", is_error=True)
         # Argumenty pochodzą od modelu (dane niezaufane). Sprawdzamy TYLKO ich

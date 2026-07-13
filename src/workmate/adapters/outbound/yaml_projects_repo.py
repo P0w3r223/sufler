@@ -18,6 +18,7 @@ przez rdzeń z notatek — tutaj trzymamy tylko część zadeklarowaną.
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -33,10 +34,18 @@ class ProjectsRegistryError(RepositoryError):
 
 
 class YamlProjectsRepository:
-    """Czyta rejestr projektów z pliku YAML (ładowanie leniwe, przy każdym wywołaniu)."""
+    """Czyta rejestr projektów z pliku YAML.
+
+    Parsowanie jest cache'owane i unieważniane fingerprintem pliku ``(st_mtime_ns, st_size)``:
+    ``all()``/``get()``/``status_record()`` w obrębie jednego wywołania re-używają jednego
+    parsowania, a ręczna edycja rejestru (także z innego procesu) jest wykrywana. ``Lock``, bo
+    repozytorium bywa wołane z pul wątków (HTTP MCP / drzwi async).
+    """
 
     def __init__(self, registry_path: Path) -> None:
         self._registry_path = registry_path
+        self._lock = threading.Lock()
+        self._cache: tuple[tuple[int, int], list[dict[str, Any]]] | None = None
 
     def all(self) -> list[Project]:
         return [
@@ -71,15 +80,22 @@ class YamlProjectsRepository:
             raise ProjectsRegistryError(
                 f"Rejestr projektów nie istnieje: {self._registry_path}"
             )
-        try:
-            data = yaml.safe_load(self._registry_path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            raise ProjectsRegistryError(
-                f"{self._registry_path}: błąd składni YAML: {exc}"
-            ) from exc
+        stat = self._registry_path.stat()
+        fingerprint = (stat.st_mtime_ns, stat.st_size)
+        with self._lock:
+            if self._cache is not None and self._cache[0] == fingerprint:
+                return self._cache[1]
+            try:
+                data = yaml.safe_load(self._registry_path.read_text(encoding="utf-8"))
+            except yaml.YAMLError as exc:
+                raise ProjectsRegistryError(
+                    f"{self._registry_path}: błąd składni YAML: {exc}"
+                ) from exc
 
-        if not isinstance(data, dict) or not isinstance(data.get("projects"), list):
-            raise ProjectsRegistryError(
-                f"{self._registry_path}: oczekiwano mapy z listą pod kluczem 'projects'"
-            )
-        return data["projects"]
+            if not isinstance(data, dict) or not isinstance(data.get("projects"), list):
+                raise ProjectsRegistryError(
+                    f"{self._registry_path}: oczekiwano mapy z listą pod kluczem 'projects'"
+                )
+            entries: list[dict[str, Any]] = data["projects"]
+            self._cache = (fingerprint, entries)
+            return entries

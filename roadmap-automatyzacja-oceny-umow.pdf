@@ -1,0 +1,182 @@
+# Roadmap: Automatyzacja oceny bezpieczeństwa umów
+
+**Cel projektu:** przekuć istniejącą ekspercką metodykę oceny umów podwykonawczych (automatyka przemysłowa) w powtarzalny, skalowalny i łatwy w użyciu system, który dla każdej umowy wydaje wyjaśnialną ocenę ryzyka — i który przez rygorystyczne procedury testujące chroni użytkownika przed podpisaniem umowy niebezpiecznej.
+
+**Zasada nadrzędna projektu:** w ocenie ryzyka najgroźniejsza pomyłka to *false negative* — przeoczona krytyczna klauzula. System jest projektowany tak, by w razie wątpliwości **flagować i eskalować do człowieka, nigdy nie przepuszczać po cichu**. Cała architektura testów podporządkowana jest minimalizacji przeoczeń, nawet kosztem części fałszywych alarmów.
+
+---
+
+## 0. Streszczenie
+
+Budujemy system w pięciu warstwach: (1) wczytanie i normalizacja umowy, (2) analiza i scoring oparte na istniejącej metodyce, (3) **bramki testujące** przez które musi przejść każda umowa, (4) prezentacja wyniku (dashboard + raport), (5) żywa baza wiedzy ucząca się z zamkniętych negocjacji. Wdrożenie fazowe: od wąskiego MVP na jednym typie umów, przez zbudowanie rygoru testowego, po skalowanie i produktyzację. Bezpieczeństwo użytkownika jest wymogiem przekrojowym, nie osobną fazą.
+
+---
+
+## 1. Zasady projektowe
+
+Cztery zasady, do których odnosimy każdą decyzję:
+
+1. **Bezpieczeństwo przed wygodą.** Ocena „zielona" wymaga wysokiej pewności. Przy niskiej pewności system nie mówi „OK" — mówi „wymaga człowieka".
+2. **Wyjaśnialność.** Każda ocena ma uzasadnienie z konkretnym zapisem umowy (paragraf, cytat, powód flagi). Bez tego handlowiec/prawnik nie zaufa i nie da się audytować.
+3. **Człowiek w pętli, nie człowiek zastąpiony.** System przyspiesza i standaryzuje analizę, ale decyzję o podpisaniu podejmuje człowiek. To także granica prawna — narzędzie nie jest poradą prawną.
+4. **Skalowalność przez modułowość.** Nowy typ umowy = nowy zestaw benchmarków i reguł, a nie przepisywanie silnika.
+
+---
+
+## 2. Architektura docelowa
+
+Umowa przepływa przez pipeline. Każdy etap ma jasne wejście i wyjście, co pozwala testować go osobno.
+
+```
+Wczytanie → Normalizacja → Segmentacja → Klasyfikacja → Detekcja red flagów
+   → Cross-check spójności → Porównanie z benchmarkiem → Scoring → Bramki testujące
+   → Raport + Dashboard → Rejestr decyzji (uczenie)
+```
+
+Warstwy funkcjonalne:
+
+- **Wejście:** PDF/DOCX (w tym skany → OCR), z obowiązkowym wczytaniem załączników.
+- **Silnik analizy:** segmentacja na klauzule, klasyfikacja zakresu (D/U/M/T/S/BR), przypisanie do osi ryzyka, detekcja sygnałów tekstowych ze słownika red flagów.
+- **Silnik oceny:** trójwarstwowy Safety Score (opis niżej).
+- **Warstwa bramek testujących:** sekcja 3 — serce systemu z perspektywy bezpieczeństwa.
+- **Warstwa wiedzy:** benchmarki rynkowe, wzorcowe klauzule, rejestr decyzji negocjacyjnych.
+- **Warstwa prezentacji:** dashboard (CODA) + raport wg istniejącego szablonu, wpięcie w rekord klienta (dossier/CRM), integracje przez MCP.
+
+### Model oceny — trójwarstwowy Safety Score
+
+- **Warstwa ciągła:** ważony indeks 0–100 per oś ryzyka (finansowe, prawne, operacyjne, IP, kompletność), z wagami zależnymi od typu umowy (strategiczna / komercyjna / przetargowa).
+- **Warstwa bramkująca:** każda krytyczna czerwona flaga (strict liability, brak cap, „za wszelkie szkody") nakłada twardy sufit na ocenę niezależnie od indeksu. Jedna klauzula może zdyskwalifikować poza tym dobrą umowę.
+- **Wskaźnik pewności (confidence):** osobny wynik mówiący, na ile analiza jest kompletna (wszystkie sekcje + załączniki, jakość OCR, brak luk). Niska pewność blokuje ocenę pozytywną.
+
+---
+
+## 3. Rygorystyczne procedury testujące umowę (bramki)
+
+Serce wymagania o bezpieczeństwie użytkownika. Każda umowa przechodzi sekwencję bramek; **brak zaliczenia którejkolwiek zatrzymuje wydanie oceny „zielonej" i eskaluje**.
+
+| # | Bramka | Co sprawdza | Zachowanie przy niepowodzeniu |
+|---|--------|-------------|-------------------------------|
+| G1 | Kompletność wejścia | Czy wczytano całą umowę + wszystkie załączniki; jakość OCR | Blok — żądaj brakujących dokumentów |
+| G2 | Pokrycie segmentacji | Czy każda sekcja została sklasyfikowana (brak „dziur", brakującej numeracji §) | Flaga + eskalacja do człowieka |
+| G3 | Detekcja red flagów | Przejście pełnego słownika sygnałów (np. „opóźnienie" vs „zwłoka", katalogi otwarte, strona bierna→czynna) | Każda krytyczna flaga → sufit oceny |
+| G4 | Cross-check spójności | Spójność wewnętrzna: definicje vs użycie w tekście, symetria kar/odstąpienia, brak sprzeczności między §a załącznikiem | Flaga niespójności do weryfikacji |
+| G5 | Benchmark | Porównanie parametrów (kary, cap, gwarancja, cash flow) z benchmarkiem dla danego typu umowy | Odchylenia oznacz kolorem ryzyka |
+| G6 | Pewność (confidence) | Czy poziom pewności przekracza próg dla oceny pozytywnej | Poniżej progu → „wymaga człowieka", nie „OK" |
+| G7 | Przegląd ludzki | Obowiązkowy dla: umów wysokiego ryzyka, niskiej pewności, nowego typu umowy, nowego klienta strategicznego | Wynik oznaczony jako niezatwierdzony do czasu przeglądu |
+| G8 | Ślad audytowy | Zapis wersji umowy, wykrytych flag, oceny, decyzji i osoby zatwierdzającej | Bez zapisu — brak finalizacji |
+
+Zasada projektowania bramek: **próg czułości ustawiony na wysoki recall red flagów**. Wolimy fałszywy alarm (człowiek go szybko odrzuci) niż przeoczoną klauzulę strict liability (kosztuje realne pieniądze i reputację).
+
+---
+
+## 4. Testowanie samego systemu (żeby bramki miały sens)
+
+Bezpieczeństwo użytkownika zależy nie tylko od bramek na umowie, ale od tego, czy silnik jest wiarygodny. Dlatego równolegle budujemy rygor testowy dla samego narzędzia:
+
+- **Zbiór wzorcowy (golden set):** kilkadziesiąt realnych umów z ekspercką oceną „prawdy" (flagi, oceny, rekomendacje). To wzorzec, wobec którego mierzymy system.
+- **Metryki (priorytet: recall):** przede wszystkim recall na krytycznych red flagach — ile groźnych klauzul system wyłapuje. Dopiero potem precision (ile fałszywych alarmów) i zgodność scoringu z ekspertem.
+- **Testy regresyjne:** każda zmiana promptów, słownika flag czy benchmarków przepuszczana przez golden set — zmiana nie może pogorszyć recall bez świadomej decyzji.
+- **Red-teaming:** celowo podchwytliwe umowy (ukryte strict liability w załączniku, „opóźnienie" zaszyte w definicji, katalog otwarty). Sprawdza, czy system daje się „przechytrzyć".
+- **Shadow mode przed produkcją:** system ocenia równolegle z ekspertem, ale decyzji nie podejmuje; porównujemy rozjazdy zanim komukolwiek zaufamy w realnej decyzji.
+
+Bramka jakości wdrożenia: system idzie do realnego użytku dopiero, gdy na golden set osiąga ustalony próg recall na klauzulach krytycznych i przechodzi red-teaming.
+
+---
+
+## 5. Bezpieczeństwo użytkownika (przekrojowo)
+
+Dwa znaczenia — oba obowiązkowe:
+
+**Bezpieczeństwo decyzji (ryzyko podpisania):**
+- Domyślne nastawienie na eskalację przy wątpliwości (sekcje 3–4).
+- Jasny komunikat, że wynik to wsparcie analizy, **nie porada prawna** — ostateczna decyzja i odpowiedzialność po stronie człowieka.
+- Wyjaśnialność każdej flagi (cytat + powód), żeby użytkownik mógł zweryfikować, a nie ślepo zaufać.
+
+**Bezpieczeństwo danych (umowy są poufne):**
+- Kontrola dostępu (kto widzi które umowy), ślad audytowy operacji.
+- Ustalenie, gdzie dane są przetwarzane i przechowywane, oraz czy nie wychodzą poza kontrolowane środowisko.
+- Wersjonowanie i retencja — kto, kiedy, co zmienił.
+- Jeśli narzędzie miałoby trafić do klientów (linia Virtual WorkMate) — to fundament zaufania, nie dodatek.
+
+---
+
+## 6. Skalowalność
+
+- **Nowe typy umów jako moduły:** silnik stały, zmienne to zestaw benchmarków + słownik flag per typ (podwykonawcza, serwisowa, dostawy, ramowa). Dodanie typu = konfiguracja, nie przepisanie.
+- **Żywa baza wiedzy:** każda zamknięta negocjacja zasila rejestr decyzji → benchmarki się kalibrują na realnych progach akceptowalności w Waszej branży. Z czasem to przewaga, której nie ma konkurencja.
+- **Przepustowość:** pipeline etapowy pozwala kolejkować i przetwarzać wiele umów równolegle; kosztowne etapy (analiza AI) izolowane i mierzone.
+- **Wielojęzyczność / warianty prawne:** architektura gotowa na dołożenie reguł dla umów obcojęzycznych lub innych jurysdykcji bez zmiany rdzenia.
+
+---
+
+## 7. Użyteczność (łatwość użytkowania)
+
+- **Jedno wejście, jasny wynik:** użytkownik wrzuca umowę, dostaje ocenę ogólną (1–5 + traffic light), top 5 ryzyk i rekomendacje — bez potrzeby rozumienia mechaniki.
+- **Dashboard CODA:** traffic light per oś, top ryzyka, trend po umowach, historia negocjacji z klientem, z narracją „co widać / dlaczego / wniosek / rekomendacja".
+- **Raport w znanym formacie:** zgodny z istniejącym szablonem (kontekst biznesowy, legenda ocen, dekompozycja zakresu, rekomendacje klauzul) — zero krzywej uczenia dla zespołu.
+- **Wpięcie w przepływ pracy:** ocena siedzi przy rekordzie klienta (dossier/CRM), a nie w osobnym pliku; eskalacje trafiają do właściwego decydenta wg macierzy (kierownik → dyrektor → zarząd).
+
+---
+
+## 8. Fazy projektu i kamienie milowe
+
+Czasy orientacyjne, zależne od wielkości zespołu — traktuj jako sekwencję, nie sztywny kalendarz.
+
+### Faza 0 — Fundament i zakres (2–3 tyg.)
+Decyzja kluczowa: **narzędzie wewnętrzne czy produkt dla klientów** (determinuje resztę). Wybór pierwszego typu umów pod MVP. Zebranie 30–50 realnych umów. Formalizacja obecnej metodyki w specyfikację reguł.
+*Kamień milowy:* zatwierdzony zakres MVP + zbiór wzorcowy w budowie.
+
+### Faza 1 — MVP silnika (4–6 tyg.)
+Pipeline dla jednego typu umów: wczytanie → segmentacja → detekcja flag → scoring → raport. Jedna oś ryzyka dopracowana do końca (proponuję finansową — kary/cap/cash flow, największa ekspozycja).
+*Kamień milowy:* system ocenia umowę i produkuje raport zgodny z ekspertem na prostych przypadkach.
+
+### Faza 2 — Rygor testujący (4–6 tyg.)
+Wdrożenie bramek G1–G8. Zbudowanie golden set z ekspercką „prawdą". Testy regresyjne, red-teaming, metryki recall/precision. Shadow mode.
+*Kamień milowy:* system przekracza próg recall na klauzulach krytycznych i przechodzi red-teaming.
+
+### Faza 3 — Bezpieczeństwo i użyteczność (3–4 tyg.)
+Kontrola dostępu, ślad audytowy, retencja danych. Dashboard CODA, wpięcie w rekord klienta, macierz eskalacji. Komunikaty „nie porada prawna" i wyjaśnialność flag.
+*Kamień milowy:* pierwsi realni użytkownicy wewnętrzni na produkcji, z audytem.
+
+### Faza 4 — Skalowanie (bieżąco)
+Dokładanie kolejnych typów umów jako modułów. Uruchomienie żywej bazy wiedzy (rejestr decyzji → kalibracja benchmarków). Optymalizacja przepustowości.
+*Kamień milowy:* ≥3 typy umów obsługiwane, benchmarki kalibrowane na danych własnych.
+
+### Faza 5 — Produktyzacja / utrzymanie (bieżąco)
+Jeśli wybrano ścieżkę produktową: pakowanie pod klientów, twardsze gwarancje bezpieczeństwa danych, onboarding. Stały cykl: monitoring metryk → regresja → aktualizacja reguł.
+*Kamień milowy:* stabilny cykl utrzymania i (opcjonalnie) pierwszy klient zewnętrzny.
+
+---
+
+## 9. Metryki sukcesu
+
+- **Bezpieczeństwo (najważniejsze):** recall na krytycznych red flagach na golden set (cel: bardzo wysoki); liczba przeoczonych klauzul krytycznych w shadow mode → docelowo zero.
+- **Jakość:** zgodność oceny ogólnej systemu z oceną eksperta; odsetek raportów przyjętych bez korekty.
+- **Efektywność:** czas analizy umowy vs proces ręczny; liczba umów przetworzonych na tydzień.
+- **Zaufanie/adopcja:** odsetek analiz, w których użytkownik korzysta z rekomendacji; udział umów eskalowanych trafnie (nie za dużo fałszywych eskalacji).
+
+---
+
+## 10. Ryzyka projektu i mitygacje
+
+| Ryzyko | Mitygacja |
+|--------|-----------|
+| Przeoczona klauzula krytyczna (false negative) | Wysoki recall bramek, red-teaming, obowiązkowy człowiek przy niskiej pewności |
+| Nadmiar fałszywych alarmów → zmęczenie użytkownika | Kalibracja progów na golden set; priorytetyzacja flag; uczenie z decyzji |
+| „Ślepe zaufanie" do systemu | Wyjaśnialność, komunikat „nie porada prawna", człowiek w pętli |
+| Wyciek poufnych umów | Kontrola dostępu, kontrolowane środowisko przetwarzania, audyt |
+| Dryf jakości po zmianach reguł | Testy regresyjne na golden set przy każdej zmianie |
+| Rozjazd między §a załącznikiem | Bramka G4 (cross-check), obowiązkowe wczytanie załączników (G1) |
+| Przeskalowanie przed walidacją | Sztywna kolejność faz — skalowanie dopiero po przejściu rygoru testowego |
+
+---
+
+## 11. Następne kroki
+
+1. Rozstrzygnąć fork z Fazy 0: **narzędzie wewnętrzne czy produkt dla klientów**.
+2. Wybrać pierwszy typ umów i oś ryzyka pod MVP.
+3. Rozpocząć budowę zbioru wzorcowego (golden set) — to najdłuższy w realizacji element, warto ruszyć od razu.
+
+---
+
+*Dokument roboczy — do iteracji w miarę decyzji projektowych.*

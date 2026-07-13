@@ -16,72 +16,43 @@ from __future__ import annotations
 
 import logging
 
-from workmate.adapters.inbound.responder import (
-    ConversationalResponder,
-    Responder,
-    SafeResponder,
-)
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.adapters.inbound import env
+from workmate.adapters.inbound.agent_wiring import build_conversational_responder
 from workmate.config import (
     AgentSettings,
     ConversationSettings,
     Settings,
     TelegramSettings,
 )
-from workmate.core.application.conversations import ConversationService
 
 logger = logging.getLogger(__name__)
 
 _MISSING_TELEGRAM = "Drzwi Telegram wymagają extra 'telegram'. Zainstaluj: uv sync --extra telegram"
-_MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 
 
 def main() -> None:
     """Uruchom proces drzwi Telegram (long polling) z runtime agenta (read-only)."""
     logging.basicConfig(level=logging.INFO)
-
-    try:
-        from dotenv import load_dotenv
-    except ImportError as exc:
-        raise SystemExit(_MISSING_TELEGRAM) from exc
-    load_dotenv()
+    env.load_dotenv()
 
     settings = Settings.from_env()
     telegram_settings = TelegramSettings.from_env()
     telegram_settings.validate()
     agent_settings = AgentSettings.from_env()
     agent_settings.validate()
-
-    # Telegram = drzwi MNIEJ ZAUFANE (ADR 0006): runtime na katalogu READ-ONLY.
-    from workmate.adapters.inbound.agent_wiring import (
-        build_agent_runtime,
-        build_compaction_service,
-    )
-
-    try:
-        runtime = build_agent_runtime(settings, agent_settings, enable_write=False)
-    except ImportError as exc:
-        raise SystemExit(_MISSING_AGENT) from exc
-
-    # Pamięć rozmów (ADR 0010): wątkowość per czat + limit kontekstu. Kompaktowanie (ADR
-    # 0014), gdy włączone, ZASTĘPUJE rollover-na-rozmiarze (``size_rollover=False``) — stare
-    # tury streszczamy zamiast startować nowy wątek. Store współdzielony: serwis rozmów i
-    # kompaktowanie piszą do tej samej bazy.
     conversation_settings = ConversationSettings.from_env()
     conversation_settings.validate()
-    store = SqliteConversationStore(conversation_settings.db_path)
-    conversations = ConversationService(
-        store,
-        max_context_tokens=conversation_settings.max_context_tokens,
-        idle_timeout=conversation_settings.idle_timeout(),
-        size_rollover=not conversation_settings.compaction_enabled,
-    )
-    compaction = build_compaction_service(agent_settings, conversation_settings, store)
-    # SafeResponder: łagodna degradacja przy błędach runtime/infra (odporność drzwi).
-    responder: Responder = SafeResponder(
-        ConversationalResponder(
-            runtime, conversations, channel="telegram", compaction=compaction
-        )
+
+    # Telegram = drzwi MNIEJ ZAUFANE (ADR 0006): katalog READ-ONLY (``enable_write=False``),
+    # owinięte w ``SafeResponder`` (łagodna degradacja). Recepta pamięci + komend read-only
+    # ze wspólnego buildera (brak extra ``agent`` → czytelny SystemExit z buildera).
+    responder = build_conversational_responder(
+        settings,
+        agent_settings,
+        conversation_settings,
+        channel="telegram",
+        enable_write=False,
+        safe=True,
     )
 
     from workmate.adapters.inbound.telegram.bot import build_application

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from workmate.core.domain.models import NoteMetadata
+from workmate.core.domain.notes import build_note_metadata
 
 if TYPE_CHECKING:
     from datetime import date
@@ -46,7 +46,7 @@ class MeetingNoteService:
         """
         transcript = self._transcripts.fetch(meeting_ref)
         summary = self._summarizer.summarize(transcript)
-        metadata = NoteMetadata(
+        metadata = build_note_metadata(
             title=summary.title,
             project=project,
             date=meeting_date,
