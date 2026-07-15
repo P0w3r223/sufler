@@ -1,0 +1,81 @@
+"""Mapowanie surowego JSON Microsoft Graph → model domenowy (czyste, bez sieci).
+
+Wydzielone od klienta HTTP, żeby dało się je testować na utrwalonych odpowiedziach Graph.
+Wszystkie mappery zwracają ``None`` dla wpisów, których nie da się bezpiecznie zinterpretować
+(brak wymaganych pól, zła data, niepoprawny zakres) — warstwa wyżej je pomija.
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from typing import Any
+
+from powiadomienia_teams.domain.models import InvalidShift, Member, Shift
+
+_FRACTION = re.compile(r"\.(\d+)")
+
+
+def parse_graph_datetime(value: str) -> datetime:
+    """ISO 8601 z Graph (``…Z``) → tz-aware ``datetime`` (UTC).
+
+    Znosi ułamek sekundy dłuższy niż 6 cyfr (Graph bywa 7-cyfrowy, a ``fromisoformat``
+    poniżej Pythona 3.11 tego nie przyjmuje).
+    """
+    v = value.strip()
+    if v.endswith("Z"):
+        v = v[:-1] + "+00:00"
+    v = _FRACTION.sub(lambda m: "." + m.group(1)[:6], v)
+    return datetime.fromisoformat(v)
+
+
+def member_from_json(raw: dict[str, Any]) -> Member | None:
+    """Wpis ``/teams/{id}/members`` → ``Member`` (albo ``None`` bez userId/nazwy)."""
+    user_id = raw.get("userId")
+    display_name = raw.get("displayName")
+    if not user_id or not display_name:
+        return None
+    email = raw.get("email")
+    roles = raw.get("roles") or []
+    return Member(
+        user_id=str(user_id),
+        display_name=str(display_name),
+        email=(str(email) if email else None),
+        roles=tuple(str(r) for r in roles),
+    )
+
+
+def shift_from_json(raw: dict[str, Any]) -> Shift | None:
+    """Wpis ``/schedule/shifts`` → ``Shift``. Preferuje ``sharedShift`` (opublikowaną).
+
+    ``None``, gdy brak userId, brak ciała zmiany, brak dat lub zakres jest niepoprawny.
+    """
+    user_id = raw.get("userId")
+    if not user_id:
+        return None
+
+    body = raw.get("sharedShift")
+    shared = True
+    if body is None:
+        body = raw.get("draftShift")
+        shared = False
+    if not body:
+        return None
+
+    start_raw = body.get("startDateTime")
+    end_raw = body.get("endDateTime")
+    if not start_raw or not end_raw:
+        return None
+
+    try:
+        start = parse_graph_datetime(start_raw)
+        end = parse_graph_datetime(end_raw)
+        return Shift(
+            user_id=str(user_id),
+            start=start,
+            end=end,
+            shared=shared,
+            scheduling_group_id=raw.get("schedulingGroupId"),
+            theme=body.get("theme"),
+        )
+    except (ValueError, InvalidShift):
+        return None
