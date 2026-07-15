@@ -13,6 +13,7 @@ import base64
 import io
 from typing import Any
 
+import pytest
 from docx import Document
 from openpyxl import Workbook
 from PIL import Image
@@ -53,14 +54,14 @@ class _FakeGraphClient:
         self._hosted = hosted or {}
         self._files = files or {}
         self._public = public or {}
-        self.hosted_calls: list[tuple[str, str, str, str]] = []
+        self.hosted_calls: list[tuple[str, str, str, str, str]] = []
         self.file_calls: list[str] = []
         self.public_calls: list[str] = []
 
     async def get_hosted_content(
-        self, team_id: str, channel_id: str, message_id: str, hosted_id: str
+        self, team_id: str, channel_id: str, root_id: str, message_id: str, hosted_id: str
     ) -> bytes:
-        self.hosted_calls.append((team_id, channel_id, message_id, hosted_id))
+        self.hosted_calls.append((team_id, channel_id, root_id, message_id, hosted_id))
         return _resolve(self._hosted[hosted_id])
 
     async def download_shared_url(self, url: str) -> bytes:
@@ -78,10 +79,12 @@ def _resolve(value: bytes | Exception) -> bytes:
     return value
 
 
-def _msg(refs: tuple[AttachmentRef, ...]) -> ChannelMessage:
+def _msg(
+    refs: tuple[AttachmentRef, ...], *, msg_id: str = "m-1", root: str = "root-1"
+) -> ChannelMessage:
     return ChannelMessage(
-        id="m-1",
-        thread_root_id="root-1",
+        id=msg_id,
+        thread_root_id=root,
         created="2024-01-01T10:00:00Z",
         sender_id="u-anna",
         sender_name="Anna",
@@ -99,6 +102,8 @@ def _materialize(
     max_total: int = 5_000_000,
     max_extract: int = 50_000_000,
     max_image_edge: int = 2048,
+    msg_id: str = "m-1",
+    root: str = "root-1",
 ) -> tuple:
     materializer = AttachmentMaterializer(
         client,
@@ -110,7 +115,9 @@ def _materialize(
             max_image_edge=max_image_edge,
         ),
     )
-    return asyncio.run(materializer.materialize(_TEAM, _CHAN, _msg(refs)))
+    return asyncio.run(
+        materializer.materialize(_TEAM, _CHAN, _msg(refs, msg_id=msg_id, root=root))
+    )
 
 
 def _docx_bytes(*, paragraph: str, table_cells: list[list[str]]) -> bytes:
@@ -168,7 +175,7 @@ def test_hosted_png_sniffed_as_image_png():
     assert att.kind == "image"
     assert att.media_type == "image/png"
     assert att.data_base64  # bajty zakodowane base64
-    assert client.hosted_calls == [(_TEAM, _CHAN, "m-1", "h1")]
+    assert client.hosted_calls == [(_TEAM, _CHAN, "root-1", "m-1", "h1")]
 
 
 def test_hosted_jpeg_sniffed_as_image_jpeg():
@@ -187,6 +194,145 @@ def test_hosted_unrecognized_magic_bytes_yields_note():
 
     assert att.kind == "text"
     assert "nieobsługiwany typ" in att.text
+
+
+def test_hosted_reply_forwards_root_and_reply_ids():
+    """Wklejka w ODPOWIEDZI: materializer forwarduje thread_root_id (root) OBOK id repliki — to
+    sedno fixu reply-scope 404 (klient buduje wtedy ścieżkę …/messages/{root}/replies/{reply})."""
+    client = _FakeGraphClient(hosted={"h1": _PNG})
+
+    _materialize(client, (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),))
+
+    assert client.hosted_calls == [(_TEAM, _CHAN, "root-1", "m-1", "h1")]
+
+
+def test_hosted_root_post_uses_own_id_as_root():
+    """Wklejka w POŚCIE-ROOT: id == thread_root_id → root-scope zachowany (bez segmentu replies)."""
+    client = _FakeGraphClient(hosted={"h1": _PNG})
+
+    _materialize(
+        client,
+        (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),),
+        msg_id="root-x",
+        root="root-x",
+    )
+
+    assert client.hosted_calls == [(_TEAM, _CHAN, "root-x", "root-x", "h1")]
+
+
+# --- HEIC/HEIF (zdjęcia iPhone): dekodowanie po zawartości + konwersja do JPEG ----
+
+
+def _heic_bytes(*, size: tuple[int, int]) -> bytes:
+    """Zbuduj PRAWDZIWY HEIC (pillow-heif) — do testu dekodowania i konwersji HEIC→JPEG."""
+    pytest.importorskip("pillow_heif").register_heif_opener()
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (123, 200, 50)).save(buffer, format="HEIF")
+    return buffer.getvalue()
+
+
+def test_hosted_heic_converted_to_jpeg():
+    """HEIC wklejony inline → dekodowany po zawartości i konwertowany do JPEG."""
+    client = _FakeGraphClient(hosted={"h1": _heic_bytes(size=(640, 480))})
+
+    (att,) = _materialize(client, (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),))
+
+    assert att.kind == "image"
+    assert att.media_type == "image/jpeg"
+    assert Image.open(io.BytesIO(base64.b64decode(att.data_base64))).format == "JPEG"
+
+
+def test_file_heic_named_heic_converted_to_jpeg():
+    """HEIC jako plik .heic → obraz/jpeg (routing po zawartości, nie rozszerzeniu)."""
+    client = _FakeGraphClient(files={"u://foto": _heic_bytes(size=(640, 480))})
+    ref = AttachmentRef(kind="file", name="foto.heic", url="u://foto")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert (att.kind, att.media_type) == ("image", "image/jpeg")
+
+
+def test_large_heic_downscaled_to_jpeg():
+    """Zdjęcie 12 MP HEIC (4032×3024) → downscale do 2048 px, wynik JPEG (aspect zachowany)."""
+    client = _FakeGraphClient(hosted={"h1": _heic_bytes(size=(4032, 3024))})
+
+    (att,) = _materialize(
+        client,
+        (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),),
+        max_image_edge=2048,
+    )
+
+    out = Image.open(io.BytesIO(base64.b64decode(att.data_base64)))
+    assert out.format == "JPEG"
+    assert out.size == (2048, 1536)
+
+
+def test_heic_output_fits_under_tight_max_bytes():
+    """HEIC 12 MP jako JPEG mieści się pod ciasnym max_bytes (PNG by go przekroczył)."""
+    client = _FakeGraphClient(hosted={"h1": _heic_bytes(size=(4032, 3024))})
+
+    (att,) = _materialize(
+        client,
+        (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),),
+        max_bytes=2_000_000,
+        max_total=2_000_000,
+        max_image_edge=2048,
+    )
+
+    assert att.kind == "image"
+    assert len(base64.b64decode(att.data_base64)) < 2_000_000
+
+
+def test_undecodable_heic_yields_note():
+    """Bajty z marką HEIC bez dekodowalnej treści → notka (nigdy passthrough do API)."""
+    client = _FakeGraphClient(hosted={"h1": b"\x00\x00\x00\x18ftypheic" + b"\x00" * 64})
+
+    (att,) = _materialize(client, (AttachmentRef(kind="hosted", name="obraz", hosted_id="h1"),))
+
+    assert att.kind == "text"
+    assert "nieobsługiwany typ" in att.text
+
+
+def test_ensure_heif_registered_missing_plugin_is_silent(monkeypatch):
+    """Brak extra pillow-heif → helper NIE rzuca (poller nie może paść) i zapamiętuje False."""
+    import builtins
+
+    from workmate.adapters.inbound.teams_graph import attachments as att_mod
+
+    real_import = builtins.__import__
+
+    def fail_pillow_heif(name, *args, **kwargs):
+        if name == "pillow_heif":
+            raise ImportError("symulacja braku extra")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_pillow_heif)
+    monkeypatch.setattr(att_mod, "_heif_state", None)
+
+    att_mod._ensure_heif_registered()  # nie może rzucić
+
+    assert att_mod._heif_state is False
+
+
+def test_ensure_heif_registered_is_idempotent(monkeypatch):
+    """Rejestracja opener'a HEIF wykonuje się co najwyżej RAZ na proces."""
+    pillow_heif = pytest.importorskip("pillow_heif")
+
+    from workmate.adapters.inbound.teams_graph import attachments as att_mod
+
+    calls = {"n": 0}
+
+    def counting_register() -> None:
+        calls["n"] += 1
+
+    monkeypatch.setattr(pillow_heif, "register_heif_opener", counting_register)
+    monkeypatch.setattr(att_mod, "_heif_state", None)
+
+    att_mod._ensure_heif_registered()
+    att_mod._ensure_heif_registered()
+
+    assert calls["n"] == 1
+    assert att_mod._heif_state is True
 
 
 # --- pliki: mapowanie po rozszerzeniu ----------------------------------------

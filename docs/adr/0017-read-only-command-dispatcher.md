@@ -1,7 +1,7 @@
 # 0017 — Generalized read-only command dispatcher in the door seam
 
 Date: 2026-07-12
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0006](0006-write-capability-gate-2.md), [ADR 0008](0008-agent-runtime-and-tool-catalog.md), [ADR 0010](0010-conversation-threading-and-context-limit.md), [ADR 0012](0012-thread-integrity-and-idle-boundary.md)
 

@@ -20,18 +20,18 @@ dopieszczenia kontraktu narzędzi.
 ```
 src/workmate/adapters/
   inbound/
+    responder.py  # WSPÓLNY SZEW: Responder(Protocol); RuntimeResponder (dziś), EchoResponder (fallback)
     mcp/          # Faza 1 (jest)
-    teams/        # Faza 2 — spike M2 echo (jest); wpięcie rdzenia to szew (patrz niżej)
-      responder.py  # SZEW: Responder(Protocol) + EchoResponder (dziś); RuntimeResponder (M1)
+    teams/        # Faza 2 — runtime agenta read-only (jest)
       bot.py        # handler wiadomości (SDK-free) + build_agent_app (Agents SDK, leniwie)
       app.py        # osobny proces bota (workmate-teams): aiohttp na /api/messages
   agent/          # NOWE w Fazie 2 (M1): runtime agenta w rdzeniu
     runtime.py    # model w pętli: czyta zapytanie → woła te same narzędzia → składa odpowiedź
 ```
 
-Szew M1 bez przepisania: `app.py` ma jedną linię `responder = EchoResponder()`.
-M1 podmienia ją na `RuntimeResponder(runtime_rdzenia)` implementujący ten sam
-`Responder` (strukturalnie) — handler i `bot.py` bez zmian. Profil uprawnień per
+Szew bez przepisania: `app.py` buduje `RuntimeResponder(runtime_rdzenia)` (runtime
+agenta read-only) implementujący ten sam `Responder` (strukturalnie) — powrót do
+`EchoResponder()` to jedna linia. Handler i `bot.py` bez zmian. Profil uprawnień per
 drzwi (Teams = mniej zaufane, ADR 0006) wchodzi przez to, z jakim serwisem rdzenia
 zbudowany jest `RuntimeResponder`.
 

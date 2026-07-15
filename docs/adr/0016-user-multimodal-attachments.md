@@ -1,7 +1,7 @@
 # 0016 — User multimodal attachments (PDF / Word / images) via neutral content blocks
 
 Date: 2026-07-12
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0006](0006-write-capability-gate-2.md), [ADR 0008](0008-agent-runtime-and-tool-catalog.md), [ADR 0011](0011-stateful-lossless-conversation-memory.md), [ADR 0015](0015-teams-delegated-graph-polling.md)
 Amends: ADR 0011 (user rows may carry neutral attachment blocks), ADR 0015 (adds Files.Read.All + Sites.Read.All scopes, one-time re-consent)
@@ -113,3 +113,23 @@ references.
 - **New dependency** `python-docx` in the `teams-graph` extra; lazy import in the door.
 - **Revisit when** the Files API (`file_id` reference) is preferred over inline base64 to cut
   per-turn payload, or when a PDF page-count guard is needed.
+
+---
+
+## Amendment (2026-07-14) — reply-scoped hosted content + HEIC/HEIF
+
+Live-smoke drzwi Teams ujawnił dwie luki w ścieżce obrazów; obie naprawione bez zmiany decyzji rdzenia:
+
+- **Reply-scoped hosted content.** Wklejka obrazu w ODPOWIEDZI wątku dawała `404`: klient budował
+  URL root-scoped (`…/messages/{id}/hostedContents`) z id repliki, a Graph adresuje odpowiedź tylko
+  przez `…/messages/{root_id}/replies/{reply_id}/hostedContents`. `get_hosted_content` dostaje teraz
+  `root_id`; gdy `message_id != root_id`, ścieżka (by-id i listowanie-fallback) jest reply-scoped —
+  post-root bez zmian. Materializer forwarduje `msg.thread_root_id`. Degradacja do notki niezmieniona.
+- **HEIC/HEIF (domyślny format zdjęć iPhone).** Nowa zależność `pillow-heif` w extra `teams-graph`
+  (leniwa, idempotentna `register_heif_opener()` w adapterze; brak wtyczki → notka, nie crash).
+  Formaty fotograficzne nieakceptowane natywnie przez API (HEIF) są re-enkodowane do **JPEG q85**
+  (nie PNG — fotografia jako PNG groziłaby przekroczeniem `max_bytes` nawet po downscalingu); BMP/TIFF
+  nadal → PNG. `_sniff_image` pozostaje passthrough wyłącznie dla formatów API-native, więc surowy
+  HEIC nigdy nie trafia do API (dałby 400).
+- **Znane ograniczenie:** HEIC powyżej `_MAX_IMAGE_PIXELS` (40 MP, tryb wysokiej rozdzielczości) nadal
+  degraduje do notki (ochrona RAM); domyślne 12 MP z iPhone jest wspierane.

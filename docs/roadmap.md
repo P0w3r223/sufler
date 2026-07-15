@@ -8,8 +8,11 @@ Ten plik streszcza fazy i pokazuje, gdzie znajduje się kod w tym repozytorium.
 | Faza | Zakres | Status | Gdzie w kodzie |
 |------|--------|--------|----------------|
 | **Faza 1** | Serwer MCP tylko do odczytu dla Claude Code (4 narzędzia nad notatkami i statusem projektów). | 🟢 **Kod domknięty (3/3 bramki)** — pozostaje wdrożenie HTTP | `core/` + `adapters/inbound/mcp/` |
-| **Faza 2** | Drzwi Teams + **runtime agenta** w rdzeniu (model w pętli). Te same narzędzia. | 🔄 **W toku** — M1 runtime (`core/agent/`, `workmate-agent`) + jednoźródłowy katalog narzędzi ([ADR 0008](adr/0008-agent-runtime-and-tool-catalog.md)); M2 spike Teams (echo). | `core/agent/`, `adapters/inbound/{teams,cli}`, `adapters/outbound/anthropic_llm.py` |
+| **Faza 2** | Drzwi Teams + **runtime agenta** w rdzeniu (model w pętli). Te same narzędzia. | 🔄 **W toku** — M1 runtime (`core/agent/`, `workmate-agent`) + jednoźródłowy katalog narzędzi ([ADR 0008](adr/0008-agent-runtime-and-tool-catalog.md)); drzwi Teams/Telegram/CLI na runtime agenta read-only; Teams delegowany przez polling Microsoft Graph z załącznikami multimodalnymi ([ADR 0015](adr/0015-teams-delegated-graph-polling.md)/[0016](adr/0016-user-multimodal-attachments.md)). Echo pozostaje fallbackiem transportu. | `core/agent/`, `adapters/inbound/{teams,teams_graph,telegram,cli}`, `adapters/outbound/anthropic_llm.py` |
 | **Faza 3** | Drzwi GitHub Issues, lepszy retrieval / RAG, push zdarzeń. | ⏳ Później | `adapters/github/` (stub) |
+
+> 🧪 Weryfikacje wymagające żywego klucza / konta / infrastruktury (poza pakietem `pytest`)
+> zebrane są w [`how-to/live-smoke-checklist.md`](how-to/live-smoke-checklist.md).
 
 ## Faza 1 — kamienie milowe (tyg. 1–4)
 

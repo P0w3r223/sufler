@@ -74,9 +74,48 @@ def test_get_hosted_content_falls_back_to_listing_on_404():
     async def run() -> bytes:
         async with httpx.AsyncClient(transport=transport) as http:
             client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
-            return await client.get_hosted_content("t", "c", "m", "bad")
+            return await client.get_hosted_content("t", "c", "m", "m", "bad")
 
     assert asyncio.run(run()) == b"IMG-BYTES"  # „bad" pominięte, „good" pobrane z listowania
+
+
+def test_get_hosted_content_root_scoped_url_has_no_replies_segment():
+    """Post-root (root_id == message_id): URL …/messages/{root}/hostedContents, bez replies."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=b"IMG")
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            return await client.get_hosted_content("t", "c", "root-1", "root-1", "h")
+
+    assert asyncio.run(run()) == b"IMG"
+    assert seen["url"].endswith("/messages/root-1/hostedContents/h/$value")
+    assert "/replies/" not in seen["url"]
+
+
+def test_get_hosted_content_reply_scoped_url_uses_replies_segment():
+    """Odpowiedź (root_id != message_id): URL zawiera segment …/replies/{reply}/… — fix 404."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, content=b"IMG")
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            return await client.get_hosted_content("t", "c", "root-1", "reply-9", "h")
+
+    assert asyncio.run(run()) == b"IMG"
+    assert seen["url"].endswith("/messages/root-1/replies/reply-9/hostedContents/h/$value")
 
 
 def test_download_public_url_does_not_follow_redirects(monkeypatch):
