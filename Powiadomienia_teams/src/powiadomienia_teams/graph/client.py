@@ -135,12 +135,18 @@ class GraphClient:
         body = {"chatType": "oneOnOne", "members": [_member(me_id), _member(target_user_id)]}
         return str(self._post(f"{GRAPH}/chats", body).get("id", ""))
 
-    def send_chat_message(self, chat_id: str, html: str) -> None:
-        """Wyślij wiadomość HTML do czatu (root, nie reply)."""
-        self._post(
+    def send_chat_message(self, chat_id: str, html: str) -> str:
+        """Wyślij wiadomość HTML do czatu; zwróć ``createdDateTime`` (czas SERWERA) wiadomości.
+
+        Ten znacznik służy jako watermark przypomnienia — czas serwera (a nie lokalnego zegara)
+        chroni przed przesunięciem zegarów: odpowiedź pracownika ma zawsze późniejszy znacznik
+        serwera niż wysłane przez nas przypomnienie.
+        """
+        data = self._post(
             f"{GRAPH}/chats/{chat_id}/messages",
             {"body": {"contentType": "html", "content": html}},
         )
+        return str(data.get("createdDateTime", ""))
 
     def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
         """Ostatnie wiadomości czatu (do wykrywania odpowiedzi pracownika)."""

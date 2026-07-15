@@ -135,16 +135,17 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
             )
             continue
         chat_id = client.create_or_get_chat(me_id, member.user_id)
-        client.send_chat_message(chat_id, to_html(text))
+        # Watermark = czas SERWERA wysłanego przypomnienia: listener bierze pod uwagę TYLKO
+        # odpowiedzi po nudge'u, a nie stare wiadomości z czatu ani (przy przesuniętym lokalnym
+        # zegarze) samą odpowiedź. Fallback na czas lokalny, gdyby Graph nie zwrócił znacznika.
+        sent_at = client.send_chat_message(chat_id, to_html(text))
         state[member.user_id] = st.PendingReminder(
             member_id=member.user_id,
             member_name=member.display_name,
             chat_id=chat_id,
             week_start=target_monday.date().isoformat(),
             status=st.AWAITING_REPLY,
-            # Watermark = moment wysłania: listener bierze pod uwagę TYLKO odpowiedzi po nudge'u,
-            # a nie stare wiadomości z czatu (inaczej stara „ok" przesuwałaby obieg bez odpowiedzi).
-            watermark=_iso_utc(now),
+            watermark=sent_at or _iso_utc(now),
             proposal=schedule_to_intervals(proposal, tz),
         )
         logger.info("Wysłano powiadomienie do %s", member.display_name)

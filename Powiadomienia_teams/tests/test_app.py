@@ -58,8 +58,9 @@ class _FakeClient:
     def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
         return self.messages.get(chat_id, [])
 
-    def send_chat_message(self, chat_id: str, html: str) -> None:
+    def send_chat_message(self, chat_id: str, html: str) -> str:
         self.sent.append((chat_id, html))
+        return "2026-07-15T10:00:00Z"  # createdDateTime (czas serwera) wysłanej wiadomości
 
     def create_shift(self, team_id: str, shift: Any) -> str:
         self.created.append(shift)
@@ -247,15 +248,17 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     settings = _settings(state_path)  # dry_run=False
     member = Member("u1", "Mikołaj")
     client = _FakeClient({}, members=(member,), shifts=())  # brak zmian → luka na przyszły tydzień
-    now = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)  # LOKALNY zegar wcześniejszy niż serwer
 
     run_once(settings, client, now=now)  # type: ignore[arg-type]
 
     pending = load_state(state_path)["u1"]
     assert pending.status == "awaiting_reply"
-    assert pending.watermark  # ustawiony (nie pusty)
+    # Watermark = czas SERWERA z send_chat_message (10:00), NIE lokalny now (09:00) — chroni przed
+    # przesunięciem zegara (błąd live: odpowiedź 10:14:58Z odrzucona przez watermark 10:15:09Z).
+    assert pending.watermark == "2026-07-15T10:00:00Z"
     # Stara wiadomość SPRZED nudge'a jest ignorowana dzięki watermarkowi.
-    stale = [_msg("u1", "2026-07-15T09:00:00Z", "OK, rozumiem")]
+    stale = [_msg("u1", "2026-07-15T09:30:00Z", "OK, rozumiem")]
     assert newest_incoming(stale, "me", pending.watermark) is None
     # Nowa wiadomość PO nudge'u jest brana pod uwagę.
     fresh = [_msg("u1", "2026-07-15T10:05:00Z", "ok")]
