@@ -16,10 +16,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+if TYPE_CHECKING:
+    from workmate.core.application.github import GithubWriteService
+
+from workmate.core.application.events import EventService
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
@@ -240,4 +244,75 @@ def build_workspace_catalog(
         ToolSpec("create_file", create_file.__doc__ or "", create_file),
         ToolSpec("read_file", read_file.__doc__ or "", read_file),
         ToolSpec("list_files", list_files.__doc__ or "", list_files),
+    ]
+
+
+def build_events_catalog(events: EventService) -> list[ToolSpec]:
+    """Zbuduj narzędzie ODCZYTU wspólnego magazynu zdarzeń (ADR 0019) — warstwa spajająca drzwi.
+
+    Osobne od ``build_tool_catalog`` i wstrzykiwane do runtime agenta jako ``extra_catalog``
+    per drzwi (nie przez drzwi MCP) — dlatego golden-test powierzchni MCP zostaje nietknięty.
+    Read-only: pozwala agentowi dowolnych drzwi „zobaczyć", co zdarzyło się w innych warstwach
+    (np. świeże issue z GitHuba), bez własnego portu do tamtego serwisu.
+    """
+
+    def read_recent_events(source: str | None = None, limit: int = 20) -> dict[str, Any]:
+        """Pokaż ostatnie zdarzenia z warstwy spajającej (np. z GitHuba), najnowsze pierwsze.
+
+        Opcjonalny filtr ``source`` (np. 'github', 'teams') zawęża do jednej warstwy.
+        Każde zdarzenie ma źródło, typ, autora, tytuł, skrót, odnośnik i czas wystąpienia.
+        """
+
+        def build() -> dict[str, Any]:
+            items = events.recent(source=source, limit=limit)
+            return {
+                "count": len(items),
+                "events": [e.model_dump(mode="json") for e in items],
+            }
+
+        return _envelope(build)
+
+    return [ToolSpec("read_recent_events", read_recent_events.__doc__ or "", read_recent_events)]
+
+
+def build_github_write_catalog(write_service: GithubWriteService) -> list[ToolSpec]:
+    """Zbuduj BRAMKOWANE narzędzia zapisu do GitHub (Gate 4 / ADR 0021) — create-only.
+
+    Osobne od ``build_tool_catalog`` i wstrzykiwane jako ``extra_catalog`` TYLKO na drzwiach z
+    włączoną bramką ``enable_github_write`` — jak ``save_note`` tylko z ``write_service``.
+    Gdy bramka wyłączona, katalog nie powstaje, więc model nie widzi narzędzia mutującego
+    (strukturalna gwarancja profilu per drzwi). Golden-test powierzchni MCP nietknięty.
+    """
+
+    def create_github_issue(
+        title: str, body: str, labels: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Utwórz NOWE issue w repozytorium GitHub zespołu (ZAPIS — tworzy issue).
+
+        Podaj ``title`` i ``body`` (Markdown). Opcjonalnie ``labels`` (lista etykiet). Zwraca numer
+        i URL nowego issue. Tworzy wyłącznie NOWE issue — bez edycji i usuwania istniejących.
+        """
+
+        def build() -> dict[str, Any]:
+            result = write_service.create_issue(title, body, tuple(labels or ()))
+            return {"created": True, **result}
+
+        return _envelope(build, errors=(WorkMateError, ValidationError))
+
+    def comment_github_issue(issue_number: int, body: str) -> dict[str, Any]:
+        """Dodaj komentarz do istniejącego issue w GitHub (ZAPIS — tworzy komentarz).
+
+        ``issue_number`` to numer issue, ``body`` to treść (Markdown). Zwraca URL komentarza.
+        Tworzy wyłącznie nowy komentarz — nie edytuje ani nie usuwa istniejących.
+        """
+
+        def build() -> dict[str, Any]:
+            result = write_service.create_comment(issue_number, body)
+            return {"created": True, **result}
+
+        return _envelope(build, errors=(WorkMateError, ValidationError))
+
+    return [
+        ToolSpec("create_github_issue", create_github_issue.__doc__ or "", create_github_issue),
+        ToolSpec("comment_github_issue", comment_github_issue.__doc__ or "", comment_github_issue),
     ]

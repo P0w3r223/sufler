@@ -42,7 +42,7 @@ from workmate.core.application.workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from workmate.config import (
         AgentSettings,
@@ -66,13 +66,19 @@ def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
 
 
 def build_agent_runtime(
-    settings: Settings, agent_settings: AgentSettings, *, enable_write: bool
+    settings: Settings,
+    agent_settings: AgentSettings,
+    *,
+    enable_write: bool,
+    extra_catalog: Sequence[ToolSpec] = (),
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
     ``enable_write`` steruje profilem zaufania drzwi: ``True`` → katalog z
     ``save_note`` (zaufane, np. lokalne CLI); ``False`` → katalog tylko do odczytu
-    (mniej zaufane drzwi, np. Telegram — ADR 0006).
+    (mniej zaufane drzwi, np. Telegram — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
+    STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
+    bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -88,20 +94,26 @@ def build_agent_runtime(
     catalog = build_tool_catalog(notes_service, projects_service, write_service=write_service)
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
-        catalog,
+        [*catalog, *extra_catalog],
         max_tool_iterations=agent_settings.max_tool_iterations,
     )
 
 
 def build_agent_runtime_or_exit(
-    settings: Settings, agent_settings: AgentSettings, *, enable_write: bool
+    settings: Settings,
+    agent_settings: AgentSettings,
+    *,
+    enable_write: bool,
+    extra_catalog: Sequence[ToolSpec] = (),
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
     Uwspólnia powtarzany w 4 drzwiach blok ``try build_agent_runtime except ImportError``.
     """
     try:
-        return build_agent_runtime(settings, agent_settings, enable_write=enable_write)
+        return build_agent_runtime(
+            settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
+        )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
 
@@ -153,6 +165,7 @@ def build_conversational_responder(
     show_thinking: bool = False,
     enable_workspace: bool = False,
     workspace_settings: WorkspaceSettings | None = None,
+    extra_catalog: Sequence[ToolSpec] = (),
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -160,9 +173,11 @@ def build_conversational_responder(
     w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``show_thinking`` tylko
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
+    ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
+    poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
     """
     runtime = build_agent_runtime_or_exit(
-        settings, agent_settings, enable_write=enable_write
+        settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(

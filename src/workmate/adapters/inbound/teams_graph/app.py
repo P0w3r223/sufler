@@ -28,6 +28,8 @@ from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
     AgentSettings,
     ConversationSettings,
+    EventsSettings,
+    GithubSettings,
     Settings,
     TeamsGraphSettings,
     WorkspaceSettings,
@@ -36,6 +38,7 @@ from workmate.config import (
 if TYPE_CHECKING:
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
+    from workmate.core.application.tools import ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +85,61 @@ def main() -> None:
         )
         if removed:
             logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
+    extra_catalog = _build_bridge_catalog(
+        EventsSettings.from_env(), GithubSettings.from_env()
+    )
     responder = _build_responder(
-        core_settings, agent_settings, conv_settings, workspace_settings
+        core_settings, agent_settings, conv_settings, workspace_settings, extra_catalog
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
+
+
+def _build_bridge_catalog(
+    events_settings: EventsSettings, github_settings: GithubSettings
+) -> list[ToolSpec]:
+    """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021): odczyt zdarzeń + zapis GitHub.
+
+    ``read_recent_events`` jest ZAWSZE (agent widzi, co zdarzyło się w innych warstwach — np. świeże
+    issue z GitHuba). Zapis do GitHub (``create_github_issue``/``comment_github_issue``) dokładamy
+    TYLKO przy włączonej bramce ``enable_github_write`` i skonfigurowanym repo/tokenie — profil
+    uprawnień per drzwi (ADR 0006/0021). Zdarzenia z zapisu idą jako ``source=teams`` — notifier
+    (wypycha tylko ``source=github``) ich nie odeśle (element strażnika pętli).
+    """
+    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from workmate.core.application.events import EventService
+    from workmate.core.application.tools import build_events_catalog
+
+    events = EventService(SqliteEventStore(events_settings.db_path))
+    catalog = build_events_catalog(events)
+
+    if not (
+        github_settings.enable_github_write
+        and github_settings.token
+        and github_settings.owner
+        and github_settings.repo
+    ):
+        return catalog
+
+    import httpx
+
+    from workmate.adapters.outbound.github_api import HttpxGithubClient
+    from workmate.core.application.github import GithubWriteService
+    from workmate.core.application.tools import build_github_write_catalog
+
+    # Sync klient GitHub żyje przez cały proces (daemon); tool dispatch woła go w wątkach puli.
+    client = HttpxGithubClient(
+        httpx.Client(timeout=30), github_settings.token, api_base=github_settings.api_base
+    )
+    write_service = GithubWriteService(
+        client, owner=github_settings.owner, repo=github_settings.repo, events=events
+    )
+    logger.info(
+        "GitHub write WŁĄCZONY dla %s/%s — agent Teams może tworzyć issue/komentarze.",
+        github_settings.owner,
+        github_settings.repo,
+    )
+    return [*catalog, *build_github_write_catalog(write_service)]
 
 
 def _build_responder(
@@ -94,12 +147,13 @@ def _build_responder(
     agent_settings: AgentSettings,
     conv_settings: ConversationSettings,
     workspace_settings: WorkspaceSettings,
+    extra_catalog: list[ToolSpec],
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
     (ADR 0018) włącza OSOBNA bramka ``enable_workspace`` (env ``WORKMATE_ENABLE_WORKSPACE``),
-    niezależna od zapisu notatek. ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi
-    osobno od drzwi bota (``"teams"``)."""
+    niezależna od zapisu notatek. ``extra_catalog`` (ADR 0019/0021) dokłada narzędzia warstwy
+    spajającej. ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi osobno od bota."""
     return build_conversational_responder(
         core_settings,
         agent_settings,
@@ -109,6 +163,7 @@ def _build_responder(
         safe=True,
         enable_workspace=workspace_settings.enabled,
         workspace_settings=workspace_settings,
+        extra_catalog=extra_catalog,
     )
 
 

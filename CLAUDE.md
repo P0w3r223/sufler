@@ -15,8 +15,11 @@ agenta** (drzwi Teams/CLI) — jedno źródło narzędzi, wiele drzwi.
   agenta read-only, echo jako fallback transportu, extra `teams`); `inbound/telegram/`
   (Faza 2 — runtime agenta read-only, long polling, extra `telegram`);
   `inbound/teams_graph/` (drzwi delegowane przez polling Microsoft Graph — ADR 0015/0016);
-  `inbound/cli/app.py` (Faza 2 — harness `workmate-agent`); `outbound/` (repozytoria +
-  `anthropic_llm.py` — Claude API, extra `agent`); `github/` to pusty stub (Faza 3).
+  `inbound/cli/app.py` (Faza 2 — harness `workmate-agent`); `inbound/github/` (Faza 3 — drzwi
+  delegowane przez polling GitHub REST tokenem PAT, extra `github`, `workmate-github` — ADR 0020);
+  `outbound/` (repozytoria + `anthropic_llm.py` — Claude API, extra `agent`; `github_api.py` —
+  klient GitHub read/write; `sqlite_events.py` — wspólny magazyn zdarzeń; `graph_teams_notifier.py`
+  — proaktywny push do Teams).
 - `src/workmate/server.py` — punkt składania (wiring). `config.py` — ustawienia.
 - `data/` — notatki `.md` w układzie `notes/<firma>/<projekt>/` (frontmatter YAML)
   + `data/projects/registry.yaml` (z polem `company` na projekt).
@@ -71,6 +74,18 @@ Sekrety (klucze/tokeny) trzymamy WYŁĄCZNIE poza repo — w CLAUDE.md tylko śc
   ORAZ runtime agenta dostają je automatycznie ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)).
   Zamrożona powierzchnia 4+1 narzędzi jest pilnowana golden-testem
   `tests/adapters/test_mcp_tool_surface.py` (patrz `docs/how-to/add-a-tool.md`).
+- **Warstwa spajająca Fazy 3 = wspólny `EventStore`** (SQLite `~/.workmate/events.db`, POZA `data/`,
+  append-only, [ADR 0019](docs/adr/0019-shared-event-store.md)): drzwi GitHub piszą zdarzenia →
+  notifier wypycha je do Teams (1:1 + kanał, [ADR 0022](docs/adr/0022-proactive-dual-target-teams-push.md))
+  → narzędzie `read_recent_events` pozwala je czytać na dowolnych drzwiach. **Narzędzia warstwy
+  spajającej (odczyt zdarzeń + zapis GitHub) wchodzą przez `extra_catalog`, NIE przez `build_tool_catalog`**
+  — dlatego golden-test powierzchni MCP zostaje nietknięty.
+- **Zapis do GitHub to bramkowana zdolność mutująca (Gate 4, [ADR 0021](docs/adr/0021-github-write-capability-gate-4.md))**:
+  osobny `GithubWritePort`, bramka `enable_github_write` per drzwi (domyślnie OFF), CREATE-ONLY
+  (issue/komentarz; bez edycji/usuwania). Strażnik pętli dwustronny: drzwi GitHub pomijają zdarzenia
+  autorstwa konta PAT (self-skip), a echo zapisu idzie jako `source="teams"`, więc notifier
+  (wypycha tylko `source="github"`) go nie odsyła. **PAT GitHub i cache tokenu Teams-push to sekrety**
+  — z env (`WORKMATE_GITHUB_TOKEN`, `repr=False`) / pliku poza repo i `data/`, nigdy w repo.
 
 ## Konwencje
 - Opisy narzędzi zwięzłe, zaczynaj od słów kluczowych (Claude Code skraca do ~2 KB).

@@ -157,7 +157,7 @@ def test_from_env_defaults_attachment_limits(monkeypatch):
     settings = TeamsGraphSettings.from_env()
 
     assert settings.max_attachment_mb == 8
-    assert settings.max_attachments_per_message == 5
+    assert settings.max_attachments_per_message == 20
     assert settings.max_total_attachment_mb == 20
 
 

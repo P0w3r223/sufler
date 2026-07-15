@@ -7,7 +7,7 @@ osobnym „smoke na kluczu / na żywym koncie". Poniższe pozycje pochodzą z AD
 sesji, w których zapisano „live-smoke do zrobienia".
 
 Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanale Teams ·
-☁️ wymaga infrastruktury (Azure/M365 lub serwer Windows/IIS).
+☁️ wymaga infrastruktury (Azure/M365 lub serwer Windows/IIS) · 🐙 wymaga PAT GitHub + repo.
 
 ---
 
@@ -63,6 +63,28 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
   odłożony). Czysta obróbka otoku JSON (`_extract_json`) jest już pokryta testem jednostkowym.
 - **Oczekiwane:** model zwraca JSON walidujący się do `MeetingSummary` (`model_validate_json`),
   a jakość streszczenia (tytuł, decyzje, action items) jest sensowna.
+
+## 8. GitHub → EventStore (ingest) — 🐙 (ADR 0019/0020)
+
+- **Krok:** ustaw `WORKMATE_GITHUB_TOKEN`/`_OWNER`/`_REPO`, uruchom `uv run workmate-github`;
+  utwórz ręcznie issue w repo. Podejrzyj `~/.workmate/events.db` (np. przez agenta narzędziem
+  `read_recent_events` na drzwiach Teams).
+- **Oczekiwane:** issue pojawia się jako zdarzenie `source="github", kind="issue_opened"`;
+  ponowny poll go NIE dubluje (dedup), a issue utworzone kontem PAT jest pomijane (self-skip).
+
+## 9. EventStore → Teams (notifier dual-target) — 🔑 👥 🐙 (ADR 0022)
+
+- **Krok:** skonfiguruj `WORKMATE_TEAMS_PUSH_*` (włącz `ENABLE_CHAT` i/lub `ENABLE_CHANNEL`),
+  zaloguj się raz device-code; wywołaj zdarzenie GitHub (nowe issue).
+- **Oczekiwane:** powiadomienie ląduje w **czacie 1:1 ORAZ na kanale** (wg włączonych celów),
+  treść zescapowana (bez żywego HTML). Restart procesu nie gubi ani nie dubluje (kursor).
+
+## 10. Teams → GitHub (bramkowany zapis) — 🔑 👥 🐙 (ADR 0021)
+
+- **Krok:** ustaw `WORKMATE_GITHUB_ENABLE_WRITE=true`; przez agenta na kanale Teams poproś
+  „utwórz issue: …". 
+- **Oczekiwane:** issue powstaje w skonfigurowanym repo (nie w cudzym); agent zwraca numer i URL;
+  **potwierdź, że NIE wraca jako powiadomienie** (self-skip po loginie PAT + echo `source="teams"`).
 
 ---
 

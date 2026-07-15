@@ -48,5 +48,7 @@ publiczne < uwierzytelniona sesja developera). Decyzje — na Bramce 2.
 ## Rejestracja w `.mcp.json` vs inne kanały
 
 Drzwi MCP rejestrujemy w [`.mcp.json`](../../.mcp.json). Drzwi Teams/GitHub
-działają inaczej (webhook / Bot Framework / Graph) i nie przechodzą przez
-`.mcp.json` — to osobny proces uruchamiany obok serwera MCP.
+działają inaczej (Bot Framework / polling Graph / polling GitHub REST) i nie
+przechodzą przez `.mcp.json` — to osobny proces uruchamiany obok serwera MCP.
+Drzwi `teams_graph` (ADR 0015) i `github` (ADR 0020) to gotowe wzorce takiego
+procesu pollingowego: pusty stub → pełne drzwi (patrz `adapters/inbound/github/`).
