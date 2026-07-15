@@ -50,13 +50,17 @@ def build_nudge_text(member: Member, proposal: WeekSchedule, week_label: str, tz
 
 
 def describe_schedule(schedule: WeekSchedule, tz: ZoneInfo) -> str:
-    """Opis grafiku do potwierdzenia z trybem pracy, np. „pon 08:00–16:00 (stacjonarnie)”."""
+    """Opis grafiku do potwierdzenia z trybem pracy jako emotka: 🟢 stacjonarnie, 🔵 zdalnie.
+
+    Kolor emotki idzie za kolorem Shifts (`theme`): green/None → 🟢 (stacjonarnie), blue → 🔵
+    (zdalnie), np. „pon 08:00–16:00 🟢”.
+    """
     parts = []
     for sh in schedule.shifts:
         start = sh.start.astimezone(tz)
         end = sh.end.astimezone(tz)
-        mode = "zdalnie" if sh.theme == "blue" else "stacjonarnie"  # green/None = stacjonarnie
-        parts.append(f"{_DNI_SKROT[start.weekday()]} {start:%H:%M}–{end:%H:%M} ({mode})")
+        mode = "🔵" if sh.theme == "blue" else "🟢"  # blue = zdalnie, green/None = stacjonarnie
+        parts.append(f"{_DNI_SKROT[start.weekday()]} {start:%H:%M}–{end:%H:%M} {mode}")
     return ", ".join(parts)
 
 

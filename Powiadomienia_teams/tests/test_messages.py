@@ -5,6 +5,7 @@ from powiadomienia_teams.domain.models import Member, Shift, WeekSchedule
 from powiadomienia_teams.messages import (
     build_confirm_text,
     build_nudge_text,
+    describe_schedule,
     describe_time_off,
     to_html,
 )
@@ -48,6 +49,18 @@ def test_describe_time_off_uses_actual_reason_name():
         {"weekday": 1, "reason_id": "TOR_L4", "reason_name": "Zwolnienie lekarskie"},
     ]
     assert describe_time_off(entries) == "pt: Urlop, wt: Zwolnienie lekarskie"
+
+
+def test_describe_schedule_uses_color_emoji_not_words():
+    green = Shift("u1", datetime(2026, 7, 20, 6, tzinfo=UTC), datetime(2026, 7, 20, 14, tzinfo=UTC))
+    blue = Shift(
+        "u1", datetime(2026, 7, 21, 6, tzinfo=UTC), datetime(2026, 7, 21, 14, tzinfo=UTC),
+        theme="blue",
+    )
+    text = describe_schedule(WeekSchedule("u1", date(2026, 7, 20), (green, blue)), WAW)
+    assert "🟢" in text  # stacjonarnie (green/None)
+    assert "🔵" in text  # zdalnie (blue)
+    assert "stacjonarnie" not in text and "zdalnie" not in text  # bez słów w nawiasach
 
 
 def test_confirm_text_mentions_schedule_and_time_off():
