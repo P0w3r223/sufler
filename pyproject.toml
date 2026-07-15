@@ -50,6 +50,10 @@ teams-graph = [
     "openpyxl>=3.1",
     "python-pptx>=1.0",
     "pillow>=10",
+    # Dekoder HEIC/HEIF (domyślny format zdjęć iPhone) — Pillow sam nie czyta HEIF; wtyczka
+    # rejestruje opener (register_heif_opener), a materializer konwertuje HEIC→JPEG. Wheel'e
+    # pakują libheif — bez systemowej zależności. Import/rejestracja LENIWE w adapterze. ADR 0016.
+    "pillow-heif>=0.16",
 ]
 
 [project.scripts]
@@ -123,9 +127,9 @@ module = ["telegram.*", "dotenv.*"]
 ignore_missing_imports = true
 
 # Załączniki drzwi teams_graph (extra `teams-graph`, ADR 0016) — python-docx, openpyxl,
-# python-pptx i Pillow importowane leniwie w adapterze; mypy rdzenia nie może się o nie wywrócić.
+# python-pptx, Pillow i pillow-heif importowane leniwie w adapterze; mypy rdzenia nie może się o nie wywrócić.
 [[tool.mypy.overrides]]
-module = ["docx.*", "openpyxl.*", "pptx.*", "PIL.*"]
+module = ["docx.*", "openpyxl.*", "pptx.*", "PIL.*", "pillow_heif.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

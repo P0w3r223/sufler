@@ -36,6 +36,12 @@ _SUPPORTED_IMAGE = {
     "GIF": "image/gif",
     "WEBP": "image/webp",
 }
+# Formaty źródłowe FOTOGRAFICZNE nieakceptowane natywnie przez API — konwertuj do JPEG, nie PNG:
+# HEIF/HEIC (domyślny format iPhone) jako PNG dałby wielomegabajtowy plik, który po downscalingu
+# i tak może przekroczyć max_bytes; JPEG q85 mieści fotografię w setkach kB. Pillow+pillow-heif
+# ustawia ``img.format="HEIF"`` dla .heic i .heif.
+_PHOTO_SOURCE_FORMATS = {"HEIF"}
+_JPEG_QUALITY = 85
 # Rozszerzenia traktowane jako czysty tekst (dekodowanie UTF-8, bez base64).
 _TEXT_EXTS = {"txt", "md", "csv", "log", "json", "xml", "yaml", "yml"}
 # Górne capy ekstrakcji — chronią przed absurdalnie dużym plikiem (bloki wracają co turę).
@@ -98,7 +104,7 @@ class AttachmentMaterializer:
         for ref in kept:
             remaining = self._limits.max_total_bytes - total
             att, size = await self._materialize_one(
-                team_id, channel_id, msg.id, ref, budget=remaining
+                team_id, channel_id, msg.thread_root_id, msg.id, ref, budget=remaining
             )
             out.append(att)
             total += size
@@ -108,6 +114,7 @@ class AttachmentMaterializer:
         self,
         team_id: str,
         channel_id: str,
+        root_id: str,
         message_id: str,
         ref: AttachmentRef,
         *,
@@ -124,7 +131,7 @@ class AttachmentMaterializer:
         try:
             if ref.kind == "hosted":
                 data = await self._client.get_hosted_content(
-                    team_id, channel_id, message_id, ref.hosted_id
+                    team_id, channel_id, root_id, message_id, ref.hosted_id
                 )
             elif ref.kind == "url":
                 data = await self._client.download_public_url(ref.url)
@@ -198,6 +205,27 @@ def _build(
     return None
 
 
+_heif_state: bool | None = None  # None=nie próbowano; True=zarejestrowano; False=brak wtyczki
+
+
+def _ensure_heif_registered() -> None:
+    """Zarejestruj opener HEIF w Pillow RAZ na proces (idempotentnie); brak wtyczki = cichy no-op.
+
+    ``pillow-heif`` żyje w extra ``teams-graph``; jego brak NIE może wywalić importu modułu ani
+    pollera — bez niego HEIC się nie otworzy i zejdzie notką (jak inne nieobsługiwane typy).
+    """
+    global _heif_state
+    if _heif_state is not None:
+        return
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+        _heif_state = True
+    except Exception:  # brak extra albo błąd rejestracji — degradujemy, nie wywracamy
+        _heif_state = False
+
+
 def _process_image(data: bytes, max_edge: int) -> tuple[str, bytes] | None:
     """Rozpoznaj i przetwórz obraz: ``(media_type, bajty)`` albo ``None`` (to nie obraz).
 
@@ -211,6 +239,7 @@ def _process_image(data: bytes, max_edge: int) -> tuple[str, bytes] | None:
         from PIL import Image
     except ImportError:
         return _sniff_image(data)
+    _ensure_heif_registered()  # idempotentnie włącza dekoder HEIC/HEIF, jeśli extra obecny
 
     try:
         with Image.open(io.BytesIO(data)) as img:
@@ -226,8 +255,13 @@ def _process_image(data: bytes, max_edge: int) -> tuple[str, bytes] | None:
             longest = max(width, height)
             if media_type is not None and longest <= max_edge:
                 return media_type, data  # bez zmian (zachowaj oryginał/animację)
-            out_format = fmt if media_type is not None else "PNG"
-            out_media = media_type or "image/png"
+            if media_type is not None:
+                out_format, out_media = fmt, media_type
+            elif fmt in _PHOTO_SOURCE_FORMATS:
+                # Fotografia (HEIF/HEIC) → JPEG: PNG dałby wielomegabajtowy plik (ryzyko max_bytes).
+                out_format, out_media = "JPEG", "image/jpeg"
+            else:
+                out_format, out_media = "PNG", "image/png"
             scaled: Image.Image = img
             if longest > max_edge:
                 ratio = max_edge / longest
@@ -241,7 +275,10 @@ def _process_image(data: bytes, max_edge: int) -> tuple[str, bytes] | None:
             ):
                 scaled = scaled.convert("RGB")
             buffer = io.BytesIO()
-            scaled.save(buffer, format=out_format)
+            if out_format == "JPEG":
+                scaled.save(buffer, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
+            else:
+                scaled.save(buffer, format=out_format)
             return out_media, buffer.getvalue()
     except Exception:
         return _sniff_image(data)

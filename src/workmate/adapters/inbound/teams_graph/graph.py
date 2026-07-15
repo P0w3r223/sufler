@@ -89,18 +89,23 @@ class HttpxGraphChannelClient:
         return str(data["id"])
 
     async def get_hosted_content(
-        self, team_id: str, channel_id: str, message_id: str, hosted_id: str
+        self, team_id: str, channel_id: str, root_id: str, message_id: str, hosted_id: str
     ) -> bytes:
         """Bajty obrazu wklejonego inline (hostedContents) — na obecnym zakresie kanału.
+
+        Wklejka w POŚCIE-ROOT jest pod ``…/messages/{root_id}/hostedContents`` (wtedy
+        ``message_id == root_id``); wklejka w ODPOWIEDZI wymaga ścieżki REPLY-scoped
+        ``…/messages/{root_id}/replies/{reply_id}/hostedContents`` — Graph NIE adresuje repliki
+        pod top-level ``/messages/{id}`` — root-scope dla repliki daje 404 (by-id i listowanie).
 
         Id z ``<img src>`` w treści bywa nie-do-zmapowania przez proxy Graph (404). Wtedy
         próbujemy jeszcze AUTORYTATYWNYCH id z LISTOWANIA ``/hostedContents`` — część wklejek
         (obiekty ``asm.skype``) schodzi dopiero tak. Obiekty ``asyncgw`` i tak nie zejdą.
         """
-        base = (
-            f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{message_id}"
-            f"/hostedContents"
-        )
+        base = f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{root_id}"
+        if message_id != root_id:  # odpowiedź → reply-scoped (root-scope dałby 404)
+            base += f"/replies/{message_id}"
+        base += "/hostedContents"
         try:
             return await self._get_bytes(f"{base}/{hosted_id}/$value")
         except httpx.HTTPStatusError as exc:

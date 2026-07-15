@@ -11,20 +11,45 @@ agenta** (drzwi Teams/CLI) — jedno źródło narzędzi, wiele drzwi.
   jednoźródłowy katalog narzędzi), runtime agenta (`agent/`). Bez I/O, bez SDK.
 - `src/workmate/adapters/` — DRZWI: wspólny szew `inbound/responder.py` (`Responder`,
   `EchoResponder`, `RuntimeResponder`, …) reużywany przez drzwi async; `inbound/mcp/tools.py`
-  (Faza 1 — cienka pętla po katalogu narzędzi); `inbound/teams/` (Faza 2 spike echo,
-  extra `teams`); `inbound/telegram/` (Faza 2 spike echo, long polling, extra `telegram`);
+  (Faza 1 — cienka pętla po katalogu narzędzi); `inbound/teams/` (Faza 2 — runtime
+  agenta read-only, echo jako fallback transportu, extra `teams`); `inbound/telegram/`
+  (Faza 2 — runtime agenta read-only, long polling, extra `telegram`);
+  `inbound/teams_graph/` (drzwi delegowane przez polling Microsoft Graph — ADR 0015/0016);
   `inbound/cli/app.py` (Faza 2 — harness `workmate-agent`); `outbound/` (repozytoria +
   `anthropic_llm.py` — Claude API, extra `agent`); `github/` to pusty stub (Faza 3).
 - `src/workmate/server.py` — punkt składania (wiring). `config.py` — ustawienia.
 - `data/` — notatki `.md` w układzie `notes/<firma>/<projekt>/` (frontmatter YAML)
   + `data/projects/registry.yaml` (z polem `company` na projekt).
 - `tests/` — lustrzane wobec `src/`. `docs/` — dokumentacja.
+- `Powiadomienia_teams/` — SAMODZIELNY pod-projekt uv (własny `pyproject.toml`, styl heksagonalny):
+  cotygodniowy asystent uzupełniania zmian w **Microsoft Shifts** (nudge 1:1 → interpretacja przez
+  Claude → zapis zmian i **czasu wolnego** timeOff). Reużywa wzorców `teams_graph`. Niezmienniki:
+  zapis tylko po jawnym „tak" pracownika (spirit ADR 0006) + strażnik cross-user (odpowiedź nie
+  zmieni cudzego grafiku). Pełny status i decyzje: `Powiadomienia_teams/PLAN.md`.
 
 ## Komendy
 - Instalacja: `uv sync`
 - Testy: `uv run pytest`  (pojedynczy: `uv run pytest tests/core -q`)
 - Lint / typy: `uv run ruff check .` · `uv run mypy`
 - Serwer lokalnie: `uv run workmate`  · Inspector: `uv run mcp dev src/workmate/server.py`
+
+## Powiadomienia_teams — sekrety i konfiguracja (LOKALIZACJE, nie wartości sekretów)
+Sekrety (klucze/tokeny) trzymamy WYŁĄCZNIE poza repo — w CLAUDE.md tylko ścieżki, nigdy wartości.
+- **`ANTHROPIC_API_KEY`** (interpretacja odpowiedzi, model domyślny `claude-haiku-4-5`): plik `.env`
+  w KATALOGU GŁÓWNYM repo (`<repo-root>/.env`; alternatywnie `WORKMATE_AGENT_API_KEY`). Gitignorowany.
+- **Cache tokenu MSAL** (refresh-token; delegowany login jako kierownik/„głos" bota): plik
+  `~/.workmate/teams_token_cache.bin` (chmod 600). Przy uruchomieniu na żywo używać providera
+  tylko-cichego (silent refresh), nigdy blokującego device-code.
+- **Stan pilotażu** (pending, watermark, ustalony grafik/czas wolny): `~/.workmate/powiadomienia_state.json`.
+- Konfiguracja tenanta BIAP (NIE-sekret; te same wartości są w `Powiadomienia_teams/.env.example` i PLAN.md):
+  - `POWIADOMIENIA_CLIENT_ID=c0ffee00-0000-4000-8000-000000000015` (Azure public client, device-code)
+  - `POWIADOMIENIA_TENANT_ID=c0ffee00-0000-4000-8000-000000000017`
+  - `POWIADOMIENIA_TEAM_ID=c0ffee00-0000-4000-8000-000000000019` (zespół „Stażyści" — jedyny z prowizjonowanym Shifts)
+  - `POWIADOMIENIA_SCHEDULING_GROUP_ID=TAG_c0ffee00-0000-4000-8000-000000000009` (wymagany przy zapisie zmian)
+- „Głos" bota = konto kierownika logowane delegowanie: **Piotr Częstkiewicz**, `me_id=c0ffee00-0000-4000-8000-000000000016`.
+- Uruchomienie na żywo: env `POWIADOMIENIA_*` + `ANTHROPIC_API_KEY` + `POWIADOMIENIA_DRY_RUN=false`
+  (+ opcjonalnie `POWIADOMIENIA_ONLY_USER_IDS` do pilotażu). Watermark przypomnienia = czas SERWERA
+  z `send_chat_message` (nie lokalny zegar — chroni przed skew).
 
 ## Reguły (nieoczywiste — przeczytaj przed zmianą)
 - **Odczyt jest domyślny; istnieje jedno narzędzie zapisu — `save_note`** (Bramka 2,

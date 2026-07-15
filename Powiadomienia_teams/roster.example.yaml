@@ -1,0 +1,10 @@
+# Ręczny roster — obejście braku uprawnienia TeamMember.Read.All.
+# Skopiuj do roster.yaml i uzupełnij. user_id = AAD objectId osoby (ten sam, który
+# pojawia się w zmianach Shifts). Po nadaniu uprawnienia roster będzie czytany z Graph.
+- user_id: "00000000-0000-0000-0000-000000000000"
+  display_name: "Imię Nazwisko"
+  email: "imie.nazwisko@example.com"
+  roles: ["member"]
+- user_id: "11111111-1111-1111-1111-111111111111"
+  display_name: "Druga Osoba"
+  email: "druga.osoba@example.com"

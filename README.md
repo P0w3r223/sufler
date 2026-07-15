@@ -5,7 +5,7 @@ każdego developera dostęp do wspólnej bazy wiedzy — **notatek ze spotkań**
 i **statusu projektów** — przez wąskie, typowane narzędzia MCP.
 
 > **Status:** 🟢 **Faza 1 (MVP) domknięta** — serwer MCP: 4 narzędzia odczytu + zapis (`save_note`) + gotowy kod wdrożenia HTTP z uwierzytelnianiem (Bramka 3; pozostaje samo wdrożenie).
-> 🔄 **Faza 2 w toku** — runtime agenta w rdzeniu (M1, `workmate-agent`) nad **tymi samymi** narzędziami ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)) + spike drzwi Teams (M2 echo). Faza 3 (GitHub) później. Patrz [`docs/roadmap.md`](docs/roadmap.md).
+> 🔄 **Faza 2 w toku** — runtime agenta w rdzeniu (M1, `workmate-agent`) nad **tymi samymi** narzędziami ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)) + drzwi Teams/Telegram/CLI na runtime agenta read-only (Teams także przez delegowany Microsoft Graph — [ADR 0015](docs/adr/0015-teams-delegated-graph-polling.md)/[0016](docs/adr/0016-user-multimodal-attachments.md)); echo pozostaje fallbackiem transportu. Faza 3 (GitHub) później. Patrz [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Architektura w jednym akapicie
 
@@ -90,16 +90,17 @@ per osoba tokenami bearer i drzwi tylko do odczytu — patrz
 [`docs/how-to/deploy-http.md`](docs/how-to/deploy-http.md) oraz
 [ADR 0007](docs/adr/0007-gate-3-http-auth-deployment.md).
 
-## Drzwi Fazy 2 (spike, lokalnie)
+## Drzwi Fazy 2 (lokalnie)
 
-Poza serwerem MCP ten sam rdzeń napędza drzwi asynchroniczne (bot echo → docelowo
-runtime agenta nad tymi samymi narzędziami, przez wspólny szew `Responder`):
+Poza serwerem MCP ten sam rdzeń napędza drzwi asynchroniczne na runtime agenta
+read-only, nad tymi samymi narzędziami, przez wspólny szew `Responder`
+(`EchoResponder` pozostaje fallbackiem transportu — podmiana to jedna linia w `app.py`):
 
 - **Telegram** (long polling, bez tunelu; runtime agenta read-only): `uv sync
   --extra telegram --extra agent`, `WORKMATE_TELEGRAM_BOT_TOKEN` + `ANTHROPIC_API_KEY`
   w `.env`, `uv run workmate-telegram`. Kroki:
   [`docs/how-to/telegram-bot.md`](docs/how-to/telegram-bot.md).
-- **Teams** (Bot Framework Emulator lokalnie): [`docs/how-to/teams-bot.md`](docs/how-to/teams-bot.md).
+- **Teams** (Bot Framework Emulator lokalnie; runtime agenta read-only): [`docs/how-to/teams-bot.md`](docs/how-to/teams-bot.md). Wariant delegowany przez polling Microsoft Graph: `uv run workmate-teams-graph` ([ADR 0015](docs/adr/0015-teams-delegated-graph-polling.md)).
 - **Runtime agenta lokalnie**: `uv sync --extra agent`, `ANTHROPIC_API_KEY` w `.env`,
   `uv run workmate-agent "…"`.
 
