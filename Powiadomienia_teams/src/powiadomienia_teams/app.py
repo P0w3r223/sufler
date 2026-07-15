@@ -42,8 +42,7 @@ from powiadomienia_teams.messages import (
 from powiadomienia_teams.reminders.detect import members_without_shifts
 from powiadomienia_teams.reminders.propose import proposal_from_last_week
 from powiadomienia_teams.reminders.replies import (
-    is_affirmative,
-    looks_like_schedule,
+    is_pure_affirmation,
     message_text,
     newest_incoming,
 )
@@ -222,13 +221,10 @@ def _process_pending(
     pending.watermark = str(incoming.get("createdDateTime", ""))
     text = message_text(incoming)
 
-    # Czyste „tak" w stanie oczekiwania na potwierdzenie → zapis. „tak, ale w piątek 10-20"
-    # (zawiera godziny) trafia do reinterpretacji, żeby nie zapisać starej propozycji.
-    pure_yes = (
-        pending.status == st.AWAITING_CONFIRM
-        and is_affirmative(text)
-        and not looks_like_schedule(text)
-    )
+    # Czyste „tak" w stanie oczekiwania na potwierdzenie → zapis. „Ok, ale nie będzie mnie w
+    # czwartek" / „tak, ale w piątek 10-20" (potwierdzenie + poprawka) trafia do reinterpretacji,
+    # żeby nie zapisać starej propozycji mimo prośby o zmianę.
+    pure_yes = pending.status == st.AWAITING_CONFIRM and is_pure_affirmation(text)
     if pure_yes:
         pending.status = st.APPLIED
         st.save_state(settings.state_path, state)  # commit PRZED zapisem — brak dubli przy awarii

@@ -151,6 +151,48 @@ def test_affirmative_with_hours_reinterprets_not_applies(tmp_path: Path):
     assert after.resolved == [{"weekday": 4, "start": "10:00", "end": "20:00", "theme": None}]
 
 
+def test_confirm_with_absence_correction_reinterprets_not_applies(tmp_path: Path):
+    # Regresja live (Mikołaj): „Ok, ale nie będzie mnie w czwartek" na etapie potwierdzenia — BEZ
+    # cyfr, więc kiedyś przechodziło jako czyste „tak" i zapisywało czwartek jako pracę. Teraz
+    # musi trafić do reinterpretacji: czwartek → nieobecność, brak natychmiastowego zapisu.
+    state_path = tmp_path / "state.json"
+    full_week = [
+        {"weekday": d, "start": "09:00", "end": "17:00"} for d in range(5)
+    ]
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Mikołaj", chat_id="chat1",
+                week_start="2026-08-03", status=AWAITING_CONFIRM,
+                proposal=full_week, resolved=full_week,
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient(
+        {"chat1": [_msg("u1", "2026-08-02T18:00:00Z", "Ok, ale nie będzie mnie w czwartek")]}
+    )
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":['
+        '{"weekday":0,"start":"09:00","end":"17:00"},'
+        '{"weekday":1,"start":"09:00","end":"17:00"},'
+        '{"weekday":2,"start":"09:00","end":"17:00"},'
+        '{"weekday":4,"start":"09:00","end":"17:00"}],'
+        '"time_off":[{"weekday":3,"powod":"nieobecność"}]}'
+    )
+    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == AWAITING_CONFIRM  # reinterpretacja, nie zapis
+    assert client.created == [] and client.time_off == []  # nic nie zapisano
+    workdays = {item["weekday"] for item in after.resolved}
+    assert 3 not in workdays  # czwartek usunięty z pracy
+    assert after.resolved_time_off == [
+        {"weekday": 3, "reason_id": "TOR_NIEOB", "reason_name": "Nieobecność"}
+    ]
+
+
 def test_write_failure_is_at_most_once(tmp_path: Path):
     state_path = tmp_path / "state.json"
     save_state(

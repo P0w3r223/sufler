@@ -14,6 +14,9 @@ _AFFIRM = {
     "tak", "ok", "okej", "okey", "spoko", "potwierdzam", "zgoda",
     "pasuje", "dokładnie", "git", "zgadza", "jasne", "super",
 }
+# Uprzejmości dopuszczalne obok potwierdzenia (nie są poprawką grafiku).
+_FILLER = {"", "no", "dzięki", "dzieki", "dziękuję", "dziekuje", "wielkie", "i", "też"}
+_STRIP = ".,!?…:;-–„”\"'()"
 
 
 def message_text(message: dict[str, Any]) -> str:
@@ -76,3 +79,19 @@ def looks_like_schedule(text: str) -> bool:
     starej propozycji zamiast poprawki.
     """
     return bool(_DIGIT.search(text))
+
+
+def is_pure_affirmation(text: str) -> bool:
+    """Czy odpowiedź to WYŁĄCZNIE potwierdzenie (bez dodatkowej treści = bez poprawki).
+
+    »tak«/»ok«/»ok dzięki« → True. »Ok, ale nie będzie mnie w czwartek« → False — jest poprawka
+    (nawet bez cyfr!), więc trafi do reinterpretacji zamiast zapisać starą propozycję. Kierunek
+    bezpieczny: gdy pojawi się JAKIEKOLWIEK słowo spoza potwierdzeń/uprzejmości, wolimy
+    reinterpretować (najwyżej dodatkowe wywołanie modelu), niż zapisać niezmieniony grafik mimo
+    prośby o zmianę. Zastępuje kruchą heurystykę »są cyfry« (`looks_like_schedule`).
+    """
+    tokens = [t.strip(_STRIP) for t in text.lower().split()]
+    if not any(t in _AFFIRM for t in tokens):
+        return False
+    allowed = _AFFIRM | _FILLER
+    return all(t in allowed for t in tokens)

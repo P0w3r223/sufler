@@ -1,5 +1,6 @@
 from powiadomienia_teams.reminders.replies import (
     is_affirmative,
+    is_pure_affirmation,
     looks_like_schedule,
     message_text,
     newest_incoming,
@@ -56,3 +57,19 @@ def test_newest_incoming_compares_parsed_time_not_string():
 def test_looks_like_schedule():
     assert looks_like_schedule("tak ale w piątek 10-20")
     assert not looks_like_schedule("tak, potwierdzam")
+
+
+def test_is_pure_affirmation_accepts_clean_yes():
+    assert is_pure_affirmation("tak")
+    assert is_pure_affirmation("Ok!")
+    assert is_pure_affirmation("ok, dzięki")
+    assert is_pure_affirmation("no dokładnie")
+
+
+def test_is_pure_affirmation_rejects_correction_even_without_digits():
+    # Regresja live: „Ok, ale nie będzie mnie w czwartek" NIE jest czystym potwierdzeniem —
+    # zawiera poprawkę (brak cyfr), więc musi trafić do reinterpretacji.
+    assert not is_pure_affirmation("Ok, ale nie będzie mnie w czwartek")
+    assert not is_pure_affirmation("tak ale w piątek 10-20")
+    assert not is_pure_affirmation("ok tylko środa wolne")
+    assert not is_pure_affirmation("w piątek mnie nie będzie")
