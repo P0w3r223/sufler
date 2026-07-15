@@ -20,7 +20,13 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from powiadomienia_teams.domain.models import InvalidShift, Shift, WeekSchedule
+from powiadomienia_teams.domain.models import (
+    InvalidShift,
+    InvalidTimeOff,
+    Shift,
+    TimeOff,
+    WeekSchedule,
+)
 
 
 class LlmClient(Protocol):
@@ -29,10 +35,15 @@ class LlmClient(Protocol):
 
 @dataclass(frozen=True)
 class ReplyDecision:
-    """Wynik interpretacji odpowiedzi. `schedule` ustawione dla confirm/modify."""
+    """Wynik interpretacji odpowiedzi. `schedule`/`time_off` ustawione dla confirm/modify.
+
+    `time_off` to lista intencji {weekday, powod} — id powodu Shifts rozstrzygamy dopiero na
+    etapie potwierdzenia (``reminders.timeoff.resolve_time_off``) z żywych powodów zespołu.
+    """
 
     action: str  # confirm | modify | decline | unclear
     schedule: WeekSchedule | None = None
+    time_off: tuple[dict[str, Any], ...] = ()
     note: str = ""
 
 
@@ -52,16 +63,26 @@ _SYSTEM = (
     # --- Kontrakt wyjścia ---
     'W proponowanym grafiku pole "theme" to tryb pracy: "green"=stacjonarnie, "blue"=zdalnie. '
     "Zwróć WYŁĄCZNIE JSON (bez żadnego innego tekstu): "
-    '{"action":"confirm|modify|decline|unclear","shifts":[{"weekday":0,"start":"HH:MM",'
-    '"end":"HH:MM","tryb":"zdalnie|stacjonarnie"}],"note":"krótko po polsku"}. '
-    "weekday: 0=poniedziałek … 6=niedziela. Dla \"confirm\" zwróć shifts = proponowany grafik "
-    "bez zmian. Dla \"modify\" zwróć PEŁNY docelowy grafik po zmianach (usuwając dni, w które "
-    "pracownik nie pracuje). Dla \"decline\" (pracownik w OGÓLE nie pracuje w tym tygodniu — "
-    "np. urlop, wolne, chorobowe, nieobecny cały tydzień) i \"unclear\" zwróć shifts=[]. "
-    # --- Nieobecność: całotygodniowa vs w konkretne dni vs nieokreślona ---
-    "Nieobecność w KONKRETNE dni (np. „w piątek mnie nie będzie”, „we wtorek wolne”) to "
-    "\"modify\": zostaw pozostałe dni z propozycji, usuń wskazane. Jeśli NIE WIADOMO, które "
-    "dni są wolne/nieobecne (np. „nie będzie mnie kilka dni” bez podania których) — zwróć "
+    '{"action":"confirm|modify|decline|unclear",'
+    '"shifts":[{"weekday":0,"start":"HH:MM","end":"HH:MM","tryb":"zdalnie|stacjonarnie"}],'
+    '"time_off":[{"weekday":4,'
+    '"powod":"urlop|nieobecność|chorobowe|urlop bezpłatny|urlop rodzicielski"}],'
+    '"note":"krótko po polsku"}. '
+    "weekday: 0=poniedziałek … 6=niedziela. shifts = dni PRACUJĄCE; time_off = dni WOLNE "
+    "(urlop/nieobecność/chorobowe). Ten sam dzień może być tylko w JEDNEJ z list. "
+    "Dla \"confirm\" zwróć shifts = proponowany grafik bez zmian, time_off=[]. "
+    "Dla \"modify\" zwróć PEŁNY docelowy tydzień: dni pracujące w shifts, dni wolne w time_off. "
+    "Dla \"unclear\" oraz \"decline\" (pracownik nie chce nic zapisywać) zwróć shifts=[], "
+    "time_off=[]. "
+    # --- Czas wolny: urlop / nieobecność / chorobowe (jak »dodaj czas wolny« w Shifts) ---
+    "Gdy pracownik jest wolny/nieobecny — NIE usuwaj dnia po cichu, tylko dodaj go do time_off z "
+    "właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod=\"urlop\"; „nie będzie mnie”/"
+    "„nieobecny”/„wolne” → powod=\"nieobecność\"; „chorobowe”/„L4”/„zwolnienie” → "
+    "powod=\"chorobowe\"; „urlop bezpłatny” → powod=\"urlop bezpłatny\"; „rodzicielski”/"
+    "„macierzyński” → powod=\"urlop rodzicielski\". Urlop na CAŁY tydzień → time_off dla dni "
+    "roboczych (pon–pt), shifts=[]. Nieobecność w KONKRETNE dni (np. „w piątek urlop”, „we wtorek "
+    "mnie nie będzie”) → ten dzień do time_off, pozostałe dni pracujące zostaw w shifts. Jeśli NIE "
+    "WIADOMO, które dni są wolne (np. „nie będzie mnie kilka dni” bez podania których) — zwróć "
     "\"unclear\" (nie zgaduj dni). "
     'Pole "tryb" ustaw tylko gdy pracownik wskazał zdalnie/stacjonarnie dla danego dnia; inaczej '
     "je pomiń (kolor zostanie z zeszłego tygodnia)."
@@ -152,6 +173,59 @@ def build_schedule(
     return WeekSchedule(member_id, week_start, tuple(sorted(shifts, key=lambda s: s.start)))
 
 
+def _parse_time_off(entries: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+    """Wydobądź poprawne intencje czasu wolnego {weekday 0-6, powod}. Pomija błędne wpisy."""
+    result: list[dict[str, Any]] = []
+    for item in entries:
+        try:
+            weekday = int(item["weekday"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if not 0 <= weekday <= 6:
+            continue
+        powod = str(item.get("powod", "")).strip()
+        if not powod:
+            continue
+        result.append({"weekday": weekday, "powod": powod})
+    return tuple(result)
+
+
+def build_time_offs(
+    member_id: str,
+    week_start: date,
+    entries: list[dict[str, Any]],
+    tz: ZoneInfo,
+) -> list[TimeOff]:
+    """Zbuduj całodobowe wpisy czasu wolnego z ROZSTRZYGNIĘTEJ listy {weekday, reason_id}.
+
+    Powód (id) jest już ustalony wcześniej (na etapie potwierdzenia). Dzień wolny = lokalna
+    północ–północ (w UTC). Pomija wpisy niepoprawne lub bez ``reason_id``.
+    """
+    time_offs: list[TimeOff] = []
+    for item in entries:
+        try:
+            weekday = int(item["weekday"])
+            if not 0 <= weekday <= 6:
+                continue
+            reason_id = str(item.get("reason_id", ""))
+            if not reason_id:
+                continue
+            day = week_start + timedelta(days=weekday)
+            start_local = datetime.combine(day, time(0, 0), tzinfo=tz)
+            end_local = datetime.combine(day + timedelta(days=1), time(0, 0), tzinfo=tz)
+            time_offs.append(
+                TimeOff(
+                    member_id,
+                    start_local.astimezone(timezone.utc),
+                    end_local.astimezone(timezone.utc),
+                    reason_id,
+                )
+            )
+        except (KeyError, ValueError, InvalidTimeOff):
+            continue
+    return time_offs
+
+
 def interpret_reply(
     proposal: WeekSchedule,
     reply_text: str,
@@ -160,7 +234,7 @@ def interpret_reply(
     group_id: str | None,
     llm: LlmClient,
 ) -> ReplyDecision:
-    """Zamień odpowiedź pracownika na decyzję + docelowy grafik (confirm/modify)."""
+    """Zamień odpowiedź pracownika na decyzję + docelowy grafik i czas wolny (confirm/modify)."""
     payload = json.dumps(
         {
             "proponowany_grafik": schedule_to_intervals(proposal, tz),
@@ -176,9 +250,17 @@ def interpret_reply(
         theme_by_weekday = {sh.start.astimezone(tz).weekday(): sh.theme for sh in proposal.shifts}
         enriched = _with_themes(data.get("shifts") or [], theme_by_weekday)
         schedule = build_schedule(proposal.member_id, proposal.week_start, enriched, tz, group_id)
-        if schedule.is_empty:
-            return ReplyDecision("unclear", None, note or "Nie udało się odczytać godzin.")
-        return ReplyDecision(action, schedule, note)
+        time_off = _parse_time_off(data.get("time_off") or [])
+        # Rozłączność: dzień wolny wygrywa — usuń go z grafiku pracy, żeby nie zapisać obu naraz.
+        off_days = {item["weekday"] for item in time_off}
+        if off_days and not schedule.is_empty:
+            kept = tuple(
+                s for s in schedule.shifts if s.start.astimezone(tz).weekday() not in off_days
+            )
+            schedule = WeekSchedule(schedule.member_id, schedule.week_start, kept)
+        if schedule.is_empty and not time_off:
+            return ReplyDecision("unclear", None, (), note or "Nie udało się odczytać godzin.")
+        return ReplyDecision(action, schedule, time_off, note)
     if action == "decline":
-        return ReplyDecision("decline", None, note)
-    return ReplyDecision("unclear", None, note)
+        return ReplyDecision("decline", None, (), note)
+    return ReplyDecision("unclear", None, (), note)

@@ -1,7 +1,12 @@
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from powiadomienia_teams.agent.interpreter import ReplyDecision, build_schedule, interpret_reply
+from powiadomienia_teams.agent.interpreter import (
+    ReplyDecision,
+    build_schedule,
+    build_time_offs,
+    interpret_reply,
+)
 from powiadomienia_teams.domain.models import Shift, WeekSchedule
 
 UTC = timezone.utc
@@ -120,28 +125,34 @@ def test_reply_sets_mode_stacjonarnie_to_green():
     assert decision.schedule.shifts[0].theme == "green"
 
 
-# Testy kontraktowe (dokumentują mapowanie action → decyzja/grafik). LLM jest atrapą, więc NIE
-# weryfikują samego promptu — czy realny model faktycznie zwróci decline/modify/unclear dla tych
-# zdań sprawdza smoke na żywym modelu (patrz PLAN.md / docs live-smoke). Chronią przed regresją
-# logiki interpret_reply/build_schedule dla nowo obsłużonych scenariuszy nieobecności.
-def test_whole_week_vacation_declines():
-    # „jestem na urlopie w tym tygodniu" → decline → brak grafiku, nic do zapisu
-    llm = _FakeLlm('{"action":"decline","shifts":[],"note":"urlop"}')
-    decision = interpret_reply(
-        _proposal(), "jestem na urlopie w tym tygodniu", tz=WAW, group_id="TAG", llm=llm
+# Testy kontraktowe (dokumentują mapowanie action → decyzja/grafik/czas wolny). LLM jest atrapą,
+# więc NIE weryfikują samego promptu — czy realny model faktycznie tak sklasyfikuje urlop sprawdza
+# smoke na żywym modelu (patrz PLAN.md / docs live-smoke). Chronią przed regresją logiki
+# interpret_reply/build_schedule/build_time_offs dla scenariuszy nieobecności.
+def test_whole_week_vacation_creates_time_off():
+    # „urlop cały tydzień" → modify: shifts=[], time_off dla pon–pt z powodem urlop
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[],"time_off":['
+        '{"weekday":0,"powod":"urlop"},{"weekday":1,"powod":"urlop"},'
+        '{"weekday":2,"powod":"urlop"},{"weekday":3,"powod":"urlop"},'
+        '{"weekday":4,"powod":"urlop"}]}'
     )
-    assert decision.action == "decline"
-    assert decision.schedule is None
+    decision = interpret_reply(_proposal(), "cały tydzień urlop", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.action == "modify"
+    assert decision.schedule is not None and decision.schedule.is_empty
+    assert {t["weekday"] for t in decision.time_off} == {0, 1, 2, 3, 4}
+    assert all(t["powod"] == "urlop" for t in decision.time_off)
 
 
-def test_partial_absence_modifies_removing_day():
-    # „w piątek mnie nie będzie, reszta tak samo" → modify z pozostałymi dniami (bez piątku)
+def test_partial_absence_moves_day_to_time_off():
+    # „w piątek mnie nie będzie" → pon–czw praca, piątek do time_off (nieobecność)
     llm = _FakeLlm(
         '{"action":"modify","shifts":['
         '{"weekday":0,"start":"08:00","end":"16:00"},'
         '{"weekday":1,"start":"08:00","end":"16:00"},'
         '{"weekday":2,"start":"08:00","end":"16:00"},'
-        '{"weekday":3,"start":"08:00","end":"16:00"}]}'
+        '{"weekday":3,"start":"08:00","end":"16:00"}],'
+        '"time_off":[{"weekday":4,"powod":"nieobecność"}]}'
     )
     decision = interpret_reply(
         _proposal(), "w piątek mnie nie będzie, reszta tak samo", tz=WAW, group_id="TAG", llm=llm
@@ -149,17 +160,49 @@ def test_partial_absence_modifies_removing_day():
     assert decision.action == "modify"
     assert decision.schedule is not None
     weekdays = {s.start.astimezone(WAW).weekday() for s in decision.schedule.shifts}
-    assert weekdays == {0, 1, 2, 3}  # piątek (4) usunięty
+    assert weekdays == {0, 1, 2, 3}  # dni pracujące
+    assert decision.time_off == ({"weekday": 4, "powod": "nieobecność"},)
 
 
 def test_ambiguous_absence_is_unclear():
     # „nie będzie mnie kilka dni" bez wskazania których → unclear (model nie zgaduje dni)
-    llm = _FakeLlm('{"action":"unclear","shifts":[],"note":""}')
+    llm = _FakeLlm('{"action":"unclear","shifts":[],"time_off":[]}')
     decision = interpret_reply(
         _proposal(), "nie będzie mnie kilka dni", tz=WAW, group_id="TAG", llm=llm
     )
     assert decision.action == "unclear"
     assert decision.schedule is None
+    assert decision.time_off == ()
+
+
+def test_day_in_both_shifts_and_time_off_time_off_wins():
+    # Model zwrócił piątek i w shifts, i w time_off → dedup: piątek tylko jako wolne
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":['
+        '{"weekday":0,"start":"08:00","end":"16:00"},'
+        '{"weekday":4,"start":"08:00","end":"16:00"}],'
+        '"time_off":[{"weekday":4,"powod":"urlop"}]}'
+    )
+    decision = interpret_reply(_proposal(), "w piątek urlop", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.schedule is not None
+    weekdays = {s.start.astimezone(WAW).weekday() for s in decision.schedule.shifts}
+    assert 4 not in weekdays  # piątek usunięty z grafiku pracy
+    assert decision.time_off == ({"weekday": 4, "powod": "urlop"},)
+
+
+def test_build_time_offs_spans_full_day_from_resolved_reason():
+    # entries mają już rozstrzygnięte reason_id (etap potwierdzenia)
+    offs = build_time_offs("u1", date(2026, 7, 20), [{"weekday": 4, "reason_id": "TOR_L4"}], WAW)
+    assert len(offs) == 1
+    assert offs[0].reason_id == "TOR_L4"
+    assert offs[0].user_id == "u1"
+    assert offs[0].start.astimezone(WAW).weekday() == 4
+    assert offs[0].start.astimezone(WAW).hour == 0  # całodobowy blok od lokalnej północy
+
+
+def test_build_time_offs_skips_entry_without_reason_id():
+    offs = build_time_offs("u1", date(2026, 7, 20), [{"weekday": 4, "reason_id": ""}], WAW)
+    assert offs == []
 
 
 def test_reply_decision_defaults():

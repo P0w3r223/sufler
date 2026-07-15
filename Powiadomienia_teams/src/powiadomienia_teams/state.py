@@ -34,6 +34,8 @@ class PendingReminder:
     watermark: str = ""  # createdDateTime ostatniej przetworzonej wiadomości pracownika
     proposal: list[dict[str, Any]] = field(default_factory=list)  # gotowiec z zeszłego tygodnia
     resolved: list[dict[str, Any]] = field(default_factory=list)  # grafik ustalony po odpowiedzi
+    # Czas wolny ustalony po odpowiedzi: [{weekday, reason_id, reason_name}] (powód rozstrzygnięty).
+    resolved_time_off: list[dict[str, Any]] = field(default_factory=list)
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}

@@ -14,8 +14,9 @@ from typing import Any
 
 import httpx
 
-from powiadomienia_teams.domain.models import Member, Shift
+from powiadomienia_teams.domain.models import Member, Shift, TimeOff
 from powiadomienia_teams.graph.mapping import member_from_json, shift_from_json
+from powiadomienia_teams.reminders.timeoff import TeamReasons, normalize
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 _UTC = timezone.utc
@@ -172,3 +173,36 @@ class GraphClient:
             f"{GRAPH}/teams/{team_id}/schedule/share",
             {"notifyTeam": notify, "startDateTime": _iso_z(start), "endDateTime": _iso_z(end)},
         )
+
+    def list_time_off_reasons(self, team_id: str) -> TeamReasons:
+        """Aktywne powody czasu wolnego zespołu (wyszukiwanie po nazwie + odwrotne po id).
+
+        Odpowiada zakładce »dodaj czas wolny« w Shifts (urlop, nieobecność, zwolnienie …).
+        Pomija nieaktywne i wpisy bez id/nazwy.
+        """
+        raw = self._get_all(f"{GRAPH}/teams/{team_id}/schedule/timeOffReasons")
+        by_name: dict[str, str] = {}
+        names: dict[str, str] = {}
+        for item in raw:
+            reason_id = item.get("id")
+            name = item.get("displayName")
+            if item.get("isActive") and reason_id and name:
+                by_name[normalize(str(name))] = str(reason_id)
+                names[str(reason_id)] = str(name)
+        return TeamReasons(by_name=by_name, names=names)
+
+    def create_time_off(self, team_id: str, time_off: TimeOff) -> str:
+        """Utwórz opublikowany czas wolny (``sharedTimeOff``) dla pracownika — zwróć jego id.
+
+        Publikuje od razu (jak ``create_shift`` z ``sharedShift``), więc pracownik widzi wpis
+        w zakładce »Zmiany« bez osobnego udostępniania.
+        """
+        body: dict[str, Any] = {
+            "userId": time_off.user_id,
+            "sharedTimeOff": {
+                "timeOffReasonId": time_off.reason_id,
+                "startDateTime": _iso_z(time_off.start),
+                "endDateTime": _iso_z(time_off.end),
+            },
+        }
+        return str(self._post(f"{GRAPH}/teams/{team_id}/schedule/timesOff", body).get("id", ""))

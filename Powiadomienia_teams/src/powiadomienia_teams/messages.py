@@ -1,7 +1,9 @@
 """Treść powiadomienia 1:1 (czysta logika) + minimalny render do HTML dla Graph."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from html import escape
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.domain.models import Member, WeekSchedule
@@ -58,10 +60,32 @@ def describe_schedule(schedule: WeekSchedule, tz: ZoneInfo) -> str:
     return ", ".join(parts)
 
 
-def build_confirm_text(schedule: WeekSchedule, tz: ZoneInfo) -> str:
+def describe_time_off(entries: Iterable[dict[str, Any]]) -> str:
+    """Opis dni wolnych do potwierdzenia, np. „pt: Urlop, wt: Zwolnienie lekarskie”.
+
+    Używa FAKTYCZNEJ nazwy powodu z rozstrzygniętego wpisu (``reason_name``), więc pracownik
+    widzi dokładnie to, co zostanie zapisane.
+    """
+    parts = []
+    for item in entries:
+        weekday = int(item["weekday"])
+        name = str(item.get("reason_name") or "Nieobecność")
+        parts.append(f"{_DNI_SKROT[weekday]}: {name}")
+    return ", ".join(parts)
+
+
+def build_confirm_text(
+    schedule: WeekSchedule, time_off: Iterable[dict[str, Any]], tz: ZoneInfo
+) -> str:
     """Prośba o potwierdzenie przed zapisem (spirit ADR 0006 — zapis tylko po »tak«)."""
+    time_off = list(time_off)
+    segments = []
+    if not schedule.is_empty:
+        segments.append(f"grafik: {describe_schedule(schedule, tz)}")
+    if time_off:
+        segments.append(f"czas wolny: {describe_time_off(time_off)}")
     return (
-        f"Zapiszę Twój grafik: {describe_schedule(schedule, tz)}. "
+        f"Zapiszę {'; '.join(segments)}. "
         "Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
     )
 

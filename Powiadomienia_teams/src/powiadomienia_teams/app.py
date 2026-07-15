@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone, tzinfo
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -20,11 +22,12 @@ from powiadomienia_teams.agent.anthropic_llm import AnthropicLlm
 from powiadomienia_teams.agent.interpreter import (
     LlmClient,
     build_schedule,
+    build_time_offs,
     interpret_reply,
     schedule_to_intervals,
 )
 from powiadomienia_teams.config import Settings
-from powiadomienia_teams.domain.models import Member, WeekSchedule
+from powiadomienia_teams.domain.models import Member, TimeOff, WeekSchedule
 from powiadomienia_teams.graph.auth import build_token_provider
 from powiadomienia_teams.graph.client import GraphClient
 from powiadomienia_teams.messages import (
@@ -44,30 +47,34 @@ from powiadomienia_teams.reminders.replies import (
     message_text,
     newest_incoming,
 )
+from powiadomienia_teams.reminders.timeoff import resolve_time_off
 from powiadomienia_teams.scheduler.weekly import next_run
 
 logger = logging.getLogger(__name__)
 _UTC = timezone.utc
-_POLL_INTERVAL_S = 120  # jak często między przebiegami sprawdzać odpowiedzi
 
 
 class CrossUserWriteError(RuntimeError):
     """Próba zapisu zmiany dla innego pracownika niż adresat przypomnienia."""
 
 
-def ensure_single_owner(member_id: str, schedule: WeekSchedule) -> None:
-    """Twarda granica: KAŻDA zmiana musi należeć do adresata przypomnienia (`member_id`).
+def ensure_single_owner(
+    member_id: str, schedule: WeekSchedule, time_offs: Iterable[TimeOff] = ()
+) -> None:
+    """Twarda granica: KAŻDY zapis (zmiana i czas wolny) musi należeć do adresata (`member_id`).
 
-    Odpowiedź pracownika steruje wyłącznie dniami i godzinami WŁASNEGO grafiku — nigdy
+    Odpowiedź pracownika steruje wyłącznie dniami/godzinami i wolnym WŁASNEGO grafiku — nigdy
     tożsamością osoby (schemat wyjścia modelu nie ma pola użytkownika). Ten warunek egzekwuje
     ten niezmiennik na granicy nieodwracalnego zapisu, nawet gdyby przyszły refaktor przypadkiem
-    przepuścił cudze `user_id` do zapisu. Nie da się więc czyjąkolwiek odpowiedzią wpisać zmiany
-    innemu pracownikowi.
+    przepuścił cudze `user_id`. Nie da się więc czyjąkolwiek odpowiedzią wpisać nic innej osobie.
     """
-    foreign = sorted({s.user_id for s in schedule.shifts if s.user_id != member_id})
+    foreign = sorted(
+        {s.user_id for s in schedule.shifts if s.user_id != member_id}
+        | {t.user_id for t in time_offs if t.user_id != member_id}
+    )
     if foreign:
         raise CrossUserWriteError(
-            f"Zapis odrzucony: zmiany dla {foreign} ≠ adresat {member_id!r}"
+            f"Zapis odrzucony: wpisy dla {foreign} ≠ adresat {member_id!r}"
         )
 
 
@@ -149,18 +156,26 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
 def _apply_schedule(
     settings: Settings, client: GraphClient, pending: st.PendingReminder, tz: ZoneInfo
 ) -> None:
-    """Zapisz ustalony grafik do Shifts.
+    """Zapisz ustalony grafik i czas wolny do Shifts.
 
-    ``sharedShift`` publikuje zmianę od razu (potwierdzone smoke-testem), więc osobny ``share``
-    jest zbędny; pracownik i tak dostaje potwierdzenie na czacie.
+    ``sharedShift``/``sharedTimeOff`` publikują wpis od razu (potwierdzone smoke-testem), więc
+    osobny ``share`` jest zbędny; pracownik i tak dostaje potwierdzenie na czacie. Powody czasu
+    wolnego są już rozstrzygnięte (``reason_id`` w stanie z etapu potwierdzenia) — tu żadnego
+    odczytu z Graph, żeby nie poszerzać okna awarii po ustawieniu APPLIED.
     """
     week_start = date.fromisoformat(pending.week_start)
     schedule = build_schedule(
         pending.member_id, week_start, pending.resolved, tz, settings.scheduling_group_id
     )
-    ensure_single_owner(pending.member_id, schedule)  # nigdy nie zapisz grafiku cudzą tożsamością
+    # Powody czasu wolnego rozstrzygnięte już przy potwierdzeniu — tu tylko budujemy wpisy
+    # (bez odczytu z Graph w sekcji krytycznej po APPLIED).
+    time_offs = build_time_offs(pending.member_id, week_start, pending.resolved_time_off, tz)
+    # Nigdy nie zapisz nic cudzą tożsamością (obejmuje zmiany i czas wolny).
+    ensure_single_owner(pending.member_id, schedule, time_offs)
     for shift in schedule.shifts:
         client.create_shift(settings.team_id, shift)
+    for time_off in time_offs:
+        client.create_time_off(settings.team_id, time_off)
 
 
 def poll_replies(settings: Settings, client: GraphClient, llm: LlmClient) -> None:
@@ -246,10 +261,28 @@ def _process_pending(
         proposal, text, tz=tz, group_id=settings.scheduling_group_id, llm=llm
     )
     if decision.action in ("confirm", "modify") and decision.schedule is not None:
+        # Rozstrzygnij powody czasu wolnego TERAZ (przed potwierdzeniem), żeby wiadomość obiecała
+        # dokładnie to, co zostanie zapisane, i nie zgubić dnia po cichu przy zapisie.
+        resolved_time_off: list[dict[str, Any]] = []
+        if decision.time_off:
+            reasons = client.list_time_off_reasons(settings.team_id)
+            resolved_time_off = resolve_time_off(list(decision.time_off), reasons)
+            if len(resolved_time_off) < len(decision.time_off):
+                logger.warning(
+                    "Pominięto część dni wolnych dla %s — brak powodów czasu wolnego w zespole",
+                    pending.member_name,
+                )
+        if decision.schedule.is_empty and not resolved_time_off:
+            # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
+            # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
+            st.save_state(settings.state_path, state)
+            client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
+            return
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
+        pending.resolved_time_off = resolved_time_off
         pending.status = st.AWAITING_CONFIRM
         st.save_state(settings.state_path, state)
-        confirm = build_confirm_text(decision.schedule, tz)
+        confirm = build_confirm_text(decision.schedule, resolved_time_off, tz)
         client.send_chat_message(pending.chat_id, to_html(confirm))
     elif decision.action == "decline":
         pending.status = st.DECLINED
@@ -279,7 +312,7 @@ def run_forever(settings: Settings, client: GraphClient, llm: LlmClient) -> None
                 logger.exception("Listener odpowiedzi zawiódł")
             remaining = (target - datetime.now(_UTC)).total_seconds()
             if remaining > 0:
-                time.sleep(min(remaining, _POLL_INTERVAL_S))
+                time.sleep(min(remaining, float(settings.poll_interval_s)))
         try:
             run_once(settings, client, now=datetime.now(_UTC))
         except Exception:

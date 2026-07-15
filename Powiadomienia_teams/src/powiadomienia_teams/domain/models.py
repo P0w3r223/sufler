@@ -15,6 +15,10 @@ class InvalidShift(ValueError):
     """Zmiana narusza kontrakt domenowy (naiwny czas, zła kolejność lub absurdalna długość)."""
 
 
+class InvalidTimeOff(ValueError):
+    """Wpis czasu wolnego narusza kontrakt domenowy (naiwny czas lub zła kolejność)."""
+
+
 @dataclass(frozen=True)
 class Member:
     """Członek zespołu — kandydat do powiadomienia."""
@@ -55,6 +59,32 @@ class Shift:
             raise InvalidShift(
                 f"Zmiana dłuższa niż 24h: {self.start.isoformat()}–{self.end.isoformat()}"
             )
+
+
+@dataclass(frozen=True)
+class TimeOff:
+    """Wpis czasu wolnego (urlop, nieobecność, zwolnienie) do zapisu w Shifts.
+
+    `start`/`end` tz-aware (UTC). `reason_id` to id powodu Shifts (``TOR_…``), rozstrzygane
+    wcześniej z listy `timeOffReasons` zespołu. Dzień wolny modelujemy jako całodobowy blok
+    (lokalna północ–północ), dlatego — inaczej niż `Shift` — nie ma limitu 24h.
+    """
+
+    user_id: str
+    start: datetime
+    end: datetime
+    reason_id: str
+    shared: bool = True
+
+    def __post_init__(self) -> None:
+        if self.start.tzinfo is None or self.end.tzinfo is None:
+            raise InvalidTimeOff("TimeOff.start/end muszą być tz-aware (UTC)")
+        if self.end <= self.start:
+            raise InvalidTimeOff(
+                f"Koniec {self.end.isoformat()} nie jest po początku {self.start.isoformat()}"
+            )
+        if not self.reason_id:
+            raise InvalidTimeOff("TimeOff wymaga niepustego reason_id")
 
 
 @dataclass(frozen=True)

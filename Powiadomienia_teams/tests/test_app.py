@@ -12,7 +12,8 @@ from powiadomienia_teams.app import (
     week_windows,
 )
 from powiadomienia_teams.config import Settings
-from powiadomienia_teams.domain.models import Shift, WeekSchedule
+from powiadomienia_teams.domain.models import Shift, TimeOff, WeekSchedule
+from powiadomienia_teams.reminders.timeoff import TeamReasons
 from powiadomienia_teams.state import (
     APPLIED,
     AWAITING_CONFIRM,
@@ -27,6 +28,7 @@ class _FakeClient:
         self.messages = messages
         self.sent: list[tuple[str, str]] = []
         self.created: list[Any] = []
+        self.time_off: list[Any] = []
         self.shared: list[tuple[Any, Any]] = []
 
     def refresh_auth(self) -> None:
@@ -44,6 +46,18 @@ class _FakeClient:
     def create_shift(self, team_id: str, shift: Any) -> str:
         self.created.append(shift)
         return "shift-id"
+
+    def list_time_off_reasons(self, team_id: str) -> TeamReasons:
+        return TeamReasons(
+            by_name={"urlop": "TOR_URLOP", "nieobecność": "TOR_NIEOB",
+                     "zwolnienie lekarskie": "TOR_L4"},
+            names={"TOR_URLOP": "Urlop", "TOR_NIEOB": "Nieobecność",
+                   "TOR_L4": "Zwolnienie lekarskie"},
+        )
+
+    def create_time_off(self, team_id: str, time_off: Any) -> str:
+        self.time_off.append(time_off)
+        return "timeoff-id"
 
     def share_schedule(self, team_id: str, start: Any, end: Any, *, notify: bool = True) -> None:
         self.shared.append((start, end))
@@ -220,6 +234,113 @@ def test_ensure_single_owner_rejects_foreign_shift():
     schedule = WeekSchedule("u1", date(2026, 7, 20), (_monday_shift("u2"),))
     with pytest.raises(CrossUserWriteError):
         ensure_single_owner("u1", schedule)
+
+
+def test_ensure_single_owner_rejects_foreign_time_off():
+    # Czas wolny z cudzym user_id też nie może przejść do zapisu.
+    schedule = WeekSchedule("u1", date(2026, 7, 20), (_monday_shift("u1"),))
+    foreign_off = TimeOff(
+        "u2",
+        datetime(2026, 7, 24, tzinfo=timezone.utc),
+        datetime(2026, 7, 25, tzinfo=timezone.utc),
+        "TOR_URLOP",
+    )
+    with pytest.raises(CrossUserWriteError):
+        ensure_single_owner("u1", schedule, [foreign_off])
+
+
+def test_vacation_reply_resolves_reason_at_confirm(tmp_path: Path):
+    # „w piątek urlop" → interpretacja → rozstrzygnięty powód w stanie + w tekście potwierdzenia
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1",
+                week_start="2026-07-20", status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "w piątek urlop")]})
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}],'
+        '"time_off":[{"weekday":4,"powod":"urlop"}]}'
+    )
+    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == AWAITING_CONFIRM
+    assert after.resolved_time_off == [
+        {"weekday": 4, "reason_id": "TOR_URLOP", "reason_name": "Urlop"}
+    ]
+    relayed = "".join(html for _chat, html in client.sent)
+    assert "Urlop" in relayed  # potwierdzenie wymienia faktyczny powód
+    assert client.created == [] and client.time_off == []  # nic jeszcze nie zapisano
+
+
+def test_whole_week_vacation_without_team_reasons_is_unclear(tmp_path: Path):
+    # Urlop cały tydzień, ale zespół nie ma żadnych powodów czasu wolnego → unclear, bez zapisu
+    # i bez pustej obietnicy „Zapiszę .".
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1",
+                week_start="2026-07-20", status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+
+    class _NoReasonsClient(_FakeClient):
+        def list_time_off_reasons(self, team_id: str) -> TeamReasons:
+            return TeamReasons(by_name={}, names={})
+
+    client = _NoReasonsClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "cały tydzień urlop")]})
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[],"time_off":['
+        '{"weekday":0,"powod":"urlop"},{"weekday":4,"powod":"urlop"}]}'
+    )
+    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "awaiting_reply"  # unclear nie zmienia statusu
+    assert client.created == [] and client.time_off == []
+    assert "Zapiszę ." not in "".join(html for _chat, html in client.sent)
+
+
+def test_time_off_written_for_addressee_on_confirm(tmp_path: Path):
+    # „tak" na propozycję z rozstrzygniętym dniem wolnym → utworzenie timeOff tylko dla u1.
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1",
+                week_start="2026-07-20", status=AWAITING_CONFIRM,
+                resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+                resolved_time_off=[
+                    {"weekday": 4, "reason_id": "TOR_URLOP", "reason_name": "Urlop"}
+                ],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
+
+    poll_replies(settings, client, _FakeLlm("{}"))  # type: ignore[arg-type]
+
+    assert len(client.created) == 1  # zmiana w poniedziałek
+    assert len(client.time_off) == 1  # piątek wolny
+    off = client.time_off[0]
+    assert off.user_id == "u1"  # wyłącznie adresat
+    assert off.reason_id == "TOR_URLOP"
+    assert off.start.astimezone(settings.tz).weekday() == 4
+    assert load_state(state_path)["u1"].status == APPLIED
 
 
 def test_reply_referencing_another_person_writes_only_for_addressee(tmp_path: Path):

@@ -81,9 +81,10 @@ class Settings:
     run_minute: int = 0
     timezone: str = "Europe/Warsaw"
     reply_window_hours: int = 48
+    poll_interval_s: int = 10  # jak często (s) listener sprawdza odpowiedzi między przebiegami
     dry_run: bool = True
     only_user_ids: tuple[str, ...] = ()  # pusty = wszyscy; ustawiony = tryb pilotażowy
-    llm_model: str = "claude-opus-4-8"
+    llm_model: str = "claude-haiku-4-5"
     anthropic_api_key: str = field(default="", repr=False)
 
     @property
@@ -104,6 +105,8 @@ class Settings:
             raise ConfigError(f"run_hour poza zakresem 0..23: {self.run_hour}")
         if not 0 <= self.run_minute <= 59:
             raise ConfigError(f"run_minute poza zakresem 0..59: {self.run_minute}")
+        if self.poll_interval_s < 5:
+            raise ConfigError(f"poll_interval_s musi być ≥ 5 s: {self.poll_interval_s}")
         if not self.dry_run and not self.scheduling_group_id:
             raise ConfigError(
                 "scheduling_group_id jest wymagane, gdy dry_run=false (zapis zmian do Shifts)"
@@ -129,8 +132,9 @@ class Settings:
             run_minute=_int("RUN_MINUTE", 0),
             timezone=_get("TIMEZONE", "Europe/Warsaw"),
             reply_window_hours=_int("REPLY_WINDOW_HOURS", 48),
+            poll_interval_s=_int("POLL_INTERVAL_S", 10),
             dry_run=_bool("DRY_RUN", True),
             only_user_ids=_list("ONLY_USER_IDS"),
-            llm_model=_get("LLM_MODEL", "claude-opus-4-8"),
+            llm_model=_get("LLM_MODEL", "claude-haiku-4-5"),
             anthropic_api_key=(os.environ.get("ANTHROPIC_API_KEY") or _get("AGENT_API_KEY")),
         )
