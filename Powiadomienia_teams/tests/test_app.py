@@ -9,10 +9,12 @@ from powiadomienia_teams.app import (
     CrossUserWriteError,
     ensure_single_owner,
     poll_replies,
+    run_once,
     week_windows,
 )
 from powiadomienia_teams.config import Settings
-from powiadomienia_teams.domain.models import Shift, TimeOff, WeekSchedule
+from powiadomienia_teams.domain.models import Member, Shift, TimeOff, WeekSchedule
+from powiadomienia_teams.reminders.replies import newest_incoming
 from powiadomienia_teams.reminders.timeoff import TeamReasons
 from powiadomienia_teams.state import (
     APPLIED,
@@ -24,8 +26,15 @@ from powiadomienia_teams.state import (
 
 
 class _FakeClient:
-    def __init__(self, messages: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        messages: dict[str, list[dict[str, Any]]],
+        members: tuple[Any, ...] = (),
+        shifts: tuple[Any, ...] = (),
+    ) -> None:
         self.messages = messages
+        self._members = members
+        self._shifts = shifts
         self.sent: list[tuple[str, str]] = []
         self.created: list[Any] = []
         self.time_off: list[Any] = []
@@ -36,6 +45,15 @@ class _FakeClient:
 
     def get_me(self) -> str:
         return "me"
+
+    def list_members(self, team_id: str) -> tuple[Any, ...]:
+        return self._members
+
+    def read_shifts(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
+        return tuple(s for s in self._shifts if start <= s.start < end)
+
+    def create_or_get_chat(self, me_id: str, target_user_id: str) -> str:
+        return f"chat-{target_user_id}"
 
     def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
         return self.messages.get(chat_id, [])
@@ -220,6 +238,28 @@ def test_write_failure_is_at_most_once(tmp_path: Path):
     poll_replies(settings, client, _FakeLlm("{}"))  # type: ignore[arg-type]
     assert client.created == []
     assert len(client.sent) == 1  # tylko komunikat o nieudanym zapisie
+
+
+def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
+    # Regresja live: nudge musi ustawić watermark = czas wysłania, żeby listener NIE potraktował
+    # starej wiadomości z czatu (sprzed przypomnienia) jako odpowiedzi i nie przeszedł dalej.
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)  # dry_run=False
+    member = Member("u1", "Mikołaj")
+    client = _FakeClient({}, members=(member,), shifts=())  # brak zmian → luka na przyszły tydzień
+    now = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+
+    run_once(settings, client, now=now)  # type: ignore[arg-type]
+
+    pending = load_state(state_path)["u1"]
+    assert pending.status == "awaiting_reply"
+    assert pending.watermark  # ustawiony (nie pusty)
+    # Stara wiadomość SPRZED nudge'a jest ignorowana dzięki watermarkowi.
+    stale = [_msg("u1", "2026-07-15T09:00:00Z", "OK, rozumiem")]
+    assert newest_incoming(stale, "me", pending.watermark) is None
+    # Nowa wiadomość PO nudge'u jest brana pod uwagę.
+    fresh = [_msg("u1", "2026-07-15T10:05:00Z", "ok")]
+    assert newest_incoming(fresh, "me", pending.watermark) is not None
 
 
 def test_week_windows_targets_next_week_and_prior_is_current_week():

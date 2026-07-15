@@ -53,6 +53,11 @@ logger = logging.getLogger(__name__)
 _UTC = timezone.utc
 
 
+def _iso_utc(dt: datetime) -> str:
+    """UTC datetime → ISO 8601 z sufiksem ``Z`` (format zgodny z watermarkiem Graph)."""
+    return dt.astimezone(_UTC).isoformat().replace("+00:00", "Z")
+
+
 class CrossUserWriteError(RuntimeError):
     """Próba zapisu zmiany dla innego pracownika niż adresat przypomnienia."""
 
@@ -137,6 +142,9 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
             chat_id=chat_id,
             week_start=target_monday.date().isoformat(),
             status=st.AWAITING_REPLY,
+            # Watermark = moment wysłania: listener bierze pod uwagę TYLKO odpowiedzi po nudge'u,
+            # a nie stare wiadomości z czatu (inaczej stara „ok" przesuwałaby obieg bez odpowiedzi).
+            watermark=_iso_utc(now),
             proposal=schedule_to_intervals(proposal, tz),
         )
         logger.info("Wysłano powiadomienie do %s", member.display_name)
