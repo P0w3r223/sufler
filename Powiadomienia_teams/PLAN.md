@@ -1,7 +1,13 @@
 # Plan: Powiadomienia_teams — cotygodniowy asystent uzupełniania zmian (Microsoft Shifts)
 
 > Status: zatwierdzony (2026-07-14). Ten dokument jest roadmapą projektu.
-> Realizacja kodu jeszcze nie ruszyła — na tym etapie powstaje tylko plan.
+>
+> **Aktualizacja 2026-07-16:** rdzeń zaimplementowany (Etapy 0–4 pierwotnego planu, patrz „Postęp"
+> niżej). Termin przełączony na **piątek 16:00**; wybór osób przez `ONLY_USER_IDS`; **nasłuch
+> przeprojektowany** na adaptacyjny backoff + wygasanie okna odpowiedzi + odporny provider tokenu
+> (silent-only, `--login` ze startu) — decyzje w **[ADR 0002](docs/adr/0002-adaptive-listener.md)**.
+> Wielozespołowość zaprojektowana w **[ADR 0001](docs/adr/0001-multi-team-shifts-support.md)**
+> (odłożona). Zostaje smoke na żywym tenancie (poniżej).
 
 ## Kontekst — po co to robimy
 

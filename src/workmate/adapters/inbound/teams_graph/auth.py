@@ -18,14 +18,36 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import Protocol
+
     import msal  # type: ignore[import-untyped]  # msal nie dostarcza py.typed/stubów
 
-    from workmate.config import TeamsGraphSettings
+    class TokenProviderSettings(Protocol):
+        """Strukturalny kontrakt konfiguracji dostawcy tokenu MSAL (delegowany, single-tenant).
+
+        Spełniają go ``TeamsGraphSettings`` (drzwi kanałowe) i ``TeamsPushSettings`` (push, ADR
+        0022) — jeden builder tokenu obsługuje oba. Pola jako read-only ``@property``, bo settings
+        to zamrożone dataklasy (atrybuty tylko do odczytu).
+        """
+
+        @property
+        def client_id(self) -> str: ...
+
+        @property
+        def scopes(self) -> tuple[str, ...]: ...
+
+        @property
+        def token_cache_path(self) -> Path: ...
+
+        @property
+        def authority(self) -> str: ...
+
 
 logger = logging.getLogger(__name__)
 
 
-def build_token_provider(settings: TeamsGraphSettings) -> Callable[[], str]:
+def build_token_provider(settings: TokenProviderSettings) -> Callable[[], str]:
     """Zbuduj dostawcę tokenu: cichy refresh z cache, device-code przy pierwszym użyciu.
 
     Zwraca synchroniczną funkcję ``() -> str`` (MSAL jest synchroniczny) — warstwa Graph

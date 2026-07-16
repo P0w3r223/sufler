@@ -22,6 +22,7 @@ AWAITING_REPLY = "awaiting_reply"
 AWAITING_CONFIRM = "awaiting_confirm"
 APPLIED = "applied"
 DECLINED = "declined"
+EXPIRED = "expired"  # minęło okno odpowiedzi bez reakcji pracownika (koniec odpytywania)
 
 
 @dataclass
@@ -32,6 +33,7 @@ class PendingReminder:
     week_start: str  # ISO date (poniedziałek przyszłego tygodnia)
     status: str
     watermark: str = ""  # createdDateTime ostatniej przetworzonej wiadomości pracownika
+    nudged_at: str = ""  # createdDateTime nudge'a (niezmienny; baza okna odpowiedzi)
     proposal: list[dict[str, Any]] = field(default_factory=list)  # gotowiec z zeszłego tygodnia
     resolved: list[dict[str, Any]] = field(default_factory=list)  # grafik ustalony po odpowiedzi
     # Czas wolny ustalony po odpowiedzi: [{weekday, reason_id, reason_name}] (powód rozstrzygnięty).
@@ -49,11 +51,18 @@ def load_state(path: Path) -> dict[str, PendingReminder]:
     except (json.JSONDecodeError, OSError):
         logger.warning("Uszkodzony plik stanu %s — startuję z pustym stanem", path)
         return {}
-    # Ignoruj nieznane pola (odporność na dryf schematu).
-    return {
-        key: PendingReminder(**{k: v for k, v in value.items() if k in _FIELDS})
-        for key, value in raw.items()
-    }
+    if not isinstance(raw, dict):
+        logger.warning("Plik stanu %s nie jest obiektem — startuję z pustym stanem", path)
+        return {}
+    # Ignoruj nieznane pola (dryf schematu) i POMIJAJ pojedyncze nieczytelne wpisy zamiast kłaść
+    # cały nasłuch — zgodnie z deklarowaną tolerancyjnością odczytu.
+    result: dict[str, PendingReminder] = {}
+    for key, value in raw.items():
+        try:
+            result[key] = PendingReminder(**{k: v for k, v in value.items() if k in _FIELDS})
+        except (TypeError, AttributeError):
+            logger.warning("Pomijam nieczytelny wpis stanu %r w %s", key, path)
+    return result
 
 
 def save_state(path: Path, state: dict[str, PendingReminder]) -> None:

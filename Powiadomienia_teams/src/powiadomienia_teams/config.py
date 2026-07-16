@@ -35,6 +35,20 @@ class ConfigError(ValueError):
     """Brak lub niepoprawna wartość wymaganego ustawienia."""
 
 
+@dataclass(frozen=True)
+class TeamContext:
+    """Dane JEDNEGO zespołu potrzebne obiegowi do odczytu/zapisu (team_id + grupa grafiku).
+
+    Wydzielone ze skalarnej konfiguracji, żeby orkiestracja brała zespół z PARAMETRU, nie z
+    globalnych ustawień. Dziś jest zawsze jeden (z konfiguracji jednozespołowej) — to szew, w który
+    wielozespołowość ([ADR 0001](../../docs/adr/0001-multi-team-shifts-support.md)) wepnie iterację
+    po wielu kontekstach bez zmiany logiki obiegu.
+    """
+
+    team_id: str
+    scheduling_group_id: str | None = None
+
+
 def _get(name: str, default: str = "") -> str:
     return os.environ.get(_PREFIX + name, default)
 
@@ -76,12 +90,15 @@ class Settings:
     token_cache_path: Path = field(default_factory=lambda: _DEFAULT_TOKEN_CACHE)
     state_path: Path = field(default_factory=lambda: _DEFAULT_STATE)
     roster_path: Path | None = None
-    run_weekday: int = 6  # niedziela
+    run_weekday: int = 4  # piątek (0=poniedziałek … 6=niedziela)
     run_hour: int = 16
     run_minute: int = 0
     timezone: str = "Europe/Warsaw"
-    reply_window_hours: int = 48
-    poll_interval_s: int = 10  # jak często (s) listener sprawdza odpowiedzi między przebiegami
+    reply_window_hours: int = 48  # po tylu h ciszy zamknij okno odpowiedzi (status EXPIRED)
+    send_expiry_message: bool = True  # przy wygaśnięciu wyślij uprzejme domknięcie do pracownika
+    poll_interval_s: int = 10  # bazowy (minimalny) odstęp odpytywania; backoff go wydłuża
+    poll_max_interval_s: int = 300  # górny limit odstępu przy długiej ciszy (5 min)
+    catchup_grace_hours: int = 6  # jak długo po minionym terminie wolno nadrobić przebieg (0=off)
     dry_run: bool = True
     only_user_ids: tuple[str, ...] = ()  # pusty = wszyscy; ustawiony = tryb pilotażowy
     llm_model: str = "claude-haiku-4-5"
@@ -90,6 +107,11 @@ class Settings:
     @property
     def authority(self) -> str:
         return f"https://login.microsoftonline.com/{self.tenant_id}"
+
+    @property
+    def team_context(self) -> TeamContext:
+        """Kontekst zespołu z obecnej (jednozespołowej) konfiguracji — na razie zawsze jeden."""
+        return TeamContext(self.team_id, self.scheduling_group_id)
 
     @property
     def tz(self) -> ZoneInfo:
@@ -107,6 +129,15 @@ class Settings:
             raise ConfigError(f"run_minute poza zakresem 0..59: {self.run_minute}")
         if self.poll_interval_s < 5:
             raise ConfigError(f"poll_interval_s musi być ≥ 5 s: {self.poll_interval_s}")
+        if self.poll_max_interval_s < self.poll_interval_s:
+            raise ConfigError(
+                f"poll_max_interval_s ({self.poll_max_interval_s}) musi być ≥ poll_interval_s "
+                f"({self.poll_interval_s})"
+            )
+        if self.reply_window_hours <= 0:
+            raise ConfigError(f"reply_window_hours musi być > 0: {self.reply_window_hours}")
+        if self.catchup_grace_hours < 0:
+            raise ConfigError(f"catchup_grace_hours < 0 niedozwolone: {self.catchup_grace_hours}")
         if not self.dry_run and not self.scheduling_group_id:
             raise ConfigError(
                 "scheduling_group_id jest wymagane, gdy dry_run=false (zapis zmian do Shifts)"
@@ -127,12 +158,15 @@ class Settings:
             token_cache_path=_path("TOKEN_CACHE", _DEFAULT_TOKEN_CACHE),
             state_path=_path("STATE_PATH", _DEFAULT_STATE),
             roster_path=(Path(roster).expanduser() if roster else None),
-            run_weekday=_int("RUN_WEEKDAY", 6),
+            run_weekday=_int("RUN_WEEKDAY", 4),
             run_hour=_int("RUN_HOUR", 16),
             run_minute=_int("RUN_MINUTE", 0),
             timezone=_get("TIMEZONE", "Europe/Warsaw"),
             reply_window_hours=_int("REPLY_WINDOW_HOURS", 48),
+            send_expiry_message=_bool("SEND_EXPIRY_MESSAGE", True),
             poll_interval_s=_int("POLL_INTERVAL_S", 10),
+            poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 300),
+            catchup_grace_hours=_int("CATCHUP_GRACE_HOURS", 6),
             dry_run=_bool("DRY_RUN", True),
             only_user_ids=_list("ONLY_USER_IDS"),
             llm_model=_get("LLM_MODEL", "claude-haiku-4-5"),

@@ -28,6 +28,8 @@ from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
     AgentSettings,
     ConversationSettings,
+    EventsSettings,
+    GithubSettings,
     Settings,
     TeamsGraphSettings,
     WorkspaceSettings,
@@ -36,6 +38,9 @@ from workmate.config import (
 if TYPE_CHECKING:
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
+    from workmate.core.application.github import GithubWriteService
+    from workmate.core.application.tools import ToolSpec
+    from workmate.core.ports.thread_links import ThreadLinkStore
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +87,97 @@ def main() -> None:
         )
         if removed:
             logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
+    extra_catalog, thread_factory = _build_bridge_catalog(
+        EventsSettings.from_env(), GithubSettings.from_env()
+    )
     responder = _build_responder(
-        core_settings, agent_settings, conv_settings, workspace_settings
+        core_settings, agent_settings, conv_settings, workspace_settings,
+        extra_catalog, thread_factory,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
+
+
+def _build_bridge_catalog(
+    events_settings: EventsSettings, github_settings: GithubSettings
+) -> tuple[list[ToolSpec], Callable[[str], list[ToolSpec]] | None]:
+    """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024): zdarzenia + zapis GitHub.
+
+    Zwraca ``(katalog, fabryka_wątkowa)``. ``read_recent_events`` jest ZAWSZE (agent widzi, co
+    zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) dokładamy TYLKO przy
+    włączonej bramce ``enable_github_write`` i skonfigurowanym repo/tokenie — profil per drzwi
+    (ADR 0006/0021). Zdarzenia z zapisu idą jako ``source=teams`` (strażnik pętli — notifier ich nie
+    odeśle). Gdy zapis włączony, budujemy też FABRYKĘ ``reply_on_thread`` (ADR 0024, Faza 3b): dla
+    wątku powiązanego z issue/PR wstrzyknie scoped narzędzie z numerem celu.
+    """
+    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from workmate.core.application.events import EventService
+    from workmate.core.application.tools import build_events_catalog
+
+    events = EventService(SqliteEventStore(events_settings.db_path))
+    catalog = build_events_catalog(events)
+
+    if not (
+        github_settings.enable_github_write
+        and github_settings.token
+        and github_settings.owner
+        and github_settings.repo
+    ):
+        return catalog, None
+
+    import httpx
+
+    from workmate.adapters.outbound.github_api import HttpxGithubClient
+    from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
+    from workmate.core.application.github import GithubWriteService
+    from workmate.core.application.tools import build_github_write_catalog
+
+    # Sync klient GitHub żyje przez cały proces (daemon); tool dispatch woła go w wątkach puli.
+    client = HttpxGithubClient(
+        httpx.Client(timeout=30), github_settings.token, api_base=github_settings.api_base
+    )
+    write_service = GithubWriteService(
+        client, owner=github_settings.owner, repo=github_settings.repo, events=events
+    )
+    thread_links = SqliteThreadLinkStore(events_settings.db_path)
+    logger.info(
+        "GitHub write WŁĄCZONY dla %s/%s — agent Teams może tworzyć issue/komentarze. "
+        "Uwaga (ADR 0024): `reply_on_thread` zadziała TYLKO, gdy drzwi GitHub biegną z "
+        "ENABLE_CHANNEL_THREADING=true na WSPÓLNYM events.db i tej samej parze team/channel — "
+        "to notifier zapełnia mapę wątków. Bez tego mapa jest pusta i narzędzie wątkowe milczy.",
+        github_settings.owner,
+        github_settings.repo,
+    )
+    return (
+        [*catalog, *build_github_write_catalog(write_service)],
+        _make_thread_tool_factory(thread_links, write_service),
+    )
+
+
+def _make_thread_tool_factory(
+    thread_links: ThreadLinkStore, write_service: GithubWriteService
+) -> Callable[[str], list[ToolSpec]]:
+    """Fabryka ``reply_on_thread`` per turę (ADR 0024, Faza 3b) — analogicznie do workspace factory.
+
+    Z ``external_id`` (``team/channel/root`` — konwencja tych drzwi) odczytuje cel wątku z
+    ``ThreadLinkStore``. Gdy wątek wiąże się z issue/PR, zwraca scoped narzędzie z PRE-ZWIĄZANYM
+    numerem; inaczej pusta lista (agent bez narzędzia zapisu). Numer pochodzi z zaufanego mapowania,
+    nie od modelu — nie da się przekierować komentarza na inne issue.
+    """
+    from workmate.core.application.tools import build_thread_reply_catalog
+
+    def factory(external_id: str) -> list[ToolSpec]:
+        parts = external_id.split("/")
+        if len(parts) != 3:
+            return []
+        team_id, channel_id, root_id = parts
+        target = thread_links.get_target(team_id, channel_id, root_id)
+        if target is None:
+            return []
+        target_kind, target_number = target
+        return build_thread_reply_catalog(write_service, target_kind, target_number)
+
+    return factory
 
 
 def _build_responder(
@@ -94,12 +185,15 @@ def _build_responder(
     agent_settings: AgentSettings,
     conv_settings: ConversationSettings,
     workspace_settings: WorkspaceSettings,
+    extra_catalog: list[ToolSpec],
+    thread_factory: Callable[[str], list[ToolSpec]] | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
     (ADR 0018) włącza OSOBNA bramka ``enable_workspace`` (env ``WORKMATE_ENABLE_WORKSPACE``),
-    niezależna od zapisu notatek. ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi
-    osobno od drzwi bota (``"teams"``)."""
+    niezależna od zapisu notatek. ``extra_catalog`` (ADR 0019/0021) dokłada narzędzia warstwy
+    spajającej, a ``thread_factory`` (ADR 0024, Faza 3b) — per-turowe ``reply_on_thread``.
+    ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi osobno od bota."""
     return build_conversational_responder(
         core_settings,
         agent_settings,
@@ -109,6 +203,8 @@ def _build_responder(
         safe=True,
         enable_workspace=workspace_settings.enabled,
         workspace_settings=workspace_settings,
+        extra_catalog=extra_catalog,
+        thread_tool_factory=thread_factory,
     )
 
 

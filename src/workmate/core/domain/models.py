@@ -45,7 +45,9 @@ class NoteSummary(BaseModel):
     date: date
     participants: list[str]
     snippet: str
-    score: int
+    # Trafność: BM25 (lematyzacja PL) albo — bez lematyzatora — dawna heurystyka pokrycia.
+    # ``float``, bo BM25/RRF dają wartości niecałkowite (ADR 0023); wyższy = trafniejszy.
+    score: float
 
 
 class MeetingSummary(BaseModel):

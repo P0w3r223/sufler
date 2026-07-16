@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.agent.interpreter import (
     ReplyDecision,
+    _coerce_weekday,
     build_schedule,
     build_time_offs,
     interpret_reply,
@@ -47,6 +48,23 @@ def test_modify_returns_new_schedule():
     assert decision.schedule is not None
     assert decision.schedule.shifts[0].start.astimezone(WAW).weekday() == 4
     assert decision.schedule.shifts[0].start.astimezone(WAW).hour == 10
+
+
+def test_modify_from_empty_proposal_single_day():
+    # REGRESJA: pusty gotowiec (pracownik bez zmian w zeszłym tygodniu) + poprawny grafik OD ZERA.
+    # Jeden dzień MUSI dać modify, nie unclear — wcześniej bot w kółko odpowiadał „nie zrozumiałem"
+    # (przyczyna była w PROMPCIE; ten test broni ścieżki KODU: single-day modify przy pustym gotowcu
+    # nie może zostać zdegradowane do unclear). Prompt weryfikuje live-smoke (patrz PLAN.md).
+    empty = WeekSchedule("u1", date(2026, 7, 20), ())
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":1,"start":"12:00","end":"21:00"}]}')
+    decision = interpret_reply(empty, "wtorek 12-21", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.action == "modify"
+    assert decision.schedule is not None and not decision.schedule.is_empty
+    assert len(decision.schedule.shifts) == 1
+    assert decision.schedule.shifts[0].start.astimezone(WAW).weekday() == 1
+    assert decision.schedule.shifts[0].start.astimezone(WAW).hour == 12
+    # Brak gotowca → theme None; domyślny kolor (green) nada dopiero create_shift przy zapisie.
+    assert decision.schedule.shifts[0].theme is None
 
 
 def test_decline_has_no_schedule():
@@ -208,4 +226,105 @@ def test_build_time_offs_skips_entry_without_reason_id():
 def test_reply_decision_defaults():
     d = ReplyDecision("unclear")
     assert d.schedule is None
-    assert d.note == ""
+    assert d.time_off == ()
+
+
+# --- Regresja: deterministyczne mapowanie nazwy dnia → weekday -------------------------------
+# Model bywa zawodny w liczeniu weekday (potrafił zwrócić 4=piątek dla „czwartek”), więc dzień
+# podaje jako NAZWĘ, a kod mapuje ją deterministycznie. Poniższe testy bronią ścieżki KODU.
+
+
+def test_build_schedule_maps_day_name_to_weekday():
+    schedule = build_schedule(
+        "u1", date(2026, 7, 20), [{"dzien": "czwartek", "start": "08:00", "end": "16:00"}], WAW, "T"
+    )
+    assert len(schedule.shifts) == 1
+    assert schedule.shifts[0].start.astimezone(WAW).weekday() == 3  # czwartek, nie piątek
+
+
+def test_day_name_beats_wrong_numeric_weekday():
+    # Nazwa jest źródłem prawdy: gdy model poda sprzeczne dzien+weekday, wygrywa nazwa.
+    schedule = build_schedule(
+        "u1",
+        date(2026, 7, 20),
+        [{"dzien": "czwartek", "weekday": 4, "start": "08:00", "end": "16:00"}],
+        WAW,
+        "T",
+    )
+    assert schedule.shifts[0].start.astimezone(WAW).weekday() == 3
+
+
+def test_build_schedule_falls_back_to_numeric_weekday():
+    # Wsteczna kompatybilność: brak nazwy → użyj liczbowego weekday.
+    schedule = build_schedule(
+        "u1", date(2026, 7, 20), [{"weekday": 3, "start": "08:00", "end": "16:00"}], WAW, "T"
+    )
+    assert schedule.shifts[0].start.astimezone(WAW).weekday() == 3
+
+
+def test_interpret_reply_maps_day_name_from_model():
+    empty = WeekSchedule("u1", date(2026, 7, 20), ())
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[{"dzien":"czwartek","start":"08:00","end":"16:00"}]}'
+    )
+    decision = interpret_reply(empty, "czw 8-16", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.action == "modify"
+    assert decision.schedule is not None
+    assert decision.schedule.shifts[0].start.astimezone(WAW).weekday() == 3
+
+
+def test_theme_copied_from_proposal_when_model_returns_day_name():
+    # Kopiowanie koloru z gotowca (_theme_for) przechodzi teraz przez _coerce_weekday — gdy model
+    # zwraca dzień po NAZWIE (bez liczbowego weekday), kolor musi się i tak dobrać po dniu.
+    shift = Shift(
+        "u1", datetime(2026, 7, 20, 6, tzinfo=UTC), datetime(2026, 7, 20, 14, tzinfo=UTC),
+        theme="green",
+    )
+    proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
+    llm = _FakeLlm(
+        '{"action":"confirm","shifts":[{"dzien":"poniedziałek","start":"08:00","end":"16:00"}]}'
+    )
+    decision = interpret_reply(proposal, "ok", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.schedule is not None
+    assert decision.schedule.shifts[0].theme == "green"  # skopiowany z gotowca po nazwie dnia
+
+
+def test_time_off_accepts_day_name():
+    empty = WeekSchedule("u1", date(2026, 7, 20), ())
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[],"time_off":[{"dzien":"piątek","powod":"urlop"}]}'
+    )
+    decision = interpret_reply(empty, "w piątek urlop", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.time_off == ({"weekday": 4, "powod": "urlop"},)
+
+
+def test_coerce_weekday_name_and_abbrev_and_numeric():
+    assert _coerce_weekday({"dzien": "poniedziałek"}) == 0
+    assert _coerce_weekday({"dzien": "CZWARTEK"}) == 3  # case-insensitive
+    assert _coerce_weekday({"dzien": "czw"}) == 3  # skrót
+    assert _coerce_weekday({"weekday": 5}) == 5  # fallback liczbowy
+    assert _coerce_weekday({"dzien": "blursday"}) is None  # nieznana nazwa
+    assert _coerce_weekday({"weekday": 9}) is None  # poza zakresem
+    assert _coerce_weekday({}) is None
+
+
+# --- Regresja: odporność na niepoprawny JSON z modelu ---------------------------------------
+# Model potrafił wstawić nieoescapowany cudzysłów (mylił polski „ ” z ASCII ") w wolnym tekście
+# i zwrócić niepoprawny JSON. Wcześniej leciał niekontrolowany JSONDecodeError; teraz jedna zła
+# odpowiedź degraduje się do unclear, więc listener obsłuży ją, a nie wywróci.
+
+
+def test_interpret_reply_malformed_json_falls_back_to_unclear():
+    # Nieoescapowany ASCII " wewnątrz stringa → niepoprawny JSON.
+    llm = _FakeLlm('{"action":"modify","shifts":[],"note":"mówi "albo nie" i tyle"}')
+    decision = interpret_reply(_proposal(), "cokolwiek", tz=WAW, group_id="TAG", llm=llm)
+    assert decision.action == "unclear"
+    assert decision.schedule is None
+
+
+def test_interpret_reply_no_json_at_all_is_unclear():
+    decision = interpret_reply(
+        _proposal(), "cokolwiek", tz=WAW, group_id="TAG", llm=_FakeLlm("brak json tutaj")
+    )
+    assert decision.action == "unclear"
+    assert decision.schedule is None

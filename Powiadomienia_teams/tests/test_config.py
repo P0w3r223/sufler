@@ -14,7 +14,7 @@ def test_from_env_defaults(monkeypatch):
     s = Settings.from_env()
     s.validate()
     assert s.dry_run is True
-    assert s.run_weekday == 6
+    assert s.run_weekday == 4  # piątek (domyślny termin przypomnienia)
     assert s.run_hour == 16
     assert s.authority.endswith("/tid")
     assert s.tz.key == "Europe/Warsaw"

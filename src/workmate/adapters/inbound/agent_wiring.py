@@ -18,6 +18,7 @@ from workmate.adapters.inbound.responder import (
     Responder,
     SafeResponder,
 )
+from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
@@ -26,6 +27,7 @@ from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesReposito
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+from workmate.config import RetrievalSettings
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
@@ -42,7 +44,7 @@ from workmate.core.application.workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from workmate.config import (
         AgentSettings,
@@ -59,20 +61,34 @@ _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --ext
 
 
 def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
-    """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie)."""
+    """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie).
+
+    ``NotesService`` dostaje lematyzator PL (ADR 0023) z fallbackiem na brak extra — lepszy
+    ranking wyszukiwania (BM25 nad lematami) na wszystkich drzwiach agenta.
+    """
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
-    return NotesService(notes_repo), ProjectsService(projects_repo, notes_repo)
+    lemmatizer = build_lemmatizer(RetrievalSettings.from_env())
+    return (
+        NotesService(notes_repo, lemmatizer=lemmatizer),
+        ProjectsService(projects_repo, notes_repo),
+    )
 
 
 def build_agent_runtime(
-    settings: Settings, agent_settings: AgentSettings, *, enable_write: bool
+    settings: Settings,
+    agent_settings: AgentSettings,
+    *,
+    enable_write: bool,
+    extra_catalog: Sequence[ToolSpec] = (),
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
     ``enable_write`` steruje profilem zaufania drzwi: ``True`` → katalog z
     ``save_note`` (zaufane, np. lokalne CLI); ``False`` → katalog tylko do odczytu
-    (mniej zaufane drzwi, np. Telegram — ADR 0006).
+    (mniej zaufane drzwi, np. Telegram — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
+    STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
+    bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -88,20 +104,26 @@ def build_agent_runtime(
     catalog = build_tool_catalog(notes_service, projects_service, write_service=write_service)
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
-        catalog,
+        [*catalog, *extra_catalog],
         max_tool_iterations=agent_settings.max_tool_iterations,
     )
 
 
 def build_agent_runtime_or_exit(
-    settings: Settings, agent_settings: AgentSettings, *, enable_write: bool
+    settings: Settings,
+    agent_settings: AgentSettings,
+    *,
+    enable_write: bool,
+    extra_catalog: Sequence[ToolSpec] = (),
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
     Uwspólnia powtarzany w 4 drzwiach blok ``try build_agent_runtime except ImportError``.
     """
     try:
-        return build_agent_runtime(settings, agent_settings, enable_write=enable_write)
+        return build_agent_runtime(
+            settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
+        )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
 
@@ -153,6 +175,8 @@ def build_conversational_responder(
     show_thinking: bool = False,
     enable_workspace: bool = False,
     workspace_settings: WorkspaceSettings | None = None,
+    extra_catalog: Sequence[ToolSpec] = (),
+    thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -160,9 +184,11 @@ def build_conversational_responder(
     w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``show_thinking`` tylko
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
+    ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
+    poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
     """
     runtime = build_agent_runtime_or_exit(
-        settings, agent_settings, enable_write=enable_write
+        settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -188,6 +214,7 @@ def build_conversational_responder(
         compaction=compaction,
         commands=router,
         workspace_catalog_factory=workspace_factory,
+        thread_tool_factory=thread_tool_factory,
     )
     return SafeResponder(inner) if safe else inner
 

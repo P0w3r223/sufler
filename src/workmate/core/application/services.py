@@ -7,6 +7,8 @@ testowalne na atrapach w pamięci, bez dotykania dysku.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from workmate.core.domain.models import (
     Note,
     NoteMetadata,
@@ -16,6 +18,7 @@ from workmate.core.domain.models import (
 )
 from workmate.core.domain.notes import notes_of_project
 from workmate.core.domain.paths import note_id as build_note_id
+from workmate.core.domain.ranking import bm25_rank
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
 from workmate.core.ports.repositories import (
@@ -23,6 +26,9 @@ from workmate.core.ports.repositories import (
     NotesWriter,
     ProjectsRepository,
 )
+
+if TYPE_CHECKING:
+    from workmate.core.ports.text import Lemmatizer
 
 # Maksymalna długość fragmentu (snippet) zwracanego w wynikach wyszukiwania.
 _SNIPPET_LENGTH = 200
@@ -36,10 +42,18 @@ _COVERAGE_WEIGHT = 1000
 
 
 class NotesService:
-    """Przypadki użycia dla notatek: wyszukiwanie i odczyt pojedynczej notatki."""
+    """Przypadki użycia dla notatek: wyszukiwanie i odczyt pojedynczej notatki.
 
-    def __init__(self, notes: NotesRepository) -> None:
+    ``lemmatizer`` (opcjonalny, ADR 0023) włącza ranking BM25 nad LEMATAMI — sprowadza polską
+    fleksję do lematów, więc „integracji" trafia „integracja". Bez niego (``None``) serwis używa
+    dawnego scorera podłańcuchowego (zgodność wsteczna: istniejące wywołania i testy bez zmian).
+    """
+
+    def __init__(
+        self, notes: NotesRepository, *, lemmatizer: Lemmatizer | None = None
+    ) -> None:
         self._notes = notes
+        self._lemmatizer = lemmatizer
 
     def search_notes(
         self,
@@ -51,23 +65,65 @@ class NotesService:
     ) -> list[NoteSummary]:
         """Znajdź notatki pasujące do zapytania, z opcjonalnymi filtrami.
 
-        Zapytanie jest tokenizowane na słowa (nie traktowane jako jedna fraza), więc
-        „koszt integracji" trafia notatkę z oboma słowami w dowolnej kolejności.
-        Dopasowanie jest po metadanych i treści (bez rozróżniania wielkości liter).
-        Wyniki są sortowane malejąco po trafności, a przy remisie — po dacie.
+        Z lematyzatorem: zapytanie i pola notatki są lematyzowane (odporność na polską fleksję),
+        a ranking to BM25 (TF/IDF + normalizacja długości; waga tytułu przez powtórzenie lematów).
+        Bez lematyzatora: dawne dopasowanie podłańcuchowe z pokryciem słów. W obu wypadkach
+        wyniki sortowane malejąco po trafności, a przy remisie — po dacie; puste zapytanie zwraca
+        wszystkie (posortowane po dacie).
         """
-        terms = query.lower().split()
+        raw_terms = query.lower().split()  # do snippetu (surowe słowa lepiej trafiają w treść)
         candidates = self._filtered(project=project, participant=participant)
+        scored = self._score_all(candidates, query, raw_terms)
 
-        summaries: list[NoteSummary] = []
-        for note in candidates:
-            score = _score(note, terms) if terms else 1
-            if score == 0:
-                continue
-            summaries.append(_summarize(note, terms, score))
-
+        summaries = [_summarize(note, raw_terms, score) for note, score in scored]
         summaries.sort(key=lambda s: (s.score, s.date), reverse=True)
         return summaries[: max(0, limit)]
+
+    def _score_all(
+        self, candidates: list[Note], query: str, raw_terms: list[str]
+    ) -> list[tuple[Note, float]]:
+        """Przypisz trafność każdej notatce (BM25 z lematyzacją albo podłańcuch); pomiń zerowe."""
+        if not raw_terms:
+            return [(note, 1.0) for note in candidates]  # puste zapytanie → wszystko
+
+        if self._lemmatizer is not None:
+            query_lemmas = self._lemmatizer.lemmatize(query)
+            if not query_lemmas:  # brak tokenów słownych (np. sama interpunkcja) → jak puste
+                return [(note, 1.0) for note in candidates]
+            docs = {note.id: self._doc_lemmas(note) for note in candidates}
+            scores = bm25_rank(query_lemmas, docs)
+            by_id = {note.id: note for note in candidates}
+            return [(by_id[note_id], score) for note_id, score in scores.items()]
+
+        # Fallback bez lematyzatora — dawny scorer podłańcuchowy (zgodność wsteczna).
+        return [
+            (note, float(score))
+            for note in candidates
+            if (score := _score(note, raw_terms)) > 0
+        ]
+
+    def _doc_lemmas(self, note: Note) -> list[str]:
+        """Worek lematów notatki: wszystkie pola, z tytułem POWTÓRZONYM (waga tytułu ×3).
+
+        Powtórzenie podbija ``tf`` termów tytułu, ale i ``dl`` (długość dok.), więc normalizacja
+        długości BM25 częściowo je znosi — to INNA semantyka niż dawny addytywny bonus pola w
+        ``_score`` (wyniki między gałęziami nie są wprost porównywalne). Przy krótkich tytułach
+        spotkań efekt jest pomijalny; prawdziwe per-polowe BM25F to ewentualna przyszła rewizja.
+        """
+        assert self._lemmatizer is not None  # wołane tylko z gałęzi z lematyzatorem
+        lemmatize = self._lemmatizer.lemmatize
+        meta = note.metadata
+        bag = lemmatize(meta.title) * _TITLE_WEIGHT
+        bag += lemmatize(note.body)
+        for field in (
+            meta.decisions,
+            meta.open_questions,
+            meta.action_items,
+            meta.tags,
+            meta.participants,
+        ):
+            bag += lemmatize(" ".join(field))
+        return bag
 
     def get_note(self, note_id: str) -> Note | None:
         """Zwróć pełną notatkę po id ``<firma>/<projekt>/<data>-<slug>`` albo ``None``."""
@@ -207,7 +263,7 @@ def _score(note: Note, terms: list[str]) -> int:
     return len(matched) * _COVERAGE_WEIGHT + field_bonus
 
 
-def _summarize(note: Note, terms: list[str], score: int) -> NoteSummary:
+def _summarize(note: Note, terms: list[str], score: float) -> NoteSummary:
     """Zbuduj lekki wynik wyszukiwania z fragmentem wokół dopasowania."""
     return NoteSummary(
         id=note.id,

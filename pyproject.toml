@@ -55,6 +55,19 @@ teams-graph = [
     # pakują libheif — bez systemowej zależności. Import/rejestracja LENIWE w adapterze. ADR 0016.
     "pillow-heif>=0.16",
 ]
+# Drzwi GitHub w trybie DELEGOWANYM (ADR 0020) — polling repo przez GitHub REST tokenem PAT.
+# Bez webhooka/publicznego endpointu; serwer MCP zostaje lekki. Współdziała z extra `agent`
+# (runtime nad tymi samymi narzędziami) i `teams-graph` (proaktywny push zdarzeń do Teams).
+github = [
+    "httpx>=0.28.1",
+    "python-dotenv>=1.0",
+]
+# Lepszy retrieval notatek (ADR 0023, Faza A) — lematyzacja polska (BM25 nad lematami odporny na
+# fleksję). Lekkie, pure-Python, bez torch; serwer MCP zostaje lekki. Warstwa dense (osadzenia)
+# to Faza B za bramką mikro-evalu — osobny extra dopiero wtedy.
+retrieval = [
+    "simplemma>=1.0",
+]
 
 [project.scripts]
 # Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
@@ -67,6 +80,8 @@ workmate-agent = "workmate.adapters.inbound.cli.app:main"
 workmate-telegram = "workmate.adapters.inbound.telegram.app:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
+# Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.
+workmate-github = "workmate.adapters.inbound.github.app:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
@@ -132,7 +147,13 @@ ignore_missing_imports = true
 module = ["docx.*", "openpyxl.*", "pptx.*", "PIL.*", "pillow_heif.*"]
 ignore_missing_imports = true
 
+# simplemma (extra `retrieval`, ADR 0023) — bez stubów; import LENIWY w wiringu, więc mypy
+# rdzenia nie może się o niego wywrócić.
+[[tool.mypy.overrides]]
+module = ["simplemma.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "eval"]
 testpaths = ["tests"]
 addopts = "-q"

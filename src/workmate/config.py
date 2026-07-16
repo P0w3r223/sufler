@@ -25,6 +25,11 @@ _DEFAULT_TOKENS_FILE = Path("C:/ProgramData/WorkMate/tokens.json")
 # uprawnień administratora — drzwi lokalne). Nadpisywalna przez WORKMATE_CONVERSATIONS_DB.
 _DEFAULT_CONVERSATIONS_DB = Path.home() / ".workmate" / "conversations.db"
 
+# Domyślny wspólny magazyn zdarzeń (EventStore, ADR 0019): OSOBNY plik od conversations.db
+# (tamten robi rebuild tabeli przy migracji FK), POZA repo i data/ — to dane operacyjne
+# (warstwa spajająca drzwi), nie baza wiedzy. Nadpisywalny przez WORKMATE_EVENTS_DB.
+_DEFAULT_EVENTS_DB = Path.home() / ".workmate" / "events.db"
+
 # Domyślne allowed_hosts trybu HTTP: wyłącznie loopback. Wdrożenie za IIS MUSI
 # dołożyć publiczny host (np. "workmate.firma.pl:*") przez WORKMATE_ALLOWED_HOSTS —
 # inaczej realny nagłówek Host daje 421 (ochrona przed DNS-rebinding).
@@ -386,6 +391,43 @@ class ConversationSettings:
         return int(self.context_window_tokens * self.compaction_threshold_fraction)
 
 
+@dataclass(frozen=True)
+class EventsSettings:
+    """Konfiguracja wspólnego magazynu zdarzeń (EventStore, ADR 0019) — warstwa spajająca drzwi.
+
+    Baza SQLite leży POZA ``data/`` (folder indeksowany przez rdzeń) i poza repo — to dane
+    operacyjne (zdarzenia z drzwi), nie baza wiedzy; poisoned zdarzenie nie może trafić do
+    notatek, które agent czyta. Osobny plik od ``conversations.db`` (patrz ``_DEFAULT_EVENTS_DB``).
+    """
+
+    db_path: Path = _DEFAULT_EVENTS_DB
+
+    @classmethod
+    def from_env(cls) -> EventsSettings:
+        return cls(db_path=_path_from_env("WORKMATE_EVENTS_DB", _DEFAULT_EVENTS_DB))
+
+
+@dataclass(frozen=True)
+class RetrievalSettings:
+    """Konfiguracja retrievalu notatek (ADR 0023, Faza A) — lepszy ranking wyszukiwania.
+
+    ``lemmatize`` włącza lematyzację PL (BM25 nad lematami, odporność na fleksję) — domyślnie ON,
+    o ile dostępny extra ``retrieval`` (``simplemma``); brak extra degraduje do dawnego rankingu
+    podłańcuchowego (wiring łapie ``ImportError``). Wyłączalne env do debugowania/porównań.
+    Warstwa DENSE (osadzenia + RRF) to Faza B za bramką mikro-evalu — tu jeszcze jej nie ma.
+    """
+
+    lemmatize: bool = True
+    lang: str = "pl"
+
+    @classmethod
+    def from_env(cls) -> RetrievalSettings:
+        return cls(
+            lemmatize=_bool_from_env("WORKMATE_RETRIEVAL_LEMMATIZE", default=True),
+            lang=os.environ.get("WORKMATE_RETRIEVAL_LANG", "pl"),
+        )
+
+
 # Domyślne ścieżki drzwi Teams w trybie delegowanym (ADR 0015): POZA repo i data/.
 # Cache tokenu MSAL to SEKRET; plik stanu (watermark wątków) — dane operacyjne, nie sekret.
 _DEFAULT_TEAMS_GRAPH_CACHE = Path.home() / ".workmate" / "teams_token_cache.bin"
@@ -457,7 +499,7 @@ class TeamsGraphSettings:
     active_idle_hours: int = 24
     # Limity załączników (ADR 0016): rozmiar pliku, liczba i ŁĄCZNY budżet na wiadomość.
     max_attachment_mb: int = 8
-    max_attachments_per_message: int = 5
+    max_attachments_per_message: int = 20  # równolegle wysłane pliki na wiadomość (= sufit MAX)
     max_total_attachment_mb: int = 20  # sumaryczny budżet base64 — chroni sufit 32 MB żądania API
     max_extract_mb: int = 50  # sufit pliku ekstrahowanego do tekstu (docx/xlsx/pptx/txt)
     max_image_edge_px: int = 2048  # dłuższa krawędź obrazu (px) — powyżej downscaling
@@ -488,7 +530,7 @@ class TeamsGraphSettings:
             active_idle_hours=_int_from_env("WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", 24),
             max_attachment_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", 8),
             max_attachments_per_message=_int_from_env(
-                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 5
+                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 20
             ),
             max_total_attachment_mb=_int_from_env(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", 20
@@ -658,4 +700,216 @@ class WorkspaceSettings:
         if self.retention_days < 1:
             raise ValueError(
                 f"WORKMATE_WORKSPACE_RETENTION_DAYS musi być >= 1, jest: {self.retention_days}."
+            )
+
+
+# Domyślny stan pollera GitHub (watermark ``since``): POZA repo i data/ — dane operacyjne.
+_DEFAULT_GITHUB_STATE = Path.home() / ".workmate" / "github_state.json"
+# Dolny sufit interwału pollingu GitHub (świadomość limitu 5000 żądań/h uwierzytelnionych).
+_GITHUB_POLL_FLOOR_S = 30
+_MAX_GITHUB_PER_PAGE = 100
+# Dozwolone rodzaje zdarzeń nasłuchiwanych w repo (ADR 0024: PR/CI/recenzje wchodzą opcjonalnie).
+_ALLOWED_GITHUB_WATCH_KINDS = ("issues", "comments", "pulls", "reviews", "ci")
+# Domyślny zestaw (wsteczna zgodność): tylko issue i komentarze; nowe rodzaje włącza się jawnie
+# przez ``WORKMATE_GITHUB_WATCH_KINDS`` — patrz ADR 0024.
+_DEFAULT_GITHUB_WATCH_KINDS = ("issues", "comments")
+
+
+@dataclass(frozen=True)
+class GithubSettings:
+    """Konfiguracja drzwi GitHub w trybie DELEGOWANYM (ADR 0020) — polling repo przez PAT.
+
+    Bot odpytuje GitHub REST tokenem osobistym (PAT), bez webhooka i publicznego endpointu.
+    ``token`` to SEKRET (``repr=False``, env ``WORKMATE_GITHUB_TOKEN``) — nigdy w repo/``data/``.
+    Zapis do GitHub jest OSOBNO bramkowany (``enable_github_write``, Gate 4 / ADR 0021),
+    domyślnie wyłączony — drzwi startują read-only (ingest zdarzeń), zgodnie z ADR 0006.
+    ``enable_ci_auto_comment`` (ADR 0024, domyślnie OFF) włącza JEDYNY autonomiczny zapis mostu —
+    deterministyczny komentarz przy porażce CI na PR; wymaga też ``enable_github_write``.
+    """
+
+    token: str = field(default="", repr=False)
+    owner: str = ""
+    repo: str = ""
+    api_base: str = "https://api.github.com"
+    poll_interval_s: int = 60
+    per_page: int = 50
+    watch_kinds: tuple[str, ...] = _DEFAULT_GITHUB_WATCH_KINDS
+    enable_github_write: bool = False
+    enable_ci_auto_comment: bool = False
+    state_path: Path = _DEFAULT_GITHUB_STATE
+    self_login: str = ""
+
+    @classmethod
+    def from_env(cls) -> GithubSettings:
+        return cls(
+            token=os.environ.get("WORKMATE_GITHUB_TOKEN", ""),
+            owner=os.environ.get("WORKMATE_GITHUB_OWNER", ""),
+            repo=os.environ.get("WORKMATE_GITHUB_REPO", ""),
+            api_base=os.environ.get("WORKMATE_GITHUB_API_BASE", "https://api.github.com"),
+            poll_interval_s=_int_from_env("WORKMATE_GITHUB_POLL_INTERVAL", 60),
+            per_page=_int_from_env("WORKMATE_GITHUB_PER_PAGE", 50),
+            watch_kinds=_list_from_env(
+                "WORKMATE_GITHUB_WATCH_KINDS", _DEFAULT_GITHUB_WATCH_KINDS
+            ),
+            enable_github_write=_bool_from_env("WORKMATE_GITHUB_ENABLE_WRITE", default=False),
+            enable_ci_auto_comment=_bool_from_env(
+                "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", default=False
+            ),
+            state_path=_path_from_env("WORKMATE_GITHUB_STATE", _DEFAULT_GITHUB_STATE),
+            self_login=os.environ.get("WORKMATE_GITHUB_SELF_LOGIN", ""),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy brak tożsamości repo/tokenu albo bezsensowne limity."""
+        missing = [
+            name
+            for name, value in (
+                ("WORKMATE_GITHUB_TOKEN", self.token),
+                ("WORKMATE_GITHUB_OWNER", self.owner),
+                ("WORKMATE_GITHUB_REPO", self.repo),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Drzwi GitHub wymagają tokenu i repo: brakuje "
+                + ", ".join(missing)
+                + " w środowisku/.env."
+            )
+        if self.poll_interval_s < _GITHUB_POLL_FLOOR_S:
+            raise ValueError(
+                f"WORKMATE_GITHUB_POLL_INTERVAL musi być >= {_GITHUB_POLL_FLOOR_S} "
+                f"(limit API GitHub), jest: {self.poll_interval_s}."
+            )
+        if not 1 <= self.per_page <= _MAX_GITHUB_PER_PAGE:
+            raise ValueError(
+                "WORKMATE_GITHUB_PER_PAGE musi być w zakresie "
+                f"1..{_MAX_GITHUB_PER_PAGE}, jest: {self.per_page}."
+            )
+        unknown = [k for k in self.watch_kinds if k not in _ALLOWED_GITHUB_WATCH_KINDS]
+        if unknown:
+            raise ValueError(
+                "WORKMATE_GITHUB_WATCH_KINDS zawiera nieznane rodzaje: "
+                f"{unknown}. Dozwolone: {', '.join(_ALLOWED_GITHUB_WATCH_KINDS)}."
+            )
+        if not self.watch_kinds:
+            raise ValueError("WORKMATE_GITHUB_WATCH_KINDS nie może być puste.")
+        # Recenzje odpytujemy per-PR, a kandydatów (otwarte PR) odkrywamy z ``/issues`` — bez
+        # „issues"/„pulls" nie byłoby skąd; odrzucamy cichą, funkcjonalnie martwą konfigurację.
+        if "reviews" in self.watch_kinds and not (
+            "issues" in self.watch_kinds or "pulls" in self.watch_kinds
+        ):
+            raise ValueError(
+                "WORKMATE_GITHUB_WATCH_KINDS='reviews' wymaga też 'issues' lub 'pulls' "
+                "(otwarte PR do odpytania o recenzje odkrywamy z endpointu /issues)."
+            )
+        # Auto-komentarz CI to ZAPIS do GitHub — bez ogólnej bramki zapisu byłby martwy (nic nie
+        # dopisze), a użytkownik myślałby, że działa; odrzucamy tę cichą, sprzeczną konfigurację.
+        if self.enable_ci_auto_comment and not self.enable_github_write:
+            raise ValueError(
+                "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true wymaga też "
+                "WORKMATE_GITHUB_ENABLE_WRITE=true (auto-komentarz dopisuje na GitHub)."
+            )
+        # …a także musi mieć CO komentować: bez „ci" w WATCH_KINDS poller nie pobiera przebiegów CI,
+        # więc auto-komentarz nigdy nie zobaczy porażki do skomentowania (ta sama klasa cichej,
+        # funkcjonalnie martwej konfiguracji co powyżej — odrzucamy fail-fast).
+        if self.enable_ci_auto_comment and "ci" not in self.watch_kinds:
+            raise ValueError(
+                "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true wymaga też 'ci' w "
+                "WORKMATE_GITHUB_WATCH_KINDS (bez zdarzeń CI nie ma czego komentować)."
+            )
+
+
+# Zakresy delegowane proaktywnego push do Teams (ADR 0022): tworzenie/pisanie czatu 1:1 oraz
+# wysyłka na kanał. MSAL dokłada offline_access/openid/profile sam (nie wpisujemy ich).
+_DEFAULT_TEAMS_PUSH_SCOPES = (
+    "Chat.Create",
+    "Chat.ReadWrite",
+    "ChatMessage.Send",
+    "ChannelMessage.Send",
+    "User.Read",
+)
+
+
+@dataclass(frozen=True)
+class TeamsPushSettings:
+    """Konfiguracja proaktywnego push do Teams (dual-target, ADR 0022) — notifier zdarzeń → Teams.
+
+    Tożsamość = zalogowany użytkownik (device-code MSAL, jak ``teams_graph``); może współdzielić
+    ten sam ``token_cache_path`` (jedno logowanie). Sam obiekt nie trzyma sekretu (sekretem jest
+    CACHE tokenu na dysku). OBA cele są konfigurowalne (decyzja użytkownika): czat 1:1 i kanał —
+    włączane niezależnie flagami ``enable_chat``/``enable_channel``. Gdy oba wyłączone, notifier
+    nie startuje (drzwi GitHub działają wtedy jako ingest-only). ``enable_channel_threading``
+    (ADR 0024, domyślnie OFF) dokłada zdarzenia tego samego issue/PR do JEDNEGO wątku na kanale
+    (zamiast nowego roota za każdym razem); wymaga włączonego celu kanału.
+    """
+
+    client_id: str = ""
+    tenant_id: str = ""
+    scopes: tuple[str, ...] = _DEFAULT_TEAMS_PUSH_SCOPES
+    token_cache_path: Path = _DEFAULT_TEAMS_GRAPH_CACHE
+    chat_user_id: str = ""
+    team_id: str = ""
+    channel_id: str = ""
+    enable_chat: bool = False
+    enable_channel: bool = False
+    enable_channel_threading: bool = False
+
+    @property
+    def authority(self) -> str:
+        """URL authority MSAL dla aplikacji single-tenant (z ``tenant_id``)."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}"
+
+    @property
+    def enabled(self) -> bool:
+        """Czy notifier ma w ogóle wystartować (włączony co najmniej jeden cel)."""
+        return self.enable_chat or self.enable_channel
+
+    @classmethod
+    def from_env(cls) -> TeamsPushSettings:
+        return cls(
+            client_id=os.environ.get("WORKMATE_TEAMS_PUSH_CLIENT_ID", ""),
+            tenant_id=os.environ.get("WORKMATE_TEAMS_PUSH_TENANT_ID", ""),
+            scopes=_list_from_env("WORKMATE_TEAMS_PUSH_SCOPES", _DEFAULT_TEAMS_PUSH_SCOPES),
+            token_cache_path=_path_from_env(
+                "WORKMATE_TEAMS_PUSH_TOKEN_CACHE", _DEFAULT_TEAMS_GRAPH_CACHE
+            ),
+            chat_user_id=os.environ.get("WORKMATE_TEAMS_PUSH_CHAT_USER_ID", ""),
+            team_id=os.environ.get("WORKMATE_TEAMS_PUSH_TEAM_ID", ""),
+            channel_id=os.environ.get("WORKMATE_TEAMS_PUSH_CHANNEL_ID", ""),
+            enable_chat=_bool_from_env("WORKMATE_TEAMS_PUSH_ENABLE_CHAT", default=False),
+            enable_channel=_bool_from_env("WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL", default=False),
+            enable_channel_threading=_bool_from_env(
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING", default=False
+            ),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy włączony cel jest niekompletny (brak id celu/aplikacji).
+
+        Gdy notifier wyłączony (żaden cel), nie wymagamy niczego — drzwi GitHub są ingest-only.
+        """
+        if not self.enabled:
+            return
+        if not self.client_id or not self.tenant_id:
+            raise ValueError(
+                "Proaktywny push do Teams wymaga tożsamości aplikacji: ustaw "
+                "WORKMATE_TEAMS_PUSH_CLIENT_ID i WORKMATE_TEAMS_PUSH_TENANT_ID."
+            )
+        if self.enable_chat and not self.chat_user_id:
+            raise ValueError(
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHAT wymaga WORKMATE_TEAMS_PUSH_CHAT_USER_ID "
+                "(AAD user id adresata)."
+            )
+        if self.enable_channel and (not self.team_id or not self.channel_id):
+            raise ValueError(
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL wymaga WORKMATE_TEAMS_PUSH_TEAM_ID "
+                "i WORKMATE_TEAMS_PUSH_CHANNEL_ID."
+            )
+        # Wątkowanie dotyczy WYŁĄCZNIE kanału (czat 1:1 nie ma wątków) — bez celu kanału byłoby
+        # martwe; odrzucamy cichą, sprzeczną konfigurację (ADR 0024, Faza 3).
+        if self.enable_channel_threading and not self.enable_channel:
+            raise ValueError(
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING wymaga "
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL=true (wątki są tylko na kanale)."
             )
