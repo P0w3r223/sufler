@@ -11,15 +11,22 @@ from powiadomienia_teams.domain.models import Member, WeekSchedule
 _DNI = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
 _DNI_SKROT = ["pon", "wt", "śr", "czw", "pt", "sob", "nd"]
 
-DECLINED_TEXT = "OK, nie zapisuję. Jak zmienisz zdanie, po prostu napisz, kiedy pracujesz."
+DECLINED_TEXT = (
+    "OK, nie wprowadzam żadnych zmian w Twoim grafiku na ten tydzień i kończę przypominanie. "
+    "Odezwę się ponownie przy kolejnym grafiku."
+)
 APPLIED_TEXT = "Gotowe ✅ Zapisałem Twoje zmiany na przyszły tydzień. Dzięki!"
 WRITE_FAILED_TEXT = (
-    "Nie udało mi się automatycznie zapisać zmian 😕 Uzupełnij je proszę ręcznie "
-    "w zakładce »Zmiany« w Teams."
+    "Nie udało mi się zapisać wszystkiego 😕 Zajrzyj proszę do zakładki »Zmiany« w Teams i "
+    "sprawdź, czego brakuje — część mogła się już zapisać. Uzupełnij tylko brakujące dni."
 )
 UNCLEAR_TEXT = (
     "Nie do końca zrozumiałem 🙂 Napisz proszę np. „pon–pt 8–16” "
     "albo „w piątek 10–20, reszta bez zmian”."
+)
+EXPIRED_TEXT = (
+    "Nie dostałem odpowiedzi, więc na razie nic nie zapisuję. Kiedy będziesz gotowy/gotowa, "
+    "napisz, kiedy pracujesz — wrócę do tego przy kolejnym przypomnieniu."
 )
 
 

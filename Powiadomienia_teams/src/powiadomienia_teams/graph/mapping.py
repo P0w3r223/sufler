@@ -7,12 +7,13 @@ Wszystkie mappery zwracają ``None`` dla wpisów, których nie da się bezpieczn
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from powiadomienia_teams.domain.models import InvalidShift, Member, Shift
 
 _FRACTION = re.compile(r"\.(\d+)")
+_UTC = timezone.utc
 
 
 def parse_graph_datetime(value: str) -> datetime:
@@ -26,6 +27,15 @@ def parse_graph_datetime(value: str) -> datetime:
         v = v[:-1] + "+00:00"
     v = _FRACTION.sub(lambda m: "." + m.group(1)[:6], v)
     return datetime.fromisoformat(v)
+
+
+def to_graph_iso(dt: datetime) -> str:
+    """tz-aware ``datetime`` → ISO 8601 UTC z sufiksem ``Z`` (format oczekiwany przez Graph).
+
+    Odwrotność ``parse_graph_datetime``. Wspólny formatter dla klienta Graph (ciała żądań) i
+    watermarku przypomnień — jedno źródło formatu, brak rozjazdu między adapterem a orkiestracją.
+    """
+    return dt.astimezone(_UTC).isoformat().replace("+00:00", "Z")
 
 
 def member_from_json(raw: dict[str, Any]) -> Member | None:

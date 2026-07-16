@@ -9,17 +9,16 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import httpx
 
 from powiadomienia_teams.domain.models import Member, Shift, TimeOff
-from powiadomienia_teams.graph.mapping import member_from_json, shift_from_json
+from powiadomienia_teams.graph.mapping import member_from_json, shift_from_json, to_graph_iso
 from powiadomienia_teams.reminders.timeoff import TeamReasons, normalize
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-_UTC = timezone.utc
 _DEFAULT_RETRY_AFTER_S = 5
 _MAX_429_RETRIES = 5
 _MAX_PAGES = 50
@@ -29,11 +28,6 @@ _DEFAULT_THEME = "green"  # nieokreślony dzień = stacjonarnie
 def _retry_after(response: httpx.Response) -> int:
     raw = response.headers.get("Retry-After", "")
     return int(raw) if raw.isdigit() else _DEFAULT_RETRY_AFTER_S
-
-
-def _iso_z(dt: datetime) -> str:
-    """UTC datetime → ISO 8601 z sufiksem ``Z`` (format oczekiwany przez Graph)."""
-    return dt.astimezone(_UTC).isoformat().replace("+00:00", "Z")
 
 
 class GraphClient:
@@ -160,8 +154,8 @@ class GraphClient:
         domyślnie ``green`` (stacjonarnie).
         """
         shared: dict[str, Any] = {
-            "startDateTime": _iso_z(shift.start),
-            "endDateTime": _iso_z(shift.end),
+            "startDateTime": to_graph_iso(shift.start),
+            "endDateTime": to_graph_iso(shift.end),
             "theme": shift.theme or _DEFAULT_THEME,
         }
         body: dict[str, Any] = {
@@ -177,7 +171,11 @@ class GraphClient:
         """Udostępnij grafik w zakresie dat (uwidacznia zmiany + opcjonalnie powiadamia)."""
         self._post(
             f"{GRAPH}/teams/{team_id}/schedule/share",
-            {"notifyTeam": notify, "startDateTime": _iso_z(start), "endDateTime": _iso_z(end)},
+            {
+                "notifyTeam": notify,
+                "startDateTime": to_graph_iso(start),
+                "endDateTime": to_graph_iso(end),
+            },
         )
 
     def list_time_off_reasons(self, team_id: str) -> TeamReasons:
@@ -207,8 +205,8 @@ class GraphClient:
             "userId": time_off.user_id,
             "sharedTimeOff": {
                 "timeOffReasonId": time_off.reason_id,
-                "startDateTime": _iso_z(time_off.start),
-                "endDateTime": _iso_z(time_off.end),
+                "startDateTime": to_graph_iso(time_off.start),
+                "endDateTime": to_graph_iso(time_off.end),
             },
         }
         return str(self._post(f"{GRAPH}/teams/{team_id}/schedule/timesOff", body).get("id", ""))
