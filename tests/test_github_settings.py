@@ -132,5 +132,20 @@ def test_validate_rejects_ci_auto_comment_without_write():
         _valid(enable_ci_auto_comment=True, enable_github_write=False).validate()
 
 
-def test_validate_accepts_ci_auto_comment_with_write():
-    _valid(enable_ci_auto_comment=True, enable_github_write=True).validate()  # nie rzuca
+def test_validate_rejects_ci_auto_comment_without_ci_watch_kind():
+    # Auto-komentarz CI potrzebuje zdarzeń CI — bez „ci" w WATCH_KINDS poller ich nie pobiera,
+    # więc funkcja byłaby martwa mimo logu „WŁĄCZONY". Odrzucamy tę cichą sprzeczność.
+    with pytest.raises(ValueError, match="WATCH_KINDS"):
+        _valid(
+            enable_ci_auto_comment=True,
+            enable_github_write=True,
+            watch_kinds=("issues", "comments"),
+        ).validate()
+
+
+def test_validate_accepts_ci_auto_comment_with_write_and_ci_watch_kind():
+    _valid(
+        enable_ci_auto_comment=True,
+        enable_github_write=True,
+        watch_kinds=("issues", "comments", "ci"),
+    ).validate()  # nie rzuca

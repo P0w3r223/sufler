@@ -53,7 +53,6 @@ class ReplyDecision:
     action: str  # confirm | modify | decline | unclear
     schedule: WeekSchedule | None = None
     time_off: tuple[dict[str, Any], ...] = ()
-    note: str = ""
 
 
 _SYSTEM = (
@@ -322,9 +321,8 @@ def interpret_reply(
         data = _extract_json(raw)
     except ValueError:
         logger.warning("Model zwrócił niepoprawny JSON — degraduję do »unclear«.", exc_info=True)
-        return ReplyDecision("unclear", None, (), "Nie udało się odczytać odpowiedzi.")
+        return ReplyDecision("unclear", None, ())
     action = str(data.get("action", "unclear"))
-    note = str(data.get("note", ""))
 
     if action in ("confirm", "modify"):
         theme_by_weekday = {sh.start.astimezone(tz).weekday(): sh.theme for sh in proposal.shifts}
@@ -339,8 +337,8 @@ def interpret_reply(
             )
             schedule = WeekSchedule(schedule.member_id, schedule.week_start, kept)
         if schedule.is_empty and not time_off:
-            return ReplyDecision("unclear", None, (), note or "Nie udało się odczytać godzin.")
-        return ReplyDecision(action, schedule, time_off, note)
+            return ReplyDecision("unclear", None, ())
+        return ReplyDecision(action, schedule, time_off)
     if action == "decline":
-        return ReplyDecision("decline", None, (), note)
-    return ReplyDecision("unclear", None, (), note)
+        return ReplyDecision("decline", None, ())
+    return ReplyDecision("unclear", None, ())

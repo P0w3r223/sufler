@@ -141,7 +141,10 @@ def _build_bridge_catalog(
     )
     thread_links = SqliteThreadLinkStore(events_settings.db_path)
     logger.info(
-        "GitHub write WŁĄCZONY dla %s/%s — agent Teams może tworzyć issue/komentarze.",
+        "GitHub write WŁĄCZONY dla %s/%s — agent Teams może tworzyć issue/komentarze. "
+        "Uwaga (ADR 0024): `reply_on_thread` zadziała TYLKO, gdy drzwi GitHub biegną z "
+        "ENABLE_CHANNEL_THREADING=true na WSPÓLNYM events.db i tej samej parze team/channel — "
+        "to notifier zapełnia mapę wątków. Bez tego mapa jest pusta i narzędzie wątkowe milczy.",
         github_settings.owner,
         github_settings.repo,
     )

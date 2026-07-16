@@ -226,7 +226,7 @@ def test_build_time_offs_skips_entry_without_reason_id():
 def test_reply_decision_defaults():
     d = ReplyDecision("unclear")
     assert d.schedule is None
-    assert d.note == ""
+    assert d.time_off == ()
 
 
 # --- Regresja: deterministyczne mapowanie nazwy dnia → weekday -------------------------------

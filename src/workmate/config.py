@@ -810,6 +810,14 @@ class GithubSettings:
                 "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true wymaga też "
                 "WORKMATE_GITHUB_ENABLE_WRITE=true (auto-komentarz dopisuje na GitHub)."
             )
+        # …a także musi mieć CO komentować: bez „ci" w WATCH_KINDS poller nie pobiera przebiegów CI,
+        # więc auto-komentarz nigdy nie zobaczy porażki do skomentowania (ta sama klasa cichej,
+        # funkcjonalnie martwej konfiguracji co powyżej — odrzucamy fail-fast).
+        if self.enable_ci_auto_comment and "ci" not in self.watch_kinds:
+            raise ValueError(
+                "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true wymaga też 'ci' w "
+                "WORKMATE_GITHUB_WATCH_KINDS (bez zdarzeń CI nie ma czego komentować)."
+            )
 
 
 # Zakresy delegowane proaktywnego push do Teams (ADR 0022): tworzenie/pisanie czatu 1:1 oraz

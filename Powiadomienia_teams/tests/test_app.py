@@ -22,6 +22,7 @@ from powiadomienia_teams.reminders.timeoff import TeamReasons
 from powiadomienia_teams.state import (
     APPLIED,
     AWAITING_CONFIRM,
+    DECLINED,
     PendingReminder,
     load_state,
     save_state,
@@ -292,6 +293,33 @@ def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):
 
     run_once(settings, client, now=now)  # ponowienie tego samego tygodnia
     assert len(client.sent) == 1  # brak drugiej wysyłki
+
+
+def test_run_once_does_not_renudge_declined_member_same_week(tmp_path: Path):
+    # Regresja H1: osoba, która ODMÓWIŁA w tym tygodniu, nie może dostać drugiego nudge'a przy
+    # ponownym przebiegu (nadrobienie/restart tuż po odmowie). Terminalny DECLINED nie jest
+    # nadpisywany nowym AWAITING_REPLY — bot obiecał „kończę przypominanie".
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Mikołaj", chat_id="chat1",
+                week_start="2026-07-20", status=DECLINED,
+                watermark="2026-07-17T15:00:00Z",  # świeża odmowa — GC jej nie usunie
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    member = Member("u1", "Mikołaj")
+    client = _FakeClient({}, members=(member,), shifts=())  # brak zmian → wciąż w „missing"
+    now = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)  # piątek, ten sam tydzień docelowy
+    settings = _settings(state_path)
+
+    run_once(settings, client, now=now)
+
+    assert client.sent == []  # żadnego ponownego nudge'a
+    assert load_state(state_path)["u1"].status == DECLINED  # stan odmowy zachowany
 
 
 _FRI_16 = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)

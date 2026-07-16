@@ -120,13 +120,13 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     sent = 0
     for member in missing:
         existing = state.get(member.user_id)
-        # Idempotencja przebiegu: pomiń osoby z już OTWARTYM pendingiem na TEN tydzień (ponowienie
-        # po transientnym błędzie albo nadrobienie nie może wysłać drugi raz tej samej prośby).
-        if (
-            existing is not None
-            and existing.week_start == week_start_iso
-            and existing.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
-        ):
+        # Idempotencja przebiegu: JEDNA prośba na osobę na TEN tydzień. Pomijamy każdy istniejący
+        # wpis na bieżący tydzień — nie tylko otwarty (ponowienie po transientnym błędzie albo
+        # nadrobienie nie wyśle drugi raz tej samej prośby), ale też TERMINALNY DECLINED/EXPIRED:
+        # osoba już odmówiła albo jej okno minęło, więc restart/nadrobienie w tym samym tygodniu nie
+        # może nadpisać jej stanu i zaczepić ponownie (sprzeczne z „kończę przypominanie"). Osoba z
+        # udanym zapisem ma już zmianę w grafiku i nie występuje w `missing`.
+        if existing is not None and existing.week_start == week_start_iso:
             continue
         proposal = proposal_from_last_week(
             member.user_id, prior_shifts, target_monday.date(), tz=tz
@@ -153,7 +153,10 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
                 member.display_name,
             )
             continue
-        sent_iso = sent_at or to_graph_iso(now)
+        # Fallback, gdy Graph nie zwrócił znacznika: realny „teraz", NIE `now`. Przy nadrobieniu
+        # (`_catchup_due`) `now` to PRZESZŁY termin — użycie go cofnęłoby watermark przed faktyczny
+        # czas wysyłki, przez co listener mógłby wziąć wcześniejszą wiadomość z czatu za odpowiedź.
+        sent_iso = sent_at or to_graph_iso(datetime.now(_UTC))
         state[member.user_id] = st.PendingReminder(
             member_id=member.user_id,
             member_name=member.display_name,
@@ -478,17 +481,22 @@ def _safe_run_once(settings: Settings, client: GraphClient, now: datetime) -> No
 
 def run_forever(settings: Settings, client: GraphClient, llm: LlmClient) -> None:
     """Pętla: nadrób zaległy przebieg, do terminu obsługuj odpowiedzi, w terminie wyślij nowe."""
+    last_run_term: datetime | None = None  # termin już obsłużony w TEJ sesji (dedup nadrobień)
     while True:
         now = datetime.now(_UTC)
         # Nadrobienie: zaplanowany termin właśnie minął (okno łaski) → wykonaj przebieg teraz
-        # (idempotentnie), z czasem TERMINU jako punktem odniesienia tygodnia (nie „teraz").
+        # (idempotentnie), z czasem TERMINU jako odniesieniem tygodnia (nie „teraz").
+        # Pomijamy termin obsłużony już w tej sesji: po zaplanowanym przebiegu `previous_run(now)`
+        # wskazuje ten sam termin, więc bez znacznika byłby zbędny podwójny odczyt z Graph co cykl.
+        # Po restarcie znacznik znika — realna zaległość (awaria po terminie) i tak się nadrobi.
         catchup_term = _catchup_due(settings, now)
-        if catchup_term is not None:
+        if catchup_term is not None and catchup_term != last_run_term:
             logger.info(
                 "Nadrabiam zaległy przebieg powiadomień (okno łaski %dh).",
                 settings.catchup_grace_hours,
             )
             _safe_run_once(settings, client, now=catchup_term)
+            last_run_term = catchup_term
         target = next_run(
             now,
             tz=settings.tz,
@@ -516,6 +524,7 @@ def run_forever(settings: Settings, client: GraphClient, llm: LlmClient) -> None
             if remaining > 0:
                 time.sleep(min(remaining, _poll_delay(settings, outcome, now_dt)))
         _safe_run_once(settings, client, now=datetime.now(_UTC))
+        last_run_term = target  # termin obsłużony — nadrobienie nie odpali go ponownie w tym cyklu
 
 
 def _ensure_authenticated(settings: Settings, provider: Callable[[], str]) -> None:
