@@ -16,16 +16,25 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from workmate.core.domain.threads import resolve_thread_target
+from workmate.core.errors import ThreadRootGone
+
 if TYPE_CHECKING:
     from workmate.core.application.events import EventService
     from workmate.core.domain.events import Event
     from workmate.core.ports.notifications import TeamsNotifier
+    from workmate.core.ports.thread_links import ThreadLinkStore
 
 logger = logging.getLogger(__name__)
 
 _KIND_LABELS = {
     "issue_opened": "Nowe issue",
     "issue_comment": "Nowy komentarz",
+    "pr_opened": "Nowy PR",
+    "pr_comment": "Nowy komentarz w PR",
+    "pr_review": "Recenzja PR",
+    "ci_success": "CI: sukces",
+    "ci_failure": "CI: porażka",
 }
 
 
@@ -73,6 +82,7 @@ class EventNotifier:
         source: str = "github",
         poll_interval: int = 60,
         render: Callable[[Event], str] = default_event_render,
+        thread_links: ThreadLinkStore | None = None,
     ) -> None:
         self._events = events
         self._sender = sender
@@ -82,6 +92,9 @@ class EventNotifier:
         self._source = source
         self._poll_interval = poll_interval
         self._render = render
+        # Gdy podano ``thread_links`` (ADR 0024, flaga wątkowania ON), zdarzenia tego samego
+        # issue/PR lecą do JEDNEGO wątku na kanale; gdy ``None`` — każde jako nowy root (jak dziś).
+        self._thread_links = thread_links
 
     async def pump(self) -> None:
         """Pętla: co ``poll_interval`` wypchnij nowe zdarzenia; błąd rundy nie kładzie pętli."""
@@ -112,4 +125,46 @@ class EventNotifier:
         if targets.enable_chat and targets.chat_user_id:
             await self._sender.send_chat(targets.chat_user_id, text)
         if targets.enable_channel and targets.team_id and targets.channel_id:
+            await self._deliver_channel(event, text)
+
+    async def _deliver_channel(self, event: Event, text: str) -> None:
+        """Wyślij na kanał: gdy wątkowanie ON i zdarzenie ma cel — do wątku celu, inaczej nowy root.
+
+        Wątkowanie kluczujemy na CELU (issue/PR), nie na rodzaju zdarzenia: dzięki temu komentarz
+        czy CI trafia do wątku „opened", a jeśli root jeszcze nie istnieje (np. komentarz dotarł
+        pierwszy) — tworzymy go teraz i zapamiętujemy. Zdarzenie bez celu (np. CI bez PR) idzie jako
+        osobny root. Przy ``thread_links=None`` (wątkowanie OFF) — zawsze nowy root (jak dziś).
+        """
+        targets = self._targets
+        target = (
+            resolve_thread_target(event.url) if self._thread_links is not None else None
+        )
+        if self._thread_links is None or target is None:
             await self._sender.post_channel(targets.team_id, targets.channel_id, text)
+            return
+        kind, number = target
+        root_id = self._thread_links.get_root(
+            targets.team_id, targets.channel_id, kind, number
+        )
+        if root_id:
+            try:
+                await self._sender.reply_channel(
+                    targets.team_id, targets.channel_id, root_id, text
+                )
+                return
+            except ThreadRootGone:
+                # Root usunięty w Teams — NIE blokuj całego strumienia na tym zdarzeniu: schodzimy
+                # do utworzenia nowego roota i PRZEŁĄCZENIA linku (``link`` nadpisuje nieaktualny).
+                logger.info(
+                    "Root wątku %s zniknął — tworzę nowy i przełączam link (%s #%s)",
+                    root_id,
+                    kind,
+                    number,
+                )
+        new_root = await self._sender.post_channel(
+            targets.team_id, targets.channel_id, text
+        )
+        if new_root:
+            self._thread_links.link(
+                targets.team_id, targets.channel_id, kind, number, new_root
+            )

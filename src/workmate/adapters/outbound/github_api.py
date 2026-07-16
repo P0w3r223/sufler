@@ -69,6 +69,35 @@ class HttpxGithubClient:
             f"{self._api_base}/repos/{owner}/{repo}/issues/comments", params
         )
 
+    def list_pull_reviews(
+        self, owner: str, repo: str, pull_number: int
+    ) -> list[dict[str, Any]]:
+        # Endpoint recenzji jest per-PR i bez ``since`` — poller ogranicza liczbę PR-ów/rundę,
+        # a watermark ``reviews_since`` (w selection) odsiewa już widziane; dedup magazynu domyka.
+        return self._get_all(
+            f"{self._api_base}/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+            {"per_page": "100"},
+        )
+
+    def list_workflow_runs(
+        self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
+    ) -> list[dict[str, Any]]:
+        # Odpowiedź to KOPERTA ``{"total_count", "workflow_runs": [...]}`` (nie goła lista) — więc
+        # nie przez ``_get_all``; bierzemy PIERWSZĄ STRONĘ zakończonych przebiegów (sort desc wg
+        # UTWORZENIA). Watermark ``runs_since`` (na ``updated_at``) odsiewa już widziane.
+        # OGRANICZENIE (ADR 0024, do rewizji przy dużym wolumenie CI): re-run zachowuje stare
+        # ``created_at``, więc gdy między nim a rundą powstanie >``per_page`` nowszych przebiegów,
+        # wypadnie poza pierwszą stronę i zostanie pominięty. Dla pilotażu (niski wolumen) OK.
+        params = {"status": status, "per_page": str(per_page)}
+        body = self._get_json(
+            f"{self._api_base}/repos/{owner}/{repo}/actions/runs", params
+        )
+        if isinstance(body, dict):
+            runs = body.get("workflow_runs")
+            if isinstance(runs, list):
+                return [run for run in runs if isinstance(run, dict)]
+        return []
+
     # --- write (ADR 0021, bramkowane) --------------------------------------------
 
     def create_issue(

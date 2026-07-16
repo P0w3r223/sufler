@@ -32,3 +32,12 @@ class LLMError(WorkMateError):
     Claude API. Podnoszony wyłącznie w adapterze outbound (``AnthropicLLMClient``),
     żeby wokabularz SDK nie wchodził do rdzenia; drzwi degradują łagodnie.
     """
+
+
+class ThreadRootGone(WorkMateError):
+    """Root wątku na kanale Teams już nie istnieje (odpowiedź na usunięty post, ADR 0024).
+
+    Adapter ``TeamsNotifier`` podnosi to, gdy ``reply_channel`` dostaje 404 (człowiek/retencja
+    usunęły root). Notifier łapie i degraduje: tworzy NOWY root i przełącza link — dzięki temu
+    usunięty wątek nie blokuje na trwałe całego strumienia zdarzeń (zamiast wywracać kursor).
+    """

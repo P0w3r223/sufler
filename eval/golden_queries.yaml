@@ -1,0 +1,95 @@
+# Złoty zbiór zapytań do mikro-evalu retrievalu notatek (ADR 0023 — BRAMKA Fazy B).
+#
+# STARTER do przeglądu przez pion: to punkt wyjścia zbudowany z treści realnych 15 notatek
+# (+ 3 zapytania wykopane z historii search_notes: MCP, bramka, workmate). Dopisujcie realne
+# zapytania użytkowników i korygujcie etykiety — im więcej i im trafniej, tym pewniejsza decyzja
+# o włączeniu warstwy dense (Faza B).
+#
+# Każdy wpis: `query` (jak wpisałby pracownik pionu) + `relevant` (lista note_id, które MUSZĄ się
+# znaleźć wysoko). Kolejność w `relevant` bez znaczenia. Wiele zapytań jest w formie FLEKSYJNEJ
+# innej niż w notatce — to celowe (mierzymy zysk lematyzacji PL).
+
+- query: "rotacja kluczy API"
+  relevant:
+    - mpwik/scada-integration/2025-06-26-status-i-ryzyka
+    - mpwik/scada-integration/2025-06-12-przeglad-api-scada
+
+- query: "klucze API w menedżerze sekretów"
+  relevant:
+    - mpwik/scada-integration/2025-06-12-przeglad-api-scada
+
+- query: "kosztów integracji i abonamentu"
+  relevant:
+    - translog/track-and-trace/2025-04-15-spotkanie-ofertowe-i-cennik
+
+- query: "umowa powierzenia danych osobowych"
+  relevant:
+    - translog/track-and-trace/2025-05-19-warsztat-integracyjny-i-umowa-powierzenia
+
+- query: "adapter plików EDI dla przewoźnika bez API"
+  relevant:
+    - translog/track-and-trace/2025-05-19-warsztat-integracyjny-i-umowa-powierzenia
+
+- query: "eskalacja ryzyka terminu podwykonawcy"
+  relevant:
+    - translog/track-and-trace/2025-06-24-status-eskalacja-ryzyka
+
+- query: "SLA czas synchronizacji stanów magazynowych"
+  relevant:
+    - nordmarket/omnichannel/2025-04-22-negocjacje-umowy-sla
+
+- query: "kary umowne za incydenty krytyczne"
+  relevant:
+    - nordmarket/omnichannel/2025-04-22-negocjacje-umowy-sla
+
+- query: "incydent kolejki i nocnego importu wsadowego"
+  relevant:
+    - nordmarket/omnichannel/2025-06-20-retrospektywa-i-incydent
+
+- query: "jedna prawda o stanie magazynowym"
+  relevant:
+    - nordmarket/omnichannel/2025-03-25-kickoff-i-transkrypt
+
+- query: "pilotaż w trzech sklepach"
+  relevant:
+    - nordmarket/omnichannel/2025-03-25-kickoff-i-transkrypt
+    - nordmarket/omnichannel/2025-06-20-retrospektywa-i-incydent
+
+- query: "bezpłatny PoC odczytu z koncentratora"
+  relevant:
+    - enerkom/smart-metering/2025-04-08-spotkanie-sprzedazowe-transkrypt
+    - enerkom/smart-metering/2025-05-06-warsztat-wymagan-i-sow
+
+- query: "koncentrator gubi odczyty, flaga jakości danych"
+  relevant:
+    - enerkom/smart-metering/2025-06-18-przeglad-techniczny-i-ryzyka
+
+- query: "prognozowanie zużycia poza zakresem PoC"
+  relevant:
+    - enerkom/smart-metering/2025-05-06-warsztat-wymagan-i-sow
+
+- query: "termin wdrożenia testowego"
+  relevant:
+    - mpwik/scada-integration/2025-06-26-status-i-ryzyka
+
+- query: "pokrycie testami logiki wyszukiwania"
+  relevant:
+    - biap/workmate/2025-06-24-testy-i-wdrozenie
+
+- query: "schemat notatki i kontrakt narzędzi"
+  relevant:
+    - biap/workmate/2025-06-10-schemat-notatki
+
+- query: "przeglądy ryzyk projektów"
+  relevant:
+    - mpwik/scada-integration/2025-06-26-status-i-ryzyka
+    - enerkom/smart-metering/2025-06-18-przeglad-techniczny-i-ryzyka
+    - translog/track-and-trace/2025-06-24-status-eskalacja-ryzyka
+
+- query: "warsztat wymagań i zakres SoW"
+  relevant:
+    - enerkom/smart-metering/2025-05-06-warsztat-wymagan-i-sow
+
+- query: "checklista przeglądu bezpieczeństwa przed produkcją"
+  relevant:
+    - mpwik/scada-integration/2025-06-12-przeglad-api-scada

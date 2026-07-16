@@ -19,6 +19,7 @@ from workmate.adapters.inbound import env
 from workmate.config import EventsSettings, GithubSettings, TeamsPushSettings
 
 if TYPE_CHECKING:
+    from workmate.core.application.ci_autocomment import CiAutoCommentService
     from workmate.core.application.events import EventService
 
 logger = logging.getLogger(__name__)
@@ -84,16 +85,47 @@ async def _run(
             )
             tasks = [poller.run()]
             if push_settings.enabled:
+                thread_links = _build_thread_links(events_settings, push_settings)
                 tasks.append(
                     _build_notifier(
-                        async_http, events, state, persist, settings, push_settings
+                        async_http, events, state, persist, settings, push_settings,
+                        thread_links,
                     ).pump()
                 )
             else:
                 logger.info(
                     "Push do Teams wyłączony (żaden cel) — drzwi GitHub działają ingest-only."
                 )
+            ci_auto = _build_ci_autocommenter(client, events, state, settings)
+            if ci_auto is not None:
+                logger.info(
+                    "Auto-komentarz CI WŁĄCZONY (deterministyczny, ADR 0024) — porażka CI na PR "
+                    "dostanie komentarz konta PAT."
+                )
+
+                def save_ci_cursor(cursor_id: int) -> None:
+                    state["ci_autocomment_cursor"] = cursor_id
+                    persist(state)
+
+                tasks.append(
+                    _pump_ci_autocomment(ci_auto, save_ci_cursor, settings.poll_interval_s)
+                )
             await asyncio.gather(*tasks)
+
+
+def _build_thread_links(
+    events_settings: EventsSettings, push_settings: TeamsPushSettings
+) -> Any:
+    """Złóż ``ThreadLinkStore`` (SQLite nad events.db), gdy wątkowanie kanału ON; inaczej ``None``.
+
+    Wątkowanie (ADR 0024) dokłada zdarzenia tego samego issue/PR do jednego wątku na kanale. Gdy
+    OFF (domyślnie) — zwracamy ``None``, a notifier tworzy nowy root per zdarzenie (jak dotąd).
+    """
+    if not push_settings.enable_channel_threading:
+        return None
+    from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
+
+    return SqliteThreadLinkStore(events_settings.db_path)
 
 
 def _build_notifier(
@@ -103,6 +135,7 @@ def _build_notifier(
     persist: Callable[[dict[str, Any]], None],
     settings: GithubSettings,
     push_settings: TeamsPushSettings,
+    thread_links: Any = None,
 ) -> Any:
     """Złóż notifiera EventStore → Teams (dual-target). Wymaga MSAL (extra teams-graph)."""
     try:
@@ -133,7 +166,63 @@ def _build_notifier(
         save_cursor=save_cursor,
         cursor=int(state.get("notify_cursor", 0)),
         poll_interval=settings.poll_interval_s,
+        thread_links=thread_links,
     )
+
+
+def _build_ci_autocommenter(
+    client: Any,
+    events: EventService,
+    state: dict[str, Any],
+    settings: GithubSettings,
+) -> CiAutoCommentService | None:
+    """Złóż serwis auto-komentarza CI, gdy WŁĄCZONY (i włączona bramka zapisu); inaczej ``None``.
+
+    Wymaga OBU flag: ``enable_ci_auto_comment`` (konkretna zdolność, ADR 0024) i
+    ``enable_github_write`` (ogólna bramka zapisu, Gate 4) — zgodność wymuszona już w
+    ``GithubSettings.validate``. Zapis idzie przez ten sam bramkowany ``GithubWriteService`` co
+    narzędzia agenta (jedna sanityzowana ścieżka). Kursor ``ci_autocomment_cursor`` jest
+    NIEZALEŻNY od ``notify_cursor`` (osobny konsument).
+    """
+    if not (settings.enable_ci_auto_comment and settings.enable_github_write):
+        return None
+    from workmate.core.application.ci_autocomment import CiAutoCommentService
+    from workmate.core.application.github import GithubWriteService
+
+    write_service = GithubWriteService(
+        client, owner=settings.owner, repo=settings.repo, events=events
+    )
+    return CiAutoCommentService(
+        events,
+        write_service,
+        cursor=int(state.get("ci_autocomment_cursor", 0)),
+    )
+
+
+async def _pump_ci_autocomment(
+    service: CiAutoCommentService,
+    save_cursor: Callable[[int], None],
+    poll_interval: int,
+) -> None:
+    """Pętla auto-komentarza CI: co interwał obsłuż nowe porażki CI. Sync serwis → pula wątków.
+
+    ``process_once`` jest synchroniczny (SQLite + sync klient GitHub), więc offloadujemy go do puli
+    wątków — nie blokujemy pętli, na której działają równolegle poller i notifier. Kursor utrwalamy
+    DOPIERO PO powrocie z puli, NA WĄTKU PĘTLI (jak poller/notifier) — nigdy z wątku roboczego, żeby
+    nie zapisywać współbieżnie tego samego pliku stanu (uszkodzenie/wyścig). Zapis tylko gdy kursor
+    drgnął (unikamy zbędnej rywalizacji o plik). Błąd rundy nie kładzie pętli (best-effort).
+    """
+    loop = asyncio.get_running_loop()
+    last_saved = service.cursor
+    while True:
+        try:
+            await loop.run_in_executor(None, service.process_once)
+            if service.cursor != last_saved:
+                save_cursor(service.cursor)
+                last_saved = service.cursor
+        except Exception:
+            logger.exception("Błąd rundy auto-komentarza CI — ponowię za chwilę")
+        await asyncio.sleep(poll_interval)
 
 
 if __name__ == "__main__":

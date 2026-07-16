@@ -18,6 +18,7 @@ from workmate.adapters.inbound.responder import (
     Responder,
     SafeResponder,
 )
+from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
@@ -26,6 +27,7 @@ from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesReposito
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+from workmate.config import RetrievalSettings
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
@@ -59,10 +61,18 @@ _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --ext
 
 
 def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
-    """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie)."""
+    """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie).
+
+    ``NotesService`` dostaje lematyzator PL (ADR 0023) z fallbackiem na brak extra — lepszy
+    ranking wyszukiwania (BM25 nad lematami) na wszystkich drzwiach agenta.
+    """
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
-    return NotesService(notes_repo), ProjectsService(projects_repo, notes_repo)
+    lemmatizer = build_lemmatizer(RetrievalSettings.from_env())
+    return (
+        NotesService(notes_repo, lemmatizer=lemmatizer),
+        ProjectsService(projects_repo, notes_repo),
+    )
 
 
 def build_agent_runtime(
@@ -166,6 +176,7 @@ def build_conversational_responder(
     enable_workspace: bool = False,
     workspace_settings: WorkspaceSettings | None = None,
     extra_catalog: Sequence[ToolSpec] = (),
+    thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -203,6 +214,7 @@ def build_conversational_responder(
         compaction=compaction,
         commands=router,
         workspace_catalog_factory=workspace_factory,
+        thread_tool_factory=thread_tool_factory,
     )
     return SafeResponder(inner) if safe else inner
 

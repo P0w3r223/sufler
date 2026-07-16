@@ -16,10 +16,11 @@ from dataclasses import replace
 from mcp.server.fastmcp import FastMCP
 
 from workmate.adapters.inbound.mcp.tools import register_tools
+from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
-from workmate.config import Settings
+from workmate.config import RetrievalSettings, Settings
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
@@ -43,7 +44,10 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
 
-    notes_service = NotesService(notes_repo)
+    # Lematyzacja PL (ADR 0023) — lekka, więc również na drzwiach MCP stdio; brak extra
+    # degraduje do dawnego rankingu podłańcuchowego. Warstwa dense (Faza B) tu NIE wchodzi.
+    lemmatizer = build_lemmatizer(RetrievalSettings.from_env())
+    notes_service = NotesService(notes_repo, lemmatizer=lemmatizer)
     projects_service = ProjectsService(projects_repo, notes_repo)
 
     # Zapis (save_note) wystawiamy tylko, gdy drzwi mają na to pozwolenie

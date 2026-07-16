@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class GithubReadPort(Protocol):
-    """Odczyt z GitHub (polling PAT): tożsamość konta + listy issue i komentarzy."""
+    """Odczyt z GitHub (polling PAT): tożsamość konta + issue/PR, komentarze, recenzje i CI."""
 
     def authenticated_login(self) -> str:
         """Login konta PAT — do strażnika pętli self-ping (pomijamy własne zdarzenia)."""
@@ -27,13 +27,29 @@ class GithubReadPort(Protocol):
     def list_issues(
         self, owner: str, repo: str, *, since: datetime | None = None, per_page: int = 50
     ) -> list[dict[str, Any]]:
-        """Surowe issue od ``since`` (rosnąco), z paginacją; PR-y odfiltruje selection."""
+        """Surowe issue ORAZ PR od ``since`` (rosnąco), z paginacją; PR mają klucz ``pull_request``
+        — rozróżnienie issue vs PR robi selection (ADR 0024)."""
         ...
 
     def list_issue_comments(
         self, owner: str, repo: str, *, since: datetime | None = None, per_page: int = 50
     ) -> list[dict[str, Any]]:
-        """Surowe komentarze do issue zaktualizowane od ``since`` (rosnąco), z paginacją."""
+        """Surowe komentarze do issue ORAZ PR od ``since`` (rosnąco), z paginacją; PR-owe rozpozna
+        selection po ``html_url`` (``/pull/``)."""
+        ...
+
+    def list_pull_reviews(
+        self, owner: str, repo: str, pull_number: int
+    ) -> list[dict[str, Any]]:
+        """Surowe recenzje danego PR (endpoint per-PR, bez ``since``); istotne stany wybierze
+        selection (ADR 0024)."""
+        ...
+
+    def list_workflow_runs(
+        self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
+    ) -> list[dict[str, Any]]:
+        """Surowe zakończone przebiegi CI (workflow runs); sukces/porażkę zmapuje selection
+        z BIAŁEJ LISTY pól (ADR 0024) — bez logów/sekretów."""
         ...
 
 

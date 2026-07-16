@@ -7,8 +7,10 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 from workmate.adapters.outbound.graph_teams_notifier import HttpxTeamsNotifier
+from workmate.core.errors import ThreadRootGone
 
 
 def _notifier(handler) -> HttpxTeamsNotifier:
@@ -68,6 +70,50 @@ def test_post_channel_posts_root_message():
     asyncio.run(_notifier(handler).post_channel("team-1", "chan-1", "status"))
     assert seen["path"] == "/v1.0/teams/team-1/channels/chan-1/messages"
     assert '"contentType":"html"' in seen["body"]
+
+
+def test_post_channel_returns_message_id():
+    """Root wątku: post_channel zwraca ``id`` z odpowiedzi Graph (do zapamiętania w linku)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"id": "root-42"})
+
+    root_id = asyncio.run(_notifier(handler).post_channel("team-1", "chan-1", "status"))
+    assert root_id == "root-42"
+
+
+def test_reply_channel_hits_replies_endpoint():
+    """Odpowiedź w wątku uderza w ``.../messages/{root_id}/replies`` (dokłada do roota)."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = request.read().decode()
+        return httpx.Response(201, json={"id": "reply-1"})
+
+    asyncio.run(_notifier(handler).reply_channel("team-1", "chan-1", "root-42", "odp"))
+    assert seen["path"] == "/v1.0/teams/team-1/channels/chan-1/messages/root-42/replies"
+    assert '"contentType":"html"' in seen["body"]
+
+
+def test_reply_channel_raises_thread_root_gone_on_404():
+    """Usunięty root wątku (Graph 404) → ThreadRootGone — notifier utworzy nowy root."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": {"code": "NotFound"}})
+
+    with pytest.raises(ThreadRootGone):
+        asyncio.run(_notifier(handler).reply_channel("t", "c", "root-gone", "odp"))
+
+
+def test_reply_channel_reraises_non_404_error():
+    """Błąd inny niż 404 (np. 500) NIE jest tłumaczony na ThreadRootGone — leci dalej."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(_notifier(handler).reply_channel("t", "c", "root-x", "odp"))
 
 
 def test_html_escapes_injected_markup():

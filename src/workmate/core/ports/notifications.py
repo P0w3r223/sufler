@@ -12,12 +12,22 @@ from typing import Protocol
 
 
 class TeamsNotifier(Protocol):
-    """Wypchnięcie wiadomości do Teams: czat 1:1 albo nowy post na kanale (oba async)."""
+    """Wypchnięcie wiadomości do Teams: czat 1:1, nowy post na kanale lub odpowiedź w wątku."""
 
     async def send_chat(self, target_user_id: str, text: str) -> None:
         """Wyślij ``text`` (Markdown) jako wiadomość 1:1 do użytkownika o danym AAD id."""
         ...
 
-    async def post_channel(self, team_id: str, channel_id: str, text: str) -> None:
-        """Wyślij ``text`` (Markdown) jako NOWY post (wątek root) na kanale zespołu."""
+    async def post_channel(self, team_id: str, channel_id: str, text: str) -> str:
+        """Wyślij ``text`` jako NOWY post (root wątku) na kanale; zwróć id utworzonej wiadomości.
+
+        Id roota jest potrzebne do wątkowania (ADR 0024): notifier zapamiętuje je w
+        ``ThreadLinkStore`` i kolejne zdarzenia tego samego issue/PR dokłada jako ``reply_channel``.
+        """
+        ...
+
+    async def reply_channel(
+        self, team_id: str, channel_id: str, root_id: str, text: str
+    ) -> None:
+        """Wyślij ``text`` jako odpowiedź w istniejącym wątku (``root_id``) na kanale zespołu."""
         ...

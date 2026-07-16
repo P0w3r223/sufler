@@ -14,6 +14,7 @@ _GITHUB_VARS = (
     "WORKMATE_GITHUB_PER_PAGE",
     "WORKMATE_GITHUB_WATCH_KINDS",
     "WORKMATE_GITHUB_ENABLE_WRITE",
+    "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT",
     "WORKMATE_GITHUB_STATE",
     "WORKMATE_GITHUB_SELF_LOGIN",
 )
@@ -82,3 +83,54 @@ def test_validate_rejects_bad_per_page():
 def test_validate_rejects_unknown_watch_kind():
     with pytest.raises(ValueError, match="WATCH_KINDS"):
         _valid(watch_kinds=("issues", "releases")).validate()
+
+
+def test_validate_accepts_new_watch_kinds():
+    # ADR 0024: pulls/reviews/ci wchodzą do dozwolonego zbioru obok issues/comments.
+    _valid(watch_kinds=("issues", "comments", "pulls", "reviews", "ci")).validate()
+
+
+def test_validate_rejects_reviews_without_issues_or_pulls():
+    # Recenzje odkrywamy z otwartych PR w /issues — 'reviews' samo (lub tylko z 'ci') jest
+    # funkcjonalnie martwe, więc walidacja odrzuca taką cichą pułapkę konfiguracji.
+    with pytest.raises(ValueError, match="reviews"):
+        _valid(watch_kinds=("reviews",)).validate()
+    with pytest.raises(ValueError, match="reviews"):
+        _valid(watch_kinds=("reviews", "ci")).validate()
+
+
+def test_validate_accepts_reviews_with_pulls():
+    _valid(watch_kinds=("pulls", "reviews")).validate()  # 'pulls' wystarcza jako źródło PR
+
+
+def test_validate_rejects_empty_watch_kinds():
+    with pytest.raises(ValueError, match="WATCH_KINDS"):
+        _valid(watch_kinds=()).validate()
+
+
+# --- ADR 0024 Faza 2: auto-komentarz CI ------------------------------------
+
+
+def test_enable_ci_auto_comment_defaults_false():
+    assert _valid().enable_ci_auto_comment is False
+    assert GithubSettings.from_env().enable_ci_auto_comment is False
+
+
+def test_from_env_reads_ci_auto_comment(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "biap")
+    monkeypatch.setenv("WORKMATE_GITHUB_REPO", "workmate")
+    monkeypatch.setenv("WORKMATE_GITHUB_ENABLE_WRITE", "true")
+    monkeypatch.setenv("WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", "true")
+    assert GithubSettings.from_env().enable_ci_auto_comment is True
+
+
+def test_validate_rejects_ci_auto_comment_without_write():
+    # Auto-komentarz to ZAPIS — bez ogólnej bramki zapisu byłby martwy; odrzucamy cichą sprzeczność.
+    with pytest.raises(ValueError, match="CI_AUTO_COMMENT"):
+        _valid(enable_ci_auto_comment=True, enable_github_write=False).validate()
+
+
+def test_validate_accepts_ci_auto_comment_with_write():
+    _valid(enable_ci_auto_comment=True, enable_github_write=True).validate()  # nie rzuca

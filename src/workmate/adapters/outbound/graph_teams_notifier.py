@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from workmate.adapters.inbound.teams_graph.formatting import to_teams_html
+from workmate.core.errors import ThreadRootGone
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 _MAX_429_RETRIES = 5
@@ -38,12 +39,30 @@ class HttpxTeamsNotifier:
         chat_id = await self._create_or_get_chat(me_id, target_user_id)
         await self._post(f"{GRAPH}/chats/{chat_id}/messages", _html_body(text))
 
-    async def post_channel(self, team_id: str, channel_id: str, text: str) -> None:
-        """Wyślij NOWY post (wątek root) na kanale zespołu."""
+    async def post_channel(self, team_id: str, channel_id: str, text: str) -> str:
+        """Wyślij NOWY post (root wątku) na kanale i zwróć id wiadomości (do wątkowania)."""
         await self._refresh_auth()
-        await self._post(
+        data = await self._post(
             f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages", _html_body(text)
         )
+        return str(data.get("id", ""))
+
+    async def reply_channel(
+        self, team_id: str, channel_id: str, root_id: str, text: str
+    ) -> None:
+        """Wyślij odpowiedź w istniejącym wątku (``root_id``) — dokładamy do roota, nie tworzymy.
+
+        Gdy root został usunięty (Graph 404), podnosimy ``ThreadRootGone`` — notifier utworzy nowy
+        root zamiast blokować cały strumień na usuniętym wątku.
+        """
+        await self._refresh_auth()
+        url = f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{root_id}/replies"
+        try:
+            await self._post(url, _html_body(text))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise ThreadRootGone(f"root wątku {root_id} nie istnieje") from exc
+            raise
 
     async def _refresh_auth(self) -> None:
         """Ustaw nagłówek Authorization świeżym tokenem (sync MSAL w puli wątków, cichy refresh)."""

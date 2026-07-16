@@ -62,6 +62,12 @@ github = [
     "httpx>=0.28.1",
     "python-dotenv>=1.0",
 ]
+# Lepszy retrieval notatek (ADR 0023, Faza A) — lematyzacja polska (BM25 nad lematami odporny na
+# fleksję). Lekkie, pure-Python, bez torch; serwer MCP zostaje lekki. Warstwa dense (osadzenia)
+# to Faza B za bramką mikro-evalu — osobny extra dopiero wtedy.
+retrieval = [
+    "simplemma>=1.0",
+]
 
 [project.scripts]
 # Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
@@ -141,7 +147,13 @@ ignore_missing_imports = true
 module = ["docx.*", "openpyxl.*", "pptx.*", "PIL.*", "pillow_heif.*"]
 ignore_missing_imports = true
 
+# simplemma (extra `retrieval`, ADR 0023) — bez stubów; import LENIWY w wiringu, więc mypy
+# rdzenia nie może się o niego wywrócić.
+[[tool.mypy.overrides]]
+module = ["simplemma.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "eval"]
 testpaths = ["tests"]
 addopts = "-q"

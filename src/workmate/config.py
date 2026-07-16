@@ -407,6 +407,27 @@ class EventsSettings:
         return cls(db_path=_path_from_env("WORKMATE_EVENTS_DB", _DEFAULT_EVENTS_DB))
 
 
+@dataclass(frozen=True)
+class RetrievalSettings:
+    """Konfiguracja retrievalu notatek (ADR 0023, Faza A) — lepszy ranking wyszukiwania.
+
+    ``lemmatize`` włącza lematyzację PL (BM25 nad lematami, odporność na fleksję) — domyślnie ON,
+    o ile dostępny extra ``retrieval`` (``simplemma``); brak extra degraduje do dawnego rankingu
+    podłańcuchowego (wiring łapie ``ImportError``). Wyłączalne env do debugowania/porównań.
+    Warstwa DENSE (osadzenia + RRF) to Faza B za bramką mikro-evalu — tu jeszcze jej nie ma.
+    """
+
+    lemmatize: bool = True
+    lang: str = "pl"
+
+    @classmethod
+    def from_env(cls) -> RetrievalSettings:
+        return cls(
+            lemmatize=_bool_from_env("WORKMATE_RETRIEVAL_LEMMATIZE", default=True),
+            lang=os.environ.get("WORKMATE_RETRIEVAL_LANG", "pl"),
+        )
+
+
 # Domyślne ścieżki drzwi Teams w trybie delegowanym (ADR 0015): POZA repo i data/.
 # Cache tokenu MSAL to SEKRET; plik stanu (watermark wątków) — dane operacyjne, nie sekret.
 _DEFAULT_TEAMS_GRAPH_CACHE = Path.home() / ".workmate" / "teams_token_cache.bin"
@@ -687,8 +708,11 @@ _DEFAULT_GITHUB_STATE = Path.home() / ".workmate" / "github_state.json"
 # Dolny sufit interwału pollingu GitHub (świadomość limitu 5000 żądań/h uwierzytelnionych).
 _GITHUB_POLL_FLOOR_S = 30
 _MAX_GITHUB_PER_PAGE = 100
-# Dozwolone rodzaje zdarzeń nasłuchiwanych w repo (rozszerzalne w przyszłości np. o PR/CI).
-_ALLOWED_GITHUB_WATCH_KINDS = ("issues", "comments")
+# Dozwolone rodzaje zdarzeń nasłuchiwanych w repo (ADR 0024: PR/CI/recenzje wchodzą opcjonalnie).
+_ALLOWED_GITHUB_WATCH_KINDS = ("issues", "comments", "pulls", "reviews", "ci")
+# Domyślny zestaw (wsteczna zgodność): tylko issue i komentarze; nowe rodzaje włącza się jawnie
+# przez ``WORKMATE_GITHUB_WATCH_KINDS`` — patrz ADR 0024.
+_DEFAULT_GITHUB_WATCH_KINDS = ("issues", "comments")
 
 
 @dataclass(frozen=True)
@@ -699,6 +723,8 @@ class GithubSettings:
     ``token`` to SEKRET (``repr=False``, env ``WORKMATE_GITHUB_TOKEN``) — nigdy w repo/``data/``.
     Zapis do GitHub jest OSOBNO bramkowany (``enable_github_write``, Gate 4 / ADR 0021),
     domyślnie wyłączony — drzwi startują read-only (ingest zdarzeń), zgodnie z ADR 0006.
+    ``enable_ci_auto_comment`` (ADR 0024, domyślnie OFF) włącza JEDYNY autonomiczny zapis mostu —
+    deterministyczny komentarz przy porażce CI na PR; wymaga też ``enable_github_write``.
     """
 
     token: str = field(default="", repr=False)
@@ -707,8 +733,9 @@ class GithubSettings:
     api_base: str = "https://api.github.com"
     poll_interval_s: int = 60
     per_page: int = 50
-    watch_kinds: tuple[str, ...] = _ALLOWED_GITHUB_WATCH_KINDS
+    watch_kinds: tuple[str, ...] = _DEFAULT_GITHUB_WATCH_KINDS
     enable_github_write: bool = False
+    enable_ci_auto_comment: bool = False
     state_path: Path = _DEFAULT_GITHUB_STATE
     self_login: str = ""
 
@@ -722,9 +749,12 @@ class GithubSettings:
             poll_interval_s=_int_from_env("WORKMATE_GITHUB_POLL_INTERVAL", 60),
             per_page=_int_from_env("WORKMATE_GITHUB_PER_PAGE", 50),
             watch_kinds=_list_from_env(
-                "WORKMATE_GITHUB_WATCH_KINDS", _ALLOWED_GITHUB_WATCH_KINDS
+                "WORKMATE_GITHUB_WATCH_KINDS", _DEFAULT_GITHUB_WATCH_KINDS
             ),
             enable_github_write=_bool_from_env("WORKMATE_GITHUB_ENABLE_WRITE", default=False),
+            enable_ci_auto_comment=_bool_from_env(
+                "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", default=False
+            ),
             state_path=_path_from_env("WORKMATE_GITHUB_STATE", _DEFAULT_GITHUB_STATE),
             self_login=os.environ.get("WORKMATE_GITHUB_SELF_LOGIN", ""),
         )
@@ -764,6 +794,22 @@ class GithubSettings:
             )
         if not self.watch_kinds:
             raise ValueError("WORKMATE_GITHUB_WATCH_KINDS nie może być puste.")
+        # Recenzje odpytujemy per-PR, a kandydatów (otwarte PR) odkrywamy z ``/issues`` — bez
+        # „issues"/„pulls" nie byłoby skąd; odrzucamy cichą, funkcjonalnie martwą konfigurację.
+        if "reviews" in self.watch_kinds and not (
+            "issues" in self.watch_kinds or "pulls" in self.watch_kinds
+        ):
+            raise ValueError(
+                "WORKMATE_GITHUB_WATCH_KINDS='reviews' wymaga też 'issues' lub 'pulls' "
+                "(otwarte PR do odpytania o recenzje odkrywamy z endpointu /issues)."
+            )
+        # Auto-komentarz CI to ZAPIS do GitHub — bez ogólnej bramki zapisu byłby martwy (nic nie
+        # dopisze), a użytkownik myślałby, że działa; odrzucamy tę cichą, sprzeczną konfigurację.
+        if self.enable_ci_auto_comment and not self.enable_github_write:
+            raise ValueError(
+                "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true wymaga też "
+                "WORKMATE_GITHUB_ENABLE_WRITE=true (auto-komentarz dopisuje na GitHub)."
+            )
 
 
 # Zakresy delegowane proaktywnego push do Teams (ADR 0022): tworzenie/pisanie czatu 1:1 oraz
@@ -785,7 +831,9 @@ class TeamsPushSettings:
     ten sam ``token_cache_path`` (jedno logowanie). Sam obiekt nie trzyma sekretu (sekretem jest
     CACHE tokenu na dysku). OBA cele są konfigurowalne (decyzja użytkownika): czat 1:1 i kanał —
     włączane niezależnie flagami ``enable_chat``/``enable_channel``. Gdy oba wyłączone, notifier
-    nie startuje (drzwi GitHub działają wtedy jako ingest-only).
+    nie startuje (drzwi GitHub działają wtedy jako ingest-only). ``enable_channel_threading``
+    (ADR 0024, domyślnie OFF) dokłada zdarzenia tego samego issue/PR do JEDNEGO wątku na kanale
+    (zamiast nowego roota za każdym razem); wymaga włączonego celu kanału.
     """
 
     client_id: str = ""
@@ -797,6 +845,7 @@ class TeamsPushSettings:
     channel_id: str = ""
     enable_chat: bool = False
     enable_channel: bool = False
+    enable_channel_threading: bool = False
 
     @property
     def authority(self) -> str:
@@ -822,6 +871,9 @@ class TeamsPushSettings:
             channel_id=os.environ.get("WORKMATE_TEAMS_PUSH_CHANNEL_ID", ""),
             enable_chat=_bool_from_env("WORKMATE_TEAMS_PUSH_ENABLE_CHAT", default=False),
             enable_channel=_bool_from_env("WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL", default=False),
+            enable_channel_threading=_bool_from_env(
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING", default=False
+            ),
         )
 
     def validate(self) -> None:
@@ -845,4 +897,11 @@ class TeamsPushSettings:
             raise ValueError(
                 "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL wymaga WORKMATE_TEAMS_PUSH_TEAM_ID "
                 "i WORKMATE_TEAMS_PUSH_CHANNEL_ID."
+            )
+        # Wątkowanie dotyczy WYŁĄCZNIE kanału (czat 1:1 nie ma wątków) — bez celu kanału byłoby
+        # martwe; odrzucamy cichą, sprzeczną konfigurację (ADR 0024, Faza 3).
+        if self.enable_channel_threading and not self.enable_channel:
+            raise ValueError(
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING wymaga "
+                "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL=true (wątki są tylko na kanale)."
             )

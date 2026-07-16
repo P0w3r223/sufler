@@ -39,7 +39,7 @@ from workmate.core.ports.llm import (
 _TRUNCATED_STOP = "max_tokens"
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from workmate.adapters.inbound.commands import CommandRouter
     from workmate.core.agent.runtime import AgentRuntime
@@ -157,6 +157,7 @@ class ConversationalResponder:
         compaction: CompactionService | None = None,
         commands: CommandRouter | None = None,
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
+        thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
@@ -164,6 +165,10 @@ class ConversationalResponder:
         # Fabryka narzędzi KATALOGU ROBOCZEGO per rozmowa (ADR 0018); ``None`` → brak zapisu plików.
         # Scope budujemy z ZAUFANEGO (kanał, external_id), nie od modelu — rozmowy są izolowane.
         self._workspace_catalog_factory = workspace_catalog_factory
+        # Fabryka narzędzia ODPOWIEDZI W WĄTKU (ADR 0024, Faza 3b); ``None`` → brak (inne drzwi).
+        # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
+        # ``reply_on_thread`` z PRE-ZWIĄZANYM numerem — model nie przekieruje na inne issue.
+        self._thread_tool_factory = thread_tool_factory
         # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
         # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
         self._commands = commands
@@ -209,11 +214,22 @@ class ConversationalResponder:
         transcript = self._build_transcript(conversation_id, history, rolled_over)
         # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
         # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
-        extra_tools = (
+        extra_tools: list[ToolSpec] = list(
             self._workspace_catalog_factory(WorkspaceScope(self._channel, external_id))
             if self._workspace_catalog_factory is not None
             else ()
         )
+        # Narzędzie odpowiedzi w wątku (ADR 0024, Faza 3b): dokładane, gdy wątek kanału jest
+        # powiązany z issue/PR (fabryka odczytuje cel z external_id) — inaczej pusta lista.
+        # To OPCJONALNE wzbogacenie: błąd odczytu mapowania (np. blokada SQLite) NIE może zabić
+        # tury odczytowej — degradujemy do „brak narzędzia wątku" i logujemy.
+        if self._thread_tool_factory is not None:
+            try:
+                extra_tools.extend(self._thread_tool_factory(external_id))
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzia wątku dla %r — pomijam", external_id
+                )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
         result = self._runtime.run_turn(
             message.text,
