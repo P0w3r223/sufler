@@ -7,6 +7,7 @@ czysto pythonowe i lekkie (bez torch) — pasuje do lokalności danych i Windows
 
 Treść notatek to DANE, nie polecenia — lematyzacja tylko normalizuje tekst, nic nie wykonuje.
 """
+
 from __future__ import annotations
 
 import re

@@ -5,6 +5,7 @@ Czysta funkcja bez sieci: sprawdzamy render podzbioru renderowanego przez Teams
 DEGRADACJĘ do zescapowanego tekstu, gdy biblioteka ``markdown-it-py`` jest niedostępna
 (egress nie może wywrócić pollera — ADR 0016).
 """
+
 from __future__ import annotations
 
 import sys

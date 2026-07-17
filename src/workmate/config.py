@@ -5,6 +5,7 @@ i mają sensowne wartości domyślne wyznaczane względem korzenia repozytorium.
 Dzięki temu ``python -m workmate`` działa bez żadnej konfiguracji, a wdrożenie
 może nadpisać ścieżki pojedynczą zmienną środowiskową.
 """
+
 from __future__ import annotations
 
 import os
@@ -266,9 +267,7 @@ class AgentSettings:
                 f"{self.max_tool_iterations}."
             )
         if self.max_tokens < 1:
-            raise ValueError(
-                f"WORKMATE_AGENT_MAX_TOKENS musi być >= 1, jest: {self.max_tokens}."
-            )
+            raise ValueError(f"WORKMATE_AGENT_MAX_TOKENS musi być >= 1, jest: {self.max_tokens}.")
         if self.thinking_type not in ("adaptive", "disabled"):
             raise ValueError(
                 "WORKMATE_AGENT_THINKING musi być 'adaptive' albo 'disabled', jest: "
@@ -335,9 +334,7 @@ class ConversationSettings:
     @classmethod
     def from_env(cls) -> ConversationSettings:
         return cls(
-            db_path=_path_from_env(
-                "WORKMATE_CONVERSATIONS_DB", _DEFAULT_CONVERSATIONS_DB
-            ),
+            db_path=_path_from_env("WORKMATE_CONVERSATIONS_DB", _DEFAULT_CONVERSATIONS_DB),
             max_context_tokens=_int_from_env("WORKMATE_CONV_MAX_TOKENS", 128000),
             idle_timeout_minutes=_int_from_env("WORKMATE_CONV_IDLE_MINUTES", 30),
             compaction_enabled=_bool_from_env("WORKMATE_COMPACTION_ENABLED", default=True),
@@ -353,8 +350,7 @@ class ConversationSettings:
         """Twardy błąd startu, gdy limit, próg bezczynności lub kompaktowanie są bez sensu."""
         if self.max_context_tokens < 1:
             raise ValueError(
-                "WORKMATE_CONV_MAX_TOKENS musi być >= 1, jest: "
-                f"{self.max_context_tokens}."
+                f"WORKMATE_CONV_MAX_TOKENS musi być >= 1, jest: {self.max_context_tokens}."
             )
         # 0 = kryterium bezczynności wyłączone; ujemne nie ma sensu (fail fast).
         if self.idle_timeout_minutes < 0:
@@ -364,8 +360,7 @@ class ConversationSettings:
             )
         if self.context_window_tokens < 1:
             raise ValueError(
-                "WORKMATE_CONTEXT_WINDOW_TOKENS musi być >= 1, jest: "
-                f"{self.context_window_tokens}."
+                f"WORKMATE_CONTEXT_WINDOW_TOKENS musi być >= 1, jest: {self.context_window_tokens}."
             )
         if not 0.0 < self.compaction_threshold_fraction <= 1.0:
             raise ValueError(
@@ -374,8 +369,7 @@ class ConversationSettings:
             )
         if self.compaction_keep_turns < 1:
             raise ValueError(
-                "WORKMATE_COMPACTION_KEEP_TURNS musi być >= 1, jest: "
-                f"{self.compaction_keep_turns}."
+                f"WORKMATE_COMPACTION_KEEP_TURNS musi być >= 1, jest: {self.compaction_keep_turns}."
             )
 
     def idle_timeout(self) -> timedelta | None:
@@ -514,24 +508,18 @@ class TeamsGraphSettings:
         return cls(
             client_id=os.environ.get("WORKMATE_TEAMS_GRAPH_CLIENT_ID", ""),
             tenant_id=os.environ.get("WORKMATE_TEAMS_GRAPH_TENANT_ID", ""),
-            scopes=_list_from_env(
-                "WORKMATE_TEAMS_GRAPH_SCOPES", _DEFAULT_TEAMS_GRAPH_SCOPES
-            ),
+            scopes=_list_from_env("WORKMATE_TEAMS_GRAPH_SCOPES", _DEFAULT_TEAMS_GRAPH_SCOPES),
             token_cache_path=_path_from_env(
                 "WORKMATE_TEAMS_GRAPH_TOKEN_CACHE", _DEFAULT_TEAMS_GRAPH_CACHE
             ),
-            state_path=_path_from_env(
-                "WORKMATE_TEAMS_GRAPH_STATE", _DEFAULT_TEAMS_GRAPH_STATE
-            ),
+            state_path=_path_from_env("WORKMATE_TEAMS_GRAPH_STATE", _DEFAULT_TEAMS_GRAPH_STATE),
             watch=_parse_watch_pairs(os.environ.get("WORKMATE_TEAMS_GRAPH_WATCH", "")),
             poll_interval_s=_int_from_env("WORKMATE_TEAMS_GRAPH_POLL_INTERVAL", 10),
             top_roots=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_ROOTS", 20),
             top_replies=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_REPLIES", 50),
             active_idle_hours=_int_from_env("WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", 24),
             max_attachment_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", 8),
-            max_attachments_per_message=_int_from_env(
-                "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 20
-            ),
+            max_attachments_per_message=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 20),
             max_total_attachment_mb=_int_from_env(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", 20
             ),
@@ -559,8 +547,7 @@ class TeamsGraphSettings:
             raise ValueError("WORKMATE_TEAMS_GRAPH_SCOPES nie może być puste.")
         if self.poll_interval_s < 1:
             raise ValueError(
-                "WORKMATE_TEAMS_GRAPH_POLL_INTERVAL musi być >= 1, jest: "
-                f"{self.poll_interval_s}."
+                f"WORKMATE_TEAMS_GRAPH_POLL_INTERVAL musi być >= 1, jest: {self.poll_interval_s}."
             )
         if self.top_roots < 1:
             raise ValueError(
@@ -748,9 +735,7 @@ class GithubSettings:
             api_base=os.environ.get("WORKMATE_GITHUB_API_BASE", "https://api.github.com"),
             poll_interval_s=_int_from_env("WORKMATE_GITHUB_POLL_INTERVAL", 60),
             per_page=_int_from_env("WORKMATE_GITHUB_PER_PAGE", 50),
-            watch_kinds=_list_from_env(
-                "WORKMATE_GITHUB_WATCH_KINDS", _DEFAULT_GITHUB_WATCH_KINDS
-            ),
+            watch_kinds=_list_from_env("WORKMATE_GITHUB_WATCH_KINDS", _DEFAULT_GITHUB_WATCH_KINDS),
             enable_github_write=_bool_from_env("WORKMATE_GITHUB_ENABLE_WRITE", default=False),
             enable_ci_auto_comment=_bool_from_env(
                 "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", default=False

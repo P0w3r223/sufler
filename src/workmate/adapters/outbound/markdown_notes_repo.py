@@ -20,6 +20,7 @@ Identyfikator notatki to jej ścieżka względem katalogu notatek, bez rozszerze
 danymi, więc błędny plik = błąd danych: podnosimy ``NoteParseError`` z kontekstem
 (fail fast), a granica MCP zamienia go na czytelny komunikat.
 """
+
 from __future__ import annotations
 
 import threading
@@ -93,9 +94,7 @@ class MarkdownNotesRepository:
         try:
             metadata = NoteMetadata.model_validate(meta_dict)
         except ValidationError as exc:
-            raise NoteParseError(
-                f"{location}: nieprawidłowy frontmatter notatki: {exc}"
-            ) from exc
+            raise NoteParseError(f"{location}: nieprawidłowy frontmatter notatki: {exc}") from exc
         note_id = path.relative_to(self._notes_dir).with_suffix("").as_posix()
         return Note(id=note_id, metadata=metadata, body=body.strip())
 
@@ -107,9 +106,7 @@ def _split_frontmatter(raw: str, location: str) -> tuple[dict[str, Any], str]:
     musi być bezpieczna do pokazania klientowi (bez bezwzględnej ścieżki serwera).
     """
     if not raw.lstrip().startswith(_FRONTMATTER_FENCE):
-        raise NoteParseError(
-            f"{location}: brak bloku frontmatter ('---') na początku pliku"
-        )
+        raise NoteParseError(f"{location}: brak bloku frontmatter ('---') na początku pliku")
 
     # maxsplit=2: dzielimy tylko na pierwszych dwóch '---', ewentualne '---'
     # w treści (linie poziome) zostają nietknięte w części z treścią.
@@ -121,9 +118,7 @@ def _split_frontmatter(raw: str, location: str) -> tuple[dict[str, Any], str]:
     try:
         meta = yaml.safe_load(front)
     except yaml.YAMLError as exc:
-        raise NoteParseError(
-            f"{location}: błąd składni YAML we frontmatter: {exc}"
-        ) from exc
+        raise NoteParseError(f"{location}: błąd składni YAML we frontmatter: {exc}") from exc
 
     if not isinstance(meta, dict):
         raise NoteParseError(f"{location}: frontmatter musi być mapą klucz-wartość")

@@ -9,6 +9,7 @@ wspólnego magazynu (``EventStore``), żeby druga strona (GitHub/agent) je „zo
 Miejsce zapisu (``owner``/``repo``) pochodzi z KONFIGURACJI drzwi, nie z treści prośby — treść nie
 może przekierować zapisu do cudzego repozytorium.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -43,9 +44,7 @@ class GithubWriteService:
         self._repo = repo
         self._events = events
 
-    def create_issue(
-        self, title: str, body: str, labels: tuple[str, ...] = ()
-    ) -> dict[str, Any]:
+    def create_issue(self, title: str, body: str, labels: tuple[str, ...] = ()) -> dict[str, Any]:
         """Utwórz nowe issue; zwróć ``{number, url}``. Sanityzacja + sufit długości, create-only."""
         reject_dangerous_content(title, body, *labels)
         title = _bounded(title.strip(), _MAX_TITLE, "tytuł issue")

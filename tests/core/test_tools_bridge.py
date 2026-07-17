@@ -4,6 +4,7 @@ Bramkowanie jak ``save_note``: narzędzia zapisu powstają WYŁĄCZNIE z fabryki
 ``build_github_write_catalog`` (przy włączonej bramce). Sprawdzamy też kopertę błędów
 (``WriteError`` → ``{"error": ...}``).
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -9,6 +9,7 @@ Bezpieczeństwo: o miejscu zapisu (``project``, ``date``) decyduje WYWOŁUJĄCY,
 streszczenie transkryptu (treść niezaufana). Dzięki temu transkrypt nie może
 przekierować notatki do cudzego projektu przez wstrzyknięte pola.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -36,9 +37,7 @@ class MeetingNoteService:
         self._summarizer = summarizer
         self._write_service = write_service
 
-    def note_from_meeting(
-        self, meeting_ref: str, *, project: str, meeting_date: date
-    ) -> Note:
+    def note_from_meeting(self, meeting_ref: str, *, project: str, meeting_date: date) -> Note:
         """Pobierz transkrypt, streść i zapisz notatkę; zwróć zapisaną notatkę.
 
         ``project`` i ``meeting_date`` pochodzą z kontekstu wywołania (drzwi/rejestr),

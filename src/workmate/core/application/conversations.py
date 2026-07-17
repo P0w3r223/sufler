@@ -16,6 +16,7 @@ Rozliczenie tokenów jest REALNE (Design 2): z pola ``usage`` odpowiedzi API, pr
 przez ``AgentResult``/``AssistantTurn`` do magazynu. Rollover bramkuje realny rozmiar
 kontekstu OSTATNIEJ tury (``last_context_tokens``), nie estymatę tekstu.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -194,9 +195,7 @@ class ConversationService:
         limit: int = 20,
     ) -> list[ConversationSearchHit]:
         """Przeszukaj archiwum rozmów (delegacja do magazynu)."""
-        return self._store.search(
-            query, channel=channel, external_id=external_id, limit=limit
-        )
+        return self._store.search(query, channel=channel, external_id=external_id, limit=limit)
 
     def list_conversations(
         self, *, channel: str | None = None, limit: int = 50
@@ -204,9 +203,7 @@ class ConversationService:
         """Wylistuj rozmowy do podglądu historii (delegacja do magazynu)."""
         return self._store.list_conversations(channel=channel, limit=limit)
 
-    def active_conversation(
-        self, channel: str, external_id: str
-    ) -> Conversation | None:
+    def active_conversation(self, channel: str, external_id: str) -> Conversation | None:
         """Aktywny wątek (kanał, rozmowa) albo ``None`` — generyczny odczyt (delegacja)."""
         return self._store.active_conversation(channel, external_id)
 

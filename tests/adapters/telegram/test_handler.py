@@ -3,6 +3,7 @@
 Handler (``make_on_message``) jest kaczo-typowany, więc testujemy go strukturalnymi
 atrapami (jak w drzwiach Teams), bez zainstalowanego extra ``telegram``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -86,9 +87,7 @@ def test_handler_extracts_attribution_from_update():
             captured["conversation_id"] = message.conversation_id
             return "ok"
 
-    update = _FakeUpdate(
-        _FakeMessage("x"), user=_FakeUser(username="anna"), chat=_FakeChat(id=42)
-    )
+    update = _FakeUpdate(_FakeMessage("x"), user=_FakeUser(username="anna"), chat=_FakeChat(id=42))
 
     asyncio.run(make_on_message(_Capture())(update))
 

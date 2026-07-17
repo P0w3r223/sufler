@@ -5,6 +5,7 @@ Przypadkowe zalogowanie obiektu ustawień albo traceback nie może ich ujawnić 
 dlatego pola sekretne mają ``field(repr=False)``. Testy to pilnują dla wszystkich
 trzech nośników sekretów.
 """
+
 from __future__ import annotations
 
 from workmate.config import AgentSettings, TeamsSettings, TelegramSettings

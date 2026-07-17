@@ -3,6 +3,7 @@
 ``validate`` to granica startu runtime'u (klucz + sensowne limity), a ``from_env``
 ma poprawnie wybierać źródło klucza. Oba czyste — testujemy bez SDK i bez sieci.
 """
+
 from __future__ import annotations
 
 import pytest

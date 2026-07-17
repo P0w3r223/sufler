@@ -11,6 +11,7 @@ kontekstu. Wszystkie komendy są READ-ONLY — nie omijają bramki zapisu (ADR 0
 wyłącznie narzędzia odczytu. Argumenty komend to dane wejściowe (np. ``/szukaj`` → parametryzowany
 FTS), nie polecenia.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -91,9 +92,7 @@ class CommandRouter:
         }
         # Rozwiń aliasy z rejestru; KeyError = rejestr i handlery się rozjechały (guard w testach).
         self._by_token = {
-            token: handlers[spec.tokens[0]]
-            for spec in COMMAND_SPECS
-            for token in spec.tokens
+            token: handlers[spec.tokens[0]] for spec in COMMAND_SPECS for token in spec.tokens
         }
 
     def dispatch(self, text: str, ctx: CommandContext) -> str | None:
@@ -194,7 +193,6 @@ def _format_project_status(data: dict[str, Any]) -> str:
             f"[{data['key']}] {data['name']} — {data['status']} / {data['health']} "
             f"/ faza: {data['phase']}",
             str(data["summary"]),
-            f"Notatki: {data['notes_count']} · "
-            f"otwarte action items: {data['open_action_items']}",
+            f"Notatki: {data['notes_count']} · otwarte action items: {data['open_action_items']}",
         ]
     )

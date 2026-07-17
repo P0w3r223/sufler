@@ -8,6 +8,7 @@ handlera działają bez zainstalowanego extra ``teams``.
 API zweryfikowane wobec Agents SDK 1.1.0 (patrz docs/research/teams-bot-setup-2026.md):
 trasa aiohttp woła ``start_agent_process(request, agent_app, adapter)``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

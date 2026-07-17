@@ -3,6 +3,7 @@
 Loader jest wygodą deva i granicą wczytania sekretu z ``.env`` — musi być odporny
 na kodowanie (PowerShell zapisuje UTF-16 LE z BOM) i NIE nadpisywać realnego env.
 """
+
 from __future__ import annotations
 
 import os

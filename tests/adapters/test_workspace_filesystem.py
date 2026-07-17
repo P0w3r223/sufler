@@ -3,6 +3,7 @@
 Realny FS (``tmp_path``): sedno to atomowy zapis create-only (``os.link``) oraz ``resolve()`` +
 ``relative_to(root)`` na każdej ścieżce (zapis i odczyt) — nic nie wyjdzie poza korzeń workspace.
 """
+
 from __future__ import annotations
 
 import os

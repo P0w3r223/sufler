@@ -8,6 +8,7 @@ czasu i identyfikatory nadaje implementacja, nie rdzeń.
 Magazyn jest APPEND-ONLY z deduplikacją po ``(source, external_id, kind)`` — to daje
 polleremu semantykę „co najmniej raz" bez podwójnych wpisów przy wyścigu procesów.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

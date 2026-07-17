@@ -8,6 +8,7 @@ ranking leksykalny (BM25 w ``core/domain/ranking.py``) trafiał „integracji"�
 Lematyzacja jest DETERMINISTYCZNA i bez I/O w kontrakcie (adapter może leniwie ładować dane
 językowe, ale nie woła zegara/sieci) — więc rdzeń pozostaje testowalny na atrapie.
 """
+
 from __future__ import annotations
 
 from typing import Protocol

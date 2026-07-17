@@ -1,4 +1,5 @@
 """Testy czystej logiki celu wątku (resolve_thread_target, ADR 0024) — url zdarzenia → cel."""
+
 from __future__ import annotations
 
 import pytest
@@ -31,9 +32,7 @@ def test_pull_takes_priority_over_issue_fragment():
     nie może wpaść do osobnego wątku „issue" o tym samym numerze. Url z oboma segmentami
     jednoznacznie odsłania kolejność dopasowania.
     """
-    assert resolve_thread_target(
-        "https://github.com/o/r/pull/12/issues/7"
-    ) == ("pr", "12")
+    assert resolve_thread_target("https://github.com/o/r/pull/12/issues/7") == ("pr", "12")
 
 
 def test_unrelated_url_has_no_target():

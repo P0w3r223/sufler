@@ -5,6 +5,7 @@ i zapisuje przez port ``NotesWriter``. Nigdy nie nadpisuje — przy kolizji dok�
 sufiks. Testowany w pełni w pamięci na atrapach (``FakeNotesWriter`` /
 ``FakeProjectsRepository``), zgodnie z regułą zależności rdzeń↛adaptery.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -31,9 +32,7 @@ def _projects_repo() -> FakeProjectsRepository:
     )
 
 
-def _metadata(
-    *, project: str = "scada-integration", title: str = "Przeglad API"
-) -> NoteMetadata:
+def _metadata(*, project: str = "scada-integration", title: str = "Przeglad API") -> NoteMetadata:
     return NoteMetadata(
         title=title,
         project=project,

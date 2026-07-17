@@ -5,6 +5,7 @@ pochodzi od wołającego i trafia do ścieżki pliku, więc wynik jest zawężon
 białej listy ``[a-z0-9-]``. Testy pilnują tej reguły oraz transliteracji polskich
 znaków, przypadków pustych i przycięcia długości.
 """
+
 from __future__ import annotations
 
 from datetime import date

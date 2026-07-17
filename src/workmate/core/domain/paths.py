@@ -10,6 +10,7 @@ od wołającego i trafia do ścieżki pliku, więc wynik jest zawężony do bia�
 path traversal). Polskie znaki są transliterowane do ASCII, spójnie z konwencją
 istniejących nazw plików (``przegląd`` → ``przeglad``).
 """
+
 from __future__ import annotations
 
 import re
@@ -30,11 +31,7 @@ def slugify(text: str) -> str:
     wołający (przypadek użycia zapisu) musi to potraktować jako błąd wejścia.
     """
     folded = text.translate(_TRANSLITERATION)
-    ascii_only = (
-        unicodedata.normalize("NFKD", folded)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
+    ascii_only = unicodedata.normalize("NFKD", folded).encode("ascii", "ignore").decode("ascii")
     hyphenated = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
     return hyphenated[:_SLUG_MAX_LENGTH].strip("-")
 

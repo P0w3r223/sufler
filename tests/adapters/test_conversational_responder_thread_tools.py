@@ -5,6 +5,7 @@ przekazywanych do ``run_turn`` (obok narzędzi katalogu roboczego, jeśli są). 
 (inne drzwi) — brak dodatkowych narzędzi (wsteczna zgodność). Bez LLM/sieci: atrapa runtime notuje
 ``extra_tools`` + prawdziwy ``ConversationService`` nad SQLite w pamięci.
 """
+
 from __future__ import annotations
 
 import asyncio

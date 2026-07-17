@@ -4,6 +4,7 @@
 ``tenant_id`` proces nie ma jak się zalogować (device-code), więc lepiej nie ruszyć niż
 wystartować z placeholderem. Ustawienia są czyste, więc testujemy je bez MSAL i bez sieci.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -197,9 +198,7 @@ def test_from_env_defaults_when_unset(monkeypatch):
 def test_from_env_parses_watch_pairs(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv(
-        "WORKMATE_TEAMS_GRAPH_WATCH", "team-a:chan-1, team-b:chan-2"
-    )
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_WATCH", "team-a:chan-1, team-b:chan-2")
 
     settings = TeamsGraphSettings.from_env()
 

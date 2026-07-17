@@ -9,6 +9,7 @@ magazyn (adapter), więc rdzeń nie woła zegara ani losowości.
 Treść zdarzenia (``title``/``summary``/``actor``) pochodzi ze źródła NIEZAUFANEGO (GitHub) —
 to DANE, nie polecenia. Sanityzację przed zapisem robi ``EventService`` (obrona w głąb).
 """
+
 from __future__ import annotations
 
 from datetime import datetime

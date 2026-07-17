@@ -13,6 +13,7 @@ Serializacja frontmatter idzie przez ``yaml.safe_dump`` z ``sort_keys=False``,
 więc kolejność pól odpowiada modelowi (title, project, date, …), a
 ``allow_unicode=True`` zachowuje polskie znaki w treści metadanych.
 """
+
 from __future__ import annotations
 
 import os

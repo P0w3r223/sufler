@@ -5,6 +5,7 @@ Wzorzec jak ``NotesRepository``/``NotesWriter``: odczyt jest jawnie tylko-do-odc
 (bramka ``enable_workspace``, osobna od ``enable_write`` dla notatek). Ścieżki są WZGLĘDNE wobec
 korzenia workspace (posix, wyliczone w domenie); adapter rozwiązuje je z ochroną path-traversal.
 """
+
 from __future__ import annotations
 
 from typing import Protocol

@@ -5,6 +5,7 @@ końcu jeden test integracyjny na REALNYM simplemma (pominięty, gdy brak extra 
 Sedno: zapytanie w innej formie fleksyjnej niż notatka trafia dopiero z lematyzacją; bez niej
 zachowanie podłańcuchowe zostaje bez zmian (zgodność wsteczna).
 """
+
 from __future__ import annotations
 
 import re
@@ -51,10 +52,20 @@ def test_inflected_query_matches_base_form_only_with_lemmatizer():
 
 def test_title_match_ranks_higher_than_body_via_weight():
     notes = [
-        make_note("x/y/2025-01-01-t", project="p", title="Raport koszt", on=date(2025, 1, 1),
-                  body="ogólne uwagi"),
-        make_note("x/y/2025-01-02-b", project="p", title="Uwagi ogólne", on=date(2025, 1, 2),
-                  body="analiza koszt i szczegóły"),
+        make_note(
+            "x/y/2025-01-01-t",
+            project="p",
+            title="Raport koszt",
+            on=date(2025, 1, 1),
+            body="ogólne uwagi",
+        ),
+        make_note(
+            "x/y/2025-01-02-b",
+            project="p",
+            title="Uwagi ogólne",
+            on=date(2025, 1, 2),
+            body="analiza koszt i szczegóły",
+        ),
     ]
     svc = NotesService(FakeNotesRepository(notes), lemmatizer=_StubLemmatizer())
     results = svc.search_notes("koszty")  # lemat „koszt"
@@ -64,8 +75,13 @@ def test_title_match_ranks_higher_than_body_via_weight():
 
 def test_without_lemmatizer_keeps_substring_behavior():
     notes = [
-        make_note("m/s/2025-01-01-k", project="p", title="Kickoff integracji", on=date(2025, 1, 1),
-                  body="odczyt danych ze SCADA przez API"),
+        make_note(
+            "m/s/2025-01-01-k",
+            project="p",
+            title="Kickoff integracji",
+            on=date(2025, 1, 1),
+            body="odczyt danych ze SCADA przez API",
+        ),
     ]
     svc = NotesService(FakeNotesRepository(notes))  # brak lematyzatora
     assert [r.id for r in svc.search_notes("SCADA")] == ["m/s/2025-01-01-k"]  # podłańcuch działa
@@ -95,8 +111,13 @@ def test_real_simplemma_matches_polish_inflection():
     from workmate.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
 
     notes = [
-        make_note("mpwik/scada/2025-06-12-w", project="scada", title="Wdrożenie systemu",
-                  on=date(2025, 6, 12), body="Plan wdrożenia oraz koszty integracji z SCADA."),
+        make_note(
+            "mpwik/scada/2025-06-12-w",
+            project="scada",
+            title="Wdrożenie systemu",
+            on=date(2025, 6, 12),
+            body="Plan wdrożenia oraz koszty integracji z SCADA.",
+        ),
     ]
     svc = NotesService(FakeNotesRepository(notes), lemmatizer=SimplemmaLemmatizer())
     # Realna fleksja: zapytanie w innej formie niż w notatce, mimo to trafia.

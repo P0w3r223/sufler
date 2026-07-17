@@ -6,6 +6,7 @@ dedupowany magazynu), at-most-once przy awarii (komentarz świadomie tracony, ni
 podobnie REALNE ``EventService`` (na atrapie ``_FakeStore`` z prawdziwym dedupem) i REALNY
 ``GithubWriteService`` (na atrapie portu ``GithubWritePort``, która NOTUJE wywołania zapisu).
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -54,11 +55,9 @@ class _FakeStore:
         return row
 
     def read_since(self, after_id, *, source=None, limit=50):
-        return [
-            r
-            for r in self.rows
-            if r.id > after_id and (source is None or r.source == source)
-        ][:limit]
+        return [r for r in self.rows if r.id > after_id and (source is None or r.source == source)][
+            :limit
+        ]
 
     def recent(self, *, source=None, limit=20):
         return list(reversed(self.rows))
@@ -225,12 +224,36 @@ def test_ignores_non_ci_failure_kinds():
     # przesuwa się przez wszystkie zdarzenia (żeby nie utknąć na nieinteresujących).
     store = _FakeStore()
     events, writer, port = _wire(store)
-    events.ingest(NewEvent(source="github", kind="issue_opened", external_id="1",
-                           title="i", url=f"{_REPO}/issues/1", occurred_at=_WHEN))
-    events.ingest(NewEvent(source="github", kind="ci_success", external_id="2#1",
-                           title="ok", url=f"{_REPO}/pull/5", occurred_at=_WHEN))
-    e3 = events.ingest(NewEvent(source="github", kind="pr_comment", external_id="3",
-                                title="c", url=f"{_REPO}/pull/5", occurred_at=_WHEN))
+    events.ingest(
+        NewEvent(
+            source="github",
+            kind="issue_opened",
+            external_id="1",
+            title="i",
+            url=f"{_REPO}/issues/1",
+            occurred_at=_WHEN,
+        )
+    )
+    events.ingest(
+        NewEvent(
+            source="github",
+            kind="ci_success",
+            external_id="2#1",
+            title="ok",
+            url=f"{_REPO}/pull/5",
+            occurred_at=_WHEN,
+        )
+    )
+    e3 = events.ingest(
+        NewEvent(
+            source="github",
+            kind="pr_comment",
+            external_id="3",
+            title="c",
+            url=f"{_REPO}/pull/5",
+            occurred_at=_WHEN,
+        )
+    )
 
     svc = _service(events, writer)
     posted = svc.process_once()
@@ -245,8 +268,16 @@ def test_reads_only_github_source():
     # o tym samym kind jest niewidoczne — potwierdza, że atrapa respektuje source (test #9).
     store = _FakeStore()
     events, writer, port = _wire(store)
-    events.ingest(NewEvent(source="teams", kind="ci_failure", external_id="7#1",
-                           title="t", url=f"{_REPO}/pull/7", occurred_at=_WHEN))
+    events.ingest(
+        NewEvent(
+            source="teams",
+            kind="ci_failure",
+            external_id="7#1",
+            title="t",
+            url=f"{_REPO}/pull/7",
+            occurred_at=_WHEN,
+        )
+    )
     ev = _seed_ci_failure(events, run_id="8", attempt="1", pr=8)
 
     svc = _service(events, writer)

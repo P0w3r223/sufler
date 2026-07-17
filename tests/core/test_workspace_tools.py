@@ -4,6 +4,7 @@ Powierzchnia MCP (4+1 notatki) jest zamrożona osobnym golden-testem ``test_mcp_
 narzędzia workspace są WYŁĄCZNIE dla runtime agenta, więc tam się nie pojawiają (gdyby się
 pojawiły, golden-test by padł). Tu sprawdzamy same narzędzia workspace i kopertę błędów.
 """
+
 from __future__ import annotations
 
 from workmate.core.application.tools import build_workspace_catalog

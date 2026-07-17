@@ -10,6 +10,7 @@ Granice bezpieczeństwa (zapis z NIEZAUFANYCH drzwi — treść może być promp
 - Nazwa pliku od modelu przechodzi przez ``slugify`` (biała lista ``[a-z0-9-]``) + białą listę
   rozszerzeń — ``/``, ``..`` i ścieżki absolutne nie przeżyją (jak tytuł notatki w ``paths.py``).
 """
+
 from __future__ import annotations
 
 import hashlib

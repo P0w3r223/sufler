@@ -3,6 +3,7 @@
 Bez SDK i bez sieci: ``RuntimeResponder`` dostaje atrapę runtime'u (kaczo-typowaną),
 a ``SaveNoteResponder`` jest jawnym stubem (zapis z Teams czeka na decyzję bramkowania).
 """
+
 from __future__ import annotations
 
 import asyncio

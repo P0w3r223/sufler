@@ -3,6 +3,7 @@
 Baza ``:memory:``: link + odczyt dwukierunkowy (root po celu, cel po roocie), NADPISANIE roota
 (upsert — przełączenie wątku po usunięciu roota), niezależność celów/kanałów/zespołów, brak wpisu.
 """
+
 from __future__ import annotations
 
 from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore

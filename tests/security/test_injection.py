@@ -5,6 +5,7 @@ Trzy wektory: (1) treść notatki udająca frontmatter nie może podmienić meta
 (3) strażnik ``reject_dangerous_content`` odrzuca NUL i znaki sterujące. Round-tripy
 idą przez PRAWDZIWE adaptery zapisu/odczytu na ``tmp_path`` (nie ruszają ``data/``).
 """
+
 from __future__ import annotations
 
 from datetime import date

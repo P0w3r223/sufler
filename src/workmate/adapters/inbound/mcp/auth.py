@@ -13,6 +13,7 @@ twardo przy starcie: zły albo źle położony magazyn = proces się nie urucham
 Middleware jest czystym ASGI (bez importu Starlette), więc jego jedyną zależnością
 jest kontrakt ASGI, a testy napędzają je bez sieci.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -86,28 +87,18 @@ class TokenVerifier:
         try:
             raw = resolved.read_text(encoding="utf-8")
         except OSError as exc:
-            raise TokenStoreError(
-                f"Nie można odczytać magazynu tokenów {resolved}: {exc}"
-            ) from exc
+            raise TokenStoreError(f"Nie można odczytać magazynu tokenów {resolved}: {exc}") from exc
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise TokenStoreError(
-                f"Magazyn tokenów {resolved} to niepoprawny JSON: {exc}"
-            ) from exc
+            raise TokenStoreError(f"Magazyn tokenów {resolved} to niepoprawny JSON: {exc}") from exc
         if not isinstance(parsed, list):
             raise TokenStoreError(
-                f"Magazyn tokenów {resolved} musi być listą wpisów, "
-                f"jest: {type(parsed).__name__}."
+                f"Magazyn tokenów {resolved} musi być listą wpisów, jest: {type(parsed).__name__}."
             )
-        entries = [
-            _parse_entry(entry, index=i, source=resolved)
-            for i, entry in enumerate(parsed)
-        ]
+        entries = [_parse_entry(entry, index=i, source=resolved) for i, entry in enumerate(parsed)]
         if not entries:
-            raise TokenStoreError(
-                f"Magazyn tokenów {resolved} jest pusty — brak osób z dostępem."
-            )
+            raise TokenStoreError(f"Magazyn tokenów {resolved} jest pusty — brak osób z dostępem.")
         return cls(entries)
 
     def verify_header(self, authorization: str | None) -> Principal | None:
@@ -137,17 +128,11 @@ def _parse_entry(entry: Any, *, index: int, source: Path) -> tuple[str, Principa
     token_hash = entry.get("token_sha256")
     scopes = entry.get("scopes", ["read"])
     if not isinstance(person, str) or not person.strip():
-        raise TokenStoreError(
-            f"Wpis #{index} w {source}: brakuje niepustego pola 'person'."
-        )
+        raise TokenStoreError(f"Wpis #{index} w {source}: brakuje niepustego pola 'person'.")
     if not isinstance(token_hash, str) or not token_hash.strip():
-        raise TokenStoreError(
-            f"Wpis #{index} w {source}: brakuje niepustego pola 'token_sha256'."
-        )
+        raise TokenStoreError(f"Wpis #{index} w {source}: brakuje niepustego pola 'token_sha256'.")
     if not isinstance(scopes, list) or not all(isinstance(s, str) for s in scopes):
-        raise TokenStoreError(
-            f"Wpis #{index} w {source}: 'scopes' musi być listą napisów."
-        )
+        raise TokenStoreError(f"Wpis #{index} w {source}: 'scopes' musi być listą napisów.")
     # Normalizuj do lowercase (typowe narzędzia hashujące zwracają wielkie litery),
     # potem twardo waliduj format — wyłapuje literówkę w magazynie na starcie,
     # zamiast cichego „token nie działa mimo zgodnego hasha".

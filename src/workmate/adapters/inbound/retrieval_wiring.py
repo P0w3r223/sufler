@@ -4,6 +4,7 @@ Buduje ``Lemmatizer`` (adapter ``simplemma``) albo ``None`` z łagodną degradac
 konfiguracji lub brak extra ``retrieval`` → ``None`` → ``NotesService`` używa dawnego rankingu
 podłańcuchowego. Import adaptera jest LENIWY, żeby serwer MCP/testy bez extra się nie wywróciły.
 """
+
 from __future__ import annotations
 
 import logging

@@ -5,6 +5,7 @@ Fabryka mapuje ``external_id`` drzwi teams_graph (konwencja ``team/channel/root`
 wątek → narzędzie komentujące właściwy numer; brak powiązania → pusta lista; źle uformowany
 ``external_id`` (nie 3 części) → pusta lista bez wyjątku. Na atrapach (link store + port zapisu).
 """
+
 from __future__ import annotations
 
 from workmate.adapters.inbound.teams_graph.app import (

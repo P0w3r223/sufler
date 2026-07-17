@@ -4,6 +4,7 @@ Bez LLM i bez sieci: atrapa runtime (notuje przekazaną historię, zwraca kanned
 + prawdziwy ``ConversationService`` nad SQLite w pamięci. Sprawdzamy, że kolejna tura
 dostaje historię poprzednich, odpowiedź jest zapisywana, a rollover dokłada notkę.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -131,12 +132,8 @@ def test_second_turn_receives_prior_history_and_reply_is_recorded():
     runtime = _FakeRuntime("odpowiedz")
     responder = ConversationalResponder(runtime, service, channel="telegram")
 
-    r1 = asyncio.run(
-        responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1"))
-    )
-    asyncio.run(
-        responder.respond(InboundMessage(text="druga", conversation_id="chat1"))
-    )
+    r1 = asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1")))
+    asyncio.run(responder.respond(InboundMessage(text="druga", conversation_id="chat1")))
 
     assert r1 == "odpowiedz"
     # Druga tura: query "druga", a historia to poprzednia para (user + assistant).
@@ -157,9 +154,7 @@ def test_rollover_prefixes_notice_on_context_limit():
     responder = ConversationalResponder(runtime, service, channel="telegram")
 
     asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="c")))
-    reply2 = asyncio.run(
-        responder.respond(InboundMessage(text="druga", conversation_id="c"))
-    )
+    reply2 = asyncio.run(responder.respond(InboundMessage(text="druga", conversation_id="c")))
 
     assert reply2.startswith("(Zaczynam nową rozmowę")
 
@@ -172,9 +167,7 @@ def test_idle_gap_starts_new_thread_via_responder():
     runtime = _FakeRuntime("ok")
     # Pierwsza tura o _TS, druga 31 min później → przekroczona bezczynność → nowy wątek.
     clock = _FakeClock([_TS, _TS + timedelta(minutes=31)])
-    responder = ConversationalResponder(
-        runtime, service, channel="telegram", clock=clock
-    )
+    responder = ConversationalResponder(runtime, service, channel="telegram", clock=clock)
 
     asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1")))
     # Po zapisie updated_at to realny CURRENT_TIMESTAMP — przypnij do _TS, by bezczynność
@@ -187,9 +180,7 @@ def test_idle_gap_starts_new_thread_via_responder():
     )
     store._conn.commit()
 
-    reply2 = asyncio.run(
-        responder.respond(InboundMessage(text="druga", conversation_id="chat1"))
-    )
+    reply2 = asyncio.run(responder.respond(InboundMessage(text="druga", conversation_id="chat1")))
 
     assert reply2.startswith("(Zaczynam nową rozmowę")
     # Druga tura poszła do NOWEGO wątku — dostała pustą historię (świeży kontekst).
@@ -203,9 +194,7 @@ def test_runtime_error_leaves_no_orphan_turn():
     responder = ConversationalResponder(_FailingRuntime(), service, channel="telegram")
 
     with pytest.raises(RuntimeError):
-        asyncio.run(
-            responder.respond(InboundMessage(text="czesc", conversation_id="chat1"))
-        )
+        asyncio.run(responder.respond(InboundMessage(text="czesc", conversation_id="chat1")))
 
     # prepare_turn otworzyło rozmowę, ale błąd runtime → NIC nie utrwalono (brak sieroty).
     active = store.active_conversation("telegram", "chat1")
@@ -379,9 +368,7 @@ def test_new_thread_command_closes_thread_without_calling_runtime():
     # Zbuduj niepusty wątek (jedna realna tura).
     asyncio.run(responder.respond(InboundMessage(text="pierwsza", conversation_id="chat1")))
 
-    ack = asyncio.run(
-        responder.respond(InboundMessage(text="/nowa", conversation_id="chat1"))
-    )
+    ack = asyncio.run(responder.respond(InboundMessage(text="/nowa", conversation_id="chat1")))
 
     assert ack == _NEW_THREAD_ACK
     assert len(runtime.calls) == 1  # komenda NIE poszła do runtime (wciąż 1 wywołanie)
@@ -401,9 +388,7 @@ def test_new_thread_command_on_empty_conversation_reports_already_fresh():
         runtime, service, channel="telegram", commands=CommandRouter(service, {})
     )
 
-    ack = asyncio.run(
-        responder.respond(InboundMessage(text="/nowa", conversation_id="chat1"))
-    )
+    ack = asyncio.run(responder.respond(InboundMessage(text="/nowa", conversation_id="chat1")))
 
     assert ack == _NEW_THREAD_ALREADY_FRESH
     assert runtime.calls == []  # nic nie trafiło do runtime
@@ -445,17 +430,11 @@ class _FakeSummarizer:
 def test_compaction_archives_old_turns_and_injects_summary():
     store = SqliteConversationStore(":memory:")
     # Kompaktowanie zastępuje rollover rozmiaru: size_rollover=False, duży limit.
-    service = ConversationService(
-        store, max_context_tokens=1_000_000, size_rollover=False
-    )
+    service = ConversationService(store, max_context_tokens=1_000_000, size_rollover=False)
     # Każda tura raportuje input 500 > próg 100 → po zebraniu dość wymian kompaktuje.
     runtime = _FakeRuntime("odp", usage=TokenUsage(input_tokens=500))
-    compaction = CompactionService(
-        store, _FakeSummarizer(), threshold_tokens=100, keep_turns=2
-    )
-    responder = ConversationalResponder(
-        runtime, service, channel="cli", compaction=compaction
-    )
+    compaction = CompactionService(store, _FakeSummarizer(), threshold_tokens=100, keep_turns=2)
+    responder = ConversationalResponder(runtime, service, channel="cli", compaction=compaction)
 
     for i in range(4):
         asyncio.run(responder.respond(InboundMessage(text=f"q{i}", conversation_id="chat")))
@@ -475,17 +454,11 @@ def test_compaction_archives_old_turns_and_injects_summary():
 
 def test_no_compaction_keeps_full_history_in_replay():
     store = SqliteConversationStore(":memory:")
-    service = ConversationService(
-        store, max_context_tokens=1_000_000, size_rollover=False
-    )
+    service = ConversationService(store, max_context_tokens=1_000_000, size_rollover=False)
     # Wejście poniżej progu — kompaktowanie nie odpala, replay = pełna historia.
     runtime = _FakeRuntime("odp", usage=TokenUsage(input_tokens=10))
-    compaction = CompactionService(
-        store, _FakeSummarizer(), threshold_tokens=10_000, keep_turns=2
-    )
-    responder = ConversationalResponder(
-        runtime, service, channel="cli", compaction=compaction
-    )
+    compaction = CompactionService(store, _FakeSummarizer(), threshold_tokens=10_000, keep_turns=2)
+    responder = ConversationalResponder(runtime, service, channel="cli", compaction=compaction)
 
     for i in range(3):
         asyncio.run(responder.respond(InboundMessage(text=f"q{i}", conversation_id="chat")))

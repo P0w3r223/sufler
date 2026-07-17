@@ -6,6 +6,7 @@ ATRAPĄ portu — bez ``httpx``, bez MSAL, bez sieci. Sedno: sniff obrazu po ZAW
 (docx/xlsx/pptx/pliki tekstowe) oraz łagodna degradacja (limit rozmiaru/liczby, nieobsługiwany
 typ, błąd pobrania/uszkodzony plik → NOTKA, a nie wyjątek na zewnątrz).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -115,9 +116,7 @@ def _materialize(
             max_image_edge=max_image_edge,
         ),
     )
-    return asyncio.run(
-        materializer.materialize(_TEAM, _CHAN, _msg(refs, msg_id=msg_id, root=root))
-    )
+    return asyncio.run(materializer.materialize(_TEAM, _CHAN, _msg(refs, msg_id=msg_id, root=root)))
 
 
 def _docx_bytes(*, paragraph: str, table_cells: list[list[str]]) -> bytes:
@@ -618,13 +617,13 @@ def test_extracted_file_does_not_consume_api_budget():
     client = _FakeGraphClient(files={"u://d": docx, "u://p": b"%PDF" + b"a" * 96})
     refs = (
         AttachmentRef(kind="file", name="a.docx", url="u://d"),  # tekst → 0 do budżetu
-        AttachmentRef(kind="file", name="b.pdf", url="u://p"),   # 100 B base64
+        AttachmentRef(kind="file", name="b.pdf", url="u://p"),  # 100 B base64
     )
 
     doc_text, pdf = _materialize(client, refs, max_bytes=1000, max_total=150)
 
     assert doc_text.kind == "text"  # docx wyekstrahowany
-    assert pdf.kind == "document"   # PDF się zmieścił (docx nie zjadł budżetu)
+    assert pdf.kind == "document"  # PDF się zmieścił (docx nie zjadł budżetu)
 
 
 def test_corrupt_docx_yields_note_not_raised():

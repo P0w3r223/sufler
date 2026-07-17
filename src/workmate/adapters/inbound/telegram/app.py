@@ -12,6 +12,7 @@ Importy SDK/dotenv są leniwe; brak extra kończy się czytelnym komunikatem.
 Powrót do samego echa (bez API/klucza) to jedna linia: ``RuntimeResponder(runtime)``
 → ``EchoResponder()`` (patrz ``adapters/inbound/responder.py``).
 """
+
 from __future__ import annotations
 
 import logging

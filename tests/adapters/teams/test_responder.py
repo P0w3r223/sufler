@@ -1,4 +1,5 @@
 """Testy szwu drzwi Teams (responder) — bez SDK, bez Azure."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,9 +8,7 @@ from workmate.adapters.inbound.responder import EchoResponder, InboundMessage
 
 
 def test_echo_responder_confirms_receipt():
-    reply = asyncio.run(
-        EchoResponder().respond(InboundMessage(text="notatka ze spotkania"))
-    )
+    reply = asyncio.run(EchoResponder().respond(InboundMessage(text="notatka ze spotkania")))
 
     assert reply == "Odebrałem notatkę: notatka ze spotkania"
 

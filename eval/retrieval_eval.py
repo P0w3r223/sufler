@@ -10,6 +10,7 @@ z ``lexical-PL`` — dense włączamy TYLKO gdy poprawia nDCG@5 o istotny margin
 Uruchomienie: ``uv run python eval/retrieval_eval.py`` (wymaga extra ``retrieval`` do lematyzacji).
 Funkcje są czyste/importowalne — z tego korzysta test-strażnik ``tests/test_retrieval_eval.py``.
 """
+
 from __future__ import annotations
 
 import math
@@ -114,8 +115,10 @@ def main() -> None:
     if {"baseline", "lexical-PL"} <= results.keys():
         d = results["lexical-PL"]["ndcg@5"] - results["baseline"]["ndcg@5"]
         print("\n" + "=" * 70)
-        print(f"Faza A (lexical-PL vs baseline): ΔnDCG@5 = {d:+.3f} — "
-              f"{'POPRAWA' if d > 0 else 'brak poprawy'}.")
+        print(
+            f"Faza A (lexical-PL vs baseline): ΔnDCG@5 = {d:+.3f} — "
+            f"{'POPRAWA' if d > 0 else 'brak poprawy'}."
+        )
     print(
         "\nBramka Fazy B: dołóż konfigurację 'hybrid' (dense+RRF), gdy powstanie; dense TYLKO "
         f"gdy nDCG@5(hybrid) − nDCG@5(lexical-PL) ≥ {_DENSE_GATE_NDCG5:.2f} bez regresji recall@10."

@@ -6,6 +6,7 @@ identyczne. Baseline (``tool_surface_baseline.json``) został zrzucony z FastMCP
 PRZED przebudową; ten test asertuje równość po przebudowie. Jeśli kiedyś padnie,
 to sygnał, że zamrożona powierzchnia się ruszyła — zatrzymaj się i sprawdź.
 """
+
 from __future__ import annotations
 
 import json

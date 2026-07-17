@@ -6,6 +6,7 @@ Wszystkie decyzje (mapowanie, self-skip, watermark) delegujemy do czystej ``sele
 zostaje orkiestracja I/O i utrwalanie stanu. Deduplikację egzekwuje magazyn (at-least-once):
 watermark ``since`` przesuwamy PO ingest, a ponowne przyjęcie tego samego zdarzenia jest no-op.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -159,9 +160,7 @@ class GithubPoller:
         )
         self._persist(self._state)
         if ingested:
-            logger.info(
-                "Przyjęto %d zdarzeń z GitHub %s/%s", ingested, self._owner, self._repo
-            )
+            logger.info("Przyjęto %d zdarzeń z GitHub %s/%s", ingested, self._owner, self._repo)
         return ingested
 
     def _ingest_batch(self, events: list[NewEvent]) -> int:
@@ -216,9 +215,7 @@ class GithubPoller:
             return
         loop = asyncio.get_running_loop()
         try:
-            self._self_login = await loop.run_in_executor(
-                None, self._client.authenticated_login
-            )
+            self._self_login = await loop.run_in_executor(None, self._client.authenticated_login)
         except Exception:
             logger.warning(
                 "Nie udało się ustalić konta PAT — self-skip wyłączony (ryzyko pętli self-ping)."

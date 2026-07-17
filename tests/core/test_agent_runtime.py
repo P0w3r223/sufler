@@ -4,6 +4,7 @@ Runtime zależy tylko od portu LLM i katalogu narzędzi, więc scenariusze pętl
 tool-use sprawdzamy atrapą zwracającą zaplanowane odpowiedzi (jak atrapy repo w
 ``conftest.py``).
 """
+
 from __future__ import annotations
 
 from workmate.core.agent.runtime import AgentRuntime
@@ -242,8 +243,13 @@ def test_run_turn_wraps_attachments_into_user_text_in_transcript_and_entries():
     modelu ORAZ w zapisanych ``entries`` (bezstratna pamięć multimodalna, ADR 0016)."""
     att = Attachment("image", "image/png", "z.png", data_base64="QUJD")
     llm = _ScriptedLLM(
-        [LLMResponse(text="widzę obraz", blocks=({"type": "text", "text": "widzę obraz"},),
-                     stop_reason="end_turn")]
+        [
+            LLMResponse(
+                text="widzę obraz",
+                blocks=({"type": "text", "text": "widzę obraz"},),
+                stop_reason="end_turn",
+            )
+        ]
     )
     runtime = AgentRuntime(llm, [])
 

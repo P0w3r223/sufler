@@ -5,6 +5,7 @@ Logika bez I/O: atrapa ``ConversationStore`` w pamięci. Rozliczenie tokenów je
 Atrapa liczy agregaty jak prawdziwy magazyn: sumę usage, kontekst ostatniej tury asystenta
 oraz liczbę tur (sygnał „niepusty" dla bramek idle/``/nowa``).
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -69,15 +70,11 @@ class _FakeStore:
             }
         )
 
-    def active_conversation(
-        self, channel: str, external_id: str
-    ) -> Conversation | None:
+    def active_conversation(self, channel: str, external_id: str) -> Conversation | None:
         actives = [
             c
             for c in self.conversations.values()
-            if c.channel == channel
-            and c.external_id == external_id
-            and c.status == "active"
+            if c.channel == channel and c.external_id == external_id and c.status == "active"
         ]
         return self._enrich(actives[-1]) if actives else None
 
@@ -99,9 +96,7 @@ class _FakeStore:
 
     def close_conversation(self, conversation_id: str) -> None:
         conv = self.conversations[conversation_id]
-        self.conversations[conversation_id] = conv.model_copy(
-            update={"status": "closed"}
-        )
+        self.conversations[conversation_id] = conv.model_copy(update={"status": "closed"})
 
     def append_message(
         self,
@@ -277,9 +272,7 @@ def test_rollover_starts_new_thread_after_idle_gap():
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "czesc", now=_TS)
     service.record_turn(cid1, "czesc", "hej")  # message_count > 0 (wątek niepusty)
     later = _TS + timedelta(minutes=31)  # 31 min bezczynności > próg 30 min
-    cid2, history, rolled_over = service.prepare_turn(
-        "telegram", "chat1", "wracam", now=later
-    )
+    cid2, history, rolled_over = service.prepare_turn("telegram", "chat1", "wracam", now=later)
 
     assert rolled_over is True
     assert cid2 != cid1
@@ -296,9 +289,7 @@ def test_no_rollover_within_idle_window():
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "czesc", now=_TS)
     service.record_turn(cid1, "czesc", "hej")
     soon = _TS + timedelta(minutes=10)  # w oknie 30 min → ten sam wątek
-    cid2, history, rolled_over = service.prepare_turn(
-        "telegram", "chat1", "dalej", now=soon
-    )
+    cid2, history, rolled_over = service.prepare_turn("telegram", "chat1", "dalej", now=soon)
 
     assert rolled_over is False
     assert cid2 == cid1
@@ -312,9 +303,7 @@ def test_idle_disabled_keeps_single_thread_across_long_gap():
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "czesc", now=_TS)
     service.record_turn(cid1, "czesc", "hej")
     much_later = _TS + timedelta(days=7)
-    cid2, _, rolled_over = service.prepare_turn(
-        "telegram", "chat1", "po tygodniu", now=much_later
-    )
+    cid2, _, rolled_over = service.prepare_turn("telegram", "chat1", "po tygodniu", now=much_later)
 
     assert rolled_over is False  # wyłączone kryterium → tylko limit kontekstu
     assert cid2 == cid1
@@ -329,9 +318,7 @@ def test_empty_thread_not_rolled_over_on_idle():
     # Pierwsza tura otwiera PUSTY wątek (message_count=0) — brak tur do odcięcia.
     cid1, _, _ = service.prepare_turn("telegram", "chat1", "czesc", now=_TS)
     later = _TS + timedelta(minutes=31)
-    cid2, _, rolled_over = service.prepare_turn(
-        "telegram", "chat1", "kolejna", now=later
-    )
+    cid2, _, rolled_over = service.prepare_turn("telegram", "chat1", "kolejna", now=later)
 
     assert rolled_over is False  # pustego wątku nie rollujemy mimo przekroczonej przerwy
     assert cid2 == cid1

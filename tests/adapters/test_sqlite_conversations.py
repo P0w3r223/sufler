@@ -5,6 +5,7 @@ zapis/odczyt tur, REALNE usage aktywnej rozmowy (Design 2), domknięcie (znika z
 zostaje w archiwum) oraz wyszukiwanie po treści (FTS5 albo fallback LIKE — test jest
 niezależny od trybu).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -63,9 +64,7 @@ def _touch(store: SqliteConversationStore, conv_id: str, updated_at: str) -> Non
     dostają identyczny znacznik, więc jawne wartości są jedynym deterministycznym
     sposobem sprawdzenia, że sortuje ``updated_at`` (a nie kolejność zapisu / rowid).
     """
-    store._conn.execute(
-        "UPDATE conversations SET updated_at=? WHERE id=?", (updated_at, conv_id)
-    )
+    store._conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (updated_at, conv_id))
     store._conn.commit()
 
 
@@ -352,8 +351,11 @@ def test_pre_0011_db_migrates_additively_and_reads_legacy_rows(tmp_path: Path):
 
     # Po migracji nowy zapis z blokami/usage działa na tej samej (zmigrowanej) bazie.
     store.append_message(
-        "c-old", "assistant", "nowa",
-        blocks=[{"type": "text", "text": "nowa"}], stop_reason="end_turn",
+        "c-old",
+        "assistant",
+        "nowa",
+        blocks=[{"type": "text", "text": "nowa"}],
+        stop_reason="end_turn",
         usage=TokenUsage(input_tokens=10, output_tokens=2),
     )
     fresh = store.messages("c-old")[1]

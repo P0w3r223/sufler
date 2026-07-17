@@ -1,4 +1,5 @@
 """Testy repozytorium projektów opartego na rejestrze YAML (parsowanie, błędy, cache)."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -122,8 +123,7 @@ def test_modified_registry_is_reparsed_on_next_call(tmp_path: Path):
     assert {p.key for p in repo.all()} == {"scada-integration", "workmate"}
 
     path.write_text(
-        REGISTRY
-        + "  - key: enerkom\n"
+        REGISTRY + "  - key: enerkom\n"
         "    company: enerkom\n"
         "    name: Enerkom\n"
         "    description: Nowy projekt\n"

@@ -5,6 +5,7 @@ Tu żyje sedno drzwi — WIELOTURA w wątku (watermark PER WĄTEK, nie po
 znaczników czasu na różną precyzję ułamków sekund. Wszystko czyste → testujemy bez sieci
 i bez SDK, atrapując tylko surowe słowniki payloadu Graph.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -64,9 +65,7 @@ def _raw_message(
 
 
 def test_parse_iso_handles_zulu_suffix():
-    assert parse_iso("2024-01-01T10:00:00Z") == datetime(
-        2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-    )
+    assert parse_iso("2024-01-01T10:00:00Z") == datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
 
 
 def test_parse_iso_empty_and_invalid_map_to_epoch():
@@ -226,7 +225,9 @@ def test_parse_refs_extracts_public_giphy_image_as_url():
     refs = _parse_refs({}, body_html=body)
 
     assert refs == (
-        AttachmentRef(kind="url", name="obraz", url="https://media.giphy.com/media/abc123/giphy.gif"),
+        AttachmentRef(
+            kind="url", name="obraz", url="https://media.giphy.com/media/abc123/giphy.gif"
+        ),
     )
 
 
@@ -281,9 +282,7 @@ def test_normalize_keeps_message_with_only_file_and_no_text():
 
     assert msg is not None
     assert msg.text == ""
-    assert msg.attachment_refs == (
-        AttachmentRef(kind="file", name="plik.pdf", url="u://plik"),
-    )
+    assert msg.attachment_refs == (AttachmentRef(kind="file", name="plik.pdf", url="u://plik"),)
 
 
 def test_normalize_keeps_message_with_only_inline_image():
@@ -412,9 +411,7 @@ def test_plan_channel_returns_new_reply_in_tracked_thread_past_per_thread_waterm
     Bramkujemy WYŁĄCZNIE po watermarku per wątek — dlatego bot nie milknie po pierwszej
     odpowiedzi (spike milkł, bo patrzył na root.lastModifiedDateTime).
     """
-    reply = _raw_message(
-        msg_id="r-2", created="2024-01-01T11:40:00Z", reply_to="root-1"
-    )
+    reply = _raw_message(msg_id="r-2", created="2024-01-01T11:40:00Z", reply_to="root-1")
 
     messages, state = plan_channel(
         [],
@@ -433,9 +430,7 @@ def test_plan_channel_returns_new_reply_in_tracked_thread_past_per_thread_waterm
 
 def test_plan_channel_skips_replies_at_or_before_per_thread_watermark():
     """Odpowiedź nie nowsza niż watermark wątku to już-widziana — nie zwracamy jej."""
-    stale = _raw_message(
-        msg_id="r-old", created="2024-01-01T11:30:00Z", reply_to="root-1"
-    )
+    stale = _raw_message(msg_id="r-old", created="2024-01-01T11:30:00Z", reply_to="root-1")
 
     messages, _ = plan_channel(
         [],
@@ -500,9 +495,7 @@ def test_plan_channel_skips_bot_and_app_messages_without_user_id():
 
 def test_plan_channel_dedup_skips_already_replied_message():
     """``replied`` (dedup) blokuje drugą odpowiedź na tę samą wiadomość."""
-    reply = _raw_message(
-        msg_id="r-2", created="2024-01-01T11:40:00Z", reply_to="root-1"
-    )
+    reply = _raw_message(msg_id="r-2", created="2024-01-01T11:40:00Z", reply_to="root-1")
 
     messages, state = plan_channel(
         [],
@@ -524,9 +517,7 @@ def test_plan_channel_dedup_skips_already_replied_message():
 
 def test_plan_channel_sorts_returned_messages_chronologically():
     later = _raw_message(msg_id="late", created="2024-01-01T11:50:00Z", reply_to="root-1")
-    earlier = _raw_message(
-        msg_id="early", created="2024-01-01T11:40:00Z", reply_to="root-1"
-    )
+    earlier = _raw_message(msg_id="early", created="2024-01-01T11:40:00Z", reply_to="root-1")
 
     messages, _ = plan_channel(
         [],

@@ -10,6 +10,7 @@ nieznany z narzędzia wypływa jako defekt kodu.
 zapisu w pamięci: tura ucięta na ``max_tokens`` jest wykluczana z zapisu (jej
 odtworzenie dałoby API 400). ``run`` to cienka nakładka zwracająca sam tekst.
 """
+
 from __future__ import annotations
 
 import inspect

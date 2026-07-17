@@ -5,6 +5,7 @@ a nie kształt danych — jak ``core/domain/paths.py``. Bez I/O i bez zależnoś
 kilku konsumentów (serwisy, katalog narzędzi, przypadek „notatka ze spotkania") współdzieli
 te helpery zamiast duplikować predykat filtra i konstrukcję metadanych.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

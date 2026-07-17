@@ -1,4 +1,5 @@
 """Testy pętli pollera GitHub (poll_once) na atrapach — ingest, self-skip, watermark, dedup."""
+
 from __future__ import annotations
 
 import asyncio
@@ -98,8 +99,13 @@ def _pr(number: int, *, state: str = "open", login: str = "alice") -> dict:
     return raw
 
 
-def _run(run_id: int, *, conclusion: str = "success", attempt: int = 1,
-         updated: str = "2026-07-15T13:00:00Z") -> dict:
+def _run(
+    run_id: int,
+    *,
+    conclusion: str = "success",
+    attempt: int = 1,
+    updated: str = "2026-07-15T13:00:00Z",
+) -> dict:
     return {
         "id": run_id,
         "name": "CI",
@@ -112,8 +118,14 @@ def _run(run_id: int, *, conclusion: str = "success", attempt: int = 1,
     }
 
 
-def _review(review_id: int, *, state: str = "APPROVED", login: str = "alice", pr: int = 12,
-            submitted: str = "2026-07-15T12:00:00Z") -> dict:
+def _review(
+    review_id: int,
+    *,
+    state: str = "APPROVED",
+    login: str = "alice",
+    pr: int = 12,
+    submitted: str = "2026-07-15T12:00:00Z",
+) -> dict:
     return {
         "id": review_id,
         "state": state,
@@ -166,8 +178,12 @@ def test_poll_once_dedups_across_rounds():
 
 def test_poll_once_advances_watermark_after_ingest():
     state: dict = {}
-    client = _FakeClient(issues=[_issue(1, updated="2026-07-15T10:00:00Z"),
-                                 _issue(2, updated="2026-07-15T12:00:00Z")])
+    client = _FakeClient(
+        issues=[
+            _issue(1, updated="2026-07-15T10:00:00Z"),
+            _issue(2, updated="2026-07-15T12:00:00Z"),
+        ]
+    )
     asyncio.run(_poller(client, _FakeStore(), state=state).poll_once())
     assert state["issues_since"] == "2026-07-15T12:00:00Z"
 
@@ -197,15 +213,17 @@ def test_poll_once_ingests_ci_runs():
     ingested = asyncio.run(_poller(client, store, watch=("ci",)).poll_once())
     assert ingested == 2
     assert {(r.kind, r.external_id) for r in store.rows} == {
-        ("ci_success", "1#1"), ("ci_failure", "2#1"),
+        ("ci_success", "1#1"),
+        ("ci_failure", "2#1"),
     }
     assert ("runs", None) in client.since_seen  # gałąź CI odpytała klienta
 
 
 def test_poll_once_advances_runs_watermark():
     state: dict = {}
-    client = _FakeClient(runs=[_run(1, updated="2026-07-15T13:00:00Z"),
-                               _run(2, updated="2026-07-15T18:00:00Z")])
+    client = _FakeClient(
+        runs=[_run(1, updated="2026-07-15T13:00:00Z"), _run(2, updated="2026-07-15T18:00:00Z")]
+    )
     asyncio.run(_poller(client, _FakeStore(), state=state, watch=("ci",)).poll_once())
     assert state["runs_since"] == "2026-07-15T18:00:00Z"
 
@@ -216,9 +234,7 @@ def test_fetch_reviews_only_queries_open_pull_requests():
         issues=[_pr(10, state="open"), _pr(11, state="closed"), _issue(12)],
         reviews_by_pr={10: [_review(1, login="alice")]},
     )
-    ingested = asyncio.run(
-        _poller(client, store, watch=("issues", "reviews")).poll_once()
-    )
+    ingested = asyncio.run(_poller(client, store, watch=("issues", "reviews")).poll_once())
     # Tylko otwarty PR #10 odpytany o recenzje (zamknięty PR i zwykłe issue pominięte).
     assert client.reviews_seen == [10]
     assert ingested >= 1
@@ -239,18 +255,21 @@ def test_poll_once_advances_reviews_watermark_by_submitted_at():
     state: dict = {}
     client = _FakeClient(
         issues=[_pr(10, state="open")],
-        reviews_by_pr={10: [_review(1, submitted="2026-07-15T12:00:00Z"),
-                            _review(2, submitted="2026-07-15T16:00:00Z")]},
+        reviews_by_pr={
+            10: [
+                _review(1, submitted="2026-07-15T12:00:00Z"),
+                _review(2, submitted="2026-07-15T16:00:00Z"),
+            ]
+        },
     )
-    asyncio.run(
-        _poller(client, _FakeStore(), state=state, watch=("issues", "reviews")).poll_once()
-    )
+    asyncio.run(_poller(client, _FakeStore(), state=state, watch=("issues", "reviews")).poll_once())
     assert state["reviews_since"] == "2026-07-15T16:00:00Z"
 
 
 def test_seed_initializes_all_four_watermarks():
-    poller = _poller(_FakeClient(), _FakeStore(), watch=("issues", "comments", "pulls",
-                                                         "reviews", "ci"))
+    poller = _poller(
+        _FakeClient(), _FakeStore(), watch=("issues", "comments", "pulls", "reviews", "ci")
+    )
     poller._seed("2026-07-15T00:00:00Z")
     state = poller._state
     assert set(state) == {"issues_since", "comments_since", "runs_since", "reviews_since"}

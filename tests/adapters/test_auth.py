@@ -5,6 +5,7 @@ magazynu (poza ``data/``, poprawna struktura) oraz zachowanie middleware end-to-
 napędzanego czysto po ASGI, bez sieci. Testy asynchroniczne uruchamiamy przez
 ``asyncio.run`` — repo nie ma ``pytest-asyncio``, a middleware jest zwykłym ASGI.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -98,9 +99,7 @@ def test_verify_header_returns_matching_person_among_many(tmp_path: Path):
         ],
     )
 
-    assert verifier.verify_header(f"Bearer {marek_token}") == Principal(
-        "marek", ("read", "audit")
-    )
+    assert verifier.verify_header(f"Bearer {marek_token}") == Principal("marek", ("read", "audit"))
 
 
 def test_verify_scans_all_entries_constant_time(tmp_path: Path, monkeypatch):
@@ -174,9 +173,7 @@ def test_from_file_non_string_scopes_raises(tmp_path: Path):
 def test_from_file_malformed_hash_raises(tmp_path: Path):
     """Wartość 'token_sha256' spoza formatu sha256 → błąd startowy, nie cichy brak dostępu."""
     with pytest.raises(TokenStoreError, match="hexem"):
-        _verifier(
-            tmp_path, entries=[{"person": "anna", "token_sha256": "za-krotki"}]
-        )
+        _verifier(tmp_path, entries=[{"person": "anna", "token_sha256": "za-krotki"}])
 
 
 def test_from_file_entry_missing_hash_raises(tmp_path: Path):
@@ -266,9 +263,7 @@ def test_middleware_bad_token_returns_401(tmp_path: Path):
     downstream = _Downstream()
     middleware = TokenAuthMiddleware(downstream, verifier=_verifier(tmp_path))
 
-    status, _, _ = _run_request(
-        middleware, headers=[(b"authorization", b"Bearer zly-token")]
-    )
+    status, _, _ = _run_request(middleware, headers=[(b"authorization", b"Bearer zly-token")])
 
     assert status == 401
     assert not downstream.called
@@ -294,9 +289,7 @@ def test_middleware_does_not_leak_token_to_logs(tmp_path: Path, caplog):
     middleware = TokenAuthMiddleware(downstream, verifier=_verifier(tmp_path))
 
     with caplog.at_level(logging.INFO):
-        _run_request(
-            middleware, headers=[(b"authorization", f"Bearer {_TOKEN}".encode())]
-        )
+        _run_request(middleware, headers=[(b"authorization", f"Bearer {_TOKEN}".encode())])
 
     assert _TOKEN not in caplog.text
     assert "anna" in caplog.text  # tożsamość jednak jest logowana

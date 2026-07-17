@@ -4,6 +4,7 @@ Krytyczny invariant bezpieczeństwa: drzwi HTTP są tylko-do-odczytu KONSTRUKCYJ
 niezależnie od środowiska. Nawet gdy ``WORKMATE_ENABLE_WRITE`` jest włączone,
 mutujące ``save_note`` nie może się pojawić na drzwiach sieciowych.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace

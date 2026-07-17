@@ -11,6 +11,7 @@ więc jedno połączenie z ``check_same_thread=False`` + ``Lock`` wokół operac
 Znaczniki czasu nadaje baza (``CURRENT_TIMESTAMP``), identyfikatory — ``uuid4``:
 rdzeń nie woła zegara ani losowości.
 """
+
 from __future__ import annotations
 
 import json
@@ -211,16 +212,12 @@ class SqliteConversationStore:
         ``table``/``columns`` to stałe modułu (nie dane użytkownika), więc interpolacja
         nazwy jest bezpieczna. SQLite ADD COLUMN jest online i niedestrukcyjne.
         """
-        existing = {
-            row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")
-        }
+        existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
         for name, decl in columns.items():
             if name not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
-    def active_conversation(
-        self, channel: str, external_id: str
-    ) -> Conversation | None:
+    def active_conversation(self, channel: str, external_id: str) -> Conversation | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM conversations WHERE channel=? AND external_id=? "
@@ -255,8 +252,7 @@ class SqliteConversationStore:
     def close_conversation(self, conversation_id: str) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE conversations SET status='closed', updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=?",
+                "UPDATE conversations SET status='closed', updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (conversation_id,),
             )
             self._conn.commit()
@@ -271,9 +267,7 @@ class SqliteConversationStore:
         stop_reason: str | None = None,
         usage: TokenUsage | None = None,
     ) -> ConversationMessage:
-        blocks_json = (
-            json.dumps(blocks, ensure_ascii=False) if blocks is not None else None
-        )
+        blocks_json = json.dumps(blocks, ensure_ascii=False) if blocks is not None else None
         u = usage  # realne usage (Design 2) — tylko na turze asystenta; NULL inaczej
         with self._lock:
             cur = self._conn.execute(
@@ -283,7 +277,11 @@ class SqliteConversationStore:
                 "cache_creation_input_tokens) "
                 "VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",  # token_estimate WYGASZONE (0)
                 (
-                    conversation_id, role, text, blocks_json, stop_reason,
+                    conversation_id,
+                    role,
+                    text,
+                    blocks_json,
+                    stop_reason,
                     u.input_tokens if u else None,
                     u.output_tokens if u else None,
                     u.cache_read_input_tokens if u else None,
@@ -302,9 +300,7 @@ class SqliteConversationStore:
                 (conversation_id,),
             )
             self._conn.commit()
-            row = self._conn.execute(
-                "SELECT * FROM messages WHERE id=?", (msg_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM messages WHERE id=?", (msg_id,)).fetchone()
         return _message(row)
 
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
@@ -368,7 +364,9 @@ class SqliteConversationStore:
                 "cache_creation_input_tokens) "
                 "VALUES (?, ?, ?, 'active', ?, ?, ?, ?)",
                 (
-                    conversation_id, summary, covers_through_message_id,
+                    conversation_id,
+                    summary,
+                    covers_through_message_id,
                     u.input_tokens if u else None,
                     u.output_tokens if u else None,
                     u.cache_read_input_tokens if u else None,

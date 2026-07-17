@@ -12,6 +12,7 @@ Realny test w Teams: pełne ``WORKMATE_TEAMS_*`` (single-tenant) + dev tunnel.
 Importy SDK/aiohttp/Anthropic są leniwe (w funkcjach), a brak extra kończy się
 czytelnym komunikatem, nie surowym ``ImportError``.
 """
+
 from __future__ import annotations
 
 import logging

@@ -5,6 +5,7 @@ uschematyzowanym zbiorem notatek (bez RAG-a — to Faza 3). Serwisy zależą tyl
 od portów (``NotesRepository`` / ``ProjectsRepository``), więc są w pełni
 testowalne na atrapach w pamięci, bez dotykania dysku.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -49,9 +50,7 @@ class NotesService:
     dawnego scorera podłańcuchowego (zgodność wsteczna: istniejące wywołania i testy bez zmian).
     """
 
-    def __init__(
-        self, notes: NotesRepository, *, lemmatizer: Lemmatizer | None = None
-    ) -> None:
+    def __init__(self, notes: NotesRepository, *, lemmatizer: Lemmatizer | None = None) -> None:
         self._notes = notes
         self._lemmatizer = lemmatizer
 
@@ -97,9 +96,7 @@ class NotesService:
 
         # Fallback bez lematyzatora — dawny scorer podłańcuchowy (zgodność wsteczna).
         return [
-            (note, float(score))
-            for note in candidates
-            if (score := _score(note, raw_terms)) > 0
+            (note, float(score)) for note in candidates if (score := _score(note, raw_terms)) > 0
         ]
 
     def _doc_lemmas(self, note: Note) -> list[str]:
@@ -129,19 +126,13 @@ class NotesService:
         """Zwróć pełną notatkę po id ``<firma>/<projekt>/<data>-<slug>`` albo ``None``."""
         return self._notes.get(note_id)
 
-    def _filtered(
-        self, *, project: str | None, participant: str | None
-    ) -> list[Note]:
+    def _filtered(self, *, project: str | None, participant: str | None) -> list[Note]:
         notes = self._notes.all()
         if project:
             notes = notes_of_project(notes, project)
         if participant:
             needle = participant.lower()
-            notes = [
-                n
-                for n in notes
-                if any(needle in p.lower() for p in n.metadata.participants)
-            ]
+            notes = [n for n in notes if any(needle in p.lower() for p in n.metadata.participants)]
         return notes
 
 
@@ -217,9 +208,7 @@ class NotesWriteService:
         if project is None:
             raise WriteError(f"projekt nie istnieje w rejestrze: {metadata.project!r}")
         try:
-            base_id = build_note_id(
-                project.company, project.key, metadata.date, metadata.title
-            )
+            base_id = build_note_id(project.company, project.key, metadata.date, metadata.title)
         except ValueError as exc:
             raise WriteError(str(exc)) from exc
 

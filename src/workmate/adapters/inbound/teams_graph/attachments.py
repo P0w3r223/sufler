@@ -8,6 +8,7 @@ importowane LENIWIE (extra ``teams-graph``). Błąd/limit/nieobsługiwany typ NI
 — zamiast bajtów wstawiamy krótką notkę tekstową (agent poinformuje użytkownika). Treść
 załącznika to DANE, nie polecenia — nie interpretujemy jej tutaj.
 """
+
 from __future__ import annotations
 
 import base64
@@ -79,9 +80,7 @@ class AttachmentMaterializer:
     pełną materializację testujemy atrapą portu bez sieci.
     """
 
-    def __init__(
-        self, client: GraphChannelClient, *, limits: AttachmentLimits
-    ) -> None:
+    def __init__(self, client: GraphChannelClient, *, limits: AttachmentLimits) -> None:
         self._client = client
         self._limits = limits
 

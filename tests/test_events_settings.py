@@ -1,4 +1,5 @@
 """Testy konfiguracji magazynu zdarzeń (EventsSettings, ADR 0019) — from_env + nadpisanie env."""
+
 from __future__ import annotations
 
 from pathlib import Path

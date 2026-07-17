@@ -4,6 +4,7 @@ Sprawdzamy WYBÓR trybu (argv jednorazowo / potok jednorazowo / TTY → czat), n
 wywołanie API: ``build_agent_runtime_or_exit`` i ``_run_chat`` podmieniamy atrapami. Klucz
 ustawiamy w env, żeby ``AgentSettings.validate`` przeszło bez sekretu w repo.
 """
+
 from __future__ import annotations
 
 import io
@@ -145,10 +146,7 @@ def test_format_body_assistant_without_text_lists_tool_calls():
         {"type": "tool_use", "name": "search_notes"},
         {"type": "text", "text": ""},
     ]
-    assert (
-        app._format_body(_msg("assistant", "", blocks))
-        == "(wywołuje narzędzia: search_notes)"
-    )
+    assert app._format_body(_msg("assistant", "", blocks)) == "(wywołuje narzędzia: search_notes)"
 
 
 def test_format_body_empty_assistant_falls_back_to_placeholder():

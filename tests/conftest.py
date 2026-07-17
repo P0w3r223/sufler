@@ -4,6 +4,7 @@ Atrapy implementują porty (``NotesRepository`` / ``ProjectsRepository``)
 strukturalnie — bez dziedziczenia — dzięki czemu serwisy testujemy w pełni
 w pamięci, bez dotykania dysku.
 """
+
 from __future__ import annotations
 
 from datetime import date

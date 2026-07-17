@@ -5,6 +5,7 @@ dopisujący ``NotesWriteService`` (Bramka 2). Testowane w pełni na atrapach w p
 (źródło transkryptu + summarizer + ``FakeNotesWriter``/``FakeProjectsRepository``),
 zgodnie z regułą zależności rdzeń↛adaptery. Realny Graph i LLM są poza rdzeniem.
 """
+
 from __future__ import annotations
 
 from datetime import date

@@ -8,6 +8,7 @@ znaki sterujące — nie mają legalnego zastosowania w treści notatki, a są
 klasycznym wektorem wstrzyknięć (terminal, log, nazwa pliku). Czysta funkcja
 domenowa, bez I/O — wołana przez ``NotesWriteService`` przed zapisem.
 """
+
 from __future__ import annotations
 
 from workmate.core.errors import WriteError
@@ -31,6 +32,5 @@ def reject_dangerous_content(*fields: str) -> None:
             # zastosowania w notatce, klasyczny wektor wstrzyknięć (terminal/log/ścieżka).
             if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
                 raise WriteError(
-                    f"treść zawiera niedozwolony znak sterujący (U+{code:04X}) — "
-                    "zapis odrzucony"
+                    f"treść zawiera niedozwolony znak sterujący (U+{code:04X}) — zapis odrzucony"
                 )

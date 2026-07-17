@@ -5,6 +5,7 @@ prawdziwy ``ConversationService`` nad ``SqliteConversationStore(":memory:")``. S
 parser ``dispatch`` (pierwszy token, sufiks ``@bot``, lowercase, zachowane argumenty), każdą
 komendę oraz strukturalną gwarancję read-only (router nie widzi ``save_note``).
 """
+
 from __future__ import annotations
 
 from workmate.adapters.inbound.commands import (

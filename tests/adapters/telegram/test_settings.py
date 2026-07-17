@@ -1,4 +1,5 @@
 """Testy TelegramSettings — bramka tokenu, źródło z env, sekret w repr (Faza 2)."""
+
 from __future__ import annotations
 
 import pytest

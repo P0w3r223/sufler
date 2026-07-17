@@ -6,6 +6,7 @@ tłumaczy ``text`` (Markdown) na HTML Teams i wypycha go do celu; rdzeń o HTML/
 
 Dwa cele, oba konfigurowalne (decyzja użytkownika): czat 1:1 do osoby oraz post na kanał zespołu.
 """
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -26,8 +27,6 @@ class TeamsNotifier(Protocol):
         """
         ...
 
-    async def reply_channel(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None:
+    async def reply_channel(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         """Wyślij ``text`` jako odpowiedź w istniejącym wątku (``root_id``) na kanale zespołu."""
         ...

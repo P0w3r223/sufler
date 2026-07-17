@@ -4,6 +4,7 @@ Stan to plik JSON (watermark wątków + dedup ``replied``). Testujemy na ``tmp_p
 bez sieci: brak pliku → pusty stan, round-trip zachowuje słownik, ``save`` tworzy
 brakujący katalog nadrzędny, a zapis jest sformatowanym JSON-em (``indent=2``).
 """
+
 from __future__ import annotations
 
 import json

@@ -10,6 +10,7 @@ plik). Jednoznaczność ``(team, channel, kind, number)``: jeden wątek na cel. 
 zakłada JEDEN proces notifiera (drzwi GitHub); dwa notifiery mogłyby utworzyć dwa rooty (jeden
 osierocony) — analogicznie do inwariantu „jeden pisarz" auto-komentarza CI.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -61,9 +62,7 @@ class SqliteThreadLinkStore:
             ).fetchone()
         return str(row["root_id"]) if row is not None else None
 
-    def get_target(
-        self, team_id: str, channel_id: str, root_id: str
-    ) -> tuple[str, str] | None:
+    def get_target(self, team_id: str, channel_id: str, root_id: str) -> tuple[str, str] | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT target_kind, target_number FROM thread_links "

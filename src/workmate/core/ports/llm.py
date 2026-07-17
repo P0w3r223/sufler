@@ -13,6 +13,7 @@ mogła odtwarzać historię bajt-w-bajt (bloki ``thinking`` z ``signature`` MUSZ
 niezmienione). Rdzeń tych bloków NIGDY nie interpretuje — tylko je przenosi
 (opaque-cursor). Wiedza o ich kształcie żyje wyłącznie w adapterze Anthropic.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

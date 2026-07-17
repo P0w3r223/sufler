@@ -6,6 +6,7 @@ z pól JUŻ zsanityzowanych zdarzenia (``title``/``summary`` przeszły ``reject_
 przy ingest) — bez interpretacji, bez modelu językowego, więc nie ma jak wstrzyknąć zmyślonej
 treści ani sekretu (mapper CI i tak nie wciąga logów/tokenów — biała lista pól, ADR 0024 §D).
 """
+
 from __future__ import annotations
 
 import re
@@ -35,7 +36,5 @@ def render_ci_failure_comment(title: str, summary: str) -> str:
         parts.append(title)
     if summary:
         parts.append(summary)
-    parts.append(
-        "_Komentarz wygenerowany automatycznie przez WorkMate — bez modelu językowego._"
-    )
+    parts.append("_Komentarz wygenerowany automatycznie przez WorkMate — bez modelu językowego._")
     return "\n\n".join(parts)

@@ -3,6 +3,7 @@
 Sedno: nagłówki uwierzytelnienia/wersji, paginacja po nagłówku ``Link`` (rel="next"),
 backoff na wyczerpanym limicie (403 + Retry-After), odczyt loginu oraz zapis (issue/komentarz).
 """
+
 from __future__ import annotations
 
 import httpx
@@ -53,9 +54,7 @@ def test_list_issues_sends_since_param():
         seen["since"] = request.url.params.get("since")
         return httpx.Response(200, json=[])
 
-    _client(handler).list_issues(
-        "o", "r", since=datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
-    )
+    _client(handler).list_issues("o", "r", since=datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc))
     assert seen["since"] == "2026-07-15T10:00:00Z"
 
 

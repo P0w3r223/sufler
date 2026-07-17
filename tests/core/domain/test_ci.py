@@ -1,4 +1,5 @@
 """Testy czystej domeny CI (ADR 0024, Faza 2) — wyłuskanie numeru PR i deterministyczny render."""
+
 from __future__ import annotations
 
 from workmate.core.domain.ci import pr_number_from_url, render_ci_failure_comment

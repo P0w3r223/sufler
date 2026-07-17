@@ -4,6 +4,7 @@ Analogicznie do ``teams/bot.py::make_on_message`` i ``telegram/bot.py`` — z dr
 wychodzi jedynie ``InboundMessage``, a co bot odpowiada, decyduje wstrzyknięty
 ``Responder`` (echo / runtime agenta / … — podmiana to jedna linia w ``app.py``).
 """
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

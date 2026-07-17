@@ -7,6 +7,7 @@ modelu. Zapis egzekwuje granice bezpieczeństwa zapisu z niezaufanych drzwi: gua
 sterujących, biała lista rozszerzeń, kwoty (rozmiar pliku / liczba / łączny rozmiar per rozmowa),
 create-only z sufiksem przy kolizji (jak ``NotesWriteService._unique_id``).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
