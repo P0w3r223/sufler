@@ -32,6 +32,7 @@ from workmate.config import RetrievalSettings
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
+from workmate.core.application.events import EventService
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
@@ -72,8 +73,25 @@ def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
     lemmatizer = build_lemmatizer(RetrievalSettings.from_env())
     return (
         NotesService(notes_repo, lemmatizer=lemmatizer),
-        ProjectsService(projects_repo, notes_repo),
+        ProjectsService(projects_repo, notes_repo, events=_events_if_present()),
     )
+
+
+def _events_if_present() -> EventService | None:
+    """``EventService`` nad wspólnym ``events.db`` — TYLKO gdy plik istnieje (most w użyciu).
+
+    Wzbogaca ``get_project_status`` o aktywność GitHub (ADR 0029). Bez pliku ``None`` — drzwi
+    agenta bez mostu NIE tworzą pustego ``events.db`` tylko pod odczyt statusu.
+    """
+    from pathlib import Path
+
+    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from workmate.config import EventsSettings
+
+    path = EventsSettings.from_env().db_path
+    if not Path(str(path)).expanduser().exists():
+        return None
+    return EventService(SqliteEventStore(path))
 
 
 def build_agent_runtime(

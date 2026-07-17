@@ -178,4 +178,7 @@ def test_read_tool_output_shapes_are_stable(sample_notes):
         "notes_count",
         "latest_note_date",
         "open_action_items",
+        "recent_activity_count",
+        "latest_activity_at",
+        "failing_ci_count",
     }
