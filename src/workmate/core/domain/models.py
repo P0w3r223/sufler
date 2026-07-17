@@ -7,7 +7,7 @@ i musi być stały: to on czyni odpytywanie i śledzenie stanu prostym
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -117,3 +117,8 @@ class ProjectStatus(BaseModel):
     notes_count: int
     latest_note_date: date | None
     open_action_items: int
+    # Pola z warstwy zdarzeń (synteza aktywności GitHub przypisanej do projektu, ADR 0029) —
+    # domyślne (0/None), gdy status liczony bez EventService (np. drzwi MCP bez mostu):
+    recent_activity_count: int = 0
+    latest_activity_at: datetime | None = None
+    failing_ci_count: int = 0

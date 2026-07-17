@@ -228,3 +228,41 @@ def test_get_project_activity_folds_events_by_kind(tmp_path) -> None:
     assert result["event_count"] == 2
     assert result["by_kind"] == {"pr_opened": 1, "pr_merged": 1}
     assert result["latest_activity_at"] is not None
+
+
+def test_project_status_enriched_with_event_activity(tmp_path) -> None:
+    from datetime import date
+
+    from workmate.core.application.events import EventService
+    from workmate.core.domain.models import ProjectStatusRecord
+
+    store = SqliteEventStore(tmp_path / "events.db")
+    store.append(_ev("o/r#1", kind="pr_opened", repo="o/r", project="wm"))
+    store.append(_ev("o/r#5", kind="ci_failure", repo="o/r", project="wm"))
+    store.append(_ev("o/r#2", kind="issue_opened", repo="o/r", project="other"))
+
+    class _Repo:
+        def all(self):
+            return [Project(key="wm", company="biap", name="WM", description="")]
+
+        def get(self, key):
+            return self.all()[0] if key == "wm" else None
+
+        def status_record(self, key):
+            if key != "wm":
+                return None
+            return ProjectStatusRecord(
+                key="wm",
+                status="active",
+                health="green",
+                phase="p",
+                summary="s",
+                last_updated=date(2026, 7, 1),
+            )
+
+    service = ProjectsService(_Repo(), _EmptyNotesRepo(), events=EventService(store))
+    status = service.get_project_status("wm")
+    assert status is not None
+    assert status.recent_activity_count == 2  # tylko zdarzenia projektu wm
+    assert status.failing_ci_count == 1
+    assert status.latest_activity_at is not None

@@ -29,6 +29,9 @@ from workmate.core.ports.repositories import (
 )
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    from workmate.core.application.events import EventService
     from workmate.core.ports.text import Lemmatizer
 
 # Maksymalna długość fragmentu (snippet) zwracanego w wynikach wyszukiwania.
@@ -143,9 +146,15 @@ class ProjectsService:
     wyliczonymi z notatek — dlatego serwis potrzebuje obu repozytoriów.
     """
 
-    def __init__(self, projects: ProjectsRepository, notes: NotesRepository) -> None:
+    def __init__(
+        self,
+        projects: ProjectsRepository,
+        notes: NotesRepository,
+        events: EventService | None = None,
+    ) -> None:
         self._projects = projects
         self._notes = notes
+        self._events = events
 
     def list_projects(self) -> list[Project]:
         """Zwróć projekty pionu, posortowane po kluczu."""
@@ -175,6 +184,7 @@ class ProjectsService:
         project_notes = notes_of_project(self._notes.all(), key)
         note_dates = [n.metadata.date for n in project_notes]
         open_action_items = sum(len(n.metadata.action_items) for n in project_notes)
+        activity_count, latest_activity_at, failing_ci_count = self._activity_facts(key)
 
         return ProjectStatus(
             key=record.key,
@@ -188,7 +198,22 @@ class ProjectsService:
             notes_count=len(project_notes),
             latest_note_date=max(note_dates) if note_dates else None,
             open_action_items=open_action_items,
+            recent_activity_count=activity_count,
+            latest_activity_at=latest_activity_at,
+            failing_ci_count=failing_ci_count,
         )
+
+    def _activity_facts(self, key: str) -> tuple[int, datetime | None, int]:
+        """Synteza aktywności GitHub projektu ze zdarzeń (ADR 0029): (liczba, ostatnia, porażki CI).
+
+        Bez ``EventService`` → ``(0, None, 0)`` — status jak dawniej (drzwi bez mostu zdarzeń).
+        """
+        if self._events is None:
+            return 0, None, 0
+        items = self._events.recent(project=key, limit=100)
+        failing = sum(1 for e in items if e.kind == "ci_failure")
+        latest = items[0].occurred_at if items else None
+        return len(items), latest, failing
 
 
 class NotesWriteService:
