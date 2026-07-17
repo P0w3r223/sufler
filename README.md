@@ -4,8 +4,8 @@ Wewnętrzny asystent wiedzy pionu Inteligentnych Technologii. Daje Claude Code
 każdego developera dostęp do wspólnej bazy wiedzy — **notatek ze spotkań**
 i **statusu projektów** — przez wąskie, typowane narzędzia MCP.
 
-> **Status:** 🟢 **Faza 1 (MVP) domknięta** — serwer MCP: 4 narzędzia odczytu + zapis (`save_note`) + gotowy kod wdrożenia HTTP z uwierzytelnianiem (Bramka 3; pozostaje samo wdrożenie).
-> 🔄 **Faza 2 w toku** — runtime agenta w rdzeniu (M1, `workmate-agent`) nad **tymi samymi** narzędziami ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)) + drzwi Teams/Telegram/CLI na runtime agenta read-only (Teams także przez delegowany Microsoft Graph — [ADR 0015](docs/adr/0015-teams-delegated-graph-polling.md)/[0016](docs/adr/0016-user-multimodal-attachments.md)); echo pozostaje fallbackiem transportu. Faza 3 (GitHub) później. Patrz [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** 🟢 **Fazy 1–4 domknięte.** Serwer MCP (4 narzędzia odczytu + `save_note`, Bramka 3 HTTP gotowa); runtime agenta w rdzeniu (`workmate-agent`) nad **tymi samymi** narzędziami ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)); drzwi Teams/Telegram/CLI na runtime agenta read-only (Teams także przez delegowany Microsoft Graph — [ADR 0015](docs/adr/0015-teams-delegated-graph-polling.md)/[0016](docs/adr/0016-user-multimodal-attachments.md)).
+> 🟢 **Trójstronny most GitHub ↔ wspólny EventStore ↔ Teams** — ingest issue/PR/CI/review, dwukierunkowe wątki na kanale, bramkowany zapis z Teams do GitHub ([ADR 0019](docs/adr/0019-shared-event-store.md)–[0024](docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)); drzwi GitHub `workmate-github` + push do Teams. Plus lokalny retrieval leksykalny notatek — BM25 nad lematami ([ADR 0023](docs/adr/0023-hybrid-local-retrieval.md)). Patrz [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Architektura w jednym akapicie
 
@@ -53,7 +53,7 @@ Claude wywoła `search_notes` i odpowie na podstawie notatek.
 PROJEKT/
 ├── src/workmate/         # kod serwera
 │   ├── core/             # RDZEŃ — domena, porty, przypadki użycia (bez I/O, bez MCP)
-│   ├── adapters/         # DRZWI — inbound/{mcp,teams,cli}, outbound/ (repozytoria + Claude API); github/ (stub)
+│   ├── adapters/         # DRZWI — inbound/{mcp,teams,teams_graph,telegram,cli,github}, outbound/ (repozytoria + Claude API, GitHub, Graph, wspólny EventStore)
 │   ├── config.py         # typowana konfiguracja ze zmiennych środowiskowych
 │   └── server.py         # punkt składania (wiring rdzenia z drzwiami)
 ├── data/                 # baza wiedzy: notatki notes/<firma>/<projekt>/*.md + rejestr projektów (.yaml)
