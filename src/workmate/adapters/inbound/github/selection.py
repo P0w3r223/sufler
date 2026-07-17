@@ -178,11 +178,45 @@ def map_ci_run(raw: dict[str, Any]) -> NewEvent | None:
     )
 
 
+def map_pull_state(raw: dict[str, Any]) -> NewEvent | None:
+    """Zmapuj PR z ``/pulls`` na TRANZYCJĘ → ``pr_merged``/``pr_closed``; ``None`` dla otwartych.
+
+    Tranzycja to FAKT niezmienny (PR raz zmergowany taki zostaje), więc ``external_id`` =
+    ``{numer}#merged``/``{numer}#closed`` — dedup magazynu emituje ją RAZ (ADR 0029). BIAŁA LISTA
+    PÓL: numer, stan, ``merged_at``/``closed_at``, tytuł, url — NIGDY diffów/patchy. ``actor`` pusty
+    (jak CI): tranzycja to obserwacja read-only, nie wektor pętli — bez self-skip, żeby merge PR-a
+    autorstwa konta PAT też był widoczny.
+    """
+    number = raw.get("number")
+    if number is None:
+        return None
+    if raw.get("merged_at"):
+        kind, suffix, when, verb = "pr_merged", "merged", raw.get("merged_at"), "zmergowany"
+    elif str(raw.get("state") or "").lower() == "closed":
+        when = raw.get("closed_at") or raw.get("updated_at")
+        kind, suffix, verb = "pr_closed", "closed", "zamknięty"
+    else:
+        return None
+    if not when:
+        return None
+    return NewEvent(
+        source=_SOURCE,
+        kind=kind,
+        external_id=f"{number}#{suffix}",
+        actor="",
+        title=f"PR #{number} {verb}",
+        summary=_clip(str(raw.get("title") or "")),
+        url=str(raw.get("html_url") or ""),
+        occurred_at=_parse(str(when)),
+    )
+
+
 def select_events(
     raw_issues: Sequence[dict[str, Any]],
     raw_comments: Sequence[dict[str, Any]],
     raw_runs: Sequence[dict[str, Any]] = (),
     raw_reviews: Sequence[dict[str, Any]] = (),
+    raw_pulls: Sequence[dict[str, Any]] = (),
     *,
     self_login: str,
     watch_kinds: tuple[str, ...] = ("issues", "comments"),
@@ -226,6 +260,12 @@ def select_events(
             and _from_other_actor(ev, self_login)
             and _after_watermark(raw.get("submitted_at"), reviews_since)
         ):
+            events.append(ev)
+    for raw in raw_pulls:
+        # Tranzycje PR: dedup (external_id ``{n}#merged``/``#closed``) emituje raz; ``actor=""`` →
+        # bez self-skip (obserwacja, nie wektor pętli). Watermark zbędny — dedup domyka poprawność.
+        ev = map_pull_state(raw)
+        if ev is not None:
             events.append(ev)
     if repo or project:
         events = [e.model_copy(update={"repo": repo, "project": project}) for e in events]

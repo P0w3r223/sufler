@@ -103,6 +103,7 @@ class GithubPoller:
         raw_comments: list[dict[str, Any]] = []
         raw_runs: list[dict[str, Any]] = []
         raw_reviews: list[dict[str, Any]] = []
+        raw_pulls: list[dict[str, Any]] = []
         # ``/issues`` obejmuje ISSUE i PR (te mają klucz ``pull_request``) — pobieramy, gdy
         # nasłuchujemy któregokolwiek; selection rozróżni je po ``watch_kinds``.
         if "issues" in self._watch_kinds or "pulls" in self._watch_kinds:
@@ -130,12 +131,20 @@ class GithubPoller:
             )
         if "reviews" in self._watch_kinds:
             raw_reviews = await self._fetch_reviews(loop, raw_issues)
+        if "pull_state" in self._watch_kinds:
+            raw_pulls = await loop.run_in_executor(
+                None,
+                lambda: self._client.list_pulls(
+                    self._owner, self._repo, state="all", per_page=self._per_page
+                ),
+            )
 
         events = selection.select_events(
             raw_issues,
             raw_comments,
             raw_runs,
             raw_reviews,
+            raw_pulls,
             self_login=self._self_login,
             watch_kinds=self._watch_kinds,
             runs_since=self._state.get("runs_since", ""),

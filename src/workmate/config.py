@@ -696,7 +696,7 @@ _DEFAULT_GITHUB_STATE = Path.home() / ".workmate" / "github_state.json"
 _GITHUB_POLL_FLOOR_S = 30
 _MAX_GITHUB_PER_PAGE = 100
 # Dozwolone rodzaje zdarzeń nasłuchiwanych w repo (ADR 0024: PR/CI/recenzje wchodzą opcjonalnie).
-_ALLOWED_GITHUB_WATCH_KINDS = ("issues", "comments", "pulls", "reviews", "ci")
+_ALLOWED_GITHUB_WATCH_KINDS = ("issues", "comments", "pulls", "reviews", "ci", "pull_state")
 # Domyślny zestaw (wsteczna zgodność): tylko issue i komentarze; nowe rodzaje włącza się jawnie
 # przez ``WORKMATE_GITHUB_WATCH_KINDS`` — patrz ADR 0024.
 _DEFAULT_GITHUB_WATCH_KINDS = ("issues", "comments")
