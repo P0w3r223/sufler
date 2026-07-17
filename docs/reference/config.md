@@ -1,13 +1,24 @@
 # Reference: konfiguracja
 
-Konfiguracja jest scentralizowana w `src/workmate/config.py` (`Settings`) i czytana
-ze zmiennych środowiskowych. **Wszystkie zmienne są opcjonalne** — bez nich serwer
-używa danych z katalogu `data/` w korzeniu repozytorium.
+Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonych dataklas
+`*Settings` z metodami `from_env()` + `validate()`) i czytana ze zmiennych środowiskowych
+(lub z `.env` w korzeniu repo — patrz [`.env.example`](../../.env.example)).
 
-W trybie `stdio` WorkMate **nie wymaga sekretów ani kluczy API** — odczyt i zapis
-notatek działają na lokalnych plikach. Tryb `streamable-http` (Bramka 3) dokłada
-**magazyn tokenów** per osoba — trzymany poza `data/` (patrz niżej i
-[ADR 0007](../adr/0007-gate-3-http-auth-deployment.md)).
+**Co wymaga sekretów, a co nie:**
+
+- **Serwer MCP w trybie `stdio`** (Faza 1) — **nie wymaga żadnych sekretów**; odczyt i zapis
+  notatek działają na plikach z `data/`.
+- **Runtime agenta** (drzwi Teams/Telegram/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
+  jego brak to twardy błąd startu, nie tryb degradacji.
+- **Most GitHub / push do Teams** — wymagają PAT GitHub i/lub cache tokenu Microsoft Graph.
+
+Sekrety trzymamy **wyłącznie poza repo** (env / plik poza `data/`). Wszystkie bramki zapisu
+(`*_ENABLE_WRITE`, `*_ENABLE_CHANNEL*`, `*_CI_AUTO_COMMENT`, `ENABLE_WORKSPACE`) są **domyślnie
+wyłączone** i włączane świadomie per drzwi.
+
+---
+
+## Serwer MCP (bazowe `Settings`)
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
@@ -16,38 +27,141 @@ notatek działają na lokalnych plikach. Tryb `streamable-http` (Bramka 3) dokł
 | `WORKMATE_PROJECTS_REGISTRY` | `<data_dir>/projects/registry.yaml` | Plik rejestru projektów. |
 | `WORKMATE_TRANSPORT` | `stdio` | Transport MCP: `stdio` lub `streamable-http`. |
 | `WORKMATE_LOG_LEVEL` | `INFO` | Poziom logowania. |
-| `WORKMATE_ENABLE_WRITE` | `true` | Czy wystawić narzędzie zapisu `save_note` (profil uprawnień per drzwi, [ADR 0006](../adr/0006-write-capability-gate-2.md)). Drzwi HTTP ustawiają `false`. |
+| `WORKMATE_ENABLE_WRITE` | `true` | Czy wystawić narzędzie zapisu `save_note` ([ADR 0006](../adr/0006-write-capability-gate-2.md)). Drzwi HTTP wymuszają `false`. |
 
-### Tryb HTTP (`streamable-http`, Bramka 3 / ADR 0007)
+### Tryb HTTP (`streamable-http`, Bramka 3 / [ADR 0007](../adr/0007-gate-3-http-auth-deployment.md))
 
-Poniższe zmienne mają znaczenie **tylko** przy `WORKMATE_TRANSPORT=streamable-http`;
-w trybie `stdio` są ignorowane. Pełna procedura: [`how-to/deploy-http.md`](../how-to/deploy-http.md).
+Znaczące **tylko** przy `WORKMATE_TRANSPORT=streamable-http`. Procedura: [`how-to/deploy-http.md`](../how-to/deploy-http.md).
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
-| `WORKMATE_TOKENS_FILE` | `C:\ProgramData\WorkMate\tokens.json` | Magazyn tokenów per osoba (`sha256` w spoczynku). **Musi leżeć poza `data/`** — inaczej twardy błąd startowy. |
+| `WORKMATE_TOKENS_FILE` | `C:\ProgramData\WorkMate\tokens.json` | Magazyn tokenów per osoba (`sha256` w spoczynku). **Musi leżeć poza `data/`** — inaczej twardy błąd startu. |
 | `WORKMATE_BIND_HOST` | `127.0.0.1` | Adres nasłuchu uvicorn (za IIS: loopback). |
 | `WORKMATE_BIND_PORT` | `8000` | Port nasłuchu uvicorn. |
-| `WORKMATE_ALLOWED_HOSTS` | loopback | Lista (po przecinku) dozwolonych nagłówków `Host`. **Dołóż publiczny host w OBU formach** — bez portu (`workmate.firma.pl`, dla HTTPS na 443) i z portem (`workmate.firma.pl:*`); inaczej realny Host daje 421. |
-| `WORKMATE_ALLOWED_ORIGINS` | *(puste)* | Lista dozwolonych `Origin` (gdy klient go wysyła). |
-| `WORKMATE_TLS_CERTFILE` | *(brak)* | Certyfikat TLS — fallback, gdy uvicorn terminuje TLS bez IIS (razem z kluczem). |
-| `WORKMATE_TLS_KEYFILE` | *(brak)* | Klucz TLS — jw. |
+| `WORKMATE_ALLOWED_HOSTS` | loopback | Dozwolone nagłówki `Host` (dołóż publiczny host w obu formach: z portem i bez). |
+| `WORKMATE_ALLOWED_ORIGINS` | *(puste)* | Dozwolone `Origin`. |
+| `WORKMATE_TLS_CERTFILE` / `WORKMATE_TLS_KEYFILE` | *(brak)* | Certyfikat/klucz TLS, gdy uvicorn terminuje TLS bez IIS. |
+
+---
+
+## Runtime agenta (`AgentSettings`, extra `agent`)
+
+Napędza drzwi Teams/Telegram/CLI. `validate()` twardo wymaga klucza.
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `ANTHROPIC_API_KEY` *(lub `WORKMATE_AGENT_API_KEY`)* | *(brak — wymagane)* | **Sekret.** Klucz Claude API. `WORKMATE_AGENT_API_KEY` ma priorytet. |
+| `WORKMATE_AGENT_MODEL` | `claude-sonnet-5` | Model agenta. |
+| `WORKMATE_AGENT_MAX_TOKENS` | *(rozsądny limit)* | Sufit tokenów odpowiedzi. |
+| `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` | *(kilka)* | Maks. iteracji pętli narzędzi na turę. |
+| `WORKMATE_AGENT_THINKING` | `adaptive` | Tryb rozumowania (`adaptive`/`disabled`). |
+
+## Pamięć rozmów i kompaktowanie (`ConversationSettings`)
+
+| Zmienna | Opis |
+|---------|------|
+| `WORKMATE_CONVERSATIONS_DB` | Ścieżka SQLite pamięci rozmów (poza `data/`). |
+| `WORKMATE_CONV_MAX_TOKENS` / `WORKMATE_CONV_IDLE_MINUTES` | Budżet kontekstu wątku i granica bezczynności. |
+| `WORKMATE_COMPACTION_ENABLED` | Czy kompaktować historię przy zbliżaniu do limitu ([ADR 0014](../adr/0014-conversation-compaction.md)). |
+| `WORKMATE_CONTEXT_WINDOW_TOKENS`, `WORKMATE_COMPACTION_THRESHOLD_FRACTION`, `WORKMATE_COMPACTION_KEEP_TURNS`, `WORKMATE_COMPACTION_MODEL` | Parametry progu i strategii kompaktowania. |
+
+## Wspólny magazyn zdarzeń (`EventsSettings`)
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_EVENTS_DB` | `~/.workmate/events.db` | Plik `EventStore` mostu ([ADR 0019](../adr/0019-shared-event-store.md)). **Wspólny** dla drzwi GitHub i drzwi Teams; ustaw na trwałą ścieżkę serwera. |
+
+## Retrieval (`RetrievalSettings`, extra `retrieval`)
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_RETRIEVAL_LEMMATIZE` | `true` | Lematyzacja zapytań/treści (BM25 nad lematami). Bez extra `retrieval` — fallback podłańcuchowy. |
+| `WORKMATE_RETRIEVAL_LANG` | `pl` | Język lematyzacji. |
+
+## Katalog roboczy agenta (`WorkspaceSettings`, [ADR 0018](../adr/0018-agent-working-directory.md))
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_ENABLE_WORKSPACE` | `false` | Bramka narzędzi `create_file`/`read_file`/`list_files` (niezależna od zapisu notatek). |
+| `WORKMATE_WORKSPACE_DIR` | pod `data_dir` | Katalog plików roboczych per rozmowa. |
+| `WORKMATE_WORKSPACE_MAX_FILE_MB` / `_MAX_FILES` / `_MAX_TOTAL_MB` | limity | Sufity rozmiaru/liczby/łącznego budżetu. |
+| `WORKMATE_WORKSPACE_ALLOWED_EXT` | `md,txt,csv,json` | Dozwolone rozszerzenia (tylko tekst). |
+| `WORKMATE_WORKSPACE_RETENTION_DAYS` | TTL | Wygasanie bezczynnych katalogów. |
+
+---
+
+## Drzwi Teams — delegowany Graph (`TeamsGraphSettings`, extra `teams-graph`)
+
+Produkcyjny wariant drzwi Teams: polling kanału przez Microsoft Graph jako zalogowany użytkownik
+([ADR 0015](../adr/0015-teams-delegated-graph-polling.md)/[0016](../adr/0016-user-multimodal-attachments.md)).
+Procedura: [`how-to/teams-graph.md`](../how-to/teams-graph.md).
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_TEAMS_GRAPH_CLIENT_ID` / `_TENANT_ID` | *(wymagane)* | Aplikacja Entra (public client, device-code). |
+| `WORKMATE_TEAMS_GRAPH_WATCH` | *(puste → tryb odkrywania)* | Pary `team_id:channel_id` (po przecinku). Puste = wypisz zespoły/kanały i zakończ. |
+| `WORKMATE_TEAMS_GRAPH_SCOPES` | zakresy z ADR 0015/0016 | Zakresy Graph (wymagają zgody admina). |
+| `WORKMATE_TEAMS_GRAPH_TOKEN_CACHE` | `~/.workmate/teams_token_cache.bin` | **Sekret** (cache MSAL, chmod 600). |
+| `WORKMATE_TEAMS_GRAPH_STATE` | `~/.workmate/teams_graph_state.json` | Watermarki wątków. |
+| `WORKMATE_TEAMS_GRAPH_POLL_INTERVAL` | `10` | Odstęp odpytań (s). |
+| `WORKMATE_TEAMS_GRAPH_TOP_ROOTS` / `_TOP_REPLIES` | `20` / `50` | Limit kosztu API na rundę. |
+| `WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS` | próg | Po ilu godzinach ciszy wątek przestaje być odpytywany o odpowiedzi. |
+| `WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB` | `8` | Sufit pojedynczego załącznika (RAW). |
+| `WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS` | `20` | Maks. załączników na wiadomość. |
+| `WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB` | `20` | Łączny budżet załączników. |
+| `WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB` | `50` | Sufit rozmiaru pliku ekstrahowanego do tekstu (docx/xlsx/pptx). |
+| `WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE` | `2048` | Sufit dłuższej krawędzi obrazu (px, downscaling). |
+
+## Push do Teams (`TeamsPushSettings`, most → Teams)
+
+Notifier wypychający zdarzenia `EventStore` do Teams ([ADR 0022](../adr/0022-proactive-dual-target-teams-push.md)).
+Współdzieli cache tokenu z `TeamsGraphSettings`.
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_TEAMS_PUSH_CLIENT_ID` / `_TENANT_ID` | *(wymagane)* | Ta sama aplikacja Entra (device-code). |
+| `WORKMATE_TEAMS_PUSH_SCOPES` / `_TOKEN_CACHE` | jak Graph | Zakresy push i wspólny cache MSAL. |
+| `WORKMATE_TEAMS_PUSH_ENABLE_CHAT` | `false` | Push na czat 1:1 (wymaga `_CHAT_USER_ID`). |
+| `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL` | `false` | Push na kanał (wymaga `_TEAM_ID` + `_CHANNEL_ID`). |
+| `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING` | `false` | Dwukierunkowe wątki ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)); wymaga `_ENABLE_CHANNEL`. Warunek działania `reply_on_thread`. |
+| `WORKMATE_TEAMS_PUSH_CHAT_USER_ID` / `_TEAM_ID` / `_CHANNEL_ID` | — | Cele push (AAD id / team / channel). |
+
+## Drzwi GitHub / most (`GithubSettings`, extra `github`)
+
+Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.md)). Procedura: [`how-to/github-bridge.md`](../how-to/github-bridge.md).
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_GITHUB_TOKEN` | *(wymagane)* | **Sekret.** Klasyczny PAT (scope `repo`). |
+| `WORKMATE_GITHUB_OWNER` / `_REPO` | *(wymagane)* | Repo docelowe. |
+| `WORKMATE_GITHUB_API_BASE` | `https://api.github.com` | Baza API (dla GitHub Enterprise). |
+| `WORKMATE_GITHUB_POLL_INTERVAL` | `60` (podłoga `30`) | Odstęp odpytań (s). |
+| `WORKMATE_GITHUB_PER_PAGE` | `50` | Rozmiar strony. |
+| `WORKMATE_GITHUB_WATCH_KINDS` | `issues,comments` | Białą listą: `issues,comments,pulls,reviews,ci` ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)). |
+| `WORKMATE_GITHUB_ENABLE_WRITE` | `false` | Bramka 4: zapis create-only (issue/komentarz) + `reply_on_thread` ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)). |
+| `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT` | `false` | Deterministyczny auto-komentarz przy porażce CI; wymaga `_ENABLE_WRITE` ORAZ `ci` w `WATCH_KINDS`. |
+| `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
+| `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |
+
+## Drzwi Telegram (`TelegramSettings`, extra `telegram`)
+
+| Zmienna | Opis |
+|---------|------|
+| `WORKMATE_TELEGRAM_BOT_TOKEN` | **Sekret.** Token bota (long polling). |
+
+## Drzwi Teams — Bot Framework (`TeamsSettings`, extra `teams`)
+
+Lokalny wariant przez Bot Framework Emulator/Azure ([`how-to/teams-bot.md`](../how-to/teams-bot.md)).
+
+| Zmienna | Opis |
+|---------|------|
+| `WORKMATE_TEAMS_APP_ID` / `_APP_PASSWORD` / `_TENANT_ID` | Rejestracja bota (Azure). |
+| `WORKMATE_TEAMS_ANONYMOUS` | `true` = tryb bez uwierzytelniania (tylko loopback/Emulator). |
+| `WORKMATE_TEAMS_BIND_HOST` / `_PORT` | Adres/port nasłuchu drzwi bota. |
+
+---
 
 ## Jak wyznaczana jest ścieżka domyślna
 
-`config.py` szuka korzenia repozytorium, idąc w górę do katalogu z
-`pyproject.toml`. Dzięki temu serwer działa niezależnie od bieżącego katalogu
-roboczego (np. `uv run --directory ...`), bez zaszywania ścieżek w kodzie.
-
-## Transport
-
-- **`stdio`** (domyślny) — lokalny tryb dla Claude Code (Faza 1, tyg. 1–3).
-- **`streamable-http`** — wdrożenie sieciowe na serwerze firmowym (tyg. 4,
-  Bramka 3). Przełącza się jedną zmienną: `WORKMATE_TRANSPORT=streamable-http`.
-  Uwierzytelnianie per osoba (bearer token) i uprawnienia minimalne opisuje
-  [ADR 0007](../adr/0007-gate-3-http-auth-deployment.md); procedura wdrożenia:
-  [`how-to/deploy-http.md`](../how-to/deploy-http.md).
-
-## Przykład `.env`
-
-Patrz [`.env.example`](../../.env.example) w korzeniu repozytorium.
+`config.py` szuka korzenia repozytorium, idąc w górę do katalogu z `pyproject.toml`. Dzięki temu
+serwer działa niezależnie od bieżącego katalogu roboczego, bez zaszywania ścieżek w kodzie.

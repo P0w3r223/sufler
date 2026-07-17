@@ -1,7 +1,7 @@
 # Roadmapa WorkMate — „jesteśmy tu"
 
-Pełna mapa drogowa przedsięwzięcia to `roadmap_workmate.pdf` (poziom pionu).
-Ten plik streszcza fazy i pokazuje, gdzie znajduje się kod w tym repozytorium.
+Ten plik streszcza fazy przedsięwzięcia i pokazuje, gdzie znajduje się kod w tym
+repozytorium. Decyzje szczegółowe: [`adr/`](adr/) (0001–0027).
 
 ## Status faz
 

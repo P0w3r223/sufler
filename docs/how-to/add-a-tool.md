@@ -33,25 +33,33 @@ def test_count_notes_filters_by_project(sample_notes):
     assert service.count_notes(project="scada-integration") == 2
 ```
 
-## 3. Opakowanie MCP (cienkie drzwi)
+## 3. Wpis w jednoźródłowym katalogu narzędzi (ADR 0008)
 
-W `src/workmate/adapters/inbound/mcp/tools.py`, wewnątrz `register_tools`:
+Narzędzia definiuje się **raz** w `src/workmate/core/application/tools.py` (funkcja
+`build_tool_catalog`) — drzwi MCP ORAZ runtime agenta dostają je z tego samego miejsca
+([ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)). Adapter MCP jest cienki i sam się nie
+zmienia (`mcp/tools.py` tylko rejestruje `spec.fn` na FastMCP).
+
+Wewnątrz `build_tool_catalog` dodaj funkcję narzędzia i dopisz ją do listy `catalog`:
 
 ```python
-    @mcp.tool()
     def count_notes(project: str | None = None) -> dict[str, Any]:
         """Policz notatki (opcjonalnie w jednym projekcie)."""
-        try:
-            total = notes.count_notes(project=project)
-        except RepositoryError as exc:
-            return {"error": str(exc)}
-        return {"project": project, "count": total}
+
+        def build() -> dict[str, Any]:
+            return {"project": project, "count": notes.count_notes(project=project)}
+
+        return _envelope(build)
+
+    catalog.append(ToolSpec("count_notes", count_notes.__doc__ or "", count_notes))
 ```
 
-Zasady opakowania:
-- typuj parametry (FastMCP generuje z nich schemat wejścia);
-- opis zwięzły, od słów kluczowych (limit ~2 KB w Claude Code);
-- łap `RepositoryError` i zwracaj `{"error": ...}`; nie łap wyjątków nieznanych.
+Zasady:
+- typuj parametry (schemat wejścia — FastMCP i adapter agenta — wywodzi się z sygnatury);
+- **opis to docstring**, zwięzły, od słów kluczowych (Claude Code skraca do ~2 KB);
+- owijaj ciało w `_envelope(build)` — łapie `RepositoryError` → `{"error": ...}`; nie łap wyjątków nieznanych;
+- **nie ruszaj powierzchni MCP 4+1** — narzędzia mostu/agenta wchodzą osobnymi builderami przez
+  `extra_catalog` (patrz `build_workspace_catalog`, `build_events_catalog`), nie przez `build_tool_catalog`.
 
 ## 4. Sprawdź
 

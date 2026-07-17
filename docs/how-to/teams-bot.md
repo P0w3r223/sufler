@@ -1,4 +1,9 @@
-# How-to: bot Teams (Faza 2, M2 — Teams na runtime agenta)
+# How-to: bot Teams przez Bot Framework (Emulator / Azure Bot)
+
+> **To jeden z dwóch wariantów drzwi Teams.** Ten przewodnik dotyczy wariantu **Bot Framework**
+> (`workmate-teams`, rejestracja bota + endpoint). Produkcyjnie zwykle używamy **delegowanych drzwi
+> Graph** (`workmate-teams-graph`, bez publicznego endpointu, z załącznikami i wątkami) — patrz
+> [`teams-graph.md`](teams-graph.md). Oba napędza ten sam runtime agenta rdzenia.
 
 Ten przewodnik prowadzi od zera do bota w Microsoft Teams. Stos: Microsoft 365
 Agents SDK for Python (patrz

@@ -32,7 +32,7 @@ Dodaj trywialne narzędzie read-only end-to-end — przejdziesz przez rdzeń,
 adapter i test:
 
 1. **Przypadek użycia** w `core/application/services.py` (np. `count_notes`).
-2. **Opakowanie MCP** w `adapters/inbound/mcp/tools.py` (`@mcp.tool()` wołające serwis).
+2. **Wpis w jednoźródłowym katalogu narzędzi** w `core/application/tools.py` (`build_tool_catalog`) — drzwi MCP i runtime agenta dostają go z jednego miejsca ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)).
 3. **Test** w `tests/core/` na atrapie repozytorium (patrz `tests/conftest.py`).
 4. `uv run pytest` → zielono.
 
@@ -41,16 +41,16 @@ Nowe „drzwi" (adapter): [`docs/how-to/add-a-door.md`](docs/how-to/add-a-door.m
 
 ## 4. Konwencje
 
-- **Tylko do odczytu w Fazie 1.** Narzędzie zapisujące → najpierw ADR + zgoda zespołu.
+- **Odczyt jest domyślny; zapis jest bramkowany.** Narzędzie mutujące stan → najpierw ADR + zgoda zespołu, osobny port zapisu i bramka per drzwi ([ADR 0006](docs/adr/0006-write-capability-gate-2.md) / [0021](docs/adr/0021-github-write-capability-gate-4.md)).
 - **Jedno drzwi = jeden pakiet** w `adapters/`. Testy lustrzane wobec `src/`.
 - Konfiguracja tylko przez `config.py` (zmienne środowiskowe) — żadnych zaszytych ścieżek.
 - Proza po polsku; ADR i `docs/research/` po angielsku.
-- Style: `uv run ruff format .` i `uv run ruff check .`; typy: `uv run mypy`.
+- Style: `uv run ruff format src tests eval` i `uv run ruff check src tests eval`; typy: `uv run mypy`.
 
 ## 5. Definicja ukończenia
 
 - [ ] `uv run pytest` przechodzi
-- [ ] `uv run ruff check .` i `uv run mypy` bez błędów
+- [ ] `uv run ruff check src tests eval` i `uv run mypy` bez błędów
 - [ ] zmiana ma test, jeśli dotyka logiki
 - [ ] decyzja architektoniczna? → ADR w `docs/adr/`
 - [ ] przegląd kodu przed scaleniem
