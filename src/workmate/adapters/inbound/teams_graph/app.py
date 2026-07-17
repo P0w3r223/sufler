@@ -31,6 +31,7 @@ from workmate.config import (
     ConversationSettings,
     EventsSettings,
     GithubSettings,
+    JiraSettings,
     Settings,
     TeamsGraphSettings,
     WorkspaceSettings,
@@ -39,6 +40,7 @@ from workmate.config import (
 if TYPE_CHECKING:
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
+    from workmate.core.application.events import EventService
     from workmate.core.application.github import GithubWriteService
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.thread_links import ThreadLinkStore
@@ -88,7 +90,7 @@ def main() -> None:
         if removed:
             logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
     extra_catalog, thread_factory = _build_bridge_catalog(
-        EventsSettings.from_env(), GithubSettings.from_env()
+        EventsSettings.from_env(), GithubSettings.from_env(), JiraSettings.from_env()
     )
     responder = _build_responder(
         core_settings,
@@ -103,16 +105,18 @@ def main() -> None:
 
 
 def _build_bridge_catalog(
-    events_settings: EventsSettings, github_settings: GithubSettings
+    events_settings: EventsSettings,
+    github_settings: GithubSettings,
+    jira_settings: JiraSettings,
 ) -> tuple[list[ToolSpec], Callable[[str], list[ToolSpec]] | None]:
-    """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024): zdarzenia + zapis GitHub.
+    """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024/0031): zdarzenia + zapis.
 
     Zwraca ``(katalog, fabryka_wątkowa)``. ``read_recent_events`` jest ZAWSZE (agent widzi, co
-    zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) dokładamy TYLKO przy
-    włączonej bramce ``enable_github_write`` i skonfigurowanym repo/tokenie — profil per drzwi
-    (ADR 0006/0021). Zdarzenia z zapisu idą jako ``source=teams`` (strażnik pętli — notifier ich nie
-    odeśle). Gdy zapis włączony, budujemy też FABRYKĘ ``reply_on_thread`` (ADR 0024, Faza 3b): dla
-    wątku powiązanego z issue/PR wstrzyknie scoped narzędzie z numerem celu.
+    zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) i do Jiry (zgłoszenie/
+    komentarz) dokładamy NIEZALEŻNIE, każdy TYLKO przy swojej włączonej bramce i skonfigurowanym
+    celu — profil per drzwi (ADR 0006/0021/0031). Zdarzenia z zapisu idą jako ``source=teams``
+    (strażnik pętli — notifier ich nie odeśle). Gdy zapis GitHub włączony, budujemy też FABRYKĘ
+    ``reply_on_thread`` (ADR 0024, Faza 3b) dla wątku powiązanego z issue/PR.
     """
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.core.application.events import EventService
@@ -120,6 +124,7 @@ def _build_bridge_catalog(
 
     events = EventService(SqliteEventStore(events_settings.db_path))
     catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
+    catalog += _build_jira_write_catalog(jira_settings, events)
 
     if not (
         github_settings.enable_github_write
@@ -156,6 +161,57 @@ def _build_bridge_catalog(
         [*catalog, *build_github_write_catalog(write_service)],
         _make_thread_tool_factory(thread_links, write_service),
     )
+
+
+def _build_jira_write_catalog(
+    jira_settings: JiraSettings, events: EventService
+) -> list[ToolSpec]:
+    """Bramkowany zapis do Jiry (Gate 5 / ADR 0031) — pusty przy OFF; fail-fast przy ON bez celu.
+
+    Bramka OFF → pusto (agent bez narzędzia zapisu Jira). Bramka ON, ale brak celu (token/URL/proj)
+    → TWARDY błąd (ADR 0031 czyni walidację punktem egzekucji): cicha bramka „włączona, ale martwa"
+    byłaby footgunem (operator myśli, że zapis działa). ``self_account`` (strażnik pętli self-skip)
+    egzekwuje poller Jira (``JiraSettings.validate`` w ``workmate-jira``) — to jego proces go używa.
+    Sync klient Jiry żyje przez proces; echo zapisu idzie jako ``source=teams`` (strażnik pętli).
+    """
+    if not jira_settings.enable_jira_write:
+        return []
+    missing = [
+        name
+        for name, value in (
+            ("WORKMATE_JIRA_TOKEN", jira_settings.token),
+            ("WORKMATE_JIRA_BASE_URL", jira_settings.base_url),
+            ("WORKMATE_JIRA_WRITE_PROJECT", jira_settings.write_project),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            "WORKMATE_JIRA_ENABLE_WRITE=true wymaga: " + ", ".join(missing) + " w środowisku/.env."
+        )
+
+    import httpx
+
+    from workmate.adapters.outbound.jira_api import HttpxJiraClient
+    from workmate.core.application.jira import JiraWriteService
+    from workmate.core.application.tools import build_jira_write_catalog
+
+    client = HttpxJiraClient(
+        httpx.Client(timeout=30), jira_settings.token, base_url=jira_settings.base_url
+    )
+    write_service = JiraWriteService(
+        client,
+        project=jira_settings.write_project,
+        issue_type=jira_settings.default_issue_type,
+        events=events,
+    )
+    logger.info(
+        "Jira write WŁĄCZONY dla projektu %s — agent Teams może tworzyć zgłoszenia/komentarze. "
+        "Strażnik pętli (self-skip) domyka poller Jira: wymaga tego samego WORKMATE_JIRA_TOKEN i "
+        "WORKMATE_JIRA_SELF_ACCOUNT = konto tego PAT (ADR 0031).",
+        jira_settings.write_project,
+    )
+    return build_jira_write_catalog(write_service)
 
 
 def _make_thread_tool_factory(

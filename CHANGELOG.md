@@ -21,6 +21,14 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   self-skip konta PAT), poller + entry point + notifier (B1.2). Atrybucja `project` per issue z rejestru
   (`jira_project_key`). Notifier zgeneralizowany: etykieta źródła z `event.source` (`[Jira]`/`[GitHub]`),
   źródło konsumpcji konfigurowalne. Read-only (bez nowej bramki zapisu); wątkowanie kanału OFF w B1.
+- **Zapis do Jira (Gate 5, create-only)** ([ADR 0031](docs/adr/0031-jira-write-capability-gate-5.md)):
+  bramkowana zdolność mutująca `create_jira_issue` + `comment_jira_issue` (odpowiednik Gate 4 GitHuba).
+  Osobny `JiraWritePort`/`JiraWriteService` (rdzeń), bramka `enable_jira_write` per drzwi (domyślnie OFF,
+  wystawiana na drzwiach agenta `teams_graph` przez `extra_catalog` — powierzchnia MCP nietknięta). Projekt
+  tworzenia z konfiguracji (`WORKMATE_JIRA_WRITE_PROJECT`), nie z treści; komentarz waliduje PEŁNY kształt
+  klucza (`PROJ-123`) i zgodność projektu — blokuje obejście cross-project (także path-traversal `WM-1/../X`).
+  Strażnik pętli: echo zapisu jako `source="teams"` (notifier `source="jira"` go nie odsyła) + self-skip PAT
+  w pollerze; fail-fast walidacji sprzecznej konfiguracji. Tranzycja statusu odłożona do ADR 0032.
 
 ## [1.0.0] — 2026-07-17
 
