@@ -813,6 +813,74 @@ class GithubSettings:
             )
 
 
+_JIRA_POLL_FLOOR_S = 30
+_DEFAULT_JIRA_STATE = Path.home() / ".workmate" / "jira_state.json"
+_MAX_JIRA_PER_PAGE = 100
+
+
+@dataclass(frozen=True)
+class JiraSettings:
+    """Konfiguracja drzwi Jira (Server/Data Center, ADR 0030) — polling REST v2 tokenem PAT.
+
+    Bot odpytuje Jira REST v2 osobistym tokenem (PAT Bearer), bez webhooka. ``token`` to SEKRET
+    (``repr=False``, env ``WORKMATE_JIRA_TOKEN``) — nigdy w repo/``data/``. Drzwi są READ-ONLY
+    (ingest zdarzeń Jira → EventStore → Teams); zapis do Jira będzie osobno bramkowany.
+    ``watch_projects`` to klucze projektów Jira do nasłuchu (np. ``WM``); mapowanie na projekt
+    WorkMate z rejestru (``jira_project_key``, ADR 0028). ``self_account`` (konto PAT) do self-skip.
+    """
+
+    base_url: str = ""
+    token: str = field(default="", repr=False)
+    watch_projects: tuple[str, ...] = ()
+    poll_interval_s: int = 60
+    per_page: int = 50
+    state_path: Path = _DEFAULT_JIRA_STATE
+    self_account: str = ""
+
+    @classmethod
+    def from_env(cls) -> JiraSettings:
+        return cls(
+            base_url=os.environ.get("WORKMATE_JIRA_BASE_URL", "").rstrip("/"),
+            token=os.environ.get("WORKMATE_JIRA_TOKEN", ""),
+            watch_projects=_list_from_env("WORKMATE_JIRA_WATCH_PROJECTS", ()),
+            poll_interval_s=_int_from_env("WORKMATE_JIRA_POLL_INTERVAL", 60),
+            per_page=_int_from_env("WORKMATE_JIRA_PER_PAGE", 50),
+            state_path=_path_from_env("WORKMATE_JIRA_STATE", _DEFAULT_JIRA_STATE),
+            self_account=os.environ.get("WORKMATE_JIRA_SELF_ACCOUNT", ""),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy brak URL/tokenu/projektów albo bezsensowne limity."""
+        missing = [
+            name
+            for name, value in (
+                ("WORKMATE_JIRA_BASE_URL", self.base_url),
+                ("WORKMATE_JIRA_TOKEN", self.token),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Drzwi Jira wymagają URL i tokenu: brakuje "
+                + ", ".join(missing)
+                + " w środowisku/.env."
+            )
+        if not self.watch_projects:
+            raise ValueError(
+                "WORKMATE_JIRA_WATCH_PROJECTS nie może być puste — podaj klucze projektów Jira."
+            )
+        if self.poll_interval_s < _JIRA_POLL_FLOOR_S:
+            raise ValueError(
+                f"WORKMATE_JIRA_POLL_INTERVAL musi być >= {_JIRA_POLL_FLOOR_S}, "
+                f"jest: {self.poll_interval_s}."
+            )
+        if not 1 <= self.per_page <= _MAX_JIRA_PER_PAGE:
+            raise ValueError(
+                f"WORKMATE_JIRA_PER_PAGE musi być w zakresie 1..{_MAX_JIRA_PER_PAGE}, "
+                f"jest: {self.per_page}."
+            )
+
+
 # Zakresy delegowane proaktywnego push do Teams (ADR 0022): tworzenie/pisanie czatu 1:1 oraz
 # wysyłka na kanał. MSAL dokłada offline_access/openid/profile sam (nie wpisujemy ich).
 _DEFAULT_TEAMS_PUSH_SCOPES = (
