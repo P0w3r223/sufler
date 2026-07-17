@@ -207,3 +207,24 @@ def test_select_events_maps_pull_state_transitions() -> None:
         watch_kinds=("pull_state",),
     )
     assert [e.kind for e in events] == ["pr_merged"]
+
+
+def test_get_project_activity_folds_events_by_kind(tmp_path) -> None:
+    from workmate.core.application.events import EventService
+    from workmate.core.application.tools import build_activity_catalog
+
+    store = SqliteEventStore(tmp_path / "events.db")
+    for e in [
+        _ev("o/r#1", kind="pr_opened", repo="o/r", project="wm"),
+        _ev("o/r#1m", kind="pr_merged", repo="o/r", project="wm"),
+        _ev("o/r#2", kind="issue_opened", repo="o/r", project="other"),
+    ]:
+        store.append(e)
+
+    spec = build_activity_catalog(EventService(store))[0]
+    assert spec.name == "get_project_activity"
+    result = spec.fn(project="wm")
+    assert result["project"] == "wm"
+    assert result["event_count"] == 2
+    assert result["by_kind"] == {"pr_opened": 1, "pr_merged": 1}
+    assert result["latest_activity_at"] is not None
