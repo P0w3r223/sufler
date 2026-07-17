@@ -23,3 +23,6 @@ BotFramework-Emulator-main/
 
 # Tymczasowe worktree agentów Claude Code
 .claude/worktrees/
+
+# Artefakty dostarczane klientowi (raporty weryfikacji) — nie commitować.
+RAPORT-*.md
