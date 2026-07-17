@@ -279,6 +279,42 @@ def build_events_catalog(events: EventService) -> list[ToolSpec]:
     return [ToolSpec("read_recent_events", read_recent_events.__doc__ or "", read_recent_events)]
 
 
+def build_activity_catalog(events: EventService) -> list[ToolSpec]:
+    """Narzędzie PODSUMOWANIA aktywności projektu (ADR 0029) — fold zdarzeń danego projektu.
+
+    Osobne od ``build_tool_catalog`` (extra_catalog, per drzwi) — golden-test powierzchni MCP
+    zostaje nietknięty. Reużywa atrybucję ``project`` na zdarzeniach (ADR 0028): liczniki wg typu +
+    ostatnie zdarzenia dają agentowi zwięzły „stan prac" bez surowego przeglądania strumienia.
+    """
+
+    def get_project_activity(project: str, limit: int = 50) -> dict[str, Any]:
+        """Podsumuj aktywność i stan prac projektu ze zdarzeń GitHub przypisanych do projektu.
+
+        Zwraca liczniki wg typu (nowe/zmergowane/zamknięte PR, issue, komentarze, recenzje, CI),
+        czas ostatniej aktywności i ostatnie zdarzenia (najnowsze pierwsze). ``project`` to klucz
+        projektu z rejestru (np. 'workmate'); zdarzenia bez przypisanego projektu tu nie wejdą.
+        """
+
+        def build() -> dict[str, Any]:
+            items = events.recent(project=project, limit=limit)
+            by_kind: dict[str, int] = {}
+            for event in items:
+                by_kind[event.kind] = by_kind.get(event.kind, 0) + 1
+            return {
+                "project": project,
+                "event_count": len(items),
+                "by_kind": by_kind,
+                "latest_activity_at": items[0].occurred_at.isoformat() if items else None,
+                "recent": [e.model_dump(mode="json") for e in items[:20]],
+            }
+
+        return _envelope(build)
+
+    return [
+        ToolSpec("get_project_activity", get_project_activity.__doc__ or "", get_project_activity)
+    ]
+
+
 def build_github_write_catalog(write_service: GithubWriteService) -> list[ToolSpec]:
     """Zbuduj BRAMKOWANE narzędzia zapisu do GitHub (Gate 4 / ADR 0021) — create-only.
 

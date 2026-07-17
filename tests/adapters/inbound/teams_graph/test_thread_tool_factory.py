@@ -98,4 +98,5 @@ def test_bridge_catalog_gate_off_yields_no_thread_factory():
     )
 
     assert factory is None  # brak fabryki = brak reply_on_thread
-    assert [spec.name for spec in catalog] == ["read_recent_events"]  # tylko odczyt zdarzeń
+    # Odczyt zdarzeń + podsumowanie aktywności projektu (ADR 0029); zapis GitHub OFF.
+    assert [spec.name for spec in catalog] == ["read_recent_events", "get_project_activity"]

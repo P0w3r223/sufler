@@ -116,10 +116,10 @@ def _build_bridge_catalog(
     """
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_events_catalog
+    from workmate.core.application.tools import build_activity_catalog, build_events_catalog
 
     events = EventService(SqliteEventStore(events_settings.db_path))
-    catalog = build_events_catalog(events)
+    catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
 
     if not (
         github_settings.enable_github_write
