@@ -54,12 +54,16 @@ class _FakeStore:
         self.rows.append(row)
         return row
 
-    def read_since(self, after_id, *, source=None, limit=50):
-        return [r for r in self.rows if r.id > after_id and (source is None or r.source == source)][
-            :limit
-        ]
+    def read_since(self, after_id, *, source=None, project=None, limit=50):
+        return [
+            r
+            for r in self.rows
+            if r.id > after_id
+            and (source is None or r.source == source)
+            and (project is None or r.project == project)
+        ][:limit]
 
-    def recent(self, *, source=None, limit=20):
+    def recent(self, *, source=None, project=None, limit=20):
         return list(reversed(self.rows))
 
 

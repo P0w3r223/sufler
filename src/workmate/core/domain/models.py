@@ -74,12 +74,16 @@ class Project(BaseModel):
 
     ``company`` to klucz firmy/klienta, do której należy projekt (ADR 0005).
     Jest jedynym źródłem prawdy o firmie — notatka go nie duplikuje.
+    ``github_repos``/``jira_project_key`` mapują projekt na systemy zewnętrzne
+    (ADR 0028) — per-projektowe źródło prawdy dla mostu GitHub/Jira (opcjonalne).
     """
 
     key: str
     company: str
     name: str
     description: str
+    github_repos: list[str] = Field(default_factory=list)
+    jira_project_key: str | None = None
 
 
 class ProjectStatusRecord(BaseModel):

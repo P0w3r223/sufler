@@ -76,6 +76,23 @@ class HttpxGithubClient:
             {"per_page": "100"},
         )
 
+    def list_pulls(
+        self, owner: str, repo: str, *, state: str = "all", per_page: int = 50
+    ) -> list[dict[str, Any]]:
+        # Dedykowany /pulls (bogatszy niż z /issues): ``merged_at``, ``draft``, ``head``/``base``,
+        # ``state`` — snapshot stanu PR i tranzycji (ADR 0029). Sort desc po aktualizacji.
+        return self._get_all(
+            f"{self._api_base}/repos/{owner}/{repo}/pulls",
+            {"state": state, "sort": "updated", "direction": "desc", "per_page": str(per_page)},
+        )
+
+    def list_branches(self, owner: str, repo: str, *, per_page: int = 50) -> list[dict[str, Any]]:
+        # Gałęzie repo: nazwa + HEAD SHA (``commit.sha``) — snapshot i wykrycie pushy (ADR 0029).
+        return self._get_all(
+            f"{self._api_base}/repos/{owner}/{repo}/branches",
+            {"per_page": str(per_page)},
+        )
+
     def list_workflow_runs(
         self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
     ) -> list[dict[str, Any]]:

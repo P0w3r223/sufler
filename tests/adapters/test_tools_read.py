@@ -153,7 +153,14 @@ def test_read_tool_output_shapes_are_stable(sample_notes):
 
     projects = _tool_fn(mcp, "list_projects")()
     assert set(projects) == {"count", "projects"}
-    assert set(projects["projects"][0]) == {"key", "company", "name", "description"}
+    assert set(projects["projects"][0]) == {
+        "key",
+        "company",
+        "name",
+        "description",
+        "github_repos",
+        "jira_project_key",
+    }
 
     note = _tool_fn(mcp, "get_note")(note_id="mpwik/scada-integration/2025-06-12-api")
     assert set(note) == {"id", "metadata", "body"}

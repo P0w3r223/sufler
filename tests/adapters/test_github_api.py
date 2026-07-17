@@ -93,6 +93,30 @@ def test_create_issue_posts_payload():
     assert result["number"] == 12
 
 
+def test_list_pulls_uses_pulls_endpoint_and_state():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["state"] = request.url.params.get("state")
+        return httpx.Response(200, json=[{"number": 3, "state": "open", "draft": False}])
+
+    pulls = _client(handler).list_pulls("o", "r", state="all")
+    assert seen["path"] == "/repos/o/r/pulls"
+    assert seen["state"] == "all"
+    assert pulls[0]["number"] == 3
+
+
+def test_list_branches_reads_name_and_head_sha():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/repos/o/r/branches"
+        return httpx.Response(200, json=[{"name": "main", "commit": {"sha": "abc123"}}])
+
+    branches = _client(handler).list_branches("o", "r")
+    assert branches[0]["name"] == "main"
+    assert branches[0]["commit"]["sha"] == "abc123"
+
+
 def test_create_comment_posts_to_issue():
     seen: dict = {}
 

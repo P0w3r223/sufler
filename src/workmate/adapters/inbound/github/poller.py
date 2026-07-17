@@ -57,6 +57,7 @@ class GithubPoller:
         poll_interval: int,
         per_page: int,
         self_login: str = "",
+        project: str = "",
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._client = client
@@ -69,6 +70,7 @@ class GithubPoller:
         self._poll_interval = poll_interval
         self._per_page = per_page
         self._self_login = self_login
+        self._project = project
         self._clock = clock
 
     async def run(self) -> None:
@@ -138,6 +140,8 @@ class GithubPoller:
             watch_kinds=self._watch_kinds,
             runs_since=self._state.get("runs_since", ""),
             reviews_since=self._state.get("reviews_since", ""),
+            repo=f"{self._owner}/{self._repo}",
+            project=self._project,
         )
         # Ingest (SQLite, synchroniczny) offloadujemy do puli wątków — nie blokujemy pętli, więc
         # współbieżny notifier działa dalej. Błąd JEDNEGO zdarzenia izolujemy per zdarzenie (patrz

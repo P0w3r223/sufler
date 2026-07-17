@@ -32,10 +32,10 @@ class _FakeStore:
         self.rows.append(row)
         return row
 
-    def read_since(self, after_id, *, source=None, limit=50):
+    def read_since(self, after_id, *, source=None, project=None, limit=50):
         return []
 
-    def recent(self, *, source=None, limit=20):
+    def recent(self, *, source=None, project=None, limit=20):
         return list(reversed(self.rows))[:limit]
 
 
@@ -45,8 +45,8 @@ class _EventsService:
     def __init__(self, store):
         self._store = store
 
-    def recent(self, *, source=None, limit=20):
-        return self._store.recent(source=source, limit=limit)
+    def recent(self, *, source=None, project=None, limit=20):
+        return self._store.recent(source=source, project=project, limit=limit)
 
 
 class _OkWriter:

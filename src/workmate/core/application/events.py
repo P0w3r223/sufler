@@ -36,12 +36,19 @@ class EventService:
             return None
         return self._store.append(event)
 
-    def recent(self, *, source: str | None = None, limit: int = 20) -> list[Event]:
-        """Ostatnie zdarzenia (najnowsze pierwsze), opcjonalnie zawężone do źródła."""
-        return self._store.recent(source=source, limit=limit)
+    def recent(
+        self, *, source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> list[Event]:
+        """Ostatnie zdarzenia (najnowsze pierwsze), opcjonalnie zawężone do źródła/projektu."""
+        return self._store.recent(source=source, project=project, limit=limit)
 
     def read_since(
-        self, after_id: int, *, source: str | None = None, limit: int = 50
+        self,
+        after_id: int,
+        *,
+        source: str | None = None,
+        project: str | None = None,
+        limit: int = 50,
     ) -> list[Event]:
         """Zdarzenia nowsze niż kursor ``after_id`` (dla notifiera), rosnąco po id."""
-        return self._store.read_since(after_id, source=source, limit=limit)
+        return self._store.read_since(after_id, source=source, project=project, limit=limit)
