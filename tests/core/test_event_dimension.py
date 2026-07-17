@@ -155,3 +155,55 @@ def test_github_selection_stamps_repo_and_project() -> None:
     assert len(events) == 1
     # repo/project ostemplowane; external_id niezmienione (single-repo, ADR 0028/0029).
     assert (events[0].repo, events[0].project, events[0].external_id) == ("o/r", "wm", "5")
+
+
+def test_map_pull_state_merged_closed_open() -> None:
+    from workmate.adapters.inbound.github import selection
+
+    merged = selection.map_pull_state(
+        {
+            "number": 7,
+            "merged_at": "2026-07-17T10:00:00Z",
+            "state": "closed",
+            "title": "Feat",
+            "html_url": "http://gh/7",
+        }
+    )
+    assert merged is not None
+    assert (merged.kind, merged.external_id, merged.actor) == ("pr_merged", "7#merged", "")
+
+    closed = selection.map_pull_state(
+        {
+            "number": 8,
+            "merged_at": None,
+            "state": "closed",
+            "closed_at": "2026-07-17T11:00:00Z",
+            "title": "X",
+            "html_url": "http://gh/8",
+        }
+    )
+    assert closed is not None
+    assert (closed.kind, closed.external_id) == ("pr_closed", "8#closed")
+
+    assert selection.map_pull_state({"number": 9, "state": "open", "merged_at": None}) is None
+
+
+def test_select_events_maps_pull_state_transitions() -> None:
+    from workmate.adapters.inbound.github import selection
+
+    events = selection.select_events(
+        [],
+        [],
+        raw_pulls=[
+            {
+                "number": 7,
+                "merged_at": "2026-07-17T10:00:00Z",
+                "state": "closed",
+                "title": "t",
+                "html_url": "http://gh/7",
+            }
+        ],
+        self_login="bot",
+        watch_kinds=("pull_state",),
+    )
+    assert [e.kind for e in events] == ["pr_merged"]

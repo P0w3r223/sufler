@@ -32,6 +32,8 @@ _KIND_LABELS = {
     "issue_opened": "Nowe issue",
     "issue_comment": "Nowy komentarz",
     "pr_opened": "Nowy PR",
+    "pr_merged": "PR zmergowany",
+    "pr_closed": "PR zamknięty",
     "pr_comment": "Nowy komentarz w PR",
     "pr_review": "Recenzja PR",
     "ci_success": "CI: sukces",
