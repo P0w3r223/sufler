@@ -1,7 +1,7 @@
 [project]
 name = "workmate"
-version = "0.1.0"
-description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code. Faza 1 domknięta (odczyt + save_note + HTTP); Faza 2 w toku: runtime agenta i drzwi Teams nad tymi samymi narzędziami."
+version = "1.0.0"
+description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/Telegram/CLI, trójstronny most GitHub ↔ EventStore ↔ Teams oraz lokalny retrieval leksykalny notatek."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
