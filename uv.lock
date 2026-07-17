@@ -2695,6 +2695,10 @@ github = [
     { name = "httpx" },
     { name = "python-dotenv" },
 ]
+jira = [
+    { name = "httpx" },
+    { name = "python-dotenv" },
+]
 retrieval = [
     { name = "simplemma" },
 ]
@@ -2732,6 +2736,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.40" },
     { name = "httpx", marker = "extra == 'github'", specifier = ">=0.28.1" },
+    { name = "httpx", marker = "extra == 'jira'", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'teams-graph'", specifier = ">=0.28.1" },
     { name = "markdown-it-py", marker = "extra == 'teams-graph'", specifier = ">=3.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
@@ -2746,6 +2751,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.6" },
     { name = "python-docx", marker = "extra == 'teams-graph'", specifier = ">=1.1" },
     { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0" },
+    { name = "python-dotenv", marker = "extra == 'jira'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'telegram'", specifier = ">=1.0" },
     { name = "python-pptx", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
@@ -2754,7 +2760,7 @@ requires-dist = [
     { name = "simplemma", marker = "extra == 'retrieval'", specifier = ">=1.0" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
-provides-extras = ["teams", "agent", "telegram", "teams-graph", "github", "retrieval"]
+provides-extras = ["teams", "agent", "telegram", "teams-graph", "github", "jira", "retrieval"]
 
 [package.metadata.requires-dev]
 dev = [
