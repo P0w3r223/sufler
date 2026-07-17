@@ -104,6 +104,7 @@ class GithubPoller:
         raw_runs: list[dict[str, Any]] = []
         raw_reviews: list[dict[str, Any]] = []
         raw_pulls: list[dict[str, Any]] = []
+        raw_branches: list[dict[str, Any]] = []
         # ``/issues`` obejmuje ISSUE i PR (te mają klucz ``pull_request``) — pobieramy, gdy
         # nasłuchujemy któregokolwiek; selection rozróżni je po ``watch_kinds``.
         if "issues" in self._watch_kinds or "pulls" in self._watch_kinds:
@@ -138,6 +139,13 @@ class GithubPoller:
                     self._owner, self._repo, state="all", per_page=self._per_page
                 ),
             )
+        if "branches" in self._watch_kinds:
+            raw_branches = await loop.run_in_executor(
+                None,
+                lambda: self._client.list_branches(
+                    self._owner, self._repo, per_page=self._per_page
+                ),
+            )
 
         events = selection.select_events(
             raw_issues,
@@ -152,6 +160,17 @@ class GithubPoller:
             repo=f"{self._owner}/{self._repo}",
             project=self._project,
         )
+        if "branches" in self._watch_kinds:
+            # Push/usunięcie gałęzi to różnica HEAD SHA między rundami (ADR 0029): stan
+            # ``branch_heads`` w state pollera; pierwsza runda seeduje bez zdarzeń.
+            branch_events, self._state["branch_heads"] = selection.diff_branches(
+                raw_branches,
+                self._state.get("branch_heads"),
+                repo=f"{self._owner}/{self._repo}",
+                project=self._project,
+                occurred_at=self._clock(),
+            )
+            events = [*events, *branch_events]
         # Ingest (SQLite, synchroniczny) offloadujemy do puli wątków — nie blokujemy pętli, więc
         # współbieżny notifier działa dalej. Błąd JEDNEGO zdarzenia izolujemy per zdarzenie (patrz
         # ``_ingest_batch``), żeby jedno zatrute nie zakleszczyło całego strumienia GitHub → Teams.

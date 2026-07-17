@@ -211,6 +211,58 @@ def map_pull_state(raw: dict[str, Any]) -> NewEvent | None:
     )
 
 
+def diff_branches(
+    raw_branches: Sequence[dict[str, Any]],
+    previous: dict[str, str] | None,
+    *,
+    repo: str = "",
+    project: str = "",
+    occurred_at: datetime,
+) -> tuple[list[NewEvent], dict[str, str]]:
+    """Wykryj pushy/usunięcia gałęzi różnicą HEAD SHA między rundami (ADR 0029, zgrubne).
+
+    Pierwsza runda (``previous is None``) SEEDUJE mapę bez zdarzeń (inaczej wszystkie gałęzie
+    wyglądałyby jak świeży push). Potem: nowa gałąź lub zmiana SHA → ``branch_pushed``; gałąź
+    zniknęła → ``branch_deleted``. ``external_id`` = ``{gałąź}@{sha}`` (dedup emituje raz;
+    force-push = nowy SHA = nowe zdarzenie). BIAŁA LISTA PÓL: nazwa gałęzi i SHA — nic więcej.
+    ``actor`` pusty (obserwacja, nie wektor pętli). ``occurred_at`` podaje wołający (detekcja jest
+    KLIENCKA, bez znacznika GitHuba), więc rdzeń nie woła zegara.
+    """
+    current = {
+        str(b.get("name") or ""): str((b.get("commit") or {}).get("sha") or "")
+        for b in raw_branches
+        if b.get("name")
+    }
+    if previous is None:
+        return [], current
+    events: list[NewEvent] = []
+    for name, sha in current.items():
+        if sha and previous.get(name) != sha:
+            events.append(_branch_event("branch_pushed", name, sha, occurred_at, repo, project))
+    for name, sha in previous.items():
+        if name not in current:
+            events.append(_branch_event("branch_deleted", name, sha, occurred_at, repo, project))
+    return events, current
+
+
+def _branch_event(
+    kind: str, name: str, sha: str, when: datetime, repo: str, project: str
+) -> NewEvent:
+    pushed = kind == "branch_pushed"
+    return NewEvent(
+        source=_SOURCE,
+        kind=kind,
+        external_id=f"{name}@{sha}" + ("" if pushed else "#deleted"),
+        actor="",
+        title=f"Push do gałęzi {name}" if pushed else f"Usunięto gałąź {name}",
+        summary=f"HEAD {sha[:12]}" if sha else "",
+        url="",
+        repo=repo,
+        project=project,
+        occurred_at=when,
+    )
+
+
 def select_events(
     raw_issues: Sequence[dict[str, Any]],
     raw_comments: Sequence[dict[str, Any]],

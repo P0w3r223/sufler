@@ -38,6 +38,8 @@ _KIND_LABELS = {
     "pr_review": "Recenzja PR",
     "ci_success": "CI: sukces",
     "ci_failure": "CI: porażka",
+    "branch_pushed": "Push do gałęzi",
+    "branch_deleted": "Usunięto gałąź",
 }
 
 

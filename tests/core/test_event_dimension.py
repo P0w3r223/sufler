@@ -266,3 +266,27 @@ def test_project_status_enriched_with_event_activity(tmp_path) -> None:
     assert status.recent_activity_count == 2  # tylko zdarzenia projektu wm
     assert status.failing_ci_count == 1
     assert status.latest_activity_at is not None
+
+
+def test_diff_branches_seeds_then_detects_push_and_delete() -> None:
+    from workmate.adapters.inbound.github import selection
+
+    raw1 = [{"name": "main", "commit": {"sha": "aaa"}}, {"name": "feat", "commit": {"sha": "bbb"}}]
+    # Pierwsza runda: SEED — zero zdarzeń, mapa zapisana.
+    events, heads = selection.diff_branches(raw1, None, repo="o/r", project="wm", occurred_at=_WHEN)
+    assert events == []
+    assert heads == {"main": "aaa", "feat": "bbb"}
+
+    # Druga runda: feat dostał nowy SHA (push); main bez zmian → bez zdarzenia.
+    raw2 = [{"name": "main", "commit": {"sha": "aaa"}}, {"name": "feat", "commit": {"sha": "ccc"}}]
+    events2, heads2 = selection.diff_branches(
+        raw2, heads, repo="o/r", project="wm", occurred_at=_WHEN
+    )
+    assert [(e.kind, e.external_id) for e in events2] == [("branch_pushed", "feat@ccc")]
+    assert heads2 == {"main": "aaa", "feat": "ccc"}
+
+    # Trzecia runda: feat usunięta.
+    raw3 = [{"name": "main", "commit": {"sha": "aaa"}}]
+    events3, _ = selection.diff_branches(raw3, heads2, repo="o/r", project="wm", occurred_at=_WHEN)
+    assert [(e.kind, e.external_id) for e in events3] == [("branch_deleted", "feat@ccc#deleted")]
+    assert all(e.project == "wm" and e.repo == "o/r" and e.actor == "" for e in events3)
