@@ -196,6 +196,42 @@ def test_default_render_falls_back_to_raw_kind_when_unknown():
     assert "mystery_kind" in text  # brak etykiety → surowy kind (nie wywala renderu)
 
 
+@pytest.mark.parametrize(
+    "kind,label",
+    [
+        ("jira_issue_created", "Nowe zgłoszenie"),
+        ("jira_transition", "Zmiana statusu"),
+        ("jira_comment", "Nowy komentarz"),
+    ],
+)
+def test_default_render_labels_jira_kinds_with_jira_source(kind, label):
+    # Etykieta źródła wyprowadzona z event.source (ADR 0030) — nie zaszyta [GitHub].
+    text = default_event_render(_event(7, source="jira", kind=kind))
+    assert f"**[Jira] {label}**" in text
+
+
+def test_default_render_unknown_source_falls_back_to_raw_source():
+    text = default_event_render(_event(7, source="gitlab", kind="issue_opened"))
+    assert "**[gitlab] Nowe issue**" in text
+
+
+def test_notifier_source_configurable_to_jira():
+    sender = _FakeSender()
+    targets = NotifyTargets(chat_user_id="u1", enable_chat=True)
+    events = _FakeEvents([_event(1, source="github"), _event(2, source="jira")])
+    notifier = EventNotifier(
+        events,
+        sender,
+        targets=targets,
+        save_cursor=lambda _cid: None,
+        source="jira",
+    )
+    asyncio.run(notifier.pump_once())
+    # source="jira" → tylko zdarzenie Jiry wypchnięte (github pominięty przez filtr źródła).
+    assert len(sender.chats) == 1
+    assert sender.chats[0][1].startswith("**[Jira]")
+
+
 # --- ADR 0024 Faza 3a: wątkowanie kanału (GitHub → jeden wątek na issue/PR) -----------
 
 _CHANNEL_TARGETS = NotifyTargets(

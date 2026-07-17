@@ -88,6 +88,8 @@ workmate-telegram = "workmate.adapters.inbound.telegram.app:main"
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 # Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.
 workmate-github = "workmate.adapters.inbound.github.app:main"
+# Proces drzwi Jira (Server/DC) w trybie delegowanym (ADR 0030), polling PAT: `uv run workmate-jira`.
+workmate-jira = "workmate.adapters.inbound.jira.app:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).

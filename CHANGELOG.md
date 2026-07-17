@@ -14,6 +14,13 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   endpointy `list_pulls`/`list_branches`; atrybucja zdarzeń do projektu; tranzycje `pr_merged`/`pr_closed`;
   zdarzenia `branch_pushed`/`branch_deleted` (SHA-diff); narzędzie `get_project_activity`; wzbogacony
   `get_project_status` (aktywność GitHub, porażki CI). Nowe watch-kindy `pull_state`, `branches` (opt-in).
+- **Drzwi Jira read (Server/Data Center)** ([ADR 0030](docs/adr/0030-jira-server-read-door.md)): delegowany
+  polling REST v2 tokenem PAT (`workmate-jira`, extra `jira`) → wspólny `EventStore` → Teams. `JiraSettings`
+  + `JiraReadPort`/`HttpxJiraClient` (B1.1); `jira/selection` mapuje issue na zdarzenia `jira_issue_created`
+  /`jira_transition`/`jira_comment` (dedup tranzycji po `id` wpisu changelogu, watermark JQL po `updated`,
+  self-skip konta PAT), poller + entry point + notifier (B1.2). Atrybucja `project` per issue z rejestru
+  (`jira_project_key`). Notifier zgeneralizowany: etykieta źródła z `event.source` (`[Jira]`/`[GitHub]`),
+  źródło konsumpcji konfigurowalne. Read-only (bez nowej bramki zapisu); wątkowanie kanału OFF w B1.
 
 ## [1.0.0] — 2026-07-17
 
