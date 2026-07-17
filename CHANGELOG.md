@@ -4,6 +4,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/); wersjonowanie
 [SemVer](https://semver.org/lang/pl/). Decyzje projektowe: [`docs/adr/`](docs/adr/).
 
+## [Unreleased]
+
+### Dodane
+- **Fundament projekt↔repo↔Jira** ([ADR 0028](docs/adr/0028-project-repo-jira-mapping-and-event-dimension.md)):
+  rejestr z `github_repos`/`jira_project_key` + reverse-lookup; wymiar `project`/`repo` w zdarzeniu
+  (migracja `ADD COLUMN`); filtr `project` w `read_recent_events`; dedup multi-repo (`composite_external_id`).
+- **Realny stan branchy/PR** ([ADR 0029](docs/adr/0029-branch-pr-state-transitions-and-project-activity.md)):
+  endpointy `list_pulls`/`list_branches`; atrybucja zdarzeń do projektu; tranzycje `pr_merged`/`pr_closed`;
+  zdarzenia `branch_pushed`/`branch_deleted` (SHA-diff); narzędzie `get_project_activity`; wzbogacony
+  `get_project_status` (aktywność GitHub, porażki CI). Nowe watch-kindy `pull_state`, `branches` (opt-in).
+
 ## [1.0.0] — 2026-07-17
 
 Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryfikowany na żywo.

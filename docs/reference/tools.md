@@ -87,7 +87,8 @@ Wstrzykiwane per drzwi zależnie od włączonych zdolności; **nie** wchodzą na
 
 | Narzędzie | Parametry | Zwraca |
 |-----------|-----------|--------|
-| `read_recent_events` | `source: str \| None = None`, `limit: int = 20` | `{ count, events: [...] }` — okno read-only na zdarzenia GitHub/Teams. |
+| `read_recent_events` | `source: str \| None = None`, `project: str \| None = None`, `limit: int = 20` | `{ count, events: [...] }` — okno read-only na zdarzenia (filtr źródła/projektu, ADR 0028). |
+| `get_project_activity` | `project: str`, `limit: int = 50` | `{ project, event_count, by_kind, latest_activity_at, recent }` — fold aktywności projektu: liczniki wg typu + ostatnia aktywność ([ADR 0029](../adr/0029-branch-pr-state-transitions-and-project-activity.md)). |
 
 ### Zapis GitHub (Bramka 4, [ADR 0021](../adr/0021-github-write-capability-gate-4.md), bramka `WORKMATE_GITHUB_ENABLE_WRITE`)
 
