@@ -2,6 +2,7 @@
 
 Sedno: 1:1 = /me → utworzenie czatu oneOnOne → wiadomość; kanał = post root; render Markdown→HTML.
 """
+
 from __future__ import annotations
 
 import asyncio

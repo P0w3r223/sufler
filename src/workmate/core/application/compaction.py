@@ -10,6 +10,7 @@ Logika bez I/O w rdzeniu: zależy tylko od portów ``ConversationStore`` i ``LLM
 testujemy na atrapach, bez sieci. „Wymiana" liczona jest od wiadomości użytkownika do
 następnej wiadomości użytkownika (tak odmierzamy N tur do zachowania verbatim).
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

@@ -1,4 +1,5 @@
 """Testy logiki serwisów (wyszukiwanie, odczyt, synteza statusu)."""
+
 from __future__ import annotations
 
 from datetime import date

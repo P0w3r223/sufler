@@ -5,6 +5,7 @@ jest akceptowana bez dziedziczenia. Domyślny adapter: SQLite + FTS5 (wydajne
 wyszukiwanie wielu starych rozmów); w testach — atrapa w pamięci. Znaczniki czasu
 i identyfikatory nadaje implementacja, nie rdzeń.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol

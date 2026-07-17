@@ -5,6 +5,7 @@ kontekstem. Granica (adapter MCP) łapie ``RepositoryError`` i zamienia go na
 czytelny komunikat dla klienta, zamiast wywracać cały serwer — to realizacja
 zasady "fail fast na błędnych danych, degraduj łagodnie na granicy".
 """
+
 from __future__ import annotations
 
 

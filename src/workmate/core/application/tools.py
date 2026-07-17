@@ -11,6 +11,7 @@ Funkcje narzędzi to cienkie opakowania serwisów: na granicy łapią ``Reposito
 / ``WriteError`` i zwracają ``{"error": ...}`` (żeby jedna wadliwa dana nie
 wywróciła serwera); wyjątki nieznane świadomie wypływają jako defekt kodu.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable

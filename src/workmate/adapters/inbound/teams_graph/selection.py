@@ -6,6 +6,7 @@ wątku, przez co spike milkł po pierwszej odpowiedzi), tylko od watermarku PER 
 zbioru aktywnych wątków. Dzięki temu w jednym wątku można pisać wielokrotnie, a bot dalej
 czyta i odpowiada. Wszystkie decyzje są czystymi funkcjami — testowalne bez sieci.
 """
+
 from __future__ import annotations
 
 import html
@@ -120,9 +121,7 @@ def _parse_refs(raw: dict[str, Any], body_html: str | None) -> tuple[AttachmentR
     for att in raw.get("attachments") or []:
         if att.get("contentType") == "reference" and att.get("contentUrl"):
             refs.append(
-                AttachmentRef(
-                    kind="file", name=att.get("name") or "plik", url=att["contentUrl"]
-                )
+                AttachmentRef(kind="file", name=att.get("name") or "plik", url=att["contentUrl"])
             )
     seen: set[str] = set()
     for hosted_id in _HOSTED_RE.findall(body_html or ""):
@@ -182,9 +181,7 @@ def roots_to_poll(roots: list[dict[str, Any]], channel_state: dict[str, Any]) ->
     return sorted(ids)
 
 
-def _collect_new(
-    raws: list[dict[str, Any]], watermark: str
-) -> tuple[list[dict[str, Any]], str]:
+def _collect_new(raws: list[dict[str, Any]], watermark: str) -> tuple[list[dict[str, Any]], str]:
     """Zwróć surowe wiadomości utworzone po ``watermark`` + nowy watermark.
 
     Watermark przesuwamy do NAJNOWSZEJ realnie zobaczonej wiadomości (a nie do „teraz"),
@@ -248,11 +245,7 @@ def plan_channel(
 
     # 3) Eksmisja martwych wątków — bez aktywności dłużej niż active_idle.
     cutoff = now - active_idle
-    threads = {
-        rid: info
-        for rid, info in threads.items()
-        if parse_iso(info["last_seen"]) >= cutoff
-    }
+    threads = {rid: info for rid, info in threads.items() if parse_iso(info["last_seen"]) >= cutoff}
 
     messages = _dedup_by_id(messages)
     messages.sort(key=lambda m: parse_iso(m.created))

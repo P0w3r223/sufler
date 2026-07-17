@@ -8,6 +8,7 @@ Dołożenie drzwi Fazy 2 (Teams) polega na dodaniu tu drugiego adaptera
 wejściowego nad tymi samymi ``notes_service`` / ``projects_service`` — bez
 zmiany rdzenia.
 """
+
 from __future__ import annotations
 
 import logging

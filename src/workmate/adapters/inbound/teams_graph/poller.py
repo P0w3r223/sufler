@@ -5,6 +5,7 @@ wstrzykiwane, więc pełną pętlę testujemy atrapą portu bez sieci. Wszystkie
 (co nowe, watermark per wątek, dedup, self-skip) delegujemy do czystej
 ``selection.plan_channel`` — tu zostaje tylko orkiestracja I/O i utrwalanie stanu.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -63,9 +64,7 @@ class GraphChannelClient(Protocol):
         self, team_id: str, channel_id: str, root_id: str, *, top: int
     ) -> list[dict[str, Any]]: ...
 
-    async def post_reply(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None: ...
+    async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None: ...
 
     async def get_hosted_content(
         self, team_id: str, channel_id: str, root_id: str, message_id: str, hosted_id: str
@@ -149,9 +148,7 @@ class ChannelPoller:
         key = f"{team_id}/{channel_id}"
         channel_state = self._state["channels"][key]
 
-        roots = await self._client.list_root_messages(
-            team_id, channel_id, top=self._top_roots
-        )
+        roots = await self._client.list_root_messages(team_id, channel_id, top=self._top_roots)
         replies_by_root: dict[str, list[dict[str, Any]]] = {}
         for root_id in selection.roots_to_poll(roots, channel_state):
             replies_by_root[root_id] = await self._client.list_replies(
@@ -173,9 +170,7 @@ class ChannelPoller:
             # Materializuj załączniki (I/O) tuż przed obsługą — bajty trafiają na kopię
             # wiadomości, którą handler przekłada na treść multimodalną dla agenta.
             if self._materializer is not None and msg.attachment_refs:
-                attachments = await self._materializer.materialize(
-                    team_id, channel_id, msg
-                )
+                attachments = await self._materializer.materialize(team_id, channel_id, msg)
                 msg = replace(msg, attachments=attachments)
             reply = await self._handle(msg, conversation_id)
             if reply:

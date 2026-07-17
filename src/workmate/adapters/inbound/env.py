@@ -5,6 +5,7 @@ Bez zależności zewnętrznej (nie ``python-dotenv``): realne zmienne środowisk
 mają priorytet (``setdefault``). PowerShell domyślnie zapisuje UTF-16 LE z BOM — obsługujemy
 oba warianty, żeby ``.env`` z Windowsa działał tak samo jak z powłoki uniksowej.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,8 +26,7 @@ def apply_env_file(env_file: Path) -> None:
             text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise SystemExit(
-            f"Nie udało się odczytać {env_file.name} — sprawdź kodowanie "
-            f"(zapisz jako UTF-8): {exc}"
+            f"Nie udało się odczytać {env_file.name} — sprawdź kodowanie (zapisz jako UTF-8): {exc}"
         ) from exc
     for raw in text.splitlines():
         line = raw.strip()
@@ -43,8 +43,6 @@ def load_dotenv() -> None:
     eksportować ręcznie. Brak pliku nie jest błędem (operator może eksportować w powłoce).
     """
     here = Path(__file__).resolve()
-    root = next(
-        (p for p in (here, *here.parents) if (p / "pyproject.toml").is_file()), None
-    )
+    root = next((p for p in (here, *here.parents) if (p / "pyproject.toml").is_file()), None)
     if root is not None and (root / ".env").is_file():
         apply_env_file(root / ".env")

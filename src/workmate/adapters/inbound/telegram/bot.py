@@ -9,6 +9,7 @@ Tryb LONG POLLING (``app.run_polling()``) — bez webhooka, bez publicznego endp
 Treść z Telegrama to DANE, nie polecenia; drzwi mniej zaufane (przy wpięciu runtime
 katalog read-only, ADR 0006).
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine

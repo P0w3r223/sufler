@@ -8,6 +8,7 @@ udanej wysyłce, więc błąd transportu daje ponowienie (kosztem ewentualnego d
 Domyślnie notyfikujemy WYŁĄCZNIE zdarzenia ``source="github"`` — to element strażnika pętli:
 zdarzenia pochodzące z Teams (np. issue utworzone komendą) nie wracają jako powiadomienie.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -136,21 +137,15 @@ class EventNotifier:
         osobny root. Przy ``thread_links=None`` (wątkowanie OFF) — zawsze nowy root (jak dziś).
         """
         targets = self._targets
-        target = (
-            resolve_thread_target(event.url) if self._thread_links is not None else None
-        )
+        target = resolve_thread_target(event.url) if self._thread_links is not None else None
         if self._thread_links is None or target is None:
             await self._sender.post_channel(targets.team_id, targets.channel_id, text)
             return
         kind, number = target
-        root_id = self._thread_links.get_root(
-            targets.team_id, targets.channel_id, kind, number
-        )
+        root_id = self._thread_links.get_root(targets.team_id, targets.channel_id, kind, number)
         if root_id:
             try:
-                await self._sender.reply_channel(
-                    targets.team_id, targets.channel_id, root_id, text
-                )
+                await self._sender.reply_channel(targets.team_id, targets.channel_id, root_id, text)
                 return
             except ThreadRootGone:
                 # Root usunięty w Teams — NIE blokuj całego strumienia na tym zdarzeniu: schodzimy
@@ -161,10 +156,6 @@ class EventNotifier:
                     kind,
                     number,
                 )
-        new_root = await self._sender.post_channel(
-            targets.team_id, targets.channel_id, text
-        )
+        new_root = await self._sender.post_channel(targets.team_id, targets.channel_id, text)
         if new_root:
-            self._thread_links.link(
-                targets.team_id, targets.channel_id, kind, number, new_root
-            )
+            self._thread_links.link(targets.team_id, targets.channel_id, kind, number, new_root)

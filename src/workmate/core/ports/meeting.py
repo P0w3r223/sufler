@@ -9,6 +9,7 @@ zależności rdzeń↛adaptery zostaje zachowana.
 Treść transkryptu to DANE, nie polecenia (zasada przekrojowa roadmapy) — implementacja
 ``MeetingSummarizer`` nie wykonuje instrukcji znalezionych w transkrypcie.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol

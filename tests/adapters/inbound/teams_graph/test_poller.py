@@ -6,6 +6,7 @@ I/O testujemy atrapą portu — bez ``httpx``, bez MSAL, bez sieci. Atrapa nagry
 tym samym wątku po już wysłanej), self-skip, dedup, watermark startowy i odporność pętli na
 błąd pojedynczego kanału.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -80,9 +81,7 @@ class FakeGraphClient:
     ) -> list[dict[str, Any]]:
         return list(self._current().get("replies", {}).get(root_id, []))
 
-    async def post_reply(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None:
+    async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         self.posted.append((team_id, channel_id, root_id, text))
 
 
@@ -183,9 +182,7 @@ def test_poll_channel_multiturn_replies_again_to_later_reply_in_same_thread():
     watermark per wątek sprawia, że runda 2 widzi nową odpowiedź.
     """
     root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z", text="pytanie 1")
-    reply2 = _raw(
-        msg_id="r-2", created="2024-01-01T11:45:00Z", reply_to="root-1", text="pytanie 2"
-    )
+    reply2 = _raw(msg_id="r-2", created="2024-01-01T11:45:00Z", reply_to="root-1", text="pytanie 2")
     client = FakeGraphClient(
         [
             {"roots": [root], "replies": {}},
@@ -229,9 +226,7 @@ def test_poll_channel_does_not_reprocess_same_message_next_round():
 
 
 class _FailingPostClient(FakeGraphClient):
-    async def post_reply(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None:
+    async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         raise RuntimeError("Graph 500")
 
 
@@ -266,9 +261,7 @@ class _HttpError(Exception):
 
 
 class _PermanentFailPostClient(FakeGraphClient):
-    async def post_reply(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None:
+    async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         raise _HttpError(403)  # np. brak zgody ChannelMessage.Send na tym kanale
 
 
@@ -289,9 +282,7 @@ def test_poll_channel_swallows_permanent_post_failure_to_avoid_looping_channel()
     assert client.posted == []  # wysyłka nieudana
     assert "root-1" in poller._state["replied"]  # ale uznana za obsłużoną
     # Watermark przesunięty — kolejna runda tu nie wróci (brak zapętlenia).
-    assert (
-        poller._state["channels"]["team/chan"]["since_roots"] == "2024-01-01T11:30:00Z"
-    )
+    assert poller._state["channels"]["team/chan"]["since_roots"] == "2024-01-01T11:30:00Z"
 
 
 def test_is_permanent_classifies_only_non_429_4xx_as_permanent():
@@ -312,9 +303,7 @@ class _FakeMaterializer:
         self._attachments = attachments
         self.calls: list[tuple[str, str, str]] = []
 
-    async def materialize(
-        self, team_id: str, channel_id: str, msg: Any
-    ) -> tuple[Attachment, ...]:
+    async def materialize(self, team_id: str, channel_id: str, msg: Any) -> tuple[Attachment, ...]:
         self.calls.append((team_id, channel_id, msg.id))
         return self._attachments
 
@@ -457,17 +446,13 @@ def test_run_isolates_single_channel_failure_from_the_rest(monkeypatch):
         ) -> list[dict[str, Any]]:
             return []
 
-        async def post_reply(
-            self, team_id: str, channel_id: str, root_id: str, text: str
-        ) -> None:
+        async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
             self.posted.append((team_id, channel_id, root_id, text))
 
     client = _TwoChannelClient()
     handler = RecordingHandler("odp")
     clock = lambda: datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc)  # noqa: E731
-    poller, _ = _make_poller(
-        client, handler, watch=(("bad", "c1"), ("good", "c2")), clock=clock
-    )
+    poller, _ = _make_poller(client, handler, watch=(("bad", "c1"), ("good", "c2")), clock=clock)
     _break_after(monkeypatch, calls=3)  # 2× sleep kanału + sleep rundy
 
     with pytest.raises(_StopLoop):

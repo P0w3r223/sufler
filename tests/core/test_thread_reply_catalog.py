@@ -6,6 +6,7 @@ nie w sygnaturze. Opis niesie numer celu i regułę miękkiego potwierdzenia (�
 jak w innych narzędziach zapisu (``WriteError`` → ``{"error": ...}``). Testujemy na realnym
 ``GithubWriteService`` nad atrapą portu ``GithubWritePort`` (jak w test_github_write_service.py).
 """
+
 from __future__ import annotations
 
 import inspect

@@ -9,6 +9,7 @@ brakuje, zamiast udawać działanie.
 ``InMemoryTranscriptSource`` pozwala uruchomić i zademonstrować cały przepływ M3
 lokalnie (wklejony transkrypt), bez Azure — do testów i lokalnego harnessu.
 """
+
 from __future__ import annotations
 
 

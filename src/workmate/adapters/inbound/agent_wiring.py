@@ -7,6 +7,7 @@ READ-ONLY (agent czyta, nie zapisuje). Import Claude API jest leniwy (w adapterz
 outbound); brak extra ``agent`` daje ``ImportError``, który entry-point drzwi
 zamienia na czytelny komunikat.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace

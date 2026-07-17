@@ -8,6 +8,7 @@ Uwaga: reguły poufności KSZTAŁTUJĄ zachowanie (mniej przypadkowych wycieków
 granicą bezpieczeństwa — zdeterminowany prompt-injection je obchodzi. Realna ochrona jest
 architektoniczna: drzwi async read-only + wąskie narzędzia + sekrety poza zasięgiem agenta.
 """
+
 from __future__ import annotations
 
 SYSTEM_PROMPT = (

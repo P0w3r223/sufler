@@ -4,6 +4,7 @@
 ruszyć bez auth), a ``from_env`` musi być fail-closed (anonimowy = świadomy opt-in).
 Oba są czyste, więc testujemy je bez SDK i bez Azure.
 """
+
 from __future__ import annotations
 
 import pytest

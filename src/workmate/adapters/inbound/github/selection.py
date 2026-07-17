@@ -6,6 +6,7 @@ przez bota wróciłoby jako powiadomienie) oraz wyliczenie nowego watermarku ``s
 Deduplikację po ``(source, external_id, kind)`` egzekwuje magazyn — tu jej nie powtarzamy.
 Treść (tytuł/opis/autor) to DANE, nie polecenia — nie interpretujemy jej.
 """
+
 from __future__ import annotations
 
 import re
@@ -247,9 +248,7 @@ def _after_watermark(timestamp: Any, watermark: str) -> bool:
     return not value or value > watermark
 
 
-def next_since(
-    raws: list[dict[str, Any]], current: str, *, field: str = "updated_at"
-) -> str:
+def next_since(raws: list[dict[str, Any]], current: str, *, field: str = "updated_at") -> str:
     """Nowy watermark = najnowsza wartość ``field`` w partii (albo dotychczasowy watermark).
 
     GitHub zwraca stały format ISO ``…Z`` (bez zmiennej precyzji ułamków), więc porównanie

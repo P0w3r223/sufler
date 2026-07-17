@@ -13,6 +13,7 @@ drzwi. Reguła ``core ↛ adapters`` stoi: rdzeń nie zaimportuje tego protokoł
 to drzwi opakują runtime rdzenia w ``Responder`` (strukturalnie, jak atrapy repo
 w testach).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -243,9 +244,7 @@ class ConversationalResponder:
             self._conversations.record_run(
                 conversation_id, result.entries, stop_reason=result.stop_reason
             )
-        reply = _with_notices(
-            result.reply, rolled_over=rolled_over, stop_reason=result.stop_reason
-        )
+        reply = _with_notices(result.reply, rolled_over=rolled_over, stop_reason=result.stop_reason)
         if self._show_thinking:
             reply = _with_thinking(reply, result.thinking)
         return reply
@@ -290,10 +289,7 @@ class SafeResponder:
     daje tę granicę drzwiom async (Teams, Telegram). Kontekst (nadawca, rozmowa) w logu.
     """
 
-    _FALLBACK = (
-        "Przepraszam, wystąpił chwilowy błąd po mojej stronie. "
-        "Spróbuj ponownie za chwilę."
-    )
+    _FALLBACK = "Przepraszam, wystąpił chwilowy błąd po mojej stronie. Spróbuj ponownie za chwilę."
 
     def __init__(self, inner: Responder, *, fallback: str = _FALLBACK) -> None:
         self._inner = inner
@@ -370,9 +366,7 @@ def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]
                 entries.append(
                     ToolResults(
                         tuple(
-                            ToolOutput(
-                                b["call_id"], b["content"], b.get("is_error", False)
-                            )
+                            ToolOutput(b["call_id"], b["content"], b.get("is_error", False))
                             for b in msg.blocks
                         )
                     )

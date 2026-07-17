@@ -4,6 +4,7 @@ Katalog jest wspólnym źródłem dla drzwi MCP i runtime'u agenta; kluczowa
 niezmiennik to bramka zapisu per drzwi (ADR 0006): ``save_note`` wchodzi tylko
 przy ``write_service`` — dokładnie jak ``register_tools(write_service=None)``.
 """
+
 from __future__ import annotations
 
 from tests.conftest import (

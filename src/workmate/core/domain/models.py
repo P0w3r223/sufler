@@ -4,6 +4,7 @@ Schemat notatki (``NoteMetadata``) jest kontraktem danych z Bramki 1 roadmapy
 i musi być stały: to on czyni odpytywanie i śledzenie stanu prostym
 ("struktura przy zapisie, nie przy odczycie"). Zmiana pól = ADR + Bramka 1.
 """
+
 from __future__ import annotations
 
 from datetime import date

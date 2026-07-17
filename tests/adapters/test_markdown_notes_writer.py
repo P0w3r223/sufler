@@ -5,6 +5,7 @@ kontrolę kolizji (``exists``), atomowość (brak pliku ``.tmp`` po zapisie i br
 częściowego pliku przy awarii podmiany) oraz tworzenie brakujących katalogów
 firmy/projektu. Adapter dotyka dysku, więc testy działają na ``tmp_path``.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -72,9 +73,7 @@ def test_write_leaves_no_tmp_file(tmp_path: Path):
     assert list(tmp_path.rglob("*.tmp")) == []
 
 
-def test_failed_link_raises_write_error_and_leaves_no_partial_note(
-    tmp_path: Path, monkeypatch
-):
+def test_failed_link_raises_write_error_and_leaves_no_partial_note(tmp_path: Path, monkeypatch):
     note = _note("mpwik/scada-integration/2025-06-12-przeglad")
 
     def boom(src, dst):

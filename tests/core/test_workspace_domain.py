@@ -3,6 +3,7 @@
 Sedno bezpieczeństwa: nazwa pliku od modelu przechodzi przez slug + białą listę rozszerzeń
 (``/``, ``..``, ścieżki absolutne nie przeżyją), a różne rozmowy trafiają do RÓŻNYCH katalogów.
 """
+
 from __future__ import annotations
 
 import pytest

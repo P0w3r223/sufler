@@ -5,6 +5,7 @@ respondera. Kluczowe: ``conversation_id`` (klucz PAMIĘCI wątku) podaje poller 
 do respondera bez zmian, a pusta odpowiedź mapuje się na ``None`` (poller nic nie wysyła).
 Testujemy bez SDK — responder to atrapa strukturalna.
 """
+
 from __future__ import annotations
 
 import asyncio

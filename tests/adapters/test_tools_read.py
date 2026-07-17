@@ -5,6 +5,7 @@ wyłącznie warstwę adaptera: tłumaczenie ``RepositoryError`` na ``{"error": .
 (żeby wadliwe dane nie wywróciły serwera) oraz ścieżkę „nie istnieje" dla
 ``get_note`` i ``get_project_status``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable

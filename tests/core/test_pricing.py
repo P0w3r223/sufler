@@ -3,6 +3,7 @@
 Czyste funkcje — bez I/O. Sprawdzamy sumowanie usage, przełączenie cennika po dacie
 oraz mnożniki cache (read 10% wejścia, write 5-min 125%) i brak podwójnego liczenia.
 """
+
 from __future__ import annotations
 
 from datetime import date

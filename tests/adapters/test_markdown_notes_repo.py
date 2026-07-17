@@ -1,4 +1,5 @@
 """Testy repozytorium notatek Markdown (parsowanie frontmatter, błędy, cache)."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -242,9 +243,7 @@ def test_save_note_then_search_sees_fresh_note_on_same_dir(tmp_path: Path):
     assert notes_service.search_notes("scada") == []
 
     write_service.save_note(
-        build_note_metadata(
-            title="Notatka o SCADA", project="workmate", date=date(2025, 1, 1)
-        ),
+        build_note_metadata(title="Notatka o SCADA", project="workmate", date=date(2025, 1, 1)),
         "Ustalenia dotyczące integracji SCADA.",
     )
 

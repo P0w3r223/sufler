@@ -9,6 +9,7 @@ narzędzi (Bramka 1) pozostaje zamrożony i jednoźródłowy z runtime'em agenta
 Bramkowanie zapisu per drzwi (Bramka 2 / ADR 0006) zachowane: ``write_service=None``
 → katalog bez ``save_note`` → drzwi wystawiają wyłącznie narzędzia odczytu.
 """
+
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP

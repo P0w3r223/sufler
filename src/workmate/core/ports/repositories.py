@@ -4,6 +4,7 @@ Użycie ``Protocol`` zamiast klas bazowych oznacza, że dowolna klasa o zgodnych
 sygnaturach jest akceptowana — bez dziedziczenia. Ułatwia to testy (proste
 atrapy w pamięci) i podmianę implementacji.
 """
+
 from __future__ import annotations
 
 from typing import Protocol

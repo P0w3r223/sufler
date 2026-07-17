@@ -5,6 +5,7 @@ namówić na odczyt pliku spoza ``notes_dir`` (np. tokeny HTTP z ADR 0007, ``.en
 ``/etc/passwd``), agent mógłby wyprowadzić sekret. Testy pilnują, że granica trzyma
 po stronie ODCZYTU (``MarkdownNotesRepository.get``) i ZAPISU (``note_id``).
 """
+
 from __future__ import annotations
 
 from datetime import date

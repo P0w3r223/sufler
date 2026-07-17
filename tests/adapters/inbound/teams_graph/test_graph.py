@@ -3,6 +3,7 @@
 ``HttpxGraphChannelClient`` to cienki adapter na ``httpx`` (I/O testowane osobno/smoke),
 ale kodowanie share id dla pobrania pliku z SharePoint to czysta, łatwa do pomyłki logika.
 """
+
 from __future__ import annotations
 
 import asyncio

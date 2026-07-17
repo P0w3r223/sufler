@@ -3,6 +3,7 @@
 Sedno: sanityzacja treści, twardy sufit długości, create-only, miejsce zapisu z konfiguracji
 (nie z treści), echo zdarzenia ``source="teams"`` do wspólnego magazynu (druga strona je widzi).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -44,9 +45,7 @@ class _RecordingEvents:
 
 
 def _service(writer=None, events=None) -> GithubWriteService:
-    return GithubWriteService(
-        writer or _FakeWriter(), owner="biap", repo="workmate", events=events
-    )
+    return GithubWriteService(writer or _FakeWriter(), owner="biap", repo="workmate", events=events)
 
 
 def test_create_issue_returns_number_and_url_from_config_repo():

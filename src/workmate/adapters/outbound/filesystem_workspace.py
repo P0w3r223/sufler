@@ -7,6 +7,7 @@ więc odczyt nigdy nie wyjdzie poza korzeń workspace (nie sięgnie ``.env``, ca
 Korzeń workspace leży POZA repo i ``data/`` (dane operacyjne, ADR 0018) — poisoned artefakt nie
 zanieczyści bazy wiedzy, którą agent czyta.
 """
+
 from __future__ import annotations
 
 import os
@@ -32,9 +33,7 @@ class FilesystemWorkspaceWriter:
         path = _resolve_within(self._root, relpath)
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_create(path, content)
-        return WorkspaceFile(
-            name=path.name, relpath=relpath, size=len(content.encode("utf-8"))
-        )
+        return WorkspaceFile(name=path.name, relpath=relpath, size=len(content.encode("utf-8")))
 
 
 class FilesystemWorkspaceRepository:

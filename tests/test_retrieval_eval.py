@@ -4,6 +4,7 @@ Metryki liczone na REALNYM korpusie ``data/`` + złotym zbiorze ``eval/golden_qu
 zacommitowane, więc deterministyczne. Wymaga extra ``retrieval`` (simplemma) — inaczej pomijany.
 Pilnuje, by ulepszony ranking nie okazał się GORSZY od dawnego na złotym zbiorze pionu.
 """
+
 from __future__ import annotations
 
 import pytest

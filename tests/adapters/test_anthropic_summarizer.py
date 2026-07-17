@@ -5,6 +5,7 @@ Modele często owijają JSON w blok markdown (```` ```json … ``` ````), co wyw
 Funkcja jest czysta (string → string) — testujemy ją wprost, bez extra ``agent`` i bez
 klienta Claude. Samo ``summarize()`` (wymaga realnego klienta) należy do smoke-testów.
 """
+
 from __future__ import annotations
 
 import pytest

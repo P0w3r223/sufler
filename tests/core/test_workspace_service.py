@@ -3,6 +3,7 @@
 Sedno: create-only z sufiksem, kwoty (rozmiar pliku / liczba / łączny rozmiar per rozmowa),
 guard znaków sterujących, biała lista rozszerzeń oraz ochrona odczytu przed „..".
 """
+
 from __future__ import annotations
 
 import pytest

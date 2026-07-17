@@ -1,4 +1,5 @@
 """Testy czystej selekcji zdarzeń GitHub (mapowanie, self-skip, watermark) — bez sieci."""
+
 from __future__ import annotations
 
 import pytest
@@ -34,8 +35,9 @@ def _comment(comment_id: int, *, login: str = "bob", issue: int = 5, **kw) -> di
     return raw
 
 
-def _review(review_id: int, *, state: str = "APPROVED", login: str = "alice",
-            pr: int = 12, **kw) -> dict:
+def _review(
+    review_id: int, *, state: str = "APPROVED", login: str = "alice", pr: int = 12, **kw
+) -> dict:
     raw = {
         "id": review_id,
         "state": state,
@@ -48,8 +50,15 @@ def _review(review_id: int, *, state: str = "APPROVED", login: str = "alice",
     return raw
 
 
-def _run(run_id: int, *, conclusion: str = "success", attempt: int = 1, name: str = "CI",
-         updated: str = "2026-07-15T13:00:00Z", **kw) -> dict:
+def _run(
+    run_id: int,
+    *,
+    conclusion: str = "success",
+    attempt: int = 1,
+    name: str = "CI",
+    updated: str = "2026-07-15T13:00:00Z",
+    **kw,
+) -> dict:
     raw = {
         "id": run_id,
         "name": name,
@@ -122,8 +131,10 @@ def test_next_since_advances_to_newest_updated():
 
 
 def test_next_since_uses_submitted_at_field_for_reviews():
-    raws = [_review(1, submitted_at="2026-07-15T10:00:00Z"),
-            _review(2, submitted_at="2026-07-15T14:00:00Z")]
+    raws = [
+        _review(1, submitted_at="2026-07-15T10:00:00Z"),
+        _review(2, submitted_at="2026-07-15T14:00:00Z"),
+    ]
     # Recenzje nie mają ``updated_at`` — watermark liczymy z ``submitted_at``.
     assert selection.next_since(raws, "", field="submitted_at") == "2026-07-15T14:00:00Z"
 
@@ -196,12 +207,15 @@ def test_map_review_none_without_id_or_date():
 # --- map_ci_run (ci_success / ci_failure) -----------------------------------
 
 
-@pytest.mark.parametrize("conclusion,kind", [
-    ("success", "ci_success"),
-    ("failure", "ci_failure"),
-    ("timed_out", "ci_failure"),
-    ("startup_failure", "ci_failure"),
-])
+@pytest.mark.parametrize(
+    "conclusion,kind",
+    [
+        ("success", "ci_success"),
+        ("failure", "ci_failure"),
+        ("timed_out", "ci_failure"),
+        ("startup_failure", "ci_failure"),
+    ],
+)
 def test_map_ci_run_maps_decisive_conclusions(conclusion, kind):
     ev = selection.map_ci_run(_run(1, conclusion=conclusion))
     assert ev is not None
@@ -231,11 +245,13 @@ def test_map_ci_run_external_id_distinguishes_reruns():
 
 
 def test_map_ci_run_canonizes_url_to_pr_page():
-    ev = selection.map_ci_run(_run(
-        7,
-        pull_requests=[{"number": 12}],
-        repository={"html_url": "https://github.com/o/r"},
-    ))
+    ev = selection.map_ci_run(
+        _run(
+            7,
+            pull_requests=[{"number": 12}],
+            repository={"html_url": "https://github.com/o/r"},
+        )
+    )
     assert ev is not None
     assert ev.url == "https://github.com/o/r/pull/12"
     # Link do samego przebiegu ląduje w summary (nie gubimy go), a #12 jest w tytule.
@@ -253,14 +269,16 @@ def test_map_ci_run_without_pr_uses_run_url_and_empty_summary():
 def test_map_ci_run_ignores_extra_and_sensitive_fields():
     # Biała lista pól (bezpieczeństwo, ADR 0024): nadmiarowe/wrażliwe klucze NIE mogą
     # przeciekać do żadnego pola zdarzenia.
-    ev = selection.map_ci_run(_run(
-        7,
-        conclusion="failure",
-        logs_url="https://leak/logs",
-        jobs=[{"secret": "TOP-SECRET-JOB"}],
-        head_commit={"message": "leaky-commit-msg"},
-        secret_token="s3cr3t-token",
-    ))
+    ev = selection.map_ci_run(
+        _run(
+            7,
+            conclusion="failure",
+            logs_url="https://leak/logs",
+            jobs=[{"secret": "TOP-SECRET-JOB"}],
+            head_commit={"message": "leaky-commit-msg"},
+            secret_token="s3cr3t-token",
+        )
+    )
     assert ev is not None
     blob = f"{ev.title}\n{ev.summary}\n{ev.url}\n{ev.actor}\n{ev.external_id}"
     for leaked in ("leak/logs", "TOP-SECRET-JOB", "leaky-commit-msg", "s3cr3t-token"):
@@ -289,8 +307,12 @@ def test_select_events_ci_watermark_filters_old_runs():
     old = _run(1, updated="2026-07-15T09:00:00Z")
     fresh = _run(2, updated="2026-07-15T15:00:00Z")
     events = selection.select_events(
-        [], [], raw_runs=[old, fresh], self_login="me",
-        watch_kinds=("ci",), runs_since="2026-07-15T10:00:00Z",
+        [],
+        [],
+        raw_runs=[old, fresh],
+        self_login="me",
+        watch_kinds=("ci",),
+        runs_since="2026-07-15T10:00:00Z",
     )
     assert [e.external_id for e in events] == ["2#1"]  # <= watermark pominięty
 
@@ -299,8 +321,12 @@ def test_select_events_review_watermark_filters_old_reviews():
     old = _review(1, submitted_at="2026-07-15T09:00:00Z")
     fresh = _review(2, submitted_at="2026-07-15T15:00:00Z")
     events = selection.select_events(
-        [], [], raw_reviews=[old, fresh], self_login="me",
-        watch_kinds=("reviews",), reviews_since="2026-07-15T10:00:00Z",
+        [],
+        [],
+        raw_reviews=[old, fresh],
+        self_login="me",
+        watch_kinds=("reviews",),
+        reviews_since="2026-07-15T10:00:00Z",
     )
     assert [e.external_id for e in events] == ["2"]
 
@@ -316,5 +342,6 @@ def test_select_events_default_watch_kinds_backward_compatible():
     # Domyślne ("issues","comments") mapuje issue i komentarze jak przed ADR 0024.
     events = selection.select_events([_issue(1, login="alice")], [_comment(9)], self_login="me")
     assert {(e.kind, e.external_id) for e in events} == {
-        ("issue_opened", "1"), ("issue_comment", "9"),
+        ("issue_opened", "1"),
+        ("issue_comment", "9"),
     }

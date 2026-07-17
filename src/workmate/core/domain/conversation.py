@@ -5,6 +5,7 @@ OPERACYJNE (historia czatu), nie baza wiedzy. Modele są czyste; znaczniki czasu
 i identyfikatory nadaje magazyn (adapter), więc rdzeń nie woła zegara ani losowości
 i pozostaje deterministyczny w testach.
 """
+
 from __future__ import annotations
 
 from datetime import datetime

@@ -3,6 +3,7 @@
 Handler (``make_on_message``) jest kaczo-typowany, więc testujemy go strukturalnymi
 atrapami (jak atrapy repo w ``conftest.py``), bez zainstalowanego extra ``teams``.
 """
+
 from __future__ import annotations
 
 import asyncio

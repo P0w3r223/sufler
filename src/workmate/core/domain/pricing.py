@@ -7,6 +7,7 @@ stałe konfiguracyjne — jedno miejsce edycji przy zmianie cennika.
 Czysta domena: bez I/O, bez SDK. ``TokenUsage`` przenosi surowe liczby z ``usage``
 przez porty do rdzenia i magazynu; ``cost_usd`` wylicza koszt wg cennika z danego dnia.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,9 +44,7 @@ class TokenUsage:
         return TokenUsage(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
-            cache_read_input_tokens=(
-                self.cache_read_input_tokens + other.cache_read_input_tokens
-            ),
+            cache_read_input_tokens=(self.cache_read_input_tokens + other.cache_read_input_tokens),
             cache_creation_input_tokens=(
                 self.cache_creation_input_tokens + other.cache_creation_input_tokens
             ),

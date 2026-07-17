@@ -4,6 +4,7 @@ NIE sekret — to dane operacyjne (jak baza rozmów), nie baza wiedzy. Domyślni
 katalogu domowym poza repo i ``data/``. Kształt: patrz ``poller`` (seed) i
 ``selection.plan_channel`` (przejścia).
 """
+
 from __future__ import annotations
 
 import json

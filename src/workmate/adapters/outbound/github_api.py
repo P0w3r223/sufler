@@ -5,6 +5,7 @@ Importowany LENIWIE (w ``app.py``/wiringu), bo wymaga extra ``github`` (``httpx`
 wprost. Obsługuje limit zapytań GitHub (403/429 z ``X-RateLimit-Reset``/``Retry-After``) i
 paginację po nagłówku ``Link`` (``rel="next"``). PAT to SEKRET — wstrzykiwany, nigdy logowany.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -65,13 +66,9 @@ class HttpxGithubClient:
         params = {"sort": "updated", "direction": "asc", "per_page": str(per_page)}
         if since is not None:
             params["since"] = _iso_z(since)
-        return self._get_all(
-            f"{self._api_base}/repos/{owner}/{repo}/issues/comments", params
-        )
+        return self._get_all(f"{self._api_base}/repos/{owner}/{repo}/issues/comments", params)
 
-    def list_pull_reviews(
-        self, owner: str, repo: str, pull_number: int
-    ) -> list[dict[str, Any]]:
+    def list_pull_reviews(self, owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
         # Endpoint recenzji jest per-PR i bez ``since`` — poller ogranicza liczbę PR-ów/rundę,
         # a watermark ``reviews_since`` (w selection) odsiewa już widziane; dedup magazynu domyka.
         return self._get_all(
@@ -89,9 +86,7 @@ class HttpxGithubClient:
         # ``created_at``, więc gdy między nim a rundą powstanie >``per_page`` nowszych przebiegów,
         # wypadnie poza pierwszą stronę i zostanie pominięty. Dla pilotażu (niski wolumen) OK.
         params = {"status": status, "per_page": str(per_page)}
-        body = self._get_json(
-            f"{self._api_base}/repos/{owner}/{repo}/actions/runs", params
-        )
+        body = self._get_json(f"{self._api_base}/repos/{owner}/{repo}/actions/runs", params)
         if isinstance(body, dict):
             runs = body.get("workflow_runs")
             if isinstance(runs, list):
@@ -109,9 +104,7 @@ class HttpxGithubClient:
         with _as_write_error("utworzyć issue"):
             return self._post_json(f"{self._api_base}/repos/{owner}/{repo}/issues", payload)
 
-    def create_comment(
-        self, owner: str, repo: str, issue_number: int, body: str
-    ) -> dict[str, Any]:
+    def create_comment(self, owner: str, repo: str, issue_number: int, body: str) -> dict[str, Any]:
         with _as_write_error("dodać komentarza"):
             return self._post_json(
                 f"{self._api_base}/repos/{owner}/{repo}/issues/{issue_number}/comments",
@@ -172,9 +165,7 @@ def _as_write_error(action: str) -> Iterator[None]:
     try:
         yield
     except httpx.HTTPStatusError as exc:
-        raise WriteError(
-            f"nie udało się {action} (HTTP {exc.response.status_code})."
-        ) from exc
+        raise WriteError(f"nie udało się {action} (HTTP {exc.response.status_code}).") from exc
     except httpx.HTTPError as exc:
         raise WriteError(f"nie udało się {action}: {exc}.") from exc
 
@@ -198,10 +189,7 @@ def _is_rate_limited(response: httpx.Response) -> bool:
     """Czy odpowiedź to wyczerpany limit zapytań (403/429 z sygnałem reset/retry)."""
     if response.status_code not in (403, 429):
         return False
-    return (
-        response.headers.get("X-RateLimit-Remaining") == "0"
-        or "Retry-After" in response.headers
-    )
+    return response.headers.get("X-RateLimit-Remaining") == "0" or "Retry-After" in response.headers
 
 
 def _rate_limit_wait(response: httpx.Response) -> float:

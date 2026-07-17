@@ -6,6 +6,7 @@ KANONIZOWANY na stronę PR już przy mapowaniu (``selection.map_ci_run``). Zdarz
 CI niezwiązane z PR — url wskazuje przebieg) zwraca ``None`` → notifier potraktuje je jako osobny
 root, nie dołączy do wątku.
 """
+
 from __future__ import annotations
 
 import re

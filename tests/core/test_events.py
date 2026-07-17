@@ -2,6 +2,7 @@
 
 Rdzeń zależy tylko od portu ``EventStore``, więc pełną logikę testujemy atrapą bez SQLite.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

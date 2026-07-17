@@ -9,6 +9,7 @@ BM25 dobiera trafność po TF (częstość termu w dokumencie, z nasyceniem ``k1
 w korpusie), z normalizacją długości dokumentu (``b``) — dzięki temu długa notatka nie wygrywa samą
 objętością, a rzadkie słowo zapytania waży więcej niż częste.
 """
+
 from __future__ import annotations
 
 import math
@@ -64,9 +65,7 @@ def bm25_rank(
     return scores
 
 
-def reciprocal_rank_fusion(
-    *rankings: Sequence[str], k: int = 60
-) -> list[str]:
+def reciprocal_rank_fusion(*rankings: Sequence[str], k: int = 60) -> list[str]:
     """Połącz kilka list ID (malejąco po trafności) w jedną przez RRF: ``score = Σ 1/(k+ranga)``.
 
     Ranga-zależne (ignoruje surowe wyniki), więc łączy niekompatybilne skale (BM25 vs cosinus) bez

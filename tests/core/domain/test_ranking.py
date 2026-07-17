@@ -1,4 +1,5 @@
 """Testy czystego rankingu (ranking.py, ADR 0023) — Okapi BM25 + RRF, funkcje deterministyczne."""
+
 from __future__ import annotations
 
 from workmate.core.domain.ranking import bm25_rank, reciprocal_rank_fusion

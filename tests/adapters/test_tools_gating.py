@@ -5,6 +5,7 @@ włączony zapis (``write_service`` podane) — profil uprawnień per drzwi (Bra
 ADR 0006). Sprawdzamy też, że ścieżka błędu na granicy zwraca ``{"error": ...}``
 zamiast wywracać serwer.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -46,9 +47,7 @@ def _projects_repo() -> FakeProjectsRepository:
 def _register(*, with_write: bool) -> FastMCP:
     notes_repo = FakeNotesRepository([])
     projects_repo = _projects_repo()
-    write_service = (
-        NotesWriteService(FakeNotesWriter(), projects_repo) if with_write else None
-    )
+    write_service = NotesWriteService(FakeNotesWriter(), projects_repo) if with_write else None
     mcp = FastMCP("test")
     register_tools(
         mcp,

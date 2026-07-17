@@ -4,6 +4,7 @@ Czyste dataklasy i helpery serializacji (``Attachment``, ``attachment_to_row``/
 ``attachment_from_row``, ``UserText.attachments``). Bez SDK, bez sieci — sprawdzamy
 neutralną formę (NIE bloki Anthropic) i round-trip do wiersza ``blocks_json``.
 """
+
 from __future__ import annotations
 
 from workmate.core.ports.llm import (

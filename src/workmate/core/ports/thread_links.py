@@ -8,6 +8,7 @@ OSOBNEJ tabeli (EventStore pozostaje nietknięty). Klucz jednoznaczności: ``(te
 number)`` — jeden wątek na cel; ``link`` jest upsertem (nadpisuje root), żeby po usunięciu roota
 w Teams notifier mógł przełączyć wątek zamiast blokować strumień.
 """
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -22,9 +23,7 @@ class ThreadLinkStore(Protocol):
         """Id roota wątku dla celu ``(kind, number)``; ``None`` gdy brak (root do utworzenia)."""
         ...
 
-    def get_target(
-        self, team_id: str, channel_id: str, root_id: str
-    ) -> tuple[str, str] | None:
+    def get_target(self, team_id: str, channel_id: str, root_id: str) -> tuple[str, str] | None:
         """Cel ``(kind, number)`` dla roota wątku; ``None`` gdy wątek nie wiąże się z issue/PR."""
         ...
 

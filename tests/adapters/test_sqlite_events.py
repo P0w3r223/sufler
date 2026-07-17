@@ -3,6 +3,7 @@
 Realny plik tymczasowy: append/exists/read_since/recent, deduplikacja przez UNIQUE +
 ON CONFLICT oraz współbieżność wieloprocesowa (dwa niezależne połączenia do tego samego pliku).
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

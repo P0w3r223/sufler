@@ -7,6 +7,7 @@
 Import ``msal`` jest LENIWY (w ``build_token_provider``), więc sam import modułu i testy
 wyższych warstw nie wymagają extra ``teams-graph``.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -89,8 +90,7 @@ def build_token_provider(settings: TokenProviderSettings) -> Callable[[], str]:
             flow = app.initiate_device_flow(scopes=scopes)
             if "user_code" not in flow:
                 raise RuntimeError(
-                    "Nie udało się rozpocząć device flow: "
-                    + json.dumps(flow, ensure_ascii=False)
+                    "Nie udało się rozpocząć device flow: " + json.dumps(flow, ensure_ascii=False)
                 )
             print(flow["message"])  # „wejdź na adres i wpisz kod"
             sys.stdout.flush()

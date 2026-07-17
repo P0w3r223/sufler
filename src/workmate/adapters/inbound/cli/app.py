@@ -14,6 +14,7 @@ serwisami co MCP i wpina klient Claude API. Trzy tryby:
 Bez Teams, bez Azure. Import Claude API jest leniwy — brak extra ``agent`` kończy się
 czytelnym komunikatem, nie surowym ``ImportError``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -143,9 +144,7 @@ def _run_chat(settings: Settings, agent_settings: AgentSettings) -> None:
             return
         try:
             reply = asyncio.run(
-                responder.respond(
-                    InboundMessage(text=text, sender="cli", conversation_id="cli")
-                )
+                responder.respond(InboundMessage(text=text, sender="cli", conversation_id="cli"))
             )
         except WorkMateError as exc:
             # Oczekiwany błąd (Claude API/repo/zapis) — pokaż i kontynuuj, nie wywracaj czatu.

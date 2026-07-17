@@ -8,6 +8,7 @@ te zdarzenia do Teams (czat 1:1 i/lub kanał, ADR 0022) — domyka obieg GitHub 
 
 Importy ``httpx``/MSAL są leniwe; brak extra kończy się czytelnym komunikatem, nie ``ImportError``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,9 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MISSING_GITHUB = (
-    "Drzwi GitHub wymagają extra 'github'. Zainstaluj: uv sync --extra github"
-)
+_MISSING_GITHUB = "Drzwi GitHub wymagają extra 'github'. Zainstaluj: uv sync --extra github"
 _MISSING_PUSH = (
     "Proaktywny push do Teams wymaga extra 'teams-graph' (MSAL). "
     "Zainstaluj: uv sync --extra teams-graph"
@@ -88,7 +87,12 @@ async def _run(
                 thread_links = _build_thread_links(events_settings, push_settings)
                 tasks.append(
                     _build_notifier(
-                        async_http, events, state, persist, settings, push_settings,
+                        async_http,
+                        events,
+                        state,
+                        persist,
+                        settings,
+                        push_settings,
                         thread_links,
                     ).pump()
                 )
@@ -113,9 +117,7 @@ async def _run(
             await asyncio.gather(*tasks)
 
 
-def _build_thread_links(
-    events_settings: EventsSettings, push_settings: TeamsPushSettings
-) -> Any:
+def _build_thread_links(events_settings: EventsSettings, push_settings: TeamsPushSettings) -> Any:
     """Złóż ``ThreadLinkStore`` (SQLite nad events.db), gdy wątkowanie kanału ON; inaczej ``None``.
 
     Wątkowanie (ADR 0024) dokłada zdarzenia tego samego issue/PR do jednego wątku na kanale. Gdy

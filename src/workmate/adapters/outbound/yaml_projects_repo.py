@@ -16,6 +16,7 @@ Rejestr jest małym, ręcznie utrzymywanym źródłem prawdy o statusie projekt�
 Część "żywa" statusu (liczba notatek, otwarte action items) jest dowyliczana
 przez rdzeń z notatek — tutaj trzymamy tylko część zadeklarowaną.
 """
+
 from __future__ import annotations
 
 import threading
@@ -77,9 +78,7 @@ class YamlProjectsRepository:
 
     def _entries(self) -> list[dict[str, Any]]:
         if not self._registry_path.is_file():
-            raise ProjectsRegistryError(
-                f"Rejestr projektów nie istnieje: {self._registry_path}"
-            )
+            raise ProjectsRegistryError(f"Rejestr projektów nie istnieje: {self._registry_path}")
         stat = self._registry_path.stat()
         fingerprint = (stat.st_mtime_ns, stat.st_size)
         with self._lock:

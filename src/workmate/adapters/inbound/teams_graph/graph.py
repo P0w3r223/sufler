@@ -5,6 +5,7 @@ Implementuje port ``poller.GraphChannelClient`` strukturalnie (duck typing): obs
 429/Retry-After i stronicowanie ``@odata.nextLink``. Token odświeżamy przez wstrzyknięty
 (synchroniczny — MSAL) ``token_provider``, wołany w puli wątków, by nie blokować pętli.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,9 +30,7 @@ _MAX_429_RETRIES = 5
 class HttpxGraphChannelClient:
     """Konkretny klient Graph oparty o ``httpx.AsyncClient`` i dostawcę tokenu."""
 
-    def __init__(
-        self, client: httpx.AsyncClient, token_provider: Callable[[], str]
-    ) -> None:
+    def __init__(self, client: httpx.AsyncClient, token_provider: Callable[[], str]) -> None:
         self._client = client
         self._token = token_provider
 
@@ -45,9 +44,7 @@ class HttpxGraphChannelClient:
         token = await loop.run_in_executor(None, self._token)
         self._client.headers["Authorization"] = f"Bearer {token}"
 
-    async def _get(
-        self, url: str, params: dict[str, str] | None = None
-    ) -> dict[str, Any]:
+    async def _get(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         attempts = 0
         while True:
             response = await self._client.get(url, params=params)
@@ -181,9 +178,7 @@ class HttpxGraphChannelClient:
         url = f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{root_id}/replies"
         return await self._get_all(url, params={"$top": str(top)})
 
-    async def post_reply(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None:
+    async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         """Wyślij odpowiedź w wątku; Markdown agenta renderujemy do HTML na wyjściu.
 
         Teams renderuje ``contentType: "html"`` (podzbiór tagów), więc surowy Markdown

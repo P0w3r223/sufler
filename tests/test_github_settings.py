@@ -1,4 +1,5 @@
 """Testy konfiguracji drzwi GitHub (GithubSettings, ADR 0020) — from_env + walidacja."""
+
 from __future__ import annotations
 
 import pytest

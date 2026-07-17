@@ -6,6 +6,7 @@ Anthropic i wyprowadza ``input_schema`` narzędzia z tej samej ``fn`` co drzwi M
 (jeden generator, jeden podpis → schemat agenta zgodny z MCP). Klucz API czyta
 wyłącznie ten adapter; rdzeń i runtime go nie widzą.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

@@ -3,6 +3,7 @@
 ``validate`` to granica startu (sensowne limity), ``from_env`` czyta zmienne środowiskowe,
 a ``compaction_threshold_tokens`` liczy próg triggera z okna kontekstu i ułamka.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -4,6 +4,7 @@ Owija dowolny ``Responder``: przy sukcesie przepuszcza odpowiedź, przy błędzi
 domenowym (``WorkMateError``, np. ``LLMError``) lub nieoczekiwanym wyjątku zwraca
 przyjazny komunikat zamiast wywracać turę. Błąd trafia do logu (nie jest połykany).
 """
+
 from __future__ import annotations
 
 import asyncio

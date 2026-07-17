@@ -3,6 +3,7 @@
 Inwariant bezpieczeństwa: katalog roboczy (scratch od niezaufanego modelu) MUSI leżeć POZA bazą
 wiedzy, a biała lista rozszerzeń NIE może zawierać plików wykonywalnych (nawet z env operatora).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -27,9 +28,7 @@ def test_validate_rejects_workspace_equal_to_data_dir(tmp_path):
 
 
 def test_validate_rejects_executable_extension_even_from_operator(tmp_path):
-    settings = WorkspaceSettings(
-        workspace_dir=tmp_path / "ws", allowed_ext=("md", "exe")
-    )
+    settings = WorkspaceSettings(workspace_dir=tmp_path / "ws", allowed_ext=("md", "exe"))
 
     with pytest.raises(ValueError, match="wykonywalne"):
         settings.validate(data_dir=tmp_path / "data")

@@ -12,6 +12,7 @@ id — ``AUTOINCREMENT``: rdzeń nie woła zegara.
 APPEND-ONLY z deduplikacją: ``UNIQUE(source, external_id, kind)`` + ``INSERT … ON CONFLICT DO
 NOTHING`` — równoległe procesy nie utworzą dubla, a poller ma bezpieczne „co najmniej raz".
 """
+
 from __future__ import annotations
 
 import sqlite3

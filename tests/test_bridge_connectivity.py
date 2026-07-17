@@ -7,6 +7,7 @@ sieciowe, których w testach nie dosięgamy: klienta GitHub REST i wysyłkę do 
 Dowodzi, że warstwy naprawdę „się widzą" i przepływ działa od końca do końca oraz że oba
 strażniki pętli trzymają.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -198,8 +199,11 @@ def test_read_recent_events_sees_both_layers(tmp_path):
     _create_issue_tool(events)(title="Prośba z Teams", body="treść")
 
     # Narzędzie agenta (dostępne na dowolnych drzwiach) widzi OBIE warstwy.
-    read = next(s.fn for s in build_events_catalog(EventService(SqliteEventStore(db)))
-                if s.name == "read_recent_events")
+    read = next(
+        s.fn
+        for s in build_events_catalog(EventService(SqliteEventStore(db)))
+        if s.name == "read_recent_events"
+    )
     sources = {e["source"] for e in read()["events"]}
     assert sources == {"github", "teams"}
     assert read(source="github")["count"] == 1

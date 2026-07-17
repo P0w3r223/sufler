@@ -4,6 +4,7 @@ NIE sekret — to dane operacyjne (jak baza rozmów/zdarzeń), nie baza wiedzy. 
 katalogu domowym poza repo i ``data/``. Kształt: ``poller`` (seed) i ``selection.next_since``
 (watermark), oraz ``notifier`` (kursor). Ten sam JSON load/save co ``teams_graph.state``.
 """
+
 from __future__ import annotations
 
 import json

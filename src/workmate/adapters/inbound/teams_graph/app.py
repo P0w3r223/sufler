@@ -13,6 +13,7 @@ Importy ``msal``/``httpx``/``anthropic`` są leniwe; brak extra kończy się czy
 komunikatem, nie surowym ``ImportError``. Powrót do samego echa (bez API/klucza) to jedna
 linia: ``RuntimeResponder`` → ``EchoResponder`` (patrz ``adapters/inbound/responder.py``).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,8 +46,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MISSING_TEAMS_GRAPH = (
-    "Drzwi Teams (delegowane) wymagają extra 'teams-graph'. "
-    "Zainstaluj: uv sync --extra teams-graph"
+    "Drzwi Teams (delegowane) wymagają extra 'teams-graph'. Zainstaluj: uv sync --extra teams-graph"
 )
 
 
@@ -91,8 +91,12 @@ def main() -> None:
         EventsSettings.from_env(), GithubSettings.from_env()
     )
     responder = _build_responder(
-        core_settings, agent_settings, conv_settings, workspace_settings,
-        extra_catalog, thread_factory,
+        core_settings,
+        agent_settings,
+        conv_settings,
+        workspace_settings,
+        extra_catalog,
+        thread_factory,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -254,9 +258,7 @@ async def _run(
         await poller.run()
 
 
-async def _discover(
-    settings: TeamsGraphSettings, token_provider: Callable[[], str]
-) -> None:
+async def _discover(settings: TeamsGraphSettings, token_provider: Callable[[], str]) -> None:
     """Wypisz zespoły i kanały użytkownika z ich ID (do ustawienia WATCH)."""
     try:
         import httpx

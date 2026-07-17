@@ -11,6 +11,7 @@ Biblioteka ``markdown-it-py`` (extra ``teams-graph``) importowana LENIWIE — sa
 tego modułu nie wymaga extra. Każdy błąd renderu (w tym brak biblioteki) DEGRADUJE do
 zescapowanego tekstu (filozofia ADR 0016: egress nigdy nie kładzie pollera).
 """
+
 from __future__ import annotations
 
 import html
@@ -30,9 +31,7 @@ def to_teams_html(markdown_text: str, *, allow_links: bool = True) -> str:
     try:
         from markdown_it import MarkdownIt
     except Exception:  # brak extra teams-graph albo błąd ładowania — nie wywracaj wysyłki
-        logger.warning(
-            "markdown-it-py niedostępny — wysyłam tekst zescapowany, bez formatowania."
-        )
+        logger.warning("markdown-it-py niedostępny — wysyłam tekst zescapowany, bez formatowania.")
         return _escape_fallback(markdown_text)
 
     try:

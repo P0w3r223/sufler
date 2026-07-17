@@ -9,6 +9,7 @@ Metody są SYNCHRONICZNE (GitHub REST przez ``httpx.Client``): poller (async) wo
 wątków — jak teams_graph odświeża sync MSAL — a narzędzia agenta wołają je wprost. Surowe
 JSON (``list[dict]``) mapuje czysty ``selection`` w warstwie drzwi; treść z GitHuba to DANE.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
@@ -38,9 +39,7 @@ class GithubReadPort(Protocol):
         selection po ``html_url`` (``/pull/``)."""
         ...
 
-    def list_pull_reviews(
-        self, owner: str, repo: str, pull_number: int
-    ) -> list[dict[str, Any]]:
+    def list_pull_reviews(self, owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
         """Surowe recenzje danego PR (endpoint per-PR, bez ``since``); istotne stany wybierze
         selection (ADR 0024)."""
         ...
@@ -62,8 +61,6 @@ class GithubWritePort(Protocol):
         """Utwórz nowe issue; zwróć surową odpowiedź GitHub (m.in. ``number``, ``html_url``)."""
         ...
 
-    def create_comment(
-        self, owner: str, repo: str, issue_number: int, body: str
-    ) -> dict[str, Any]:
+    def create_comment(self, owner: str, repo: str, issue_number: int, body: str) -> dict[str, Any]:
         """Dodaj komentarz do istniejącego issue; zwróć surową odpowiedź GitHub (``html_url``)."""
         ...

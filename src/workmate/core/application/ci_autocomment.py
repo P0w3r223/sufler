@@ -21,6 +21,7 @@ Niezmienniki:
   (``cursor``), a zapis do pliku stanu wykonuje adapter na wątku pętli PO powrocie z puli wątków —
   inaczej pisalibyśmy współbieżnie ten sam plik stanu co poller/notifier (uszkodzenie/wyścig).
 """
+
 from __future__ import annotations
 
 import logging

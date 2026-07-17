@@ -5,6 +5,7 @@ round-tripu bloków, bez SDK i bez sieci. Realną akceptację ``signature`` prze
 Claude API weryfikuje osobny smoke na kluczu — atrapa tego nie sprawdzi (ADR 0011).
 Sprawdzamy tu tylko, że bloki przechodzą VERBATIM i w oryginalnej kolejności.
 """
+
 from __future__ import annotations
 
 import types
@@ -240,7 +241,10 @@ def test_from_message_captures_all_blocks_verbatim_with_order_and_semantics():
             _FakeBlock(thinking, type="thinking", thinking=""),
             _FakeBlock(text, type="text", text="cześć"),
             _FakeBlock(
-                tool_use, type="tool_use", id="t1", name="search_notes",
+                tool_use,
+                type="tool_use",
+                id="t1",
+                name="search_notes",
                 input={"query": "mpwik"},
             ),
         ],

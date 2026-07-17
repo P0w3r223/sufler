@@ -6,6 +6,7 @@ read-only bez ``save_note``, złożenie respondera (``SafeResponder`` vs goły) 
 komenda ``/pomoc`` idzie przez router BEZ wołania runtime. Osobno: brak extra ``agent``
 → czytelny ``SystemExit``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -123,25 +124,19 @@ def test_build_conversational_responder_wraps_in_saferesponder_when_safe(
     assert isinstance(responder, SafeResponder)
 
 
-def test_build_conversational_responder_returns_bare_when_not_safe(
-    tmp_path: Path, monkeypatch
-):
+def test_build_conversational_responder_returns_bare_when_not_safe(tmp_path: Path, monkeypatch):
     responder = _build_responder(tmp_path, monkeypatch, safe=False)
     assert isinstance(responder, ConversationalResponder)
 
 
-def test_built_responder_dispatches_command_without_calling_runtime(
-    tmp_path: Path, monkeypatch
-):
+def test_built_responder_dispatches_command_without_calling_runtime(tmp_path: Path, monkeypatch):
     """Złożony responder wykonuje ``/pomoc`` przez router — komenda ≠ tura, runtime niewołany.
 
     ``_DummyRuntime.run_turn`` rzuciłby, gdyby komenda trafiła do pętli agenta.
     """
     responder = _build_responder(tmp_path, monkeypatch, safe=True)
 
-    reply = asyncio.run(
-        responder.respond(InboundMessage(text="/pomoc", conversation_id="chat1"))
-    )
+    reply = asyncio.run(responder.respond(InboundMessage(text="/pomoc", conversation_id="chat1")))
     assert reply.startswith("Dostępne komendy:")
 
 
@@ -157,7 +152,5 @@ def test_missing_agent_extra_raises_systemexit_with_hint(tmp_path: Path, monkeyp
     monkeypatch.setattr(agent_wiring, "build_agent_runtime", _raise)
 
     with pytest.raises(SystemExit) as exc:
-        build_agent_runtime_or_exit(
-            _settings(tmp_path), AgentSettings(), enable_write=False
-        )
+        build_agent_runtime_or_exit(_settings(tmp_path), AgentSettings(), enable_write=False)
     assert "extra" in str(exc.value)

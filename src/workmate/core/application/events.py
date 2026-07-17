@@ -5,6 +5,7 @@ sanityzacja treści niezaufanej PRZED zapisem, deduplikacja, dopisanie i odczyt.
 zdarzenia pochodzi ze źródła NIEZAUFANEGO (GitHub) — traktujemy ją jak DANE, nie polecenia,
 i odrzucamy znaki sterujące (obrona w głąb, jak ``NotesWriteService``).
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

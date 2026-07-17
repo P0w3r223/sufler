@@ -4,6 +4,7 @@ Czysta domena, bez I/O: filtr projektu (bez rozróżniania wielkości liter, bez
 wejścia) i składanie ``NoteMetadata`` (normalizacja ``None`` → ``[]``). Test równoważności
 zamyka refaktor „jedno miejsce konstrukcji metadanych".
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -50,9 +51,7 @@ def test_notes_of_project_does_not_mutate_input():
 
 
 def test_build_note_metadata_normalizes_none_lists_to_empty():
-    meta = build_note_metadata(
-        title="Notatka", project="workmate", date=date(2025, 6, 1)
-    )
+    meta = build_note_metadata(title="Notatka", project="workmate", date=date(2025, 6, 1))
     assert meta.participants == []
     assert meta.decisions == []
     assert meta.action_items == []

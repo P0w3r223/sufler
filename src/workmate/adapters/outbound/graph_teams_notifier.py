@@ -6,6 +6,7 @@ więc wołamy go w puli wątków. Dwa cele: czat 1:1 (``create_or_get_chat`` + w
 ``Powiadomienia_teams``) i nowy post root na kanale. Markdown renderujemy przez ``to_teams_html``
 (``html=False`` — surowy HTML z treści zdarzenia jest ESCAPOWANY, obrona przed wstrzyknięciem).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,9 +26,7 @@ _DEFAULT_RETRY_AFTER_S = 5
 class HttpxTeamsNotifier:
     """``TeamsNotifier`` na Graph: 1:1 (chats) i post na kanał, z odświeżaniem tokenu MSAL."""
 
-    def __init__(
-        self, client: httpx.AsyncClient, token_provider: Callable[[], str]
-    ) -> None:
+    def __init__(self, client: httpx.AsyncClient, token_provider: Callable[[], str]) -> None:
         self._client = client
         self._token = token_provider
         self._me_id = ""  # id „głosu" bota (zalogowany user) — cache po pierwszym /me
@@ -47,9 +46,7 @@ class HttpxTeamsNotifier:
         )
         return str(data.get("id", ""))
 
-    async def reply_channel(
-        self, team_id: str, channel_id: str, root_id: str, text: str
-    ) -> None:
+    async def reply_channel(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         """Wyślij odpowiedź w istniejącym wątku (``root_id``) — dokładamy do roota, nie tworzymy.
 
         Gdy root został usunięty (Graph 404), podnosimy ``ThreadRootGone`` — notifier utworzy nowy
@@ -122,9 +119,7 @@ def _html_body(text: str) -> dict[str, Any]:
     ``allow_links=False``: treść zdarzeń pochodzi ze źródła niezaufanego (GitHub), więc markdownowe
     linki nie mogą stać się klikalne (anty-phishing) — prawdziwy URL i tak jest w treści osobno.
     """
-    return {
-        "body": {"contentType": "html", "content": to_teams_html(text, allow_links=False)}
-    }
+    return {"body": {"contentType": "html", "content": to_teams_html(text, allow_links=False)}}
 
 
 def _retry_after(response: httpx.Response) -> int:
