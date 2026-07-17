@@ -188,6 +188,8 @@ def select_events(
     watch_kinds: tuple[str, ...] = ("issues", "comments"),
     runs_since: str = "",
     reviews_since: str = "",
+    repo: str = "",
+    project: str = "",
 ) -> list[NewEvent]:
     """Zmapuj pobrane zasoby na zdarzenia, egzekwuj self-skip i watermark, posortuj po czasie.
 
@@ -195,6 +197,9 @@ def select_events(
     tylko gdy „issues", ``pr_opened`` tylko gdy „pulls". CI i recenzje filtrujemy watermarkiem TU
     (ich endpointy nie mają ``since``), więc przy starcie nie zalewa nas backlog. CI nie podlega
     self-skip (nie ma autora-człowieka); dedup magazynu domyka poprawność w każdym przypadku.
+    ``repo`` (``owner/repo``) i ``project`` (klucz z rejestru) STEMPLUJEMY na każdym zdarzeniu
+    (ADR 0028/0029) — do atrybucji i filtrowania po projekcie; ``external_id`` zostaje bez zmian
+    (drzwi single-repo; złożenie repo w id — ``composite_external_id`` — wejdzie przy multi-repo).
     """
     events: list[NewEvent] = []
     watch_issues = "issues" in watch_kinds
@@ -222,6 +227,8 @@ def select_events(
             and _after_watermark(raw.get("submitted_at"), reviews_since)
         ):
             events.append(ev)
+    if repo or project:
+        events = [e.model_copy(update={"repo": repo, "project": project}) for e in events]
     return sorted(events, key=lambda e: e.occurred_at)
 
 

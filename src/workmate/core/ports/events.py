@@ -33,11 +33,18 @@ class EventStore(Protocol):
         ...
 
     def read_since(
-        self, after_id: int, *, source: str | None = None, limit: int = 50
+        self,
+        after_id: int,
+        *,
+        source: str | None = None,
+        project: str | None = None,
+        limit: int = 50,
     ) -> list[Event]:
         """Zdarzenia o ``id`` > ``after_id`` (kursor notifiera), rosnąco po id."""
         ...
 
-    def recent(self, *, source: str | None = None, limit: int = 20) -> list[Event]:
+    def recent(
+        self, *, source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> list[Event]:
         """Ostatnie zdarzenia (najnowsze pierwsze) do podglądu przez narzędzie agenta."""
         ...

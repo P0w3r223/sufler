@@ -24,6 +24,9 @@ projects:
     phase: "Faza 1 — serwer MCP tylko do odczytu dla Claude Code"
     summary: "Bramka 1 domknięta (schemat notatki i kontrakt narzędzi); trwają testy i przygotowanie wdrożenia HTTP."
     last_updated: 2025-06-24
+    # Mapowanie na systemy zewnętrzne (ADR 0028) — per-projektowe źródło prawdy dla mostu.
+    github_repos: ["BIAP-Inteligentne-Technologie/PIWorkmate"]
+    jira_project_key: WM   # przykład — dostosuj po skonfigurowaniu Jira Server/DC
 
   - key: smart-metering
     company: enerkom

@@ -23,8 +23,7 @@ from typing import Any
 
 from workmate.core.domain.events import Event, NewEvent
 
-_SCHEMA = (
-    """
+_CREATE_TABLE = """
     CREATE TABLE IF NOT EXISTS events (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         source      TEXT NOT NULL,
@@ -34,13 +33,21 @@ _SCHEMA = (
         title       TEXT NOT NULL DEFAULT '',
         summary     TEXT NOT NULL DEFAULT '',
         url         TEXT NOT NULL DEFAULT '',
+        repo        TEXT NOT NULL DEFAULT '',
+        project     TEXT NOT NULL DEFAULT '',
         occurred_at TEXT NOT NULL,
         ingested_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
         UNIQUE(source, external_id, kind)
     );
-    """,
+    """
+# Kolumny repo/project (ADR 0028) dokładamy na starszych bazach przez ADD COLUMN — patrz
+# ``_ensure_columns``. Dedup zostaje ``UNIQUE(source, external_id, kind)``; unikalność między
+# repo daje złożenie repo w ``external_id`` (``composite_external_id``), nie zmiana constraintu.
+_INDEXES = (
     # Kursor notifiera i podgląd po źródle idą po (source, id) — jeden indeks pokrywa oba.
     "CREATE INDEX IF NOT EXISTS idx_events_source_id ON events(source, id);",
+    # Filtr po projekcie (ADR 0028) — atrybucja zdarzeń do projektu.
+    "CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project, id);",
 )
 
 
@@ -59,9 +66,25 @@ class SqliteEventStore:
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._lock = threading.Lock()
         with self._lock:
-            for stmt in _SCHEMA:
+            self._conn.execute(_CREATE_TABLE)
+            self._ensure_columns()
+            for stmt in _INDEXES:
                 self._conn.execute(stmt)
             self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        """Dołóż kolumny ``repo``/``project`` na bazach sprzed ADR 0028 (ADD COLUMN, backfill '').
+
+        ``CREATE TABLE IF NOT EXISTS`` nie zmienia istniejącej tabeli, więc starsze pliki
+        ``events.db`` nie miałyby tych kolumn — indeks po ``project`` by się wtedy wywrócił.
+        Migracja jest idempotentna i bez rebuildu (append-only nienaruszone).
+        """
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(events)")}
+        for column in ("repo", "project"):
+            if column not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE events ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                )
 
     def exists(self, source: str, external_id: str, kind: str) -> bool:
         with self._lock:
@@ -78,7 +101,7 @@ class SqliteEventStore:
             # egzekwuje baza, nie logika aplikacji.
             self._conn.execute(
                 "INSERT INTO events(source, kind, external_id, actor, title, summary, url, "
-                "occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "repo, project, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(source, external_id, kind) DO NOTHING",
                 (
                     event.source,
@@ -88,6 +111,8 @@ class SqliteEventStore:
                     event.title,
                     event.summary,
                     event.url,
+                    event.repo,
+                    event.project,
                     event.occurred_at.isoformat(),
                 ),
             )
@@ -99,25 +124,43 @@ class SqliteEventStore:
         return _event(row)
 
     def read_since(
-        self, after_id: int, *, source: str | None = None, limit: int = 50
+        self,
+        after_id: int,
+        *,
+        source: str | None = None,
+        project: str | None = None,
+        limit: int = 50,
     ) -> list[Event]:
-        clause = " AND source=?" if source is not None else ""
+        clauses = ["id>?"]
         params: list[Any] = [after_id]
         if source is not None:
+            clauses.append("source=?")
             params.append(source)
+        if project is not None:
+            clauses.append("project=?")
+            params.append(project)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM events WHERE id>?" + clause + " ORDER BY id ASC LIMIT ?",
+                "SELECT * FROM events WHERE " + " AND ".join(clauses) + " ORDER BY id ASC LIMIT ?",
                 [*params, limit],
             ).fetchall()
         return [_event(r) for r in rows]
 
-    def recent(self, *, source: str | None = None, limit: int = 20) -> list[Event]:
-        clause = " WHERE source=?" if source is not None else ""
-        params: list[Any] = [source] if source is not None else []
+    def recent(
+        self, *, source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> list[Event]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if source is not None:
+            clauses.append("source=?")
+            params.append(source)
+        if project is not None:
+            clauses.append("project=?")
+            params.append(project)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM events" + clause + " ORDER BY id DESC LIMIT ?",
+                "SELECT * FROM events" + where + " ORDER BY id DESC LIMIT ?",
                 [*params, limit],
             ).fetchall()
         return [_event(r) for r in rows]
@@ -144,6 +187,8 @@ def _event(row: Any) -> Event:
         title=row["title"],
         summary=row["summary"],
         url=row["url"],
+        repo=row["repo"],
+        project=row["project"],
         occurred_at=_parse_ts(row["occurred_at"]),
         ingested_at=_parse_ts(row["ingested_at"]),
     )

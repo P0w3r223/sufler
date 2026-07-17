@@ -55,6 +55,8 @@ class YamlProjectsRepository:
                 company=entry.get("company", ""),
                 name=entry["name"],
                 description=entry.get("description", ""),
+                github_repos=list(entry.get("github_repos") or []),
+                jira_project_key=entry.get("jira_project_key"),
             )
             for entry in self._entries()
         ]

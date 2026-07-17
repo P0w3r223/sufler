@@ -20,6 +20,8 @@ from workmate.adapters.inbound import env
 from workmate.config import EventsSettings, GithubSettings, TeamsPushSettings
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from workmate.core.application.ci_autocomment import CiAutoCommentService
     from workmate.core.application.events import EventService
 
@@ -45,6 +47,23 @@ def main() -> None:
     asyncio.run(_run(settings, events_settings, push_settings))
 
 
+def _resolve_project(registry_path: Path, owner: str, repo: str) -> str:
+    """Klucz projektu z rejestru dla repo tych drzwi (ADR 0028/0029) — atrybucja zdarzeń GitHub.
+
+    Best-effort: brak dopasowania albo nieczytelny rejestr → pusty (zdarzenia bez projektu).
+    """
+    from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+
+    slug = f"{owner}/{repo}".strip().lower()
+    try:
+        for project in YamlProjectsRepository(registry_path).all():
+            if any(r.strip().lower() == slug for r in project.github_repos):
+                return project.key
+    except Exception:
+        logger.warning("Nie udało się rozwiązać projektu dla repo %s/%s.", owner, repo)
+    return ""
+
+
 async def _run(
     settings: GithubSettings,
     events_settings: EventsSettings,
@@ -58,10 +77,12 @@ async def _run(
     from workmate.adapters.inbound.github.poller import GithubPoller
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from workmate.config import Settings
     from workmate.core.application.events import EventService
 
     events = EventService(SqliteEventStore(events_settings.db_path))
     state = state_store.load(settings.state_path)
+    project = _resolve_project(Settings.from_env().projects_registry, settings.owner, settings.repo)
 
     def persist(current: dict[str, Any]) -> None:
         state_store.save(settings.state_path, current)
@@ -81,6 +102,7 @@ async def _run(
                 poll_interval=settings.poll_interval_s,
                 per_page=settings.per_page,
                 self_login=settings.self_login,
+                project=project,
             )
             tasks = [poller.run()]
             if push_settings.enabled:

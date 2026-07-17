@@ -44,6 +44,19 @@ class GithubReadPort(Protocol):
         selection (ADR 0024)."""
         ...
 
+    def list_pulls(
+        self, owner: str, repo: str, *, state: str = "all", per_page: int = 50
+    ) -> list[dict[str, Any]]:
+        """Surowe PR-y z dedykowanego ``/pulls`` — bogatsze niż z ``/issues``: niosą ``merged_at``,
+        ``draft``, ``head``/``base`` i ``state`` (open/closed). Do snapshotu stanu PR i wykrycia
+        tranzycji merged/closed/ready (ADR 0029). Biała lista pól — bez diffów/patchy."""
+        ...
+
+    def list_branches(self, owner: str, repo: str, *, per_page: int = 50) -> list[dict[str, Any]]:
+        """Surowe gałęzie repo — nazwa + HEAD SHA (``commit.sha``). Do snapshotu stanu i wykrycia
+        pushy przez różnicę HEAD SHA między rundami (ADR 0029)."""
+        ...
+
     def list_workflow_runs(
         self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
     ) -> list[dict[str, Any]]:

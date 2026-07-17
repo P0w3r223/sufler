@@ -24,7 +24,9 @@ class NewEvent(BaseModel):
     zdarzenia (np. ``issue_opened``, ``issue_comment``); ``external_id`` identyfikuje rzecz
     u źródła (np. numer issue) i razem z ``(source, kind)`` tworzy klucz DEDUPLIKACJI.
     ``actor`` to autor (login) — służy strażnikowi pętli self-ping. ``occurred_at`` to czas
-    zdarzenia u źródła (nie czas przyjęcia).
+    zdarzenia u źródła (nie czas przyjęcia). ``repo``/``project`` przypisują zdarzenie do
+    repozytorium/projektu (ADR 0028) — do atrybucji i filtrowania; unikalność między repo
+    zapewnia złożenie repo w ``external_id`` (patrz ``composite_external_id``), nie klucz dedupu.
     """
 
     source: str
@@ -34,6 +36,8 @@ class NewEvent(BaseModel):
     title: str = ""
     summary: str = ""
     url: str = ""
+    repo: str = ""
+    project: str = ""
     occurred_at: datetime
 
 
@@ -46,3 +50,13 @@ class Event(NewEvent):
 
     id: int
     ingested_at: datetime = Field(...)
+
+
+def composite_external_id(repo: str, ref: str) -> str:
+    """Złóż repo z identyfikatorem u źródła w globalnie unikalny ``external_id`` (``repo#ref``).
+
+    Chroni dedup ``(source, external_id, kind)`` przy WIELU repozytoriach: to samo ``#5`` w dwóch
+    repo daje różne klucze — bez zmiany constraintu ``UNIQUE`` (ADR 0028). Puste ``repo`` zwraca
+    sam ``ref`` (wstecznie zgodne z pojedynczym repo).
+    """
+    return f"{repo}#{ref}" if repo else ref

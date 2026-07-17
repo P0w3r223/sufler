@@ -151,6 +151,20 @@ class ProjectsService:
         """Zwróć projekty pionu, posortowane po kluczu."""
         return sorted(self._projects.all(), key=lambda p: p.key)
 
+    def project_for_repo(self, repo: str) -> str | None:
+        """Klucz projektu, do którego zmapowano repozytorium GitHub (``owner/repo``), albo ``None``.
+
+        Odwrotny indeks rejestru (ADR 0028) — pozwala drzwiom GitHub przypisać zdarzenie do
+        projektu. Dopasowanie bez rozróżniania wielkości liter; pierwszy pasujący projekt.
+        """
+        target = repo.strip().lower()
+        if not target:
+            return None
+        for project in self._projects.all():
+            if any(r.strip().lower() == target for r in project.github_repos):
+                return project.key
+        return None
+
     def get_project_status(self, key: str) -> ProjectStatus | None:
         """Zwróć status projektu albo ``None``, gdy projekt nie istnieje."""
         project = self._projects.get(key)

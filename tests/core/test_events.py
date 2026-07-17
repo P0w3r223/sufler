@@ -45,12 +45,22 @@ class _FakeStore:
         self._rows.append(row)
         return row
 
-    def read_since(self, after_id, *, source=None, limit=50):
-        hits = [e for e in self._rows if e.id > after_id and (source is None or e.source == source)]
+    def read_since(self, after_id, *, source=None, project=None, limit=50):
+        hits = [
+            e
+            for e in self._rows
+            if e.id > after_id
+            and (source is None or e.source == source)
+            and (project is None or e.project == project)
+        ]
         return hits[:limit]
 
-    def recent(self, *, source=None, limit=20):
-        hits = [e for e in reversed(self._rows) if source is None or e.source == source]
+    def recent(self, *, source=None, project=None, limit=20):
+        hits = [
+            e
+            for e in reversed(self._rows)
+            if (source is None or e.source == source) and (project is None or e.project == project)
+        ]
         return hits[:limit]
 
 

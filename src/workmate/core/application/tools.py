@@ -257,15 +257,18 @@ def build_events_catalog(events: EventService) -> list[ToolSpec]:
     (np. świeże issue z GitHuba), bez własnego portu do tamtego serwisu.
     """
 
-    def read_recent_events(source: str | None = None, limit: int = 20) -> dict[str, Any]:
+    def read_recent_events(
+        source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> dict[str, Any]:
         """Pokaż ostatnie zdarzenia z warstwy spajającej (np. z GitHuba), najnowsze pierwsze.
 
-        Opcjonalny filtr ``source`` (np. 'github', 'teams') zawęża do jednej warstwy.
-        Każde zdarzenie ma źródło, typ, autora, tytuł, skrót, odnośnik i czas wystąpienia.
+        Opcjonalny filtr ``source`` (np. 'github', 'teams', 'jira') zawęża do jednej warstwy;
+        ``project`` (klucz projektu z rejestru) zawęża do zdarzeń przypisanych do projektu.
+        Każde zdarzenie ma źródło, typ, autora, tytuł, skrót, odnośnik, repo/projekt i czas.
         """
 
         def build() -> dict[str, Any]:
-            items = events.recent(source=source, limit=limit)
+            items = events.recent(source=source, project=project, limit=limit)
             return {
                 "count": len(items),
                 "events": [e.model_dump(mode="json") for e in items],
