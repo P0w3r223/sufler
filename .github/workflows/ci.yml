@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [Main, Dev]
+  pull_request:
+    branches: [Main, Dev]
+
+jobs:
+  quality-gate:
+    name: Bramka jakości (pytest · ruff · mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zainstaluj uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Synchronizacja zależności (z extras)
+        run: uv sync --extra agent --extra github --extra teams-graph --extra telegram --extra retrieval
+
+      - name: Testy
+        run: uv run pytest
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests eval
+
+      - name: Format (ruff)
+        run: uv run ruff format --check src tests eval
+
+      - name: Typy (mypy)
+        run: uv run mypy
