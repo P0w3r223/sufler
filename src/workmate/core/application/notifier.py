@@ -5,8 +5,9 @@ Teams (czat 1:1 i/lub kanał). Zależy tylko od portów (``EventService``, ``Tea
 testowalny na atrapach bez sieci. Semantyka „co najmniej raz": kursor przesuwamy DOPIERO po
 udanej wysyłce, więc błąd transportu daje ponowienie (kosztem ewentualnego dubla) zamiast utraty.
 
-Domyślnie notyfikujemy WYŁĄCZNIE zdarzenia ``source="github"`` — to element strażnika pętli:
-zdarzenia pochodzące z Teams (np. issue utworzone komendą) nie wracają jako powiadomienie.
+Konsumowane źródło jest KONFIGUROWALNE (parametr ``source``, domyślnie ``github``); drzwi Jira
+uruchamiają własny notifier z ``source="jira"`` (osobny proces, osobny kursor). To zarazem element
+strażnika pętli: zdarzenia z Teams (np. issue utworzone komendą) nie wracają jako powiadomienie.
 """
 
 from __future__ import annotations
@@ -40,7 +41,20 @@ _KIND_LABELS = {
     "ci_failure": "CI: porażka",
     "branch_pushed": "Push do gałęzi",
     "branch_deleted": "Usunięto gałąź",
+    # Jira (ADR 0030): utworzenie zgłoszenia, zmiana statusu, komentarz.
+    "jira_issue_created": "Nowe zgłoszenie",
+    "jira_transition": "Zmiana statusu",
+    "jira_comment": "Nowy komentarz",
 }
+
+# Etykieta źródła w nagłówku wiadomości — wyprowadzana z ``event.source`` (nie zaszyta), żeby
+# most obsługiwał wiele źródeł (GitHub, Jira) tym samym renderem (ADR 0030).
+_SOURCE_LABELS = {"github": "GitHub", "jira": "Jira", "teams": "Teams"}
+
+
+def _source_label(source: str) -> str:
+    """Ładna etykieta źródła (``github`` → ``GitHub``); nieznane źródło → surowa wartość."""
+    return _SOURCE_LABELS.get(source, source or "?")
 
 
 @dataclass(frozen=True)
@@ -57,11 +71,11 @@ class NotifyTargets:
 def default_event_render(event: Event) -> str:
     """Zwięzła wiadomość Markdown dla Teams z pól zdarzenia (adapter zamieni ją na HTML).
 
-    Treść (tytuł/skrót/autor) pochodzi z GitHuba i jest DANYMI — sanityzację zrobił już
-    ``EventService.ingest`` (brak znaków sterujących), a adapter Teams zescapuje surowy HTML.
+    Treść (tytuł/skrót/autor) pochodzi ze źródła (GitHub/Jira) i jest DANYMI — sanityzację zrobił
+    już ``EventService.ingest`` (brak znaków sterujących), a adapter Teams zescapuje surowy HTML.
     """
     label = _KIND_LABELS.get(event.kind, event.kind)
-    parts = [f"**[GitHub] {label}**"]
+    parts = [f"**[{_source_label(event.source)}] {label}**"]
     if event.title:
         parts.append(event.title)
     if event.summary:

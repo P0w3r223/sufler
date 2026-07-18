@@ -7,7 +7,8 @@ osobnym „smoke na kluczu / na żywym koncie". Poniższe pozycje pochodzą z AD
 sesji, w których zapisano „live-smoke do zrobienia".
 
 Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanale Teams ·
-☁️ wymaga infrastruktury (Azure/M365 lub serwer Windows/IIS) · 🐙 wymaga PAT GitHub + repo.
+☁️ wymaga infrastruktury (Azure/M365 lub serwer Windows/IIS) · 🐙 wymaga PAT GitHub + repo ·
+🟪 wymaga PAT Jira + instancji Jira Server/Data Center (`WORKMATE_JIRA_*`).
 
 ---
 
@@ -85,6 +86,67 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
   „utwórz issue: …". 
 - **Oczekiwane:** issue powstaje w skonfigurowanym repo (nie w cudzym); agent zwraca numer i URL;
   **potwierdź, że NIE wraca jako powiadomienie** (self-skip po loginie PAT + echo `source="teams"`).
+
+---
+
+## Most Jira (seria B) — live-testy do wykonania
+
+Cały kod mostu Jira jest gotowy i zielony na atrapach; poniższe pozycje potwierdzają realne
+zachowanie na **prawdziwej instancji Jira Server/Data Center**. Wspólne wymagania (NIE-sekret w
+CLAUDE.md, sekrety poza repo): `WORKMATE_JIRA_BASE_URL`, `WORKMATE_JIRA_TOKEN` (PAT Bearer),
+`WORKMATE_JIRA_WATCH_PROJECTS` (np. `WM`), a dla zapisu/tranzycji `WORKMATE_JIRA_WRITE_PROJECT` +
+`WORKMATE_JIRA_SELF_ACCOUNT` (= login konta PAT — inaczej fail-fast). **Inwariant cross-proces
+strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ mieć TEN SAM
+`WORKMATE_JIRA_TOKEN`/`SELF_ACCOUNT` na WSPÓLNYM `~/.workmate/events.db`.
+
+## 11. Jira → EventStore (ingest read) — 🟪 (ADR 0030)
+
+- **Krok:** ustaw `WORKMATE_JIRA_BASE_URL`/`_TOKEN`/`_WATCH_PROJECTS`, uruchom
+  `uv run workmate-jira`. Utwórz ręcznie zgłoszenie w projekcie, zmień jego status i dodaj komentarz.
+  Podejrzyj `~/.workmate/events.db` (np. przez agenta narzędziem `read_recent_events` z filtrem
+  `source="jira"`).
+- **Oczekiwane:** trzy zdarzenia — `jira_issue_created`, `jira_transition`, `jira_comment` — z
+  atrybucją `project` z rejestru (`jira_project_key`). Ponowny poll ich NIE dubluje (dedup po
+  kluczu / id wpisu changelogu / id komentarza), a zmiany autorstwa konta PAT są pomijane (self-skip).
+  Watermark JQL po `updated` (minutowa precyzja) nie gubi zdarzeń po restarcie.
+
+## 12. Jira → Teams (notifier dual-target) — 🔑 👥 🟪 (ADR 0022/0030)
+
+- **Krok:** skonfiguruj `WORKMATE_TEAMS_PUSH_*` (włącz `ENABLE_CHAT` i/lub `ENABLE_CHANNEL`),
+  zaloguj się raz device-code; wywołaj zdarzenie Jira (nowe zgłoszenie / zmiana statusu / komentarz).
+- **Oczekiwane:** powiadomienie ląduje w czacie 1:1 ORAZ na kanale (wg włączonych celów) z etykietą
+  źródła **`[Jira]`** i poprawnym rodzajem (`Nowe zgłoszenie`/`Zmiana statusu`/`Nowy komentarz`).
+  Treść zescapowana (bez żywego HTML). Restart procesu nie gubi ani nie dubluje (kursor at-least-once).
+
+## 13. Wątkowanie kanału Jiry — jedno zgłoszenie, jeden wątek (B2) — 🔑 👥 🟪 (ADR 0024)
+
+- **Krok:** ustaw `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` (wymaga `ENABLE_CHANNEL=true`);
+  dla jednego zgłoszenia (np. `WM-5`) wywołaj po kolei: utworzenie, zmianę statusu i komentarz.
+- **Oczekiwane:** wszystkie trzy powiadomienia trafiają do JEDNEGO wątku (root utworzenia; kolejne
+  jako odpowiedzi), a inne zgłoszenie (`WM-6`) zaczyna NOWY wątek. Klucz `kind="jira"` nie koliduje z
+  wątkami GitHuba na tym samym `events.db`. Usunięcie roota w Teams → notifier tworzy nowy i przełącza
+  link (nie blokuje strumienia).
+
+## 14. Teams → Jira: bramkowany zapis create-only (Gate 5) — 🔑 👥 🟪 (ADR 0031)
+
+- **Krok:** ustaw `WORKMATE_JIRA_ENABLE_WRITE=true` (+ `WRITE_PROJECT` + `SELF_ACCOUNT`); przez
+  agenta na kanale Teams poproś „utwórz zgłoszenie: …" oraz „dodaj komentarz do WM-5: …".
+- **Oczekiwane:** zgłoszenie/komentarz powstają w SKONFIGUROWANYM projekcie (nie w cudzym); agent
+  zwraca klucz i URL. Komentarz do klucza spoza projektu (`OPS-1`) lub o kształcie path-traversal
+  (`WM-1/../OPS-1`) jest ODRZUCONY. **Potwierdź, że zapis NIE wraca jako powiadomienie** (self-skip
+  PAT + echo `source="teams"`, którego notifier `source="jira"` nie odsyła).
+
+## 15. Teams → Jira: tranzycja statusu (walk) — 🔑 👥 🟪 (ADR 0032)
+
+- **Krok:** ustaw `WORKMATE_JIRA_ENABLE_TRANSITION=true` (+ `WRITE_PROJECT` + `SELF_ACCOUNT`).
+  Przy domyślnym `MAX_TRANSITION_HOPS=1` poproś agenta „przenieś WM-5 do In Progress" (status będący
+  bezpośrednim sąsiadem) oraz do statusu odległego/nieosiągalnego. Następnie podnieś
+  `MAX_TRANSITION_HOPS` (np. 3) i powtórz dla celu o kilka kroków dalej po LINIOWYM workflow.
+- **Oczekiwane:** (a) cel-sąsiad → `reached=true`, jeden hop, `[Jira] Zmiana statusu` na kanale;
+  (b) cel nieosiągalny przy cap=1 → `reached=false`, `stop_reason=hop_cap`, **zgłoszenie NIE ruszone**
+  (raport z `available_next`); (c) przy cap≥2 na liniowym workflow → walk przechodzi stany wymuszone
+  do celu, echo per hop; na rozgałęzieniu STOP (`branch_point`, bez zgadywania). Raport zawsze
+  strukturalny (`reached`/`path`/`stop_reason`); tranzycja nie wraca jako zbędne powiadomienie.
 
 ---
 

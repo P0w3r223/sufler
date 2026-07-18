@@ -14,6 +14,37 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   endpointy `list_pulls`/`list_branches`; atrybucja zdarzeń do projektu; tranzycje `pr_merged`/`pr_closed`;
   zdarzenia `branch_pushed`/`branch_deleted` (SHA-diff); narzędzie `get_project_activity`; wzbogacony
   `get_project_status` (aktywność GitHub, porażki CI). Nowe watch-kindy `pull_state`, `branches` (opt-in).
+- **Drzwi Jira read (Server/Data Center)** ([ADR 0030](docs/adr/0030-jira-server-read-door.md)): delegowany
+  polling REST v2 tokenem PAT (`workmate-jira`, extra `jira`) → wspólny `EventStore` → Teams. `JiraSettings`
+  + `JiraReadPort`/`HttpxJiraClient` (B1.1); `jira/selection` mapuje issue na zdarzenia `jira_issue_created`
+  /`jira_transition`/`jira_comment` (dedup tranzycji po `id` wpisu changelogu, watermark JQL po `updated`,
+  self-skip konta PAT), poller + entry point + notifier (B1.2). Atrybucja `project` per issue z rejestru
+  (`jira_project_key`). Notifier zgeneralizowany: etykieta źródła z `event.source` (`[Jira]`/`[GitHub]`),
+  źródło konsumpcji konfigurowalne. Read-only (bez nowej bramki zapisu); wątkowanie kanału OFF w B1.
+- **Zapis do Jira (Gate 5, create-only)** ([ADR 0031](docs/adr/0031-jira-write-capability-gate-5.md)):
+  bramkowana zdolność mutująca `create_jira_issue` + `comment_jira_issue` (odpowiednik Gate 4 GitHuba).
+  Osobny `JiraWritePort`/`JiraWriteService` (rdzeń), bramka `enable_jira_write` per drzwi (domyślnie OFF,
+  wystawiana na drzwiach agenta `teams_graph` przez `extra_catalog` — powierzchnia MCP nietknięta). Projekt
+  tworzenia z konfiguracji (`WORKMATE_JIRA_WRITE_PROJECT`), nie z treści; komentarz waliduje PEŁNY kształt
+  klucza (`PROJ-123`) i zgodność projektu — blokuje obejście cross-project (także path-traversal `WM-1/../X`).
+  Strażnik pętli: echo zapisu jako `source="teams"` (notifier `source="jira"` go nie odsyła) + self-skip PAT
+  w pollerze; fail-fast walidacji sprzecznej konfiguracji. Tranzycja statusu odłożona do ADR 0032.
+- **Tranzycja statusu Jira** ([ADR 0032](docs/adr/0032-jira-status-transition-capability.md)): bramkowane
+  narzędzie `transition_jira_issue` — best-effort „walk" po workflow. Model podaje status/akcję docelową →
+  serwis dopasowuje ją do widocznej tranzycji (akcja > status, case-insensitive) → `POST /transitions`; id
+  tranzycji nigdy nie pochodzi od modelu. NIEZALEŻNA bramka `enable_jira_transition` (domyślnie OFF; profil
+  „tylko-tranzycja" bez zapisu) współdzieli szew Gate 5 (`JiraWritePort`/`JiraWriteService`). Wielo-hop za
+  `WORKMATE_JIRA_MAX_TRANSITION_HOPS` (domyślnie 1 = single-hop, bezpieczny pilotaż; sufit 10): forced-advance
+  tylko przez stany WYMUSZONE, STOP na rozgałęzieniu (bez zgadywania), detekcja cyklu, limit hopów. **Brak
+  rollbacku** — zawsze strukturalny raport (`reached`/`path`/`stop_reason`/`available_next`), echo `source=
+  "teams"` per hop (`external_id=f"{key}:{updated}"`). Ten sam strażnik klucza/projektu i pętli co zapis.
+- **Wątkowanie kanału dla Jiry (B2)** ([ADR 0024](docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md),
+  domknięcie odłożenia z [ADR 0030](docs/adr/0030-jira-server-read-door.md)): resolver wątków
+  (`core/domain/threads.py`) rozpoznaje teraz URL-e Jira `/browse/{KEY}` → cel `("jira", KEY)`, więc
+  utworzenie/tranzycja/komentarz tego samego zgłoszenia trafiają do JEDNEGO wątku na kanale. Wpięcie
+  `SqliteThreadLinkStore` w drzwi `workmate-jira` (`_build_thread_links`, wzorzec GitHuba), za tą samą
+  flagą `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING` (domyślnie OFF). Klucz `kind="jira"` nie koliduje
+  z `pr`/`issue` na wspólnym `events.db`; samowystarczalne w drzwiach Jiry (notifier wypełnia mapę).
 
 ## [1.0.0] — 2026-07-17
 

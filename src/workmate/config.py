@@ -816,6 +816,10 @@ class GithubSettings:
 _JIRA_POLL_FLOOR_S = 30
 _DEFAULT_JIRA_STATE = Path.home() / ".workmate" / "jira_state.json"
 _MAX_JIRA_PER_PAGE = 100
+# Sufit hopów chodzenia po workflow (ADR 0032) — twardy backstop przed nieograniczoną wielo-hop
+# mutacją, gdyby operator wpisał absurd. Domyślnie 1 (single-hop, bezpieczny pilotaż). PUBLICZNY:
+# egzekwują go i ``JiraSettings.validate`` (poller), i wpięcie drzwi zapisu/tranzycji (teams_graph).
+MAX_JIRA_TRANSITION_HOPS = 10
 
 
 @dataclass(frozen=True)
@@ -827,6 +831,12 @@ class JiraSettings:
     (ingest zdarzeń Jira → EventStore → Teams); zapis do Jira będzie osobno bramkowany.
     ``watch_projects`` to klucze projektów Jira do nasłuchu (np. ``WM``); mapowanie na projekt
     WorkMate z rejestru (``jira_project_key``, ADR 0028). ``self_account`` (konto PAT) do self-skip.
+    Zapis (Gate 5 / ADR 0031) jest OSOBNO bramkowany (``enable_jira_write``, domyślnie OFF): drzwi
+    startują read-only. ``write_project`` (projekt tworzenia zgłoszeń) i ``default_issue_type`` są
+    z konfiguracji, nie z treści prośby — niezaufana treść nie przekieruje zapisu gdzie indziej.
+    Tranzycja statusu (ADR 0032) ma WŁASNĄ, NIEZALEŻNĄ bramkę ``enable_jira_transition`` (domyślnie
+    OFF) — profil „tylko-tranzycja" nie wymaga włączonego zapisu. ``max_transition_hops`` (domyślnie
+    1 = single-hop, bezpieczny pilotaż) ogranicza wielo-hop walk; >=2 włącza forced-advance.
     """
 
     base_url: str = ""
@@ -836,6 +846,11 @@ class JiraSettings:
     per_page: int = 50
     state_path: Path = _DEFAULT_JIRA_STATE
     self_account: str = ""
+    enable_jira_write: bool = False
+    write_project: str = ""
+    default_issue_type: str = "Task"
+    enable_jira_transition: bool = False
+    max_transition_hops: int = 1
 
     @classmethod
     def from_env(cls) -> JiraSettings:
@@ -847,10 +862,17 @@ class JiraSettings:
             per_page=_int_from_env("WORKMATE_JIRA_PER_PAGE", 50),
             state_path=_path_from_env("WORKMATE_JIRA_STATE", _DEFAULT_JIRA_STATE),
             self_account=os.environ.get("WORKMATE_JIRA_SELF_ACCOUNT", ""),
+            enable_jira_write=_bool_from_env("WORKMATE_JIRA_ENABLE_WRITE", default=False),
+            write_project=os.environ.get("WORKMATE_JIRA_WRITE_PROJECT", "").strip().upper(),
+            default_issue_type=os.environ.get("WORKMATE_JIRA_DEFAULT_ISSUE_TYPE", "Task"),
+            enable_jira_transition=_bool_from_env(
+                "WORKMATE_JIRA_ENABLE_TRANSITION", default=False
+            ),
+            max_transition_hops=_int_from_env("WORKMATE_JIRA_MAX_TRANSITION_HOPS", 1),
         )
 
     def validate(self) -> None:
-        """Twardy błąd startu, gdy brak URL/tokenu/projektów albo bezsensowne limity."""
+        """Twardy błąd startu, gdy brak URL/tokenu/projektów, złe limity lub sprzeczny zapis."""
         missing = [
             name
             for name, value in (
@@ -878,6 +900,42 @@ class JiraSettings:
             raise ValueError(
                 f"WORKMATE_JIRA_PER_PAGE musi być w zakresie 1..{_MAX_JIRA_PER_PAGE}, "
                 f"jest: {self.per_page}."
+            )
+        # Zapis włączony bez projektu docelowego = narzędzie martwe (nie ma gdzie tworzyć);
+        # odrzucamy cichą, funkcjonalnie martwą konfigurację (klasa fail-fast jak ADR 0024).
+        if self.enable_jira_write and not self.write_project:
+            raise ValueError(
+                "WORKMATE_JIRA_ENABLE_WRITE=true wymaga WORKMATE_JIRA_WRITE_PROJECT "
+                "(projekt tworzenia zgłoszeń)."
+            )
+        # Zapis bez ``self_account`` = strażnik pętli self-skip po cichu wyłączony: własne zapisy
+        # PAT wróciłyby jako zbędne powiadomienia Jira. Wymagamy konta PAT (inwariant cross-proces
+        # z ADR 0031 — poller i drzwi zapisu dzielą ten sam token/konto).
+        if self.enable_jira_write and not self.self_account:
+            raise ValueError(
+                "WORKMATE_JIRA_ENABLE_WRITE=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
+                "(konto PAT — strażnik pętli self-skip)."
+            )
+        # Tranzycja (ADR 0032) to bramkowana zdolność mutująca UPDATE — wymaga tych samych celów co
+        # zapis: ``write_project`` (strażnik klucza/projektu — tranzycja dotyka tylko swojego proj.)
+        # oraz ``self_account`` (strażnik pętli — każdy hop tworzy wpis changelogu autorstwa PAT).
+        # Bez nich to cicha, funkcjonalnie zepsuta konfiguracja (ta sama klasa fail-fast co zapis).
+        if self.enable_jira_transition and not self.write_project:
+            raise ValueError(
+                "WORKMATE_JIRA_ENABLE_TRANSITION=true wymaga WORKMATE_JIRA_WRITE_PROJECT "
+                "(strażnik projektu — tranzycja dotyka tylko swojego projektu)."
+            )
+        if self.enable_jira_transition and not self.self_account:
+            raise ValueError(
+                "WORKMATE_JIRA_ENABLE_TRANSITION=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
+                "(konto PAT — strażnik pętli self-skip)."
+            )
+        # Sufit hopów w rozsądnym zakresie (1 = single-hop; >1 = wielo-hop forced-advance).
+        # Walidujemy zawsze — absurd (0, ujemna, ogromna) to twardy błąd niezależnie od bramki.
+        if not 1 <= self.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS:
+            raise ValueError(
+                "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
+                f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
             )
 
 
