@@ -34,8 +34,15 @@ def _issue(
     return raw
 
 
-def _history(history_id: str, *, author: str = "bob", frm: str = "Open", to: str = "In Progress",
-             field: str = "status", created: str = "2026-07-15T11:00:00.000+0200") -> dict:
+def _history(
+    history_id: str,
+    *,
+    author: str = "bob",
+    frm: str = "Open",
+    to: str = "In Progress",
+    field: str = "status",
+    created: str = "2026-07-15T11:00:00.000+0200",
+) -> dict:
     return {
         "id": history_id,
         "author": {"name": author},
@@ -44,8 +51,13 @@ def _history(history_id: str, *, author: str = "bob", frm: str = "Open", to: str
     }
 
 
-def _comment(comment_id: str, *, author: str = "carol", body: str = "działam nad tym",
-             created: str = "2026-07-15T12:00:00.000+0200") -> dict:
+def _comment(
+    comment_id: str,
+    *,
+    author: str = "carol",
+    body: str = "działam nad tym",
+    created: str = "2026-07-15T12:00:00.000+0200",
+) -> dict:
     return {"id": comment_id, "author": {"name": author}, "body": body, "created": created}
 
 

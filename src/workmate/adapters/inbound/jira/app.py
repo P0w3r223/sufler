@@ -88,9 +88,7 @@ async def _run(
 
     events = EventService(SqliteEventStore(events_settings.db_path))
     state = state_store.load(settings.state_path)
-    project_map = _build_project_map(
-        Settings.from_env().projects_registry, settings.watch_projects
-    )
+    project_map = _build_project_map(Settings.from_env().projects_registry, settings.watch_projects)
 
     def persist(current: dict[str, Any]) -> None:
         state_store.save(settings.state_path, current)

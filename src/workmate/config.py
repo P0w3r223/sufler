@@ -865,9 +865,7 @@ class JiraSettings:
             enable_jira_write=_bool_from_env("WORKMATE_JIRA_ENABLE_WRITE", default=False),
             write_project=os.environ.get("WORKMATE_JIRA_WRITE_PROJECT", "").strip().upper(),
             default_issue_type=os.environ.get("WORKMATE_JIRA_DEFAULT_ISSUE_TYPE", "Task"),
-            enable_jira_transition=_bool_from_env(
-                "WORKMATE_JIRA_ENABLE_TRANSITION", default=False
-            ),
+            enable_jira_transition=_bool_from_env("WORKMATE_JIRA_ENABLE_TRANSITION", default=False),
             max_transition_hops=_int_from_env("WORKMATE_JIRA_MAX_TRANSITION_HOPS", 1),
         )
 

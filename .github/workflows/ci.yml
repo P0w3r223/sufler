@@ -20,7 +20,7 @@ jobs:
           enable-cache: true
 
       - name: Synchronizacja zależności (z extras)
-        run: uv sync --extra agent --extra github --extra teams-graph --extra telegram --extra retrieval
+        run: uv sync --extra agent --extra github --extra jira --extra teams-graph --extra telegram --extra retrieval
 
       - name: Testy
         run: uv run pytest
