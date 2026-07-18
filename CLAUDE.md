@@ -6,15 +6,18 @@ bramkowany zapis `save_note`). Od Fazy 2 te same narzędzia napędzają też **r
 agenta** (drzwi Teams/CLI) — jedno źródło narzędzi, wiele drzwi. Fazy 3–4 dokładają
 **trójstronny most** GitHub ↔ wspólny `EventStore` ↔ Teams (zdarzenia issue/PR/CI/review,
 dwukierunkowe wątki na kanale, deterministyczny auto-komentarz CI — ADR 0024) oraz **lokalny
-retrieval leksykalny** notatek (BM25 nad lematami — ADR 0023, Faza A). Stan i decyzje:
-`docs/adr/`, `.claude/sessions/`; sub-projekt Powiadomienia → `Powiadomienia_teams/PLAN.md`.
+retrieval leksykalny** notatek (BM25 nad lematami — ADR 0023, Faza A). **Faza B** dokłada bliźniaczy
+most **Jira** (Server/DC) ↔ `EventStore` ↔ Teams: read (polling REST v2 PAT), bramkowany zapis
+create-only, tranzycja statusu (best-effort walk) i wątkowanie kanału Jiry (ADR 0030–0032). Stan
+i decyzje: `docs/adr/`, `.claude/sessions/`; sub-projekt Powiadomienia → `Powiadomienia_teams/PLAN.md`.
 
 ## Mapa repo
 - `src/workmate/core/` — RDZEŃ: domena (`domain/`: `models.py` + `ci.py`, `threads.py`,
-  `ranking.py` — BM25/RRF), porty (`ports/`: repozytoria + `llm.py`, `github.py`,
-  `notifications.py`, `text.py` — `Lemmatizer`, `thread_links.py` — `ThreadLinkStore`),
+  `ranking.py` — BM25/RRF), porty (`ports/`: repozytoria + `llm.py`, `github.py`, `jira.py`
+  — read+write Jira, `notifications.py`, `text.py` — `Lemmatizer`, `thread_links.py` — `ThreadLinkStore`),
   przypadki użycia (`application/services.py`, jednoźródłowy katalog `application/tools.py`,
-  `notifier.py`, `ci_autocomment.py`), runtime agenta (`agent/`). Bez I/O, bez SDK.
+  `notifier.py`, `ci_autocomment.py`, `jira.py` — zapis/tranzycja Jiry), runtime agenta (`agent/`).
+  Bez I/O, bez SDK.
 - `src/workmate/adapters/` — DRZWI: wspólny szew `inbound/responder.py` (`Responder`,
   `EchoResponder`, `RuntimeResponder`, …) reużywany przez drzwi async; `inbound/mcp/tools.py`
   (Faza 1 — cienka pętla po katalogu narzędzi); `inbound/teams/` (Faza 2 — runtime
@@ -24,9 +27,12 @@ retrieval leksykalny** notatek (BM25 nad lematami — ADR 0023, Faza A). Stan i 
   `inbound/cli/app.py` (Faza 2 — harness `workmate-agent`); `inbound/github/` (Fazy 3–4 — drzwi
   delegowane przez polling GitHub REST tokenem PAT: `poller.py`/`selection.py` mapują issue/komentarze
   ORAZ PR/CI/review białą listą pól, extra `github`, `workmate-github` — ADR 0020/0024);
-  `inbound/retrieval_wiring.py` (składa `Lemmatizer` z degradacją bez extra `retrieval`);
-  `outbound/` (repozytoria + `anthropic_llm.py` — Claude API, extra `agent`; `github_api.py` —
-  klient GitHub read/write; `sqlite_events.py` — wspólny magazyn zdarzeń; `sqlite_thread_links.py`
+  `inbound/jira/` (Faza B — drzwi delegowane przez polling Jira REST v2 tokenem PAT:
+  `poller.py`/`selection.py` mapują utworzenie/tranzycję/komentarz białą listą pól, extra `jira`,
+  `workmate-jira` — ADR 0030); `inbound/retrieval_wiring.py` (składa `Lemmatizer` z degradacją bez
+  extra `retrieval`); `outbound/` (repozytoria + `anthropic_llm.py` — Claude API, extra `agent`;
+  `github_api.py` — klient GitHub read/write; `jira_api.py` — klient Jira read/write, extra `jira`;
+  `sqlite_events.py` — wspólny magazyn zdarzeń; `sqlite_thread_links.py`
   — mapa wątków issue/PR↔kanał (ADR 0024); `simplemma_lemmatizer.py` — lematyzacja PL, extra
   `retrieval`; `graph_teams_notifier.py` — proaktywny push do Teams, wątkowanie kanału).
 - `src/workmate/server.py` — punkt składania (wiring). `config.py` — ustawienia.
@@ -50,11 +56,12 @@ retrieval leksykalny** notatek (BM25 nad lematami — ADR 0023, Faza A). Stan i 
   kompletny). Pełny status i decyzje: `Powiadomienia_teams/PLAN.md`.
 
 ## Komendy
-- Instalacja: `uv sync` (extras: `agent`, `teams`, `telegram`, `teams-graph`, `github`, `retrieval`)
+- Instalacja: `uv sync` (extras: `agent`, `teams`, `telegram`, `teams-graph`, `github`, `jira`, `retrieval`)
 - Testy: `uv run pytest`  (pojedynczy: `uv run pytest tests/core -q`)
 - Lint / typy: `uv run ruff check .` · `uv run mypy`  (limit linii 100)
 - Serwer lokalnie: `uv run workmate`  · Inspector: `uv run mcp dev src/workmate/server.py`
-- Drzwi delegowane: `uv run workmate-github` (poller GitHub); notifier push → Teams (ADR 0022)
+- Drzwi delegowane: `uv run workmate-github` (poller GitHub) · `uv run workmate-jira` (poller Jira,
+  extra `jira`); notifier push → Teams (ADR 0022)
 - Mikro-eval retrievalu: `uv run pytest tests/test_retrieval_eval.py` (bramka jakości rankingu)
 - Sub-projekt Powiadomienia (własny venv): `cd Powiadomienia_teams && uv run pytest`;
   na żywo `powiadomienia-teams` (`--once` / `--login`)
@@ -131,6 +138,29 @@ Sekrety (klucze/tokeny) trzymamy WYŁĄCZNIE poza repo — w CLAUDE.md tylko śc
   zapełnia mapę). Auto-komentarz CI (`enable_ci_auto_comment`) = jedyna autonomiczna ścieżka
   (deterministyczny komentarz przy porażce CI); wymaga `enable_github_write` ORAZ `ci` w
   `WATCH_KINDS` — walidacja fail-fast, inaczej cicha, martwa konfiguracja.
+- **Most Jira (Server/DC) — read + zapis + tranzycja + wątkowanie (Faza B, [ADR 0030](docs/adr/0030-jira-server-read-door.md)–[0032](docs/adr/0032-jira-status-transition-capability.md)).**
+  Drzwi read `workmate-jira` (polling REST v2 PAT, extra `jira`) mapują utworzenie/tranzycję/komentarz
+  (`jira_issue_created`/`jira_transition`/`jira_comment`) BIAŁĄ LISTĄ pól → `EventStore` → Teams
+  (notifier `source="jira"`, etykieta `[Jira]`; atrybucja `project` z rejestru `jira_project_key`).
+  Zapis (Gate 5, [ADR 0031](docs/adr/0031-jira-write-capability-gate-5.md)) i tranzycja
+  ([ADR 0032](docs/adr/0032-jira-status-transition-capability.md)) to bramkowane zdolności mutujące na
+  drzwiach agenta (`teams_graph`), przez `extra_catalog` (golden-test MCP nietknięty), każda za WŁASNĄ,
+  NIEZALEŻNĄ bramką (domyślnie OFF): `enable_jira_write` (create-only: `create_jira_issue`/
+  `comment_jira_issue`) i `enable_jira_transition` (`transition_jira_issue`; możliwy profil
+  „tylko-tranzycja"). **Tranzycja = best-effort walk po workflow** (Jira REST pokazuje tylko SĄSIADÓW
+  bieżącego statusu — walk ślepy/greedy): idzie przez stany WYMUSZONE, STOP na rozgałęzieniu (bez
+  zgadywania), detekcja cyklu, sufit `WORKMATE_JIRA_MAX_TRANSITION_HOPS` (domyślnie 1 = single-hop
+  bezpieczny; ≥2 = wielo-hop opt-in, sufit 10). **BRAK rollbacku** — narzędzie ZAWSZE zwraca
+  strukturalny raport (`reached`/`path`/`stop_reason`/`available_next`), NIGDY gołe `{"error"}` (poza
+  pre-flight: zły klucz/treść). Strażniki jak GitHub: PEŁNY kształt klucza `PROJ-123` (blokuje
+  path-traversal `WM-1/../X`; projekt z konfiguracji, nie z treści), echo `source="teams"` + self-skip
+  PAT — **inwariant cross-proces**: poller `workmate-jira` i `teams_graph` MUSZĄ mieć TEN SAM
+  `WORKMATE_JIRA_TOKEN`/`WORKMATE_JIRA_SELF_ACCOUNT` na wspólnym `events.db` (fail-fast `validate`).
+  **Wątkowanie kanału Jiry (B2)** = uogólniony resolver `resolve_thread_target` (`core/domain/threads.py`)
+  o URL-e `/browse/{KEY}` → `("jira", KEY)`, za tą samą flagą `enable_channel_threading`; utworzenie/
+  tranzycja/komentarz jednego zgłoszenia → JEDEN wątek na kanale. `kind="jira"` nie koliduje z
+  `pr`/`issue` na wspólnym `events.db`; samowystarczalne w drzwiach Jiry (notifier zapełnia mapę).
+  **PAT Jira to sekret** (`WORKMATE_JIRA_TOKEN`, `repr=False`) — z env/pliku poza repo i `data/`.
 - **Retrieval leksykalny (Faza A, [ADR 0023](docs/adr/0023-hybrid-local-retrieval.md)).** Wyszukiwanie
   notatek: BM25 nad lematami (`core/domain/ranking.py`, lematyzacja `simplemma` przez port
   `Lemmatizer`), z fallbackiem podłańcuchowym gdy brak extra `retrieval` (import LENIWY — serwer/testy
