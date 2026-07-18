@@ -31,7 +31,7 @@ class JiraReadPort(Protocol):
 
 
 class JiraWritePort(Protocol):
-    """Zapis do Jira (bramkowany, Gate 5 / ADR 0031) — CREATE-ONLY: nowe zgłoszenia i komentarze."""
+    """Zapis do Jira: CREATE-ONLY (Gate 5 / ADR 0031) + tranzycja statusu (ADR 0032, bramkowana)."""
 
     def create_issue(
         self,
@@ -50,4 +50,21 @@ class JiraWritePort(Protocol):
 
     def add_comment(self, issue_key: str, body: str) -> dict[str, Any]:
         """Dodaj komentarz do zgłoszenia; zwróć ``{id, url, created}`` (created z odpowiedzi)."""
+        ...
+
+    def read_transitions(self, issue_key: str) -> dict[str, Any]:
+        """Bieżący status i tranzycje: ``{current_status, transitions: [{id, name, to_status}]}``.
+
+        Jedno ``GET /issue/{key}?fields=status&expand=transitions`` — API pokazuje TYLKO tranzycje
+        z bieżącego statusu (sąsiadów, nie cały graf workflow). Serwis (ADR 0032) chodzi po nich
+        greedy, hop po hopie; ``to_status`` to nazwa statusu docelowego danej tranzycji.
+        """
+        ...
+
+    def transition_issue(self, issue_key: str, transition_id: str) -> dict[str, Any]:
+        """Wykonaj tranzycję (POST ``transition.id``); zwróć ``{url, status, updated}``.
+
+        ``POST /transitions`` zwraca 204 bez ciała, więc ``status``/``updated`` adapter dobiera
+        osobnym GET-em — ``updated`` stempluje echo ``source="teams"`` hopa (strażnik pętli, 0032).
+        """
         ...

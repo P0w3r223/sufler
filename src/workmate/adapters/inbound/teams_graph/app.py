@@ -27,6 +27,7 @@ from workmate.adapters.inbound.agent_wiring import build_conversational_responde
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
 from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
+    MAX_JIRA_TRANSITION_HOPS,
     AgentSettings,
     ConversationSettings,
     EventsSettings,
@@ -124,7 +125,7 @@ def _build_bridge_catalog(
 
     events = EventService(SqliteEventStore(events_settings.db_path))
     catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
-    catalog += _build_jira_write_catalog(jira_settings, events)
+    catalog += _build_jira_catalog(jira_settings, events)
 
     if not (
         github_settings.enable_github_write
@@ -163,18 +164,20 @@ def _build_bridge_catalog(
     )
 
 
-def _build_jira_write_catalog(
-    jira_settings: JiraSettings, events: EventService
-) -> list[ToolSpec]:
-    """Bramkowany zapis do Jiry (Gate 5 / ADR 0031) — pusty przy OFF; fail-fast przy ON bez celu.
+def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> list[ToolSpec]:
+    """Bramkowane narzędzia Jiry: zapis (Gate 5 / ADR 0031) i tranzycja (ADR 0032) — bramki OSOBNE.
 
-    Bramka OFF → pusto (agent bez narzędzia zapisu Jira). Bramka ON, ale brak celu (token/URL/proj)
-    → TWARDY błąd (ADR 0031 czyni walidację punktem egzekucji): cicha bramka „włączona, ale martwa"
-    byłaby footgunem (operator myśli, że zapis działa). ``self_account`` (strażnik pętli self-skip)
-    egzekwuje poller Jira (``JiraSettings.validate`` w ``workmate-jira``) — to jego proces go używa.
-    Sync klient Jiry żyje przez proces; echo zapisu idzie jako ``source=teams`` (strażnik pętli).
+    Żadna bramka → pusto (agent bez narzędzi mutujących Jira). Co najmniej jedna → budujemy JEDEN
+    klient/serwis Jiry (współdzielą PAT/URL/projekt), potem dokładamy narzędzia zapisu (create/
+    comment) TYLKO przy ``enable_jira_write`` i narzędzie tranzycji TYLKO przy
+    ``enable_jira_transition`` — profil per drzwi (ADR 0006/0021/0031/0032): możliwy jest profil
+    „tylko-tranzycja" bez zapisu. Bramka ON, ale brak celu (token/URL/projekt) → TWARDY błąd
+    (walidacja jest punktem egzekucji): cicha bramka „włączona, ale martwa" byłaby footgunem.
+    ``self_account`` (strażnik pętli self-skip) egzekwuje poller Jira (``JiraSettings.validate``
+    w ``workmate-jira``) — to jego proces go używa. Sync klient Jiry żyje przez proces; echo
+    zapisu/tranzycji idzie jako ``source=teams`` (strażnik pętli).
     """
-    if not jira_settings.enable_jira_write:
+    if not (jira_settings.enable_jira_write or jira_settings.enable_jira_transition):
         return []
     missing = [
         name
@@ -187,14 +190,29 @@ def _build_jira_write_catalog(
     ]
     if missing:
         raise ValueError(
-            "WORKMATE_JIRA_ENABLE_WRITE=true wymaga: " + ", ".join(missing) + " w środowisku/.env."
+            "WORKMATE_JIRA_ENABLE_WRITE/ENABLE_TRANSITION=true wymaga: "
+            + ", ".join(missing)
+            + " w środowisku/.env."
+        )
+    # Sufit hopów (ADR 0032) egzekwujemy TU, bo to drzwi wykonujące walk — a ``validate`` (gdzie
+    # też jest ten check) woła tylko poller Jira, nie te drzwi. Bez tego absurdalny cap (np. 999)
+    # ominąłby twardy backstop tam, gdzie walk się dzieje. Fail-fast, nie cichy clamp.
+    if jira_settings.enable_jira_transition and not (
+        1 <= jira_settings.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS
+    ):
+        raise ValueError(
+            "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
+            f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {jira_settings.max_transition_hops}."
         )
 
     import httpx
 
     from workmate.adapters.outbound.jira_api import HttpxJiraClient
     from workmate.core.application.jira import JiraWriteService
-    from workmate.core.application.tools import build_jira_write_catalog
+    from workmate.core.application.tools import (
+        build_jira_transition_catalog,
+        build_jira_write_catalog,
+    )
 
     client = HttpxJiraClient(
         httpx.Client(timeout=30), jira_settings.token, base_url=jira_settings.base_url
@@ -204,14 +222,27 @@ def _build_jira_write_catalog(
         project=jira_settings.write_project,
         issue_type=jira_settings.default_issue_type,
         events=events,
+        max_transition_hops=jira_settings.max_transition_hops,
     )
-    logger.info(
-        "Jira write WŁĄCZONY dla projektu %s — agent Teams może tworzyć zgłoszenia/komentarze. "
-        "Strażnik pętli (self-skip) domyka poller Jira: wymaga tego samego WORKMATE_JIRA_TOKEN i "
-        "WORKMATE_JIRA_SELF_ACCOUNT = konto tego PAT (ADR 0031).",
-        jira_settings.write_project,
-    )
-    return build_jira_write_catalog(write_service)
+    catalog: list[ToolSpec] = []
+    if jira_settings.enable_jira_write:
+        logger.info(
+            "Jira write WŁĄCZONY dla projektu %s — agent Teams może tworzyć zgłoszenia/komentarze. "
+            "Strażnik pętli (self-skip) domyka poller Jira: wymaga tego samego WORKMATE_JIRA_TOKEN "
+            "i WORKMATE_JIRA_SELF_ACCOUNT = konto tego PAT (ADR 0031).",
+            jira_settings.write_project,
+        )
+        catalog += build_jira_write_catalog(write_service)
+    if jira_settings.enable_jira_transition:
+        logger.info(
+            "Jira transition WŁĄCZONY dla projektu %s (max hops=%d) — agent Teams może przesuwać "
+            "status zgłoszeń. Wielo-hop (cap>1) to autonomiczna, NIEODWRACALNA mutacja; "
+            "strażnik pętli jak przy zapisie (ADR 0032).",
+            jira_settings.write_project,
+            jira_settings.max_transition_hops,
+        )
+        catalog += build_jira_transition_catalog(write_service)
+    return catalog
 
 
 def _make_thread_tool_factory(

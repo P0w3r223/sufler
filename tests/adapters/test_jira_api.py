@@ -121,3 +121,88 @@ def test_create_issue_survives_failed_created_fetch():
     result = _client(handler).create_issue("WM", "Task", "Tytuł", "Opis")
     assert result["key"] == "WM-9"
     assert result["created"] == ""  # best-effort: brak daty → echo zostanie pominięte
+
+
+# --- transition (ADR 0032) --------------------------------------------------
+
+
+def test_read_transitions_parses_current_status_and_neighbors():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/api/2/issue/WM-5"
+        assert request.url.params.get("expand") == "transitions"
+        return httpx.Response(
+            200,
+            json={
+                "fields": {"status": {"name": "To Do"}},
+                "transitions": [
+                    {"id": "11", "name": "Start Progress", "to": {"name": "In Progress"}},
+                    {"id": "21", "name": "Done", "to": {"name": "Done"}},
+                ],
+            },
+        )
+
+    snap = _client(handler).read_transitions("WM-5")
+    assert snap["current_status"] == "To Do"
+    assert snap["transitions"] == [
+        {"id": "11", "name": "Start Progress", "to_status": "In Progress"},
+        {"id": "21", "name": "Done", "to_status": "Done"},
+    ]
+
+
+def test_read_transitions_translates_http_error_to_write_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"errorMessages": ["brak issue"]})
+
+    with pytest.raises(WriteError, match="odczytać tranzycji"):
+        _client(handler).read_transitions("WM-999")
+
+
+def test_transition_issue_posts_id_and_fetches_status_updated():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            import json
+
+            assert request.url.path == "/rest/api/2/issue/WM-5/transitions"
+            seen["payload"] = json.loads(request.content)
+            return httpx.Response(204)  # No Content — .json() by tu padło
+        seen["get_fields"] = request.url.params.get("fields")
+        return httpx.Response(
+            200,
+            json={
+                "fields": {
+                    "status": {"name": "In Progress"},
+                    "updated": "2026-07-15T10:00:00.000+0200",
+                }
+            },
+        )
+
+    result = _client(handler).transition_issue("WM-5", "11")
+    assert seen["payload"] == {"transition": {"id": "11"}}
+    assert seen["get_fields"] == "status,updated"
+    assert result == {
+        "url": f"{_BASE}/browse/WM-5",
+        "status": "In Progress",
+        "updated": "2026-07-15T10:00:00.000+0200",
+    }
+
+
+def test_transition_issue_survives_failed_followup_get():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(204)
+        return httpx.Response(500)  # follow-up GET pada — tranzycja już się PODAŁA
+
+    result = _client(handler).transition_issue("WM-5", "11")
+    # Best-effort: brak statusu/daty → puste, ale BEZ WriteError (POST się udał).
+    assert result["status"] == "" and result["updated"] == ""
+    assert result["url"] == f"{_BASE}/browse/WM-5"
+
+
+def test_transition_issue_translates_post_error_to_write_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"errorMessages": ["złe przejście"]})
+
+    with pytest.raises(WriteError, match="wykonać tranzycji"):
+        _client(handler).transition_issue("WM-5", "99")

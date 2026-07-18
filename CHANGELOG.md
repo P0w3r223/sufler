@@ -29,6 +29,15 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   klucza (`PROJ-123`) i zgodność projektu — blokuje obejście cross-project (także path-traversal `WM-1/../X`).
   Strażnik pętli: echo zapisu jako `source="teams"` (notifier `source="jira"` go nie odsyła) + self-skip PAT
   w pollerze; fail-fast walidacji sprzecznej konfiguracji. Tranzycja statusu odłożona do ADR 0032.
+- **Tranzycja statusu Jira** ([ADR 0032](docs/adr/0032-jira-status-transition-capability.md)): bramkowane
+  narzędzie `transition_jira_issue` — best-effort „walk" po workflow. Model podaje status/akcję docelową →
+  serwis dopasowuje ją do widocznej tranzycji (akcja > status, case-insensitive) → `POST /transitions`; id
+  tranzycji nigdy nie pochodzi od modelu. NIEZALEŻNA bramka `enable_jira_transition` (domyślnie OFF; profil
+  „tylko-tranzycja" bez zapisu) współdzieli szew Gate 5 (`JiraWritePort`/`JiraWriteService`). Wielo-hop za
+  `WORKMATE_JIRA_MAX_TRANSITION_HOPS` (domyślnie 1 = single-hop, bezpieczny pilotaż; sufit 10): forced-advance
+  tylko przez stany WYMUSZONE, STOP na rozgałęzieniu (bez zgadywania), detekcja cyklu, limit hopów. **Brak
+  rollbacku** — zawsze strukturalny raport (`reached`/`path`/`stop_reason`/`available_next`), echo `source=
+  "teams"` per hop (`external_id=f"{key}:{updated}"`). Ten sam strażnik klucza/projektu i pętli co zapis.
 
 ## [1.0.0] — 2026-07-17
 

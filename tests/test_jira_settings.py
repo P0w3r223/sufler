@@ -78,3 +78,49 @@ def test_from_env_reads_write_fields(monkeypatch):
     assert settings.enable_jira_write is True
     assert settings.write_project == "WM"  # znormalizowane do wielkich liter
     assert settings.default_issue_type == "Bug"
+
+
+# --- bramka tranzycji (ADR 0032) --------------------------------------------
+
+
+def test_validate_transition_requires_write_project():
+    with pytest.raises(ValueError, match="WRITE_PROJECT"):
+        _settings(enable_jira_transition=True, self_account="svc").validate()
+
+
+def test_validate_transition_requires_self_account():
+    with pytest.raises(ValueError, match="SELF_ACCOUNT"):
+        _settings(enable_jira_transition=True, write_project="WM").validate()
+
+
+def test_validate_transition_only_profile_ok_without_write():
+    # Profil „tylko-tranzycja": enable_jira_write pozostaje False, bramka tranzycji wystarcza.
+    _settings(enable_jira_transition=True, write_project="WM", self_account="svc").validate()
+
+
+def test_validate_bounds_max_transition_hops():
+    with pytest.raises(ValueError, match="MAX_TRANSITION_HOPS"):
+        _settings(max_transition_hops=0).validate()
+    with pytest.raises(ValueError, match="MAX_TRANSITION_HOPS"):
+        _settings(max_transition_hops=11).validate()  # sufit = 10
+
+
+def test_validate_max_hops_bounds_apply_even_when_gate_off():
+    # Zakres hopów walidujemy bezwarunkowo — absurd to twardy błąd niezależnie od bramki.
+    with pytest.raises(ValueError, match="MAX_TRANSITION_HOPS"):
+        _settings(enable_jira_transition=False, max_transition_hops=0).validate()
+
+
+def test_validate_default_single_hop_is_in_range():
+    _settings().validate()  # domyślnie max_transition_hops=1 (single-hop, pilotaż)
+
+
+def test_from_env_reads_transition_fields(monkeypatch):
+    monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.x")
+    monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "secret")
+    monkeypatch.setenv("WORKMATE_JIRA_WATCH_PROJECTS", "WM")
+    monkeypatch.setenv("WORKMATE_JIRA_ENABLE_TRANSITION", "true")
+    monkeypatch.setenv("WORKMATE_JIRA_MAX_TRANSITION_HOPS", "3")
+    settings = JiraSettings.from_env()
+    assert settings.enable_jira_transition is True
+    assert settings.max_transition_hops == 3

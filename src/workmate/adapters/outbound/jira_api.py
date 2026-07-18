@@ -96,6 +96,71 @@ class HttpxJiraClient:
             "created": str(created.get("created") or ""),
         }
 
+    # --- transition (ADR 0032, bramkowane) — best-effort chodzenie po workflow ---
+
+    def read_transitions(self, issue_key: str) -> dict[str, Any]:
+        """Bieżący status + dostępne tranzycje (sąsiedzi) jednym GET-em (``expand=transitions``).
+
+        Owinięte w ``_as_write_error``: 404 (brak issue) / 403 (brak uprawnień) → ``WriteError``,
+        żeby serwis dostał czytelny błąd zamiast wywrócenia tury. API zwraca tranzycje TYLKO
+        z bieżącego statusu (nie cały graf) — serwis chodzi po nich hop po hopie.
+        """
+        with _as_write_error("odczytać tranzycji"):
+            data = self._get_json(
+                f"{self._base_url}/rest/api/2/issue/{issue_key}",
+                {"fields": "status", "expand": "transitions"},
+            )
+        current = _status_name(data.get("fields") if isinstance(data, dict) else None)
+        raw = data.get("transitions") if isinstance(data, dict) else None
+        transitions: list[dict[str, str]] = []
+        if isinstance(raw, list):
+            for t in raw:
+                if not isinstance(t, dict):
+                    continue
+                to = t.get("to")
+                transitions.append(
+                    {
+                        "id": str(t.get("id") or ""),
+                        "name": str(t.get("name") or ""),
+                        "to_status": str(to.get("name") or "") if isinstance(to, dict) else "",
+                    }
+                )
+        return {"current_status": current, "transitions": transitions}
+
+    def transition_issue(self, issue_key: str, transition_id: str) -> dict[str, Any]:
+        """Wykonaj tranzycję (POST ``transition.id``); zwróć ``{url, status, updated}``.
+
+        ``POST /transitions`` zwraca 204 bez ciała, więc status/updated dobieramy osobnym GET-em
+        POZA ``_as_write_error`` (nieudane dobranie nie zamienia tranzycji, która się PODAŁA, na
+        błąd — wtedy pusty ``updated`` i serwis pominie echo tego hopa).
+        """
+        with _as_write_error("wykonać tranzycji"):
+            self._post_no_content(
+                f"{self._base_url}/rest/api/2/issue/{issue_key}/transitions",
+                {"transition": {"id": transition_id}},
+            )
+        status, updated = self._fetch_status_updated(issue_key)
+        return {"url": self._browse(issue_key), "status": status, "updated": updated}
+
+    def _fetch_status_updated(self, key: str) -> tuple[str, str]:
+        """Bieżący status i ``updated`` osobnym GET-em (POST tranzycji zwraca 204, bez ciała).
+
+        Best-effort (jak ``_fetch_created``): potrzebne do echa i potwierdzenia statusu; błąd GET →
+        puste, serwis pominie echo tego hopa. Dlatego POZA ``_as_write_error``.
+        """
+        if not key:
+            return "", ""
+        try:
+            data = self._get_json(
+                f"{self._base_url}/rest/api/2/issue/{key}", {"fields": "status,updated"}
+            )
+        except httpx.HTTPError:
+            return "", ""
+        fields = data.get("fields") if isinstance(data, dict) else None
+        if not isinstance(fields, dict):
+            return "", ""
+        return _status_name(fields), str(fields.get("updated") or "")
+
     def _fetch_created(self, key: str) -> str:
         """Znacznik ``created`` zgłoszenia osobnym GET-em (odpowiedź create Jiry go nie niesie).
 
@@ -130,6 +195,19 @@ class HttpxJiraClient:
         response.raise_for_status()
         data = response.json()
         return data if isinstance(data, dict) else {}
+
+    def _post_no_content(self, url: str, payload: dict[str, Any]) -> None:
+        """POST bez parsowania ciała — tranzycja zwraca 204 No Content (``.json()`` by padł)."""
+        response = self._client.post(url, json=payload)
+        response.raise_for_status()
+
+
+def _status_name(fields: Any) -> str:
+    """Wyłuskaj nazwę statusu z ``fields.status.name`` (odporne na brak/None)."""
+    if not isinstance(fields, dict):
+        return ""
+    status = fields.get("status")
+    return str(status.get("name") or "") if isinstance(status, dict) else ""
 
 
 @contextlib.contextmanager
