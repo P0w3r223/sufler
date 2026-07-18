@@ -10,11 +10,11 @@ Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonyc
   notatek działają na plikach z `data/`.
 - **Runtime agenta** (drzwi Teams/Telegram/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
   jego brak to twardy błąd startu, nie tryb degradacji.
-- **Most GitHub / push do Teams** — wymagają PAT GitHub i/lub cache tokenu Microsoft Graph.
+- **Most GitHub / Jira / push do Teams** — wymagają PAT GitHub, PAT Jira i/lub cache tokenu Microsoft Graph.
 
 Sekrety trzymamy **wyłącznie poza repo** (env / plik poza `data/`). Wszystkie bramki zapisu
-(`*_ENABLE_WRITE`, `*_ENABLE_CHANNEL*`, `*_CI_AUTO_COMMENT`, `ENABLE_WORKSPACE`) są **domyślnie
-wyłączone** i włączane świadomie per drzwi.
+(`*_ENABLE_WRITE`, `*_ENABLE_TRANSITION`, `*_ENABLE_CHANNEL*`, `*_CI_AUTO_COMMENT`, `ENABLE_WORKSPACE`)
+są **domyślnie wyłączone** i włączane świadomie per drzwi.
 
 ---
 
@@ -69,7 +69,7 @@ Napędza drzwi Teams/Telegram/CLI. `validate()` twardo wymaga klucza.
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
-| `WORKMATE_EVENTS_DB` | `~/.workmate/events.db` | Plik `EventStore` mostu ([ADR 0019](../adr/0019-shared-event-store.md)). **Wspólny** dla drzwi GitHub i drzwi Teams; ustaw na trwałą ścieżkę serwera. |
+| `WORKMATE_EVENTS_DB` | `~/.workmate/events.db` | Plik `EventStore` mostu ([ADR 0019](../adr/0019-shared-event-store.md)). **Wspólny** dla drzwi GitHub, Jira i Teams; ustaw na trwałą ścieżkę serwera. |
 
 ## Retrieval (`RetrievalSettings`, extra `retrieval`)
 
@@ -142,6 +142,29 @@ Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.m
 | `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT` | `false` | Deterministyczny auto-komentarz przy porażce CI; wymaga `_ENABLE_WRITE` ORAZ `ci` w `WATCH_KINDS`. |
 | `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
 | `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |
+
+## Drzwi Jira Server/DC / most (`JiraSettings`, extra `jira`)
+
+Polling instancji Jira REST v2 tokenem PAT ([ADR 0030](../adr/0030-jira-server-read-door.md)); zapis
+(Gate 5) i tranzycja statusu za NIEZALEŻNYMI bramkami. Procedura: [`how-to/jira-bridge.md`](../how-to/jira-bridge.md).
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_JIRA_BASE_URL` | *(wymagane)* | URL instancji Jira (Server/Data Center). |
+| `WORKMATE_JIRA_TOKEN` | *(wymagane)* | **Sekret.** PAT Jira (Bearer). |
+| `WORKMATE_JIRA_WATCH_PROJECTS` | *(wymagane)* | Klucze projektów do nasłuchu (po przecinku, np. `WM,OPS`); mapowanie na projekt WorkMate z rejestru (`jira_project_key`, [ADR 0028](../adr/0028-project-repo-jira-mapping-and-event-dimension.md)). |
+| `WORKMATE_JIRA_POLL_INTERVAL` | `60` (podłoga `30`) | Odstęp odpytań (s). |
+| `WORKMATE_JIRA_PER_PAGE` | `50` | Rozmiar strony. |
+| `WORKMATE_JIRA_STATE` | `~/.workmate/jira_state.json` | Watermark (`updated`) + kursor notifiera. |
+| `WORKMATE_JIRA_SELF_ACCOUNT` | login konta PAT | Strażnik pętli self-skip. **Wymagane** przy włączonym zapisie/tranzycji. |
+| `WORKMATE_JIRA_ENABLE_WRITE` | `false` | Gate 5: zapis create-only `create_jira_issue`/`comment_jira_issue` ([ADR 0031](../adr/0031-jira-write-capability-gate-5.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
+| `WORKMATE_JIRA_WRITE_PROJECT` | — | Projekt tworzenia/tranzycji (z konfiguracji, nie z treści prośby). Wymagany przy zapisie/tranzycji. |
+| `WORKMATE_JIRA_DEFAULT_ISSUE_TYPE` | `Task` | Domyślny typ tworzonego zgłoszenia. |
+| `WORKMATE_JIRA_ENABLE_TRANSITION` | `false` | NIEZALEŻNA bramka tranzycji statusu `transition_jira_issue` ([ADR 0032](../adr/0032-jira-status-transition-capability.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
+| `WORKMATE_JIRA_MAX_TRANSITION_HOPS` | `1` | Sufit hopów walk (1 = single-hop; ≥2 = wielo-hop forced-advance; sufit `10`). |
+
+Wątkowanie kanału dla Jiry (B2) korzysta ze wspólnej flagi `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING`
+(sekcja *Push do Teams*) — resolver wątków kojarzy zdarzenia jednego zgłoszenia po `/browse/{KEY}`.
 
 ## Drzwi Telegram (`TelegramSettings`, extra `telegram`)
 

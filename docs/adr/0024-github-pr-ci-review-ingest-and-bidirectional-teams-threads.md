@@ -1,7 +1,7 @@
 # 0024. GitHub PR/CI/review ingest, deterministic CI auto-comment, and bidirectional Teams channel threads
 
 Date: 2026-07-16
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0019-shared-event-store.md, docs/adr/0020-github-delegated-polling-door.md,
   docs/adr/0021-github-write-capability-gate-4.md, docs/adr/0022-proactive-dual-target-teams-push.md,
