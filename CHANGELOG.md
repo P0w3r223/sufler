@@ -38,6 +38,13 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   tylko przez stany WYMUSZONE, STOP na rozgałęzieniu (bez zgadywania), detekcja cyklu, limit hopów. **Brak
   rollbacku** — zawsze strukturalny raport (`reached`/`path`/`stop_reason`/`available_next`), echo `source=
   "teams"` per hop (`external_id=f"{key}:{updated}"`). Ten sam strażnik klucza/projektu i pętli co zapis.
+- **Wątkowanie kanału dla Jiry (B2)** ([ADR 0024](docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md),
+  domknięcie odłożenia z [ADR 0030](docs/adr/0030-jira-server-read-door.md)): resolver wątków
+  (`core/domain/threads.py`) rozpoznaje teraz URL-e Jira `/browse/{KEY}` → cel `("jira", KEY)`, więc
+  utworzenie/tranzycja/komentarz tego samego zgłoszenia trafiają do JEDNEGO wątku na kanale. Wpięcie
+  `SqliteThreadLinkStore` w drzwi `workmate-jira` (`_build_thread_links`, wzorzec GitHuba), za tą samą
+  flagą `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING` (domyślnie OFF). Klucz `kind="jira"` nie koliduje
+  z `pr`/`issue` na wspólnym `events.db`; samowystarczalne w drzwiach Jiry (notifier wypełnia mapę).
 
 ## [1.0.0] — 2026-07-17
 

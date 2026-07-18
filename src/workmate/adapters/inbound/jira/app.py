@@ -6,8 +6,10 @@ i zapisuje utworzenia/tranzycje/komentarze do wspólnego magazynu zdarzeń (``ev
 skonfigurowano cele Teams (``WORKMATE_TEAMS_PUSH_*``), RÓWNOLEGLE (``asyncio.gather``) uruchamia
 notifiera wypychającego zdarzenia ``source="jira"`` do Teams (czat 1:1 i/lub kanał, ADR 0022).
 
-Wątkowanie kanału jest w B1 WYŁĄCZONE (resolver wątków jest GitHub-URL-specyficzny — ADR 0030),
-więc notifier zawsze tworzy nowy root per zdarzenie. Importy ``httpx``/MSAL są leniwe; brak extra
+Wątkowanie kanału (ADR 0024, B2) dokłada zdarzenia tego samego zgłoszenia (utworzenie/tranzycja/
+komentarz) do JEDNEGO wątku na kanale — flaga ``WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING``
+(domyślnie OFF); przy OFF notifier tworzy nowy root per zdarzenie. Mapę wątków wypełnia notifier
+tego procesu (samowystarczalne w drzwiach Jiry). Importy ``httpx``/MSAL są leniwe; brak extra
 kończy się czytelnym komunikatem, nie ``ImportError``.
 """
 
@@ -111,9 +113,10 @@ async def _run(
             )
             tasks = [poller.run()]
             if push_settings.enabled:
+                thread_links = _build_thread_links(events_settings, push_settings)
                 tasks.append(
                     _build_notifier(
-                        async_http, events, state, persist, settings, push_settings
+                        async_http, events, state, persist, settings, push_settings, thread_links
                     ).pump()
                 )
             else:
@@ -123,6 +126,21 @@ async def _run(
             await asyncio.gather(*tasks)
 
 
+def _build_thread_links(events_settings: EventsSettings, push_settings: TeamsPushSettings) -> Any:
+    """Złóż ``ThreadLinkStore`` (SQLite nad events.db), gdy wątkowanie kanału ON; inaczej ``None``.
+
+    Wątkowanie (ADR 0024, B2) dokłada zdarzenia tego samego zgłoszenia Jiry (utworzenie/tranzycja/
+    komentarz) do jednego wątku na kanale — resolver kojarzy je po ``/browse/{KEY}`` w url. Gdy OFF
+    (domyślnie) — ``None``, a notifier tworzy nowy root per zdarzenie. Ta sama mapa (osobna tabela)
+    co drzwi GitHub na wspólnym ``events.db``; ``kind="jira"`` nie koliduje z ``pr``/``issue``.
+    """
+    if not push_settings.enable_channel_threading:
+        return None
+    from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
+
+    return SqliteThreadLinkStore(events_settings.db_path)
+
+
 def _build_notifier(
     async_http: Any,
     events: EventService,
@@ -130,11 +148,12 @@ def _build_notifier(
     persist: Callable[[dict[str, Any]], None],
     settings: JiraSettings,
     push_settings: TeamsPushSettings,
+    thread_links: Any = None,
 ) -> Any:
     """Złóż notifiera EventStore → Teams dla źródła ``jira`` (dual-target). Wymaga MSAL (teams).
 
-    Wątkowanie kanału jest w B1 wyłączone (``thread_links=None``) — resolver wątków rozumie tylko
-    URL-e GitHuba (ADR 0030), więc każde zdarzenie Jiry idzie jako nowy root.
+    ``thread_links`` (ADR 0024, B2): gdy podany (wątkowanie ON), zdarzenia tego samego zgłoszenia
+    lecą do jednego wątku na kanale; gdy ``None`` (OFF) — każde jako nowy root.
     """
     try:
         from workmate.adapters.inbound.teams_graph.auth import build_token_provider
@@ -165,6 +184,7 @@ def _build_notifier(
         cursor=int(state.get("notify_cursor", 0)),
         source="jira",
         poll_interval=settings.poll_interval_s,
+        thread_links=thread_links,
     )
 
 

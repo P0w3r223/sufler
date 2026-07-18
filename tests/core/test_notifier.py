@@ -343,3 +343,60 @@ def test_threading_on_chat_branch_stays_independent():
     assert len(sender.chats) == 1  # czat 1:1 dostał wiadomość niezależnie od wątkowania kanału
     assert len(sender.channels) == 1  # kanał: nowy root przez ścieżkę wątkowania
     assert sender.replies == []
+
+
+# --- ADR 0024 B2: wątkowanie kanału dla źródła Jira (url /browse/{KEY}) ----------------
+
+
+def _jira_notifier(events, sender, *, thread_links):
+    return EventNotifier(
+        events,
+        sender,
+        targets=_CHANNEL_TARGETS,
+        save_cursor=lambda _cid: None,
+        source="jira",
+        thread_links=thread_links,
+    )
+
+
+def test_jira_threading_same_issue_replies_to_root():
+    """Utworzenie i komentarz JEDNEGO zgłoszenia (te same /browse/WM-5, różny sufiks) → jeden wątek.
+
+    Drugie zdarzenie niesie ``?focusedCommentId=`` — cel wątku to nadal klucz WM-5, więc dokłada
+    się jako odpowiedź do roota pierwszego, a nie nowy root.
+    """
+    sender = _FakeSender()
+    links = _FakeThreadLinks()
+    events = _FakeEvents(
+        [
+            _event(1, source="jira", kind="jira_issue_created", url="https://j/browse/WM-5"),
+            _event(
+                2,
+                source="jira",
+                kind="jira_comment",
+                url="https://j/browse/WM-5?focusedCommentId=99",
+            ),
+        ]
+    )
+    asyncio.run(_jira_notifier(events, sender, thread_links=links).pump_once())
+    assert len(sender.channels) == 1  # tylko pierwsze zdarzenie utworzyło root
+    assert len(sender.replies) == 1  # komentarz dołączony jako odpowiedź
+    assert sender.replies[0][2] == "root-1"  # reply do roota WM-5
+    assert links.get_root("t1", "c1", "jira", "WM-5") == "root-1"
+
+
+def test_jira_threading_different_issue_starts_new_root():
+    """Inny klucz zgłoszenia = inny cel → osobny root (wątki zgłoszeń się nie mieszają)."""
+    sender = _FakeSender()
+    links = _FakeThreadLinks()
+    events = _FakeEvents(
+        [
+            _event(1, source="jira", kind="jira_issue_created", url="https://j/browse/WM-5"),
+            _event(2, source="jira", kind="jira_issue_created", url="https://j/browse/OPS-9"),
+        ]
+    )
+    asyncio.run(_jira_notifier(events, sender, thread_links=links).pump_once())
+    assert len(sender.channels) == 2  # dwa różne cele → dwa rooty
+    assert sender.replies == []
+    assert links.get_root("t1", "c1", "jira", "WM-5") == "root-1"
+    assert links.get_root("t1", "c1", "jira", "OPS-9") == "root-2"
