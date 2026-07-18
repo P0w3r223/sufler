@@ -1,7 +1,7 @@
 # 0028. Project ↔ repo ↔ Jira mapping and a project/repo dimension on events
 
 Date: 2026-07-17
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0005-company-project-note-layout.md, docs/adr/0019-shared-event-store.md,
   docs/adr/0020-github-delegated-polling-door.md, docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md

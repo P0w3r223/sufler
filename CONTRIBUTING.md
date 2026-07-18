@@ -41,7 +41,7 @@ Nowe „drzwi" (adapter): [`docs/how-to/add-a-door.md`](docs/how-to/add-a-door.m
 
 ## 4. Konwencje
 
-- **Odczyt jest domyślny; zapis jest bramkowany.** Narzędzie mutujące stan → najpierw ADR + zgoda zespołu, osobny port zapisu i bramka per drzwi ([ADR 0006](docs/adr/0006-write-capability-gate-2.md) / [0021](docs/adr/0021-github-write-capability-gate-4.md)).
+- **Odczyt jest domyślny; zapis jest bramkowany.** Narzędzie mutujące stan → najpierw ADR + zgoda zespołu, osobny port zapisu i bramka per drzwi ([ADR 0006](docs/adr/0006-write-capability-gate-2.md) / [0021](docs/adr/0021-github-write-capability-gate-4.md) / [0031](docs/adr/0031-jira-write-capability-gate-5.md) / [0032](docs/adr/0032-jira-status-transition-capability.md)).
 - **Jedno drzwi = jeden pakiet** w `adapters/`. Testy lustrzane wobec `src/`.
 - Konfiguracja tylko przez `config.py` (zmienne środowiskowe) — żadnych zaszytych ścieżek.
 - Proza po polsku; ADR i `docs/research/` po angielsku.

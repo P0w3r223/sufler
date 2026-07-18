@@ -8,7 +8,7 @@ WorkMate ma **jednoźródłowy katalog narzędzi** (`core/application/tools.py`)
 - **Runtime agenta** (drzwi Teams/Telegram/CLI) widzi dodatkowo narzędzia warstwy roboczej i
   mostu, wstrzykiwane **per drzwi** przez `extra_catalog` — nie ruszają powierzchni MCP.
 
-Logika stoi w `core/application/` (`services.py`, `github.py`, `events.py`, `workspace.py`).
+Logika stoi w `core/application/` (`services.py`, `github.py`, `jira.py`, `events.py`, `workspace.py`).
 
 ---
 
@@ -87,7 +87,7 @@ Wstrzykiwane per drzwi zależnie od włączonych zdolności; **nie** wchodzą na
 
 | Narzędzie | Parametry | Zwraca |
 |-----------|-----------|--------|
-| `read_recent_events` | `source: str \| None = None`, `project: str \| None = None`, `limit: int = 20` | `{ count, events: [...] }` — okno read-only na zdarzenia (filtr źródła/projektu, ADR 0028). |
+| `read_recent_events` | `source: str \| None = None`, `project: str \| None = None`, `limit: int = 20` | `{ count, events: [...] }` — okno read-only na zdarzenia (filtr źródła: `github`/`jira`/`teams`, i projektu, ADR 0028). |
 | `get_project_activity` | `project: str`, `limit: int = 50` | `{ project, event_count, by_kind, latest_activity_at, recent }` — fold aktywności projektu: liczniki wg typu + ostatnia aktywność ([ADR 0029](../adr/0029-branch-pr-state-transitions-and-project-activity.md)). |
 
 ### Zapis GitHub (Bramka 4, [ADR 0021](../adr/0021-github-write-capability-gate-4.md), bramka `WORKMATE_GITHUB_ENABLE_WRITE`)
@@ -98,6 +98,27 @@ Create-only; `owner`/`repo` pochodzą z **konfiguracji**, nie z treści prośby.
 |-----------|-----------|--------|
 | `create_github_issue` | `title: str`, `body: str`, `labels: list[str] \| None = None` | `{ created, number, url }`. |
 | `comment_github_issue` | `issue_number: int`, `body: str` | `{ created, url }`. |
+
+### Zapis Jira (Gate 5, [ADR 0031](../adr/0031-jira-write-capability-gate-5.md), bramka `WORKMATE_JIRA_ENABLE_WRITE`)
+
+Create-only; projekt pochodzi z **konfiguracji** (`WORKMATE_JIRA_WRITE_PROJECT`), nie z treści prośby.
+Komentarz waliduje pełny kształt klucza (`PROJ-123`) i zgodność projektu (blokada cross-project /
+path-traversal `WM-1/../OPS-1`).
+
+| Narzędzie | Parametry | Zwraca |
+|-----------|-----------|--------|
+| `create_jira_issue` | `summary: str`, `description: str`, `labels: list[str] \| None = None` | `{ created, key, url }`. |
+| `comment_jira_issue` | `issue_key: str`, `body: str` | `{ created, url }`. |
+
+### Tranzycja Jira ([ADR 0032](../adr/0032-jira-status-transition-capability.md), bramka `WORKMATE_JIRA_ENABLE_TRANSITION`)
+
+NIEZALEŻNA bramka (profil „tylko-tranzycja" możliwy bez zapisu). Best-effort **walk** po workflow:
+idzie ku celowi przez stany WYMUSZONE, STOP na rozgałęzieniu (bez zgadywania), detekcja cyklu, sufit
+hopów (`WORKMATE_JIRA_MAX_TRANSITION_HOPS`, domyślnie 1 = single-hop). **Brak rollbacku.**
+
+| Narzędzie | Parametry | Zwraca |
+|-----------|-----------|--------|
+| `transition_jira_issue` | `issue_key: str`, `target_status: str` | `{ transitioned, reached, status, path, hops, stop_reason, available_next }` — zawsze STRUKTURALNY raport (nigdy gołe `{error}`); model relacjonuje ścieżkę i powód zatrzymania. |
 
 ### Odpowiedź w wątku ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md))
 
