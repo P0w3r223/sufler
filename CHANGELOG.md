@@ -6,6 +6,8 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-18
+
 ### Dodane
 - **Fundament projekt↔repo↔Jira** ([ADR 0028](docs/adr/0028-project-repo-jira-mapping-and-event-dimension.md)):
   rejestr z `github_repos`/`jira_project_key` + reverse-lookup; wymiar `project`/`repo` w zdarzeniu
@@ -85,4 +87,5 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
+[1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0
 [1.0.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.0.0
