@@ -144,9 +144,7 @@ def test_action_name_match_takes_precedence_over_target_status_name():
 
 
 def test_two_transitions_to_same_status_is_ambiguous_no_mutation():
-    writer = _WalkWriter(
-        [_snap("Open", [_t("11", "Resolve", "Done"), _t("21", "Finish", "Done")])]
-    )
+    writer = _WalkWriter([_snap("Open", [_t("11", "Resolve", "Done"), _t("21", "Finish", "Done")])])
 
     result = _svc(writer).transition_issue("WM-5", "Done")
 
@@ -231,7 +229,8 @@ def test_multi_hop_forced_advance_reaches_target_with_per_hop_echo():
     assert writer.transition_calls == [("WM-5", "11"), ("WM-5", "21"), ("WM-5", "31")]
     assert len(events.ingested) == 3  # jedno echo NA KAŻDY wykonany hop
     assert [e.external_id for e in events.ingested] == [
-        f"WM-5:{h['at']}" for h in result["path"]  # external_id = f"{key}:{updated}"
+        f"WM-5:{h['at']}"
+        for h in result["path"]  # external_id = f"{key}:{updated}"
     ]
     assert all(e.kind == "jira_transition" and e.source == "teams" for e in events.ingested)
 
