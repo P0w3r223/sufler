@@ -1,9 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 
-from powiadomienia_teams.graph.client import GraphClient
+from powiadomienia_teams.graph.auth import AuthExpiredError
+from powiadomienia_teams.graph.client import GraphClient, GraphPermissionError
 
 UTC = timezone.utc
 
@@ -182,3 +185,89 @@ def test_share_schedule_posts_range():
     )
     assert seen["body"]["notifyTeam"] is True
     assert seen["body"]["startDateTime"] == "2026-07-20T00:00:00Z"
+
+
+def test_get_raises_auth_expired_on_401():
+    """401 mimo udanego cichego odświeżenia = token odrzucony przez Graph — usługa ma stanąć."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"code": "InvalidAuthenticationToken"}})
+
+    with pytest.raises(AuthExpiredError, match="--login"):
+        _graph(handler).list_members("T")
+
+
+def test_post_raises_auth_expired_on_401():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"code": "InvalidAuthenticationToken"}})
+
+    with pytest.raises(AuthExpiredError):
+        _graph(handler).send_chat_message("chat-1", "<p>x</p>")
+
+
+def test_403_raises_permission_error_with_body():
+    """Ciało 403 to jedyne miejsce z przyczyną — musi trafić i do wyjątku, i do logu."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": "Forbidden",
+                    "message": "Missing scope Schedule.ReadWrite.All",
+                }
+            },
+        )
+
+    with pytest.raises(GraphPermissionError, match="Schedule.ReadWrite.All"):
+        _graph(handler).list_members("T")
+
+
+def test_error_body_is_logged(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal boom")
+
+    with caplog.at_level(logging.ERROR), pytest.raises(httpx.HTTPStatusError):
+        _graph(handler).list_members("T")
+    assert "Internal boom" in caplog.text
+
+
+def test_5xx_still_raises_http_status_error():
+    """Transientne 5xx zostaje zwykłym błędem HTTP — ponawianie wyżej ma sens."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="try later")
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _graph(handler).list_members("T")
+
+
+def test_read_time_off_uses_overlap_not_start():
+    """Urlop zaczęty PRZED oknem i trwający w nim musi być widoczny — inaczej osoba w środku
+    dwutygodniowego urlopu wyszłaby jako »bez grafiku« i dostałaby prośbę."""
+    body = {
+        "value": [
+            {  # zaczyna się tydzień wcześniej, ale przecina okno docelowe
+                "userId": "u1",
+                "sharedTimeOff": {
+                    "startDateTime": "2026-07-13T00:00:00Z",
+                    "endDateTime": "2026-07-25T00:00:00Z",
+                    "timeOffReasonId": "TOR_URLOP",
+                },
+            },
+            {  # w całości po oknie — pomijany
+                "userId": "u2",
+                "sharedTimeOff": {
+                    "startDateTime": "2026-08-01T00:00:00Z",
+                    "endDateTime": "2026-08-05T00:00:00Z",
+                    "timeOffReasonId": "TOR_URLOP",
+                },
+            },
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url).endswith("/schedule/timesOff")
+        return httpx.Response(200, json=body)
+
+    out = _graph(handler).read_time_off(
+        "T", datetime(2026, 7, 20, tzinfo=UTC), datetime(2026, 7, 27, tzinfo=UTC)
+    )
+    assert [t.user_id for t in out] == ["u1"]

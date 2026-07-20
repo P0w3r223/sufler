@@ -35,7 +35,7 @@ from powiadomienia_teams.graph.auth import (
     build_token_provider,
     login_interactive,
 )
-from powiadomienia_teams.graph.client import GraphClient
+from powiadomienia_teams.graph.client import GraphClient, GraphPermissionError
 from powiadomienia_teams.graph.mapping import parse_graph_datetime, to_graph_iso
 from powiadomienia_teams.messages import (
     APPLIED_TEXT,
@@ -105,7 +105,11 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     next_shifts = client.read_shifts(
         ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
     )
-    missing = list(members_without_shifts(members, next_shifts))
+    # Urlop w docelowym tygodniu = grafik uzupełniony (patrz `members_without_shifts`).
+    next_time_off = client.read_time_off(
+        ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
+    )
+    missing = list(members_without_shifts(members, next_shifts, next_time_off))
     if settings.only_user_ids:  # tryb pilotażowy — ogranicz do wskazanych osób
         missing = [m for m in missing if m.user_id in settings.only_user_ids]
     prior_shifts = client.read_shifts(
@@ -279,6 +283,26 @@ def _notify_expired(client: GraphClient, expired: list[st.PendingReminder]) -> N
             logger.exception("Nie udało się wysłać domknięcia do %s", pending.member_name)
 
 
+def _commit(
+    settings: Settings,
+    state: dict[str, st.PendingReminder],
+    pending: st.PendingReminder,
+    watermark: str,
+) -> None:
+    """Utrwal stan RAZEM z przesunięciem watermarku — jedyne miejsce, gdzie watermark rośnie.
+
+    Watermark NIE może być przesuwany z góry, przed przetworzeniem odpowiedzi: ``pending`` jest
+    tym samym obiektem, który trzyma słownik ``state``, więc ``save_state`` wywołane przy obsłudze
+    INNEJ osoby zserializowałoby też zaawansowany watermark tej, której obsługa właśnie padła.
+    Jej odpowiedź stałaby się trwale niewidoczna (``newest_incoming`` odsiewa wszystko sprzed
+    watermarku), a po 48 h dostałaby nieprawdziwe „nie dostałem odpowiedzi". Wiązanie obu zapisów
+    w jednym kroku sprawia, że nieudane przetworzenie zostawia watermark nietknięty i kolejny tick
+    zobaczy tę odpowiedź ponownie.
+    """
+    pending.watermark = watermark
+    st.save_state(settings.state_path, state)
+
+
 def _process_pending(
     settings: Settings,
     client: GraphClient,
@@ -293,16 +317,16 @@ def _process_pending(
     incoming = newest_incoming(client.list_chat_messages(pending.chat_id), me_id, pending.watermark)
     if incoming is None:
         return
-    pending.watermark = str(incoming.get("createdDateTime", ""))
+    watermark = str(incoming.get("createdDateTime", ""))
     text = message_text(incoming)
 
     # Czyste „tak" w stanie oczekiwania na potwierdzenie → zapis. „Ok, ale nie będzie mnie w
     # czwartek" / „tak, ale w piątek 10-20" (potwierdzenie + poprawka) trafia do reinterpretacji,
     # żeby nie zapisać starej propozycji mimo prośby o zmianę.
     if pending.status == st.AWAITING_CONFIRM and is_pure_affirmation(text):
-        _apply_confirmed_yes(settings, client, ctx, pending, tz, state)
+        _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark)
     else:
-        _interpret_and_confirm(settings, client, llm, ctx, pending, text, tz, state)
+        _interpret_and_confirm(settings, client, llm, ctx, pending, text, tz, state, watermark)
 
 
 def _apply_confirmed_yes(
@@ -312,10 +336,11 @@ def _apply_confirmed_yes(
     pending: st.PendingReminder,
     tz: ZoneInfo,
     state: dict[str, st.PendingReminder],
+    watermark: str,
 ) -> None:
     """Czyste »tak« na etapie potwierdzenia → nieodwracalny zapis (commit stanu PRZED zapisem)."""
     pending.status = st.APPLIED
-    st.save_state(settings.state_path, state)  # commit PRZED zapisem — brak dubli przy awarii
+    _commit(settings, state, pending, watermark)  # commit PRZED zapisem — brak dubli przy awarii
     try:
         _apply_schedule(client, ctx, pending, tz)
     except CrossUserWriteError:
@@ -352,6 +377,7 @@ def _interpret_and_confirm(
     text: str,
     tz: ZoneInfo,
     state: dict[str, st.PendingReminder],
+    watermark: str,
 ) -> None:
     """Interpretuj odpowiedź: confirm/modify → poproś o »tak«; decline/unclear → zamknij."""
     proposal = build_schedule(
@@ -377,21 +403,21 @@ def _interpret_and_confirm(
         if decision.schedule.is_empty and not resolved_time_off:
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
-            st.save_state(settings.state_path, state)
+            _commit(settings, state, pending, watermark)
             client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
             return
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
         pending.resolved_time_off = resolved_time_off
         pending.status = st.AWAITING_CONFIRM
-        st.save_state(settings.state_path, state)
+        _commit(settings, state, pending, watermark)
         confirm = build_confirm_text(decision.schedule, resolved_time_off, tz)
         client.send_chat_message(pending.chat_id, to_html(confirm))
     elif decision.action == "decline":
         pending.status = st.DECLINED
-        st.save_state(settings.state_path, state)
+        _commit(settings, state, pending, watermark)
         client.send_chat_message(pending.chat_id, to_html(DECLINED_TEXT))
     else:
-        st.save_state(settings.state_path, state)
+        _commit(settings, state, pending, watermark)
         client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
 
 
@@ -425,14 +451,16 @@ def _run_once_with_retry(
 ) -> None:
     """Uruchom ``run_once``, ponawiając transientne błędy z narastającym backoffem, zanim odpuścisz.
 
-    Utrata tokenu (``AuthExpiredError``) nie jest transientna — propaguje od razu. Idempotencja
-    ``run_once`` (pomija już-wysłane w tym tygodniu) sprawia, że ponowienie nie dubluje powiadomień.
+    Utrata tokenu (``AuthExpiredError``) i brak uprawnień (``GraphPermissionError``) nie są
+    transientne — propagują od razu, bo kolejna próba nie naprawi cofniętej zgody ani utraconej
+    roli. Idempotencja ``run_once`` (pomija już-wysłane w tym tygodniu) sprawia, że ponowienie
+    nie dubluje powiadomień.
     """
     for attempt in range(1, attempts + 1):
         try:
             run_once(settings, client, now=now)
             return
-        except AuthExpiredError:
+        except (AuthExpiredError, GraphPermissionError):
             raise
         except Exception:
             if attempt >= attempts:

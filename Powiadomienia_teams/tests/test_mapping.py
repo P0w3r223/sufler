@@ -4,6 +4,7 @@ from powiadomienia_teams.graph.mapping import (
     member_from_json,
     parse_graph_datetime,
     shift_from_json,
+    time_off_from_json,
 )
 
 UTC = timezone.utc
@@ -95,3 +96,56 @@ def test_shift_invalid_range_is_none():
         },
     }
     assert shift_from_json(raw) is None
+
+
+def test_time_off_from_json_maps_shared():
+    raw = {
+        "userId": "u1",
+        "sharedTimeOff": {
+            "startDateTime": "2026-07-20T00:00:00Z",
+            "endDateTime": "2026-07-25T00:00:00Z",
+            "timeOffReasonId": "TOR_URLOP",
+        },
+    }
+    out = time_off_from_json(raw)
+    assert out is not None
+    assert out.user_id == "u1"
+    assert out.reason_id == "TOR_URLOP"
+    assert out.shared is True
+
+
+def test_time_off_from_json_falls_back_to_draft():
+    raw = {
+        "userId": "u1",
+        "draftTimeOff": {
+            "startDateTime": "2026-07-20T00:00:00Z",
+            "endDateTime": "2026-07-21T00:00:00Z",
+            "timeOffReasonId": "TOR_URLOP",
+        },
+    }
+    out = time_off_from_json(raw)
+    assert out is not None and out.shared is False
+
+
+def test_time_off_from_json_returns_none_without_reason():
+    """Bez powodu wpis jest niekompletny — TimeOff wymaga reason_id, więc pomijamy go cicho."""
+    raw = {
+        "userId": "u1",
+        "sharedTimeOff": {
+            "startDateTime": "2026-07-20T00:00:00Z",
+            "endDateTime": "2026-07-21T00:00:00Z",
+        },
+    }
+    assert time_off_from_json(raw) is None
+
+
+def test_time_off_from_json_returns_none_on_bad_range():
+    raw = {
+        "userId": "u1",
+        "sharedTimeOff": {
+            "startDateTime": "2026-07-25T00:00:00Z",
+            "endDateTime": "2026-07-20T00:00:00Z",
+            "timeOffReasonId": "TOR_URLOP",
+        },
+    }
+    assert time_off_from_json(raw) is None

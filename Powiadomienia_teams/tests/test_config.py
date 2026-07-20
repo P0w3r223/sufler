@@ -77,18 +77,40 @@ def test_invalid_timezone_fails_validation(monkeypatch):
         Settings.from_env().validate()
 
 
-def test_scheduling_group_required_when_not_dry_run(monkeypatch):
+def _set_live(monkeypatch):
+    """Komplet ustawień dla trybu na żywo (dry_run=false) — wszystkie bramki spełnione."""
     _set_required(monkeypatch)
     monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "false")
+    monkeypatch.setenv("POWIADOMIENIA_SCHEDULING_GROUP_ID", "TAG")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+
+def test_scheduling_group_required_when_not_dry_run(monkeypatch):
+    _set_live(monkeypatch)
     monkeypatch.delenv("POWIADOMIENIA_SCHEDULING_GROUP_ID", raising=False)
     with pytest.raises(ConfigError):
         Settings.from_env().validate()
 
 
 def test_scheduling_group_ok_when_provided(monkeypatch):
+    _set_live(monkeypatch)
+    Settings.from_env().validate()  # nie rzuca
+
+
+def test_api_key_required_when_not_dry_run(monkeypatch):
+    """Bez klucza bot wysłałby prośby, na które nigdy by nie odpowiedział — fail-fast na starcie."""
+    _set_live(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.delenv("POWIADOMIENIA_AGENT_API_KEY", raising=False)
+    with pytest.raises(ConfigError, match="anthropic_api_key"):
+        Settings.from_env().validate()
+
+
+def test_api_key_not_required_in_dry_run(monkeypatch):
+    """W dry-run listener jest pominięty, więc brak klucza nie jest błędem konfiguracji."""
     _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "false")
-    monkeypatch.setenv("POWIADOMIENIA_SCHEDULING_GROUP_ID", "TAG")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.delenv("POWIADOMIENIA_AGENT_API_KEY", raising=False)
     Settings.from_env().validate()  # nie rzuca
 
 
