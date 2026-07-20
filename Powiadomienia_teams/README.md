@@ -36,6 +36,18 @@ Realne działanie wymaga `POWIADOMIENIA_DRY_RUN=false`. Bez ważnego tokenu usł
 > zapisem do Shifts. Nieudany przebieg jest ponawiany (backoff), a start w oknie łaski po minionym
 > terminie nadrabia zaległe powiadomienia (`POWIADOMIENIA_CATCHUP_GRACE_HOURS`).
 
+## Wdrożenie na serwer
+
+Obowiązująca ścieżka: **[deploy/README-docker.md](deploy/README-docker.md)** — obraz Docker
+budowany na serwerze z paczki źródłowej (`scripts/pack.sh` → scp → `scripts/build-image.sh`).
+Testy biegną w trakcie budowania, więc obraz nie powstanie z niesprawnego kodu.
+
+Wariant zapasowy bez Dockera (systemd): [deploy/README-serwer.md](deploy/README-serwer.md).
+
+Konto »głosu« bota i lista odbiorców to **konfiguracja, nie kod**: konto = to, którym wykonasz
+`--login`; odbiorcy = `POWIADOMIENIA_ONLY_USER_IDS` (zmiana + restart, bez przebudowy).
+Identyfikatory AAD wypisze `scripts/lista_czlonkow.py`.
+
 ## Uruchamianie zadań deweloperskich
 
 Z katalogu głównego repo (uv utworzy środowisko podprojektu przy pierwszym uruchomieniu):

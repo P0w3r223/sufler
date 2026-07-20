@@ -1,0 +1,277 @@
+# Wdrożenie jako obraz Docker
+
+Docelowo usługa działa jako **kontener**. Obraz budowany jest **na serwerze** z paczki źródłowej,
+więc serwer potrzebuje Dockera i dostępu do sieci; nie potrzebuje Pythona ani `uv`.
+
+Bot pisze do pracowników **jako konkretny człowiek** (uwierzytelnianie delegowane, nie app-only).
+Konto, którym wykonasz `--login` w kroku 4, będzie widoczne jako nadawca wiadomości i jako autor
+zapisów w grafiku. Musi być **właścicielem/kierownikiem zespołu** — zapis do Shifts jest menedżerski.
+
+## Wymagania serwera
+
+- Ubuntu 24.04 LTS, dostęp SSH z `sudo`
+- Docker Engine z wtyczką `compose`
+- Dostęp do `docker.io`, `ghcr.io` i PyPI **na czas budowania**
+- Dostęp do `login.microsoftonline.com`, `graph.microsoft.com`, `api.anthropic.com` **na stałe**
+- Klucz API Anthropic, konto AAD z rolą właściciela w zespole
+
+---
+
+## Wysłanie źródeł
+
+Na maszynie deweloperskiej:
+
+```bash
+cd Powiadomienia_teams
+bash scripts/pack.sh
+scp ../powiadomienia-teams-*.tar.gz uzytkownik@serwer:/tmp/
+```
+
+Paczka zawiera `Dockerfile`, kod, `uv.lock`, testy i pliki wdrożeniowe. **Nie zawiera `.env`** —
+skrypt to sprawdza i przerywa, gdyby sekret się tam znalazł.
+
+## 1. Budowanie obrazu na serwerze
+
+```bash
+tar -xzf /tmp/powiadomienia-teams-*.tar.gz -C /tmp
+cd /tmp/powiadomienia-teams
+bash scripts/build-image.sh
+```
+
+**Testy biegną w trakcie budowania** — obraz nie powstanie, jeśli któryś padnie. To celowe:
+weryfikacja odbywa się na tym Pythonie i tej architekturze, na których obraz faktycznie pojedzie.
+W szczególności potwierdza gałąź POSIX `fcntl` w blokadzie jednej instancji, której na Windows
+nie da się uruchomić.
+
+Skrypt po zbudowaniu sprawdza jeszcze: wersję Pythona, użytkownika (`10001`, nie root), obecność
+SDK, kodowanie UTF-8, dostępność strefy `Europe/Warsaw` oraz to, że przy pustej konfiguracji
+program kończy się **czytelnym błędem walidacji**, a nie stacktrace'em.
+
+Po zbudowaniu źródła w `/tmp` można usunąć — obraz jest samowystarczalny.
+
+> **Przenoszenie obrazu gdzie indziej.** Gdyby serwer nie miał dostępu do internetu, zbuduj obraz
+> na innej maszynie linux/amd64 z `EKSPORT=1 bash scripts/build-image.sh`, przenieś powstały plik
+> i wgraj go przez `gunzip -c ...-image.tar.gz | docker load`.
+
+## 2. Układ katalogów
+
+```bash
+sudo mkdir -p /opt/teams-shifts-reminder
+sudo cp /tmp/powiadomienia-teams/deploy/docker-compose.yml /opt/teams-shifts-reminder/
+sudo cp /tmp/powiadomienia-teams/deploy/env.example /opt/teams-shifts-reminder/env
+sudo chmod 640 /opt/teams-shifts-reminder/env
+sudo nano /opt/teams-shifts-reminder/env       # uzupełnij ANTHROPIC_API_KEY
+```
+
+Zostaw na razie `POWIADOMIENIA_DRY_RUN=true` — na żywo przełączysz w kroku 5.
+
+`640` na pliku `env`: zawiera klucz API. **Nigdy nie wpisuj go do `Dockerfile` ani do obrazu** —
+warstwy obrazu są nieusuwalne i wędrują razem z nim.
+
+> Ścieżki stanu (`POWIADOMIENIA_TOKEN_CACHE`, `POWIADOMIENIA_STATE_PATH`) są już ustawione
+> w obrazie i wskazują na wolumen. W pliku `env` zostawione jawnie dla czytelności — wartości
+> muszą pozostać zgodne z punktem montowania wolumenu.
+
+## 3. Pierwszy start (utworzenie wolumenu)
+
+```bash
+cd /opt/teams-shifts-reminder
+docker compose up -d
+docker compose logs
+docker compose stop
+```
+
+Usługa zatrzyma się z komunikatem o braku tokenu — to oczekiwane. Chodziło o utworzenie wolumenu
+`powiadomienia-teams-stan` z właściwymi prawami.
+
+> **Wolumen jest krytyczny.** Trzyma cache tokenu i stan pendingów. Bez niego każdy restart
+> zaczynałby od pustego stanu: otwarte rozmowy przepadają, a najbliższy przebieg wysyła prośby
+> **drugi raz** do tych samych osób — idempotencja opiera się wyłącznie na tym pliku.
+
+## 4. Jednorazowe logowanie (device-code)
+
+**To jedyny krok wymagający obecności człowieka.** Loguje się właściciel konta kierowniczego,
+a dostęp SSH ma administrator — procedura jest tak zbudowana, żeby hasło i MFA nigdy nie
+przechodziły przez administratora.
+
+Usługa musi być **zatrzymana**: `--login` omija blokadę jednej instancji i pisałby do cache
+równolegle z działającym procesem.
+
+```bash
+cd /opt/teams-shifts-reminder
+docker compose stop
+docker compose run --rm -it powiadomienia --login
+```
+
+`run --rm -it` używa tego samego wolumenu i tej samej konfiguracji co usługa, więc token wyląduje
+dokładnie tam, gdzie usługa będzie go szukać. `-it` jest konieczne — bez terminala kod świadomie
+odmawia device-code zamiast zawiesić się w oczekiwaniu.
+
+Wypisze kod i adres `microsoft.com/devicelogin`. Kod jest krótkotrwały i jednorazowy — administrator
+odczytuje go z terminala i przekazuje właścicielowi konta, który wpisuje go **na własnym urządzeniu**.
+
+Weryfikacja — kto się zalogował i czy ma rolę właściciela:
+
+```bash
+docker compose run --rm --entrypoint python powiadomienia /app/scripts/lista_czlonkow.py
+```
+
+Skrypt wypisze wszystkich członków z ich AAD user-id, oznaczy zalogowane konto i ostrzeże, jeśli
+nie jest właścicielem. **Stąd bierzesz identyfikatory do `POWIADOMIENIA_ONLY_USER_IDS`.**
+
+## 5. Wejście na żywo
+
+### 5a. Przebieg w dry-run
+
+```bash
+docker compose run --rm powiadomienia --once
+```
+
+Log pokaże listę osób i **pełne treści** wiadomości, których nikt nie dostanie. To ostatni moment
+na weryfikację listy odbiorców.
+
+### 5b. Przełączenie
+
+```bash
+sudo nano /opt/teams-shifts-reminder/env
+#   POWIADOMIENIA_DRY_RUN=false
+#   POWIADOMIENIA_ONLY_USER_IDS=<id z kroku 4>
+```
+
+Od tego momentu start bez `ANTHROPIC_API_KEY` albo bez `SCHEDULING_GROUP_ID` kończy się czytelnym
+błędem konfiguracji — celowo, zanim ktokolwiek dostanie wiadomość.
+
+### 5c. Realna wysyłka pod nadzorem
+
+```bash
+docker compose run --rm powiadomienia --once
+docker run --rm -v powiadomienia-teams-stan:/s alpine \
+    cat /s/powiadomienia_state.json
+```
+
+Sprawdź: wiadomości dotarły w Teams, a stan zawiera wpisy `awaiting_reply` z niepustym watermarkiem.
+
+### 5d. Test pełnego obiegu
+
+Odpisz z konta testowego, potem:
+
+```bash
+docker compose run --rm powiadomienia --poll-once
+```
+
+Powinna przyjść prośba o potwierdzenie z konkretnym grafikiem. Odpisz „tak" i powtórz — zmiana
+ma pojawić się w Shifts. **To jedyny krok weryfikujący, że klucz Claude faktycznie działa.**
+
+### 5e. Start usługi
+
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+Szukaj w logu: `Następny przebieg powiadomień: <data najbliższego piątku 16:00>`.
+
+---
+
+## Runbook
+
+### Usługa stoi, w logu „Utracono uwierzytelnienie"
+
+Refresh-token wygasł (rolling ~90 dni) albo zadziałała polityka Conditional Access. Zachowanie
+**zamierzone** — kontener zatrzymuje się zamiast udawać, że działa (`restart: on-failure:5`).
+
+Powtórz krok 4, potem `docker compose up -d`.
+
+> Zaplanuj ponowne logowanie **co ~80 dni**, zanim token wygaśnie sam.
+
+### Zmiana listy odbiorców
+
+```bash
+sudo nano /opt/teams-shifts-reminder/env      # POWIADOMIENIA_ONLY_USER_IDS
+docker compose up -d --force-recreate
+```
+
+Bez przebudowy obrazu. Identyfikatory: `lista_czlonkow.py` (krok 4).
+
+### Zmiana konta bota
+
+```bash
+docker compose stop
+docker run --rm -v powiadomienia-teams-stan:/s alpine \
+    rm -f /s/teams_token_cache.bin
+docker compose run --rm -it powiadomienia --login    # nowe konto
+docker compose up -d
+```
+
+Stan pendingów zostaje — otwarte rozmowy będą kontynuowane z nowego konta.
+
+### Nowa wersja
+
+```bash
+tar -xzf /tmp/powiadomienia-teams-<nowa>.tar.gz -C /tmp
+cd /tmp/powiadomienia-teams
+WERSJA=0.2.0 bash scripts/build-image.sh          # testy muszą przejść, żeby obraz powstał
+
+sudo sed -i 's/powiadomienia-teams:0.1.0/powiadomienia-teams:0.2.0/' \
+    /opt/teams-shifts-reminder/docker-compose.yml
+cd /opt/teams-shifts-reminder && docker compose up -d
+```
+
+Wolumen ze stanem i tokenem przeżywa podmianę. **Rollback** = wpisanie poprzedniej wersji
+i ponowne `up -d`; stary obraz zostaje na serwerze, dopóki go nie usuniesz — dlatego nie usuwaj
+poprzedniego tagu, dopóki nowa wersja nie przepracuje jednego pełnego cyklu tygodniowego.
+
+### Kopia zapasowa stanu
+
+```bash
+docker run --rm -v powiadomienia-teams-stan:/s -v "$PWD":/kopia alpine \
+    tar czf /kopia/stan-$(date +%F).tar.gz -C /s .
+```
+
+Warto zrobić przed każdą aktualizacją — uszkodzony plik stanu jest nadpisywany bez kopii
+(znane ograniczenie poniżej).
+
+### Monitoring
+
+Bez tego zatrzymany kontener jest niewidoczny do następnego piątku:
+
+```bash
+docker compose ps
+docker compose logs --since 168h | grep -Ei 'error|critical'
+```
+
+### Diagnostyka błędów Graph
+
+Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa przyczyna:
+
+- **401** → kontener zatrzyma się z instrukcją `--login`
+- **403** → konto straciło rolę właściciela albo cofnięto zgodę admina; komunikat wskaże, którego
+  uprawnienia brakuje. Nie jest ponawiany — ponawianie nic by nie dało.
+
+---
+
+## Decyzje w obrazie (dlaczego tak)
+
+| Decyzja | Powód |
+|---|---|
+| Testy w trakcie budowania | Weryfikacja na docelowym Pythonie i architekturze; gałąź POSIX `fcntl` nie działa na Windows |
+| `--extra agent` obowiązkowe | `anthropic` jest formalnie opcjonalne, ale import jest leniwy — brak ujawniłby się dopiero przy pierwszej odpowiedzi |
+| `USER 10001`, kod jako root | Skompromitowany proces nie podmieni własnego kodu |
+| `read_only: true` + tmpfs | Zapisywalny jest wyłącznie wolumen stanu |
+| `tini` jako PID 1 | Przekazuje SIGTERM, więc `docker stop` kończy pętlę czysto zamiast SIGKILL po 10 s |
+| `LANG=C.UTF-8`, `PYTHONUTF8=1` | Emoji w wiadomościach i polskie znaki w cache MSAL; bez tego `UnicodeEncodeError` |
+| `restart: on-failure:5` | Wygasły token wymaga człowieka; restart w pętli ukryłby problem |
+| Brak `VOLUME` w Dockerfile | Nazwany wolumen w compose zamiast anonimowych, które narastają przy każdym `docker run` |
+
+## Znane ograniczenia
+
+Świadomie pozostawione, udokumentowane zamiast naprawiane:
+
+| Objaw | Przyczyna | Obejście |
+|---|---|---|
+| Pętla stoi kilkanaście minut | Brak timeoutu klienta Anthropic (domyślnie 10 min × 2 próby) | Zwykle mija samo; przy nawrotach `docker compose restart` |
+| Bardzo długa cisza przy throttlingu | `Retry-After` z Graph bez górnego limitu (może wynieść 3600 s) | Jak wyżej |
+| Stan zniknął po awarii | Uszkodzony plik jest nadpisywany bez kopii i bez `fsync` | Kopia zapasowa przed aktualizacją (wyżej) |
+| Pracownik nie dostał prośby o potwierdzenie | Nieudana wysyłka nie jest ponawiana; status już zmieniony | Napisz do niego ręcznie |
+| Odpowiedź zignorowana bez komunikatu | Model zwrócił JSON poprawny składniowo, ale złego kształtu | Poproś pracownika o prostszą odpowiedź |
+| Fałszywe prośby po ~roku pracy | Paginacja odczytu zmian ucięta na 50 stronach, po cichu | Wymaga poprawki kodu, gdy zespół urośnie |
