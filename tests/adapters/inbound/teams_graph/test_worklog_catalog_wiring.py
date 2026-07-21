@@ -1,35 +1,34 @@
-"""Testy wiringu ``_build_worklog_catalog`` (ADR 0034) — trzecia, niezależna bramka Jiry.
+"""Testy wiringu ``_build_worklog_catalog`` (ADR 0034 po cięciu) — odczyt, bez bramki.
 
-Sedno: ewidencja czasu stoi NA DWÓCH nogach (Jira = zapis wpisu, GitHub = źródło commitów), więc
-włączona bramka bez którejkolwiek z nich to twardy błąd startu, a nie narzędzie, które okaże się
-puste przy pierwszym użyciu. Bramka OFF → pusty katalog, czyli model nie widzi ani zapisu, ani
-odczytu commitów. Golden-test powierzchni MCP zostaje nietknięty — wchodzimy przez
-``extra_catalog``, nie przez ``build_tool_catalog``.
+Sedno zmiany: zdolność stała dawniej na DWÓCH nogach (Jira = zapis wpisu, GitHub = źródło
+commitów) i miała własną bramkę. Po wycięciu ścieżki zapisu została sama noga GitHuba, a wraz
+z mutacją zniknął powód do bramkowania — odczyt jest w tym repo domyślny (ADR 0006).
+
+To, co zostaje warte przypięcia: powierzchnia jest JEDNONARZĘDZIOWA, konfiguracja przenosi się
+do polityki sesji, a sufity estymacji egzekwują TE drzwi (``GithubSettings.validate`` woła tylko
+poller GitHuba). Golden-test powierzchni MCP zostaje nietknięty — wchodzimy przez ``extra_catalog``.
 """
 
 from __future__ import annotations
 
+from datetime import date
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from workmate.adapters.inbound.teams_graph.app import _build_worklog_catalog
-from workmate.config import GithubSettings, JiraSettings
-
-# Budowa katalogu nie dotyka magazynu zdarzeń (wstrzykuje go tylko do serwisu) — None wystarcza.
-_EVENTS = None
+from workmate.config import GithubSettings
 
 
-def _jira(**kw) -> JiraSettings:
-    base: dict = {
-        "base_url": "https://example.atlassian.net",
-        "token": "api-token",
-        "deployment": "cloud",
-        "email": "piotr@example.com",
-        "watch_projects": ("WT",),
-        "write_project": "WT",
-        "self_account": "712020:4788230b",
-    }
-    base.update(kw)
-    return JiraSettings(**base)
+class _FakeGithubClient:
+    """Atrapa klienta — zapamiętuje okno zapytania, żeby dało się sprawdzić strefę z ustawień."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def list_commits(self, owner: str, repo: str, **kwargs) -> list[dict]:
+        self.calls.append(kwargs)
+        return []
 
 
 def _github(**kw) -> GithubSettings:
@@ -42,72 +41,45 @@ def _github(**kw) -> GithubSettings:
     return GithubSettings(**base)
 
 
-def _names(jira: JiraSettings, github: GithubSettings | None = None) -> set[str]:
-    return {spec.name for spec in _build_worklog_catalog(jira, github or _github(), _EVENTS)}
+def _build(settings: GithubSettings, client: _FakeGithubClient | None = None):
+    return _build_worklog_catalog(client or _FakeGithubClient(), settings)  # type: ignore[arg-type]
 
 
-def test_gate_off_yields_empty_catalog() -> None:
-    """Bez bramki model nie dostaje nawet odczytu commitów — profil per drzwi."""
-    assert _build_worklog_catalog(_jira(), _github(), _EVENTS) == []
+def test_catalog_has_exactly_the_read_tool() -> None:
+    assert {spec.name for spec in _build(_github())} == {"propose_worklog"}
 
 
-def test_gate_on_yields_both_worklog_tools() -> None:
-    assert _names(_jira(enable_jira_worklog=True)) == {"propose_worklog", "log_jira_worklog"}
-
-
-def test_write_gate_alone_does_not_enable_worklog() -> None:
-    """Bramki są NIEZALEŻNE: zapis zgłoszeń nie otwiera ewidencji czasu."""
-    assert _build_worklog_catalog(_jira(enable_jira_write=True), _github(), _EVENTS) == []
+def test_no_gate_is_required() -> None:
+    """Zdolność wchodzi z samą konfiguracją GitHuba — bramka zniknęła razem z mutacją."""
+    assert _build(_github(enable_github_write=False)) != []
 
 
 @pytest.mark.parametrize(
-    ("field", "expected"),
+    ("field", "value", "expected"),
     [
-        ("token", "WORKMATE_JIRA_TOKEN"),
-        ("base_url", "WORKMATE_JIRA_BASE_URL"),
-        ("write_project", "WORKMATE_JIRA_WRITE_PROJECT"),
-        ("self_account", "WORKMATE_JIRA_SELF_ACCOUNT"),
+        ("worklog_idle_gap_minutes", 4, "IDLE_GAP_MINUTES"),
+        ("worklog_ramp_up_minutes", 999, "RAMP_UP_MINUTES"),
+        ("worklog_round_minutes", 7, "ROUND_MINUTES"),
+        ("worklog_max_session_hours", 100.0, "MAX_SESSION_HOURS"),
+        ("worklog_max_range_days", 400, "MAX_RANGE_DAYS"),
+        ("worklog_tz", "Europe/Warszawa", "WORKLOG_TZ"),
     ],
 )
-def test_missing_jira_target_is_a_hard_start_error(field: str, expected: str) -> None:
+def test_absurd_tuning_is_a_hard_start_error(field: str, value: object, expected: str) -> None:
+    """Sufity muszą działać po stronie, która LICZY estymację, nie tylko w procesie pollera."""
     with pytest.raises(ValueError, match=expected):
-        _build_worklog_catalog(_jira(enable_jira_worklog=True, **{field: ""}), _github(), _EVENTS)
+        _build(_github(**{field: value}))
 
 
-@pytest.mark.parametrize(
-    ("field", "expected"),
-    [
-        ("token", "WORKMATE_GITHUB_TOKEN"),
-        ("owner", "WORKMATE_GITHUB_OWNER"),
-        ("repo", "WORKMATE_GITHUB_REPO"),
-    ],
-)
-def test_missing_commit_source_is_a_hard_start_error(field: str, expected: str) -> None:
-    """Bez commitów propozycja jest martwa — to POŁOWA zdolności, nie opcjonalny dodatek."""
-    with pytest.raises(ValueError, match=expected):
-        _build_worklog_catalog(_jira(enable_jira_worklog=True), _github(**{field: ""}), _EVENTS)
+def test_ramp_up_longer_than_idle_gap_is_rejected() -> None:
+    """Rozbieg dłuższy niż przerwa dawałby sesje nachodzące na siebie — cichy bezsens."""
+    with pytest.raises(ValueError, match="nie może przekraczać"):
+        _build(_github(worklog_idle_gap_minutes=30, worklog_ramp_up_minutes=60))
 
 
-def test_cloud_without_email_is_a_hard_start_error() -> None:
-    with pytest.raises(ValueError, match="WORKMATE_JIRA_EMAIL"):
-        _build_worklog_catalog(_jira(enable_jira_worklog=True, email=""), _github(), _EVENTS)
-
-
-def test_server_deployment_does_not_require_email() -> None:
-    settings = _jira(enable_jira_worklog=True, deployment="server", email="")
-    assert _names(settings) == {"propose_worklog", "log_jira_worklog"}
-
-
-def test_unknown_deployment_is_rejected() -> None:
-    with pytest.raises(ValueError, match="DEPLOYMENT"):
-        _build_worklog_catalog(
-            _jira(enable_jira_worklog=True, deployment="klaud"), _github(), _EVENTS
-        )
-
-
-def test_unimplemented_author_strategy_is_rejected_at_wiring() -> None:
-    """``JiraSettings.validate`` woła tylko poller — te drzwi muszą sprawdzić same."""
-    with pytest.raises(ValueError, match="SZKIELETEM"):
-        _build_worklog_catalog(
-            _jira(enable_jira_worklog=True, worklog_author_strategy="tempo"), _github(), _EVENTS
-        )
+def test_timezone_from_settings_reaches_the_query_window() -> None:
+    """Strefa z ustawień musi dojechać do granic okna — inaczej doba liczyłaby się gdzie indziej."""
+    client = _FakeGithubClient()
+    spec = _build(_github(worklog_tz="Europe/London"), client)[0]
+    spec.fn(date(2026, 1, 5), date(2026, 1, 9))
+    assert client.calls[0]["since"].tzinfo == ZoneInfo("Europe/London")

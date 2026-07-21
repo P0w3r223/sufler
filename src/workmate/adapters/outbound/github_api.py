@@ -18,10 +18,14 @@ from typing import Any
 import httpx
 
 from workmate.core.errors import WriteError
+from workmate.core.ports.github import MAX_COMMITS_PER_FETCH
 
 _API_VERSION = "2022-11-28"
 # Cap stron na jedno pobranie — chroni przed nieskończoną paginacją i wypaleniem limitu.
 _MAX_PAGES = 10
+# Największa strona, jaką przyjmuje GitHub REST. Prośba o więcej jest po cichu przycinana,
+# więc przycinamy sami — inaczej budżet stron liczony z ``per_page`` byłby zawyżony.
+_MAX_PER_PAGE = 100
 _MAX_RETRIES = 3
 _DEFAULT_RETRY_AFTER_S = 5
 # Sufit pojedynczego odczekania na reset limitu — nie blokujemy pollera na godziny.
@@ -106,15 +110,27 @@ class HttpxGithubClient:
         # Commity GAŁĘZI DOMYŚLNEJ w oknie czasu (ADR 0034). ``author`` zawęża do jednej osoby
         # — GitHub dopasowuje go do loginu ALBO adresu e-mail autora commita, więc inny
         # ``git config user.email`` da cichy zerowy wynik (propozycja ostrzega o tym w ``notes``).
-        # Paginacja i limit zapytań przez wspólne ``_get_all``; bez diffów i patchy.
-        params = {"per_page": str(per_page)}
+        # Bez diffów i patchy.
+        #
+        # Budżet stron liczymy Z SUFITU KONTRAKTU, nie z ogólnego ``_MAX_PAGES``. Rdzeń rozpoznaje
+        # ucięcie po DOKŁADNEJ liczbie pozycji (pełne wiadro = zgubione najstarsze dni), więc sufit
+        # musi być OSIĄGALNY niezależnie od rozmiaru strony. Przy wspólnym ``_MAX_PAGES`` mniejsze
+        # ``per_page`` dawałoby mniej niż ``MAX_COMMITS_PER_FETCH`` — ucięcie znowu byłoby CICHE,
+        # czyli dokładnie ten defekt, który sufit miał zlikwidować.
+        size = max(1, min(per_page, _MAX_PER_PAGE))
+        params = {"per_page": str(size)}
         if since is not None:
             params["since"] = _iso_z(since)
         if until is not None:
             params["until"] = _iso_z(until)
         if author:
             params["author"] = author
-        return self._get_all(f"{self._api_base}/repos/{owner}/{repo}/commits", params)
+        return self._get_all(
+            f"{self._api_base}/repos/{owner}/{repo}/commits",
+            params,
+            limit=MAX_COMMITS_PER_FETCH,
+            max_pages=-(-MAX_COMMITS_PER_FETCH // size),
+        )
 
     def list_workflow_runs(
         self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
@@ -160,16 +176,32 @@ class HttpxGithubClient:
         data = self._request("POST", url, json=payload).json()
         return data if isinstance(data, dict) else {}
 
-    def _get_all(self, url: str, params: dict[str, str]) -> list[dict[str, Any]]:
+    def _get_all(
+        self,
+        url: str,
+        params: dict[str, str],
+        *,
+        limit: int | None = None,
+        max_pages: int = _MAX_PAGES,
+    ) -> list[dict[str, Any]]:
+        """Zbierz pozycje ze wszystkich stron; ``limit`` docina wynik do sufitu kontraktu portu.
+
+        Domyślnie bound stanowi sam ``max_pages``, więc realny sufit zależy od ``per_page``
+        wołającego. Wołający, który obiecuje sufit W POZYCJACH (``list_commits``), podaje OBA:
+        ``limit`` i pasujący do niego budżet stron — inaczej dwie niezależne granice rozjeżdżają
+        się przy zmianie którejkolwiek stałej.
+        """
         items: list[dict[str, Any]] = []
         pages = 0
         next_url: str | None = url
         next_params: dict[str, str] | None = params
-        while next_url and pages < _MAX_PAGES:
+        while next_url and pages < max_pages:
             response = self._request("GET", next_url, params=next_params)
             body = response.json()
             if isinstance(body, list):
                 items.extend(x for x in body if isinstance(x, dict))
+            if limit is not None and len(items) >= limit:
+                return items[:limit]
             next_url = _next_link(response.headers.get("Link"))
             next_params = None  # nagłówek Link niesie już parametry
             pages += 1

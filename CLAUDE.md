@@ -17,11 +17,11 @@ sub-projekt Powiadomienia → `Powiadomienia_teams/PLAN.md`.
 - `src/workmate/core/` — RDZEŃ: domena (`domain/`: `models.py` + `ci.py`, `threads.py`,
   `ranking.py` — BM25/RRF, `guards.py` — wspólne strażniki klucza/limitów Jiry, `jira_time.py`
   — znaczniki czasu na granicy Jiry, `worklog.py` — czysta agregacja commity→sesje), porty
-  (`ports/`: repozytoria + `llm.py`, `github.py`, `jira.py` — read+write+worklog Jira,
+  (`ports/`: repozytoria + `llm.py`, `github.py` (sufit `MAX_COMMITS_PER_FETCH`), `jira.py` — read+write Jira,
   `notifications.py`, `text.py` — `Lemmatizer`, `thread_links.py` — `ThreadLinkStore`),
   przypadki użycia (`application/services.py`, jednoźródłowy katalog `application/tools.py`,
-  `notifier.py`, `ci_autocomment.py`, `jira.py` — zapis/tranzycja Jiry, `worklog.py` +
-  `worklog_author.py` — ewidencja czasu i szew autorstwa), runtime agenta (`agent/`).
+  `notifier.py`, `ci_autocomment.py`, `jira.py` — zapis/tranzycja Jiry, `worklog.py` —
+  propozycja czasu z commitów, tylko odczyt), runtime agenta (`agent/`).
   Bez I/O, bez SDK.
 - `src/workmate/adapters/` — DRZWI: wspólny szew `inbound/responder.py` (`Responder`,
   `EchoResponder`, `RuntimeResponder`, …) reużywany przez drzwi async; `inbound/mcp/tools.py`
@@ -124,16 +124,16 @@ jednorazowo przez `powiadomienia-teams --login`); watermark = czas SERWERA (nie 
   wiadomością; stan po KAŻDEJ osobie; blokada jednej instancji. **Nagłówki `WORKLOGPRO_HEADERS` to
   HIPOTEZA** — potwierdzić szablonem z kreatora importu (bramka w `how-to/worklogi-weekly.md`).
   `week.py` i `single_instance.py` są PRZENIESIONE z `Powiadomienia_teams` — utrzymywać zgodnie.
-- **Ewidencja czasu z commitów ([ADR 0034](docs/adr/0034-jira-worklog-from-github-commits.md)):**
-  TRZECIA, niezależna bramka `WORKMATE_JIRA_ENABLE_WORKLOG` (OFF) + druga, węższa
-  `..._WORKLOG_ALLOW_ON_BEHALF` (OFF) na zapis w cudzym imieniu. **DWA KROKI:** `propose_worklog`
-  (odczyt commitów → estymacja, ZERO mutacji) i `log_jira_worklog` (jeden wpis, godziny i dzień
-  podane WPROST). Sklejenie ich zamieniłoby wiadomości commitów w polecenia zapisu. **Jira nie
-  pozwala ustawić autora worklogu** — `on_behalf_of` to adnotacja w treści, NIE atrybucja
-  (raporty czasu pokażą cudzy czas jako czas konta tokenu); adaptery świadomie NIE wysyłają pola
-  `author`. Create-only bez usuwania → strażnik duplikatów to jedyna ochrona. Zdolność stoi na
-  DWÓCH nogach (Jira + GitHub), więc wpięcie drzwi wymaga obu kompletów zmiennych (fail-fast).
-  Estymacja: sesje cięte przerwą LUB dobą, rachunki w MINUTACH (sumy zgadzają się co do minuty).
+- **Propozycja czasu z commitów ([ADR 0034](docs/adr/0034-jira-worklog-from-github-commits.md),
+  ścieżka zapisu USUNIĘTA 2026-07-21):** zostało JEDNO narzędzie — `propose_worklog` (odczyt
+  commitów → estymacja, zero mutacji), **bez bramki**, wpięte przy skonfigurowanym GitHubie
+  (odczyt jest domyślny, ADR 0006). Zapis worklogu do Jiry istniał, by obejść fakt, że Jira
+  przypisuje wpis kontu tokenu — ADR 0035 obalił mur (arkusz WorklogPRO importuje pracownik),
+  więc obejście straciło przedmiot: nie ma `log_jira_worklog`, `worklog_author.py`,
+  `JiraWorklogPort` ani zmiennych `WORKMATE_JIRA_WORKLOG_*` (pokrętła estymacji → `GithubSettings`,
+  `WORKMATE_GITHUB_WORKLOG_*`). Estymacja: sesje cięte przerwą LUB dobą (strefa jako `ZoneInfo`,
+  nie offset), rachunki w MINUTACH. Sufit pobrania `MAX_COMMITS_PER_FETCH`=500 (kontrakt portu,
+  nie szczegół adaptera) — pełne wiadro = ucięta historia i jawna nota w `notes`.
 - **Most Jira dual-provider ([ADR 0030](docs/adr/0030-jira-server-read-door.md)–[0033](docs/adr/0033-jira-cloud-support.md)):**
   `WORKMATE_JIRA_DEPLOYMENT`=`server` (PAT Bearer, REST v2) | `cloud` (Basic `email:api_token`, REST v3,
   `search/jql`). Fabryka `build_jira_client` (`jira_api.py`); klient Cloud (`jira_cloud_api.py`) tłumaczy

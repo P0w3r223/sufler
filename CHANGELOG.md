@@ -6,6 +6,54 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Usunięte
+- **Ścieżka zapisu ewidencji czasu do Jiry** (ADR 0034 →
+  [`superseded in part by 0035`](docs/adr/0034-jira-worklog-from-github-commits.md)). Cała
+  konstrukcja istniała, żeby obejść jeden mur: Jira przypisuje worklog kontu tokenu i ignoruje pole
+  `author`, więc czas „w imieniu" innej osoby wchodził do raportów jako czas konta usługowego.
+  ADR 0035 obalił mur — arkusz WorklogPRO importuje sam pracownik, więc autor jest prawdziwy.
+  Obejście straciło przedmiot i było w całości bez konsumenta (~870 linii rdzenia).
+  Zniknęły: narzędzie `log_jira_worklog`, moduł `core/application/worklog_author.py` (trzy
+  strategie autorstwa, z czego dwie były slotami `NotImplementedError`), port `JiraWorklogPort`
+  wraz z `add_worklog`/`read_worklogs` w obu adapterach Jiry, strażnik duplikatów oraz echo
+  zdarzenia `jira_worklog`.
+- **Zmienne `WORKMATE_JIRA_WORKLOG_*` i bramki `WORKMATE_JIRA_ENABLE_WORKLOG` /
+  `..._WORKLOG_ALLOW_ON_BEHALF`** — ZMIANA ŁAMIĄCA konfigurację (stąd MINOR, nie PATCH). Bez
+  zamiennika znikają `MAX_HOURS`, `MAX_BACKDATE_DAYS`, `AUTHOR_STRATEGY`, `DUPLICATE_GUARD`
+  i obie bramki; pokrętła estymacji przeniosły się (patrz *Zmienione*).
+
+### Zmienione
+- **`propose_worklog` przeniesione pod GitHuba i BEZ bramki.** Po cięciu narzędzie nie dotyka Jiry
+  (klucze zgłoszeń wyłuskuje regexem z treści commitów), a niczego nie mutuje — więc wchodzi, gdy
+  tylko skonfigurowany jest GitHub, zgodnie z zasadą repo „odczyt domyślny, bramkujemy zapis"
+  (ADR 0006). Pokrętła estymacji migrują `JiraSettings` → `GithubSettings` jako
+  `WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES`, `..._RAMP_UP_MINUTES`, `..._ROUND_MINUTES`,
+  `..._MAX_SESSION_HOURS` (dawne `MAX_HOURS` — to sufit JEDNEJ sesji, mimo nazwy nigdy nie należał
+  do zapisu), `..._MAX_RANGE_DAYS` i `..._TZ`. Nowe `GithubSettings.validate_worklog_limits()`
+  wołane z OBU stron (poller i drzwi Teams) — sufity muszą działać tam, gdzie liczy się estymację.
+- **Strefa czasowa estymacji: stały offset → `ZoneInfo`** (`SessionPolicy.tz`, domyślnie
+  `Europe/Warsaw`). Uzasadnienie z ADR 0034 („czystość domeny") upadło, gdy ADR 0035 wprowadził
+  `week.py` liczący granice przez `ZoneInfo` i dodał `tzdata` do zależności rdzenia. Ze stałym
+  offsetem granica doby przez pół roku wypadała o godzinę obok, więc commity z okolic północy
+  trafiały do sąsiedniego dnia. Literówka w nazwie strefy = twardy błąd startu, nie awaria przy
+  pierwszym użyciu narzędzia.
+- **Ucięcie historii commitów przestaje być ciche.** `list_commits` oddaje najwyżej
+  `MAX_COMMITS_PER_FETCH` = 500 pozycji (sufit jest teraz CZĘŚCIĄ KONTRAKTU portu, nie szczegółem
+  adaptera) i liczy OD NAJNOWSZYCH, więc szerokie okno na aktywnym repo gubiło najstarsze dni,
+  a propozycja prezentowała zaniżony wynik jako kompletny. Pełne wiadro daje jawną notę w `notes`.
+- **`WorkSession.shas` to PRÓBKA (5), nie pełna lista.** Przy pełnym wiadrze odpowiedź niosła
+  kilkanaście kilobajtów SHA-ów do kontekstu modelu przy każdym wywołaniu; pełną liczbę i tak
+  niesie `commit_count`.
+- **Zestawienie nie zawęża się już do jednego projektu Jiry.** Filtr brał prefiks z
+  `WORKMATE_JIRA_WRITE_PROJECT`, czyli z celu ZAPISU — bez zapisu nie ma dokąd kierować
+  zestawienia, a `OPS-9` wspomniane w commicie opisuje pracę, która naprawdę się odbyła.
+  `by_issue` niesie teraz każdy klucz znaleziony w wiadomościach, `unattributed_hours` maleje.
+- **`propose_worklog` odrzuca też okno KOŃCZĄCE się w przyszłości** (dotąd tylko początek) —
+  literówka w roku dawała pustą końcówkę udającą brak pracy. Walidacja wejścia na ścieżce
+  odczytu rzuca nowy `InvalidRequestError` zamiast `WriteError` (ta sama koperta, uczciwa nazwa).
+- **Klienty HTTP drzwi Teams są domykane** (`atexit`) i **współdzielone**: jeden klient GitHuba
+  obsługuje odczyt commitów i zapis, zamiast dwóch pul do tego samego hosta.
+
 ## [1.2.0] — 2026-07-21
 
 ### Dodane

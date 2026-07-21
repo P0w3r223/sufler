@@ -118,6 +118,12 @@ of twenty does not re-message the first six.
 - **Ported code can drift** from `Powiadomienia_teams`.
 - **Two processes now message the same six people weekly** (Shifts reminders and timesheets). No
   coordination between them; if this becomes noise, merging the schedules is the follow-up.
+- **This ADR made most of ADR 0034 dead code**, and the write path was removed on 2026-07-21 (see
+  the superseding note there). What survives is `propose_worklog` — read-only, GitHub-side.
+  Its estimator fits `HoursSource` structurally (`read(since, until) -> list[WorkEntry]`), and
+  wiring it would be a few lines — **do not**. This ADR deliberately left estimation behind for
+  measured data; feeding guessed hours into a sheet a human imports into Jira as fact would
+  reintroduce, one layer lower, exactly the dishonesty the WorklogPRO route was chosen to avoid.
 
 ## Rejected alternatives
 

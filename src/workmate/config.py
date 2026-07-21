@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Dozwolone transporty serwera MCP. "stdio" to lokalny tryb dla Claude Code
 # (Fazy 1 tyg. 1-3); "streamable-http" to wdrożenie sieciowe (tyg. 4, Bramka 3).
@@ -711,6 +711,18 @@ _ALLOWED_GITHUB_WATCH_KINDS = (
 # przez ``WORKMATE_GITHUB_WATCH_KINDS`` — patrz ADR 0024.
 _DEFAULT_GITHUB_WATCH_KINDS = ("issues", "comments")
 
+# Strojenie estymacji czasu z commitów (ADR 0034, część odczytowa). Pokrętła mieszkały w
+# ``JiraSettings``, dopóki zdolność miała ścieżkę zapisu do Jiry; po jej wycięciu dotyczą
+# WYŁĄCZNIE czytania commitów, więc stoją przy źródle danych. Twarde backstopy chronią przed
+# absurdem wpisanym do ``.env``; egzekwuje je ``validate_worklog_limits`` — wołane przez poller
+# i przez wpięcie drzwi Teams, czyli wszędzie tam, gdzie te wartości są w ogóle czytane.
+MAX_WORKLOG_RANGE_DAYS = 92
+_MAX_WORKLOG_SESSION_HOURS = 24.0
+_MAX_WORKLOG_IDLE_GAP_MIN = 720
+_MAX_WORKLOG_RAMP_UP_MIN = 240
+# Ewidencja czasu jest kwantowana — dopuszczamy tylko dzielniki godziny mające sens w praktyce.
+_ALLOWED_ROUND_MINUTES = (1, 5, 10, 15, 30, 60)
+
 
 @dataclass(frozen=True)
 class GithubSettings:
@@ -722,6 +734,10 @@ class GithubSettings:
     domyślnie wyłączony — drzwi startują read-only (ingest zdarzeń), zgodnie z ADR 0006.
     ``enable_ci_auto_comment`` (ADR 0024, domyślnie OFF) włącza JEDYNY autonomiczny zapis mostu —
     deterministyczny komentarz przy porażce CI na PR; wymaga też ``enable_github_write``.
+
+    Pola ``worklog_*`` stroją ESTYMACJĘ czasu z commitów (ADR 0034) — czysty odczyt, bez bramki
+    (odczyt jest domyślny, ADR 0006). ``worklog_tz`` to nazwa strefy IANA, nie offset: doba
+    kalendarzowa dzieli sesje pracy, a stały offset mylił się o godzinę przez pół roku.
     """
 
     token: str = field(default="", repr=False)
@@ -735,6 +751,12 @@ class GithubSettings:
     enable_ci_auto_comment: bool = False
     state_path: Path = _DEFAULT_GITHUB_STATE
     self_login: str = ""
+    worklog_idle_gap_minutes: int = 90
+    worklog_ramp_up_minutes: int = 30
+    worklog_round_minutes: int = 15
+    worklog_max_session_hours: float = 8.0
+    worklog_max_range_days: int = 31
+    worklog_tz: str = "Europe/Warsaw"
 
     @classmethod
     def from_env(cls) -> GithubSettings:
@@ -752,10 +774,19 @@ class GithubSettings:
             ),
             state_path=_path_from_env("WORKMATE_GITHUB_STATE", _DEFAULT_GITHUB_STATE),
             self_login=os.environ.get("WORKMATE_GITHUB_SELF_LOGIN", ""),
+            worklog_idle_gap_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES", 90),
+            worklog_ramp_up_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES", 30),
+            worklog_round_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES", 15),
+            worklog_max_session_hours=_float_from_env(
+                "WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS", 8.0
+            ),
+            worklog_max_range_days=_int_from_env("WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS", 31),
+            worklog_tz=os.environ.get("WORKMATE_GITHUB_WORKLOG_TZ", "Europe/Warsaw").strip(),
         )
 
     def validate(self) -> None:
         """Twardy błąd startu, gdy brak tożsamości repo/tokenu albo bezsensowne limity."""
+        self.validate_worklog_limits()
         missing = [
             name
             for name, value in (
@@ -814,6 +845,58 @@ class GithubSettings:
                 "WORKMATE_GITHUB_WATCH_KINDS (bez zdarzeń CI nie ma czego komentować)."
             )
 
+    def validate_worklog_limits(self) -> None:
+        """Strojenie estymacji czasu (ADR 0034) — kontrole NIEZALEŻNE od tokenu i repozytorium.
+
+        Wydzielone z ``validate()`` z tego samego powodu co ``JiraSettings.validate_limits``:
+        pełnego ``validate()`` nie da się zawołać z drzwi Teams, bo bezwarunkowo żąda tokenu
+        i repo, więc wywróciłoby każde wdrożenie bez GitHuba. Sufity muszą jednak obowiązywać
+        po stronie, która faktycznie liczy estymację — inaczej absurd z ``.env`` egzekwowałby
+        wyłącznie proces pollera, czyli nie ten, który go używa.
+        """
+        if not 5 <= self.worklog_idle_gap_minutes <= _MAX_WORKLOG_IDLE_GAP_MIN:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES musi być w zakresie "
+                f"5..{_MAX_WORKLOG_IDLE_GAP_MIN}, jest: {self.worklog_idle_gap_minutes}."
+            )
+        if not 0 <= self.worklog_ramp_up_minutes <= _MAX_WORKLOG_RAMP_UP_MIN:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES musi być w zakresie "
+                f"0..{_MAX_WORKLOG_RAMP_UP_MIN}, jest: {self.worklog_ramp_up_minutes}."
+            )
+        # Rozbieg dłuższy niż przerwa kończąca sesję dawałby estymacje NACHODZĄCE na siebie
+        # (doliczony czas sprzed sesji sięgałby w poprzednią) — cichy bezsens, więc odrzucamy.
+        if self.worklog_ramp_up_minutes > self.worklog_idle_gap_minutes:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES nie może przekraczać "
+                "WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES (estymacje sesji zachodziłyby "
+                f"na siebie): {self.worklog_ramp_up_minutes} > {self.worklog_idle_gap_minutes}."
+            )
+        if self.worklog_round_minutes not in _ALLOWED_ROUND_MINUTES:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES musi być jedną z "
+                f"{_ALLOWED_ROUND_MINUTES}, jest: {self.worklog_round_minutes}."
+            )
+        if not 0 < self.worklog_max_session_hours <= _MAX_WORKLOG_SESSION_HOURS:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS musi być w zakresie "
+                f"0..{_MAX_WORKLOG_SESSION_HOURS}, jest: {self.worklog_max_session_hours}."
+            )
+        if not 1 <= self.worklog_max_range_days <= MAX_WORKLOG_RANGE_DAYS:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS musi być w zakresie "
+                f"1..{MAX_WORKLOG_RANGE_DAYS}, jest: {self.worklog_max_range_days}."
+            )
+        # Nazwę strefy sprawdzamy próbą zbudowania ``ZoneInfo``: literówka (``Europe/Warszawa``)
+        # inaczej wywróciłaby pierwsze wywołanie narzędzia, a nie start procesu.
+        try:
+            ZoneInfo(self.worklog_tz)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(
+                f"WORKMATE_GITHUB_WORKLOG_TZ={self.worklog_tz!r} nie jest znaną strefą IANA "
+                "(np. 'Europe/Warsaw')."
+            ) from exc
+
 
 _JIRA_POLL_FLOOR_S = 30
 _DEFAULT_JIRA_STATE = Path.home() / ".workmate" / "jira_state.json"
@@ -831,22 +914,6 @@ _LOOKS_LIKE_ACCOUNT_ID = re.compile(r"[0-9a-fA-F]{24}")
 # mutacją, gdyby operator wpisał absurd. Domyślnie 1 (single-hop, bezpieczny pilotaż). PUBLICZNY:
 # egzekwują go i ``JiraSettings.validate`` (poller), i wpięcie drzwi zapisu/tranzycji (teams_graph).
 MAX_JIRA_TRANSITION_HOPS = 10
-
-# Strategie autorstwa wpisu czasu (ADR 0034). Zaimplementowana jest DZIŚ tylko ``self``;
-# pozostałe to udokumentowane sloty (``application/worklog_author.py``) — konfiguracja odrzuca
-# je przy starcie, żeby operator nie odkrył braku dopiero w środku rozmowy z użytkownikiem.
-# PUBLICZNE, jak ``JIRA_DEPLOYMENTS``: egzekwuje je i ``JiraSettings.validate`` (poller), i
-# wpięcie drzwi ewidencji (``teams_graph``) — spójny fail-fast po obu stronach.
-WORKLOG_AUTHOR_STRATEGIES = ("self", "per_user_token", "tempo")
-IMPLEMENTED_WORKLOG_STRATEGIES = ("self",)
-# Twarde backstopy niezależne od bramki — chronią przed absurdem wpisanym do .env.
-MAX_WORKLOG_HOURS_PER_ENTRY = 24.0
-MAX_WORKLOG_BACKDATE_DAYS = 90
-MAX_WORKLOG_RANGE_DAYS = 92
-_MAX_WORKLOG_IDLE_GAP_MIN = 720
-_MAX_WORKLOG_RAMP_UP_MIN = 240
-# Ewidencja czasu jest kwantowana — dopuszczamy tylko dzielniki godziny mające sens w praktyce.
-_ALLOWED_ROUND_MINUTES = (1, 5, 10, 15, 30, 60)
 
 
 @dataclass(frozen=True)
@@ -870,12 +937,8 @@ class JiraSettings:
     OFF) — profil „tylko-tranzycja" nie wymaga włączonego zapisu. ``max_transition_hops`` (domyślnie
     1 = single-hop, bezpieczny pilotaż) ogranicza wielo-hop walk; >=2 włącza forced-advance.
 
-    Ewidencja czasu (ADR 0034) ma TRZECIĄ, niezależną bramkę ``enable_jira_worklog`` (domyślnie
-    OFF) i wymaga też źródła commitów (ustawienia GitHub — egzekwuje to wpięcie drzwi, bo tu ich
-    nie widać). ``worklog_allow_on_behalf`` to OSOBNA, węższa bramka na zapis w cudzym imieniu:
-    Jira i tak zapisze autorem konto tokenu, więc cudzy czas trafi do raportów jako nasz — to
-    ma być decyzja operatora, nie efekt uboczny włączenia ewidencji. Pozostałe pola ``worklog_*``
-    to strojenie estymacji (``SessionPolicy``) i sufity bezpieczeństwa zapisu.
+    Ewidencji czasu tu NIE MA: ścieżkę zapisu worklogu (ADR 0034) wycięto, a strojenie estymacji
+    z commitów przeniosło się do ``GithubSettings`` — to czysty odczyt GitHuba (ADR 0035).
     """
 
     base_url: str = ""
@@ -892,17 +955,6 @@ class JiraSettings:
     default_issue_type: str = "Task"
     enable_jira_transition: bool = False
     max_transition_hops: int = 1
-    enable_jira_worklog: bool = False
-    worklog_author_strategy: str = "self"
-    worklog_allow_on_behalf: bool = False
-    worklog_max_hours_per_entry: float = 8.0
-    worklog_max_backdate_days: int = 14
-    worklog_max_range_days: int = 31
-    worklog_idle_gap_minutes: int = 90
-    worklog_ramp_up_minutes: int = 30
-    worklog_round_minutes: int = 15
-    worklog_tz_offset_minutes: int = 120
-    worklog_duplicate_guard: bool = True
 
     @classmethod
     def from_env(cls) -> JiraSettings:
@@ -921,23 +973,6 @@ class JiraSettings:
             default_issue_type=os.environ.get("WORKMATE_JIRA_DEFAULT_ISSUE_TYPE", "Task"),
             enable_jira_transition=_bool_from_env("WORKMATE_JIRA_ENABLE_TRANSITION", default=False),
             max_transition_hops=_int_from_env("WORKMATE_JIRA_MAX_TRANSITION_HOPS", 1),
-            enable_jira_worklog=_bool_from_env("WORKMATE_JIRA_ENABLE_WORKLOG", default=False),
-            worklog_author_strategy=os.environ.get("WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY", "self")
-            .strip()
-            .lower(),
-            worklog_allow_on_behalf=_bool_from_env(
-                "WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF", default=False
-            ),
-            worklog_max_hours_per_entry=_float_from_env("WORKMATE_JIRA_WORKLOG_MAX_HOURS", 8.0),
-            worklog_max_backdate_days=_int_from_env("WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS", 14),
-            worklog_max_range_days=_int_from_env("WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS", 31),
-            worklog_idle_gap_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES", 90),
-            worklog_ramp_up_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES", 30),
-            worklog_round_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_ROUND_MINUTES", 15),
-            worklog_tz_offset_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES", 120),
-            worklog_duplicate_guard=_bool_from_env(
-                "WORKMATE_JIRA_WORKLOG_DUPLICATE_GUARD", default=True
-            ),
         )
 
     def validate_limits(self) -> None:
@@ -990,7 +1025,6 @@ class JiraSettings:
                 "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
                 f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
             )
-        self._validate_worklog()
 
     def validate(self) -> None:
         """Twardy błąd startu, gdy brak URL/tokenu/projektów, złe limity lub sprzeczny zapis."""
@@ -1051,83 +1085,6 @@ class JiraSettings:
             raise ValueError(
                 "WORKMATE_JIRA_ENABLE_TRANSITION=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
                 "(konto PAT — strażnik pętli self-skip)."
-            )
-
-    def _validate_worklog(self) -> None:
-        """Reguły ewidencji czasu (ADR 0034) — te same klasy fail-fast co zapis i tranzycja.
-
-        Zakresy liczbowe i nazwę strategii walidujemy ZAWSZE, nie tylko przy włączonej bramce:
-        literówka w ``.env`` nie może spać do dnia, w którym ktoś przestawi flagę.
-        """
-        # Ewidencja to zdolność mutująca — potrzebuje projektu (strażnik klucza) i konta
-        # (strażnik pętli oraz „kto jest self" dla strategii autorstwa). Ta sama para co zapis.
-        if self.enable_jira_worklog and not self.write_project:
-            raise ValueError(
-                "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga WORKMATE_JIRA_WRITE_PROJECT "
-                "(strażnik projektu — wpis czasu trafia tylko do swojego projektu)."
-            )
-        if self.enable_jira_worklog and not self.self_account:
-            raise ValueError(
-                "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
-                "(konto tokenu — strażnik pętli i podstawa strategii autorstwa)."
-            )
-        if self.worklog_author_strategy not in WORKLOG_AUTHOR_STRATEGIES:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY musi być jedną z "
-                f"{', '.join(WORKLOG_AUTHOR_STRATEGIES)}, jest: {self.worklog_author_strategy!r}."
-            )
-        # Slot wybrany przy WŁĄCZONEJ bramce = narzędzie, które padnie dopiero przy pierwszym
-        # zapisie. Lepiej nie wystartować, niż obiecać zdolność, której nie ma (ADR 0034).
-        if (
-            self.enable_jira_worklog
-            and self.worklog_author_strategy not in IMPLEMENTED_WORKLOG_STRATEGIES
-        ):
-            raise ValueError(
-                f"strategia autorstwa {self.worklog_author_strategy!r} jest udokumentowanym "
-                "SZKIELETEM, jeszcze niezaimplementowanym (ADR 0034) — użyj 'self'."
-            )
-        if not 0 < self.worklog_max_hours_per_entry <= MAX_WORKLOG_HOURS_PER_ENTRY:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_MAX_HOURS musi być w zakresie "
-                f"0..{MAX_WORKLOG_HOURS_PER_ENTRY}, jest: {self.worklog_max_hours_per_entry}."
-            )
-        if not 0 <= self.worklog_max_backdate_days <= MAX_WORKLOG_BACKDATE_DAYS:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS musi być w zakresie "
-                f"0..{MAX_WORKLOG_BACKDATE_DAYS}, jest: {self.worklog_max_backdate_days}."
-            )
-        if not 1 <= self.worklog_max_range_days <= MAX_WORKLOG_RANGE_DAYS:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS musi być w zakresie "
-                f"1..{MAX_WORKLOG_RANGE_DAYS}, jest: {self.worklog_max_range_days}."
-            )
-        if not 5 <= self.worklog_idle_gap_minutes <= _MAX_WORKLOG_IDLE_GAP_MIN:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES musi być w zakresie "
-                f"5..{_MAX_WORKLOG_IDLE_GAP_MIN}, jest: {self.worklog_idle_gap_minutes}."
-            )
-        if not 0 <= self.worklog_ramp_up_minutes <= _MAX_WORKLOG_RAMP_UP_MIN:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES musi być w zakresie "
-                f"0..{_MAX_WORKLOG_RAMP_UP_MIN}, jest: {self.worklog_ramp_up_minutes}."
-            )
-        # Rozbieg dłuższy niż przerwa kończąca sesję dawałby estymacje NACHODZĄCE na siebie
-        # (doliczony czas sprzed sesji sięgałby w poprzednią) — cichy bezsens, więc odrzucamy.
-        if self.worklog_ramp_up_minutes > self.worklog_idle_gap_minutes:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES nie może przekraczać "
-                "WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES (estymacje sesji zachodziłyby na siebie): "
-                f"{self.worklog_ramp_up_minutes} > {self.worklog_idle_gap_minutes}."
-            )
-        if self.worklog_round_minutes not in _ALLOWED_ROUND_MINUTES:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_ROUND_MINUTES musi być jedną z "
-                f"{_ALLOWED_ROUND_MINUTES}, jest: {self.worklog_round_minutes}."
-            )
-        if not -720 <= self.worklog_tz_offset_minutes <= 840:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES musi być w zakresie -720..840, "
-                f"jest: {self.worklog_tz_offset_minutes}."
             )
 
 

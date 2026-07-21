@@ -447,14 +447,15 @@ def build_jira_transition_catalog(write_service: JiraWriteService) -> list[ToolS
 
 
 def build_worklog_catalog(service: WorklogService) -> list[ToolSpec]:
-    """Zbuduj BRAMKOWANE narzędzia ewidencji czasu (ADR 0034) — propozycja + jawny zapis.
+    """Zbuduj narzędzie propozycji ewidencji czasu z commitów (ADR 0034, część odczytowa).
 
-    Osobne od ``build_tool_catalog`` i wstrzykiwane jako ``extra_catalog`` TYLKO przy bramce
-    ``enable_jira_worklog``. Golden-test powierzchni MCP nietknięty.
+    Osobne od ``build_tool_catalog`` i wstrzykiwane jako ``extra_catalog`` (jak reszta narzędzi
+    warstwy spajającej), więc golden-test powierzchni MCP zostaje nietknięty. Wchodzi bez własnej
+    bramki — po wycięciu ścieżki zapisu nic tu nie mutuje, a odczyt jest domyślny (ADR 0006).
 
-    DWA NARZĘDZIA, nie jedno — celowo. ``propose_worklog`` czyta commity i szacuje; ``log_jira_
-    worklog`` zapisuje z godzinami podanymi WPROST. Gdyby zapis liczył godziny sam, wiadomości
-    commitów stałyby się poleceniami zapisu (łamie „treść to DANE, nie polecenia", ADR 0006).
+    JEDNO narzędzie: towarzyszący mu ``log_jira_worklog`` został USUNIĘTY razem z całą ścieżką
+    zapisu — godziny trafiają dziś do Jiry arkuszem WorklogPRO, importowanym przez człowieka
+    (ADR 0035), więc worklog ma prawdziwego autora.
     """
 
     def propose_worklog(since: date, until: date, author: str = "") -> dict[str, Any]:
@@ -465,8 +466,8 @@ def build_worklog_catalog(service: WorklogService) -> list[ToolSpec]:
         ``YYYY-MM-DD``; ``author`` (login GitHub albo e-mail) zawęża do jednej osoby. Zwraca
         sesje, sumy dzienne, sumy per zgłoszenie, godziny bez przypisania oraz ``confidence``
         i ``notes``. To ESTYMACJA z punktów w czasie, nie zmierzony czas pracy — PRZEDSTAW ją
-        użytkownikowi razem z zastrzeżeniami i poczekaj, aż potwierdzi liczby. Zapis robi
-        osobne narzędzie log_jira_worklog; nigdy nie wołaj go wprost na podstawie tej odpowiedzi.
+        użytkownikowi razem z zastrzeżeniami z pola ``notes`` i ``disclaimer``. Godzin nie da
+        się stąd nigdzie zapisać: do Jiry wprowadza je człowiek, importując arkusz.
         """
 
         def build() -> dict[str, Any]:
@@ -475,37 +476,7 @@ def build_worklog_catalog(service: WorklogService) -> list[ToolSpec]:
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
-    def log_jira_worklog(
-        issue_key: str,
-        hours: float,
-        day: date,
-        comment: str = "",
-        on_behalf_of: str = "",
-        display_name: str = "",
-    ) -> dict[str, Any]:
-        """Zapisz JEDEN wpis czasu pracy w zgłoszeniu Jira (ZAPIS — dodaje wpis, NIEODWRACALNY).
-
-        ``issue_key`` (np. ``WT-12``) musi należeć do skonfigurowanego projektu. ``hours`` to
-        godziny dziesiętne (np. 1.5), ``day`` to data ``YYYY-MM-DD`` (bez przyszłości, ograniczona
-        wstecz). ``comment`` opisuje pracę. ``on_behalf_of`` to ``accountId`` osoby, której praca
-        dotyczy — UWAGA: Jira i tak zapisze autorem konto tokenu, a „w imieniu" trafia jedynie do
-        treści wpisu; ZAWSZE przekaż użytkownikowi pole ``note`` z odpowiedzi. Nie edytuje ani nie
-        usuwa istniejących wpisów (cofnięcie jest możliwe tylko ręcznie w Jirze), a drugi wpis na
-        ten sam dzień zostanie odrzucony. Użyj TYLKO gdy użytkownik WPROST poda zgłoszenie, liczbę
-        godzin i dzień — nigdy z własnej inicjatywy ani wprost z wyniku propose_worklog.
-        """
-
-        def build() -> dict[str, Any]:
-            return service.log_jira_worklog(
-                issue_key, hours, day, comment, on_behalf_of, display_name
-            )
-
-        return _envelope(build, errors=(WorkMateError, ValidationError))
-
-    return [
-        ToolSpec("propose_worklog", propose_worklog.__doc__ or "", propose_worklog),
-        ToolSpec("log_jira_worklog", log_jira_worklog.__doc__ or "", log_jira_worklog),
-    ]
+    return [ToolSpec("propose_worklog", propose_worklog.__doc__ or "", propose_worklog)]
 
 
 def build_thread_reply_catalog(

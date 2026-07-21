@@ -10,7 +10,7 @@ i przesuwać status. Bliźniak mostu GitHub. Decyzje: [ADR 0030](../adr/0030-jir
 kanału). Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md).
 
 
-> **Ewidencja czasu z commitów** (ADR 0034) ma własną instrukcję: [`worklog-from-commits.md`](worklog-from-commits.md) — bramka `WORKMATE_JIRA_ENABLE_WORKLOG`, przepływ propozycja → potwierdzenie → zapis, oraz ograniczenie atrybucji przy zapisie w cudzym imieniu.
+> **Propozycja czasu z commitów** (ADR 0034) ma własną instrukcję: [`worklog-from-commits.md`](worklog-from-commits.md). Nie dotyczy już Jiry: ścieżkę zapisu worklogu usunięto (2026-07-21), został sam odczyt commitów po stronie GitHuba. Godziny wprowadza człowiek arkuszem WorklogPRO — [`worklogi-weekly.md`](worklogi-weekly.md).
 
 ## Wymagania
 

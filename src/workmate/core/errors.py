@@ -26,6 +26,16 @@ class WriteError(WorkMateError):
     """
 
 
+class InvalidRequestError(WorkMateError):
+    """Prośba wołającego jest niepoprawna (zły zakres, wartość spoza limitu) — bez mutacji.
+
+    Istnieje, bo ``WriteError`` niósł dotąd DWA znaczenia: „zapis się nie udał" i „wejście jest
+    złe". Na czystej ścieżce ODCZYTU to drugie jest myleniem czytelnika dokładnie tam, gdzie
+    szuka dowodu, że zapisu nie ma. Granica traktuje go tak samo — koperta łapie
+    ``WorkMateError`` i zwraca ``{"error": ...}``.
+    """
+
+
 class LLMError(WorkMateError):
     """Błąd komunikacji z modelem (runtime agenta, Faza 2 / ADR 0008).
 

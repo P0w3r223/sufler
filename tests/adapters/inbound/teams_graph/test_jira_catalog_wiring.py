@@ -43,15 +43,15 @@ def test_bridge_catalog_enforces_jira_limits_before_touching_the_store(tmp_path)
     """Sufity Jiry egzekwuje TEŻ proces, który wykonuje zapis — nie tylko poller.
 
     Regresja: ``JiraSettings.validate()`` woła wyłącznie ``workmate-jira``, więc absurd
-    w ``.env`` (tu: sufit 100 h na wpis przy backstopie 24 h) przechodził w drzwiach
-    Teams — czyli dokładnie tam, gdzie zapis się odbywa. Błąd musi paść PRZED dotknięciem
+    w ``.env`` (tu: 999 hopów tranzycji przy backstopie 10) przechodził w drzwiach
+    Teams — czyli dokładnie tam, gdzie mutacja się odbywa. Błąd musi paść PRZED dotknięciem
     magazynu zdarzeń, stąd ścieżka bazy prowadzi do nieistniejącego katalogu.
     """
-    with pytest.raises(ValueError, match="WORKMATE_JIRA_WORKLOG_MAX_HOURS"):
+    with pytest.raises(ValueError, match="WORKMATE_JIRA_MAX_TRANSITION_HOPS"):
         _build_bridge_catalog(
             EventsSettings(db_path=tmp_path / "nie-ma-katalogu" / "events.db"),
             GithubSettings(),
-            _settings(worklog_max_hours_per_entry=100.0),
+            _settings(max_transition_hops=999),
         )
 
 

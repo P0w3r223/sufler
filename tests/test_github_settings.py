@@ -18,6 +18,12 @@ _GITHUB_VARS = (
     "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT",
     "WORKMATE_GITHUB_STATE",
     "WORKMATE_GITHUB_SELF_LOGIN",
+    "WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES",
+    "WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES",
+    "WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES",
+    "WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS",
+    "WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS",
+    "WORKMATE_GITHUB_WORKLOG_TZ",
 )
 
 
@@ -150,3 +156,67 @@ def test_validate_accepts_ci_auto_comment_with_write_and_ci_watch_kind():
         enable_github_write=True,
         watch_kinds=("issues", "comments", "ci"),
     ).validate()  # nie rzuca
+
+
+# --- strojenie estymacji czasu z commitów (ADR 0034 po cięciu) ---------------------
+#
+# Pokrętła przyjechały tu z ``JiraSettings``: po usunięciu zapisu worklogu dotyczą wyłącznie
+# czytania commitów. Zdolność NIE MA bramki (odczyt jest domyślny), więc sufity muszą działać
+# zawsze — nie ma flagi, za którą absurd mógłby przeczekać.
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("worklog_idle_gap_minutes", 1, "IDLE_GAP_MINUTES"),
+        ("worklog_idle_gap_minutes", 5000, "IDLE_GAP_MINUTES"),
+        ("worklog_ramp_up_minutes", -5, "RAMP_UP_MINUTES"),
+        ("worklog_round_minutes", 7, "ROUND_MINUTES"),
+        ("worklog_max_session_hours", 0, "MAX_SESSION_HOURS"),
+        ("worklog_max_session_hours", 99.0, "MAX_SESSION_HOURS"),
+        ("worklog_max_range_days", 0, "MAX_RANGE_DAYS"),
+        ("worklog_max_range_days", 999, "MAX_RANGE_DAYS"),
+    ],
+)
+def test_validate_rejects_out_of_range_worklog_numbers(field, value, match):
+    with pytest.raises(ValueError, match=match):
+        _valid(**{field: value}).validate()
+
+
+def test_validate_rejects_ramp_up_longer_than_idle_gap():
+    """Rozbieg dłuższy niż przerwa kończąca sesję dawałby estymacje nachodzące na siebie."""
+    with pytest.raises(ValueError, match="nie może przekraczać"):
+        _valid(worklog_idle_gap_minutes=30, worklog_ramp_up_minutes=60).validate()
+
+
+def test_validate_rejects_unknown_timezone():
+    """Literówka w nazwie strefy ma paść przy STARCIE, nie przy pierwszym wywołaniu narzędzia."""
+    with pytest.raises(ValueError, match="WORKLOG_TZ"):
+        _valid(worklog_tz="Europe/Warszawa").validate()
+
+
+def test_validate_worklog_limits_needs_no_token_or_repo():
+    """Drzwi Teams wołają SAM ten fragment — pełne ``validate`` wywróci wdrożenie bez GitHuba."""
+    GithubSettings().validate_worklog_limits()  # nie rzuca
+
+
+def test_from_env_reads_worklog_tuning(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES", "45")
+    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES", "30")
+    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS", "6.5")
+    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_TZ", "  Europe/London  ")
+    settings = GithubSettings.from_env()
+    assert settings.worklog_idle_gap_minutes == 45
+    assert settings.worklog_round_minutes == 30
+    assert settings.worklog_max_session_hours == 6.5
+    assert settings.worklog_tz == "Europe/London"  # przycięte
+
+
+def test_from_env_worklog_defaults(monkeypatch):
+    _clear(monkeypatch)
+    settings = GithubSettings.from_env()
+    assert settings.worklog_idle_gap_minutes == 90
+    assert settings.worklog_ramp_up_minutes == 30
+    assert settings.worklog_max_range_days == 31
+    assert settings.worklog_tz == "Europe/Warsaw"

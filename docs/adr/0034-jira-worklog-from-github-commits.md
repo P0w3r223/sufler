@@ -1,14 +1,45 @@
 # 0034. Jira worklog from GitHub commit history — proposal/write split and pluggable author strategy
 
 Date: 2026-07-20
-Status: accepted
+Status: superseded in part by ADR 0035 (write path removed 2026-07-21)
 Author: P0w3r223
 Related to: docs/adr/0006-write-capability-gate-2.md,
   docs/adr/0020-github-read-door.md,
   docs/adr/0021-github-write-capability-gate-4.md,
   docs/adr/0031-jira-write-capability-gate-5.md,
   docs/adr/0032-jira-status-transition-capability.md,
-  docs/adr/0033-jira-cloud-support.md
+  docs/adr/0033-jira-cloud-support.md,
+  docs/adr/0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md
+
+---
+
+## Superseding note (2026-07-21)
+
+**The write path described below no longer exists in the code.** ADR 0035 installed WorklogPRO:
+hours reach Jira through a per-person spreadsheet that the employee imports, so the worklog carries
+a real author. That removed the very wall this ADR was built to work around — and with it the reason
+for `SelfAuthorStrategy`, the `w imieniu` annotation, the second gate, and the duplicate guard.
+A `grep` over `src/` confirmed ADR 0035 used none of it: ~870 lines of core had no consumer.
+
+Removed: `log_jira_worklog`, `core/application/worklog_author.py`, `JiraWorklogPort` and the
+`add_worklog`/`read_worklogs` adapter methods, the `enable_jira_worklog` and
+`worklog_allow_on_behalf` gates, and every `WORKMATE_JIRA_WORKLOG_*` variable.
+
+Kept: `propose_worklog` and the pure estimation domain (`core/domain/worklog.py`) — read-only, now
+wired under `GithubSettings` **without a gate**, because nothing it does mutates anything and this
+repo gates writes, not reads (ADR 0006).
+
+**Accepted knowingly with that:** the `author` parameter lets anyone in the Teams channel estimate
+*someone else's* hours, which used to require an operator turning a gate on. Judged acceptable here
+— the input is commit history every team member already sees in the repository, the team is six
+people, and the output is explicitly labelled an estimate that nothing can act on. Should the tool
+ever reach a wider audience, or should its input stop being something the asker could read anyway,
+this is the assumption to revisit first (a narrow knob on `author` beats re-gating the capability). Two consequences listed below were resolved rather than
+inherited: the fixed timezone offset became a named IANA zone (`ZoneInfo`, matching `week.py` from
+ADR 0035), and the silent commit-history ceiling now surfaces as an explicit `notes` entry.
+
+Read the rest of this ADR as the record of a decision that was correct for its constraints and
+outlived them.
 
 ---
 
@@ -98,14 +129,20 @@ remainder to the first key.
   approximates frequent ones. The `confidence` field and the two-step flow are the mitigation.
 - **Fixed timezone offset, not `zoneinfo`.** A range spanning a DST switch buckets one day's commits
   an hour off. Acceptable for a pilot; keeping the domain functions pure was worth more than DST
-  precision at this stage.
+  precision at this stage. **Resolved 2026-07-21:** `SessionPolicy.tz` is a `ZoneInfo` now — the
+  purity argument collapsed once ADR 0035 put `tzdata` in the core dependencies.
 - **Default branch only.** `/repos/{owner}/{repo}/commits` without `sha` returns the default branch,
   so work on unmerged branches is invisible. The proposal says so in `notes`.
+- **The commit fetch has a ceiling.** The adapter returns at most `MAX_COMMITS_PER_FETCH` (500)
+  commits, newest first, so a busy window loses its *oldest* days and the estimate comes out low.
+  **Addressed 2026-07-21:** a full bucket is reported as a `notes` warning instead of passing for a
+  complete answer.
 - **Author matching is fragile.** GitHub matches `author` against login or commit email; a different
   local `git config user.email` yields a silent empty result — hence an explicit hint in `notes`.
-- **Cross-settings coupling.** `enable_jira_worklog` lives in `JiraSettings` but functionally needs
-  `GithubSettings`; `JiraSettings.validate()` cannot see them, so the check lands at door wiring.
-  Same split as `max_transition_hops` (ADR 0032), and enforcement is duplicated deliberately.
+- **Cross-settings coupling.** `enable_jira_worklog` lived in `JiraSettings` but functionally needed
+  `GithubSettings`; `JiraSettings.validate()` cannot see them, so the check landed at door wiring.
+  **Resolved 2026-07-21:** with the write path gone the capability is GitHub-only, so the knobs moved
+  to `GithubSettings` (`WORKMATE_GITHUB_WORKLOG_*`) and the coupling disappeared.
 
 ## Rejected alternatives
 

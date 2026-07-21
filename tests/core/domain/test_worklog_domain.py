@@ -7,6 +7,7 @@ losowości. Znaczniki podajemy w UTC, a dobę kalendarzową liczymy w strefie z 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from workmate.core.domain.worklog import (
     Commit,
@@ -21,6 +22,8 @@ from workmate.core.domain.worklog import (
 )
 
 _POLICY = SessionPolicy()
+_UTC = ZoneInfo("UTC")
+_WARSAW = ZoneInfo("Europe/Warsaw")
 _SINCE, _UNTIL = date(2026, 7, 13), date(2026, 7, 19)
 
 
@@ -65,8 +68,9 @@ def test_extract_keys_dedupes_and_preserves_order() -> None:
     assert extract_issue_keys(message) == ("WT-12", "WT-3")
 
 
-def test_extract_keys_filters_by_project() -> None:
-    assert extract_issue_keys("WT-1 oraz OPS-9", project="WT") == ("WT-1",)
+def test_extract_keys_takes_every_project_prefix() -> None:
+    """Bez zawężania do projektu: to raport, a praca nad ``OPS-9`` też się odbyła."""
+    assert extract_issue_keys("WT-1 oraz OPS-9") == ("WT-1", "OPS-9")
 
 
 def test_extract_keys_ignores_lowercase_and_embedded() -> None:
@@ -77,7 +81,6 @@ def test_extract_keys_ignores_lowercase_and_embedded() -> None:
 def test_extract_keys_does_not_confuse_longer_prefix() -> None:
     """``XWT-12`` to własny, poprawny klucz — a NIE ``WT-12`` wyłuskane ze środka."""
     assert extract_issue_keys("XWT-12") == ("XWT-12",)
-    assert extract_issue_keys("XWT-12", project="WT") == ()
 
 
 def test_extract_keys_returns_empty_for_message_without_keys() -> None:
@@ -121,13 +124,26 @@ def test_confidence_medium_for_short_pair() -> None:
 # --- doba kalendarzowa -----------------------------------------------------------
 
 
-def test_local_day_uses_policy_offset() -> None:
-    """23:30 UTC przy offsecie +120 min to już następna doba lokalna."""
-    assert local_day(_at(15, 23, 30), 120) == date(2026, 7, 16)
+def test_local_day_uses_policy_timezone() -> None:
+    """23:30 UTC to w Warszawie (letni czas, +2 h) już następna doba."""
+    assert local_day(_at(15, 23, 30), ZoneInfo("Europe/Warsaw")) == date(2026, 7, 16)
+
+
+def test_local_day_follows_dst_instead_of_a_fixed_offset() -> None:
+    """Zimą Warszawa ma +1 h, więc ta sama godzina UTC zostaje w TEJ SAMEJ dobie.
+
+    Regresja wobec stałego offsetu +120 min (pierwotny ADR 0034): tamten przez pół roku
+    przesuwał granicę doby o godzinę, więc commity z okolic północy lądowały w złym dniu.
+    """
+    winter = datetime(2026, 1, 15, 23, 30, tzinfo=timezone.utc)
+    assert local_day(winter, ZoneInfo("Europe/Warsaw")) == date(2026, 1, 16)
+    assert local_day(datetime(2026, 1, 15, 22, 30, tzinfo=timezone.utc), _WARSAW) == date(
+        2026, 1, 15
+    )
 
 
 def test_local_day_treats_naive_as_utc() -> None:
-    assert local_day(datetime(2026, 7, 15, 10, 0), 0) == date(2026, 7, 15)
+    assert local_day(datetime(2026, 7, 15, 10, 0), _UTC) == date(2026, 7, 15)
 
 
 # --- grupowanie sesji ------------------------------------------------------------
@@ -147,7 +163,7 @@ def test_group_sessions_cuts_on_idle_gap() -> None:
 
 def test_group_sessions_cuts_on_day_boundary_even_within_gap() -> None:
     """Doba tnie TWARDO: wpis worklogu dotyczy jednego dnia, więc sesja nie przechodzi północy."""
-    policy = SessionPolicy(tz_offset_minutes=0)
+    policy = SessionPolicy(tz=_UTC)
     commits = [_commit("a", _at(15, 23, 40)), _commit("b", _at(16, 0, 20))]  # 40 min przerwy
     sessions = group_sessions(commits, policy)
     assert len(sessions) == 2
@@ -176,10 +192,8 @@ def test_session_collects_issue_keys_from_all_its_commits() -> None:
 # --- pełna propozycja ------------------------------------------------------------
 
 
-def _proposal(commits: list[Commit], project: str = "WT"):
-    return build_proposal(
-        commits, since=_SINCE, until=_UNTIL, policy=_POLICY, project=project, author="piotr"
-    )
+def _proposal(commits: list[Commit]):
+    return build_proposal(commits, since=_SINCE, until=_UNTIL, policy=_POLICY, author="piotr")
 
 
 def test_proposal_on_empty_commits_is_empty_not_a_crash() -> None:
@@ -224,12 +238,12 @@ def test_proposal_moves_keyless_session_to_unattributed() -> None:
     assert any("unattributed_hours" in note for note in proposal.notes)
 
 
-def test_proposal_ignores_keys_from_other_projects() -> None:
-    """``OPS-9`` wspomniane mimochodem nie może wejść do zestawienia projektu ``WT``."""
+def test_proposal_reports_keys_of_every_project() -> None:
+    """Zawężanie do projektu odeszło razem z zapisem — dziś nie ma DOKĄD kierować zestawienia."""
     commits = [_commit("a", _at(15, 9), "OPS-9 wzmianka")]
-    proposal = _proposal(commits, project="WT")
-    assert proposal.by_issue == ()
-    assert proposal.unattributed_minutes == proposal.total_minutes
+    proposal = _proposal(commits)
+    assert [total.issue_key for total in proposal.by_issue] == ["OPS-9"]
+    assert proposal.unattributed_minutes == 0
 
 
 def test_proposal_orders_issues_by_time_descending() -> None:
@@ -255,13 +269,12 @@ def test_proposal_carries_disclaimer() -> None:
 
 
 def test_proposal_day_bucket_uses_policy_timezone() -> None:
-    """Commit o 23:30 UTC ląduje w następnej dobie przy offsecie +120 min."""
+    """Commit o 23:30 UTC ląduje w następnej dobie warszawskiej (letni czas)."""
     proposal = build_proposal(
         [_commit("a", _at(15, 23, 30), "WT-1")],
         since=_SINCE,
         until=_UNTIL,
-        policy=SessionPolicy(tz_offset_minutes=120),
-        project="WT",
+        policy=SessionPolicy(tz=_WARSAW),
     )
     assert proposal.by_day[0].day == date(2026, 7, 16)
 
@@ -270,3 +283,34 @@ def test_proposal_long_range_produces_one_session_per_day() -> None:
     commits = [_commit(f"c{i}", _at(13, 9) + timedelta(days=i), "WT-1") for i in range(5)]
     proposal = _proposal(commits)
     assert len(proposal.by_day) == 5
+
+
+# --- objętość odpowiedzi i ostrzeżenie o ucięciu ----------------------------------
+
+
+def test_session_shas_are_a_sample_not_the_full_list() -> None:
+    """Pełna lista SHA szła w całości do kontekstu modelu — przy 500 commitach kilkanaście KB.
+
+    Licznik zostaje pełny (``commit_count``), więc nic nie ginie poza objętością.
+    """
+    commits = [_commit(f"sha{index}", _at(15, 9) + timedelta(minutes=index)) for index in range(20)]
+    session = group_sessions(commits, _POLICY)[0]
+    assert session.commit_count == 20
+    assert len(session.shas) == 5
+    assert session.shas[0] == "sha0"
+
+
+def test_truncated_history_is_announced_in_notes() -> None:
+    """Ucięcie zaniża godziny — bez noty propozycja wygląda na kompletną."""
+    proposal = build_proposal(
+        [_commit("a", _at(15, 9), "WT-1")],
+        since=_SINCE,
+        until=_UNTIL,
+        policy=_POLICY,
+        truncated=True,
+    )
+    assert any("UCIĘTA" in note for note in proposal.notes)
+
+
+def test_complete_history_carries_no_truncation_note() -> None:
+    assert not any("UCIĘTA" in note for note in _proposal([]).notes)
