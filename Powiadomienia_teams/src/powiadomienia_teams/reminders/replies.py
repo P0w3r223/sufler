@@ -9,7 +9,6 @@ from typing import Any
 from powiadomienia_teams.graph.mapping import parse_graph_datetime
 
 _TAGS = re.compile(r"<[^>]+>")
-_DIGIT = re.compile(r"\d")
 _AFFIRM = {
     "tak", "ok", "okej", "okey", "spoko", "potwierdzam", "zgoda",
     "pasuje", "dokładnie", "git", "zgadza", "jasne", "super",
@@ -66,21 +65,6 @@ def newest_incoming(
     return max(incoming, key=lambda pair: pair[0])[1]
 
 
-def is_affirmative(text: str) -> bool:
-    """Czy odpowiedź to potwierdzenie (»tak«, »ok«, »potwierdzam« …)."""
-    tokens = {t.strip(".,!…") for t in text.lower().split()}
-    return bool(tokens & _AFFIRM)
-
-
-def looks_like_schedule(text: str) -> bool:
-    """Czy tekst zawiera treść grafiku (godziny) — np. »tak, ale w piątek 10-20«.
-
-    Chroni przed potraktowaniem „tak, ale …” jako czystego potwierdzenia i zapisaniem
-    starej propozycji zamiast poprawki.
-    """
-    return bool(_DIGIT.search(text))
-
-
 def is_pure_affirmation(text: str) -> bool:
     """Czy odpowiedź to WYŁĄCZNIE potwierdzenie (bez dodatkowej treści = bez poprawki).
 
@@ -88,7 +72,7 @@ def is_pure_affirmation(text: str) -> bool:
     (nawet bez cyfr!), więc trafi do reinterpretacji zamiast zapisać starą propozycję. Kierunek
     bezpieczny: gdy pojawi się JAKIEKOLWIEK słowo spoza potwierdzeń/uprzejmości, wolimy
     reinterpretować (najwyżej dodatkowe wywołanie modelu), niż zapisać niezmieniony grafik mimo
-    prośby o zmianę. Zastępuje kruchą heurystykę »są cyfry« (`looks_like_schedule`).
+    prośby o zmianę. Zastępuje wcześniejszą kruchą heurystykę »są cyfry«.
     """
     tokens = [t.strip(_STRIP) for t in text.lower().split()]
     if not any(t in _AFFIRM for t in tokens):

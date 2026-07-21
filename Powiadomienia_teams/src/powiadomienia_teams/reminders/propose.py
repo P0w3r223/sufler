@@ -41,7 +41,6 @@ def proposal_from_last_week(
             user_id=member_id,
             start=_plus_one_week_local(s.start, tz),
             end=_plus_one_week_local(s.end, tz),
-            shared=s.shared,
             scheduling_group_id=s.scheduling_group_id,
             theme=s.theme,  # kolor = tryb pracy — kopiujemy z dnia źródłowego
         )

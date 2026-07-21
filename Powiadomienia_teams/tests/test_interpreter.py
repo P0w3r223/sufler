@@ -223,12 +223,6 @@ def test_build_time_offs_skips_entry_without_reason_id():
     assert offs == []
 
 
-def test_reply_decision_defaults():
-    d = ReplyDecision("unclear")
-    assert d.schedule is None
-    assert d.time_off == ()
-
-
 # --- Regresja: deterministyczne mapowanie nazwy dnia → weekday -------------------------------
 # Model bywa zawodny w liczeniu weekday (potrafił zwrócić 4=piątek dla „czwartek”), więc dzień
 # podaje jako NAZWĘ, a kod mapuje ją deterministycznie. Poniższe testy bronią ścieżki KODU.

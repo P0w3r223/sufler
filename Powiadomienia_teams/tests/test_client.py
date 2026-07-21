@@ -172,21 +172,6 @@ def test_create_shift_includes_theme_when_set():
     assert seen["body"]["sharedShift"]["theme"] == "green"
 
 
-def test_share_schedule_posts_range():
-    seen: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://graph.microsoft.com/v1.0/teams/T/schedule/share"
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(204)
-
-    _graph(handler).share_schedule(
-        "T", datetime(2026, 7, 20, tzinfo=UTC), datetime(2026, 7, 27, tzinfo=UTC)
-    )
-    assert seen["body"]["notifyTeam"] is True
-    assert seen["body"]["startDateTime"] == "2026-07-20T00:00:00Z"
-
-
 def test_get_raises_auth_expired_on_401():
     """401 mimo udanego cichego odświeżenia = token odrzucony przez Graph — usługa ma stanąć."""
     def handler(request: httpx.Request) -> httpx.Response:

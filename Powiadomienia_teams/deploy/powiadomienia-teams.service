@@ -23,6 +23,12 @@ Environment=PYTHONUNBUFFERED=1
 # Restart z limitem — CELOWO pozwalamy usłudze umrzeć na dobre. Utrata refresh-tokenu
 # (AuthExpiredError) jest nienaprawialna automatycznie: potrzeba człowieka i `--login`.
 # Restartowanie w nieskończoność tylko ukryłoby problem do następnego piątku.
+#
+# ŚWIADOMA RÓŻNICA wobec wariantu Docker (`restart: unless-stopped` w docker-compose.yml):
+# tam wyczerpanie limitu prób zatrzymywało kontener NA STAŁE także po błędach przejściowych,
+# więc limit zdjęto. Tutaj zostaje, bo `journalctl`/`systemctl status` pokazują martwą usługę
+# wprost — ale konsekwencja jest realna: seria awarii przejściowych w ciągu godziny (5 prób)
+# też zatrzyma unit do ręcznego `systemctl start`.
 Restart=on-failure
 RestartSec=60
 StartLimitIntervalSec=3600

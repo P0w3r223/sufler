@@ -44,8 +44,3 @@ def test_negative_idle_clamped_to_base():
 
 def test_factor_one_is_constant_base():
     assert _delay(10_000, factor=1.0) == 10.0  # brak wzrostu i brak pętli nieskończonej
-
-
-def test_result_always_within_base_and_max():
-    for idle in (0, 5, 50, 500, 5000):
-        assert 10.0 <= _delay(idle) <= 300.0

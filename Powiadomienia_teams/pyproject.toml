@@ -6,7 +6,6 @@ requires-python = ">=3.10"
 dependencies = [
     "msal>=1.37.0",
     "httpx>=0.28.1",
-    "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "tzdata>=2024.1",
 ]
@@ -32,7 +31,6 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
     "mypy>=1.10",
-    "types-PyYAML>=6.0",
 ]
 
 [tool.ruff]

@@ -162,10 +162,6 @@ class GraphClient:
         """Id zalogowanego użytkownika (tożsamość »głosu« bota)."""
         return str(self._get(f"{GRAPH}/me").get("id", ""))
 
-    def schedule_provision_status(self, team_id: str) -> str | None:
-        """``provisionStatus`` grafiku zespołu (``Completed`` = Shifts uruchomione)."""
-        return self._get(f"{GRAPH}/teams/{team_id}/schedule").get("provisionStatus")
-
     def list_members(self, team_id: str) -> tuple[Member, ...]:
         """Aktualni członkowie zespołu (roster do porównania). Pomija wpisy bez userId/nazwy."""
         raw = self._get_all(f"{GRAPH}/teams/{team_id}/members")
@@ -257,19 +253,6 @@ class GraphClient:
             "sharedShift": shared,
         }
         return str(self._post(f"{GRAPH}/teams/{team_id}/schedule/shifts", body).get("id", ""))
-
-    def share_schedule(
-        self, team_id: str, start: datetime, end: datetime, *, notify: bool = True
-    ) -> None:
-        """Udostępnij grafik w zakresie dat (uwidacznia zmiany + opcjonalnie powiadamia)."""
-        self._post(
-            f"{GRAPH}/teams/{team_id}/schedule/share",
-            {
-                "notifyTeam": notify,
-                "startDateTime": to_graph_iso(start),
-                "endDateTime": to_graph_iso(end),
-            },
-        )
 
     def list_time_off_reasons(self, team_id: str) -> TeamReasons:
         """Aktywne powody czasu wolnego zespołu (wyszukiwanie po nazwie + odwrotne po id).

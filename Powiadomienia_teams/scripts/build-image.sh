@@ -50,7 +50,7 @@ docker run --rm --entrypoint sh "$OBRAZ" -c '
     echo "  Python:      $(python --version 2>&1)"
     test "$(id -u)" = "10001" || { echo "  BŁĄD: proces biegnie jako $(id -u), oczekiwano 10001" >&2; exit 1; }
     echo "  Użytkownik:  $(id -u):$(id -g) (nie root)"
-    python -c "import anthropic, msal, httpx, yaml, dotenv; print(\"  Zależności:  anthropic\", anthropic.__version__, \"| msal\", msal.__version__, \"| httpx\", httpx.__version__)"
+    python -c "import anthropic, msal, httpx, dotenv; print(\"  Zależności:  anthropic\", anthropic.__version__, \"| msal\", msal.__version__, \"| httpx\", httpx.__version__)"
     python -c "import sys; assert sys.stdout.encoding.lower().replace(\"-\",\"\") == \"utf8\", sys.stdout.encoding; print(\"  Kodowanie:  \", sys.stdout.encoding)"
     python -c "from zoneinfo import ZoneInfo; ZoneInfo(\"Europe/Warsaw\"); print(\"  Strefa:      Europe/Warsaw OK\")"
     # Sufit nasłuchu bierze się z KODU (nie z pliku env), więc obraz zbudowany ze starego źródła

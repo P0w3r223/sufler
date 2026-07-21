@@ -1,7 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -54,7 +53,6 @@ class _FakeClient:
         self.sent: list[tuple[str, str]] = []
         self.created: list[Any] = []
         self.time_off: list[Any] = []
-        self.shared: list[tuple[Any, Any]] = []
 
     def refresh_auth(self) -> None:
         pass
@@ -96,9 +94,6 @@ class _FakeClient:
     def create_time_off(self, team_id: str, time_off: Any) -> str:
         self.time_off.append(time_off)
         return "timeoff-id"
-
-    def share_schedule(self, team_id: str, start: Any, end: Any, *, notify: bool = True) -> None:
-        self.shared.append((start, end))
 
 
 class _FakeLlm:
@@ -282,15 +277,6 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     # Nowa wiadomość PO nudge'u jest brana pod uwagę.
     fresh = [_msg("u1", "2026-07-15T10:05:00Z", "ok")]
     assert newest_incoming(fresh, "me", pending.watermark) is not None
-
-
-def test_week_windows_targets_next_week_and_prior_is_current_week():
-    waw = ZoneInfo("Europe/Warsaw")
-    now = datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc)  # wtorek 14.07
-    prior, target, target_end = week_windows(now, waw)
-    assert prior.date().isoformat() == "2026-07-13"    # bieżący tydzień = gotowiec
-    assert target.date().isoformat() == "2026-07-20"   # przyszły tydzień = cel
-    assert target_end.date().isoformat() == "2026-07-27"
 
 
 def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):

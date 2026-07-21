@@ -150,7 +150,8 @@ Sprawdzono na żywym tenancie (`99b17207-…`), konto `piotr.czastkiewicz@contos
 
 **Blokada USUNIĘTA (2026-07-14):** po admin consent MSAL dobrał oba uprawnienia po cichu
 (bez re-logowania). Roster zespołu „Stażyści" (6 osób) i mapowanie id→osoba działają. Ręczny
-roster YAML (`roster.py`) zostaje jako opcjonalny fallback.
+roster YAML (`roster.py`) był fallbackiem na wypadek braku `TeamMember.Read.All` — **usunięty
+2026-07-21**, bo uprawnienie działa stabilnie, a niepodłączony fallback tylko rósł jako martwy kod.
 
 **Roster „Stażyści" (potwierdzony na żywo):** Mikołaj Anonimowicz (owner), Jerzy Zastepski (owner),
 Oskar Zastepski, Igor Zakryty, Kamil Ukryty, Piotr Częstkiewicz (owner — konto bota). Konto bota
@@ -363,3 +364,32 @@ refresh-tokenu, logowanie, ADR projektu, README z instrukcją consentu i uruchom
 - Godzina/strefa sztywno 16:00 `Europe/Warsaw` czy z env (`POWIADOMIENIA_RUN_AT`)?
 - Czy wymagać jawnego „tak" przed zapisem (rekomendowane), czy zapisywać od razu po interpretacji?
 - Jak długo po niedzieli trzymać okno na odpowiedzi (np. do wtorku), zanim zamkniemy pending?
+
+---
+
+## Czyszczenie i wydanie 0.2.0 (2026-07-21)
+
+Przegląd referencji przed pierwszym wdrożeniem serwerowym wykazał kod, który nigdy nie wszedł na
+ścieżkę wykonania. Usunięte (zatwierdzone jawnie, nie automatem):
+
+- `roster.py` + `load_roster` + `config.roster_path` + `POWIADOMIENIA_ROSTER_PATH` +
+  `roster.example.yaml` — fallback YAML na wypadek braku `TeamMember.Read.All`; uprawnienie
+  działa od 2026-07-14, fallback nigdy nie został podłączony do `app.py`. Wraz z nim wypadła
+  zależność `pyyaml` (jedyny konsument) i `types-PyYAML`.
+- `GraphClient.share_schedule` — `create_shift`/`create_time_off` publikują od razu jako
+  `sharedShift`/`sharedTimeOff`, więc osobne udostępnianie było zbędne (zgodnie z notatką przy
+  ścieżce zapisu).
+- `GraphClient.schedule_provision_status`, `CANONICAL_REASONS` — zero odwołań w kodzie i testach.
+- `reminders.replies.is_affirmative`, `looks_like_schedule` — zastąpione przez
+  `is_pure_affirmation` (heurystyka „są cyfry" była krucha), żyły już tylko w testach.
+- Pola `Shift.shared` / `TimeOff.shared` — zapisywane w mapperach, nigdy nieczytane do decyzji.
+  Wybór ciała `sharedX` → `draftX` w `graph/mapping.py` **nie zmienił semantyki** (dalej
+  `if body is None`, a nie `or` — puste `sharedShift` przy ważnym drafcie nadal daje `None`).
+- 5 testów bez pokrycia gałęzi: domyślne wartości dataclass (`ReplyDecision`, `Member`), duplikat
+  `week_windows` z `test_weekly.py`, słaby test własnościowy backoffu, duplikat pustego czasu wolnego.
+
+Suita: **250 → 236 testów**, wszystkie zielone; `ruff` i `mypy` czyste.
+
+**Dług techniczny (świadomie odłożony):** `app.py` ma ~995 linii przy przyjętym limicie 800.
+Podział (wydzielenie pętli serwisowej, pulsu i alertów z `run_once`/`poll_replies`) odłożony,
+żeby nie wprowadzać ryzyka regresji tuż przed pierwszym uruchomieniem na serwerze.

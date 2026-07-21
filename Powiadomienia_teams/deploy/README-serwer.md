@@ -189,12 +189,16 @@ Szukaj w logu: `Następny przebieg powiadomień: <data najbliższego piątku 16:
 
 ### Usługa stoi, w logu „Utracono uwierzytelnienie"
 
-Refresh-token wygasł (rolling ~90 dni) albo zadziałała polityka Conditional Access. To zachowanie
-**zamierzone** — usługa zatrzymuje się czysto zamiast udawać, że działa.
+Token przestał być odnawialny — najczęściej po okresie bezczynności (>90 dni bez użycia), zmianie
+hasła konta bota albo przez politykę Conditional Access. To zachowanie **zamierzone** — usługa
+zatrzymuje się czysto zamiast udawać, że działa.
 
 Powtórz krok 5, potem `sudo systemctl start powiadomienia-teams`.
 
-> Zaplanuj ponowne logowanie **co ~80 dni**, zanim token wygaśnie sam.
+> **Nie ma potrzeby cyklicznego przelogowywania.** 90 dni to okno **bezczynności**, a nie maksymalny
+> wiek tokenu: refresh-token rotuje się przy każdym użyciu, więc przy cotygodniowym cyklu żyje
+> bezterminowo. Ponowne logowanie jest reakcją na zdarzenie w tenancie, nie zadaniem w kalendarzu
+> (pełna tabela kodów AADSTS → `README-docker.md`).
 
 ### Zmiana listy odbiorców
 

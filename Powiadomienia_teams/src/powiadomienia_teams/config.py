@@ -15,7 +15,6 @@ _PREFIX = "POWIADOMIENIA_"
 
 # Delegowane scope Graph — wszystkie nadane i potwierdzone na żywo (Smoke #1, 2026-07-14).
 # MSAL sam dokłada openid/profile/offline_access — nie wpisywać ich tutaj.
-# roster.py (YAML) zostaje jako opcjonalny fallback, gdyby TeamMember.Read.All było niedostępne.
 _DEFAULT_SCOPES: tuple[str, ...] = (
     "User.Read",
     "User.ReadBasic.All",
@@ -89,7 +88,6 @@ class Settings:
     scopes: tuple[str, ...] = _DEFAULT_SCOPES
     token_cache_path: Path = field(default_factory=lambda: _DEFAULT_TOKEN_CACHE)
     state_path: Path = field(default_factory=lambda: _DEFAULT_STATE)
-    roster_path: Path | None = None
     run_weekday: int = 4  # piątek (0=poniedziałek … 6=niedziela)
     run_hour: int = 16
     run_minute: int = 0
@@ -184,7 +182,6 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        roster = os.environ.get(_PREFIX + "ROSTER_PATH")
         return cls(
             client_id=_get("CLIENT_ID"),
             tenant_id=_get("TENANT_ID"),
@@ -192,7 +189,6 @@ class Settings:
             scheduling_group_id=(_get("SCHEDULING_GROUP_ID") or None),
             token_cache_path=_path("TOKEN_CACHE", _DEFAULT_TOKEN_CACHE),
             state_path=_path("STATE_PATH", _DEFAULT_STATE),
-            roster_path=(Path(roster).expanduser() if roster else None),
             run_weekday=_int("RUN_WEEKDAY", 4),
             run_hour=_int("RUN_HOUR", 16),
             run_minute=_int("RUN_MINUTE", 0),

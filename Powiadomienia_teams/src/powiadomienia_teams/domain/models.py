@@ -37,14 +37,12 @@ class Member:
 class Shift:
     """Pojedyncza zmiana (odczytana z Shifts lub proponowana do zapisu).
 
-    `start`/`end` muszą być tz-aware (przechowujemy w UTC). `shared=True` to zmiana
-    opublikowana (widoczna dla pracownika); `False` = wersja robocza (draft).
+    `start`/`end` muszą być tz-aware (przechowujemy w UTC).
     """
 
     user_id: str
     start: datetime
     end: datetime
-    shared: bool = True
     scheduling_group_id: str | None = None
     theme: str | None = None  # kolor Shifts = tryb pracy (blue=zdalnie, green=stacjonarnie)
 
@@ -74,7 +72,6 @@ class TimeOff:
     start: datetime
     end: datetime
     reason_id: str
-    shared: bool = True
 
     def __post_init__(self) -> None:
         if self.start.tzinfo is None or self.end.tzinfo is None:

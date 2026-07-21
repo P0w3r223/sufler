@@ -22,9 +22,6 @@ _DEFAULT_DISPLAY = "Nieobecność"  # kanoniczna nazwa dla nierozpoznanego słow
 # Kolejność fallbacku, gdy konkretny powód nie istnieje w tenancie (generyczny, wciąż nieobecność).
 _FALLBACK_DISPLAY = ("Nieobecność", "Urlop")
 
-# Kanoniczne powody, których wolno użyć w prompcie/interpretacji.
-CANONICAL_REASONS = tuple(_CANONICAL_TO_DISPLAY)
-
 
 def normalize(name: str) -> str:
     """Znormalizuj nazwę powodu do porównań (małe litery, pojedyncze spacje)."""
