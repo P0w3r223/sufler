@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml/badge.svg)](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml)
-[![Wersja](https://img.shields.io/badge/wersja-1.2.0-green.svg)](CHANGELOG.md)
+[![Wersja](https://img.shields.io/badge/wersja-1.3.0-green.svg)](CHANGELOG.md)
 [![Licencja](https://img.shields.io/badge/licencja-Proprietary-red.svg)](LICENSE)
 
 **Wspólna baza wiedzy pionu Inteligentnych Technologii — jedno źródło prawdy o projektach,

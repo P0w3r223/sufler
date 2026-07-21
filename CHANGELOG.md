@@ -6,6 +6,8 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-07-21
+
 ### Dodane
 - **Bramka potwierdzenia nagłówków WorklogPRO** — `WORKMATE_WORKLOGI_HEADERS_CONFIRMED` (domyślnie
   `false`). `WORKLOGPRO_HEADERS` pochodzi z dokumentacji producenta, nie z kreatora importu tej
@@ -240,6 +242,7 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
+[1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0
 [1.2.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.2.0
 [1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0
 [1.0.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.0.0
