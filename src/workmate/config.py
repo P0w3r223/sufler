@@ -9,6 +9,7 @@ może nadpisać ścieżki pojedynczą zmienną środowiskową.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -822,6 +823,10 @@ _MAX_JIRA_PER_PAGE = 100
 # Domyślnie ``server`` — wstecznie zgodne. PUBLICZNY: egzekwują go i ``JiraSettings.validate``
 # (poller), i wpięcie drzwi zapisu/tranzycji (``_build_jira_catalog``) — spójny fail-fast.
 JIRA_DEPLOYMENTS = ("server", "cloud")
+# Starszy wariant ``accountId`` na Cloud: 24 znaki hex (nowszy ma kształt ``712020:<uuid>``,
+# więc wychwytuje go obecność dwukropka). Kontrola jest CELOWO luźna — ma odsiać login
+# Server/DC wklejony po przełączeniu wariantu, a nie zgadywać przyszłe formaty Atlassiana.
+_LOOKS_LIKE_ACCOUNT_ID = re.compile(r"[0-9a-fA-F]{24}")
 # Sufit hopów chodzenia po workflow (ADR 0032) — twardy backstop przed nieograniczoną wielo-hop
 # mutacją, gdyby operator wpisał absurd. Domyślnie 1 (single-hop, bezpieczny pilotaż). PUBLICZNY:
 # egzekwują go i ``JiraSettings.validate`` (poller), i wpięcie drzwi zapisu/tranzycji (teams_graph).
@@ -961,6 +966,22 @@ class JiraSettings:
             raise ValueError(
                 "WORKMATE_JIRA_DEPLOYMENT=cloud wymaga WORKMATE_JIRA_EMAIL "
                 "(e-mail konta Atlassian do Basic-auth z API tokenem)."
+            )
+        # Na Cloud tożsamość to ``accountId`` (``name``/``key`` usunięte, RODO), na Server/DC —
+        # login PAT. Przełączenie DEPLOYMENT bez podmiany konta CICHO psuje strażnik pętli
+        # self-skip: porównanie aktora zdarzenia z ``self_account`` nigdy nie trafia, więc poller
+        # i drzwi zapisu zaczynają odsyłać sobie nawzajem własne zapisy. Login rozpoznajemy po
+        # tym, że nie ma ani dwukropka (``712020:uuid``), ani kształtu 24 znaków hex.
+        if (
+            deployment == "cloud"
+            and self.self_account
+            and ":" not in self.self_account
+            and not _LOOKS_LIKE_ACCOUNT_ID.fullmatch(self.self_account)
+        ):
+            raise ValueError(
+                f"WORKMATE_JIRA_SELF_ACCOUNT={self.self_account!r} wygląda na login Server/DC, "
+                "a WORKMATE_JIRA_DEPLOYMENT=cloud wymaga accountId (np. '712020:4788230b-…' "
+                "albo 24 znaki hex) — inaczej strażnik pętli self-skip po cichu przestaje działać."
             )
         # Sufit hopów w rozsądnym zakresie (1 = single-hop; >1 = wielo-hop forced-advance).
         # Walidujemy zawsze — absurd (0, ujemna, ogromna) to twardy błąd niezależnie od bramki.

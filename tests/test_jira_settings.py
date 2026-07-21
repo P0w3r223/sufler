@@ -270,3 +270,30 @@ def test_from_env_worklog_defaults_are_conservative(monkeypatch):
     assert settings.enable_jira_worklog is False
     assert settings.worklog_allow_on_behalf is False
     assert settings.worklog_duplicate_guard is True
+
+
+# --- tożsamość konta a wariant wdrożenia ------------------------------------------
+
+
+def test_cloud_rejects_a_server_login_as_self_account():
+    """Login Server/DC po przełączeniu na Cloud = CICHO martwy strażnik pętli self-skip.
+
+    Na Cloud aktor zdarzenia to ``accountId``, więc porównanie z loginem nigdy nie trafia:
+    poller i drzwi zapisu zaczynają odsyłać sobie nawzajem własne zapisy. Wcześniej
+    walidacja patrzyła tylko na to, czy wartość jest NIEPUSTA.
+    """
+    with pytest.raises(ValueError, match="wygląda na login Server/DC"):
+        _settings(deployment="cloud", email="a@b.pl", self_account="psmit").validate()
+
+
+@pytest.mark.parametrize(
+    "account",
+    ["712020:c0ffee00-0000-4000-8000-000000000008", "5b10ac8d82e05b22cc7d4ef5"],
+)
+def test_cloud_accepts_both_account_id_shapes(account: str):
+    _settings(deployment="cloud", email="a@b.pl", self_account=account).validate()
+
+
+def test_server_still_accepts_a_plain_login():
+    """Ścieżka Server/DC nietknięta — tam login PAT jest poprawną tożsamością."""
+    _settings(self_account="psmit").validate()
