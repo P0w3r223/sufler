@@ -81,7 +81,7 @@ async def _run(
         raise SystemExit(_MISSING_JIRA) from exc
     from workmate.adapters.inbound.jira import state as state_store
     from workmate.adapters.inbound.jira.poller import JiraPoller
-    from workmate.adapters.outbound.jira_api import HttpxJiraClient
+    from workmate.adapters.outbound.jira_api import build_jira_client
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.config import Settings
     from workmate.core.application.events import EventService
@@ -96,7 +96,7 @@ async def _run(
     # Poller używa sync klienta (wołanego w puli wątków), notifier — async; osobne menedżery.
     async with httpx.AsyncClient(timeout=30) as async_http:
         with httpx.Client(timeout=30) as sync_http:
-            client = HttpxJiraClient(sync_http, settings.token, base_url=settings.base_url)
+            client = build_jira_client(sync_http, settings)
             poller = JiraPoller(
                 client,
                 events,

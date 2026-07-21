@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # Dozwolone transporty serwera MCP. "stdio" to lokalny tryb dla Claude Code
 # (Fazy 1 tyg. 1-3); "streamable-http" to wdrożenie sieciowe (tyg. 4, Bramka 3).
@@ -816,18 +817,44 @@ class GithubSettings:
 _JIRA_POLL_FLOOR_S = 30
 _DEFAULT_JIRA_STATE = Path.home() / ".workmate" / "jira_state.json"
 _MAX_JIRA_PER_PAGE = 100
+# Warianty wdrożenia Jiry (ADR 0033): ``server`` = Server/Data Center (PAT Bearer, REST v2,
+# paginacja startAt); ``cloud`` = Jira Cloud (Basic email+API-token, REST v3/ADF, search/jql).
+# Domyślnie ``server`` — wstecznie zgodne. PUBLICZNY: egzekwują go i ``JiraSettings.validate``
+# (poller), i wpięcie drzwi zapisu/tranzycji (``_build_jira_catalog``) — spójny fail-fast.
+JIRA_DEPLOYMENTS = ("server", "cloud")
 # Sufit hopów chodzenia po workflow (ADR 0032) — twardy backstop przed nieograniczoną wielo-hop
 # mutacją, gdyby operator wpisał absurd. Domyślnie 1 (single-hop, bezpieczny pilotaż). PUBLICZNY:
 # egzekwują go i ``JiraSettings.validate`` (poller), i wpięcie drzwi zapisu/tranzycji (teams_graph).
 MAX_JIRA_TRANSITION_HOPS = 10
 
+# Strategie autorstwa wpisu czasu (ADR 0034). Zaimplementowana jest DZIŚ tylko ``self``;
+# pozostałe to udokumentowane sloty (``application/worklog_author.py``) — konfiguracja odrzuca
+# je przy starcie, żeby operator nie odkrył braku dopiero w środku rozmowy z użytkownikiem.
+# PUBLICZNE, jak ``JIRA_DEPLOYMENTS``: egzekwuje je i ``JiraSettings.validate`` (poller), i
+# wpięcie drzwi ewidencji (``teams_graph``) — spójny fail-fast po obu stronach.
+WORKLOG_AUTHOR_STRATEGIES = ("self", "per_user_token", "tempo")
+IMPLEMENTED_WORKLOG_STRATEGIES = ("self",)
+# Twarde backstopy niezależne od bramki — chronią przed absurdem wpisanym do .env.
+MAX_WORKLOG_HOURS_PER_ENTRY = 24.0
+MAX_WORKLOG_BACKDATE_DAYS = 90
+MAX_WORKLOG_RANGE_DAYS = 92
+_MAX_WORKLOG_IDLE_GAP_MIN = 720
+_MAX_WORKLOG_RAMP_UP_MIN = 240
+# Ewidencja czasu jest kwantowana — dopuszczamy tylko dzielniki godziny mające sens w praktyce.
+_ALLOWED_ROUND_MINUTES = (1, 5, 10, 15, 30, 60)
+
 
 @dataclass(frozen=True)
 class JiraSettings:
-    """Konfiguracja drzwi Jira (Server/Data Center, ADR 0030) — polling REST v2 tokenem PAT.
+    """Konfiguracja drzwi Jira (Server/DC lub Cloud, ADR 0030/0033) — polling REST tokenem.
 
-    Bot odpytuje Jira REST v2 osobistym tokenem (PAT Bearer), bez webhooka. ``token`` to SEKRET
-    (``repr=False``, env ``WORKMATE_JIRA_TOKEN``) — nigdy w repo/``data/``. Drzwi są READ-ONLY
+    ``deployment`` wybiera wariant (ADR 0033): ``server`` (Server/Data Center — PAT Bearer, REST v2,
+    paginacja ``startAt``) lub ``cloud`` (Jira Cloud — Basic ``email``+API-token, REST v3/ADF,
+    ``search/jql``). Domyślnie ``server`` (wstecznie zgodne). ``email`` jest wymagany tylko na Cloud
+    (konto Basic-auth); na Server/DC pozostaje pusty. ``token`` to SEKRET (``repr=False``, env
+    ``WORKMATE_JIRA_TOKEN`` — PAT na Server/DC, API token na Cloud) — nigdy w repo/``data/``.
+    ``self_account`` (self-skip) to login/klucz PAT na Server/DC, a ``accountId`` na Cloud.
+    Bot odpytuje Jira REST osobistym tokenem, bez webhooka. Drzwi są READ-ONLY
     (ingest zdarzeń Jira → EventStore → Teams); zapis do Jira będzie osobno bramkowany.
     ``watch_projects`` to klucze projektów Jira do nasłuchu (np. ``WM``); mapowanie na projekt
     WorkMate z rejestru (``jira_project_key``, ADR 0028). ``self_account`` (konto PAT) do self-skip.
@@ -837,10 +864,19 @@ class JiraSettings:
     Tranzycja statusu (ADR 0032) ma WŁASNĄ, NIEZALEŻNĄ bramkę ``enable_jira_transition`` (domyślnie
     OFF) — profil „tylko-tranzycja" nie wymaga włączonego zapisu. ``max_transition_hops`` (domyślnie
     1 = single-hop, bezpieczny pilotaż) ogranicza wielo-hop walk; >=2 włącza forced-advance.
+
+    Ewidencja czasu (ADR 0034) ma TRZECIĄ, niezależną bramkę ``enable_jira_worklog`` (domyślnie
+    OFF) i wymaga też źródła commitów (ustawienia GitHub — egzekwuje to wpięcie drzwi, bo tu ich
+    nie widać). ``worklog_allow_on_behalf`` to OSOBNA, węższa bramka na zapis w cudzym imieniu:
+    Jira i tak zapisze autorem konto tokenu, więc cudzy czas trafi do raportów jako nasz — to
+    ma być decyzja operatora, nie efekt uboczny włączenia ewidencji. Pozostałe pola ``worklog_*``
+    to strojenie estymacji (``SessionPolicy``) i sufity bezpieczeństwa zapisu.
     """
 
     base_url: str = ""
     token: str = field(default="", repr=False)
+    deployment: str = "server"
+    email: str = ""
     watch_projects: tuple[str, ...] = ()
     poll_interval_s: int = 60
     per_page: int = 50
@@ -851,12 +887,25 @@ class JiraSettings:
     default_issue_type: str = "Task"
     enable_jira_transition: bool = False
     max_transition_hops: int = 1
+    enable_jira_worklog: bool = False
+    worklog_author_strategy: str = "self"
+    worklog_allow_on_behalf: bool = False
+    worklog_max_hours_per_entry: float = 8.0
+    worklog_max_backdate_days: int = 14
+    worklog_max_range_days: int = 31
+    worklog_idle_gap_minutes: int = 90
+    worklog_ramp_up_minutes: int = 30
+    worklog_round_minutes: int = 15
+    worklog_tz_offset_minutes: int = 120
+    worklog_duplicate_guard: bool = True
 
     @classmethod
     def from_env(cls) -> JiraSettings:
         return cls(
             base_url=os.environ.get("WORKMATE_JIRA_BASE_URL", "").rstrip("/"),
             token=os.environ.get("WORKMATE_JIRA_TOKEN", ""),
+            deployment=os.environ.get("WORKMATE_JIRA_DEPLOYMENT", "server").strip().lower(),
+            email=os.environ.get("WORKMATE_JIRA_EMAIL", "").strip(),
             watch_projects=_list_from_env("WORKMATE_JIRA_WATCH_PROJECTS", ()),
             poll_interval_s=_int_from_env("WORKMATE_JIRA_POLL_INTERVAL", 60),
             per_page=_int_from_env("WORKMATE_JIRA_PER_PAGE", 50),
@@ -867,6 +916,23 @@ class JiraSettings:
             default_issue_type=os.environ.get("WORKMATE_JIRA_DEFAULT_ISSUE_TYPE", "Task"),
             enable_jira_transition=_bool_from_env("WORKMATE_JIRA_ENABLE_TRANSITION", default=False),
             max_transition_hops=_int_from_env("WORKMATE_JIRA_MAX_TRANSITION_HOPS", 1),
+            enable_jira_worklog=_bool_from_env("WORKMATE_JIRA_ENABLE_WORKLOG", default=False),
+            worklog_author_strategy=os.environ.get("WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY", "self")
+            .strip()
+            .lower(),
+            worklog_allow_on_behalf=_bool_from_env(
+                "WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF", default=False
+            ),
+            worklog_max_hours_per_entry=_float_from_env("WORKMATE_JIRA_WORKLOG_MAX_HOURS", 8.0),
+            worklog_max_backdate_days=_int_from_env("WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS", 14),
+            worklog_max_range_days=_int_from_env("WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS", 31),
+            worklog_idle_gap_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES", 90),
+            worklog_ramp_up_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES", 30),
+            worklog_round_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_ROUND_MINUTES", 15),
+            worklog_tz_offset_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES", 120),
+            worklog_duplicate_guard=_bool_from_env(
+                "WORKMATE_JIRA_WORKLOG_DUPLICATE_GUARD", default=True
+            ),
         )
 
     def validate(self) -> None:
@@ -884,6 +950,19 @@ class JiraSettings:
                 "Drzwi Jira wymagają URL i tokenu: brakuje "
                 + ", ".join(missing)
                 + " w środowisku/.env."
+            )
+        deployment = self.deployment.strip().lower()
+        if deployment not in JIRA_DEPLOYMENTS:
+            raise ValueError(
+                "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
+                f"{self.deployment!r}."
+            )
+        # Cloud uwierzytelnia się Basic auth (email + API token); Server/DC — PAT Bearer (bez
+        # e-maila). Brak e-maila na Cloud = niedziałające auth — twardy błąd startu (fail-fast).
+        if deployment == "cloud" and not self.email:
+            raise ValueError(
+                "WORKMATE_JIRA_DEPLOYMENT=cloud wymaga WORKMATE_JIRA_EMAIL "
+                "(e-mail konta Atlassian do Basic-auth z API tokenem)."
             )
         if not self.watch_projects:
             raise ValueError(
@@ -935,6 +1014,84 @@ class JiraSettings:
                 "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
                 f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
             )
+        self._validate_worklog()
+
+    def _validate_worklog(self) -> None:
+        """Reguły ewidencji czasu (ADR 0034) — te same klasy fail-fast co zapis i tranzycja.
+
+        Zakresy liczbowe i nazwę strategii walidujemy ZAWSZE, nie tylko przy włączonej bramce:
+        literówka w ``.env`` nie może spać do dnia, w którym ktoś przestawi flagę.
+        """
+        # Ewidencja to zdolność mutująca — potrzebuje projektu (strażnik klucza) i konta
+        # (strażnik pętli oraz „kto jest self" dla strategii autorstwa). Ta sama para co zapis.
+        if self.enable_jira_worklog and not self.write_project:
+            raise ValueError(
+                "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga WORKMATE_JIRA_WRITE_PROJECT "
+                "(strażnik projektu — wpis czasu trafia tylko do swojego projektu)."
+            )
+        if self.enable_jira_worklog and not self.self_account:
+            raise ValueError(
+                "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
+                "(konto tokenu — strażnik pętli i podstawa strategii autorstwa)."
+            )
+        if self.worklog_author_strategy not in WORKLOG_AUTHOR_STRATEGIES:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY musi być jedną z "
+                f"{', '.join(WORKLOG_AUTHOR_STRATEGIES)}, jest: {self.worklog_author_strategy!r}."
+            )
+        # Slot wybrany przy WŁĄCZONEJ bramce = narzędzie, które padnie dopiero przy pierwszym
+        # zapisie. Lepiej nie wystartować, niż obiecać zdolność, której nie ma (ADR 0034).
+        if (
+            self.enable_jira_worklog
+            and self.worklog_author_strategy not in IMPLEMENTED_WORKLOG_STRATEGIES
+        ):
+            raise ValueError(
+                f"strategia autorstwa {self.worklog_author_strategy!r} jest udokumentowanym "
+                "SZKIELETEM, jeszcze niezaimplementowanym (ADR 0034) — użyj 'self'."
+            )
+        if not 0 < self.worklog_max_hours_per_entry <= MAX_WORKLOG_HOURS_PER_ENTRY:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_MAX_HOURS musi być w zakresie "
+                f"0..{MAX_WORKLOG_HOURS_PER_ENTRY}, jest: {self.worklog_max_hours_per_entry}."
+            )
+        if not 0 <= self.worklog_max_backdate_days <= MAX_WORKLOG_BACKDATE_DAYS:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS musi być w zakresie "
+                f"0..{MAX_WORKLOG_BACKDATE_DAYS}, jest: {self.worklog_max_backdate_days}."
+            )
+        if not 1 <= self.worklog_max_range_days <= MAX_WORKLOG_RANGE_DAYS:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS musi być w zakresie "
+                f"1..{MAX_WORKLOG_RANGE_DAYS}, jest: {self.worklog_max_range_days}."
+            )
+        if not 5 <= self.worklog_idle_gap_minutes <= _MAX_WORKLOG_IDLE_GAP_MIN:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES musi być w zakresie "
+                f"5..{_MAX_WORKLOG_IDLE_GAP_MIN}, jest: {self.worklog_idle_gap_minutes}."
+            )
+        if not 0 <= self.worklog_ramp_up_minutes <= _MAX_WORKLOG_RAMP_UP_MIN:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES musi być w zakresie "
+                f"0..{_MAX_WORKLOG_RAMP_UP_MIN}, jest: {self.worklog_ramp_up_minutes}."
+            )
+        # Rozbieg dłuższy niż przerwa kończąca sesję dawałby estymacje NACHODZĄCE na siebie
+        # (doliczony czas sprzed sesji sięgałby w poprzednią) — cichy bezsens, więc odrzucamy.
+        if self.worklog_ramp_up_minutes > self.worklog_idle_gap_minutes:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES nie może przekraczać "
+                "WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES (estymacje sesji zachodziłyby na siebie): "
+                f"{self.worklog_ramp_up_minutes} > {self.worklog_idle_gap_minutes}."
+            )
+        if self.worklog_round_minutes not in _ALLOWED_ROUND_MINUTES:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_ROUND_MINUTES musi być jedną z "
+                f"{_ALLOWED_ROUND_MINUTES}, jest: {self.worklog_round_minutes}."
+            )
+        if not -720 <= self.worklog_tz_offset_minutes <= 840:
+            raise ValueError(
+                "WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES musi być w zakresie -720..840, "
+                f"jest: {self.worklog_tz_offset_minutes}."
+            )
 
 
 # Zakresy delegowane proaktywnego push do Teams (ADR 0022): tworzenie/pisanie czatu 1:1 oraz
@@ -945,6 +1102,10 @@ _DEFAULT_TEAMS_PUSH_SCOPES = (
     "ChatMessage.Send",
     "ChannelMessage.Send",
     "User.Read",
+    # Lista członków zespołu dla drzwi kart czasu (ADR 0035). NIE wymaga nowej zgody admina:
+    # to ta sama rejestracja aplikacji i ten sam cache MSAL co ``Powiadomienia_teams``, gdzie
+    # scope jest skonsentowany od 2026-07-14 — tu po prostu też o niego prosimy.
+    "TeamMember.Read.All",
 )
 
 
@@ -1029,4 +1190,157 @@ class TeamsPushSettings:
             raise ValueError(
                 "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING wymaga "
                 "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL=true (wątki są tylko na kanale)."
+            )
+
+
+# --- cotygodniowe karty czasu (ADR 0035) -------------------------------------
+_DEFAULT_WORKLOGI_STATE = Path.home() / ".workmate" / "worklogi_state.json"
+_DEFAULT_WORKLOGI_TZ = "Europe/Warsaw"
+# Sufity zdrowego rozsądku — chronią przed absurdem wpisanym do .env, niezależnie od bramki.
+MAX_WORKLOGI_HOURS_PER_DAY = 24.0
+MAX_WORKLOGI_CATCHUP_DAYS = 14
+_ALLOWED_WORKLOGI_SOURCES = ("json",)
+
+
+@dataclass(frozen=True)
+class WorklogiSettings:
+    """Konfiguracja drzwi cotygodniowych kart czasu (ADR 0035).
+
+    Przebieg: w ``run_weekday`` o ``run_hour`` bierze godziny za mijający tydzień, generuje arkusz
+    importu WorklogPRO per osoba i wysyła jej prywatną wiadomość na Teams. Domyślnie WYŁĄCZONY
+    (``enabled``) i dodatkowo w trybie PRÓBNYM (``dry_run``) — arkusze powstają, wiadomości nie.
+
+    Zdolność stoi na dwóch nogach: godziny (``hours_source``) i tożsamości (``identities_path``
+    + Graph po ``team_id``). Braku ustawień GitHuba/Teams ta klasa nie widzi — egzekwuje je
+    wiring drzwi, jak przy ``max_transition_hops`` (ADR 0032/0034).
+    """
+
+    enabled: bool = False
+    dry_run: bool = True
+    output_dir: Path = Path()
+    identities_path: Path = Path()
+    team_id: str = ""
+    state_path: Path = _DEFAULT_WORKLOGI_STATE
+    hours_source: str = "json"
+    hours_path: Path = Path()
+    tz_name: str = _DEFAULT_WORKLOGI_TZ
+    run_weekday: int = 4  # piątek (0=poniedziałek)
+    run_hour: int = 16
+    run_minute: int = 0
+    start_hour: int = 8  # godzina stemplowania wpisu (domyślna WorklogPRO)
+    max_hours_per_day: float = 16.0
+    max_catchup_days: int = 3
+    only_source_ids: tuple[str, ...] = ()
+
+    @classmethod
+    def from_env(cls) -> WorklogiSettings:
+        return cls(
+            enabled=_bool_from_env("WORKMATE_WORKLOGI_ENABLED", default=False),
+            dry_run=_bool_from_env("WORKMATE_WORKLOGI_DRY_RUN", default=True),
+            output_dir=_path_from_env("WORKMATE_WORKLOGI_OUTPUT_DIR", Path()),
+            identities_path=_path_from_env("WORKMATE_WORKLOGI_IDENTITIES", Path()),
+            team_id=os.environ.get("WORKMATE_WORKLOGI_TEAM_ID", "").strip(),
+            state_path=_path_from_env("WORKMATE_WORKLOGI_STATE", _DEFAULT_WORKLOGI_STATE),
+            hours_source=os.environ.get("WORKMATE_WORKLOGI_HOURS_SOURCE", "json").strip().lower(),
+            hours_path=_path_from_env("WORKMATE_WORKLOGI_HOURS_PATH", Path()),
+            tz_name=os.environ.get("WORKMATE_WORKLOGI_TZ", _DEFAULT_WORKLOGI_TZ).strip(),
+            run_weekday=_int_from_env("WORKMATE_WORKLOGI_RUN_WEEKDAY", 4),
+            run_hour=_int_from_env("WORKMATE_WORKLOGI_RUN_HOUR", 16),
+            run_minute=_int_from_env("WORKMATE_WORKLOGI_RUN_MINUTE", 0),
+            start_hour=_int_from_env("WORKMATE_WORKLOGI_START_HOUR", 8),
+            max_hours_per_day=_float_from_env("WORKMATE_WORKLOGI_MAX_HOURS_PER_DAY", 16.0),
+            max_catchup_days=_int_from_env("WORKMATE_WORKLOGI_MAX_CATCHUP_DAYS", 3),
+            only_source_ids=_list_from_env("WORKMATE_WORKLOGI_ONLY_SOURCE_IDS", ()),
+        )
+
+    def validate(self, *, data_dir: Path) -> None:
+        """Twardy błąd startu przy brakach i absurdach. Zakresy sprawdzamy ZAWSZE.
+
+        Literówka w ``.env`` nie może spać do dnia, w którym ktoś przestawi bramkę — dlatego
+        walidacja liczbowa i strefy biegnie niezależnie od ``enabled``.
+        """
+        self._validate_ranges()
+        if not self.enabled:
+            return
+        missing = [
+            name
+            for name, value in (
+                ("WORKMATE_WORKLOGI_OUTPUT_DIR", str(self.output_dir)),
+                ("WORKMATE_WORKLOGI_IDENTITIES", str(self.identities_path)),
+                ("WORKMATE_WORKLOGI_TEAM_ID", self.team_id),
+            )
+            if not value or value == "."
+        ]
+        if missing:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_ENABLED=true wymaga: "
+                + ", ".join(missing)
+                + " w środowisku/.env."
+            )
+        if self.hours_source not in _ALLOWED_WORKLOGI_SOURCES:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_HOURS_SOURCE musi być jednym z "
+                f"{', '.join(_ALLOWED_WORKLOGI_SOURCES)}, jest: {self.hours_source!r}."
+            )
+        if self.hours_source == "json" and str(self.hours_path) in ("", "."):
+            raise ValueError(
+                "WORKMATE_WORKLOGI_HOURS_SOURCE=json wymaga WORKMATE_WORKLOGI_HOURS_PATH."
+            )
+        if not self.identities_path.is_file():
+            raise ValueError(
+                f"mapa tożsamości nie istnieje: {self.identities_path} — bez niej NIKT nie "
+                "dostanie arkusza (fail-closed, ADR 0035)."
+            )
+        self._validate_output_dir(data_dir)
+
+    def _validate_ranges(self) -> None:
+        """Zakresy liczbowe i rozwiązywalność strefy — sprawdzane zawsze, nie tylko pod bramką."""
+        try:
+            ZoneInfo(self.tz_name)
+        except Exception as exc:
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_TZ={self.tz_name!r} nie jest znaną strefą czasową "
+                "(na Windows wymaga pakietu 'tzdata')."
+            ) from exc
+        if not 0 <= self.run_weekday <= 6:
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_RUN_WEEKDAY musi być w zakresie 0..6, jest: {self.run_weekday}."
+            )
+        if not 0 <= self.run_hour <= 23:
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_RUN_HOUR musi być w zakresie 0..23, jest: {self.run_hour}."
+            )
+        if not 0 <= self.run_minute <= 59:
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_RUN_MINUTE musi być w zakresie 0..59, jest: {self.run_minute}."
+            )
+        if not 0 <= self.start_hour <= 23:
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_START_HOUR musi być w zakresie 0..23, jest: {self.start_hour}."
+            )
+        if not 0 < self.max_hours_per_day <= MAX_WORKLOGI_HOURS_PER_DAY:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_MAX_HOURS_PER_DAY musi być w zakresie "
+                f"0..{MAX_WORKLOGI_HOURS_PER_DAY}, jest: {self.max_hours_per_day}."
+            )
+        if not 0 <= self.max_catchup_days <= MAX_WORKLOGI_CATCHUP_DAYS:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_MAX_CATCHUP_DAYS musi być w zakresie "
+                f"0..{MAX_WORKLOGI_CATCHUP_DAYS}, jest: {self.max_catchup_days}."
+            )
+
+    def _validate_output_dir(self, data_dir: Path) -> None:
+        """Katalog arkuszy MUSI leżeć poza bazą wiedzy — wzorzec ``WorkspaceSettings`` (ADR 0018).
+
+        Arkusze to artefakty operacyjne z danymi osobowymi (kto ile pracował). W ``data/`` trafiłyby
+        do bazy, którą agent czyta i indeksuje — czyli cudze godziny wyciekłyby do odpowiedzi
+        modelu. Osobny inwariant niż izolacja osób, ta sama klasa błędu.
+        """
+        resolved_out = self.output_dir.resolve()
+        resolved_data = data_dir.resolve()
+        if resolved_out == resolved_data or resolved_data in resolved_out.parents:
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_OUTPUT_DIR nie może leżeć wewnątrz katalogu danych "
+                f"({resolved_data}) — arkusze z godzinami ludzi to nie baza wiedzy, "
+                f"jest: {resolved_out}."
             )

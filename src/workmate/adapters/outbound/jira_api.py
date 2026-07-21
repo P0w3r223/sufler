@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from workmate.core.errors import WriteError
+
+if TYPE_CHECKING:
+    from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
+    from workmate.config import JiraSettings
 
 # Cap stron na jedno pobranie — chroni przed nieograniczoną paginacją dużych projektów.
 _MAX_PAGES = 10
@@ -95,6 +99,73 @@ class HttpxJiraClient:
             "url": self._browse(issue_key, comment_id=comment_id),
             "created": str(created.get("created") or ""),
         }
+
+    # --- worklog (ADR 0034, bramkowane) — ewidencja czasu, create-only ---------
+
+    def add_worklog(
+        self,
+        issue_key: str,
+        *,
+        time_spent_seconds: int,
+        started: str,
+        comment: str = "",
+        on_behalf_of: str = "",
+    ) -> dict[str, Any]:
+        """Dopisz wpis czasu (REST v2, komentarz zwykłym tekstem — bez ADF).
+
+        **Nie wysyłamy pola ``author``**, tak samo jak na Cloud. Na Server/DC dałoby się przy
+        odpowiednich uprawnieniach ustawić autora, ale świadomie tego NIE robimy: jedno
+        zachowanie na obu wdrożeniach jest łatwiejsze do wytłumaczenia użytkownikowi niż
+        atrybucja zależna od tego, gdzie stoi instancja (ADR 0034). Gdy pojawi się potrzeba
+        prawdziwej atrybucji, wejdzie ona osobną strategią, nie cichym rozjazdem adapterów.
+        """
+        payload: dict[str, Any] = {
+            "timeSpentSeconds": int(time_spent_seconds),
+            "started": started,
+        }
+        if comment:
+            payload["comment"] = comment
+        with _as_write_error("dodać wpisu czasu"):
+            created = self._post_json(
+                f"{self._base_url}/rest/api/2/issue/{issue_key}/worklog", payload
+            )
+        author = _as_dict(created.get("author"))
+        return {
+            "id": str(created.get("id") or ""),
+            "url": self._browse(issue_key),
+            "created": str(created.get("created") or ""),
+            # Server/DC identyfikuje konto przez ``name``/``key``, nie ``accountId`` — port
+            # nazywa to pole jednakowo, bo serwis porównuje je tylko z ``self_account``.
+            "author_account_id": str(author.get("name") or author.get("key") or ""),
+            "requested_author": on_behalf_of,
+            "time_spent_seconds": int(created.get("timeSpentSeconds") or time_spent_seconds),
+        }
+
+    def read_worklogs(self, issue_key: str, *, max_results: int = 100) -> list[dict[str, Any]]:
+        """Istniejące wpisy czasu zgłoszenia — podstawa strażnika duplikatów (ADR 0034)."""
+        with _as_write_error("odczytać wpisów czasu"):
+            data = self._get_json(
+                f"{self._base_url}/rest/api/2/issue/{issue_key}/worklog",
+                {"maxResults": str(max_results)},
+            )
+        raw = data.get("worklogs") if isinstance(data, dict) else None
+        if not isinstance(raw, list):
+            return []
+        entries: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            author = _as_dict(item.get("author"))
+            entries.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "author_account_id": str(author.get("name") or author.get("key") or ""),
+                    "started": str(item.get("started") or ""),
+                    "time_spent_seconds": int(item.get("timeSpentSeconds") or 0),
+                    "comment": str(item.get("comment") or ""),
+                }
+            )
+        return entries
 
     # --- transition (ADR 0032, bramkowane) — best-effort chodzenie po workflow ---
 
@@ -210,6 +281,11 @@ def _status_name(fields: Any) -> str:
     return str(status.get("name") or "") if isinstance(status, dict) else ""
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Zwróć zagnieżdżony obiekt JSON jako słownik albo pusty — odporność na dziwny kształt."""
+    return value if isinstance(value, dict) else {}
+
+
 @contextlib.contextmanager
 def _as_write_error(action: str) -> Iterator[None]:
     """Zamień błąd HTTP zapisu na ``WriteError`` — granica: narzędzie zwróci ``{"error": ...}``.
@@ -224,3 +300,21 @@ def _as_write_error(action: str) -> Iterator[None]:
         raise WriteError(f"nie udało się {action} (HTTP {exc.response.status_code}).") from exc
     except httpx.HTTPError as exc:
         raise WriteError(f"nie udało się {action}: {exc}.") from exc
+
+
+def build_jira_client(
+    sync_http: httpx.Client, settings: JiraSettings
+) -> HttpxJiraClient | HttpxJiraCloudClient:
+    """Fabryka klienta Jira wg ``settings.deployment`` (ADR 0033) — JEDNO źródło wyboru providera.
+
+    ``cloud`` → ``HttpxJiraCloudClient`` (Basic ``email:api_token``, REST v3/ADF, ``search/jql``);
+    inaczej ``HttpxJiraClient`` (Server/DC — PAT Bearer, REST v2). Oba spełniają porty read/write,
+    więc poller i serwisy zapisu ich nie rozróżniają. Klient Cloud ładowany LENIWIE (gdy trzeba).
+    """
+    if settings.deployment.strip().lower() == "cloud":
+        from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
+
+        return HttpxJiraCloudClient(
+            sync_http, email=settings.email, token=settings.token, base_url=settings.base_url
+        )
+    return HttpxJiraClient(sync_http, settings.token, base_url=settings.base_url)

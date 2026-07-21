@@ -6,6 +6,63 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Dodane
+- **Cotygodniowe karty czasu → arkusz WorklogPRO + prywatna wiadomość na Teams**
+  ([ADR 0035](docs/adr/0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md)): nowe drzwi
+  `workmate-worklogi` (extra `worklogi`, bramka OFF, domyślnie tryb PRÓBNY). W piątek biorą godziny
+  za mijający tydzień, generują KAŻDEJ osobie arkusz importu WorklogPRO i wysyłają jej prywatną
+  wiadomość 1:1 z tabelą godzin i ścieżką pliku; wiadomość dostają tylko osoby, które pracowały.
+  Zmiana kierunku wobec ADR 0034: skoro import wykonuje sam pracownik, worklog ma **prawdziwego
+  autora** — obejście „w imieniu" przestaje być potrzebne.
+  Nowy czysty rdzeń: `core/domain/week.py` (termin piątkowy i okno tygodnia przez `ZoneInfo`,
+  odporne na DST), `timesheet.py` (agregacja w minutach, predykat `worked()`), `timesheet_sheet.py`
+  (projekcja na kolumny WorklogPRO, notacja czasu bez `1d`, pełne ISO z offsetem),
+  `timesheet_message.py` (tabela HTML z `html.escape` na każdej wartości),
+  `application/weekly_timesheets.py` (izolacja per osoba, arkusz PRZED wiadomością, `RunReport`).
+  Nowe porty `HoursSource`/`SheetWriter`/`IdentityDirectory` oraz adaptery: zapis xlsx (openpyxl —
+  pierwszy ZAPIS Excela w repo), atrapa źródła na JSON, katalog tożsamości Graph + YAML.
+  Strażnik `assert_single_person` woływany DWA razy (po agregacji i na granicy zapisu).
+- **`TeamsNotifier.send_chat_html`** — wysyłka gotowego HTML 1:1 z pominięciem renderera Markdown.
+  Konieczna, bo `to_teams_html` escapuje surowy HTML i nie włącza tabel. Bezpieczna wyłącznie dzięki
+  kontraktowi: treść składa czysta funkcja rdzenia. `send_chat` bez zmian (test regresyjny pilnuje,
+  że nadal escapuje).
+- **`TeamMember.Read.All`** w `_DEFAULT_TEAMS_PUSH_SCOPES` — lista członków zespołu z Graph.
+  Bez nowej zgody admina: ta sama rejestracja aplikacji i ten sam cache MSAL co `Powiadomienia_teams`.
+- **`tzdata`** jako zależność rdzenia z markerem `sys_platform == 'win32'` (Windows nie ma
+  systemowej bazy stref, Linux ma).
+- **Ewidencja czasu w Jirze z historii commitów GitHub — SZKIELET**
+  ([ADR 0034](docs/adr/0034-jira-worklog-from-github-commits.md)): rdzeń kompletny i pokryty testami,
+  adaptery oraz wpięcie w drzwi obecne, bramka domyślnie OFF. Nowa czysta domena
+  `core/domain/worklog.py` (commity → sesje pracy; cięcie po przerwie **lub** dobie kalendarzowej,
+  rozbieg, zaokrąglanie w górę, `confidence`, rachunki w MINUTACH — sumy dzienne i per zgłoszenie
+  zgadzają się co do minuty). Nowy port `JiraWorklogPort` (trzeci obok read/write) i
+  `GithubReadPort.list_commits`. Serwis `WorklogService` daje **DWA KROKI**: `propose_worklog`
+  (odczyt, zero mutacji) i `log_jira_worklog` (jeden wpis, godziny i dzień podane wprost) — sklejenie
+  ich zamieniłoby wiadomości commitów w polecenia zapisu (ADR 0006). Nowy szew
+  `core/application/worklog_author.py`: `SelfAuthorStrategy` (zaimplementowana) plus udokumentowane
+  sloty `PerUserTokenStrategy`/`TempoWorklogStrategy`. **Jira nie pozwala ustawić autora worklogu** —
+  `on_behalf_of` jest adnotacją w treści, nie atrybucją; adaptery świadomie nie wysyłają pola
+  `author`, a wynik niesie jawne `note`. Konfiguracja: `WORKMATE_JIRA_ENABLE_WORKLOG` (OFF),
+  osobna, węższa `..._WORKLOG_ALLOW_ON_BEHALF` (OFF) i dziewięć pokręteł estymacji/sufitów
+  z walidacją fail-fast. Narzędzia `propose_worklog`/`log_jira_worklog` wchodzą przez
+  `extra_catalog` — zamrożona powierzchnia MCP (4+1) bez zmian.
+
+### Zmienione
+- Wspólne strażniki zapisu do Jiry (`bounded`, `require_jira_key` — pełny kształt `PROJ-123`,
+  blokada path-traversal) wydzielone do `core/domain/guards.py`, a parsowanie znaczników Jiry do
+  `core/domain/jira_time.py`. Powód: zdolności mutujące urosły do dwóch serwisów, a duplikowanie
+  kontroli bezpieczeństwa to dryf. Zachowanie i komunikaty błędów bez zmian.
+- **Wsparcie Jira Cloud (dual-provider)** ([ADR 0033](docs/adr/0033-jira-cloud-support.md)): most Jira
+  obsługuje teraz OBA warianty za przełącznikiem `WORKMATE_JIRA_DEPLOYMENT` (`server` domyślnie —
+  wstecznie zgodne; `cloud`). Nowy `HttpxJiraCloudClient` (REST v3): Basic auth (`WORKMATE_JIRA_EMAIL`
+  + API token), `POST /search/jql` z paginacją kursorową (`nextPageToken`/`isLast`, bez `total`, obrona
+  przed zapętleniem), tożsamość po `accountId`, treść jako **ADF** (kodowana przy zapisie, spłaszczana do
+  tekstu przy odczycie — NA GRANICY adaptera, więc `selection`/poller/serwisy bez zmian). Nowy czysty
+  moduł `core/domain/adf.py` (`text_to_adf`/`adf_to_text`). Fabryka `build_jira_client` wybiera
+  implementację wg `deployment` (jedno źródło; oba wpięcia ją wołają). Ścieżka Server/DC, jej klient i
+  testy — nietknięte. Znane ograniczenie: bulk `/search/jql` ucina inline changelog/komentarze do 20/20
+  (dla pollera inkrementalnego wystarcza; fallback per-issue jako follow-up).
+
 ## [1.1.0] — 2026-07-18
 
 ### Dodane

@@ -12,6 +12,11 @@ dependencies = [
     # server.py importuje uvicorn wprost w gałęzi HTTP (streamable-http, ADR 0007);
     # deklarujemy go jawnie, nie polegając na tranzytywności przez mcp[cli].
     "uvicorn>=0.30",
+    # ``core/domain/week.py`` liczy granice tygodnia przez ``ZoneInfo`` (ADR 0035). Windows nie ma
+    # systemowej bazy stref, więc bez tego pakietu ZoneInfo("Europe/Warsaw") rzuca — na Linuksie
+    # (serwer docelowy) baza jest systemowa, stąd marker. Zależność RDZENIA, nie extra: to czysta
+    # domena, a jej testy biegają bez extras.
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -68,6 +73,14 @@ jira = [
     "httpx>=0.28.1",
     "python-dotenv>=1.0",
 ]
+# Drzwi cotygodniowych kart czasu (ADR 0035) — arkusze WorklogPRO + prywatne wiadomosci na Teams.
+# MSAL (tozsamosc Graph, ta sama rejestracja co teams-graph), openpyxl (ZAPIS xlsx), httpx.
+worklogi = [
+    "httpx>=0.28.1",
+    "msal>=1.28",
+    "openpyxl>=3.1",
+    "python-dotenv>=1.0",
+]
 # Lepszy retrieval notatek (ADR 0023, Faza A) — lematyzacja polska (BM25 nad lematami odporny na
 # fleksję). Lekkie, pure-Python, bez torch; serwer MCP zostaje lekki. Warstwa dense (osadzenia)
 # to Faza B za bramką mikro-evalu — osobny extra dopiero wtedy.
@@ -90,12 +103,16 @@ workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 workmate-github = "workmate.adapters.inbound.github.app:main"
 # Proces drzwi Jira (Server/DC) w trybie delegowanym (ADR 0030), polling PAT: `uv run workmate-jira`.
 workmate-jira = "workmate.adapters.inbound.jira.app:main"
+# Proces drzwi kart czasu (ADR 0035), cotygodniowy: `uv run workmate-worklogi`.
+workmate-worklogi = "workmate.adapters.inbound.worklogi.app:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-testmon>=2.1",   # bieg inkrementalny: tylko testy dotknięte zmianą (`--testmon`)
+    "pytest-xdist>=3.5",     # zrównoleglenie pełnego pakietu (`-n auto`)
     "ruff>=0.5",
     "mypy>=1.10",
     "types-PyYAML>=6.0",

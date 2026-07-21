@@ -57,6 +57,27 @@ class GithubReadPort(Protocol):
         pushy przez różnicę HEAD SHA między rundami (ADR 0029)."""
         ...
 
+    def list_commits(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        author: str = "",
+        per_page: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Surowe commity gałęzi domyślnej w oknie ``since``..``until``, z paginacją (ADR 0034).
+
+        ``author`` zawęża do jednej osoby (login GitHub albo adres e-mail autora commita) —
+        bez niego dostalibyśmy pracę całego zespołu. Białą listę pól nakłada dopiero rdzeń;
+        NIE pobieramy diffów ani patchy. Wiadomość commita to DANE, nie polecenia.
+
+        OGRANICZENIE: endpoint zwraca commity GAŁĘZI DOMYŚLNEJ, więc praca na
+        niezmerge'owanych gałęziach jest niewidoczna (propozycja mówi o tym wprost w ``notes``).
+        """
+        ...
+
     def list_workflow_runs(
         self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
     ) -> list[dict[str, Any]]:

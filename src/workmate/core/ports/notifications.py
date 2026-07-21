@@ -19,6 +19,21 @@ class TeamsNotifier(Protocol):
         """Wyślij ``text`` (Markdown) jako wiadomość 1:1 do użytkownika o danym AAD id."""
         ...
 
+    async def send_chat_html(self, target_user_id: str, html: str) -> None:
+        """Wyślij GOTOWY HTML jako wiadomość 1:1 — z pominięciem renderera Markdown (ADR 0035).
+
+        Osobna metoda, nie flaga w ``send_chat``, bo różni się KONTRAKTEM BEZPIECZEŃSTWA, nie
+        formatowaniem. ``send_chat`` renderuje treść niezaufaną (GitHub/Jira/model) i dlatego
+        escapuje surowy HTML oraz nie włącza tabel. Tu jest odwrotnie: wołający deklaruje, że
+        HTML powstał w rdzeniu, ma sztywny szkielet i każdą wstawioną wartość przepuszczoną przez
+        ``html.escape`` (``core/domain/timesheet_message.py``).
+
+        **Nie wolno** podawać tu treści pochodzącej od użytkownika, modelu ani z mostu zdarzeń —
+        do tego służy ``send_chat``. Ta metoda istnieje wyłącznie dlatego, że tabela HTML jest
+        jedynym czytelnym sposobem pokazania kilkunastu wpisów czasu w wiadomości.
+        """
+        ...
+
     async def post_channel(self, team_id: str, channel_id: str, text: str) -> str:
         """Wyślij ``text`` jako NOWY post (root wątku) na kanale; zwróć id utworzonej wiadomości.
 
