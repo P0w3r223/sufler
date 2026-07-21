@@ -34,6 +34,10 @@ from workmate.core.domain.timesheet import Person
 logger = logging.getLogger(__name__)
 
 _GRAPH = "https://graph.microsoft.com/v1.0"
+# Cap stron listy członków — backstop przed pętlą, nie limit produktowy. Zespół to kilkanaście
+# osób, więc dziesięć stron to zapas ponad potrzebę; wyczerpanie capu jest sygnałem, że coś
+# jest nie tak, i dlatego GŁOŚNO ostrzegamy (patrz ``fetch_team_members``).
+_MAX_MEMBER_PAGES = 10
 
 
 class YamlIdentityDirectory:
@@ -99,7 +103,7 @@ def fetch_team_members(client: Any, team_id: str, token: str) -> dict[str, str]:
     members: dict[str, str] = {}
     url: str | None = f"{_GRAPH}/teams/{team_id}/members"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    for _ in range(10):
+    for _ in range(_MAX_MEMBER_PAGES):
         if not url:
             break
         response = client.get(url, headers=headers)
@@ -112,6 +116,19 @@ def fetch_team_members(client: Any, team_id: str, token: str) -> dict[str, str]:
             if user_id:
                 members[user_id] = str(item.get("displayName") or "")
         url = body.get("@odata.nextLink")
+    if url:
+        # Cap wyczerpany, a Graph ma jeszcze strony — TWARDY błąd, nie ostrzeżenie. Utrata byłaby
+        # cicha i groźna: brak członka w tej mapie = fail-closed w katalogu tożsamości, czyli
+        # człowiek po prostu nie dostaje arkusza, a w raporcie wygląda identycznie jak ktoś, kto
+        # nie pracował. Przy zespole kilkunastu osób wyczerpanie dziesięciu stron jest z definicji
+        # anomalią, więc lepiej nie wysłać NIC i zostawić głośny ślad (przebieg jest osłonięty
+        # ``_safe_run_once``, więc proces przeżyje do kolejnego terminu) niż pominąć kogoś po cichu.
+        # Ta sama zasada co przy niekompletnej mapie tożsamości: fail-fast zamiast domysłu.
+        raise ValueError(
+            f"lista członków zespołu {team_id} jest NIEKOMPLETNA: przerwano po "
+            f"{_MAX_MEMBER_PAGES} stronach, a Graph ma kolejne ({len(members)} osób w mapie). "
+            "Osoby spoza tej listy nie dostałyby arkusza — podnieś cap stron."
+        )
     logger.info("Zespół %s: %d członków z Graph.", team_id, len(members))
     return members
 

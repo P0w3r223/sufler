@@ -21,6 +21,14 @@ from workmate.core.errors import ThreadRootGone
 GRAPH = "https://graph.microsoft.com/v1.0"
 _MAX_429_RETRIES = 5
 _DEFAULT_RETRY_AFTER_S = 5
+# Ponawiane statusy przejściowe. 429 ma własny licznik i odczekanie z ``Retry-After``; 5xx i błąd
+# transportu (timeout, zerwane połączenie) dostają krótki, rosnący backoff — ale WYŁĄCZNIE dla
+# żądań, które wolno powtórzyć (patrz ``_request``). Bez tego jedno 503 z Graph kosztowało
+# człowieka cały tydzień: przebieg jest COTYGODNIOWY, więc „następna próba" oznaczała następny
+# piątek, a nie następną minutę.
+_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
+_MAX_TRANSIENT_RETRIES = 3
+_TRANSIENT_BACKOFF_S = 2
 
 
 class HttpxTeamsNotifier:
@@ -95,26 +103,75 @@ class HttpxTeamsNotifier:
             "chatType": "oneOnOne",
             "members": [_member(me_id), _member(target_user_id)],
         }
-        data = await self._post(f"{GRAPH}/chats", payload)
+        # Idempotentne: dla tej samej pary rozmówców Graph oddaje ISTNIEJĄCY czat, nie tworzy
+        # drugiego. Powtórzenie po timeoucie nie ma więc skutku ubocznego.
+        data = await self._post(f"{GRAPH}/chats", payload, retry_transient=True)
         return str(data["id"])
 
     async def _get(self, url: str) -> dict[str, Any]:
-        response = await self._request("GET", url)
+        # GET nic nie zmienia, więc powtórzenie jest zawsze bezpieczne.
+        response = await self._request("GET", url, retry_transient=True)
         return response.json()
 
-    async def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = await self._request("POST", url, json=payload)
+    async def _post(
+        self, url: str, payload: dict[str, Any], *, retry_transient: bool = False
+    ) -> dict[str, Any]:
+        """POST domyślnie NIE jest ponawiany przy 5xx/timeout — patrz ``_request``.
+
+        Wołający włącza ponawianie tylko tam, gdzie powtórzenie żądania jest udokumentowanie
+        bezpieczne (utworzenie czatu 1:1).
+        """
+        response = await self._request("POST", url, json=payload, retry_transient=retry_transient)
         return response.json() if response.content else {}
 
     async def _request(
-        self, method: str, url: str, *, json: dict[str, Any] | None = None
+        self,
+        method: str,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        retry_transient: bool = False,
     ) -> httpx.Response:
-        attempts = 0
+        """Wykonaj żądanie; ponów 429 ZAWSZE, a 5xx/timeout tylko gdy powtórzenie jest bezpieczne.
+
+        **429 jest bezpieczny bez wyjątku**: limit żądań znaczy, że Graph ODRZUCIŁ żądanie przed
+        przetworzeniem, i mówi wprost, ile czekać (``Retry-After``). Stąd hojne pięć prób.
+
+        **5xx i timeout są bezpieczne tylko dla żądań idempotentnych** — i to jest cała różnica.
+        Timeout odczytu znaczy „nie wiadomo, czy usługa przyjęła"; jeśli przyjęła, a odpowiedź
+        zginęła, powtórzenie wysyła DRUGĄ wiadomość. Dla kart czasu (ADR 0035) to dokładnie ten
+        skutek, przed którym broni reszta modułu: człowiek dostaje dwa arkusze i importuje tydzień
+        dwa razy, a wpisy w Jirze są nieusuwalne narzędziem. Ta sama pułapka dotyczy postu na
+        kanale — ponowiony ``post_channel`` tworzy drugi root wątku, a mapa zapamięta tylko ten
+        nowszy, zostawiając sierotę. Dlatego domyślnie NIE ponawiamy; ``retry_transient=True``
+        włączają wyłącznie: GET oraz utworzenie czatu 1:1 (Graph oddaje istniejący).
+
+        Nieudana wysyłka nie ginie: przebieg zapisuje osobę jako ``FAIL_SEND`` i NIE oznacza jej
+        jako obsłużonej, więc kolejny przebieg ponowi — z człowiekiem w pętli, nie automatycznie.
+        """
+        throttled = 0
+        transient = 0
         while True:
-            response = await self._client.request(method, url, json=json)
-            if response.status_code == 429 and attempts < _MAX_429_RETRIES:
-                attempts += 1
+            try:
+                response = await self._client.request(method, url, json=json)
+            except httpx.TransportError:
+                # Brak odpowiedzi — nie wiemy, czy żądanie zostało przetworzone.
+                if not retry_transient or transient >= _MAX_TRANSIENT_RETRIES:
+                    raise
+                transient += 1
+                await asyncio.sleep(_TRANSIENT_BACKOFF_S * transient)
+                continue
+            if response.status_code == 429 and throttled < _MAX_429_RETRIES:
+                throttled += 1
                 await asyncio.sleep(_retry_after(response))
+                continue
+            if (
+                retry_transient
+                and response.status_code in _RETRYABLE_STATUS
+                and transient < _MAX_TRANSIENT_RETRIES
+            ):
+                transient += 1
+                await asyncio.sleep(_TRANSIENT_BACKOFF_S * transient)
                 continue
             response.raise_for_status()
             return response

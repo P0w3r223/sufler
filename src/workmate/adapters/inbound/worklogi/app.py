@@ -1,8 +1,9 @@
 """Drzwi cotygodniowych kart czasu (ADR 0035) — entry point ``workmate-worklogi``.
 
-W piątek o wyznaczonej godzinie: godziny za mijający tydzień → arkusz importu WorklogPRO per
-osoba → prywatna wiadomość na Teams z zestawieniem i ścieżką pliku. Wiadomość dostają tylko te
-osoby, które faktycznie pracowały.
+W piątek o wyznaczonej godzinie: godziny za tydzień ZAMKNIĘTY (poprzedni pon.–ndz.) → arkusz
+importu WorklogPRO per osoba → prywatna wiadomość na Teams z zestawieniem i ścieżką pliku.
+Wiadomość dostają tylko te osoby, które faktycznie pracowały. Okno liczy ``reported_week``:
+tydzień poprzedni, bo bieżący gubił weekend i piątkowe popołudnie (ADR 0035 § Consequences).
 
 Uruchomienie: ``uv run workmate-worklogi`` (wymaga ``uv sync --extra worklogi``).
 Tryby: ``--once`` (jeden przebieg i koniec), ``--login`` (jednorazowa zgoda device-code),
@@ -131,10 +132,10 @@ def _safe_run_once(
 def _missed_deadline(settings: WorklogiSettings, tz: ZoneInfo) -> datetime | None:
     """Pominięty termin do nadrobienia (albo ``None``) — ZWRACAMY GO, nie samo „tak/nie".
 
-    Wołający liczy tydzień raportu z TERMINU, nie z „teraz". Inaczej restart po północy
-    przesuwał okno o siedem dni: awaria w piątek W29 i podniesienie w poniedziałek dawały
-    raport za W30, więc W29 nie trafiał do nikogo NIGDY, a osoby zapisane w stanie pod
-    etykietą W30 były pomijane w prawdziwym przebiegu W30 — traciły oba tygodnie.
+    Wołający liczy tydzień raportu z TERMINU, nie z „teraz". Termin (piątek) i podniesienie
+    (poniedziałek) leżą po DWÓCH stronach granicy tygodnia, więc raport przeskakiwał o siedem
+    dni: tydzień, który przepadł, nie trafiał do nikogo NIGDY, a osoby zapisane w stanie pod
+    etykietą tygodnia następnego były pomijane w jego prawdziwym przebiegu — traciły oba.
     Kontrakt przeniesiony z ``Powiadomienia_teams`` (tam ta sama pułapka jest opisana wprost).
     """
     if settings.max_catchup_days <= 0:

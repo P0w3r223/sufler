@@ -69,15 +69,35 @@ def test_one_row_per_entry() -> None:
     assert _rendered(entries).count("<tr>") == 4  # nagłówek + 3 wpisy
 
 
-def test_shows_hours_not_minutes() -> None:
+def test_rows_use_the_same_notation_as_the_sheet() -> None:
+    """Człowiek porównuje wiadomość z arkuszem obok siebie — różnica podważa zaufanie do obu."""
     html = _rendered([_entry(15, "WT-12", 150)])
-    assert "2.5" in html
+    assert "2h 30m" in html
     assert "150" not in html
 
 
-def test_shows_the_grand_total() -> None:
+def test_shows_the_grand_total_in_both_notations() -> None:
     html = _rendered([_entry(15, "WT-12", 180), _entry(16, "WT-14", 90)])
-    assert "4.5 h" in html
+    assert "4h 30m" in html  # jak w arkuszu
+    assert "4.5 h" in html  # do porównania z ewidencją
+
+
+def test_rows_sum_exactly_to_the_stated_total() -> None:
+    """Regresja: wiersze szły jako zaokrąglone godziny dziesiętne, a „Razem" liczyło się z MINUT.
+
+    Trzy wpisy po 50 min dawały kolumnę 0.83 + 0.83 + 0.83 = 2.49 pod sumą „2.5 h" — rozjazd
+    widoczny gołym okiem w dokumencie, który człowiek ma zweryfikować przed importem.
+    """
+    html = _rendered([_entry(15, "WT-12", 50), _entry(16, "WT-12", 50), _entry(17, "WT-12", 50)])
+    assert html.count("50m") == 3
+    assert "2h 30m" in html
+
+
+def test_zero_minute_entries_are_skipped_exactly_as_in_the_sheet() -> None:
+    """Wpis zerowy (urlop) odpada w projekcji arkusza — wiadomość obiecywała wtedy wiersz więcej."""
+    html = _rendered([_entry(15, "WT-12", 180), _entry(16, "WT-14", 0)])
+    assert html.count("<tr>") == 2  # nagłówek + JEDEN wpis
+    assert "WT-14" not in html
 
 
 def test_includes_file_path_when_given() -> None:

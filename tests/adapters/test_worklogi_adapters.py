@@ -68,6 +68,26 @@ def test_timestamp_stays_text_not_a_date_cell(tmp_path: Path) -> None:
     assert _read_back(target)[1][3] == "2026-07-15T08:00:00.000+0200"
 
 
+def test_formula_injection_lands_as_text_not_a_formula(tmp_path: Path) -> None:
+    """Komentarz ze źródła nie może stać się FORMUŁĄ — to wykonanie kodu u człowieka.
+
+    openpyxl wnioskuje typ z treści: napis od ``=`` zapisuje jako formułę. Plik jawnie każemy
+    otworzyć przed importem, a źródła godzin jeszcze nie znamy, więc ``=cmd|'/c calc'!A0``
+    w komórce jest realnym wektorem (klasyczne wstrzyknięcie formuły do arkusza). Kontrakt
+    ``SheetWriter``: KAŻDA komórka zapisana jako tekst — sprawdzamy przez odczyt typu komórki,
+    nie samej wartości, bo wartość wygląda tak samo w obu przypadkach.
+    """
+    from openpyxl import load_workbook
+
+    target = tmp_path / "a.xlsx"
+    attack = "=cmd|'/c calc'!A0"
+    OpenpyxlSheetWriter().write(str(target), _HEADERS, ((*_ROW[:4], attack),))
+
+    cell = load_workbook(target).worksheets[0].cell(row=2, column=5)
+    assert cell.data_type == "s"  # 'f' = formuła
+    assert cell.value == attack  # treść NIETKNIĘTA — komentarz ma dojechać do Jiry taki, jaki był
+
+
 def test_writes_an_empty_sheet_without_rows(tmp_path: Path) -> None:
     target = tmp_path / "a.xlsx"
     OpenpyxlSheetWriter().write(str(target), _HEADERS, ())
@@ -266,3 +286,35 @@ def test_fetch_team_members_raises_on_permission_error() -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(httpx.HTTPStatusError):
         fetch_team_members(client, "team-1", "tok")
+
+
+def test_fetch_team_members_fails_loudly_when_the_page_cap_cuts_the_list() -> None:
+    """Ucięcie listy członków było CICHE — a brak członka znaczy „nie dostaje arkusza".
+
+    Katalog tożsamości jest fail-closed, więc osoba spoza tej mapy wygląda w raporcie
+    identycznie jak ktoś, kto nie pracował. Przy zespole kilkunastu osób wyczerpanie
+    dziesięciu stron jest anomalią, więc lepiej nie wysłać NIC niż pominąć kogoś po cichu
+    (ta sama zasada co przy niekompletnej mapie tożsamości).
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Każda strona wskazuje kolejną — Graph nigdy nie mówi „to już koniec".
+        return httpx.Response(
+            200,
+            json={
+                "value": [{"userId": f"aad-{request.url.path}", "displayName": "X"}],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/next",
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(ValueError, match="NIEKOMPLETNA"):
+        fetch_team_members(client, "team-1", "tok")
+
+
+def test_fetch_team_members_succeeds_when_the_list_ends() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"value": [{"userId": "aad-1", "displayName": "Ala"}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert fetch_team_members(client, "team-1", "tok") == {"aad-1": "Ala"}

@@ -43,6 +43,14 @@ class SheetWriter(Protocol):
         Nagłówki i wiersze są już WYPROJEKTOWANE przez rdzeń — adapter niczego nie interpretuje.
         Nadpisanie jest zamierzone: ścieżka jest deterministyczna (osoba + tydzień), więc powtórny
         przebieg po awarii ma dać ten sam plik, a nie drugi obok.
+
+        **KAŻDA komórka musi zostać zapisana jako TEKST** — to wymóg BEZPIECZEŃSTWA, nie
+        kosmetyka. Biblioteki arkuszy wnioskują typ z treści: napis zaczynający się od ``=``
+        staje się FORMUŁĄ (``=cmd|'/c calc'!A0``), a komentarz pochodzi ze źródła godzin,
+        którego jeszcze nie znamy. Plik jawnie każemy człowiekowi otworzyć, więc wnioskowanie
+        typu trzeba wyłączyć po stronie implementacji — rdzeń nie może tego zagwarantować,
+        bo nie wie, czym plik zostanie zapisany. Dodatkowo chroni to znaczniki czasu przed
+        „pomocnym" przekształceniem w natywny typ daty.
         """
         ...
 

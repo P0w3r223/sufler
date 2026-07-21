@@ -217,7 +217,8 @@ Drzwi `workmate-worklogi` (extra `worklogi`). Szczegóły: [`how-to/worklogi-wee
 |---|---|---|
 | `WORKMATE_WORKLOGI_ENABLED` | `false` | **BRAMKA** drzwi. Wymaga `OUTPUT_DIR`, `IDENTITIES`, `TEAM_ID`. |
 | `WORKMATE_WORKLOGI_DRY_RUN` | `true` | Tryb próbny: arkusze powstają, wiadomości NIE wychodzą, stan się nie zapisuje. |
-| `WORKMATE_WORKLOGI_OUTPUT_DIR` | — | Katalog arkuszy. **Musi leżeć poza `data/`** (dane osobowe, nie baza wiedzy). |
+| `WORKMATE_WORKLOGI_HEADERS_CONFIRMED` | `false` | **BRAMKA trybu bojowego.** `DRY_RUN=false` bez tego = twardy błąd startu. Ustaw dopiero po porównaniu `WORKLOGPRO_HEADERS` z szablonem kreatora importu ([`how-to/worklogi-weekly.md`](../how-to/worklogi-weekly.md) §1). |
+| `WORKMATE_WORKLOGI_OUTPUT_DIR` | — | Katalog arkuszy. **Musi leżeć poza `data/` ORAZ poza repozytorium** — imienne godziny w drzewie roboczym trafiłyby do gita przy pierwszym `git add .`. Obie kontrole przy starcie. |
 | `WORKMATE_WORKLOGI_IDENTITIES` | — | Plik YAML `source_id → {aad_user_id, jira_user}`. Fail-closed. |
 | `WORKMATE_WORKLOGI_TEAM_ID` | — | Zespół Teams do weryfikacji członkostwa (`TeamMember.Read.All`). |
 | `WORKMATE_WORKLOGI_HOURS_SOURCE` | `json` | Źródło godzin. Na razie tylko atrapa `json`. |

@@ -39,16 +39,28 @@ _DEFAULT_EVENTS_DB = Path.home() / ".workmate" / "events.db"
 _DEFAULT_ALLOWED_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
 
 
-def _find_repo_root(start: Path) -> Path:
-    """Znajdź korzeń repozytorium, idąc w górę do katalogu z ``pyproject.toml``.
+def _repo_root_or_none(start: Path) -> Path | None:
+    """Korzeń repozytorium (katalog z ``pyproject.toml``) albo ``None``, gdy go nie ma.
 
-    Pozwala uruchamiać serwer niezależnie od bieżącego katalogu roboczego
-    (np. przez ``uv run`` z dowolnego miejsca), bez zaszywania ścieżek w kodzie.
+    ``None`` znaczy „kod nie leży w drzewie repozytorium" — tak jest po instalacji z wheela
+    albo w obrazie kontenera. Wołający, który pilnuje ścieżek WZGLĘDEM repo, nie ma wtedy
+    czego pilnować i musi kontrolę pominąć, zamiast podstawiać byle katalog.
     """
     for parent in (start, *start.parents):
         if (parent / "pyproject.toml").is_file():
             return parent
-    return Path.cwd()
+    return None
+
+
+def _find_repo_root(start: Path) -> Path:
+    """Korzeń repozytorium do wyznaczania ścieżek domyślnych; awaryjnie katalog roboczy.
+
+    Pozwala uruchamiać serwer niezależnie od bieżącego katalogu roboczego
+    (np. przez ``uv run`` z dowolnego miejsca), bez zaszywania ścieżek w kodzie. Degradacja
+    do ``cwd`` jest tu w porządku (chodzi o miejsce na dane), ale NIE nadaje się do kontroli
+    bezpieczeństwa — te używają ``_repo_root_or_none``.
+    """
+    return _repo_root_or_none(start) or Path.cwd()
 
 
 def _path_from_env(name: str, default: Path) -> Path:
@@ -1200,9 +1212,11 @@ _ALLOWED_WORKLOGI_SOURCES = ("json",)
 class WorklogiSettings:
     """Konfiguracja drzwi cotygodniowych kart czasu (ADR 0035).
 
-    Przebieg: w ``run_weekday`` o ``run_hour`` bierze godziny za mijający tydzień, generuje arkusz
-    importu WorklogPRO per osoba i wysyła jej prywatną wiadomość na Teams. Domyślnie WYŁĄCZONY
-    (``enabled``) i dodatkowo w trybie PRÓBNYM (``dry_run``) — arkusze powstają, wiadomości nie.
+    Przebieg: w ``run_weekday`` o ``run_hour`` bierze godziny za tydzień ZAMKNIĘTY (poprzedni
+    pon.–ndz.), generuje arkusz importu WorklogPRO per osoba i wysyła jej prywatną wiadomość na
+    Teams. Domyślnie WYŁĄCZONY (``enabled``) i dodatkowo w trybie PRÓBNYM (``dry_run``) — arkusze
+    powstają, wiadomości nie. Tryb bojowy wymaga ponadto ``headers_confirmed``: nagłówki arkusza
+    są HIPOTEZĄ, a WorklogPRO dopasowuje kolumny po nazwie.
 
     Zdolność stoi na dwóch nogach: godziny (``hours_source``) i tożsamości (``identities_path``
     + Graph po ``team_id``). Braku ustawień GitHuba/Teams ta klasa nie widzi — egzekwuje je
@@ -1211,6 +1225,7 @@ class WorklogiSettings:
 
     enabled: bool = False
     dry_run: bool = True
+    headers_confirmed: bool = False
     output_dir: Path = Path()
     identities_path: Path = Path()
     team_id: str = ""
@@ -1231,6 +1246,7 @@ class WorklogiSettings:
         return cls(
             enabled=_bool_from_env("WORKMATE_WORKLOGI_ENABLED", default=False),
             dry_run=_bool_from_env("WORKMATE_WORKLOGI_DRY_RUN", default=True),
+            headers_confirmed=_bool_from_env("WORKMATE_WORKLOGI_HEADERS_CONFIRMED", default=False),
             output_dir=_path_from_env("WORKMATE_WORKLOGI_OUTPUT_DIR", Path()),
             identities_path=_path_from_env("WORKMATE_WORKLOGI_IDENTITIES", Path()),
             team_id=os.environ.get("WORKMATE_WORKLOGI_TEAM_ID", "").strip(),
@@ -1285,7 +1301,26 @@ class WorklogiSettings:
                 f"mapa tożsamości nie istnieje: {self.identities_path} — bez niej NIKT nie "
                 "dostanie arkusza (fail-closed, ADR 0035)."
             )
+        self._validate_headers_confirmed()
         self._validate_output_dir(data_dir)
+
+    def _validate_headers_confirmed(self) -> None:
+        """Tryb BOJOWY wymaga POTWIERDZONYCH nagłówków WorklogPRO; próbny działa bez tego.
+
+        ``WORKLOGPRO_HEADERS`` pochodzi z dokumentacji producenta, nie z kreatora importu tej
+        instancji — a WorklogPRO dopasowuje kolumny PO NAZWIE, więc literówka unieważnia KAŻDY
+        wygenerowany plik. Dotąd ta hipoteza żyła wyłącznie w komentarzu, czyli pierwsze
+        uruchomienie bojowe mogło rozesłać kilkanaście bezużytecznych arkuszy, zanim ktokolwiek
+        by to zauważył. Flaga zamienia cichą hipotezę w świadomą decyzję operatora, NIE blokując
+        przebiegu na sucho — bo to właśnie on ma posłużyć do porównania z szablonem.
+        """
+        if not self.dry_run and not self.headers_confirmed:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_DRY_RUN=false wymaga WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true. "
+                "Nagłówki arkusza są HIPOTEZĄ z dokumentacji producenta: pobierz szablon "
+                "(Apps → WorklogPRO → Import worklogs), porównaj z WORKLOGPRO_HEADERS i dopiero "
+                "wtedy przestaw flagę — procedura w docs/how-to/worklogi-weekly.md (Etap 0)."
+            )
 
     def _validate_ranges(self) -> None:
         """Zakresy liczbowe i rozwiązywalność strefy — sprawdzane zawsze, nie tylko pod bramką."""
@@ -1324,11 +1359,14 @@ class WorklogiSettings:
             )
 
     def _validate_output_dir(self, data_dir: Path) -> None:
-        """Katalog arkuszy MUSI leżeć poza bazą wiedzy — wzorzec ``WorkspaceSettings`` (ADR 0018).
+        """Katalog arkuszy MUSI leżeć poza bazą wiedzy ORAZ poza repozytorium.
 
-        Arkusze to artefakty operacyjne z danymi osobowymi (kto ile pracował). W ``data/`` trafiłyby
-        do bazy, którą agent czyta i indeksuje — czyli cudze godziny wyciekłyby do odpowiedzi
-        modelu. Osobny inwariant niż izolacja osób, ta sama klasa błędu.
+        Dwa różne wycieki, jedna kontrola. W ``data/`` (wzorzec ``WorkspaceSettings``, ADR 0018)
+        arkusze trafiłyby do bazy, którą agent czyta i indeksuje — cudze godziny wyszłyby
+        w odpowiedzi modelu. Gdziekolwiek indziej w repo (``OUTPUT_DIR=arkusze``) lądują
+        w drzewie roboczym, gotowe do ``git add .`` — imienne godziny w publicznej historii
+        gita są nieusuwalne w praktyce. Dokumentacja obiecywała „poza data/ I poza repo"
+        od początku; kontrola sprawdzała tylko pierwszą połowę.
         """
         resolved_out = self.output_dir.resolve()
         resolved_data = data_dir.resolve()
@@ -1337,4 +1375,17 @@ class WorklogiSettings:
                 f"WORKMATE_WORKLOGI_OUTPUT_DIR nie może leżeć wewnątrz katalogu danych "
                 f"({resolved_data}) — arkusze z godzinami ludzi to nie baza wiedzy, "
                 f"jest: {resolved_out}."
+            )
+        # Gdy kodu nie da się umiejscowić w repozytorium (wheel w venv, obraz kontenera), nie ma
+        # czego pilnować — pomijamy kontrolę zamiast porównywać z katalogiem roboczym procesu.
+        # ``_find_repo_root`` degraduje do ``cwd``, więc bez tego odrzucalibyśmy dowolny katalog
+        # pod CWD z komunikatem mówiącym „wewnątrz repozytorium": fałszywy alarm z mylącym powodem.
+        repo_root = _repo_root_or_none(Path(__file__).resolve())
+        if repo_root is not None and (
+            resolved_out == repo_root or repo_root in resolved_out.parents
+        ):
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_OUTPUT_DIR nie może leżeć wewnątrz repozytorium "
+                f"({repo_root}) — arkusze z imiennymi godzinami trafiłyby do drzewa roboczego "
+                f"i pierwszego 'git add .', jest: {resolved_out}."
             )

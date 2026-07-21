@@ -113,16 +113,21 @@ jednorazowo przez `powiadomienia-teams --login`); watermark = czas SERWERA (nie 
   `OWNER=BIAP-Inteligentne-Technologie`, `REPO=PIWorkmate`, tryb read-only (`ENABLE_WRITE=false`).
 - **Cotygodniowe karty czasu ([ADR 0035](docs/adr/0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md)):**
   drzwi `workmate-worklogi` (extra `worklogi`, bramka `WORKMATE_WORKLOGI_ENABLED` OFF, domyślnie
-  tryb PRÓBNY). Piątek → godziny za mijający tydzień → arkusz importu **WorklogPRO** per osoba →
-  prywatny DM na Teams z tabelą godzin. Import wykonuje CZŁOWIEK, więc worklog ma prawdziwego
+  tryb PRÓBNY). Piątek → godziny za tydzień **ZAMKNIĘTY** (poprzedni pon.–ndz.; okno bieżące
+  gubiło weekend i piątkowe popołudnie BEZPOWROTNIE) → arkusz importu **WorklogPRO** per osoba →
+  prywatny DM na Teams z tabelą godzin (ta sama notacja czasu co w arkuszu, te same wiersze). Import wykonuje CZŁOWIEK, więc worklog ma prawdziwego
   autora — to odpowiedź na ograniczenie z ADR 0034. **`send_chat_html`** (nowa metoda portu) wysyła
   HTML z pominięciem `to_teams_html`, bo tamten escapuje surowy HTML i nie włącza tabel; bezpieczne
   WYŁĄCZNIE dlatego, że treść składa czysta funkcja rdzenia escapująca każdą wartość — treść
   niezaufana MUSI iść przez `send_chat`. Tożsamości: Graph (`TeamMember.Read.All`, bez nowej zgody —
   ta sama aplikacja co `Powiadomienia_teams`) + jawna mapa YAML na konto Jiry, **fail-closed**.
-  `OUTPUT_DIR` musi leżeć poza `data/` (dane osobowe, nie baza wiedzy). Kolejność: arkusz PRZED
-  wiadomością; stan po KAŻDEJ osobie; blokada jednej instancji. **Nagłówki `WORKLOGPRO_HEADERS` to
-  HIPOTEZA** — potwierdzić szablonem z kreatora importu (bramka w `how-to/worklogi-weekly.md`).
+  `OUTPUT_DIR` musi leżeć poza `data/` ORAZ poza repo (imienne godziny → `git add .`). Kolejność:
+  arkusz PRZED wiadomością; stan po KAŻDEJ osobie; blokada jednej instancji; nazwa pliku niesie
+  `source_id` (sama nazwa osoby nie jest różnowartościowa — imiennicy nadpisywali sobie arkusze).
+  **Nagłówki `WORKLOGPRO_HEADERS` to HIPOTEZA** — tryb BOJOWY nie wystartuje bez
+  `WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true` (próbny działa; procedura w `how-to/worklogi-weekly.md`).
+  Wstrzyknięcie formuły do xlsx blokuje KONTRAKT portu `SheetWriter` (każda komórka jako TEKST),
+  a nie kaleczenie treści; rdzeń wycina jedynie znaki sterujące.
   `week.py` i `single_instance.py` są PRZENIESIONE z `Powiadomienia_teams` — utrzymywać zgodnie.
 - **Propozycja czasu z commitów ([ADR 0034](docs/adr/0034-jira-worklog-from-github-commits.md),
   ścieżka zapisu USUNIĘTA 2026-07-21):** zostało JEDNO narzędzie — `propose_worklog` (odczyt

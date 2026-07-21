@@ -9,9 +9,10 @@ kompromis pilotażu, ale tutaj granice tygodnia decydują, do KTÓREGO dnia traf
 pracy w obcym systemie — błąd DST przesunąłby wpis na sąsiedni dzień.
 
 PRZENIESIONE z ``Powiadomienia_teams/scheduler/weekly.py`` (osobny projekt uv, więc import nie
-jest darmowy — patrz ADR 0035 § port-vs-share). Utrzymywać zgodnie z oryginałem; różnica jest
-JEDNA i celowa: tamten moduł patrzy W PRZÓD (grafik na przyszły tydzień), a ``reported_week``
-tutaj patrzy WSTECZ (godziny już przepracowane).
+jest darmowy — patrz ADR 0035 § port-vs-share). Utrzymywać zgodnie z oryginałem w częściach
+wspólnych (``week_monday``, ``next_run``, ``previous_run``); ``reported_week`` jest DODATKIEM
+bez odpowiednika — tamten moduł patrzy W PRZÓD (grafik na przyszły tydzień), a my WSTECZ,
+na tydzień już zamknięty.
 """
 
 from __future__ import annotations
@@ -33,17 +34,20 @@ def week_monday(now: datetime, tz: tzinfo) -> datetime:
 
 
 def reported_week(now: datetime, tz: ZoneInfo) -> tuple[datetime, datetime]:
-    """Okno raportowania ``[start, end)`` — tydzień, który WŁAŚNIE się kończy (bieżący pon.–ndz.).
+    """Okno raportowania ``[start, end)`` — tydzień ZAMKNIĘTY, czyli poprzedni pon.–ndz.
 
     Zwraca lokalne północe tz-aware. Przedział jest półotwarty: początek wchodzi, koniec nie —
     dzięki temu sąsiednie tygodnie nie nachodzą na siebie i żadna godzina nie zostanie policzona
     dwa razy ani zgubiona na styku.
 
-    Uruchomienie w piątek 16:00 raportuje tydzień OD poniedziałku TEGO tygodnia. Weekend po
-    terminie wpada więc do raportu dopiero za tydzień — świadomy kompromis: alternatywą byłoby
-    raportowanie tygodnia poprzedniego, czyli wysyłanie ludziom danych sprzed 12 dni.
+    **Tydzień poprzedni, nie bieżący.** Pierwotnie raportowaliśmy tydzień właśnie się kończący
+    i opisaliśmy to jako „weekend wpada do raportu za tydzień". To była NIEPRAWDA: kolejny
+    przebieg raportował już swój własny tydzień, więc godziny z soboty, niedzieli i piątkowego
+    popołudnia po terminie nie trafiały do żadnego arkusza NIGDY. Okno zamknięte jest kompletne
+    z definicji — całe leży w przeszłości. Koszt: zestawienie sprzed 3–12 dni zamiast świeżego,
+    co przy dokumencie, który i tak trzeba przejrzeć i ręcznie zaimportować, jest niską ceną.
     """
-    start = week_monday(now, tz)
+    start = week_monday(now, tz) - timedelta(days=7)
     return start, start + timedelta(days=7)
 
 

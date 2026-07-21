@@ -6,6 +6,52 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Dodane
+- **Bramka potwierdzenia nagłówków WorklogPRO** — `WORKMATE_WORKLOGI_HEADERS_CONFIRMED` (domyślnie
+  `false`). `WORKLOGPRO_HEADERS` pochodzi z dokumentacji producenta, nie z kreatora importu tej
+  instancji, a WorklogPRO dopasowuje kolumny PO NAZWIE — jedna literówka unieważnia KAŻDY plik.
+  Dotąd ta hipoteza żyła w komentarzu, więc pierwszy przebieg bojowy mógł rozesłać kilkanaście
+  bezużytecznych arkuszy. Teraz `DRY_RUN=false` bez potwierdzenia = twardy błąd startu; tryb
+  próbny działa bez zmian, bo to on generuje plik do porównania z szablonem.
+- **Ponawianie błędów przejściowych na Graphie — TYLKO tam, gdzie powtórzenie jest bezpieczne.**
+  5xx i timeout dostają krótki, rosnący backoff przy odczytach (`GET`) oraz przy tworzeniu czatu
+  1:1 (Graph oddaje dla tej samej pary czat ISTNIEJĄCY, więc żądanie jest idempotentne). Przebieg
+  jest COTYGODNIOWY, więc jedno 503 kosztowało człowieka cały tydzień: „następna próba" oznaczała
+  następny piątek. **Wysyłka wiadomości i post na kanale ponawiane NIE są** — timeout znaczy „nie
+  wiadomo, czy usługa przyjęła", a powtórzenie dołożyłoby drugą wiadomość (drugi arkusz do
+  zaimportowania, wpisy w Jirze nieusuwalne) albo drugi root wątku z osieroconym pierwszym.
+  429 ponawiamy wszędzie: oznacza odrzucenie PRZED przetworzeniem.
+- **Niekompletna lista członków zespołu = twardy błąd**, nie ciche ucięcie na capie stron.
+  Katalog tożsamości jest fail-closed, więc osoba, która wypadła z paginacji, wygląda w raporcie
+  identycznie jak ktoś, kto nie pracował. Przy zespole kilkunastu osób wyczerpanie dziesięciu
+  stron jest anomalią — lepiej nie wysłać nic i zostawić głośny ślad niż pominąć kogoś po cichu.
+
+### Naprawione
+- **Karty czasu raportują tydzień ZAMKNIĘTY, nie bieżący** (ADR 0035 § Consequences — korekta
+  nieprawdziwej tezy w dokumentacji). Twierdziliśmy, że godziny po piątkowym terminie „wpadają do
+  raportu za tydzień". Nie wpadały: kolejny przebieg raportował własny tydzień bieżący, więc
+  sobota, niedziela i piątkowe popołudnie nie trafiały do ŻADNEGO arkusza NIGDY. Okno zamknięte
+  jest kompletne z definicji — całe leży w przeszłości. Koszt: zestawienie sprzed 3–12 dni.
+- **Wstrzyknięcie formuły do arkusza (`=cmd|'/c calc'!A0`).** openpyxl wnioskuje typ z treści, więc
+  komentarz zaczynający się od `=` stawał się FORMUŁĄ w pliku, który JAWNIE każemy człowiekowi
+  otworzyć — a źródła godzin jeszcze nie znamy. `SheetWriter` ma teraz kontraktowy obowiązek zapisu
+  KAŻDEJ komórki jako tekstu (adapter wymusza typ po przypisaniu wartości), a rdzeń wycina znaki
+  sterujące — czyli tę sanityzację, którą docstring `WorkEntry` deklarował i której nikt nie robił.
+  Treść zostaje NIETKNIĘTA: żadnego apostrofu ani obcięcia, bo komentarz ma dojechać do Jiry taki,
+  jaki był.
+- **`OUTPUT_DIR` chroniony też przed repozytorium**, nie tylko przed `data/`. Dokumentacja
+  obiecywała „poza `data/` I poza repo" od początku, kontrola sprawdzała pierwszą połowę — więc
+  `OUTPUT_DIR=arkusze` kładł imienne godziny w drzewie roboczym, gotowe do `git add .`.
+  Dołożone `*.xlsx` w `.gitignore` jako druga linia obrony.
+- **Kolizja nazw arkuszy między imiennikami.** Nazwa pliku brała się z `display_name`, który nie
+  jest różnowartościowy — dwie osoby o tej samej nazwie dostawały tę samą ścieżkę, więc drugi
+  arkusz NADPISYWAŁ pierwszy, a wiadomość pierwszej osoby wskazywała cudze godziny. `_slug` zwężał
+  przestrzeń jeszcze bardziej (nazwa bez ASCII → stałe `bez-nazwy`). Nazwa niesie teraz `source_id`.
+- **Wiadomość rozjeżdżała się z arkuszem.** Tabela pokazywała wpisy zerowe (urlop), których arkusz
+  nie zawiera, a czas per wiersz szedł jako zaokrąglone godziny dziesiętne przy sumie liczonej
+  z MINUT — kolumna nie sumowała się do „Razem" (3 × 50 min = 2.49 ≠ 2.5). Oba dokumenty mają teraz
+  te same wiersze i tę samą notację czasu.
+
 ### Usunięte
 - **Ścieżka zapisu ewidencji czasu do Jiry** (ADR 0034 →
   [`superseded in part by 0035`](docs/adr/0034-jira-worklog-from-github-commits.md)). Cała

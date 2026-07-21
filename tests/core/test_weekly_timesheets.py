@@ -23,8 +23,10 @@ from workmate.core.application.weekly_timesheets import (
 from workmate.core.domain.timesheet import Person, WorkEntry
 
 _TZ = ZoneInfo("Europe/Warsaw")
-# Piątek 17.07.2026, 16:00 lokalnie — okno raportowania to 13–19.07 (2026-W29).
-_NOW = datetime(2026, 7, 17, 14, 0, tzinfo=timezone.utc)
+# Piątek 24.07.2026, 16:00 lokalnie. Okno raportowania to tydzień ZAMKNIĘTY, czyli 13–19.07
+# (2026-W29) — nie bieżący. Dzięki temu weekend 18–19.07 wchodzi do raportu zamiast wypaść
+# z obu przebiegów (D9); wpisy testowe stoją w dniach 13–19, więc mieszczą się w oknie.
+_NOW = datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
 
 _MIKOLAJ = Person(
     source_id="EMP-042", aad_user_id="aad-mikolaj", jira_user="mikolaj@example.org", display_name="Mikołaj"
@@ -119,7 +121,7 @@ def test_sends_one_message_per_person_who_worked() -> None:
     assert len(writer.written) == 2
 
 
-def test_reports_the_week_that_is_ending() -> None:
+def test_reports_the_week_that_is_already_closed() -> None:
     service, _, _ = _service([_entry("EMP-042", 15, 60)])
     assert service.run().week_label == "2026-W29"
 
@@ -144,14 +146,14 @@ def test_message_carries_the_file_path() -> None:
     service, _, sender = _service([_entry("EMP-042", 15, 60)])
     service.run()
     ((_, html),) = sender.sent
-    assert "worklog_mikolaj_2026-w29.xlsx" in html
+    assert "worklog_mikolaj_emp-042_2026-w29.xlsx" in html
 
 
 def test_sheet_path_is_deterministic_and_person_scoped() -> None:
     service, writer, _ = _service([_entry("EMP-042", 15, 60)])
     service.run()
     ((path, _),) = writer.written
-    assert path == "D:/worklogi/worklog_mikolaj_2026-w29.xlsx"
+    assert path == "D:/worklogi/worklog_mikolaj_emp-042_2026-w29.xlsx"
 
 
 # --- bramka „czy pracował" -------------------------------------------------------

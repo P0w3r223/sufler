@@ -143,13 +143,66 @@ def test_missing_identity_file_is_a_hard_error(tmp_path: Path) -> None:
         _settings(identities_path=tmp_path / "nie-ma.yaml").validate(data_dir=tmp_path / "data")
 
 
+def _identity_file(tmp_path: Path) -> Path:
+    """Minimalna, POPRAWNA mapa tożsamości — walidacja ma paść na czymś innym niż jej brak."""
+    path = tmp_path / "id.yaml"
+    path.write_text("EMP-1:\n  aad_user_id: a\n  jira_user: b\n", encoding="utf-8")
+    return path
+
+
 def test_output_dir_inside_data_is_rejected(tmp_path: Path) -> None:
     """Arkusze z godzinami ludzi nie mogą trafić do bazy wiedzy, którą agent czyta."""
     data = tmp_path / "data"
-    identities = tmp_path / "id.yaml"
-    identities.write_text("EMP-1:\n  aad_user_id: a\n  jira_user: b\n", encoding="utf-8")
+    identities = _identity_file(tmp_path)
     with pytest.raises(ValueError, match="nie może leżeć wewnątrz katalogu danych"):
         _settings(output_dir=data / "arkusze", identities_path=identities).validate(data_dir=data)
+
+
+def test_output_dir_inside_the_repository_is_rejected(tmp_path: Path) -> None:
+    """Imienne godziny w drzewie roboczym czekają na pierwsze ``git add .`` — i zostają w historii.
+
+    Dokumentacja obiecywała „poza data/ I poza repo" od początku; kontrola sprawdzała tylko
+    pierwszą połowę, więc ``OUTPUT_DIR=arkusze`` przechodziło bez słowa.
+    """
+    identities = _identity_file(tmp_path)
+    inside_repo = Path(__file__).resolve().parents[3] / "arkusze"
+    with pytest.raises(ValueError, match="wewnątrz repozytorium"):
+        _settings(output_dir=inside_repo, identities_path=identities).validate(
+            data_dir=tmp_path / "data"
+        )
+
+
+# --- bramka potwierdzenia nagłówków (D6) ------------------------------------------
+
+
+def _confirmable(tmp_path: Path, **kw) -> WorklogiSettings:
+    return _settings(identities_path=_identity_file(tmp_path), output_dir=tmp_path / "out", **kw)
+
+
+def test_live_run_refuses_to_start_with_unconfirmed_headers(tmp_path: Path) -> None:
+    """Nagłówki są HIPOTEZĄ — bez potwierdzenia szablonem tryb bojowy rozesłałby makulaturę.
+
+    WorklogPRO dopasowuje kolumny PO NAZWIE, więc jedna literówka unieważnia KAŻDY plik.
+    Bez tej bramki dowiedzielibyśmy się o tym dopiero od ludzi, którym import nie przeszedł.
+    """
+    with pytest.raises(ValueError, match="HEADERS_CONFIRMED"):
+        _confirmable(tmp_path, dry_run=False).validate(data_dir=tmp_path / "data")
+
+
+def test_dry_run_starts_without_confirmation(tmp_path: Path) -> None:
+    """Przebieg na sucho MA działać — to on generuje arkusz do porównania z szablonem."""
+    _confirmable(tmp_path, dry_run=True).validate(data_dir=tmp_path / "data")
+
+
+def test_live_run_starts_once_headers_are_confirmed(tmp_path: Path) -> None:
+    _confirmable(tmp_path, dry_run=False, headers_confirmed=True).validate(
+        data_dir=tmp_path / "data"
+    )
+
+
+def test_headers_confirmation_defaults_to_false() -> None:
+    """Domyślnie NIEPOTWIERDZONE — to musi być czynność operatora, nie stan zastany."""
+    assert WorklogiSettings().headers_confirmed is False
 
 
 def test_unknown_timezone_is_rejected_even_when_disabled(tmp_path: Path) -> None:
@@ -214,10 +267,10 @@ def _friday(day: int) -> datetime:
 def test_missed_deadline_returns_the_deadline_not_just_a_flag(tmp_path: Path, monkeypatch) -> None:
     """Nadrabianie w poniedziałek musi wskazać PIĄTKOWY termin, nie »teraz«.
 
-    Regresja: funkcja zwracała ``bool``, a tydzień raportu liczono z zegara. Awaria
-    w piątek W29 i podniesienie w poniedziałek dawały raport za W30 — W29 nie trafiał
-    do nikogo NIGDY, a osoby zapisane pod etykietą W30 były pomijane w prawdziwym
-    przebiegu W30, więc traciły oba tygodnie.
+    Regresja: funkcja zwracała ``bool``, a tydzień raportu liczono z zegara. Piątkowy termin
+    i poniedziałkowe podniesienie leżą po DWÓCH stronach granicy tygodnia, więc raport
+    przeskakiwał o siedem dni: tydzień, który przepadł, nie trafiał do nikogo NIGDY, a osoby
+    zapisane pod etykietą następnego były pomijane w jego prawdziwym przebiegu — traciły oba.
     """
     monday = datetime(2026, 7, 20, 9, 0, tzinfo=ZoneInfo("Europe/Warsaw"))
     monkeypatch.setattr(app, "_now", lambda: monday)
@@ -225,8 +278,14 @@ def test_missed_deadline_returns_the_deadline_not_just_a_flag(tmp_path: Path, mo
     settings = _settings(state_path=tmp_path / "s.json")
     missed = app._missed_deadline(settings, ZoneInfo("Europe/Warsaw"))
 
-    assert missed == _friday(17)  # piątek W29, nie poniedziałek W30
-    assert week_label(reported_week(missed, ZoneInfo("Europe/Warsaw"))[0]) == "2026-W29"
+    assert missed == _friday(17)  # piątkowy termin, nie poniedziałkowe „teraz"
+    # Termin z piątku W29 raportuje tydzień ZAMKNIĘTY, czyli W28. Liczone z „teraz"
+    # (poniedziałek W30) wyszłoby W29 — o tydzień za daleko, i to jest właśnie ten błąd.
+    warsaw = ZoneInfo("Europe/Warsaw")
+    assert week_label(reported_week(missed, warsaw)[0]) == "2026-W28"
+    assert week_label(reported_week(_friday(17), warsaw)[0]) != week_label(
+        reported_week(datetime(2026, 7, 20, 9, 0, tzinfo=warsaw), warsaw)[0]
+    )
 
 
 def test_missed_deadline_is_none_when_the_week_was_already_reported(
@@ -235,7 +294,7 @@ def test_missed_deadline_is_none_when_the_week_was_already_reported(
     monday = datetime(2026, 7, 20, 9, 0, tzinfo=ZoneInfo("Europe/Warsaw"))
     monkeypatch.setattr(app, "_now", lambda: monday)
     state = tmp_path / "s.json"
-    state_store.save(state, {"2026-W29:EMP-042": monday.isoformat()})
+    state_store.save(state, {"2026-W28:EMP-042": monday.isoformat()})
 
     assert app._missed_deadline(_settings(state_path=state), ZoneInfo("Europe/Warsaw")) is None
 
@@ -255,3 +314,126 @@ def test_failed_run_does_not_kill_the_loop(monkeypatch, caplog) -> None:
     app._safe_run_once(_settings(), TeamsPushSettings(), lambda: "t", as_of=_friday(17))
 
     assert "nie powiódł się" in caplog.text
+
+
+# --- przycinanie stanu ------------------------------------------------------------
+
+
+def test_prune_keeps_the_week_that_was_just_reported(tmp_path: Path) -> None:
+    """Nadrabianie nie może wyciąć tygodnia, który WŁAŚNIE zapisało — stąd ``moment``, nie zegar."""
+    state = tmp_path / "s.json"
+    settings = _settings(state_path=state, dry_run=False)
+    tz = ZoneInfo("Europe/Warsaw")
+    moment = _friday(24)
+    label = week_label(reported_week(moment, tz)[0])
+    saved = {f"{label}:EMP-042": "x", "2020-W01:EMP-042": "stare"}
+
+    app._prune_state(settings, saved, tz, moment)
+
+    kept = state_store.load(state)
+    assert f"{label}:EMP-042" in kept
+    assert "2020-W01:EMP-042" not in kept
+
+
+def test_prune_writes_nothing_in_dry_run(tmp_path: Path) -> None:
+    """Tryb PRÓBNY nie dotyka stanu — także przy przycinaniu; „na sucho" nie zostawia śladu."""
+    state = tmp_path / "s.json"
+    settings = _settings(state_path=state, dry_run=True)
+    app._prune_state(
+        settings, {"2020-W01:EMP-042": "stare"}, ZoneInfo("Europe/Warsaw"), _friday(24)
+    )
+
+    assert not state.exists()
+
+
+# --- wymagania startowe -----------------------------------------------------------
+
+
+def test_missing_teams_identity_is_a_hard_start_error() -> None:
+    """Bez tożsamości Graph nie ma jak wysłać — lepiej nie wystartować niż milczeć w piątek."""
+    with pytest.raises(SystemExit, match="CLIENT_ID"):
+        app._require_teams(TeamsPushSettings(client_id="", tenant_id=""))
+
+
+def test_configured_teams_identity_passes() -> None:
+    app._require_teams(TeamsPushSettings(client_id="c", tenant_id="t"))
+
+
+# --- pełne wpięcie drzwi (przebieg na sucho, bez Graph) ---------------------------
+
+
+def _wired(tmp_path: Path, monkeypatch, *, hours: str) -> WorklogiSettings:
+    """Postaw prawdziwe adaptery (JSON, xlsx, YAML) i podmień JEDYNIE listę członków z Graph."""
+    identities = tmp_path / "id.yaml"
+    identities.write_text(
+        "EMP-042:\n  aad_user_id: aad-mikolaj\n  jira_user: mikolaj@example.com\n", encoding="utf-8"
+    )
+    hours_path = tmp_path / "hours.json"
+    hours_path.write_text(hours, encoding="utf-8")
+    monkeypatch.setattr(
+        "workmate.adapters.outbound.graph_identity_directory.fetch_team_members",
+        lambda *_a, **_k: {"aad-mikolaj": "Mikołaj"},
+    )
+    return _settings(
+        output_dir=tmp_path / "out",
+        identities_path=identities,
+        hours_path=hours_path,
+        state_path=tmp_path / "s.json",
+        dry_run=True,
+    )
+
+
+def test_run_once_reports_the_week_of_the_deadline_not_of_the_clock(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Sedno nadrabiania: raport liczy się z ``as_of``, więc tydzień, który przepadł, wraca.
+
+    Bez tego podniesienie w poniedziałek raportowało tydzień bieżący, a ten sprzed awarii
+    nie trafiał do nikogo NIGDY.
+    """
+    settings = _wired(
+        tmp_path,
+        monkeypatch,
+        hours='[{"source_id": "EMP-042", "day": "2026-07-15", "issue_key": "WT-12", "hours": 3}]',
+    )
+    monkeypatch.setattr(app, "_now", lambda: datetime(2026, 8, 30, 9, 0, tzinfo=ZoneInfo("UTC")))
+
+    report = app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert report.week_label == "2026-W29"  # tydzień terminu, nie „teraz" (koniec sierpnia)
+    assert [outcome.source_id for outcome in report.sent] == ["EMP-042"]
+
+
+def test_run_once_writes_the_sheet_but_sends_nothing_in_dry_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tryb PRÓBNY ma dać artefakt do obejrzenia i NIC poza tym — ani wiadomości, ani stanu."""
+    settings = _wired(
+        tmp_path,
+        monkeypatch,
+        hours='[{"source_id": "EMP-042", "day": "2026-07-15", "issue_key": "WT-12", "hours": 3}]',
+    )
+
+    app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert list((tmp_path / "out").glob("*.xlsx"))
+    assert not (tmp_path / "s.json").exists()
+
+
+def test_run_once_fails_closed_for_a_person_outside_the_identity_map(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Nieznane ``source_id`` NIE dostaje pliku ani wiadomości — zgadywanie tożsamości jest gorsze.
+
+    Zły ``jira_user`` zaimportowałby czyjeś godziny na CUDZE konto Jiry, create-only.
+    """
+    settings = _wired(
+        tmp_path,
+        monkeypatch,
+        hours='[{"source_id": "OBCY-1", "day": "2026-07-15", "issue_key": "WT-12", "hours": 3}]',
+    )
+
+    report = app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert [outcome.reason for outcome in report.failed] == ["unknown_person"]
+    assert not list((tmp_path / "out").glob("*.xlsx"))

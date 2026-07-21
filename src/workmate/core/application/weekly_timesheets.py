@@ -121,7 +121,12 @@ class WeeklyTimesheetService:
         self._now = now
 
     def run(self) -> RunReport:
-        """Wykonaj przebieg za tydzień, który właśnie się kończy; zwróć strukturalny raport."""
+        """Wykonaj przebieg za tydzień ZAMKNIĘTY (poprzedni pon.–ndz.); zwróć raport.
+
+        Okno bierze ``reported_week`` i jest to tydzień POPRZEDNI, nie bieżący: okno bieżące
+        gubiło godziny z weekendu i z piątkowego popołudnia BEZPOWROTNIE, bo kolejny przebieg
+        raportował już swój własny tydzień (ADR 0035 § Consequences).
+        """
         week_start, week_end = reported_week(self._now(), self._tz)
         label = week_label(week_start)
         report = RunReport(week_label=label, dry_run=self._dry_run)

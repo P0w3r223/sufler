@@ -171,12 +171,19 @@ strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ 
   z `WORKLOGPRO_HEADERS`. Zaimportuj 2–3 wiersze ręcznie, potem TE SAME drugi raz. Sprawdź, czy
   import działa z konta BEZ uprawnień admina.
 - **Oczekiwane:** nagłówki zgodne (albo poprawione w stałej + teście); wiadomo, czy powstają
-  duplikaty; wiadomo, czy nie-admin może importować. Bez tego kroku reszta jest niepotwierdzona.
+  duplikaty; wiadomo, czy nie-admin może importować. Dopiero po tym kroku wolno ustawić
+  `WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true` — bez tego przebieg BOJOWY nie wystartuje.
 - **Krok (próbny):** `WORKMATE_WORKLOGI_ENABLED=true`, `DRY_RUN=true`, `ONLY_SOURCE_IDS` = tylko Ty.
   `uv run workmate-worklogi --once`.
 - **Oczekiwane:** arkusz w `OUTPUT_DIR` z Twoimi godzinami, ŻADNEJ wiadomości na Teams, pusty stan.
-  Otwórz plik i zweryfikuj kolumny oraz znacznik `Start Date & Time` z offsetem.
-- **Krok (bojowy, pilotaż):** `DRY_RUN=false`, `ONLY_SOURCE_IDS` = Ty + Mikołaj. Uruchom ponownie.
+  Otwórz plik i zweryfikuj kolumny oraz znacznik `Start Date & Time` z offsetem. Sprawdź też okno:
+  raport dotyczy tygodnia ZAMKNIĘTEGO, więc piątkowy przebieg pokazuje poprzedni pon.–ndz. razem
+  z weekendem (wcześniej te godziny nie trafiały do żadnego arkusza).
+- **Krok (bramka nagłówków):** spróbuj `DRY_RUN=false` BEZ `HEADERS_CONFIRMED=true`.
+- **Oczekiwane:** proces nie startuje, komunikat odsyła do Kroku 0. To jedyna ochrona przed
+  rozesłaniem kilkunastu plików z niepoprawnymi kolumnami.
+- **Krok (bojowy, pilotaż):** `DRY_RUN=false`, `HEADERS_CONFIRMED=true`, `ONLY_SOURCE_IDS` = Ty
+  + Mikołaj. Uruchom ponownie.
 - **Oczekiwane:** prywatna wiadomość 1:1 z **tabelą** (nie `&lt;table&gt;` — to sprawdza
   `send_chat_html`), sumą tygodnia, ścieżką pliku i ostrzeżeniem o dublowaniu. Każdy widzi TYLKO
   swoje godziny. Osoba bez godzin nie dostaje nic.
