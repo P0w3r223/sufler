@@ -1,6 +1,6 @@
 # Do wykonania, zanim obraz zadziała na serwerze
 
-Stan na 2026-07-21. Obraz `powiadomienia-teams:0.1.0` jest **zbudowany i przetestowany** (229 testów
+Stan na 2026-07-21. Obraz `powiadomienia-teams:0.2.0` jest **zbudowany i przetestowany** (236 testów
 w środku obrazu, przebieg próbny przeciwko prawdziwemu Graphowi przeszedł). Poniższe punkty to
 wyłącznie to, czego brakuje **po stronie tenanta i konfiguracji** — nie kodu.
 

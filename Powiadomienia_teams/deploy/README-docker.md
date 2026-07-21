@@ -229,9 +229,9 @@ Stan pendingów zostaje — otwarte rozmowy będą kontynuowane z nowego konta.
 ```bash
 tar -xzf /tmp/powiadomienia-teams-<nowa>.tar.gz -C /tmp
 cd /tmp/powiadomienia-teams
-WERSJA=0.2.0 bash scripts/build-image.sh          # testy muszą przejść, żeby obraz powstał
+WERSJA=0.3.0 bash scripts/build-image.sh          # testy muszą przejść, żeby obraz powstał
 
-sudo sed -i 's/powiadomienia-teams:0.1.0/powiadomienia-teams:0.2.0/' \
+sudo sed -i 's/powiadomienia-teams:0.2.0/powiadomienia-teams:0.3.0/' \
     /opt/teams-shifts-reminder/docker-compose.yml
 cd /opt/teams-shifts-reminder && docker compose up -d
 ```
