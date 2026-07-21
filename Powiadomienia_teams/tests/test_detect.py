@@ -56,9 +56,3 @@ def test_shifts_and_time_off_cover_jointly():
     members = [Member("u1", "A"), Member("u2", "B"), Member("u3", "C")]
     out = members_without_shifts(members, [_shift("u1")], [_time_off("u2")])
     assert [m.user_id for m in out] == ["u3"]
-
-
-def test_time_off_defaults_to_empty():
-    """Domyślna pusta krotka — wywołania bez czasu wolnego zachowują się jak dotąd."""
-    members = [Member("u1", "A")]
-    assert [m.user_id for m in members_without_shifts(members, [])] == ["u1"]

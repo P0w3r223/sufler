@@ -10,6 +10,7 @@ from typing import Any
 # Haiku 4.5 — szybka, tania ekstrakcja JSON (interpretacja odpowiedzi to proste zadanie
 # strukturalne). Konfigurowalne przez POWIADOMIENIA_LLM_MODEL, gdyby potrzeba więcej mocy.
 _DEFAULT_MODEL = "claude-haiku-4-5"
+_TIMEOUT_S = 30.0  # patrz `_get_client` — chroni pętlę nasłuchu przed zawieszeniem
 
 
 class AnthropicLlm:
@@ -31,7 +32,12 @@ class AnthropicLlm:
         if self._client is None:
             import anthropic
 
-            self._client = anthropic.Anthropic(api_key=self._api_key)
+            # Timeout JAWNIE: domyślne 10 min SDK × 2 ponowienia to do ~30 min zegara ściennego
+            # wewnątrz obsługi JEDNEJ odpowiedzi. Przez ten czas nasłuch nie obsługuje nikogo
+            # innego, a proces wygląda na zdrowy — najgorszy możliwy stan dla pracy bezobsługowej.
+            self._client = anthropic.Anthropic(
+                api_key=self._api_key, timeout=_TIMEOUT_S, max_retries=1
+            )
         return self._client
 
     def complete(self, system: str, user: str) -> str:

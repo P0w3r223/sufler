@@ -43,7 +43,9 @@ Adopt a three-part design. Each part keeps the single-team run working via a com
 
 Introduce `teams: tuple[TeamConfig, ...]` on `Settings`, where `TeamConfig` is a frozen value
 object `{team_id, scheduling_group_id, only_user_ids?}`. Populate it from an optional YAML file
-(`POWIADOMIENIA_TEAMS_FILE`, reusing the existing `roster.py` YAML+validation pattern); when the
+(`POWIADOMIENIA_TEAMS_FILE`, following a YAML+validation pattern like the former `roster.py` —
+that module was removed on 2026-07-21 as unused, so this ADR now describes the pattern, not a
+file to copy); when the
 file is absent, synthesize a **one-element list from the existing scalar** `team_id`/
 `scheduling_group_id`. All downstream code depends only on `settings.teams`, never on the scalars.
 

@@ -15,7 +15,6 @@ _PREFIX = "POWIADOMIENIA_"
 
 # Delegowane scope Graph — wszystkie nadane i potwierdzone na żywo (Smoke #1, 2026-07-14).
 # MSAL sam dokłada openid/profile/offline_access — nie wpisywać ich tutaj.
-# roster.py (YAML) zostaje jako opcjonalny fallback, gdyby TeamMember.Read.All było niedostępne.
 _DEFAULT_SCOPES: tuple[str, ...] = (
     "User.Read",
     "User.ReadBasic.All",
@@ -89,7 +88,6 @@ class Settings:
     scopes: tuple[str, ...] = _DEFAULT_SCOPES
     token_cache_path: Path = field(default_factory=lambda: _DEFAULT_TOKEN_CACHE)
     state_path: Path = field(default_factory=lambda: _DEFAULT_STATE)
-    roster_path: Path | None = None
     run_weekday: int = 4  # piątek (0=poniedziałek … 6=niedziela)
     run_hour: int = 16
     run_minute: int = 0
@@ -97,12 +95,22 @@ class Settings:
     reply_window_hours: int = 48  # po tylu h ciszy zamknij okno odpowiedzi (status EXPIRED)
     send_expiry_message: bool = True  # przy wygaśnięciu wyślij uprzejme domknięcie do pracownika
     poll_interval_s: int = 10  # bazowy (minimalny) odstęp odpytywania; backoff go wydłuża
-    poll_max_interval_s: int = 300  # górny limit odstępu przy długiej ciszy (5 min)
+    poll_max_interval_s: int = 3600  # górny limit odstępu przy długiej ciszy (1 h)
     catchup_grace_hours: int = 6  # jak długo po minionym terminie wolno nadrobić przebieg (0=off)
     dry_run: bool = True
     only_user_ids: tuple[str, ...] = ()  # pusty = wszyscy; ustawiony = tryb pilotażowy
     llm_model: str = "claude-haiku-4-5"
     anthropic_api_key: str = field(default="", repr=False)
+    # --- Praca bezobsługowa ---
+    admin_user_id: str = ""  # AAD id administratora — odbiorca cotygodniowego podsumowania
+    # URL webhooka bywa sekretem (potrafi zawierać token w ścieżce) → repr=False jak klucz API.
+    alert_webhook_url: str = field(default="", repr=False)
+    heartbeat_interval_h: int = 24  # co ile godzin sprawdzać sesję poza przebiegiem tygodniowym
+    auth_failure_exit_delay_s: int = 600  # ile czekać przed wyjściem po utracie sesji
+    # Po jakim czasie bez pulsu healthcheck uznaje pętlę za martwą. NIEZALEŻNE od sufitu nasłuchu:
+    # puls bije co minutę (`app._spij_z_pulsem`), więc próg nie musi rosnąć razem z odstępem
+    # odpytywania. Wcześniejsze wyprowadzanie progu z `poll_max_interval_s` dawało 2 h.
+    health_max_age_s: int = 900
 
     @property
     def authority(self) -> str:
@@ -116,6 +124,16 @@ class Settings:
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
+
+    @property
+    def heartbeat_path(self) -> Path:
+        """Plik pulsu obok stanu — czyta go HEALTHCHECK obrazu.
+
+        Wyprowadzony ze `state_path`, a nie osobną zmienną: ma leżeć na tym samym wolumenie co stan
+        (inaczej byłby zapisywany do systemu plików tylko-do-odczytu), a jedna ścieżka mniej
+        w konfiguracji to jedna okazja mniej, żeby rozjechała się z punktem montowania.
+        """
+        return self.state_path.with_name("heartbeat")
 
     def validate(self) -> None:
         missing = [n for n in ("client_id", "tenant_id", "team_id") if not getattr(self, n)]
@@ -138,6 +156,14 @@ class Settings:
             raise ConfigError(f"reply_window_hours musi być > 0: {self.reply_window_hours}")
         if self.catchup_grace_hours < 0:
             raise ConfigError(f"catchup_grace_hours < 0 niedozwolone: {self.catchup_grace_hours}")
+        if self.heartbeat_interval_h <= 0:
+            raise ConfigError(f"heartbeat_interval_h musi być > 0: {self.heartbeat_interval_h}")
+        if self.health_max_age_s <= 0:
+            raise ConfigError(f"health_max_age_s musi być > 0: {self.health_max_age_s}")
+        if self.auth_failure_exit_delay_s < 0:
+            raise ConfigError(
+                f"auth_failure_exit_delay_s < 0 niedozwolone: {self.auth_failure_exit_delay_s}"
+            )
         if not self.dry_run and not self.scheduling_group_id:
             raise ConfigError(
                 "scheduling_group_id jest wymagane, gdy dry_run=false (zapis zmian do Shifts)"
@@ -156,7 +182,6 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        roster = os.environ.get(_PREFIX + "ROSTER_PATH")
         return cls(
             client_id=_get("CLIENT_ID"),
             tenant_id=_get("TENANT_ID"),
@@ -164,7 +189,6 @@ class Settings:
             scheduling_group_id=(_get("SCHEDULING_GROUP_ID") or None),
             token_cache_path=_path("TOKEN_CACHE", _DEFAULT_TOKEN_CACHE),
             state_path=_path("STATE_PATH", _DEFAULT_STATE),
-            roster_path=(Path(roster).expanduser() if roster else None),
             run_weekday=_int("RUN_WEEKDAY", 4),
             run_hour=_int("RUN_HOUR", 16),
             run_minute=_int("RUN_MINUTE", 0),
@@ -172,10 +196,15 @@ class Settings:
             reply_window_hours=_int("REPLY_WINDOW_HOURS", 48),
             send_expiry_message=_bool("SEND_EXPIRY_MESSAGE", True),
             poll_interval_s=_int("POLL_INTERVAL_S", 10),
-            poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 300),
+            poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 3600),
             catchup_grace_hours=_int("CATCHUP_GRACE_HOURS", 6),
             dry_run=_bool("DRY_RUN", True),
             only_user_ids=_list("ONLY_USER_IDS"),
             llm_model=_get("LLM_MODEL", "claude-haiku-4-5"),
             anthropic_api_key=(os.environ.get("ANTHROPIC_API_KEY") or _get("AGENT_API_KEY")),
+            admin_user_id=_get("ADMIN_USER_ID"),
+            alert_webhook_url=_get("ALERT_WEBHOOK_URL"),
+            heartbeat_interval_h=_int("HEARTBEAT_INTERVAL_H", 24),
+            auth_failure_exit_delay_s=_int("AUTH_FAILURE_EXIT_DELAY_S", 600),
+            health_max_age_s=_int("HEALTH_MAX_AGE_S", 900),
         )

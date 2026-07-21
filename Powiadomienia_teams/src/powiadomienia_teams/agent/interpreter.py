@@ -204,6 +204,27 @@ def _with_themes(
     return result
 
 
+def _items_or_none(data: dict[str, Any], key: str) -> list[dict[str, Any]] | None:
+    """Lista wpisów spod ``key``; ``None``, gdy model przysłał zamiast niej coś zupełnie innego.
+
+    JSON bywa poprawny SKŁADNIOWO i zły STRUKTURALNIE — ``shifts`` jako napis, ``time_off`` jako
+    obiekt, lista list. Iterowanie po tym rzuca ValueError/AttributeError w środku obsługi jednej
+    odpowiedzi, a że watermark przesuwa się dopiero po sukcesie, ta sama wiadomość wracałaby
+    w każdym ticku aż do wygaśnięcia okna — dziesiątki wywołań modelu i na koniec nieprawdziwe
+    „nie dostałem odpowiedzi" do osoby, która przecież odpisała.
+
+    Zły KONTENER → ``None`` (cała odpowiedź degraduje się do »unclear«, bo nie wiadomo, co model
+    miał na myśli). Złe POJEDYNCZE wpisy → pomijane, spójnie z ``build_schedule`` oraz
+    ``_parse_time_off``, które od zawsze przepuszczają tylko to, co daje się sensownie odczytać.
+    """
+    value = data.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
@@ -325,10 +346,20 @@ def interpret_reply(
     action = str(data.get("action", "unclear"))
 
     if action in ("confirm", "modify"):
+        shifts_raw = _items_or_none(data, "shifts")
+        time_off_raw = _items_or_none(data, "time_off")
+        if shifts_raw is None or time_off_raw is None:
+            logger.warning(
+                "Model zwrócił JSON o nieoczekiwanym kształcie (shifts=%s, time_off=%s) — "
+                "degraduję do »unclear«.",
+                type(data.get("shifts")).__name__,
+                type(data.get("time_off")).__name__,
+            )
+            return ReplyDecision("unclear", None, ())
         theme_by_weekday = {sh.start.astimezone(tz).weekday(): sh.theme for sh in proposal.shifts}
-        enriched = _with_themes(data.get("shifts") or [], theme_by_weekday)
+        enriched = _with_themes(shifts_raw, theme_by_weekday)
         schedule = build_schedule(proposal.member_id, proposal.week_start, enriched, tz, group_id)
-        time_off = _parse_time_off(data.get("time_off") or [])
+        time_off = _parse_time_off(time_off_raw)
         # Rozłączność: dzień wolny wygrywa — usuń go z grafiku pracy, żeby nie zapisać obu naraz.
         off_days = {item["weekday"] for item in time_off}
         if off_days and not schedule.is_empty:

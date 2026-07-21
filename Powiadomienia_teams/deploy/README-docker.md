@@ -175,14 +175,33 @@ Szukaj w logu: `Następny przebieg powiadomień: <data najbliższego piątku 16:
 
 ## Runbook
 
-### Usługa stoi, w logu „Utracono uwierzytelnienie"
+### Alert „Utracono uwierzytelnienie"
 
-Refresh-token wygasł (rolling ~90 dni) albo zadziałała polityka Conditional Access. Zachowanie
-**zamierzone** — kontener zatrzymuje się zamiast udawać, że działa (`restart: on-failure:5`).
+Powtórz krok 4. **Nie musisz nic więcej robić** — `restart: unless-stopped` sam podniesie usługę,
+gdy tylko token wróci. W logu i w alercie jest kod AADSTS, który mówi, co dokładnie się stało:
 
-Powtórz krok 4, potem `docker compose up -d`.
+| Kod | Przyczyna | Co zrobić |
+|---|---|---|
+| `AADSTS50173` | Zmieniono lub zresetowano hasło konta bota | `--login`; rozważ konto passwordless |
+| `AADSTS50078`, `70043` | Polityka sign-in frequency | `--login`; poproś admina o wyłączenie SIF dla tej aplikacji |
+| `AADSTS530036` | Conditional Access blokuje device code flow | **Token nie do odzyskania** — potrzebna zmiana polityki |
+| `AADSTS65001` | Cofnięto zgodę administratora | Ponowna zgoda na uprawnienia aplikacji |
+| `AADSTS700082` | Token wygasł z bezczynności | Usługa nie działała >90 dni; `--login` |
 
-> Zaplanuj ponowne logowanie **co ~80 dni**, zanim token wygaśnie sam.
+> **Nie ma potrzeby cyklicznego przelogowywania.** Wbrew powszechnemu przekonaniu 90 dni to okno
+> **bezczynności**, a nie maksymalny wiek tokenu (`MaxAgeSingleFactor` = `until-revoked`).
+> Refresh-token rotuje się przy każdym użyciu, więc przy cotygodniowym cyklu żyje bezterminowo.
+> Ponowne logowanie jest reakcją na zdarzenie w tenancie, nie zadaniem w kalendarzu.
+
+### Nie przyszło cotygodniowe podsumowanie
+
+To **główny sygnał awarii** w instalacji bez monitoringu. Usługa wysyła podsumowanie po każdym
+przebiegu, także gdy nikogo nie trzeba było zagadnąć — cisza oznacza więc, że nie żyje.
+
+```bash
+docker compose ps          # zdrowy? zatrzymany?
+docker compose logs --tail 100
+```
 
 ### Zmiana listy odbiorców
 
@@ -210,9 +229,9 @@ Stan pendingów zostaje — otwarte rozmowy będą kontynuowane z nowego konta.
 ```bash
 tar -xzf /tmp/powiadomienia-teams-<nowa>.tar.gz -C /tmp
 cd /tmp/powiadomienia-teams
-WERSJA=0.2.0 bash scripts/build-image.sh          # testy muszą przejść, żeby obraz powstał
+WERSJA=0.3.0 bash scripts/build-image.sh          # testy muszą przejść, żeby obraz powstał
 
-sudo sed -i 's/powiadomienia-teams:0.1.0/powiadomienia-teams:0.2.0/' \
+sudo sed -i 's/powiadomienia-teams:0.2.0/powiadomienia-teams:0.3.0/' \
     /opt/teams-shifts-reminder/docker-compose.yml
 cd /opt/teams-shifts-reminder && docker compose up -d
 ```
@@ -233,12 +252,26 @@ Warto zrobić przed każdą aktualizacją — uszkodzony plik stanu jest nadpisy
 
 ### Monitoring
 
-Bez tego zatrzymany kontener jest niewidoczny do następnego piątku:
+Usługa sama się zgłasza — ręczne zaglądanie jest już tylko uzupełnieniem:
+
+| Kanał | Kiedy | Po co |
+|---|---|---|
+| Podsumowanie na Teams | po każdym przebiegu | **dead man's switch** — brak wiadomości = awaria |
+| Webhook | start, utrata sesji, nieudany przebieg, nieudany puls | alert niezależny od Graph |
+| `HEALTHCHECK` | co 5 min | `docker compose ps` pokazuje `healthy`/`unhealthy`, nie samo „Up" |
+| Puls sesji | co 24 h | utrata sesji wychodzi w dobę, nie dopiero w piątek o 16:00 |
+
+Wymaga ustawienia `POWIADOMIENIA_ADMIN_USER_ID` i `POWIADOMIENIA_ALERT_WEBHOOK_URL` — bez nich
+usługa działa, ale milczy.
 
 ```bash
 docker compose ps
 docker compose logs --since 168h | grep -Ei 'error|critical'
 ```
+
+> Docker **nie restartuje** kontenera oznaczonego `unhealthy` (robi to dopiero Swarm). Healthcheck
+> daje widoczność, nie samoleczenie — przed zawieszeniem chronią timeouty w klientach Graph
+> i Anthropica.
 
 ### Diagnostyka błędów Graph
 
@@ -260,7 +293,10 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 | `read_only: true` + tmpfs | Zapisywalny jest wyłącznie wolumen stanu |
 | `tini` jako PID 1 | Przekazuje SIGTERM, więc `docker stop` kończy pętlę czysto zamiast SIGKILL po 10 s |
 | `LANG=C.UTF-8`, `PYTHONUTF8=1` | Emoji w wiadomościach i polskie znaki w cache MSAL; bez tego `UnicodeEncodeError` |
-| `restart: on-failure:5` | Wygasły token wymaga człowieka; restart w pętli ukryłby problem |
+| `restart: unless-stopped` | Usługa ma wracać po reboocie hosta bez człowieka; utrata sesji jest zgłaszana alertem, a nie ukrywana martwym kontenerem |
+| Opóźnienie przed wyjściem | Przy `unless-stopped` martwy token dawałby restart co sekundę — 10 min zamienia to w spokojne czekanie na `--login` |
+| `HEALTHCHECK` po pliku pulsu | „Up" nie znaczy „działa"; puls pokazuje, kiedy pętla naprawdę ostatnio się obudziła |
+| Webhook alertów poza AAD | Alert „utracono sesję" powstaje wtedy, gdy Teams przestaje być dostępnym kanałem |
 | Brak `VOLUME` w Dockerfile | Nazwany wolumen w compose zamiast anonimowych, które narastają przy każdym `docker run` |
 
 ## Znane ograniczenia
@@ -269,9 +305,10 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 
 | Objaw | Przyczyna | Obejście |
 |---|---|---|
-| Pętla stoi kilkanaście minut | Brak timeoutu klienta Anthropic (domyślnie 10 min × 2 próby) | Zwykle mija samo; przy nawrotach `docker compose restart` |
-| Bardzo długa cisza przy throttlingu | `Retry-After` z Graph bez górnego limitu (może wynieść 3600 s) | Jak wyżej |
-| Stan zniknął po awarii | Uszkodzony plik jest nadpisywany bez kopii i bez `fsync` | Kopia zapasowa przed aktualizacją (wyżej) |
+| Zmiana przez północ znika | `22:00–06:00` traci informację o przejściu doby i jest po cichu pomijana | Nie dotyczy tego zespołu (brak nocek); wymaga poprawki kodu, gdy się pojawią |
 | Pracownik nie dostał prośby o potwierdzenie | Nieudana wysyłka nie jest ponawiana; status już zmieniony | Napisz do niego ręcznie |
-| Odpowiedź zignorowana bez komunikatu | Model zwrócił JSON poprawny składniowo, ale złego kształtu | Poproś pracownika o prostszą odpowiedź |
-| Fałszywe prośby po ~roku pracy | Paginacja odczytu zmian ucięta na 50 stronach, po cichu | Wymaga poprawki kodu, gdy zespół urośnie |
+| `--login` przy działającej usłudze | Omija blokadę jednej instancji i pisze do cache równolegle | Zawsze `docker compose stop` przed logowaniem (krok 4) |
+
+Naprawione w tej wersji, wcześniej wymienione jako ograniczenia: brak timeoutu Anthropica,
+`Retry-After` bez sufitu, stan nadpisywany bez kopii, ciche ucięcie paginacji, JSON złego kształtu
+kończący się pętlą zamiast prośbą o doprecyzowanie.

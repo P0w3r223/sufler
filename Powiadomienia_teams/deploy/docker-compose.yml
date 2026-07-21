@@ -9,7 +9,7 @@
 
 services:
   powiadomienia:
-    image: powiadomienia-teams:0.1.0
+    image: powiadomienia-teams:0.2.0
     container_name: powiadomienia-teams
 
     env_file:
@@ -21,10 +21,15 @@ services:
     volumes:
       - stan:/var/lib/powiadomienia-teams
 
-    # CELOWO `on-failure`, nie `always`: utrata refresh-tokenu (~90 dni) jest nienaprawialna
-    # automatycznie — wymaga człowieka i `--login`. Restart w nieskończoność tylko ukryłby problem
-    # do następnego piątku. Zatrzymany kontener = sygnał do interwencji.
-    restart: on-failure:5
+    # `unless-stopped`, bo usługa ma pracować bez obsługi: wraca po reboocie hosta i po awarii
+    # Dockera, a `on-failure:5` tego nie gwarantuje — dodatkowo wyczerpanie pięciu prób zatrzymywało
+    # kontener NA STAŁE, także z przyczyny przejściowej.
+    #
+    # Utrata sesji nie jest już przez to ukrywana: program zgłasza ją webhookiem i odczekuje
+    # `AUTH_FAILURE_EXIT_DELAY_S` przed wyjściem, więc restart następuje co ~10 minut, a nie co
+    # sekundę. Gdy człowiek wykona `--login`, usługa podnosi się SAMA — nikt nie musi pamiętać
+    # o `docker compose up -d`.
+    restart: unless-stopped
 
     # Wychodzące HTTPS do login.microsoftonline.com, graph.microsoft.com, api.anthropic.com.
     # Nie nasłuchuje na niczym — brak sekcji ports jest zamierzony.

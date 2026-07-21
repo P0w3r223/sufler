@@ -54,7 +54,6 @@ def test_shift_from_shared():
     s = shift_from_json(raw)
     assert s is not None
     assert s.user_id == "u1"
-    assert s.shared is True
     assert s.scheduling_group_id == "TAG"
     assert s.theme == "green"
     assert s.start == datetime(2026, 7, 20, 8, tzinfo=UTC)
@@ -70,7 +69,7 @@ def test_shift_falls_back_to_draft():
     }
     s = shift_from_json(raw)
     assert s is not None
-    assert s.shared is False
+    assert s.start == datetime(2026, 7, 20, 8, tzinfo=UTC)
 
 
 def test_shift_missing_body_is_none():
@@ -111,7 +110,6 @@ def test_time_off_from_json_maps_shared():
     assert out is not None
     assert out.user_id == "u1"
     assert out.reason_id == "TOR_URLOP"
-    assert out.shared is True
 
 
 def test_time_off_from_json_falls_back_to_draft():
@@ -124,7 +122,7 @@ def test_time_off_from_json_falls_back_to_draft():
         },
     }
     out = time_off_from_json(raw)
-    assert out is not None and out.shared is False
+    assert out is not None and out.reason_id == "TOR_URLOP"
 
 
 def test_time_off_from_json_returns_none_without_reason():

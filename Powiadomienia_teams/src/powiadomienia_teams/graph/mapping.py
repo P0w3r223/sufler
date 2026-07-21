@@ -70,10 +70,8 @@ def shift_from_json(raw: dict[str, Any]) -> Shift | None:
         return None
 
     body = raw.get("sharedShift")
-    shared = True
     if body is None:
         body = raw.get("draftShift")
-        shared = False
     if not body:
         return None
 
@@ -89,7 +87,6 @@ def shift_from_json(raw: dict[str, Any]) -> Shift | None:
             user_id=str(user_id),
             start=start,
             end=end,
-            shared=shared,
             scheduling_group_id=raw.get("schedulingGroupId"),
             theme=body.get("theme"),
         )
@@ -108,10 +105,8 @@ def time_off_from_json(raw: dict[str, Any]) -> TimeOff | None:
         return None
 
     body = raw.get("sharedTimeOff")
-    shared = True
     if body is None:
         body = raw.get("draftTimeOff")
-        shared = False
     if not body:
         return None
 
@@ -127,7 +122,6 @@ def time_off_from_json(raw: dict[str, Any]) -> TimeOff | None:
             start=parse_graph_datetime(start_raw),
             end=parse_graph_datetime(end_raw),
             reason_id=str(reason_id),
-            shared=shared,
         )
     except (ValueError, InvalidTimeOff):
         return None

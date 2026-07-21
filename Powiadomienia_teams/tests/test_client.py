@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from powiadomienia_teams.graph.auth import AuthExpiredError
-from powiadomienia_teams.graph.client import GraphClient, GraphPermissionError
+from powiadomienia_teams.graph.client import (
+    _MAX_PAGES,
+    GraphClient,
+    GraphPermissionError,
+    GraphTruncatedReadError,
+)
 
 UTC = timezone.utc
 
@@ -172,21 +177,6 @@ def test_create_shift_includes_theme_when_set():
     assert seen["body"]["sharedShift"]["theme"] == "green"
 
 
-def test_share_schedule_posts_range():
-    seen: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://graph.microsoft.com/v1.0/teams/T/schedule/share"
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(204)
-
-    _graph(handler).share_schedule(
-        "T", datetime(2026, 7, 20, tzinfo=UTC), datetime(2026, 7, 27, tzinfo=UTC)
-    )
-    assert seen["body"]["notifyTeam"] is True
-    assert seen["body"]["startDateTime"] == "2026-07-20T00:00:00Z"
-
-
 def test_get_raises_auth_expired_on_401():
     """401 mimo udanego cichego odświeżenia = token odrzucony przez Graph — usługa ma stanąć."""
     def handler(request: httpx.Request) -> httpx.Response:
@@ -271,3 +261,65 @@ def test_read_time_off_uses_overlap_not_start():
         "T", datetime(2026, 7, 20, tzinfo=UTC), datetime(2026, 7, 27, tzinfo=UTC)
     )
     assert [t.user_id for t in out] == ["u1"]
+
+
+def _graph_z_zapisem_snu(handler, spane: list):
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    gc = GraphClient(http, lambda: "tok", sleep=spane.append)
+    gc.refresh_auth()
+    return gc
+
+
+def test_dlugi_retry_after_jest_honorowany_w_ramach_budzetu():
+    """Ograniczamy SUMĘ czekania, nie pojedynczą przerwę.
+
+    Sufit 60 s na próbę wyglądał ostrożnie, ale zamieniał „wolno, ale w końcu się uda"
+    w „porzucone": przy `Retry-After: 3600` pięć prób wyczerpywało się w pięć minut i przebieg
+    tygodniowy padał. Ignorowanie nagłówka bywa też karane wydłużeniem dławienia.
+    """
+    spane: list = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "3600"}, json={})
+        return httpx.Response(200, json={"id": "me-id"})
+
+    assert _graph_z_zapisem_snu(handler, spane).get_me() == "me-id"
+    assert spane == [900], spane  # cały budżet w jednym oczekiwaniu, nie 60 s
+
+
+def test_budzet_ponowien_nie_jest_nieskonczony():
+    """Dławienie bez końca musi w końcu ustąpić błędem, a nie usypiać procesu na zawsze."""
+    spane: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "300"}, json={})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _graph_z_zapisem_snu(handler, spane).get_me()
+    assert sum(spane) <= 900  # łączne czekanie mieści się w budżecie
+
+
+def test_przekroczony_limit_stron_konczy_sie_bledem_zamiast_niepelnej_listy():
+    """Ucięte stronicowanie MUSI przewrócić przebieg, a nie zwrócić połowę grafiku.
+
+    Wykrywanie luk („kto nie ma zmian") pracuje na tym, co wróciło, więc niepełny odczyt to
+    prośby wysłane osobom, które grafik MAJĄ, a po ich „tak" DRUGI komplet wpisów w Shifts —
+    zapis nieodwracalny. Sam log tego nie zatrzymywał: usługa bezobsługowa bez monitoringu
+    logów zachowywała się dokładnie tak, jakby przebieg się udał.
+    """
+    zadania = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        zadania["n"] += 1
+        return httpx.Response(200, json={
+            "value": [{"userId": f"u{zadania['n']}", "displayName": "Ala"}],
+            # Graph deklaruje kolejną stronę BEZ KOŃCA — tak wygląda kolekcja większa niż limit.
+            "@odata.nextLink": f"https://graph.microsoft.com/v1.0/teams/T/members?p={zadania['n']}",
+        })
+
+    with pytest.raises(GraphTruncatedReadError, match="NIEPEŁNY"):
+        _graph(handler).list_members("T")
+    assert zadania["n"] == _MAX_PAGES  # limit nadal chroni przed czytaniem w nieskończoność

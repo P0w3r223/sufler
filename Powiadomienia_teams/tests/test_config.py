@@ -20,6 +20,17 @@ def test_from_env_defaults(monkeypatch):
     assert s.tz.key == "Europe/Warsaw"
 
 
+def test_poll_ceiling_defaults_to_one_hour(monkeypatch):
+    """Nieobecny pracownik: ~56 odpytań przez okno 48 h zamiast ~576 przy dawnym suficie 5 min."""
+    _set_required(monkeypatch)
+    monkeypatch.delenv("POWIADOMIENIA_POLL_MAX_INTERVAL_S", raising=False)
+    monkeypatch.delenv("POWIADOMIENIA_POLL_INTERVAL_S", raising=False)
+    s = Settings.from_env()
+    s.validate()
+    assert s.poll_interval_s == 10  # podłoga: rozmowa w toku biegnie w sekundach
+    assert s.poll_max_interval_s == 3600
+
+
 def test_missing_team_id_fails_validation(monkeypatch):
     monkeypatch.setenv("POWIADOMIENIA_CLIENT_ID", "cid")
     monkeypatch.setenv("POWIADOMIENIA_TENANT_ID", "tid")

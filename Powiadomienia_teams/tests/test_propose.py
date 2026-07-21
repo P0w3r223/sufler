@@ -9,12 +9,11 @@ WAW = ZoneInfo("Europe/Warsaw")
 
 
 def _shift(user_id: str, day: int, h1: int, h2: int, group: str | None = "TAG_x",
-           shared: bool = True, theme: str | None = "blue") -> Shift:
+           theme: str | None = "blue") -> Shift:
     return Shift(
         user_id,
         datetime(2026, 7, day, h1, tzinfo=UTC),
         datetime(2026, 7, day, h2, tzinfo=UTC),
-        shared=shared,
         scheduling_group_id=group,
         theme=theme,
     )
@@ -54,12 +53,6 @@ def test_result_sorted_by_start():
     last = [_shift("u1", 15, 10, 20), _shift("u1", 13, 8, 16)]
     ws = proposal_from_last_week("u1", last, date(2026, 7, 20), tz=WAW)
     assert ws.shifts[0].start < ws.shifts[1].start
-
-
-def test_draft_flag_preserved():
-    last = [_shift("u1", 13, 8, 16, shared=False)]
-    ws = proposal_from_last_week("u1", last, date(2026, 7, 20), tz=WAW)
-    assert ws.shifts[0].shared is False
 
 
 def test_preserves_local_hour_across_dst_fallback():

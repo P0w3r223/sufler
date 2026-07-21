@@ -111,3 +111,25 @@ latency or scale ever demands it.
 - New config: `poll_max_interval_s`, `send_expiry_message`; `reply_window_hours` now validated `>0`.
 - Tested purely: `test_backoff.py`, `test_lifecycle.py`, `test_auth.py`, plus orchestration cases
   in `test_app.py` (expiry closure at-most-once, within-window processing, `PollOutcome`).
+
+## Amendment 2026-07-21 — hourly ceiling, activity measured at detection time
+
+`poll_max_interval_s` raised **300s → 3600s**. Operational motivation: an absent employee (the
+common case — the nudge lands Friday 16:00, plenty of people answer Monday) was polled every 5
+minutes for the full 48h window, ~576 requests per pending for a chat nobody had touched. At the
+1h ceiling that drops to ~56.
+
+Raising the ceiling alone would have degraded the conversation. `last_activity` was the newest
+`watermark`, i.e. the **message's** `createdDateTime`. A reply detected an hour after it was
+written therefore reported ~1h of idle time and the *next* delay went straight back to the
+ceiling — so each turn of the exchange (reply → confirmation question → "tak" → write) would cost
+up to an hour, and a four-turn dialogue could eat a third of the 48h window.
+
+`_process_pending` now returns whether it handled a new message, and `poll_replies` reports
+`last_activity = now` whenever anything was handled in that tick. Silence is still measured from
+the message/nudge timestamp; **activity is measured from the moment we noticed it**. Absent
+employee → hourly; live conversation → back to the 10s floor immediately.
+
+Consequence: worst-case latency for noticing the *first* reply is now 1h instead of 5 min. This is
+the deliberate trade — it applies only to the first turn, and only after ~43 min of silence has
+already elapsed (the geometric ramp reaches the ceiling at idle ≈ 2560s).

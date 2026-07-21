@@ -29,10 +29,23 @@ logger = logging.getLogger(__name__)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 _DEFAULT_RETRY_AFTER_S = 5
+# ŁĄCZNY budżet czekania na dławienie w obrębie jednego żądania. Sufit per-próba zamieniał
+# przejściowe dławienie w porzucony przebieg tygodniowy (patrz `_retry_after`).
+_MAX_RETRY_BUDGET_S = 900
 _MAX_429_RETRIES = 5
 _MAX_PAGES = 50
 _DEFAULT_THEME = "green"  # nieokreślony dzień = stacjonarnie
 _MAX_ERROR_BODY = 500  # ile znaków ciała błędu trafia do logu
+
+
+class GraphTruncatedReadError(RuntimeError):
+    """Odczyt kolekcji urwał się na limicie stron — dane są NIEPEŁNE i nie wolno ich użyć.
+
+    Wydzielony wyjątek zamiast zwrócenia części wyników: wykrywanie luk („kto nie ma zmian")
+    pracuje na tym, co wróciło, więc niepełny odczyt oznacza prośby do osób, które grafik MAJĄ,
+    a po ich »tak« DRUGI komplet wpisów w Shifts. Skutkiem jest nieodwracalny zapis u klienta,
+    dlatego przebieg ma paść i zostać ponowiony, a nie „udać się" na połowie danych.
+    """
 
 
 class GraphPermissionError(RuntimeError):
@@ -43,9 +56,23 @@ class GraphPermissionError(RuntimeError):
     """
 
 
-def _retry_after(response: httpx.Response) -> int:
+def _retry_after(response: httpx.Response, pozostaly_budzet: int) -> int:
+    """Sekundy do ponowienia z nagłówka Graph, ograniczone POZOSTAŁYM budżetem oczekiwania.
+
+    Ograniczamy SUMĘ czekania, nie pojedynczą przerwę. Wcześniejszy sufit 60 s na próbę wyglądał
+    ostrożnie, ale zamieniał „wolno, ale w końcu się uda" w „porzucone": przy dławieniu, w którym
+    Graph prosi o 3600 s, pięć prób wyczerpywało się w pięć minut i przebieg tygodniowy padał.
+    Z budżetem łącznym czekamy tyle, ile Graph prosi, dopóki mieści się to w rozsądnym oknie —
+    a ignorowanie `Retry-After` bywa przez Microsoft karane wydłużeniem dławienia.
+    """
     raw = response.headers.get("Retry-After", "")
-    return int(raw) if raw.isdigit() else _DEFAULT_RETRY_AFTER_S
+    czekaj = int(raw) if raw.isdigit() else _DEFAULT_RETRY_AFTER_S
+    if czekaj > pozostaly_budzet:
+        logger.warning(
+            "Graph prosi o %ds przerwy, a budżet oczekiwania to jeszcze %ds — skracam",
+            czekaj, pozostaly_budzet,
+        )
+    return max(0, min(czekaj, pozostaly_budzet))
 
 
 def _raise_for_status(response: httpx.Response) -> None:
@@ -92,11 +119,14 @@ class GraphClient:
 
     def _get(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         attempts = 0
+        budzet = _MAX_RETRY_BUDGET_S
         while True:
             response = self._client.get(url, params=params)
-            if response.status_code == 429 and attempts < _MAX_429_RETRIES:
+            if response.status_code == 429 and attempts < _MAX_429_RETRIES and budzet > 0:
                 attempts += 1
-                self._sleep(_retry_after(response))
+                czekaj = _retry_after(response, budzet)
+                budzet -= czekaj
+                self._sleep(czekaj)
                 continue
             _raise_for_status(response)
             data: dict[str, Any] = response.json()
@@ -111,15 +141,27 @@ class GraphClient:
             items.extend(data.get("value", []))
             next_url = data.get("@odata.nextLink")
             pages += 1
+        if next_url:
+            # Sam log tu nie wystarczy: usługa bezobsługowa bez monitoringu logów zachowuje się
+            # wtedy tak, jakby nic się nie stało — a skutkiem jest podwójny zapis do grafiku
+            # klienta. Fail-closed: przebieg pada, `_run_once_with_retry` ponawia, a przy trwałym
+            # przekroczeniu limitu operator dostaje alert zamiast bota wysyłającego złe prośby.
+            raise GraphTruncatedReadError(
+                f"Ucięto stronicowanie {url} po {pages} stronach — odczyt NIEPEŁNY, "
+                f"wykrywanie luk w grafiku dałoby fałszywe wyniki"
+            )
         return items
 
     def _post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         attempts = 0
+        budzet = _MAX_RETRY_BUDGET_S
         while True:
             response = self._client.post(url, json=body)
-            if response.status_code == 429 and attempts < _MAX_429_RETRIES:
+            if response.status_code == 429 and attempts < _MAX_429_RETRIES and budzet > 0:
                 attempts += 1
-                self._sleep(_retry_after(response))
+                czekaj = _retry_after(response, budzet)
+                budzet -= czekaj
+                self._sleep(czekaj)
                 continue
             _raise_for_status(response)
             data: dict[str, Any] = response.json() if response.content else {}
@@ -128,10 +170,6 @@ class GraphClient:
     def get_me(self) -> str:
         """Id zalogowanego użytkownika (tożsamość »głosu« bota)."""
         return str(self._get(f"{GRAPH}/me").get("id", ""))
-
-    def schedule_provision_status(self, team_id: str) -> str | None:
-        """``provisionStatus`` grafiku zespołu (``Completed`` = Shifts uruchomione)."""
-        return self._get(f"{GRAPH}/teams/{team_id}/schedule").get("provisionStatus")
 
     def list_members(self, team_id: str) -> tuple[Member, ...]:
         """Aktualni członkowie zespołu (roster do porównania). Pomija wpisy bez userId/nazwy."""
@@ -224,19 +262,6 @@ class GraphClient:
             "sharedShift": shared,
         }
         return str(self._post(f"{GRAPH}/teams/{team_id}/schedule/shifts", body).get("id", ""))
-
-    def share_schedule(
-        self, team_id: str, start: datetime, end: datetime, *, notify: bool = True
-    ) -> None:
-        """Udostępnij grafik w zakresie dat (uwidacznia zmiany + opcjonalnie powiadamia)."""
-        self._post(
-            f"{GRAPH}/teams/{team_id}/schedule/share",
-            {
-                "notifyTeam": notify,
-                "startDateTime": to_graph_iso(start),
-                "endDateTime": to_graph_iso(end),
-            },
-        )
 
     def list_time_off_reasons(self, team_id: str) -> TeamReasons:
         """Aktywne powody czasu wolnego zespołu (wyszukiwanie po nazwie + odwrotne po id).

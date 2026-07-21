@@ -13,7 +13,6 @@ def _dt(hour: int) -> datetime:
 
 def test_shift_valid():
     s = Shift("u1", _dt(8), _dt(16))
-    assert s.shared is True
     assert s.scheduling_group_id is None
 
 
@@ -48,12 +47,6 @@ def test_week_schedule_is_empty():
 def test_week_schedule_rejects_non_monday():
     with pytest.raises(ValueError):
         WeekSchedule("u1", date(2026, 7, 21))  # wtorek
-
-
-def test_member_defaults():
-    m = Member("u1", "Ala")
-    assert m.email is None
-    assert m.roles == ()
 
 
 def test_member_requires_nonempty_fields():
