@@ -10,7 +10,13 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from powiadomienia_teams.domain.models import InvalidShift, Member, Shift
+from powiadomienia_teams.domain.models import (
+    InvalidShift,
+    InvalidTimeOff,
+    Member,
+    Shift,
+    TimeOff,
+)
 
 _FRACTION = re.compile(r"\.(\d+)")
 _UTC = timezone.utc
@@ -88,4 +94,40 @@ def shift_from_json(raw: dict[str, Any]) -> Shift | None:
             theme=body.get("theme"),
         )
     except (ValueError, InvalidShift):
+        return None
+
+
+def time_off_from_json(raw: dict[str, Any]) -> TimeOff | None:
+    """Wpis ``/schedule/timesOff`` → ``TimeOff``. Preferuje ``sharedTimeOff`` (opublikowany).
+
+    Lustrzane wobec ``shift_from_json``: ``None``, gdy brak userId, ciała wpisu, dat, powodu lub
+    gdy zakres jest niepoprawny.
+    """
+    user_id = raw.get("userId")
+    if not user_id:
+        return None
+
+    body = raw.get("sharedTimeOff")
+    shared = True
+    if body is None:
+        body = raw.get("draftTimeOff")
+        shared = False
+    if not body:
+        return None
+
+    start_raw = body.get("startDateTime")
+    end_raw = body.get("endDateTime")
+    reason_id = body.get("timeOffReasonId")
+    if not start_raw or not end_raw or not reason_id:
+        return None
+
+    try:
+        return TimeOff(
+            user_id=str(user_id),
+            start=parse_graph_datetime(start_raw),
+            end=parse_graph_datetime(end_raw),
+            reason_id=str(reason_id),
+            shared=shared,
+        )
+    except (ValueError, InvalidTimeOff):
         return None

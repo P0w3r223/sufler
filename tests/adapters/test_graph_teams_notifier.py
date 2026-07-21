@@ -141,3 +141,58 @@ def test_markdown_links_not_clickable_in_push():
     # allow_links=False → link schodzi jako tekst, bez żywego <a href>.
     assert "<a " not in seen["body"]
     assert "href" not in seen["body"]
+
+
+# --- send_chat_html (ADR 0035) — HTML z pominięciem renderera ------------------
+
+
+def _html_capture(seen: dict):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1.0/me":
+            return httpx.Response(200, json={"id": "me-123"})
+        if request.url.path == "/v1.0/chats":
+            return httpx.Response(201, json={"id": "chat-1"})
+        if request.url.path == "/v1.0/chats/chat-1/messages":
+            seen["body"] = request.read().decode()
+            return httpx.Response(201, json={"id": "msg-1"})
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_send_chat_html_passes_markup_through_untouched():
+    """Sedno ADR 0035: tabela MUSI dotrzeć jako znaczniki, nie jako zescapowany tekst."""
+    seen: dict = {}
+    table = "<table><tr><td>WT-12</td><td>3.0</td></tr></table>"
+    asyncio.run(_notifier(_html_capture(seen)).send_chat_html("target-9", table))
+    assert "<table>" in seen["body"]
+    assert "&lt;table&gt;" not in seen["body"]
+
+
+def test_send_chat_html_declares_html_content_type():
+    seen: dict = {}
+    asyncio.run(_notifier(_html_capture(seen)).send_chat_html("target-9", "<p>x</p>"))
+    assert '"contentType":"html"' in seen["body"].replace(" ", "")
+
+
+def test_send_chat_html_uses_the_same_oneonone_path_as_send_chat():
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/v1.0/me":
+            return httpx.Response(200, json={"id": "me-123"})
+        if request.url.path == "/v1.0/chats":
+            assert '"chatType":"oneOnOne"' in request.read().decode()
+            return httpx.Response(201, json={"id": "chat-1"})
+        return httpx.Response(201, json={"id": "msg-1"})
+
+    asyncio.run(_notifier(handler).send_chat_html("target-9", "<p>x</p>"))
+    assert calls == ["/v1.0/me", "/v1.0/chats", "/v1.0/chats/chat-1/messages"]
+
+
+def test_send_chat_still_escapes_raw_html():
+    """Regresja: nowa metoda NIE MOŻE rozluźnić starej ścieżki dla treści niezaufanej."""
+    seen: dict = {}
+    asyncio.run(_notifier(_html_capture(seen)).send_chat("target-9", "<script>alert(1)</script>"))
+    assert "<script>" not in seen["body"]

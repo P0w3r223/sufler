@@ -143,25 +143,40 @@ Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.m
 | `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
 | `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |
 
-## Drzwi Jira Server/DC / most (`JiraSettings`, extra `jira`)
+## Drzwi Jira Server/DC lub Cloud / most (`JiraSettings`, extra `jira`)
 
-Polling instancji Jira REST v2 tokenem PAT ([ADR 0030](../adr/0030-jira-server-read-door.md)); zapis
-(Gate 5) i tranzycja statusu za NIEZALEŻNYMI bramkami. Procedura: [`how-to/jira-bridge.md`](../how-to/jira-bridge.md).
+Polling instancji Jira ([ADR 0030](../adr/0030-jira-server-read-door.md)) — **Server/DC** (PAT Bearer,
+REST v2) lub **Cloud** ([ADR 0033](../adr/0033-jira-cloud-support.md); Basic email+API-token, REST
+v3/ADF, `search/jql`) wg `WORKMATE_JIRA_DEPLOYMENT`; zapis (Gate 5) i tranzycja statusu za NIEZALEŻNYMI
+bramkami. Procedura: [`how-to/jira-bridge.md`](../how-to/jira-bridge.md).
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
-| `WORKMATE_JIRA_BASE_URL` | *(wymagane)* | URL instancji Jira (Server/Data Center). |
-| `WORKMATE_JIRA_TOKEN` | *(wymagane)* | **Sekret.** PAT Jira (Bearer). |
+| `WORKMATE_JIRA_DEPLOYMENT` | `server` | Wariant: `server` (Server/DC, PAT Bearer, v2) lub `cloud` (Cloud, Basic, v3/ADF) — [ADR 0033](../adr/0033-jira-cloud-support.md). |
+| `WORKMATE_JIRA_BASE_URL` | *(wymagane)* | URL instancji. Server/DC = własny host; Cloud = `https://<site>.atlassian.net`. |
+| `WORKMATE_JIRA_TOKEN` | *(wymagane)* | **Sekret.** PAT (Server/DC) lub API token z id.atlassian.com (Cloud). |
+| `WORKMATE_JIRA_EMAIL` | — | E-mail konta do Basic-auth. **Wymagany na Cloud** (`deployment=cloud`); pusty na Server/DC. |
 | `WORKMATE_JIRA_WATCH_PROJECTS` | *(wymagane)* | Klucze projektów do nasłuchu (po przecinku, np. `WM,OPS`); mapowanie na projekt WorkMate z rejestru (`jira_project_key`, [ADR 0028](../adr/0028-project-repo-jira-mapping-and-event-dimension.md)). |
 | `WORKMATE_JIRA_POLL_INTERVAL` | `60` (podłoga `30`) | Odstęp odpytań (s). |
 | `WORKMATE_JIRA_PER_PAGE` | `50` | Rozmiar strony. |
 | `WORKMATE_JIRA_STATE` | `~/.workmate/jira_state.json` | Watermark (`updated`) + kursor notifiera. |
-| `WORKMATE_JIRA_SELF_ACCOUNT` | login konta PAT | Strażnik pętli self-skip. **Wymagane** przy włączonym zapisie/tranzycji. |
+| `WORKMATE_JIRA_SELF_ACCOUNT` | login/`accountId` | Strażnik pętli self-skip: login PAT (Server/DC) lub `accountId` (Cloud). **Wymagane** przy włączonym zapisie/tranzycji. |
 | `WORKMATE_JIRA_ENABLE_WRITE` | `false` | Gate 5: zapis create-only `create_jira_issue`/`comment_jira_issue` ([ADR 0031](../adr/0031-jira-write-capability-gate-5.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
 | `WORKMATE_JIRA_WRITE_PROJECT` | — | Projekt tworzenia/tranzycji (z konfiguracji, nie z treści prośby). Wymagany przy zapisie/tranzycji. |
 | `WORKMATE_JIRA_DEFAULT_ISSUE_TYPE` | `Task` | Domyślny typ tworzonego zgłoszenia. |
 | `WORKMATE_JIRA_ENABLE_TRANSITION` | `false` | NIEZALEŻNA bramka tranzycji statusu `transition_jira_issue` ([ADR 0032](../adr/0032-jira-status-transition-capability.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
 | `WORKMATE_JIRA_MAX_TRANSITION_HOPS` | `1` | Sufit hopów walk (1 = single-hop; ≥2 = wielo-hop forced-advance; sufit `10`). |
+| `WORKMATE_JIRA_ENABLE_WORKLOG` | `false` | **BRAMKA** ewidencji czasu ([ADR 0034](../adr/0034-jira-worklog-from-github-commits.md)) — niezależna od zapisu i tranzycji. Wymaga `WRITE_PROJECT` + `SELF_ACCOUNT` **oraz** GitHuba (`TOKEN`/`OWNER`/`REPO`). |
+| `WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY` | `self` | Strategia autorstwa: `self` (jedyna zaimplementowana), `per_user_token`, `tempo` (sloty — start padnie przy włączonej bramce). |
+| `WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF` | `false` | **BRAMKA** zapisu w cudzym imieniu. Jira i tak zapisze autorem konto tokenu — atrybucja jest stratna. |
+| `WORKMATE_JIRA_WORKLOG_MAX_HOURS` | `8.0` | Sufit godzin na jeden wpis (twardy backstop `24`). |
+| `WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS` | `14` | Ile dni wstecz wolno zapisać wpis (backstop `90`). |
+| `WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS` | `31` | Szerokość okna jednego `propose_worklog` (backstop `92`). |
+| `WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES` | `90` | Przerwa między commitami kończąca sesję (5..720). |
+| `WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES` | `30` | Czas doliczany przed pierwszym commitem sesji (0..240, ≤ `IDLE_GAP`). |
+| `WORKMATE_JIRA_WORKLOG_ROUND_MINUTES` | `15` | Kwant zaokrąglenia w górę (`1`/`5`/`10`/`15`/`30`/`60`). |
+| `WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES` | `120` | Strefa liczenia doby kalendarzowej (stały offset, bez DST). |
+| `WORKMATE_JIRA_WORKLOG_DUPLICATE_GUARD` | `true` | Odrzuca drugi wpis tego konta na ten sam dzień w tym samym zgłoszeniu. |
 
 Wątkowanie kanału dla Jiry (B2) korzysta ze wspólnej flagi `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING`
 (sekcja *Push do Teams*) — resolver wątków kojarzy zdarzenia jednego zgłoszenia po `/browse/{KEY}`.
@@ -188,3 +203,25 @@ Lokalny wariant przez Bot Framework Emulator/Azure ([`how-to/teams-bot.md`](../h
 
 `config.py` szuka korzenia repozytorium, idąc w górę do katalogu z `pyproject.toml`. Dzięki temu
 serwer działa niezależnie od bieżącego katalogu roboczego, bez zaszywania ścieżek w kodzie.
+
+## Cotygodniowe karty czasu ([ADR 0035](../adr/0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md))
+
+Drzwi `workmate-worklogi` (extra `worklogi`). Szczegóły: [`how-to/worklogi-weekly.md`](../how-to/worklogi-weekly.md).
+
+| Zmienna | Domyślnie | Znaczenie |
+|---|---|---|
+| `WORKMATE_WORKLOGI_ENABLED` | `false` | **BRAMKA** drzwi. Wymaga `OUTPUT_DIR`, `IDENTITIES`, `TEAM_ID`. |
+| `WORKMATE_WORKLOGI_DRY_RUN` | `true` | Tryb próbny: arkusze powstają, wiadomości NIE wychodzą, stan się nie zapisuje. |
+| `WORKMATE_WORKLOGI_OUTPUT_DIR` | — | Katalog arkuszy. **Musi leżeć poza `data/`** (dane osobowe, nie baza wiedzy). |
+| `WORKMATE_WORKLOGI_IDENTITIES` | — | Plik YAML `source_id → {aad_user_id, jira_user}`. Fail-closed. |
+| `WORKMATE_WORKLOGI_TEAM_ID` | — | Zespół Teams do weryfikacji członkostwa (`TeamMember.Read.All`). |
+| `WORKMATE_WORKLOGI_HOURS_SOURCE` | `json` | Źródło godzin. Na razie tylko atrapa `json`. |
+| `WORKMATE_WORKLOGI_HOURS_PATH` | — | Ścieżka pliku ze źródłem godzin (dla `json`). |
+| `WORKMATE_WORKLOGI_STATE` | `~/.workmate/worklogi_state.json` | Stan idempotencji per tydzień i osoba. |
+| `WORKMATE_WORKLOGI_RUN_WEEKDAY` | `4` | Dzień przebiegu (0=poniedziałek, 4=piątek). |
+| `WORKMATE_WORKLOGI_RUN_HOUR` / `_RUN_MINUTE` | `16` / `0` | Godzina przebiegu w strefie `TZ`. |
+| `WORKMATE_WORKLOGI_TZ` | `Europe/Warsaw` | Strefa granic tygodnia (`ZoneInfo`; walidowana przy starcie). |
+| `WORKMATE_WORKLOGI_START_HOUR` | `8` | Godzina stemplowania wpisu w arkuszu (domyślna WorklogPRO). |
+| `WORKMATE_WORKLOGI_MAX_HOURS_PER_DAY` | `16.0` | Sufit zdrowego rozsądku na dobę (backstop `24`). |
+| `WORKMATE_WORKLOGI_MAX_CATCHUP_DAYS` | `3` | Ile dni wstecz wolno nadrobić pominięty termin (backstop `14`). |
+| `WORKMATE_WORKLOGI_ONLY_SOURCE_IDS` | — | Filtr pilotażowy (puste = wszyscy ze źródła). |

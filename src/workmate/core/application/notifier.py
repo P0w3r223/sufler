@@ -45,6 +45,7 @@ _KIND_LABELS = {
     "jira_issue_created": "Nowe zgłoszenie",
     "jira_transition": "Zmiana statusu",
     "jira_comment": "Nowy komentarz",
+    "jira_worklog": "Wpis czasu pracy",
 }
 
 # Etykieta źródła w nagłówku wiadomości — wyprowadzana z ``event.source`` (nie zaszyta), żeby

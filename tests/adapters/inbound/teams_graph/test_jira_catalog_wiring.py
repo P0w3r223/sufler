@@ -74,3 +74,26 @@ def test_transition_gate_accepts_hop_cap_at_ceiling():
     # Wartość na suficie (10) jest dozwolona — walk wielo-hop działa; tool się buduje.
     names = _names(_settings(enable_jira_transition=True, max_transition_hops=10))
     assert names == {"transition_jira_issue"}
+
+
+# --- ścieżka Cloud (ADR 0033) — Basic auth wymaga e-maila -------------------
+
+
+def test_cloud_gate_without_email_raises():
+    # Na Cloud brak WORKMATE_JIRA_EMAIL = niedziałające Basic auth → fail-fast (jak brak projektu).
+    with pytest.raises(ValueError, match="EMAIL"):
+        _build_jira_catalog(
+            _settings(enable_jira_write=True, deployment="cloud", email=""), _EVENTS
+        )
+
+
+def test_cloud_gate_with_email_builds_catalog():
+    names = _names(_settings(enable_jira_write=True, deployment="cloud", email="me@example.com"))
+    assert names == {"create_jira_issue", "comment_jira_issue"}
+
+
+def test_gate_rejects_unknown_deployment():
+    # Literówka w DEPLOYMENT nie może po cichu zbudować klienta Server/DC na Cloud — fail-fast
+    # spójny z pollerem (JiraSettings.validate). Inaczej cicha, martwa konfiguracja (→ 401 runtime).
+    with pytest.raises(ValueError, match="DEPLOYMENT"):
+        _build_jira_catalog(_settings(enable_jira_write=True, deployment="cloudd"), _EVENTS)

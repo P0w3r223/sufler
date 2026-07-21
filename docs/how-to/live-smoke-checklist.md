@@ -148,6 +148,47 @@ strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ 
   do celu, echo per hop; na rozgałęzieniu STOP (`branch_point`, bez zgadywania). Raport zawsze
   strukturalny (`reached`/`path`/`stop_reason`); tranzycja nie wraca jako zbędne powiadomienie.
 
+## 16. Teams → Jira: ewidencja czasu z commitów — 🔑 👥 🟪 🐙 (ADR 0034)
+
+- **Krok (propozycja):** ustaw `WORKMATE_JIRA_ENABLE_WORKLOG=true` (+ `WRITE_PROJECT` +
+  `SELF_ACCOUNT` + GitHub `TOKEN`/`OWNER`/`REPO`). Poproś agenta o propozycję ewidencji za tydzień,
+  w którym realnie commitowałeś w `PIWorkmate`, i porównaj wynik z własną pamięcią.
+- **Oczekiwane:** sesje pocięte przerwami i dobami, sumy per zgłoszenie wyciągnięte z kluczy `WT-*`
+  w wiadomościach commitów, `confidence` niski przy pojedynczych commitach, `notes` ostrzegające
+  o gałęzi domyślnej. **Nic nie zapisane w Jirze.** Sprawdź też zakres: dzień z jednym commitem na
+  koniec dnia da tylko „rozbieg" (~30 min), nie osiem godzin — to znana, świadoma cecha estymacji.
+- **Krok (zapis własny):** poproś o zapis konkretnej liczby godzin na istniejące `WT-*` za wczoraj.
+  Powtórz TĘ SAMĄ prośbę drugi raz.
+- **Oczekiwane:** pierwszy wpis widoczny w zakładce Work log zgłoszenia; drugi **odrzucony** przez
+  strażnik duplikatów (bez usuwania wpisów duplikat byłby nieusuwalny z poziomu narzędzia).
+- **Krok (cross-user):** ustaw dodatkowo `WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF=true` i poproś
+  o wpis z `on_behalf_of=<accountId Mikołaja>`, `display_name=Mikołaj`.
+- **Oczekiwane:** w UI Jiry kolumna autora pokazuje **konto tokenu (Piotr)**, a treść wpisu zaczyna
+  się od `w imieniu: Mikołaj`; odpowiedź narzędzia niesie pole `note` o stratnej atrybucji, a agent
+  je RELACJONUJE. Bez włączonej drugiej bramki ta sama prośba musi zostać odrzucona.
+
+## 17. Cotygodniowe karty czasu → Teams — 🔑 👥 🟪 (ADR 0035)
+
+- **Krok 0 (BRAMKA):** Apps → WorklogPRO → Import worklogs. Pobierz szablon i porównaj nagłówki
+  z `WORKLOGPRO_HEADERS`. Zaimportuj 2–3 wiersze ręcznie, potem TE SAME drugi raz. Sprawdź, czy
+  import działa z konta BEZ uprawnień admina.
+- **Oczekiwane:** nagłówki zgodne (albo poprawione w stałej + teście); wiadomo, czy powstają
+  duplikaty; wiadomo, czy nie-admin może importować. Bez tego kroku reszta jest niepotwierdzona.
+- **Krok (próbny):** `WORKMATE_WORKLOGI_ENABLED=true`, `DRY_RUN=true`, `ONLY_SOURCE_IDS` = tylko Ty.
+  `uv run workmate-worklogi --once`.
+- **Oczekiwane:** arkusz w `OUTPUT_DIR` z Twoimi godzinami, ŻADNEJ wiadomości na Teams, pusty stan.
+  Otwórz plik i zweryfikuj kolumny oraz znacznik `Start Date & Time` z offsetem.
+- **Krok (bojowy, pilotaż):** `DRY_RUN=false`, `ONLY_SOURCE_IDS` = Ty + Mikołaj. Uruchom ponownie.
+- **Oczekiwane:** prywatna wiadomość 1:1 z **tabelą** (nie `&lt;table&gt;` — to sprawdza
+  `send_chat_html`), sumą tygodnia, ścieżką pliku i ostrzeżeniem o dublowaniu. Każdy widzi TYLKO
+  swoje godziny. Osoba bez godzin nie dostaje nic.
+- **Krok (idempotencja):** uruchom trzeci raz w tym samym tygodniu.
+- **Oczekiwane:** zero wiadomości, raport `wysłano 0`. Następnie spróbuj uruchomić DRUGĄ instancję
+  równolegle — musi odmówić z komunikatem o blokadzie.
+- **Krok (import):** zaimportuj wygenerowany arkusz do WorklogPRO jako pracownik.
+- **Oczekiwane:** wpisy w Jirze z **właściwym autorem** (to cała różnica wobec ADR 0034) i czasem
+  zgodnym z tabelą z wiadomości.
+
 ---
 
 > Po wykonaniu pozycji odnotuj wynik w briefie sesji (`.claude/sessions/`) i — gdy dotyczy —

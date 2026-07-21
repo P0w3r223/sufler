@@ -12,6 +12,7 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.testmondata
 
 # IDE / system
 .idea/
@@ -26,3 +27,7 @@ BotFramework-Emulator-main/
 
 # Artefakty dostarczane klientowi (raporty weryfikacji) — nie commitować.
 RAPORT-*.md
+
+# Paczki wdrożeniowe Powiadomienia_teams (scripts/pack.sh, scripts/build-image.sh).
+# Budowane z kodu na żądanie — w repo trzymamy przepis, nie wynik.
+powiadomienia-teams-*.tar.gz

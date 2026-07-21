@@ -93,6 +93,29 @@ class HttpxGithubClient:
             {"per_page": str(per_page)},
         )
 
+    def list_commits(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        author: str = "",
+        per_page: int = 50,
+    ) -> list[dict[str, Any]]:
+        # Commity GAŁĘZI DOMYŚLNEJ w oknie czasu (ADR 0034). ``author`` zawęża do jednej osoby
+        # — GitHub dopasowuje go do loginu ALBO adresu e-mail autora commita, więc inny
+        # ``git config user.email`` da cichy zerowy wynik (propozycja ostrzega o tym w ``notes``).
+        # Paginacja i limit zapytań przez wspólne ``_get_all``; bez diffów i patchy.
+        params = {"per_page": str(per_page)}
+        if since is not None:
+            params["since"] = _iso_z(since)
+        if until is not None:
+            params["until"] = _iso_z(until)
+        if author:
+            params["author"] = author
+        return self._get_all(f"{self._api_base}/repos/{owner}/{repo}/commits", params)
+
     def list_workflow_runs(
         self, owner: str, repo: str, *, per_page: int = 50, status: str = "completed"
     ) -> list[dict[str, Any]]:

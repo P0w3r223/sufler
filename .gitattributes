@@ -6,6 +6,22 @@
 *.cmd  text eol=crlf
 *.ps1  text eol=crlf
 
+# Pliki WYKONYWANE NA LINUKSIE — zawsze LF, niezależnie od platformy autora.
+# Bez tego `core.autocrlf=true` daje CRLF przy checkoucie na Windows, a wtedy:
+#   *.sh              → `bad interpreter: /usr/bin/env bash^M`
+#   env / env.example → wartość zmiennej kończy się na \r; `config._get()` NIE robi strip(),
+#                       więc np. TEAM_ID trafiłby z \r do URL-a Grapha (błąd nie do zdiagnozowania)
+#   Dockerfile        → łamie kontynuacje `\` w RUN
+#   *.service         → systemd nie parsuje dyrektyw z \r
+*.sh            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.service       text eol=lf
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+env.example     text eol=lf
+.env.example    text eol=lf
+
 # Pliki binarne — bez konwersji końców linii.
 *.png  binary
 *.jpg  binary

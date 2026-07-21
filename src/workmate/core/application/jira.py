@@ -14,11 +14,11 @@ owner/repo, który GitHub dostaje za darmo z URL-a).
 
 from __future__ import annotations
 
-import re
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.domain.events import NewEvent
+from workmate.core.domain.guards import JIRA_KEY_RE, bounded, require_jira_key
+from workmate.core.domain.jira_time import parse_jira_timestamp
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
 
@@ -31,10 +31,10 @@ _MAX_SUMMARY = 255  # limit pola summary w Jirze
 _MAX_BODY = 30_000
 _MAX_LABEL = 255
 _MAX_TARGET = 255  # limit nazwy statusu/akcji docelowej tranzycji (ADR 0032)
-# Pełny kształt klucza Jira (``PROJ-123``). Walidujemy CAŁY klucz, nie sam prefiks — inaczej
-# ``WM-1/../OPS-1`` przeszedłby test projektu, a adapter (httpx normalizuje ``..``) dopisałby
-# komentarz w CUDZYM projekcie. ``reject_dangerous_content`` nie pomoże (``/`` i ``.`` są ok).
-_JIRA_KEY_RE = re.compile(r"[A-Z][A-Z0-9]+-\d+")
+# Strażniki są WSPÓLNE z ewidencją czasu (``application/worklog.py``, ADR 0034) — mieszkają
+# w ``domain/guards.py``. Aliasy zostawiamy, bo są używane w całym module (i w testach).
+_JIRA_KEY_RE = JIRA_KEY_RE
+_bounded = bounded
 
 # Powody zatrzymania chodzenia po workflow (ADR 0032) — zwracane w raporcie, nigdy ciche.
 _STOP_AMBIGUOUS = "ambiguous_target"  # >1 tranzycji pasuje do celu (model nie rozstrzygnie)
@@ -222,23 +222,8 @@ class JiraWriteService:
         )
 
     def _require_own_project(self, issue_key: str) -> str:
-        """Zwaliduj PEŁNY kształt klucza i wymuś zgodność projektu; inaczej ``WriteError``.
-
-        Walidacja całego klucza (nie prefiksu) zamyka obejście path-traversal ``WM-1/../OPS-1``:
-        taki „klucz" nie pasuje do ``PROJ-123``, więc odrzucamy go, zanim trafi do ścieżki REST.
-        """
-        key = issue_key.strip().upper()
-        if not _JIRA_KEY_RE.fullmatch(key):
-            raise WriteError(
-                f"klucz odrzucony: {issue_key!r} nie jest poprawnym kluczem Jira (PROJ-123)."
-            )
-        prefix = key.split("-", 1)[0]
-        if prefix != self._project:
-            raise WriteError(
-                f"klucz odrzucony: {issue_key!r} jest spoza skonfigurowanego "
-                f"projektu {self._project!r}."
-            )
-        return key
+        """Zwaliduj kształt klucza i zgodność projektu — wspólny strażnik (``domain/guards.py``)."""
+        return require_jira_key(issue_key, self._project)
 
     def _echo_event(
         self, *, kind: str, external_id: str, title: str, summary: str, result: dict[str, Any]
@@ -264,13 +249,6 @@ class JiraWriteService:
                 occurred_at=occurred_at,
             )
         )
-
-
-def _bounded(text: str, limit: int, label: str) -> str:
-    """Zwróć ``text`` w granicy ``limit``; inaczej ``WriteError`` (nie tniemy po cichu)."""
-    if len(text) > limit:
-        raise WriteError(f"{label} przekracza limit {limit} znaków — zapis odrzucony.")
-    return text
 
 
 def _norm(text: Any) -> str:
@@ -352,21 +330,5 @@ def _walk_report(
     return report
 
 
-def _parse_jira_ts(value: Any) -> datetime | None:
-    """Znacznik Jiry (ISO z offsetem ``+0200``, milisekundy) → aware ``datetime``; zły → ``None``.
-
-    Rdzeń nie importuje z adapterów, więc parsujemy tu (jak ``github._parse_iso``). ``%z`` obsługuje
-    offset bez dwukropka; ``fromisoformat`` łapie warianty z dwukropkiem.
-    """
-    if not value:
-        return None
-    text = str(value).strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
+# Parsowanie znaczników Jiry jest WSPÓLNE z ewidencją czasu (ADR 0034) — ``domain/jira_time.py``.
+_parse_jira_ts = parse_jira_timestamp

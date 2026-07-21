@@ -44,7 +44,9 @@ def _load_cache(cache_path: Path) -> Any:
 
     cache = msal.SerializableTokenCache()
     if cache_path.exists():
-        cache.deserialize(cache_path.read_text())
+        # encoding JAWNIE: cache zawiera claim `name` z ID-tokenu (polskie znaki), a usługa systemd
+        # bez LANG dostaje locale POSIX → ASCII i deserializacja wywala się UnicodeDecodeError.
+        cache.deserialize(cache_path.read_text(encoding="utf-8"))
     return cache
 
 
@@ -53,7 +55,7 @@ def _save_cache(cache: Any, cache_path: Path) -> None:
     if not getattr(cache, "has_state_changed", False):
         return
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(cache.serialize())
+    cache_path.write_text(cache.serialize(), encoding="utf-8")
     # Ogranicz dostęp do pliku (Linux/macOS; na Windows ignorowane).
     with contextlib.suppress(OSError):
         os.chmod(cache_path, 0o600)

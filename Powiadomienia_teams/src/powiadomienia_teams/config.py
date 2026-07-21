@@ -142,6 +142,13 @@ class Settings:
             raise ConfigError(
                 "scheduling_group_id jest wymagane, gdy dry_run=false (zapis zmian do Shifts)"
             )
+        # Bez klucza SDK i tak wyśle żądanie (pusty string ≠ None, więc nie ma fallbacku na profil
+        # OAuth) i dostanie 401 — dla KAŻDEJ odpowiedzi, po cichu, bo wyjątek łapie izolacja
+        # per-osoba. Bot wysyłałby prośby, na które nigdy nie odpowiada. Fail-fast na starcie.
+        if not self.dry_run and not self.anthropic_api_key:
+            raise ConfigError(
+                "anthropic_api_key jest wymagane, gdy dry_run=false (interpretacja odpowiedzi)"
+            )
         try:
             _ = self.tz  # walidacja nazwy strefy
         except Exception as exc:

@@ -68,3 +68,43 @@ class JiraWritePort(Protocol):
         osobnym GET-em — ``updated`` stempluje echo ``source="teams"`` hopa (strażnik pętli, 0032).
         """
         ...
+
+
+class JiraWorklogPort(Protocol):
+    """Ewidencja czasu w Jirze (ADR 0034, bramkowana) — dopisanie wpisu i odczyt istniejących.
+
+    TRZECI port obok read/write, nie metoda w ``JiraWritePort``: ewidencja czasu ma WŁASNĄ bramkę,
+    więc drzwi mogą dostać ją bez zdolności tworzenia zgłoszeń (i odwrotnie). Ten sam rozdział
+    zdolności co ``NotesRepository`` vs ``NotesWriter`` (ADR 0006).
+
+    ``on_behalf_of`` (``accountId``) to INTENCJA wołającego, NIE gwarancja. Jira zawsze zapisuje
+    autora = konto uwierzytelnione tokenem; adapter nie wysyła pola ``author`` (API i tak je
+    ignoruje), tylko oddaje ``on_behalf_of`` z powrotem jako ``requested_author``. Za faktyczną
+    atrybucję odpowiada strategia autorstwa (``application/worklog_author.py``).
+
+    ``add_worklog`` jest CREATE-ONLY — brak edycji i usuwania (to byłaby pierwsza nie-create-only
+    mutacja Jiry, wymagająca własnego ADR). Dlatego ``read_worklogs`` istnieje: bez cofania wpisu
+    jedyną ochroną przed podwójnym zapisem jest sprawdzenie, co już tam jest.
+    """
+
+    def add_worklog(
+        self,
+        issue_key: str,
+        *,
+        time_spent_seconds: int,
+        started: str,
+        comment: str = "",
+        on_behalf_of: str = "",
+    ) -> dict[str, Any]:
+        """Dopisz wpis czasu; zwróć ``{id, url, created, author_account_id, requested_author}``.
+
+        ``started`` to znacznik w formacie Jiry (ISO z milisekundami i offsetem bez dwukropka) —
+        składa go rdzeń, bo to on zna strefę z polityki. ``created`` stempluje echo ``source=
+        "teams"`` (strażnik pętli). ``author_account_id`` to PRAWDZIWY autor z odpowiedzi Jiry.
+        """
+        ...
+
+    def read_worklogs(self, issue_key: str, *, max_results: int = 100) -> list[dict[str, Any]]:
+        """Istniejące wpisy zgłoszenia: ``[{id, author_account_id, started, time_spent_seconds,
+        comment}]`` — strażnik duplikatów (bez usuwania wpisów to jedyna ochrona)."""
+        ...

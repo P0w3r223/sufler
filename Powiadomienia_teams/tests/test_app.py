@@ -35,10 +35,12 @@ class _FakeClient:
         messages: dict[str, list[dict[str, Any]]],
         members: tuple[Any, ...] = (),
         shifts: tuple[Any, ...] = (),
+        time_offs: tuple[Any, ...] = (),
     ) -> None:
         self.messages = messages
         self._members = members
         self._shifts = shifts
+        self._time_offs = time_offs
         self.sent: list[tuple[str, str]] = []
         self.created: list[Any] = []
         self.time_off: list[Any] = []
@@ -55,6 +57,9 @@ class _FakeClient:
 
     def read_shifts(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
         return tuple(s for s in self._shifts if start <= s.start < end)
+
+    def read_time_off(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
+        return tuple(t for t in self._time_offs if t.start < end and t.end > start)
 
     def create_or_get_chat(self, me_id: str, target_user_id: str) -> str:
         return f"chat-{target_user_id}"
@@ -784,3 +789,77 @@ def test_dry_run_skips_listener(tmp_path: Path):
     client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
     poll_replies(dry, client, _FakeLlm("{}"))  # type: ignore[arg-type]
     assert client.sent == []  # dry-run: nic nie ruszone
+
+
+def test_run_once_skips_member_on_time_off(tmp_path: Path):
+    """Osoba z zatwierdzonym urlopem w docelowym tygodniu NIE dostaje prośby.
+
+    Bez tego odpisałaby „cały tydzień urlop", a bot stworzyłby jej DRUGI komplet wpisów timeOff
+    na te same dni — `create_time_off` nie deduplikuje.
+    """
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)  # dry_run=False
+    on_leave = Member("u1", "Ala")
+    without = Member("u2", "Bogdan")
+    vacation = TimeOff(
+        "u1",
+        datetime(2026, 7, 20, tzinfo=timezone.utc),
+        datetime(2026, 7, 25, tzinfo=timezone.utc),
+        reason_id="TOR_URLOP",
+    )
+    client = _FakeClient({}, members=(on_leave, without), shifts=(), time_offs=(vacation,))
+    now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+
+    missing = run_once(settings, client, now=now)  # type: ignore[arg-type]
+
+    assert [m.user_id for m in missing] == ["u2"]
+    assert "u1" not in load_state(state_path)
+
+
+def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path):
+    """Awaria interpretacji u1 NIE może utrwalić jego watermarku przy okazji zapisu u2.
+
+    `pending` to ten sam obiekt, który trzyma słownik `state`, więc przesunięcie watermarku z góry
+    sprawiłoby, że `save_state` wywołane dla u2 zserializuje też zaawansowany watermark u1 —
+    a wtedy `newest_incoming` odsieje jego odpowiedź na zawsze i po 48 h dostanie nieprawdziwe
+    „nie dostałem odpowiedzi".
+    """
+    state_path = tmp_path / "state.json"
+
+    def _pending(uid: str) -> PendingReminder:
+        return PendingReminder(
+            member_id=uid, member_name=uid.upper(), chat_id=f"chat-{uid}",
+            week_start="2026-07-20", status="awaiting_reply",
+            watermark="2026-07-17T16:00:00Z", nudged_at="2026-07-17T16:00:00Z",
+            proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+        )
+
+    save_state(state_path, {"u1": _pending("u1"), "u2": _pending("u2")})
+    settings = _settings(state_path)
+    client = _FakeClient({
+        "chat-u1": [_msg("u1", "2026-07-17T18:00:00Z", "ok")],
+        "chat-u2": [_msg("u2", "2026-07-17T18:01:00Z", "ok")],
+    })
+
+    class _FailsOnFirst:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, system: str, user: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("timeout Claude")
+            return '{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}'
+
+    poll_replies(settings, client, _FailsOnFirst(), now=datetime(  # type: ignore[arg-type]
+        2026, 7, 17, 18, 5, tzinfo=timezone.utc))
+
+    saved = load_state(state_path)
+    # u2 przetworzony — watermark przesunięty, status zmieniony.
+    assert saved["u2"].status == AWAITING_CONFIRM
+    assert saved["u2"].watermark == "2026-07-17T18:01:00Z"
+    # u1 padł — watermark MUSI zostać nietknięty, żeby kolejny tick zobaczył jego odpowiedź.
+    assert saved["u1"].watermark == "2026-07-17T16:00:00Z"
+    assert saved["u1"].status == "awaiting_reply"
+    # Dowód, że odpowiedź jest wciąż widoczna dla listenera.
+    assert newest_incoming(client.messages["chat-u1"], "me", saved["u1"].watermark) is not None

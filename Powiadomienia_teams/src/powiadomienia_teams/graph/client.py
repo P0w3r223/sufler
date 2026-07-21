@@ -7,6 +7,7 @@ event-loopowe jak poller kanałów — sync upraszcza pętlę i listener odpowie
 """
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -15,19 +16,60 @@ from typing import Any
 import httpx
 
 from powiadomienia_teams.domain.models import Member, Shift, TimeOff
-from powiadomienia_teams.graph.mapping import member_from_json, shift_from_json, to_graph_iso
+from powiadomienia_teams.graph.auth import AuthExpiredError
+from powiadomienia_teams.graph.mapping import (
+    member_from_json,
+    shift_from_json,
+    time_off_from_json,
+    to_graph_iso,
+)
 from powiadomienia_teams.reminders.timeoff import TeamReasons, normalize
+
+logger = logging.getLogger(__name__)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 _DEFAULT_RETRY_AFTER_S = 5
 _MAX_429_RETRIES = 5
 _MAX_PAGES = 50
 _DEFAULT_THEME = "green"  # nieokreślony dzień = stacjonarnie
+_MAX_ERROR_BODY = 500  # ile znaków ciała błędu trafia do logu
+
+
+class GraphPermissionError(RuntimeError):
+    """Graph odmówił dostępu (403) — brak zgody/roli. NIE jest błędem transientnym.
+
+    Wydzielony z ogólnych 4xx, bo ponawianie nic nie da: cofniętej zgody admina ani utraconej roli
+    właściciela zespołu nie naprawi kolejna próba. Orkiestracja pomija dla niego backoff.
+    """
 
 
 def _retry_after(response: httpx.Response) -> int:
     raw = response.headers.get("Retry-After", "")
     return int(raw) if raw.isdigit() else _DEFAULT_RETRY_AFTER_S
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    """``raise_for_status`` wzbogacone o CIAŁO odpowiedzi i rozróżnienie 401/403.
+
+    Samo ``raise_for_status`` daje tylko kod i URL, a jedyne miejsce z prawdziwą przyczyną
+    („Missing scope Schedule.ReadWrite.All", „Caller does not have access to the schedule") jest
+    w ciele — bez niego diagnoza na serwerze bez terminala jest niemożliwa.
+    """
+    if response.status_code < 400:
+        return
+    body = response.text[:_MAX_ERROR_BODY]
+    logger.error("Graph %s %s → %s: %s", response.request.method, response.request.url,
+                 response.status_code, body)
+    if response.status_code == 401:
+        # Token odrzucony mimo udanego cichego odświeżenia (cofnięta zgoda, zmiana hasła konta
+        # „głosu", nowa polityka Conditional Access). To NIE jest błąd transientny — usługa ma się
+        # zatrzymać czysto z instrukcją `--login`, a nie kręcić w pętli udając zdrową.
+        raise AuthExpiredError(
+            "Graph odrzucił token (401) — zaloguj się ponownie: `powiadomienia-teams --login`."
+        )
+    if response.status_code == 403:
+        raise GraphPermissionError(f"Graph odmówił dostępu (403): {body}")
+    response.raise_for_status()
 
 
 class GraphClient:
@@ -56,7 +98,7 @@ class GraphClient:
                 attempts += 1
                 self._sleep(_retry_after(response))
                 continue
-            response.raise_for_status()
+            _raise_for_status(response)
             data: dict[str, Any] = response.json()
             return data
 
@@ -79,7 +121,7 @@ class GraphClient:
                 attempts += 1
                 self._sleep(_retry_after(response))
                 continue
-            response.raise_for_status()
+            _raise_for_status(response)
             data: dict[str, Any] = response.json() if response.content else {}
             return data
 
@@ -112,6 +154,24 @@ class GraphClient:
             if s is not None and window_start <= s.start < window_end
         ]
         return tuple(sorted(shifts, key=lambda s: s.start))
+
+    def read_time_off(
+        self, team_id: str, window_start: datetime, window_end: datetime
+    ) -> tuple[TimeOff, ...]:
+        """Czas wolny PRZECINAJĄCY się z ``[window_start, window_end)`` (tz-aware, UTC).
+
+        Kryterium PRZECIĘCIA, nie „początek w oknie" jak w ``read_shifts``: zmiana trwa najwyżej
+        24 h, więc jej początek zawsze wpada w tydzień, ale urlop bywa wielotygodniowy i może
+        zacząć się na długo przed oknem docelowym. Gdyby liczyć po początku, osoba w środku
+        dwutygodniowego urlopu wyszłaby jako „bez grafiku" i dostałaby prośbę.
+        """
+        raw = self._get_all(f"{GRAPH}/teams/{team_id}/schedule/timesOff")
+        entries = [
+            t
+            for t in (time_off_from_json(x) for x in raw)
+            if t is not None and t.start < window_end and t.end > window_start
+        ]
+        return tuple(sorted(entries, key=lambda t: t.start))
 
     def create_or_get_chat(self, me_id: str, target_user_id: str) -> str:
         """Utwórz (lub pobierz istniejący) czat 1:1 z pracownikiem — zwróć chat_id.

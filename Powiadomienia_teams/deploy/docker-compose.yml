@@ -1,0 +1,46 @@
+# Uruchomienie usługi powiadomienia-teams na serwerze.
+#
+# Docelowa lokalizacja: /opt/teams-shifts-reminder/docker-compose.yml
+# Obok niego: env (konfiguracja, chmod 640 — zawiera klucz Claude).
+#
+#   docker compose up -d          # start
+#   docker compose logs -f        # podgląd
+#   docker compose down           # zatrzymanie (wolumen ZOSTAJE)
+
+services:
+  powiadomienia:
+    image: powiadomienia-teams:0.1.0
+    container_name: powiadomienia-teams
+
+    env_file:
+      - ./env
+
+    # Stan i cache MSAL MUSZĄ przeżyć restart i podmianę obrazu. Bez tego wolumenu każdy restart
+    # zaczynałby z pustym stanem: otwarte rozmowy przepadają, a najbliższy przebieg wysyła prośby
+    # drugi raz do tych samych osób (idempotencja opiera się WYŁĄCZNIE na tym pliku).
+    volumes:
+      - stan:/var/lib/powiadomienia-teams
+
+    # CELOWO `on-failure`, nie `always`: utrata refresh-tokenu (~90 dni) jest nienaprawialna
+    # automatycznie — wymaga człowieka i `--login`. Restart w nieskończoność tylko ukryłby problem
+    # do następnego piątku. Zatrzymany kontener = sygnał do interwencji.
+    restart: on-failure:5
+
+    # Wychodzące HTTPS do login.microsoftonline.com, graph.microsoft.com, api.anthropic.com.
+    # Nie nasłuchuje na niczym — brak sekcji ports jest zamierzony.
+
+    security_opt:
+      - no-new-privileges:true
+    read_only: true          # zapisywalny jest tylko wolumen stanu
+    tmpfs:
+      - /tmp:size=16m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  stan:
+    name: powiadomienia-teams-stan

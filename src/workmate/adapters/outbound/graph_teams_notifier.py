@@ -38,6 +38,22 @@ class HttpxTeamsNotifier:
         chat_id = await self._create_or_get_chat(me_id, target_user_id)
         await self._post(f"{GRAPH}/chats/{chat_id}/messages", _html_body(text))
 
+    async def send_chat_html(self, target_user_id: str, html: str) -> None:
+        """Wyślij GOTOWY HTML 1:1 — ta sama ścieżka czatu co ``send_chat``, ale BEZ renderera.
+
+        Świadomie omijamy ``to_teams_html``: renderer escapuje surowy HTML i nie włącza tabel
+        (ADR 0035), więc tabela godzin dotarłaby jako ``&lt;table&gt;``. Bezpieczeństwo opiera się
+        na kontrakcie portu — HTML składa czysta funkcja rdzenia, która escapuje każdą wstawioną
+        wartość. Treść niezaufana MUSI iść przez ``send_chat``, nie tędy.
+        """
+        await self._refresh_auth()
+        me_id = await self._me_id_cached()
+        chat_id = await self._create_or_get_chat(me_id, target_user_id)
+        await self._post(
+            f"{GRAPH}/chats/{chat_id}/messages",
+            {"body": {"contentType": "html", "content": html}},
+        )
+
     async def post_channel(self, team_id: str, channel_id: str, text: str) -> str:
         """Wyślij NOWY post (root wątku) na kanale i zwróć id wiadomości (do wątkowania)."""
         await self._refresh_auth()

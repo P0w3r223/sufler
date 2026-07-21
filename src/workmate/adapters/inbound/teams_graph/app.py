@@ -27,6 +27,8 @@ from workmate.adapters.inbound.agent_wiring import build_conversational_responde
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
 from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
+    IMPLEMENTED_WORKLOG_STRATEGIES,
+    JIRA_DEPLOYMENTS,
     MAX_JIRA_TRANSITION_HOPS,
     AgentSettings,
     ConversationSettings,
@@ -126,6 +128,7 @@ def _build_bridge_catalog(
     events = EventService(SqliteEventStore(events_settings.db_path))
     catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
     catalog += _build_jira_catalog(jira_settings, events)
+    catalog += _build_worklog_catalog(jira_settings, github_settings, events)
 
     if not (
         github_settings.enable_github_write
@@ -179,15 +182,24 @@ def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> li
     """
     if not (jira_settings.enable_jira_write or jira_settings.enable_jira_transition):
         return []
-    missing = [
-        name
-        for name, value in (
-            ("WORKMATE_JIRA_TOKEN", jira_settings.token),
-            ("WORKMATE_JIRA_BASE_URL", jira_settings.base_url),
-            ("WORKMATE_JIRA_WRITE_PROJECT", jira_settings.write_project),
+    # Wariant wdrożenia walidujemy spójnie z pollerem (``JiraSettings.validate``) — literówka w
+    # DEPLOYMENT nie może po cichu zbudować klienta Server/DC (Bearer) na instancji Cloud (→ 401).
+    deployment = jira_settings.deployment.strip().lower()
+    if deployment not in JIRA_DEPLOYMENTS:
+        raise ValueError(
+            "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
+            f"{jira_settings.deployment!r}."
         )
-        if not value
+    required = [
+        ("WORKMATE_JIRA_TOKEN", jira_settings.token),
+        ("WORKMATE_JIRA_BASE_URL", jira_settings.base_url),
+        ("WORKMATE_JIRA_WRITE_PROJECT", jira_settings.write_project),
     ]
+    # Cloud (ADR 0033) uwierzytelnia się Basic (email + API token); bez e-maila zapis/tranzycja z
+    # Teams nie zadziała — fail-fast spójnie z resztą celów (jak poller ``JiraSettings.validate``).
+    if deployment == "cloud":
+        required.append(("WORKMATE_JIRA_EMAIL", jira_settings.email))
+    missing = [name for name, value in required if not value]
     if missing:
         raise ValueError(
             "WORKMATE_JIRA_ENABLE_WRITE/ENABLE_TRANSITION=true wymaga: "
@@ -207,16 +219,14 @@ def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> li
 
     import httpx
 
-    from workmate.adapters.outbound.jira_api import HttpxJiraClient
+    from workmate.adapters.outbound.jira_api import build_jira_client
     from workmate.core.application.jira import JiraWriteService
     from workmate.core.application.tools import (
         build_jira_transition_catalog,
         build_jira_write_catalog,
     )
 
-    client = HttpxJiraClient(
-        httpx.Client(timeout=30), jira_settings.token, base_url=jira_settings.base_url
-    )
+    client = build_jira_client(httpx.Client(timeout=30), jira_settings)
     write_service = JiraWriteService(
         client,
         project=jira_settings.write_project,
@@ -243,6 +253,108 @@ def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> li
         )
         catalog += build_jira_transition_catalog(write_service)
     return catalog
+
+
+def _build_worklog_catalog(
+    jira_settings: JiraSettings,
+    github_settings: GithubSettings,
+    events: EventService,
+) -> list[ToolSpec]:
+    """Bramkowane narzędzia ewidencji czasu (ADR 0034) — propozycja z commitów + zapis do Jiry.
+
+    Bramka OSOBNA od zapisu i tranzycji (``enable_jira_worklog``): profil „tylko ewidencja" nie
+    wymaga zdolności tworzenia zgłoszeń. Wyłączona → pusto, więc model nie widzi ani narzędzia
+    mutującego, ani odczytu commitów (strukturalna gwarancja profilu per drzwi).
+
+    Zdolność stoi NA DWÓCH nogach — Jira (zapis wpisu) i GitHub (źródło commitów) — więc obie
+    walidujemy tu, razem. Brak konfiguracji GitHuba przy włączonej bramce dałby narzędzie, które
+    startuje i dopiero przy pierwszym użyciu okazuje się puste; to ta sama klasa footguna co
+    „bramka włączona, ale martwa" w ``_build_jira_catalog``. Klient GitHub jest READ-ONLY i
+    NIEZALEŻNY od ``enable_github_write`` — ewidencja czyta commity, nie pisze do repo.
+
+    Nazwę strategii autorstwa i sufity egzekwujemy TU, bo ``JiraSettings.validate`` woła tylko
+    poller Jira (``workmate-jira``), a to te drzwi wykonują zapis (analogicznie do sufitu hopów).
+    """
+    if not jira_settings.enable_jira_worklog:
+        return []
+    deployment = jira_settings.deployment.strip().lower()
+    if deployment not in JIRA_DEPLOYMENTS:
+        raise ValueError(
+            "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
+            f"{jira_settings.deployment!r}."
+        )
+    required = [
+        ("WORKMATE_JIRA_TOKEN", jira_settings.token),
+        ("WORKMATE_JIRA_BASE_URL", jira_settings.base_url),
+        ("WORKMATE_JIRA_WRITE_PROJECT", jira_settings.write_project),
+        ("WORKMATE_JIRA_SELF_ACCOUNT", jira_settings.self_account),
+        # Bez źródła commitów propozycja jest martwa — to POŁOWA zdolności, nie dodatek.
+        ("WORKMATE_GITHUB_TOKEN", github_settings.token),
+        ("WORKMATE_GITHUB_OWNER", github_settings.owner),
+        ("WORKMATE_GITHUB_REPO", github_settings.repo),
+    ]
+    if deployment == "cloud":
+        required.append(("WORKMATE_JIRA_EMAIL", jira_settings.email))
+    missing = [name for name, value in required if not value]
+    if missing:
+        raise ValueError(
+            "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga: "
+            + ", ".join(missing)
+            + " w środowisku/.env."
+        )
+    if jira_settings.worklog_author_strategy not in IMPLEMENTED_WORKLOG_STRATEGIES:
+        raise ValueError(
+            f"strategia autorstwa {jira_settings.worklog_author_strategy!r} jest udokumentowanym "
+            "SZKIELETEM, jeszcze niezaimplementowanym (ADR 0034) — użyj 'self'."
+        )
+
+    import httpx
+
+    from workmate.adapters.outbound.github_api import HttpxGithubClient
+    from workmate.adapters.outbound.jira_api import build_jira_client
+    from workmate.core.application.tools import build_worklog_catalog
+    from workmate.core.application.worklog import WorklogService
+    from workmate.core.application.worklog_author import build_author_strategy
+    from workmate.core.domain.worklog import SessionPolicy
+
+    github_client = HttpxGithubClient(
+        httpx.Client(timeout=30), github_settings.token, api_base=github_settings.api_base
+    )
+    service = WorklogService(
+        github_client,
+        build_jira_client(httpx.Client(timeout=30), jira_settings),
+        owner=github_settings.owner,
+        repo=github_settings.repo,
+        project=jira_settings.write_project,
+        author_strategy=build_author_strategy(
+            jira_settings.worklog_author_strategy, self_account=jira_settings.self_account
+        ),
+        policy=SessionPolicy(
+            idle_gap_minutes=jira_settings.worklog_idle_gap_minutes,
+            ramp_up_minutes=jira_settings.worklog_ramp_up_minutes,
+            round_minutes=jira_settings.worklog_round_minutes,
+            max_session_hours=jira_settings.worklog_max_hours_per_entry,
+            tz_offset_minutes=jira_settings.worklog_tz_offset_minutes,
+        ),
+        max_hours_per_entry=jira_settings.worklog_max_hours_per_entry,
+        max_backdate_days=jira_settings.worklog_max_backdate_days,
+        max_range_days=jira_settings.worklog_max_range_days,
+        allow_on_behalf=jira_settings.worklog_allow_on_behalf,
+        duplicate_guard=jira_settings.worklog_duplicate_guard,
+        events=events,
+    )
+    logger.info(
+        "Jira worklog WŁĄCZONY dla projektu %s ze źródłem commitów %s/%s (strategia autorstwa: %s, "
+        "zapis w cudzym imieniu: %s). UWAGA (ADR 0034): Jira zapisuje autorem wpisu KONTO TOKENU — "
+        "wpisy 'w imieniu' innych osób trafią do raportów czasu jako czas tego konta, a informacja "
+        "o właściwej osobie żyje tylko w treści wpisu.",
+        jira_settings.write_project,
+        github_settings.owner,
+        github_settings.repo,
+        jira_settings.worklog_author_strategy,
+        "TAK" if jira_settings.worklog_allow_on_behalf else "nie",
+    )
+    return build_worklog_catalog(service)
 
 
 def _make_thread_tool_factory(

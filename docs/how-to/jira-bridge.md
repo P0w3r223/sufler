@@ -9,6 +9,9 @@ i przesuwać status. Bliźniak mostu GitHub. Decyzje: [ADR 0030](../adr/0030-jir
 [ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md) (wątkowanie
 kanału). Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md).
 
+
+> **Ewidencja czasu z commitów** (ADR 0034) ma własną instrukcję: [`worklog-from-commits.md`](worklog-from-commits.md) — bramka `WORKMATE_JIRA_ENABLE_WORKLOG`, przepływ propozycja → potwierdzenie → zapis, oraz ograniczenie atrybucji przy zapisie w cudzym imieniu.
+
 ## Wymagania
 
 - **PAT Jira** — token osobisty (Bearer), konto z dostępem do projektów docelowych. **Sekret** —
@@ -18,13 +21,37 @@ kanału). Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md
 - **Rejestr projektów**: żeby zdarzenia miały atrybucję do projektu WorkMate, wpisz `jira_project_key`
   na projekcie w `data/projects/registry.yaml` (ADR 0028).
 
+## Wariant wdrożenia: Server/DC vs Cloud (ADR 0033)
+
+`WORKMATE_JIRA_DEPLOYMENT` wybiera wariant (domyślnie `server` — wstecznie zgodne):
+
+| | `server` (Server/Data Center) | `cloud` (Jira Cloud) |
+|---|---|---|
+| Auth | PAT **Bearer** (`WORKMATE_JIRA_TOKEN`) | **Basic** `email:api_token` (`WORKMATE_JIRA_EMAIL` + `WORKMATE_JIRA_TOKEN`) |
+| REST | v2 | v3 (treść jako **ADF**, spłaszczana do tekstu na wejściu) |
+| Wyszukiwanie | `/search` (`startAt`) | `/search/jql` (kursor; changelog/komentarze inline ucięte do 20) |
+| URL | własny host `https://jira.firma.pl` | `https://<site>.atlassian.net` |
+| `SELF_ACCOUNT` | login/klucz PAT | `accountId` (z `/rest/api/3/myself`) |
+
+**Cloud — jak zdobyć sekrety:** API token utwórz w `id.atlassian.com` → Security → **Create API token**
+(widoczny raz). `accountId` (do `SELF_ACCOUNT`) odczytasz z `GET /rest/api/3/myself` lub z URL-a profilu.
+Cała reszta procedury (push do Teams, wątkowanie, zapis, tranzycja) jest identyczna dla obu wariantów —
+provider jest niewidoczny powyżej adaptera.
+
+> **Uwaga strefowa (Cloud):** JQL bez strefy interpretuje daty w strefie **konta usługowego**, nie
+> instancji. Ustaw strefę konta PAT/API tak, by pasowała do hosta pollera (albo licz się z drobnym
+> przesunięciem okna — dedup i kliencki filtr świeżości to domykają).
+
 ## Krok 1 — ingest zdarzeń (Jira → EventStore)
 
-`.env` w korzeniu repo:
+`.env` w korzeniu repo (przykład Server/DC; dla Cloud dodaj `WORKMATE_JIRA_DEPLOYMENT=cloud` +
+`WORKMATE_JIRA_EMAIL`, a URL wskaż na `*.atlassian.net`):
 
 ```bash
+WORKMATE_JIRA_DEPLOYMENT=server
 WORKMATE_JIRA_BASE_URL=https://jira.firma.pl
-WORKMATE_JIRA_TOKEN=<PAT>
+WORKMATE_JIRA_TOKEN=<PAT lub API token>
+# WORKMATE_JIRA_EMAIL=me@firma.pl   # tylko Cloud
 WORKMATE_JIRA_WATCH_PROJECTS=WM
 ```
 

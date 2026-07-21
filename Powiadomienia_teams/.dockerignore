@@ -1,0 +1,26 @@
+# Kontekst budowania — im mniejszy, tym szybsze `docker build`.
+# SEKRETY: .env wykluczony JAWNIE. Konfiguracja wchodzi przez --env-file w czasie URUCHOMIENIA,
+# nigdy przez warstwę obrazu (warstwy są nieusuwalne i wędrują razem z obrazem).
+.env
+.env.*
+!.env.example
+roster.yaml
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.git/
+.gitignore
+
+# Dokumentacja i narzędzia deweloperskie — nie są potrzebne w obrazie.
+docs/
+PLAN.md
+scripts/pack.sh
+deploy/
+
+# Artefakty wcześniejszego wariantu wdrożenia (tarball).
+*.tar.gz
