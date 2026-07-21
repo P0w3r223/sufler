@@ -67,7 +67,9 @@ Skopiuj `.env.example` → `.env` i uzupełnij. Zmienne mają prefiks `POWIADOMI
 - `RUN_WEEKDAY` (domyślnie `4` = piątek), `RUN_HOUR` (16), `TIMEZONE` (`Europe/Warsaw`).
 - `REPLY_WINDOW_HOURS` (48) — po tylu h ciszy zamknij okno; `SEND_EXPIRY_MESSAGE` (true) — czy
   wysłać wtedy uprzejme domknięcie.
-- `POLL_INTERVAL_S` (10, bazowy odstęp nasłuchu) i `POLL_MAX_INTERVAL_S` (300, górny limit backoffu).
+- `POLL_INTERVAL_S` (10, bazowy odstęp nasłuchu) i `POLL_MAX_INTERVAL_S` (3600, górny limit
+  backoffu — nieobecny pracownik = sprawdzanie czatu raz na godzinę; obsłużona odpowiedź
+  natychmiast wraca do odstępu bazowego).
 - `CATCHUP_GRACE_HOURS` (6) — ile h po minionym terminie wolno nadrobić zaległy przebieg (0 = off).
 - `DRY_RUN` (domyślnie `true`) — nic nie jest wysyłane ani zapisywane, dopóki nie ustawisz `false`.
 

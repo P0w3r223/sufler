@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -6,9 +6,19 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from powiadomienia_teams.app import (
+    _MAX_PENDING_FAILURES,
     CrossUserWriteError,
+    StanPulsu,
     _catchup_due,
+    _ensure_authenticated,
+    _handle_auth_loss,
+    _przebieg_i_podsumowanie,
+    _puls_sesji,
     _run_once_with_retry,
+    _safe_run_once,
+    _send_summary,
+    _spij_z_pulsem,
+    _touch_heartbeat,
     ensure_single_owner,
     poll_replies,
     run_once,
@@ -765,6 +775,35 @@ def test_poll_replies_outcome_reports_open_and_activity(tmp_path: Path):
     assert outcome.last_activity == datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc)
 
 
+def test_handled_reply_reports_detection_time_not_message_time(tmp_path: Path):
+    """Obsłużona odpowiedź = aktywność TERAZ, nawet gdy wiadomość powstała 50 minut temu.
+
+    Przy godzinnym suficie backoffu liczenie ciszy od `createdDateTime` wiadomości wrzucałoby
+    następny odstęp z powrotem pod sufit tuż po tym, jak rozmowa ruszyła — każda tura wymiany
+    (odpowiedź → pytanie potwierdzające → »tak« → zapis) kosztowałaby wtedy do godziny.
+    """
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
+                status="awaiting_reply", watermark=nudge, nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    # Pracownik odpisał 50 min temu; nasłuch zauważa to dopiero teraz (odstęp zdążył urosnąć).
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-16T11:10:00Z", "cokolwiek")]})
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    outcome = poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+    assert outcome.open_count == 1
+    assert outcome.last_activity == now  # NIE 11:10 — inaczej backoff zostałby pod sufitem
+
+
 def test_poll_replies_outcome_zero_when_nothing_open(tmp_path: Path):
     settings = _settings(tmp_path / "state.json")  # brak pliku stanu
     outcome = poll_replies(
@@ -863,3 +902,444 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
     assert saved["u1"].status == "awaiting_reply"
     # Dowód, że odpowiedź jest wciąż widoczna dla listenera.
     assert newest_incoming(client.messages["chat-u1"], "me", saved["u1"].watermark) is not None
+
+
+class _RaisingLlm:
+    """Model, który zawsze zawodzi tak samo — imituje błąd DETERMINISTYCZNY."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls += 1
+        raise ValueError("ten sam wyjątek za każdym razem")
+
+
+def _pending_with_reply(state_path: Path) -> None:
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
+                status="awaiting_reply", watermark=nudge, nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+
+def test_deterministic_failure_gives_up_instead_of_looping(tmp_path: Path):
+    """Trwały błąd obsługi NIE może zapętlić się na 48 h i skończyć fałszywym »brak odpowiedzi«.
+
+    Watermark rośnie dopiero po udanej obsłudze, więc bez licznika prób ta sama wiadomość wracałaby
+    w każdym ticku aż do wygaśnięcia okna — a pracownik, który odpisał, dostałby na koniec
+    „nie dostałem odpowiedzi".
+    """
+    state_path = tmp_path / "state.json"
+    _pending_with_reply(state_path)
+    settings = _settings(state_path)
+    reply = "2026-07-16T11:10:00Z"
+    client = _FakeClient({"chat1": [_msg("u1", reply, "coś, czego model nie ogarnie")]})
+    llm = _RaisingLlm()
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    for tick in range(1, _MAX_PENDING_FAILURES):
+        poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
+        pending = load_state(state_path)["u1"]
+        assert pending.watermark != reply, f"tick {tick}: watermark ruszył za wcześnie"
+        assert pending.fail_count == tick
+        assert client.sent == []  # dopóki próbujemy, pracownika nie zawracamy
+
+    poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
+    pending = load_state(state_path)["u1"]
+    assert pending.watermark == reply  # odpuszczone świadomie — koniec pętli
+    assert pending.fail_count == 0
+    assert len(client.sent) == 1  # prośba o doprecyzowanie, zamiast ciszy i kłamstwa po 48 h
+
+    poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
+    assert llm.calls == _MAX_PENDING_FAILURES  # ta wiadomość nie jest już interpretowana
+
+
+def test_transient_startup_error_is_retried_not_fatal(tmp_path: Path):
+    """Chwilowa awaria sieci przy starcie nie może zabić kontenera na stałe.
+
+    Błąd rzuca FABRYKA, nie dostawca — bo `msal.PublicClientApplication` odpytuje tenant już przy
+    konstrukcji. Wcześniejsza wersja testu wstrzykiwała gotowego dostawcę i dlatego nie widziała,
+    że prawdziwa awaria sieci leci spoza pętli ponowień. Wyszło to dopiero na uruchomionym obrazie.
+    """
+    proby = {"n": 0}
+
+    def fabryka(_settings_arg):
+        proby["n"] += 1
+        if proby["n"] < 3:
+            raise OSError("Temporary failure in name resolution")
+        return lambda: "tok"
+
+    provider = _ensure_authenticated(
+        _settings(tmp_path / "s.json"), fabryka, sleep=lambda _s: None
+    )
+    assert proby["n"] == 3  # dwie próby padły, trzecia przeszła — proces żyje
+    assert provider() == "tok"  # zwrócony dostawca jest tym z UDANEJ próby
+
+
+def test_persistent_startup_error_exits_cleanly(tmp_path: Path):
+    """Ponawianie ma granicę — trwała awaria kończy proces czytelnym komunikatem, nie stosem."""
+    def fabryka(_settings_arg):
+        raise OSError("sieć nie wróciła")
+
+    with pytest.raises(SystemExit):
+        _ensure_authenticated(_settings(tmp_path / "s.json"), fabryka, sleep=lambda _s: None)
+
+
+def test_expired_token_is_not_retried(tmp_path: Path, monkeypatch):
+    """Utrata tokenu NIE jest transientna — żadnego ponawiania, od razu instrukcja `--login`."""
+    proby = {"n": 0}
+
+    def fabryka(_settings_arg):
+        def provider() -> str:
+            proby["n"] += 1
+            raise AuthExpiredError("brak refresh-tokenu")
+        return provider
+
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
+    with pytest.raises(SystemExit):
+        _ensure_authenticated(_settings(tmp_path / "s.json"), fabryka, sleep=lambda _s: None)
+    assert proby["n"] == 1
+
+
+# --- Praca bezobsługowa ------------------------------------------------------
+
+
+class _CountingClient(_FakeClient):
+    """Atrapa licząca odświeżenia sesji — puls ma bić raz na dobę, nie co pobudkę."""
+
+    def __init__(self, *args: Any, boom: Exception | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.refresh_calls = 0
+        self._boom = boom
+
+    def refresh_auth(self) -> None:
+        self.refresh_calls += 1
+        if self._boom is not None:
+            raise self._boom
+
+
+def _settings_bezobslugowe(state_path: Path, **kwargs: Any) -> Settings:
+    return Settings(
+        client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
+        state_path=state_path, dry_run=False, **kwargs,
+    )
+
+
+def test_heartbeat_tworzy_plik_obok_stanu(tmp_path: Path):
+    """Puls musi wylądować na wolumenie stanu — reszta obrazu jest tylko do odczytu."""
+    settings = _settings_bezobslugowe(tmp_path / "podkatalog" / "state.json")
+    _touch_heartbeat(settings)
+    assert (tmp_path / "podkatalog" / "heartbeat").exists()
+
+
+def _zaraz(sekund_temu: int = 1) -> StanPulsu:
+    """Stan pulsu z terminem, który już minął — czyli próba wypada natychmiast."""
+    return StanPulsu(datetime.now(timezone.utc) - timedelta(seconds=sekund_temu))
+
+
+def test_puls_nie_bije_przed_terminem(tmp_path: Path):
+    settings = _settings_bezobslugowe(tmp_path / "s.json", heartbeat_interval_h=24)
+    client = _CountingClient({})
+    stan = StanPulsu(datetime.now(timezone.utc) + timedelta(hours=24))
+
+    assert _puls_sesji(settings, client, stan) is stan
+    assert client.refresh_calls == 0  # pobudka co 10 s nie może odpytywać MSAL co 10 s
+
+
+def test_puls_bije_po_terminie(tmp_path: Path):
+    settings = _settings_bezobslugowe(tmp_path / "s.json", heartbeat_interval_h=24)
+    client = _CountingClient({})
+
+    nowy = _puls_sesji(settings, client, _zaraz())
+    assert client.refresh_calls == 1
+    assert nowy.nieudane == 0
+    za_ile = (nowy.nastepny - datetime.now(timezone.utc)).total_seconds()
+    assert 23 * 3600 < za_ile <= 24 * 3600  # następna próba dopiero za dobę
+
+
+def test_bledny_puls_odsuwa_probe_zamiast_ponawiac_co_pobudke(tmp_path: Path):
+    """Po nieudanej próbie kolejna ma wypaść za własny odstęp, nie przy najbliższej pobudce."""
+    settings = _settings_bezobslugowe(tmp_path / "s.json", heartbeat_interval_h=24)
+    client = _CountingClient({}, boom=OSError("chwilowy brak sieci"))
+
+    nowy = _puls_sesji(settings, client, _zaraz())
+    assert client.refresh_calls == 1
+    assert nowy.nieudane == 1
+    za_ile = (nowy.nastepny - datetime.now(timezone.utc)).total_seconds()
+    assert 800 < za_ile <= 900  # ~15 min, a nie „natychmiast"
+
+
+def test_trwala_awaria_pulsu_alarmuje_DOKLADNIE_RAZ(tmp_path: Path, monkeypatch):
+    """Kanał alertowy musi przeżyć własny incydent.
+
+    Wcześniej nieudany puls zostawiał znacznik nietknięty, więc każda pobudka pętli ponawiała
+    próbę i wysyłała kolejny alert — przy otwartej rozmowie (pobudka co 10 s) dawało to setki
+    alertów na godzinę i zatykało jedyny kanał niezależny od AAD dokładnie wtedy, gdy był
+    najbardziej potrzebny.
+    """
+    wyslane: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append((tytul, kw.get("waga", ""))) or True,
+    )
+    settings = _settings_bezobslugowe(
+        tmp_path / "s.json", heartbeat_interval_h=24, alert_webhook_url="https://hook"
+    )
+    client = _CountingClient({}, boom=OSError("sieć leży"))
+
+    stan = _zaraz()
+    for _ in range(12):  # dwanaście pobudek w trakcie trwającej awarii
+        stan = _puls_sesji(settings, client, stan)
+        stan = StanPulsu(datetime.now(timezone.utc) - timedelta(seconds=1), stan.nieudane)
+
+    assert client.refresh_calls == 12  # ponawiamy dalej…
+    assert len(wyslane) == 1, wyslane  # …ale alarmujemy TYLKO raz
+    assert wyslane[0][0] == "Puls sesji nie powiódł się"
+
+
+def test_powrot_pulsu_jest_zglaszany(tmp_path: Path, monkeypatch):
+    """Operator musi wiedzieć, że nie ma już nic do zrobienia."""
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    settings = _settings_bezobslugowe(
+        tmp_path / "s.json", heartbeat_interval_h=24, alert_webhook_url="https://hook"
+    )
+    sprawny = _CountingClient({})
+    stan = StanPulsu(datetime.now(timezone.utc) - timedelta(seconds=1), nieudane=3)
+
+    _puls_sesji(settings, sprawny, stan)
+    assert wyslane == ["Puls sesji wrócił"]
+
+
+def test_utrata_sesji_w_pulsie_propaguje(tmp_path: Path):
+    """Utrata sesji to nie błąd przejściowy — musi dojść do obsługi w pętli."""
+    settings = _settings_bezobslugowe(tmp_path / "s.json", heartbeat_interval_h=24)
+    client = _CountingClient({}, boom=AuthExpiredError("AADSTS50173"))
+    with pytest.raises(AuthExpiredError):
+        _puls_sesji(settings, client, _zaraz())
+
+
+def test_startowa_utrata_sesji_alarmuje_i_odczekuje(tmp_path: Path, monkeypatch):
+    """Bez terminala start MUSI iść tą samą ścieżką co utrata sesji w pętli.
+
+    Wcześniej ta gałąź miała własne `SystemExit(1)` bez alertu i bez opóźnienia — pod
+    `restart: unless-stopped` operator dostawał alert tylko w pierwszym cyklu, a każdy kolejny
+    restart kończył się po cichu, w tempie backoffu Dockera.
+    """
+    wyslane: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append((tytul, kw.get("waga", ""))) or True,
+    )
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
+    settings = _settings_bezobslugowe(
+        tmp_path / "s.json", alert_webhook_url="https://hook", auth_failure_exit_delay_s=600
+    )
+    spane: list[float] = []
+
+    def fabryka(_s):
+        def provider() -> str:
+            raise AuthExpiredError("AADSTS50173: grant cofnięty")
+        return provider
+
+    with pytest.raises(SystemExit):
+        _ensure_authenticated(settings, fabryka, sleep=spane.append)
+
+    assert [t for t, _ in wyslane] == ["Utracono uwierzytelnienie"]
+    assert spane == [600.0]  # odczekanie, żeby restart nie następował co sekundę
+
+
+def test_utrata_sesji_czeka_przed_wyjsciem(tmp_path: Path):
+    """Przy `restart: unless-stopped` brak opóźnienia = restart kontenera co sekundę."""
+    settings = _settings_bezobslugowe(tmp_path / "s.json", auth_failure_exit_delay_s=600)
+    spane: list[float] = []
+    _handle_auth_loss(settings, AuthExpiredError("AADSTS50173"), spane.append)
+    assert spane == [600.0]
+
+
+def test_podsumowanie_liczy_statusy_i_idzie_do_administratora(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(member_id="u1", member_name="Ala", chat_id="c1",
+                                  week_start="2026-07-20", status="awaiting_reply"),
+            "u2": PendingReminder(member_id="u2", member_name="Bo", chat_id="c2",
+                                  week_start="2026-07-20", status=APPLIED),
+            "u3": PendingReminder(member_id="u3", member_name="Cel", chat_id="c3",
+                                  week_start="2026-07-20", status="expired"),
+        },
+    )
+    settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
+    client = _FakeClient({})
+
+    _send_summary(settings, client, datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
+
+    assert len(client.sent) == 1
+    chat_id, html = client.sent[0]
+    assert chat_id == "chat-admin-1"
+    assert "oczekuje na odpowiedź: 1" in html
+    assert "zapisane grafiki: 1" in html
+    assert "wygasłe bez odpowiedzi: 1" in html
+
+
+def test_podsumowanie_pomijane_bez_administratora(tmp_path: Path):
+    settings = _settings_bezobslugowe(tmp_path / "state.json")  # admin_user_id pusty
+    client = _FakeClient({})
+    _send_summary(settings, client, datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
+    assert client.sent == []
+
+
+def test_awaria_podsumowania_nie_przewraca_uslugi(tmp_path: Path):
+    """Podsumowanie to raport, nie praca — jego błąd nie może zatrzymać powiadomień."""
+    class _Zepsuty(_FakeClient):
+        def get_me(self) -> str:
+            raise RuntimeError("Graph niedostępny")
+
+    settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_id="admin-1")
+    _send_summary(settings, _Zepsuty({}), datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
+
+
+def test_podsumowanie_w_dry_run_tylko_loguje(tmp_path: Path, caplog):
+    """Tryb próbny obiecuje »nic nie zostanie wysłane« — podsumowanie to wiadomość do CZŁOWIEKA.
+
+    Wyszło przy uruchomieniu obrazu z prawdziwym tenantem: dry-run poprawnie pomijał powiadomienia
+    dla pracowników, ale cotygodniowe podsumowanie poszłoby na Teams do administratora naprawdę.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {"u1": PendingReminder(member_id="u1", member_name="Ala", chat_id="c1",
+                               week_start="2026-07-20", status="awaiting_reply")},
+    )
+    settings = Settings(
+        client_id="c", tenant_id="t", team_id="T", state_path=state_path,
+        dry_run=True, admin_user_id="admin-1",
+    )
+    client = _FakeClient({})
+    with caplog.at_level("INFO"):
+        _send_summary(settings, client, datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
+
+    assert client.sent == []  # NIC nie poszło na Teams
+    assert "[dry-run] podsumowanie" in caplog.text
+    assert "oczekuje na odpowiedź: 1" in caplog.text  # treść nadal policzona i widoczna w logu
+
+
+def test_nieudany_przebieg_nie_jest_odhaczany(tmp_path: Path):
+    """`_safe_run_once` musi RAPORTOWAĆ wynik — inaczej okno łaski nie da drugiej szansy."""
+    class _Zepsuty(_FakeClient):
+        def list_members(self, team_id: str):
+            raise RuntimeError("Graph dławi")
+
+    settings = _settings_bezobslugowe(tmp_path / "s.json")
+    assert _safe_run_once(settings, _Zepsuty({}), datetime.now(timezone.utc),
+                          sleep=lambda _s: None) is False
+    assert _safe_run_once(settings, _FakeClient({}), datetime.now(timezone.utc),
+                          sleep=lambda _s: None) is True
+
+
+def test_podsumowanie_idzie_takze_po_przebiegu_nadrobionym(tmp_path: Path):
+    """„Dead man's switch" nie może milczeć w tygodniu po awarii.
+
+    Podsumowanie stało wcześniej tylko po przebiegu ZAPLANOWANYM. Restart hosta w piątek o 16:20
+    → nadrobienie wysyłało prośby, a administrator nie dostawał nic i brak wiadomości wyglądał
+    jak awaria usługi.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(state_path, {"u1": PendingReminder(
+        member_id="u1", member_name="Ala", chat_id="c1",
+        week_start="2026-07-20", status="awaiting_reply")})
+    settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
+    client = _FakeClient({})
+
+    udany = _przebieg_i_podsumowanie(settings, client, datetime.now(timezone.utc), lambda _s: None)
+
+    assert udany is True
+    assert [chat for chat, _ in client.sent] == ["chat-admin-1"]
+
+
+def test_podsumowanie_idzie_takze_po_NIEUDANYM_przebiegu(tmp_path: Path):
+    """Cisza ma oznaczać martwą usługę — nieudany przebieg musi się zgłosić, nie zamilknąć."""
+    class _Zepsuty(_FakeClient):
+        def list_members(self, team_id: str):
+            raise RuntimeError("Graph dławi")
+
+    settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_id="admin-1")
+    client = _Zepsuty({})
+
+    udany = _przebieg_i_podsumowanie(settings, client, datetime.now(timezone.utc), lambda _s: None)
+
+    assert udany is False
+    assert [chat for chat, _ in client.sent] == ["chat-admin-1"]
+
+
+def test_puls_bije_czesciej_niz_odstep_odpytywania(tmp_path: Path):
+    """Wiek pliku pulsu ma mówić »czy proces żyje«, a nie »jak często odpytujemy Graph«."""
+    settings = _settings_bezobslugowe(tmp_path / "s.json")
+    dotkniecia = {"n": 0}
+    prawdziwy = _touch_heartbeat
+
+    import powiadomienia_teams.app as modul
+    def liczacy(s):
+        dotkniecia["n"] += 1
+        prawdziwy(s)
+    modul._touch_heartbeat = liczacy
+    try:
+        _spij_z_pulsem(settings, 600.0, lambda _s: None)  # 10 minut czekania
+    finally:
+        modul._touch_heartbeat = prawdziwy
+
+    assert dotkniecia["n"] >= 10, dotkniecia  # puls co ~60 s, nie raz na całe czekanie
+
+
+def test_bot_nie_zagaduje_sam_siebie(tmp_path: Path):
+    """Konto bota jest pełnoprawnym członkiem zespołu — bez filtra trafia na listę braków.
+
+    Potwierdzone na żywo: „Virtual WorkMate" znalazło się wśród osób bez grafiku. Filtr musi być
+    w KODZIE, nie tylko w `ONLY_USER_IDS` — pusta lista odbiorców oznacza „wszyscy", więc
+    konfiguracja niczego wtedy nie chroni.
+    """
+    bot = Member("me", "Virtual WorkMate")          # `_FakeClient.get_me()` zwraca "me"
+    czlowiek = Member("u1", "Ala")
+    settings = Settings(client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
+                        state_path=tmp_path / "state.json", dry_run=True)
+    client = _FakeClient({}, members=(bot, czlowiek))
+
+    brakujacy = run_once(settings, client, now=datetime(2026, 7, 21, tzinfo=timezone.utc))
+
+    assert [m.display_name for m in brakujacy] == ["Ala"]
+
+
+def test_polecenie_jednorazowe_daje_czytelny_blad(caplog):
+    """Operator uruchamia `--once` w trakcie wdrożenia — nie może dostawać śladu stosu."""
+    from powiadomienia_teams.app import _polecenie_jednorazowe
+
+    def akcja():
+        raise RuntimeError("Graph zwrócił 404")
+
+    with caplog.at_level("CRITICAL"), pytest.raises(SystemExit) as wyjscie:
+        _polecenie_jednorazowe(akcja)
+    assert wyjscie.value.code == 1
+    assert "Graph zwrócił 404" in caplog.text
+    assert wyjscie.value.__cause__ is None  # bez łańcucha wyjątków = bez traceback w wyjściu
+
+
+def test_utrata_sesji_przechodzi_przez_polecenie_jednorazowe():
+    """`AuthExpiredError` ma własną obsługę wyżej — nie wolno jej tu połknąć."""
+    from powiadomienia_teams.app import _polecenie_jednorazowe
+
+    def akcja():
+        raise AuthExpiredError("AADSTS50173")
+
+    with pytest.raises(AuthExpiredError):
+        _polecenie_jednorazowe(akcja)

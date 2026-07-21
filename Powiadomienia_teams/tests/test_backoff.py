@@ -27,6 +27,13 @@ def test_caps_at_max():
     assert _delay(10_000) == 300.0  # cisza godzinami → limit
 
 
+def test_reaches_hourly_ceiling_for_absent_employee():
+    """Sufit produkcyjny (3600 s) — nieobecny pracownik sprawdzany raz na godzinę."""
+    assert _delay(2560, max_s=3600.0) == 2560.0  # ~43 min ciszy: ramp jeszcze pod sufitem
+    assert _delay(2561, max_s=3600.0) == 3600.0  # pierwszy krok, który sufit przycina
+    assert _delay(3 * 3600, max_s=3600.0) == 3600.0  # cisza godzinami → nadal godzina
+
+
 def test_negative_idle_clamped_to_base():
     # serwer przed zegarem lokalnym: last_activity „w przyszłości" → idle < 0 → base
     d = next_poll_delay(

@@ -11,6 +11,7 @@ import argparse
 import logging
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from powiadomienia_teams import alerts
 from powiadomienia_teams import state as st
 from powiadomienia_teams.agent.anthropic_llm import AnthropicLlm
 from powiadomienia_teams.agent.interpreter import (
@@ -28,7 +30,7 @@ from powiadomienia_teams.agent.interpreter import (
     interpret_reply,
     schedule_to_intervals,
 )
-from powiadomienia_teams.config import Settings, TeamContext
+from powiadomienia_teams.config import ConfigError, Settings, TeamContext
 from powiadomienia_teams.domain.models import Member
 from powiadomienia_teams.graph.auth import (
     AuthExpiredError,
@@ -45,6 +47,7 @@ from powiadomienia_teams.messages import (
     WRITE_FAILED_TEXT,
     build_confirm_text,
     build_nudge_text,
+    build_summary_text,
     to_html,
 )
 from powiadomienia_teams.reminders.detect import members_without_shifts
@@ -72,8 +75,14 @@ _UTC = timezone.utc
 class PollOutcome:
     """Wynik jednego przebiegu listenera — steruje adaptacyjnym odstępem w ``run_forever``.
 
-    ``last_activity`` = najświeższy ``watermark`` wśród WCIĄŻ otwartych pendingów (albo ``None``):
-    odpowiedź z tego ticku od razu skraca kolejne opóźnienie do bazowego, a cisza je wydłuża.
+    ``last_activity`` = moment ostatniej ZNANEJ aktywności: czas TEGO przebiegu, jeśli cokolwiek
+    w nim obsłużyliśmy, inaczej najświeższy ``watermark`` wśród WCIĄŻ otwartych pendingów (albo
+    ``None``). Cisza wydłuża odstęp, obsłużona odpowiedź skraca go do bazowego.
+
+    Rozróżnienie „czas przebiegu" vs „czas wiadomości" jest istotne przy godzinnym suficie:
+    świeżo wykryta odpowiedź mogła powstać 50 minut temu, więc liczenie ciszy od jej
+    ``createdDateTime`` wrzuciłoby następny odstęp z powrotem pod sufit — i każda tura rozmowy
+    (odpowiedź → pytanie potwierdzające → „tak" → zapis) kosztowałaby do godziny zamiast sekund.
     """
 
     open_count: int
@@ -98,7 +107,12 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     ctx = settings.team_context  # jeden zespół dziś; pętla po wielu wepnie się tutaj (ADR 0001)
     client.refresh_auth()
     me_id = client.get_me()
-    members = client.list_members(ctx.team_id)
+    # Konto bota NIGDY nie jest kandydatem do zagadnięcia. Bez tego bot pisze sam do siebie:
+    # jest pełnoprawnym członkiem zespołu, więc `members_without_shifts` widzi je jak każdego
+    # innego (potwierdzone na żywo — „Virtual WorkMate" trafiło na listę braków). Filtr w KODZIE,
+    # nie tylko w `ONLY_USER_IDS`, bo pusta lista odbiorców oznacza „wszyscy" i wtedy konfiguracja
+    # nie chroni przed niczym.
+    members = [m for m in client.list_members(ctx.team_id) if m.user_id != me_id]
 
     prior_monday, target_monday, target_end = week_windows(now, tz)
 
@@ -241,9 +255,10 @@ def poll_replies(
 
     # 1. NAJPIERW odczytaj i przetwórz odpowiedzi. Świeża odpowiedź przesuwa watermark, więc krok 2
     #    nie zamknie okna komuś, kto właśnie odpisał — brak wyścigu na krawędzi okna odpowiedzi.
+    progressed = False
     for pending in open_items:
         try:
-            _process_pending(settings, client, llm, ctx, pending, me_id, tz, state)
+            progressed |= _process_pending(settings, client, llm, ctx, pending, me_id, tz, state)
         except AuthExpiredError:
             raise  # utrata tokenu zatrzymuje usługę — nie myl jej z awarią jednej odpowiedzi
         except Exception:
@@ -266,7 +281,7 @@ def poll_replies(
     # Ostatnia aktywność liczona z wciąż otwartych (po przetworzeniu): świeża odpowiedź skróci
     # następny odstęp, cisza go wydłuży (patrz ``_poll_delay``/``next_poll_delay``).
     active = [p for p in still_open if p.status != st.EXPIRED]
-    return PollOutcome(len(active), _latest_activity(active))
+    return PollOutcome(len(active), now if progressed else _latest_activity(active))
 
 
 def _notify_expired(client: GraphClient, expired: list[st.PendingReminder]) -> None:
@@ -300,6 +315,7 @@ def _commit(
     zobaczy tę odpowiedź ponownie.
     """
     pending.watermark = watermark
+    pending.fail_count = 0  # ta wiadomość obsłużona — licznik prób startuje od zera
     st.save_state(settings.state_path, state)
 
 
@@ -312,21 +328,73 @@ def _process_pending(
     me_id: str,
     tz: ZoneInfo,
     state: dict[str, st.PendingReminder],
-) -> None:
-    """Dispatcher jednej odpowiedzi: czyste »tak« → zapis; wszystko inne → interpretacja."""
+) -> bool:
+    """Dispatcher jednej odpowiedzi: czyste »tak« → zapis; wszystko inne → interpretacja.
+
+    Zwraca ``True``, gdy była nowa wiadomość do obsłużenia — sygnał dla ``_poll_delay``, żeby
+    zresetować backoff do odstępu bazowego (rozmowa trwa, nie ma po co czekać do sufitu).
+    """
     incoming = newest_incoming(client.list_chat_messages(pending.chat_id), me_id, pending.watermark)
     if incoming is None:
-        return
+        return False
     watermark = str(incoming.get("createdDateTime", ""))
     text = message_text(incoming)
 
     # Czyste „tak" w stanie oczekiwania na potwierdzenie → zapis. „Ok, ale nie będzie mnie w
     # czwartek" / „tak, ale w piątek 10-20" (potwierdzenie + poprawka) trafia do reinterpretacji,
     # żeby nie zapisać starej propozycji mimo prośby o zmianę.
-    if pending.status == st.AWAITING_CONFIRM and is_pure_affirmation(text):
-        _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark)
-    else:
-        _interpret_and_confirm(settings, client, llm, ctx, pending, text, tz, state, watermark)
+    try:
+        if pending.status == st.AWAITING_CONFIRM and is_pure_affirmation(text):
+            _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark)
+        else:
+            _interpret_and_confirm(settings, client, llm, ctx, pending, text, tz, state, watermark)
+    except AuthExpiredError:
+        raise  # utrata tokenu dotyczy całej usługi, nie tej jednej wiadomości
+    except Exception:
+        _record_failure(settings, client, state, pending, watermark)
+        raise  # wyżej loguje ślad — tu tylko decydujemy, czy próbować jeszcze raz
+    return True
+
+
+_MAX_PENDING_FAILURES = 3
+
+
+def _record_failure(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    pending: st.PendingReminder,
+    watermark: str,
+) -> None:
+    """Policz nieudaną obsługę tej wiadomości; po ``_MAX_PENDING_FAILURES`` odpuść ją świadomie.
+
+    Watermark rośnie dopiero po UDANEJ obsłudze — to celowe (patrz ``_commit``), bo chroni przed
+    zgubieniem odpowiedzi przy awarii przejściowej. Ale przy błędzie DETERMINISTYCZNYM (ten sam
+    tekst → ten sam wyjątek) ta sama wiadomość wraca w każdym ticku aż do wygaśnięcia okna:
+    dziesiątki wywołań modelu, a na koniec pracownik, który odpisał, dostaje „nie dostałem
+    odpowiedzi".
+
+    Po kilku próbach przesuwamy więc watermark i prosimy o doprecyzowanie. Kilka, a nie jedna,
+    bo awarie przejściowe (5xx z Graph, chwilowy timeout modelu) muszą mieć szansę się naprawić.
+    """
+    pending.fail_count += 1
+    if pending.fail_count < _MAX_PENDING_FAILURES:
+        st.save_state(settings.state_path, state)  # licznik utrwalony, watermark NIETKNIĘTY
+        return
+
+    logger.error(
+        "Nie udało się obsłużyć odpowiedzi %s po %d próbach — pomijam tę wiadomość "
+        "i proszę o doprecyzowanie",
+        pending.member_name,
+        pending.fail_count,
+    )
+    _commit(settings, state, pending, watermark)  # przesuwa watermark i zeruje licznik
+    # Commit PRZED wysyłką (jak wszędzie): nieudana wysyłka nie może cofnąć decyzji o odpuszczeniu,
+    # bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy.
+    try:
+        client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
+    except Exception:
+        logger.exception("Nie udało się poprosić %s o doprecyzowanie", pending.member_name)
 
 
 def _apply_confirmed_yes(
@@ -457,6 +525,9 @@ def _run_once_with_retry(
     nie dubluje powiadomień.
     """
     for attempt in range(1, attempts + 1):
+        # Puls PRZED każdą próbą: przebieg z ponowieniami i dławieniem Graph potrafi trwać minuty,
+        # a bez odświeżenia healthcheck zgłosiłby „niezdrowy" dla usługi, która właśnie pracuje.
+        _touch_heartbeat(settings)
         try:
             run_once(settings, client, now=now)
             return
@@ -471,6 +542,71 @@ def _run_once_with_retry(
                 attempt, attempts, wait,
             )
             sleep(wait)
+
+
+def _kolejny_termin(settings: Settings, now: datetime) -> datetime:
+    """Najbliższy zaplanowany termin przebiegu (opakowanie na ``next_run`` z ustawieniami)."""
+    return next_run(
+        now,
+        tz=settings.tz,
+        weekday=settings.run_weekday,
+        hour=settings.run_hour,
+        minute=settings.run_minute,
+    )
+
+
+_PULS_PONOWIENIE_S = 900  # odstęp między próbami po nieudanym pulsie (15 min)
+_PULS_PROG_ALERTU = 3  # po tylu nieudanych próbach z rzędu powiadamiamy operatora
+
+
+@dataclass
+class StanPulsu:
+    """Kiedy wypada następna próba pulsu i ile z rzędu się nie powiodło.
+
+    Semantyka „kiedy następna", a nie „kiedy ostatnia udana", jest tu celowa: po nieudanej próbie
+    musimy odsunąć kolejną o własny odstęp, niezależny od tempa pobudek pętli. Pobudki potrafią
+    następować co 10 s (otwarta rozmowa), więc przy znaczniku „ostatnia udana" trwała awaria sieci
+    dawała próbę i alert PRZY KAŻDEJ POBUDCE — do kilkuset alertów na godzinę, co zatyka jedyny
+    kanał niezależny od AAD dokładnie wtedy, gdy jest najbardziej potrzebny.
+    """
+
+    nastepny: datetime
+    nieudane: int = 0
+
+
+def _puls_sesji(settings: Settings, client: GraphClient, stan: StanPulsu) -> StanPulsu:
+    """Sprawdź ważność sesji nie częściej niż co ``heartbeat_interval_h``; zwróć nowy stan pulsu.
+
+    Bez pulsu utrata sesji w poniedziałek wychodzi dopiero w piątek o 16:00 — czyli w chwili, gdy
+    przebieg miał się odbyć i nikt nie zdąży już zareagować. Puls kosztuje jedno ciche odświeżenie
+    MSAL na dobę i NIE odpytuje Graph.
+
+    Alert idzie DOKŁADNIE RAZ, po ``_PULS_PROG_ALERTU`` nieudanych próbach z rzędu — pojedyncze
+    mrugnięcie sieci nie zasługuje na alarm, a trwała awaria nie ma prawa go powtarzać. Powrót
+    sprawności też jest zgłaszany, żeby operator wiedział, że nie musi już nic robić.
+    Utrata sesji propaguje wyżej: to nie jest błąd przejściowy.
+    """
+    teraz = datetime.now(_UTC)
+    if teraz < stan.nastepny:
+        return stan
+    try:
+        client.refresh_auth()
+    except AuthExpiredError:
+        raise
+    except Exception as blad:
+        nieudane = stan.nieudane + 1
+        logger.warning("Puls sesji nie powiódł się (%d. raz z rzędu): %s", nieudane, blad)
+        if nieudane == _PULS_PROG_ALERTU:
+            _alert(
+                settings,
+                "Puls sesji nie powiódł się",
+                f"{nieudane} nieudane próby z rzędu. Ostatni błąd: {blad}",
+            )
+        return StanPulsu(teraz + timedelta(seconds=_PULS_PONOWIENIE_S), nieudane)
+    if stan.nieudane >= _PULS_PROG_ALERTU:
+        _alert(settings, "Puls sesji wrócił", "Uwierzytelnienie znów działa.", waga=alerts.INFO)
+    logger.info("Puls sesji: uwierzytelnienie nadal ważne.")
+    return StanPulsu(teraz + timedelta(hours=settings.heartbeat_interval_h), 0)
 
 
 def _catchup_due(settings: Settings, now: datetime) -> datetime | None:
@@ -496,20 +632,150 @@ def _catchup_due(settings: Settings, now: datetime) -> datetime | None:
     return None
 
 
-def _safe_run_once(settings: Settings, client: GraphClient, now: datetime) -> None:
-    """Przebieg z ponowieniem; utrata tokenu zatrzymuje usługę, inne błędy tylko logujemy."""
+def _alert(settings: Settings, tytul: str, tresc: str, *, waga: str = alerts.BLAD) -> None:
+    """Wyślij alert kanałem niezależnym od Graph (best-effort — patrz ``alerts.send_alert``)."""
+    alerts.send_alert(settings.alert_webhook_url, tytul, tresc, waga=waga)
+
+
+_PULS_CO_S = 60.0  # jak często odświeżamy plik pulsu w trakcie czekania
+_PONOWIENIE_PRZEBIEGU_S = 1800  # po nieudanym przebiegu wróć po 30 min, o ile trwa okno łaski
+
+
+def _spij_z_pulsem(settings: Settings, sekundy: float, sleep: Callable[[float], None]) -> None:
+    """Śpij podaną liczbę sekund, odświeżając puls co ``_PULS_CO_S``.
+
+    Wiek pliku pulsu ma mówić „czy proces żyje", a nie „jak często odpytujemy Graph". Bez cięcia
+    snu na kawałki puls bił co najwyżej raz na godzinę (sufit nasłuchu), więc próg healthchecku
+    musiałby wynosić 2 h — czyli stojąca pętla byłaby wykrywana dopiero po dwóch godzinach.
+    """
+    pozostalo = sekundy
+    while pozostalo > 0:
+        _touch_heartbeat(settings)
+        krok = min(pozostalo, _PULS_CO_S)
+        sleep(krok)
+        pozostalo -= krok
+    _touch_heartbeat(settings)
+
+
+def _touch_heartbeat(settings: Settings) -> None:
+    """Odśwież znacznik czasu pliku pulsu — źródło prawdy dla HEALTHCHECK obrazu.
+
+    Wołane przy KAŻDEJ pobudce pętli, więc wiek pliku odpowiada temu, jak dawno usługa naprawdę
+    coś robiła. Bez tego `docker compose ps` pokazuje „Up" także dla procesu, który stoi.
+    """
     try:
-        _run_once_with_retry(settings, client, now=now)
-    except AuthExpiredError:
-        logger.critical("Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`.")
-        raise
+        sciezka = settings.heartbeat_path
+        sciezka.parent.mkdir(parents=True, exist_ok=True)
+        sciezka.touch()
+    except OSError:
+        # Puls jest diagnostyką, nie funkcją — jego awaria nie może zatrzymać powiadomień.
+        logger.warning("Nie udało się odświeżyć pliku pulsu", exc_info=True)
+
+
+def _send_summary(settings: Settings, client: GraphClient, nastepny_przebieg: datetime) -> None:
+    """Wyślij administratorowi podsumowanie stanu po przebiegu (sygnał życia usługi).
+
+    W trybie próbnym TYLKO loguje. Podsumowanie idzie na Teams do konkretnego człowieka, więc
+    podlega tej samej obietnicy co powiadomienia dla pracowników: „nic nie zostanie wysłane".
+    Alerty webhookiem to inna kategoria i celowo działają także w dry-run — dotyczą stanu samej
+    usługi, lecą na endpoint należący do operatora i muszą dać się przetestować przed startem.
+    """
+    if not settings.admin_user_id:
+        return
+    try:
+        statusy = Counter(p.status for p in st.load_state(settings.state_path).values())
+        tresc = build_summary_text(
+            oczekuje=statusy[st.AWAITING_REPLY],
+            do_potwierdzenia=statusy[st.AWAITING_CONFIRM],
+            zapisane=statusy[st.APPLIED],
+            odmowy=statusy[st.DECLINED],
+            wygasle=statusy[st.EXPIRED],
+            nastepny_przebieg=nastepny_przebieg.astimezone(settings.tz).strftime("%Y-%m-%d %H:%M"),
+        )
+        if settings.dry_run:
+            logger.info("[dry-run] podsumowanie do administratora:\n%s", tresc)
+            return
+        chat_id = client.create_or_get_chat(client.get_me(), settings.admin_user_id)
+        client.send_chat_message(chat_id, to_html(tresc))
     except Exception:
+        # Podsumowanie to raport, nie praca — jego awaria nie może przewrócić usługi.
+        logger.exception("Nie udało się wysłać podsumowania do administratora")
+
+
+def _handle_auth_loss(settings: Settings, blad: Exception, sleep: Callable[[float], None]) -> None:
+    """Zgłoś utratę sesji i odczekaj, zanim proces się zakończy.
+
+    Alert idzie webhookiem, NIE przez Teams: wiadomość na Teams wymaga tego samego tokenu, który
+    właśnie przestał działać. Opóźnienie przed wyjściem jest konieczne, bo `restart: unless-stopped`
+    podniósłby proces natychmiast — martwy token zamieniłby się w restart co sekundę zamiast
+    w spokojne czekanie na `--login`, po którym usługa wraca sama.
+    """
+    logger.critical("Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)",
+                    blad)
+    _alert(settings, "Utracono uwierzytelnienie", str(blad), waga=alerts.KRYTYCZNY)
+    if settings.auth_failure_exit_delay_s > 0:
+        logger.info("Czekam %ds przed wyjściem (ogranicza pętlę restartów).",
+                    settings.auth_failure_exit_delay_s)
+        sleep(float(settings.auth_failure_exit_delay_s))
+
+
+def _safe_run_once(
+    settings: Settings,
+    client: GraphClient,
+    now: datetime,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Przebieg z ponowieniem; zwraca czy się POWIÓDŁ. Utrata tokenu zatrzymuje usługę.
+
+    Wynik jest istotny dla orkiestracji: nieudanego przebiegu nie wolno odhaczyć jako obsłużonego,
+    bo wtedy okno łaski nie dałoby drugiej szansy i tydzień przepadłby po jednym dławieniu Graph.
+    """
+    try:
+        # `sleep` MUSI iść dalej: to pętla ponowień faktycznie usypia (30 s + 60 s), więc bez
+        # przekazania parametru wstrzyknięcie atrapy nic nie daje i testy śpią naprawdę.
+        _run_once_with_retry(settings, client, now=now, sleep=sleep)
+        return True
+    except AuthExpiredError as blad:
+        _handle_auth_loss(settings, blad, sleep)
+        raise
+    except Exception as blad:
         logger.exception("Przebieg powiadomień nie powiódł się mimo ponowień")
+        _alert(settings, "Przebieg powiadomień nie powiódł się",
+               f"Mimo ponowień: {blad}. Nikt nie dostał prośby w tym tygodniu.")
+        return False
 
 
-def run_forever(settings: Settings, client: GraphClient, llm: LlmClient) -> None:
+def _przebieg_i_podsumowanie(
+    settings: Settings,
+    client: GraphClient,
+    now: datetime,
+    sleep: Callable[[float], None],
+) -> bool:
+    """Przebieg RAZEM z podsumowaniem — nierozłącznie. Zwraca, czy przebieg się powiódł.
+
+    Podsumowanie jest „dead man's switchem": brak wiadomości w piątek wieczorem to jedyny sygnał
+    awarii w instalacji bez monitoringu. Gdy stało tylko po przebiegu ZAPLANOWANYM, tydzień po
+    restarcie hosta wyglądał jak awaria — nadrobienie wysyłało prośby, a administrator nie
+    dostawał nic. Związanie obu czynności w jednym miejscu sprawia, że nie da się ich rozdzielić.
+    """
+    udany = _safe_run_once(settings, client, now=now, sleep=sleep)
+    _send_summary(settings, client, _kolejny_termin(settings, datetime.now(_UTC)))
+    return udany
+
+
+def run_forever(
+    settings: Settings,
+    client: GraphClient,
+    llm: LlmClient,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
     """Pętla: nadrób zaległy przebieg, do terminu obsługuj odpowiedzi, w terminie wyślij nowe."""
     last_run_term: datetime | None = None  # termin już obsłużony w TEJ sesji (dedup nadrobień)
+    # Start liczy się jako świeżo potwierdzona sesja (`_ensure_authenticated` właśnie ją sprawdził).
+    stan_pulsu = StanPulsu(datetime.now(_UTC) + timedelta(hours=settings.heartbeat_interval_h))
+    powitanie_wyslane = False
     while True:
         now = datetime.now(_UTC)
         # Nadrobienie: zaplanowany termin właśnie minął (okno łaski) → wykonaj przebieg teraz
@@ -523,56 +789,141 @@ def run_forever(settings: Settings, client: GraphClient, llm: LlmClient) -> None
                 "Nadrabiam zaległy przebieg powiadomień (okno łaski %dh).",
                 settings.catchup_grace_hours,
             )
-            _safe_run_once(settings, client, now=catchup_term)
-            last_run_term = catchup_term
-        target = next_run(
-            now,
-            tz=settings.tz,
-            weekday=settings.run_weekday,
-            hour=settings.run_hour,
-            minute=settings.run_minute,
-        )
-        logger.info("Następny przebieg powiadomień: %s", target.isoformat())
-        while datetime.now(_UTC) < target:
+            if _przebieg_i_podsumowanie(settings, client, catchup_term, sleep):
+                last_run_term = catchup_term  # odhaczamy WYŁĄCZNIE udany przebieg
+        termin = _kolejny_termin(settings, now)
+        # Pobudka może wypaść WCZEŚNIEJ niż termin: gdy zaległy przebieg wciąż czeka w oknie łaski,
+        # wracamy tu za `_PONOWIENIE_PRZEBIEGU_S`, żeby dać mu drugą szansę. Bez tego kilkunasto-
+        # minutowe dławienie Graph w piątek o 16:00 kosztowałoby cały tygodniowy cykl.
+        zalegly = _catchup_due(settings, now)
+        pobudka = termin
+        if zalegly is not None and zalegly != last_run_term:
+            pobudka = min(termin, now + timedelta(seconds=_PONOWIENIE_PRZEBIEGU_S))
+        logger.info("Następny przebieg powiadomień: %s", termin.isoformat())
+        if not powitanie_wyslane:
+            # Potwierdzenie powrotu po reboocie hosta — bez tego restart usługi jest niewidoczny.
+            _alert(settings, "Usługa wystartowała",
+                   f"Nasłuch aktywny. Najbliższy przebieg: {termin.isoformat()}", waga=alerts.INFO)
+            powitanie_wyslane = True
+        while datetime.now(_UTC) < pobudka:
+            _touch_heartbeat(settings)
             outcome: PollOutcome | None = None
             try:
                 outcome = poll_replies(settings, client, llm)
-            except AuthExpiredError:
-                # Utrata tokenu to NIE transientny błąd — zatrzymaj się czysto (supervisor
-                # zaalarmuje i zrestartuje; restart poprosi o --login).
-                logger.critical(
-                    "Utracono uwierzytelnienie — zatrzymuję nasłuch. Zaloguj się: `--login`."
-                )
+            except AuthExpiredError as blad:
+                # Utrata tokenu to NIE transientny błąd — zatrzymaj się czysto po zgłoszeniu
+                # alertu; `unless-stopped` podniesie usługę, gdy człowiek wykona `--login`.
+                _handle_auth_loss(settings, blad, sleep)
                 raise
             except Exception:
                 # Błąd listenera nie może zabić pętli.
                 logger.exception("Listener odpowiedzi zawiódł")
+            # Puls w OSOBNYM bloku: gdy Graph jest niedostępny, `poll_replies` rzuca — a wtedy puls
+            # w tym samym `try` nie wykonałby się ani razu, czyli przestałby działać dokładnie
+            # w awarii, którą ma wykrywać.
+            try:
+                stan_pulsu = _puls_sesji(settings, client, stan_pulsu)
+            except AuthExpiredError as blad:
+                _handle_auth_loss(settings, blad, sleep)
+                raise
             now_dt = datetime.now(_UTC)
-            remaining = (target - now_dt).total_seconds()
+            remaining = (pobudka - now_dt).total_seconds()
             if remaining > 0:
-                time.sleep(min(remaining, _poll_delay(settings, outcome, now_dt)))
-        _safe_run_once(settings, client, now=datetime.now(_UTC))
-        last_run_term = target  # termin obsłużony — nadrobienie nie odpali go ponownie w tym cyklu
+                _spij_z_pulsem(settings, min(remaining, _poll_delay(settings, outcome, now_dt)),
+                               sleep)
+        _touch_heartbeat(settings)
+        # Przebieg wykonujemy TYLKO po dojściu do terminu. Wcześniejsza pobudka oznacza ponowienie
+        # zaległego przebiegu — obsłuży je `_catchup_due` na górze pętli.
+        if datetime.now(_UTC) >= termin and _przebieg_i_podsumowanie(
+            settings, client, datetime.now(_UTC), sleep
+        ):
+            last_run_term = termin  # odhaczamy WYŁĄCZNIE udany przebieg
 
 
-def _ensure_authenticated(settings: Settings, provider: Callable[[], str]) -> None:
+_AUTH_CHECK_ATTEMPTS = 3
+_AUTH_CHECK_BACKOFF_S = 5
+
+
+def _ensure_authenticated(
+    settings: Settings,
+    provider_factory: Callable[[Settings], Callable[[], str]] = build_token_provider,
+    *,
+    attempts: int = _AUTH_CHECK_ATTEMPTS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Callable[[], str]:
     """Sprawdź token na starcie — usługa nie może wejść w pętlę bez ważnego uwierzytelnienia.
 
     Brak ważnego tokenu: z terminalem → jednorazowe interaktywne logowanie; bez terminala (usługa)
     → instrukcja i wyjście ≠ 0, zamiast blokowania na device-code w środku pętli.
+
+    Błąd INNY niż utrata tokenu (DNS, niedostępny ``login.microsoftonline.com``) jest transientny
+    i musi być ponowiony: przy restarcie serwera kontener potrafi wstać, zanim sieć jest gotowa,
+    a wyjście ≠ 0 przy `restart: unless-stopped` daje wtedy pętlę restartów zamiast spokojnego
+    poczekania na sieć. Pętla ``run_forever`` jest na to odporna; ta ścieżka startowa nie była.
+
+    BUDOWA dostawcy jest wewnątrz pętli ponowień, nie przed nią. ``msal.PublicClientApplication``
+    odpytuje tenant (OIDC discovery) JUŻ PRZY KONSTRUKCJI, więc przy braku sieci wyjątek leci
+    właśnie stamtąd — poza pętlą wywracał cały start śladem stosu, mimo że ponowienie by pomogło.
+    Wyszło to dopiero przy uruchomieniu obrazu; testy wstrzykiwały gotowego dostawcę i nie mogły
+    tego zobaczyć.
+    """
+    utracona: AuthExpiredError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            provider = provider_factory(settings)
+            provider()
+            return provider
+        except AuthExpiredError as blad:
+            utracona = blad
+            break  # nie do naprawienia ponowieniem — niżej instrukcja `--login`
+        except Exception as blad:
+            if attempt >= attempts:
+                logger.critical(
+                    "Nie udało się przygotować uwierzytelnienia po %d próbach: %s. Sprawdź "
+                    "łączność z login.microsoftonline.com oraz poprawność CLIENT_ID i TENANT_ID.",
+                    attempts, blad,
+                )
+                raise SystemExit(1) from None
+            wait = _AUTH_CHECK_BACKOFF_S * attempt
+            logger.warning(
+                "Nie udało się sprawdzić uwierzytelnienia (próba %d/%d) — ponawiam za %ds",
+                attempt, attempts, wait,
+            )
+            sleep(wait)
+
+    # Dotarliśmy tu wyłącznie przez `break`, czyli po AuthExpiredError.
+    if sys.stdin.isatty():
+        logger.info("Brak ważnego tokenu — uruchamiam jednorazowe logowanie device-code.")
+        login_interactive(settings)
+        return provider_factory(settings)
+    # TA SAMA obsługa co przy utracie sesji w pętli: alert + odczekanie przed wyjściem. Wcześniej
+    # ta gałąź miała własne `logger.critical` + `SystemExit(1)`, przez co pod `unless-stopped`
+    # operator dostawał alert TYLKO w pierwszym cyklu — każdy kolejny restart kończył się tu po
+    # cichu, a kontener wirował w tempie backoffu Dockera zamiast co `auth_failure_exit_delay_s`.
+    _handle_auth_loss(
+        settings,
+        utracona or AuthExpiredError("brak ważnego uwierzytelnienia i brak terminala"),
+        sleep,
+    )
+    raise SystemExit(1)
+
+
+def _polecenie_jednorazowe(akcja: Callable[[], Any]) -> None:
+    """Wykonaj `--once`/`--poll-once`, zamieniając awarię na czytelny komunikat zamiast śladu stosu.
+
+    To są DOKŁADNIE te polecenia, które operator uruchamia podczas wdrożenia (kroki weryfikacyjne
+    w `deploy/README-docker.md`). Pętla usługi ma własną obsługę przez `_safe_run_once`, ale
+    ścieżka jednorazowa jej nie miała — nieutworzony grafik dawał 20 linii traceback, w których
+    trzeba było szukać jednej istotnej. Przyczyna i tak jest już w logu: `_raise_for_status`
+    zapisuje treść odpowiedzi Graph na poziomie ERROR.
     """
     try:
-        provider()
+        akcja()
     except AuthExpiredError:
-        if sys.stdin.isatty():
-            logger.info("Brak ważnego tokenu — uruchamiam jednorazowe logowanie device-code.")
-            login_interactive(settings)
-        else:
-            logger.critical(
-                "Brak ważnego uwierzytelnienia i brak terminala. "
-                "Zaloguj się jednorazowo: `powiadomienia-teams --login`."
-            )
-            raise SystemExit(1) from None
+        raise  # ma własną, czytelną obsługę wyżej
+    except Exception as blad:
+        logger.critical("Polecenie nie powiodło się: %s: %s", type(blad).__name__, blad)
+        raise SystemExit(1) from None
 
 
 def main() -> None:
@@ -600,7 +951,15 @@ def main() -> None:
         pass
 
     settings = Settings.from_env()
-    settings.validate()
+    try:
+        settings.validate()
+    except ConfigError as blad:
+        # Błąd konfiguracji to pomyłka operatora, nie awaria programu. Ma dać JEDNO czytelne zdanie
+        # w logu usługi, a nie ślad stosu, w którym trzeba wyławiać ostatnią linię — na serwerze
+        # czyta to człowiek przez `docker compose logs`, często pod presją czasu.
+        # Kod 2 odróżnia „źle skonfigurowane" od „padło w trakcie pracy" (1).
+        logger.critical("Błąd konfiguracji: %s", blad)
+        raise SystemExit(2) from None
 
     if args.login:
         login_interactive(settings)
@@ -618,15 +977,16 @@ def main() -> None:
         raise SystemExit(1) from None
 
     with lock:
-        provider = build_token_provider(settings)
-        _ensure_authenticated(settings, provider)  # nie wchodź w pętlę bez ważnego tokenu
+        # Budowa dostawcy i sprawdzenie tokenu RAZEM — obie czynności odpytują sieć, więc obie
+        # muszą podlegać tym samym ponowieniom (patrz `_ensure_authenticated`).
+        provider = _ensure_authenticated(settings)
         llm: LlmClient = AnthropicLlm(settings.anthropic_api_key, model=settings.llm_model)
         with httpx.Client(timeout=30) as http:
             client = GraphClient(http, provider)
             if args.once:
-                run_once(settings, client, now=datetime.now(_UTC))
+                _polecenie_jednorazowe(lambda: run_once(settings, client, now=datetime.now(_UTC)))
             elif args.poll_once:
-                poll_replies(settings, client, llm)
+                _polecenie_jednorazowe(lambda: poll_replies(settings, client, llm))
             else:
                 run_forever(settings, client, llm)
 

@@ -101,6 +101,33 @@ def build_confirm_text(
     )
 
 
+def build_summary_text(
+    *,
+    oczekuje: int,
+    do_potwierdzenia: int,
+    zapisane: int,
+    odmowy: int,
+    wygasle: int,
+    nastepny_przebieg: str,
+) -> str:
+    """Podsumowanie przebiegu dla administratora — jednocześnie sygnał życia usługi.
+
+    Wysyłane po KAŻDYM przebiegu, także gdy nikogo nie trzeba było zagadnąć: „zero próśb" jest
+    informacją, natomiast cisza oznacza, że usługa nie żyje. W instalacji bez monitoringu brak tej
+    wiadomości w piątek wieczorem jest jedynym sygnałem awarii.
+    """
+    lines = [
+        "Podsumowanie przebiegu powiadomień:",
+        f"• oczekuje na odpowiedź: {oczekuje}",
+        f"• czeka na potwierdzenie: {do_potwierdzenia}",
+        f"• zapisane grafiki: {zapisane}",
+        f"• odmowy: {odmowy}",
+        f"• wygasłe bez odpowiedzi: {wygasle}",
+        f"Następny przebieg: {nastepny_przebieg}",
+    ]
+    return "\n".join(lines)
+
+
 def to_html(text: str) -> str:
     """Zamień tekst z podziałami linii na bezpieczny HTML dla wiadomości Teams."""
     return "<br>".join(escape(line) for line in text.split("\n"))

@@ -328,3 +328,36 @@ def test_interpret_reply_no_json_at_all_is_unclear():
     )
     assert decision.action == "unclear"
     assert decision.schedule is None
+
+
+def _shape(payload: str) -> ReplyDecision:
+    return interpret_reply(_proposal(), "cokolwiek", tz=WAW, group_id="TAG", llm=_FakeLlm(payload))
+
+
+def test_wrong_json_shape_degrades_to_unclear():
+    """Poprawny SKŁADNIOWO, zły STRUKTURALNIE JSON nie może rzucać wyjątku.
+
+    Watermark przesuwa się dopiero po udanej obsłudze, więc wyjątek tutaj oznaczałby, że ta sama
+    wiadomość wraca w każdym ticku aż do wygaśnięcia okna — dziesiątki wywołań modelu, a na koniec
+    nieprawdziwe „nie dostałem odpowiedzi" do osoby, która przecież odpisała.
+    """
+    for payload in (
+        '{"action":"modify","shifts":"poniedzialek 8-16","time_off":[]}',
+        '{"action":"modify","shifts":{"dzien":"wtorek"},"time_off":[]}',
+        '{"action":"modify","shifts":[],"time_off":{"dzien":"piatek"}}',
+        '{"action":"modify","shifts":[["wtorek","08:00","16:00"]],"time_off":[]}',
+    ):
+        decision = _shape(payload)
+        assert decision.action == "unclear", payload
+        assert decision.schedule is None
+
+
+def test_bad_entries_are_skipped_not_whole_answer():
+    """Zły POJEDYNCZY wpis pomijamy (jak zawsze), zły KONTENER degraduje całość."""
+    decision = _shape(
+        '{"action":"modify","time_off":[],'
+        '"shifts":[{"dzien":"wtorek","start":"08:00","end":"16:00"},"śmieć"]}'
+    )
+    assert decision.action == "modify"
+    assert decision.schedule is not None
+    assert len(decision.schedule.shifts) == 1  # poprawny wpis przeżył

@@ -95,7 +95,20 @@ USER 10001:10001
 # zamiast czekać 10 s na SIGKILL w środku obsługi odpowiedzi.
 ENTRYPOINT ["/usr/bin/tini", "--", "powiadomienia-teams"]
 
+# Bez healthchecku `docker compose ps` pokazuje „Up" także dla procesu, który stoi — czyli
+# najgorszy stan dla usługi bezobsługowej, bo wygląda jak zdrowie. Próg i ścieżkę wyprowadza sam
+# moduł z konfiguracji. `start-period` obejmuje pierwszą pobudkę, zanim puls w ogóle powstanie.
+HEALTHCHECK --interval=5m --timeout=15s --start-period=3m --retries=3 \
+    CMD ["python", "-m", "powiadomienia_teams.healthcheck"]
+
+# Wersja przekazywana z `scripts/build-image.sh` (WERSJA=…). Bez tego etykieta obrazu zostaje na
+# sztywno „0.1.0" niezależnie od tagu — a na serwerze `docker inspect` jest jedynym sposobem, żeby
+# ustalić, co właściwie działa, gdy tagi zostały nadpisane albo zdublowane. Deklaracja stoi TUŻ przed
+# LABEL celowo: `ARG` unieważnia cache wszystkich kolejnych warstw, więc wyżej kosztowałaby pełne
+# `apt-get update && upgrade` przy każdym podbiciu wersji.
+ARG WERSJA=0.1.0
+
 LABEL org.opencontainers.image.title="powiadomienia-teams" \
       org.opencontainers.image.description="Cotygodniowe przypomnienia o zmianach (Microsoft Shifts)" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="${WERSJA}" \
       org.opencontainers.image.source="https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate"

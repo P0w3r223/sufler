@@ -44,9 +44,21 @@ def _load_cache(cache_path: Path) -> Any:
 
     cache = msal.SerializableTokenCache()
     if cache_path.exists():
-        # encoding JAWNIE: cache zawiera claim `name` z ID-tokenu (polskie znaki), a usługa systemd
-        # bez LANG dostaje locale POSIX → ASCII i deserializacja wywala się UnicodeDecodeError.
-        cache.deserialize(cache_path.read_text(encoding="utf-8"))
+        try:
+            # encoding JAWNIE: cache zawiera claim `name` z ID-tokenu (polskie znaki), a usługa
+            # systemd bez LANG dostaje locale POSIX → ASCII i deserializacja wywala się
+            # UnicodeDecodeError.
+            cache.deserialize(cache_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            # Uszkodzony plik NIE może kłaść procesu przed jakimkolwiek logiem: `--login`, czyli
+            # udokumentowana droga ratunkowa, idzie przez tę samą fabrykę i wywaliłby się
+            # identycznie — usługa byłaby nie do odzyskania bez ręcznego kasowania pliku
+            # w wolumenie. Pusty cache oznacza tylko ponowne logowanie, czyli stan naprawialny.
+            logger.warning(
+                "Uszkodzony cache tokenu %s — zaloguj się ponownie: "
+                "`powiadomienia-teams --login`.",
+                cache_path,
+            )
     return cache
 
 
@@ -55,10 +67,42 @@ def _save_cache(cache: Any, cache_path: Path) -> None:
     if not getattr(cache, "has_state_changed", False):
         return
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(cache.serialize(), encoding="utf-8")
-    # Ogranicz dostęp do pliku (Linux/macOS; na Windows ignorowane).
+    # Zapis ATOMOWY (jak `state.save_state`): `write_text` obcina plik przed zapisem, więc SIGKILL
+    # po karencji `docker compose down` albo OOM w trakcie rotacji refresh-tokenu zostawiał ucięty
+    # cache — a ten wywracał następny start jeszcze przed pierwszym logiem.
+    tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    tmp.write_text(cache.serialize(), encoding="utf-8")
+    # Prawa ustawiane PRZED podmianą — inaczej token istnieje przez moment z prawami domyślnymi
+    # (Linux/macOS; na Windows ignorowane).
     with contextlib.suppress(OSError):
-        os.chmod(cache_path, 0o600)
+        os.chmod(tmp, 0o600)
+    os.replace(tmp, cache_path)
+
+
+_MAX_ERROR_DESC = 300  # ile znaków opisu błędu z Entra ID trafia do komunikatu
+_MSAL_TIMEOUT_S = 30  # limit czasu żądań do Entra ID (spójny z klientem Graph i Anthropica)
+
+# Kody AADSTS, które realnie kończą sesję tej usługi — pomocne przy diagnozie z samego alertu:
+#   700082 / 70008 → refresh-token wygasł z BEZCZYNNOŚCI (usługa nie chodziła > 90 dni)
+#   50173          → grant cofnięty (zmiana lub reset hasła konta bota)
+#   50076 / 50158  → wymagane MFA albo inna kontrola Conditional Access
+#   50078 / 70043  → polityka sign-in frequency (public client nie dostaje odroczenia)
+#   530036         → Conditional Access blokuje device code flow — token nie do odzyskania
+#   65001          → cofnięta zgoda administratora na aplikację
+
+
+def _auth_error_message(accounts: Any, result: dict[str, Any] | None) -> str:
+    """Zbuduj komunikat utraty sesji wzbogacony o przyczynę zgłoszoną przez Entra ID."""
+    if not accounts:
+        return "Brak konta w cache tokenu — zaloguj się: `powiadomienia-teams --login`."
+    if not result:
+        return "Ciche odświeżenie nie zwróciło wyniku — zaloguj się: `powiadomienia-teams --login`."
+    kod = str(result.get("error") or "nieznany_blad")
+    opis = str(result.get("error_description") or "")[:_MAX_ERROR_DESC]
+    return (
+        f"Utracono sesję ({kod}) — zaloguj się ponownie: `powiadomienia-teams --login`. "
+        f"Przyczyna: {opis}"
+    )
 
 
 def _default_app_and_cache(settings: Settings) -> tuple[Any, Any]:
@@ -66,8 +110,17 @@ def _default_app_and_cache(settings: Settings) -> tuple[Any, Any]:
     import msal
 
     cache = _load_cache(settings.token_cache_path)
+    # `timeout` JAWNIE: bez niego MSAL wiąże `timeout=None` z metodą `request` swojej wewnętrznej
+    # sesji `requests`, czyli żądania do login.microsoftonline.com nie mają ŻADNEGO limitu czasu.
+    # Blackhole sieciowy (firewall DROP zamiast REJECT — typowe po zmianie polityki na serwerze)
+    # zawieszał wtedy proces bezterminowo. To ścieżka gorąca: `refresh_auth()` woła ją w każdym
+    # przebiegu, w listenerze i w pulsie. Docker nie restartuje kontenera „unhealthy", więc
+    # healthcheck by tego nie uratował — jedyną obroną jest ten limit.
     app = msal.PublicClientApplication(
-        settings.client_id, authority=settings.authority, token_cache=cache
+        settings.client_id,
+        authority=settings.authority,
+        token_cache=cache,
+        timeout=_MSAL_TIMEOUT_S,
     )
     return app, cache
 
@@ -89,13 +142,17 @@ def build_token_provider(
 
     def get_token() -> str:
         accounts = app.get_accounts()
-        result = app.acquire_token_silent(scopes, account=accounts[0]) if accounts else None
+        # `..._with_error` zamiast `acquire_token_silent`: ta druga zwraca None ZARÓWNO przy pustym
+        # cache, JAK I przy odrzuconym odświeżeniu, więc nie da się odróżnić „trzeba się zalogować"
+        # od „tenant właśnie zmienił politykę". Wersja z błędem niesie kod AADSTS — jedyną rzecz,
+        # która na serwerze bez terminala mówi, co naprawdę się stało.
+        result = (
+            app.acquire_token_silent_with_error(scopes, account=accounts[0]) if accounts else None
+        )
         _save_cache(cache, cache_path)  # utrwal ewentualnie zrotowany refresh-token
-        if not result or "access_token" not in result:
-            raise AuthExpiredError(
-                "Utracono refresh-token — zaloguj się ponownie: `powiadomienia-teams --login`."
-            )
-        return str(result["access_token"])
+        if result and "access_token" in result:
+            return str(result["access_token"])
+        raise AuthExpiredError(_auth_error_message(accounts, result))
 
     return get_token
 
