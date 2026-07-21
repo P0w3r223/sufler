@@ -15,6 +15,7 @@ from workmate.core.application.weekly_timesheets import (
     FAIL_BAD_DATA,
     FAIL_SEND,
     FAIL_SHEET,
+    FAIL_STATE_WRITE,
     FAIL_UNKNOWN_PERSON,
     SKIP_NO_WORK,
     WeeklyTimesheetService,
@@ -296,3 +297,39 @@ def test_each_message_contains_only_that_persons_hours() -> None:
     by_person = dict(sender.sent)
     assert "WT-12" in by_person["aad-mikolaj"] and "WT-99" not in by_person["aad-mikolaj"]
     assert "WT-99" in by_person["aad-piotr"] and "WT-12" not in by_person["aad-piotr"]
+
+
+def test_state_write_failure_does_not_stop_the_rest_of_the_queue() -> None:
+    """Wyjątek zapisu stanu przy osobie 1. nie może pozbawić wiadomości osoby 2.
+
+    Regresja: ``mark_done`` stało poza ``try``, wbrew deklaracji modułu, że wyjątek jednej
+    osoby nie zatrzymuje pozostałych. Pełny dysk w środku kolejki wywracał CAŁY przebieg,
+    a osoba, przy której to nastąpiło, miała już wysłaną wiadomość i nie była zapisana jako
+    obsłużona — przy ponowieniu dostałaby ją drugi raz.
+    """
+    sender = _RecordingSender()
+
+    def mark_done(week: str, source_id: str, outcome) -> None:
+        if source_id == "EMP-042":
+            raise OSError("brak miejsca na dysku")
+
+    service = WeeklyTimesheetService(
+        _FakeHours([_entry("EMP-042", 15, 180), _entry("EMP-017", 16, 120)]),  # type: ignore[arg-type]
+        _FakeIdentities([_MIKOLAJ, _PIOTR]),  # type: ignore[arg-type]
+        _RecordingWriter(),  # type: ignore[arg-type]
+        sender,
+        output_dir="D:/worklogi",
+        tz=_TZ,
+        dry_run=False,
+        already_done=lambda week, sid: False,
+        mark_done=mark_done,
+        now=lambda: _NOW,
+    )
+
+    report = service.run()
+
+    # Obie wiadomości wyszły — pętla przeżyła awarię zapisu stanu.
+    assert {aad for aad, _ in sender.sent} == {"aad-mikolaj", "aad-piotr"}
+    # Awaria jest WIDOCZNA w raporcie, z własnym powodem (człowiek musi wiedzieć o ryzyku
+    # powtórnej wiadomości przy ponowieniu).
+    assert [(f.source_id, f.reason) for f in report.failed] == [("EMP-042", FAIL_STATE_WRITE)]

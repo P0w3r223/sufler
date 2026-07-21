@@ -5,7 +5,9 @@ Bez sieci: sprawdzamy to, co decyduje o tym, czy ktoś dostanie wiadomość DWA 
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -13,8 +15,10 @@ from workmate.adapters.inbound.single_instance import (
     AlreadyRunningError,
     acquire_single_instance_lock,
 )
+from workmate.adapters.inbound.worklogi import app
 from workmate.adapters.inbound.worklogi import state as state_store
-from workmate.config import WorklogiSettings
+from workmate.config import TeamsPushSettings, WorklogiSettings
+from workmate.core.domain.week import reported_week, week_label
 
 # --- stan idempotencji ------------------------------------------------------------
 
@@ -197,3 +201,57 @@ def test_teams_push_scopes_include_team_members() -> None:
     from workmate.config import TeamsPushSettings
 
     assert "TeamMember.Read.All" in TeamsPushSettings().scopes
+
+
+# --- nadrabianie i przeżywalność pętli --------------------------------------------
+
+
+def _friday(day: int) -> datetime:
+    """Piątek 16:00 w Europe/Warsaw — domyślny termin przebiegu."""
+    return datetime(2026, 7, day, 16, 0, tzinfo=ZoneInfo("Europe/Warsaw"))
+
+
+def test_missed_deadline_returns_the_deadline_not_just_a_flag(tmp_path: Path, monkeypatch) -> None:
+    """Nadrabianie w poniedziałek musi wskazać PIĄTKOWY termin, nie »teraz«.
+
+    Regresja: funkcja zwracała ``bool``, a tydzień raportu liczono z zegara. Awaria
+    w piątek W29 i podniesienie w poniedziałek dawały raport za W30 — W29 nie trafiał
+    do nikogo NIGDY, a osoby zapisane pod etykietą W30 były pomijane w prawdziwym
+    przebiegu W30, więc traciły oba tygodnie.
+    """
+    monday = datetime(2026, 7, 20, 9, 0, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(app, "_now", lambda: monday)
+
+    settings = _settings(state_path=tmp_path / "s.json")
+    missed = app._missed_deadline(settings, ZoneInfo("Europe/Warsaw"))
+
+    assert missed == _friday(17)  # piątek W29, nie poniedziałek W30
+    assert week_label(reported_week(missed, ZoneInfo("Europe/Warsaw"))[0]) == "2026-W29"
+
+
+def test_missed_deadline_is_none_when_the_week_was_already_reported(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monday = datetime(2026, 7, 20, 9, 0, tzinfo=ZoneInfo("Europe/Warsaw"))
+    monkeypatch.setattr(app, "_now", lambda: monday)
+    state = tmp_path / "s.json"
+    state_store.save(state, {"2026-W29:EMP-042": monday.isoformat()})
+
+    assert app._missed_deadline(_settings(state_path=state), ZoneInfo("Europe/Warsaw")) is None
+
+
+def test_failed_run_does_not_kill_the_loop(monkeypatch, caplog) -> None:
+    """Awaria przebiegu (np. plik godzin w trakcie zapisu) nie może wywrócić procesu.
+
+    Bez tego systemd restartował usługę, nadrabianie znów było należne, znów padało —
+    pętla restartów, w której nikt nie dostaje nic.
+    """
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("plik godzin w trakcie zapisu")
+
+    monkeypatch.setattr(app, "_run_once", boom)
+
+    app._safe_run_once(_settings(), TeamsPushSettings(), lambda: "t", as_of=_friday(17))
+
+    assert "nie powiódł się" in caplog.text

@@ -125,6 +125,11 @@ def _build_bridge_catalog(
     from workmate.core.application.events import EventService
     from workmate.core.application.tools import build_activity_catalog, build_events_catalog
 
+    # Sufity zdolności mutujących Jiry (limity zapisu, ewidencji, wariant wdrożenia) egzekwował
+    # dotąd WYŁĄCZNIE proces pollera — czyli nie ten, który wykonuje zapis. ``validate_limits``
+    # to część wspólna, bezpieczna dla wdrożeń bez Jiry (nie żąda URL-a ani tokenu).
+    jira_settings.validate_limits()
+
     events = EventService(SqliteEventStore(events_settings.db_path))
     catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
     catalog += _build_jira_catalog(jira_settings, events)

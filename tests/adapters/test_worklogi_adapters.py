@@ -144,7 +144,7 @@ EMP-042:
   display_name: Mikołaj Anonimowicz
 EMP-017:
   aad_user_id: aad-piotr
-  jira_user: piotr.alt@example.org
+  jira_user: piotr@example.com
 """
 
 
@@ -175,6 +175,31 @@ def test_entry_without_jira_user_fails_at_startup(tmp_path: Path) -> None:
     """Niekompletna mapa = ktoś po cichu nie dostanie nic. Padamy przy starcie, nie w piątek."""
     with pytest.raises(ValueError, match="jira_user"):
         YamlIdentityDirectory(_identities(tmp_path, "EMP-1:\n  aad_user_id: a\n"))
+
+
+def test_two_people_sharing_a_jira_account_fail_at_startup(tmp_path: Path) -> None:
+    """Skopiowany blok bez podmiany ``jira_user`` = czyjś tydzień na cudzym koncie Jiry.
+
+    Fail-closed pilnował tylko osi „brak wpisu". Tę awarię strażniki ``assert_single_person``
+    przepuszczają, bo zestawienie JEST jednorodne — wskazuje po prostu złą osobę. A worklogi
+    są create-only i nieusuwalne z poziomu narzędzi.
+    """
+    duplikat = (
+        "EMP-1:\n  aad_user_id: aad-1\n  jira_user: mikolaj@example.com\n"
+        "EMP-2:\n  aad_user_id: aad-2\n  jira_user: mikolaj@example.com\n"
+    )
+    with pytest.raises(ValueError, match="jira_user"):
+        YamlIdentityDirectory(_identities(tmp_path, duplikat))
+
+
+def test_two_people_sharing_a_teams_account_fail_at_startup(tmp_path: Path) -> None:
+    """Ten sam ``aad_user_id`` u dwóch osób = ktoś dostaje cudzą tabelę godzin."""
+    duplikat = (
+        "EMP-1:\n  aad_user_id: aad-mikolaj\n  jira_user: a@example.com\n"
+        "EMP-2:\n  aad_user_id: aad-mikolaj\n  jira_user: b@example.com\n"
+    )
+    with pytest.raises(ValueError, match="aad_user_id"):
+        YamlIdentityDirectory(_identities(tmp_path, duplikat))
 
 
 def test_graph_directory_requires_current_team_membership(tmp_path: Path) -> None:

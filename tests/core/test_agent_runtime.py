@@ -7,6 +7,8 @@ tool-use sprawdzamy atrapą zwracającą zaplanowane odpowiedzi (jak atrapy repo
 
 from __future__ import annotations
 
+from datetime import date
+
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.pricing import TokenUsage
@@ -133,6 +135,61 @@ def test_runtime_returns_recoverable_error_for_bad_tool_arguments():
     outputs = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)][0].outputs
     assert outputs[0].is_error is True
     assert "search" in outputs[0].content
+
+
+def test_runtime_coerces_json_shaped_arguments_to_annotated_types():
+    """Model przysyła datę jako NAPIS (bo taki widzi schemat) → narzędzie dostaje ``date``.
+
+    Regresja blokera: JSON nie zna typów Pythona, więc ``date`` jedzie do modelu jako
+    ``{"type": "string", "format": "date"}``. Bez koercji napis trafiał wprost do
+    arytmetyki dat, a ``TypeError`` nie jest łapany przez kopertę narzędzi — wyjątek
+    wychodził PRZED oznaczeniem wiadomości jako obsłużonej i blokował kanał.
+    """
+    seen: list[object] = []
+
+    def propose(since: date, until: date) -> dict:
+        seen.append((since, until))
+        return {"dni": (until - since).days}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                tool_calls=(
+                    ToolCall("t1", "propose", {"since": "2026-07-13", "until": "2026-07-19"}),
+                )
+            ),
+            LLMResponse(text="gotowe"),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("propose", propose)]).run("x")
+
+    assert result == "gotowe"
+    assert seen == [(date(2026, 7, 13), date(2026, 7, 19))]
+    outputs = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)][0].outputs
+    assert outputs[0].is_error is False
+    assert '"dni": 6' in outputs[0].content
+
+
+def test_runtime_returns_recoverable_error_for_unparsable_typed_argument():
+    """Nazwa argumentu poprawna, ale wartości nie da się zrzutować → błąd, nie wyjątek."""
+
+    def propose(since: date) -> dict:
+        return {"ok": True}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "propose", {"since": "zeszły wtorek"}),)),
+            LLMResponse(text="poprawiłem"),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("propose", propose)]).run("x")
+
+    assert result == "poprawiłem"  # pętla przeżyła
+    outputs = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)][0].outputs
+    assert outputs[0].is_error is True
+    assert "propose" in outputs[0].content
 
 
 def test_runtime_respects_iteration_budget():

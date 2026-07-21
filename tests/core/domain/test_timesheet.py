@@ -31,7 +31,7 @@ _MIKOLAJ = Person(
 _PIOTR = Person(
     source_id="EMP-017",
     aad_user_id="4788-piotr",
-    jira_user="piotr.alt@example.org",
+    jira_user="piotr@example.com",
     display_name="Piotr Cząstkiewicz",
 )
 
@@ -204,5 +204,5 @@ def test_group_by_source_id_splits_the_batch() -> None:
 
 def test_timesheet_carries_person_and_week_identity() -> None:
     sheet = _sheet([_entry("EMP-017", 15, "WT-12", 60)], person=_PIOTR)
-    assert sheet.person.jira_user == "piotr.alt@example.org"
+    assert sheet.person.jira_user == "piotr@example.com"
     assert sheet.week_label == "2026-W29"

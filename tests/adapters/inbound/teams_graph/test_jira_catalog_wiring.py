@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph.app import _build_jira_catalog
-from workmate.config import JiraSettings
+from workmate.adapters.inbound.teams_graph.app import _build_bridge_catalog, _build_jira_catalog
+from workmate.config import EventsSettings, GithubSettings, JiraSettings
 
 # ``_build_jira_catalog`` nie używa magazynu zdarzeń podczas budowy katalogu (tylko wstrzykuje go
 # do serwisu), więc None wystarcza — bramkowanie zależy wyłącznie od flag JiraSettings.
@@ -37,6 +37,32 @@ def _names(settings: JiraSettings) -> set[str]:
 
 def test_no_gate_yields_empty_catalog():
     assert _build_jira_catalog(_settings(), _EVENTS) == []
+
+
+def test_bridge_catalog_enforces_jira_limits_before_touching_the_store(tmp_path):
+    """Sufity Jiry egzekwuje TEŻ proces, który wykonuje zapis — nie tylko poller.
+
+    Regresja: ``JiraSettings.validate()`` woła wyłącznie ``workmate-jira``, więc absurd
+    w ``.env`` (tu: sufit 100 h na wpis przy backstopie 24 h) przechodził w drzwiach
+    Teams — czyli dokładnie tam, gdzie zapis się odbywa. Błąd musi paść PRZED dotknięciem
+    magazynu zdarzeń, stąd ścieżka bazy prowadzi do nieistniejącego katalogu.
+    """
+    with pytest.raises(ValueError, match="WORKMATE_JIRA_WORKLOG_MAX_HOURS"):
+        _build_bridge_catalog(
+            EventsSettings(db_path=tmp_path / "nie-ma-katalogu" / "events.db"),
+            GithubSettings(),
+            _settings(worklog_max_hours_per_entry=100.0),
+        )
+
+
+def test_bridge_catalog_accepts_deployment_without_jira_configured(tmp_path):
+    """Wdrożenie bez Jiry ma startować — ``validate_limits`` nie żąda URL-a ani tokenu."""
+    catalog, factory = _build_bridge_catalog(
+        EventsSettings(db_path=tmp_path / "events.db"), GithubSettings(), JiraSettings()
+    )
+
+    assert factory is None
+    assert {"read_recent_events"} <= {spec.name for spec in catalog}
 
 
 def test_write_only_yields_create_and_comment_tools():

@@ -146,5 +146,31 @@ def _load_map(path: Path) -> dict[str, Person]:
             jira_user=str(entry["jira_user"]),
             display_name=str(entry.get("display_name") or ""),
         )
+    _reject_shared_identifiers(people, path)
     logger.info("Mapa tożsamości %s: %d osób.", path, len(people))
     return people
+
+
+def _reject_shared_identifiers(people: dict[str, Person], path: Path) -> None:
+    """Dwie osoby NIE MOGĄ dzielić konta Teams ani konta Jiry — twardy błąd startu.
+
+    Fail-closed pilnował dotąd wyłącznie osi „brak wpisu". Oś „ten sam identyfikator u dwóch
+    osób" była otwarta, a to właśnie ona jest nieodwracalna: skopiowany w YAML-u blok bez
+    podmiany ``jira_user`` sprawia, że arkusz drugiej osoby ma w KAŻDEJ komórce cudze konto,
+    więc jej tydzień wjeżdża do Jiry na cudze nazwisko — create-only, bez usuwania z poziomu
+    narzędzi. Ten sam ``aad_user_id`` wysyła komuś cudzą tabelę godzin.
+
+    Strażniki ``assert_single_person`` tego nie łapią: sprawdzają JEDNORODNOŚĆ zestawienia,
+    a oba zestawienia są wewnętrznie spójne — po prostu wskazują na złą osobę.
+    """
+    for field in ("aad_user_id", "jira_user"):
+        seen: dict[str, str] = {}
+        for person in people.values():
+            value = getattr(person, field)
+            if value in seen:
+                raise ValueError(
+                    f"mapa tożsamości {path}: {field}={value!r} występuje u dwóch osób "
+                    f"({seen[value]!r} i {person.source_id!r}) — każdy identyfikator musi "
+                    "należeć do dokładnie jednej osoby."
+                )
+            seen[value] = person.source_id

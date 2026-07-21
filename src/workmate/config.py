@@ -935,8 +935,45 @@ class JiraSettings:
             ),
         )
 
+    def validate_limits(self) -> None:
+        """Kontrole NIEZALEŻNE od tego, kto buduje klienta Jiry — wołane z OBU stron.
+
+        ``validate()`` opisuje kontrakt PROCESU POLLERA: bezwarunkowo żąda URL-a, tokenu
+        i listy projektów. Drzwi Teams budują klienta Jiry tylko warunkowo (bramka zapisu
+        lub ewidencji), więc nie mogą wołać całości — wdrożenie bez Jiry przestałoby
+        startować. Tu zostaje to, co obowiązuje ZAWSZE: nazwa wariantu wdrożenia, e-mail
+        na Cloud oraz sufity zdolności mutujących.
+
+        Powód wydzielenia: te sufity są backstopem przed absurdem w ``.env``
+        (``MAX_HOURS=100``, ``TZ_OFFSET_MINUTES=1500``), a egzekwował je wyłącznie proces
+        pollera — czyli NIE ten, który wykonuje zapis. Drzwi Teams obiecywały to
+        w docstringu i nie robiły.
+        """
+        deployment = self.deployment.strip().lower()
+        if deployment not in JIRA_DEPLOYMENTS:
+            raise ValueError(
+                "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
+                f"{self.deployment!r}."
+            )
+        # Cloud uwierzytelnia się Basic auth (email + API token); Server/DC — PAT Bearer (bez
+        # e-maila). Brak e-maila na Cloud = niedziałające auth — twardy błąd startu (fail-fast).
+        if deployment == "cloud" and not self.email:
+            raise ValueError(
+                "WORKMATE_JIRA_DEPLOYMENT=cloud wymaga WORKMATE_JIRA_EMAIL "
+                "(e-mail konta Atlassian do Basic-auth z API tokenem)."
+            )
+        # Sufit hopów w rozsądnym zakresie (1 = single-hop; >1 = wielo-hop forced-advance).
+        # Walidujemy zawsze — absurd (0, ujemna, ogromna) to twardy błąd niezależnie od bramki.
+        if not 1 <= self.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS:
+            raise ValueError(
+                "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
+                f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
+            )
+        self._validate_worklog()
+
     def validate(self) -> None:
         """Twardy błąd startu, gdy brak URL/tokenu/projektów, złe limity lub sprzeczny zapis."""
+        self.validate_limits()
         missing = [
             name
             for name, value in (
@@ -950,19 +987,6 @@ class JiraSettings:
                 "Drzwi Jira wymagają URL i tokenu: brakuje "
                 + ", ".join(missing)
                 + " w środowisku/.env."
-            )
-        deployment = self.deployment.strip().lower()
-        if deployment not in JIRA_DEPLOYMENTS:
-            raise ValueError(
-                "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
-                f"{self.deployment!r}."
-            )
-        # Cloud uwierzytelnia się Basic auth (email + API token); Server/DC — PAT Bearer (bez
-        # e-maila). Brak e-maila na Cloud = niedziałające auth — twardy błąd startu (fail-fast).
-        if deployment == "cloud" and not self.email:
-            raise ValueError(
-                "WORKMATE_JIRA_DEPLOYMENT=cloud wymaga WORKMATE_JIRA_EMAIL "
-                "(e-mail konta Atlassian do Basic-auth z API tokenem)."
             )
         if not self.watch_projects:
             raise ValueError(
@@ -1007,14 +1031,6 @@ class JiraSettings:
                 "WORKMATE_JIRA_ENABLE_TRANSITION=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
                 "(konto PAT — strażnik pętli self-skip)."
             )
-        # Sufit hopów w rozsądnym zakresie (1 = single-hop; >1 = wielo-hop forced-advance).
-        # Walidujemy zawsze — absurd (0, ujemna, ogromna) to twardy błąd niezależnie od bramki.
-        if not 1 <= self.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS:
-            raise ValueError(
-                "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
-                f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
-            )
-        self._validate_worklog()
 
     def _validate_worklog(self) -> None:
         """Reguły ewidencji czasu (ADR 0034) — te same klasy fail-fast co zapis i tranzycja.
