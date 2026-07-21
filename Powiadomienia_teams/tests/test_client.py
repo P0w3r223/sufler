@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from powiadomienia_teams.graph.auth import AuthExpiredError
-from powiadomienia_teams.graph.client import GraphClient, GraphPermissionError
+from powiadomienia_teams.graph.client import (
+    _MAX_PAGES,
+    GraphClient,
+    GraphPermissionError,
+    GraphTruncatedReadError,
+)
 
 UTC = timezone.utc
 
@@ -295,3 +300,26 @@ def test_budzet_ponowien_nie_jest_nieskonczony():
     with pytest.raises(httpx.HTTPStatusError):
         _graph_z_zapisem_snu(handler, spane).get_me()
     assert sum(spane) <= 900  # łączne czekanie mieści się w budżecie
+
+
+def test_przekroczony_limit_stron_konczy_sie_bledem_zamiast_niepelnej_listy():
+    """Ucięte stronicowanie MUSI przewrócić przebieg, a nie zwrócić połowę grafiku.
+
+    Wykrywanie luk („kto nie ma zmian") pracuje na tym, co wróciło, więc niepełny odczyt to
+    prośby wysłane osobom, które grafik MAJĄ, a po ich „tak" DRUGI komplet wpisów w Shifts —
+    zapis nieodwracalny. Sam log tego nie zatrzymywał: usługa bezobsługowa bez monitoringu
+    logów zachowywała się dokładnie tak, jakby przebieg się udał.
+    """
+    zadania = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        zadania["n"] += 1
+        return httpx.Response(200, json={
+            "value": [{"userId": f"u{zadania['n']}", "displayName": "Ala"}],
+            # Graph deklaruje kolejną stronę BEZ KOŃCA — tak wygląda kolekcja większa niż limit.
+            "@odata.nextLink": f"https://graph.microsoft.com/v1.0/teams/T/members?p={zadania['n']}",
+        })
+
+    with pytest.raises(GraphTruncatedReadError, match="NIEPEŁNY"):
+        _graph(handler).list_members("T")
+    assert zadania["n"] == _MAX_PAGES  # limit nadal chroni przed czytaniem w nieskończoność

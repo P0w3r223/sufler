@@ -33,6 +33,7 @@ from powiadomienia_teams.agent.interpreter import (
 from powiadomienia_teams.config import ConfigError, Settings, TeamContext
 from powiadomienia_teams.domain.models import Member
 from powiadomienia_teams.graph.auth import (
+    AmbiguousAccountError,
     AuthExpiredError,
     build_token_provider,
     login_interactive,
@@ -791,6 +792,11 @@ def run_forever(
             )
             if _przebieg_i_podsumowanie(settings, client, catchup_term, sleep):
                 last_run_term = catchup_term  # odhaczamy WYŁĄCZNIE udany przebieg
+            # Zegar MUSI być odczytany ponownie: przebieg z ponowieniami i dławieniem Graph
+            # (budżet 900 s na żądanie × 3 próby) trwa czasem dłużej niż `_PONOWIENIE_PRZEBIEGU_S`.
+            # Na starym `now` `pobudka` wypadałaby wtedy w PRZESZŁOŚCI, więc pętla nasłuchu nie
+            # wykonałaby ani jednego obiegu — bot milczałby przez całe okno łaski, mimo że żyje.
+            now = datetime.now(_UTC)
         termin = _kolejny_termin(settings, now)
         # Pobudka może wypaść WCZEŚNIEJ niż termin: gdy zaległy przebieg wciąż czeka w oknie łaski,
         # wracamy tu za `_PONOWIENIE_PRZEBIEGU_S`, żeby dać mu drugą szansę. Bez tego kilkunasto-
@@ -892,6 +898,13 @@ def _ensure_authenticated(
             sleep(wait)
 
     # Dotarliśmy tu wyłącznie przez `break`, czyli po AuthExpiredError.
+    if isinstance(utracona, AmbiguousAccountError):
+        # Device-code NIE naprawia dwuznaczności — dołożyłby trzecie konto do cache. Człowiek musi
+        # usunąć plik cache, a instrukcja jest już w treści wyjątku.
+        logger.critical("%s", utracona)
+        if not sys.stdin.isatty():
+            _handle_auth_loss(settings, utracona, sleep)
+        raise SystemExit(1)
     if sys.stdin.isatty():
         logger.info("Brak ważnego tokenu — uruchamiam jednorazowe logowanie device-code.")
         login_interactive(settings)
@@ -982,13 +995,24 @@ def main() -> None:
         provider = _ensure_authenticated(settings)
         llm: LlmClient = AnthropicLlm(settings.anthropic_api_key, model=settings.llm_model)
         with httpx.Client(timeout=30) as http:
-            client = GraphClient(http, provider)
+            # Czekanie na `Retry-After` (budżet do 900 s na żądanie) jest ŻYCIEM usługi, nie zawisem
+            # — ale bez pulsu w środku snu healthcheck orzekłby „pętla stoi" dokładnie wtedy, gdy
+            # klient cierpliwie czeka zgodnie z projektem.
+            client = GraphClient(
+                http, provider, sleep=lambda s: _spij_z_pulsem(settings, s, time.sleep)
+            )
             if args.once:
                 _polecenie_jednorazowe(lambda: run_once(settings, client, now=datetime.now(_UTC)))
             elif args.poll_once:
                 _polecenie_jednorazowe(lambda: poll_replies(settings, client, llm))
             else:
-                run_forever(settings, client, llm)
+                try:
+                    run_forever(settings, client, llm)
+                except AuthExpiredError:
+                    # Alert, log CRITICAL i instrukcja poszły już z `_handle_auth_loss`. Ślad stosu
+                    # przykryłby je w `docker compose logs`, a runbook każe operatorowi patrzeć
+                    # właśnie tam — zatrzymujemy się tak samo czysto jak przy ConfigError.
+                    raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

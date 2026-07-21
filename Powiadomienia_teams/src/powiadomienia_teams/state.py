@@ -41,7 +41,8 @@ class PendingReminder:
     resolved: list[dict[str, Any]] = field(default_factory=list)  # grafik ustalony po odpowiedzi
     # Czas wolny ustalony po odpowiedzi: [{weekday, reason_id, reason_name}] (powód rozstrzygnięty).
     resolved_time_off: list[dict[str, Any]] = field(default_factory=list)
-    # Nieudane próby obsłużenia BIEŻĄCEJ wiadomości; zerowany przy każdym udanym commicie.
+    # Nieudane próby obsługi od ostatniego UDANEGO commitu (licznik zeruje wyłącznie `_commit`,
+    # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
     # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``app._record_failure``).
     fail_count: int = 0
 

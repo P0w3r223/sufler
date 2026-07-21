@@ -388,7 +388,32 @@ Przegląd referencji przed pierwszym wdrożeniem serwerowym wykazał kod, który
 - 5 testów bez pokrycia gałęzi: domyślne wartości dataclass (`ReplyDecision`, `Member`), duplikat
   `week_windows` z `test_weekly.py`, słaby test własnościowy backoffu, duplikat pustego czasu wolnego.
 
-Suita: **250 → 236 testów**, wszystkie zielone; `ruff` i `mypy` czyste.
+Suita po czyszczeniu: **250 → 236 testów**, wszystkie zielone; `ruff` i `mypy` czyste.
+
+### Poprawki po przeglądzie kodu (te same daty, przed wydaniem)
+
+Przegląd całości zmian znalazł jeden defekt blokujący i cztery istotne — wszystkie naprawione,
+każda z testem broniącym zachowania (suita **243 testy**):
+
+- **`run_forever` liczyło pobudkę ze starego zegara.** Przy nadrabianym przebiegu trwającym dłużej
+  niż `_PONOWIENIE_PRZEBIEGU_S` (realne przy dławieniu Graph) pobudka wypadała w przeszłości, więc
+  pętla nasłuchu nie wykonywała ANI JEDNEGO obiegu — bot milczał przez całe okno łaski mimo
+  żywego procesu i pełnego logu. Zegar jest odczytywany ponownie po przebiegu.
+- **Ucięte stronicowanie (`_get_all`) zwracało niepełną listę.** Wykrywanie luk pracuje na tym, co
+  wróciło, więc skutkiem były prośby do osób z grafikiem i po ich „tak" DRUGI komplet wpisów
+  w Shifts. Teraz `GraphTruncatedReadError` → przebieg pada, jest ponawiany, operator dostaje alert.
+- **`accounts[0]` losowało tożsamość bota** przy dwóch sesjach w cache MSAL. `AmbiguousAccountError`
+  zatrzymuje usługę z instrukcją, a `--login` odmawia startu zamiast dołożyć trzecie konto.
+- **Puls nie bił podczas czekania na `Retry-After`** (budżet do 900 s = próg healthchecku), więc
+  `docker compose ps` pokazywałby `unhealthy` dokładnie wtedy, gdy klient czeka zgodnie z projektem.
+- **Utrata sesji kończyła się śladem stosu** przykrywającym jedyne istotne zdanie w logu; teraz
+  czyste `SystemExit(1)`, jak przy `ConfigError`.
+
+Do decyzji właściciela (świadomie NIE zmienione): `deploy/env.example` niesie imiona i AAD id ośmiu
+osób w historii repozytorium, a wypełnione `ONLY_USER_IDS` sprawia, że nowy pracownik jest dla
+usługi niewidoczny, a podsumowanie „0 próśb" wygląda wtedy jak zdrowy przebieg. Osobno: przy
+utracie sesji alert leci przy każdym restarcie kontenera (bez tłumienia), a w oknie łaski
+podsumowanie i alert powtarzają się co 30 minut.
 
 **Dług techniczny (świadomie odłożony):** `app.py` ma ~995 linii przy przyjętym limicie 800.
 Podział (wydzielenie pętli serwisowej, pulsu i alertów z `run_once`/`poll_replies`) odłożony,

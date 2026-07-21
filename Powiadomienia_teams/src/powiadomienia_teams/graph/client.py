@@ -38,6 +38,16 @@ _DEFAULT_THEME = "green"  # nieokreślony dzień = stacjonarnie
 _MAX_ERROR_BODY = 500  # ile znaków ciała błędu trafia do logu
 
 
+class GraphTruncatedReadError(RuntimeError):
+    """Odczyt kolekcji urwał się na limicie stron — dane są NIEPEŁNE i nie wolno ich użyć.
+
+    Wydzielony wyjątek zamiast zwrócenia części wyników: wykrywanie luk („kto nie ma zmian")
+    pracuje na tym, co wróciło, więc niepełny odczyt oznacza prośby do osób, które grafik MAJĄ,
+    a po ich »tak« DRUGI komplet wpisów w Shifts. Skutkiem jest nieodwracalny zapis u klienta,
+    dlatego przebieg ma paść i zostać ponowiony, a nie „udać się" na połowie danych.
+    """
+
+
 class GraphPermissionError(RuntimeError):
     """Graph odmówił dostępu (403) — brak zgody/roli. NIE jest błędem transientnym.
 
@@ -132,14 +142,13 @@ class GraphClient:
             next_url = data.get("@odata.nextLink")
             pages += 1
         if next_url:
-            # Odczyt NIEPEŁNY. Grafik ma jeszcze strony, których nie przeczytaliśmy — a wykrywanie
-            # luk („kto nie ma zmian") działa na tym, co wróciło. Ucięcie oznacza więc prośby
-            # wysłane osobom, które grafik MAJĄ, i po ich „tak" DRUGI komplet wpisów w Shifts.
-            # Bez tego logu objaw wyglądałby na kaprys bota, a nie na przekroczony limit odczytu.
-            logger.error(
-                "Ucięto stronicowanie %s po %d stronach — odczyt NIEPEŁNY, wykrywanie luk "
-                "w grafiku może dawać fałszywe wyniki",
-                url, pages,
+            # Sam log tu nie wystarczy: usługa bezobsługowa bez monitoringu logów zachowuje się
+            # wtedy tak, jakby nic się nie stało — a skutkiem jest podwójny zapis do grafiku
+            # klienta. Fail-closed: przebieg pada, `_run_once_with_retry` ponawia, a przy trwałym
+            # przekroczeniu limitu operator dostaje alert zamiast bota wysyłającego złe prośby.
+            raise GraphTruncatedReadError(
+                f"Ucięto stronicowanie {url} po {pages} stronach — odczyt NIEPEŁNY, "
+                f"wykrywanie luk w grafiku dałoby fałszywe wyniki"
             )
         return items
 

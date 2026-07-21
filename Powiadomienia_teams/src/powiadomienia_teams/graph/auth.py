@@ -39,6 +39,31 @@ class AuthExpiredError(RuntimeError):
     """
 
 
+class AmbiguousAccountError(AuthExpiredError):
+    """Cache MSAL zawiera kilka kont — nie wiadomo, którą tożsamością bot ma pisać.
+
+    Wydzielony z ``AuthExpiredError``, bo naprawa jest INNA: ponowne logowanie nie pomaga,
+    tylko dokłada kolejne konto do cache. Jedyne wyjście to usunięcie pliku cache przez
+    człowieka, dlatego ścieżka startowa nie może na to odpowiedzieć device-flow.
+    """
+
+
+def _jedyne_konto(accounts: list[Any], cache_path: Path) -> None:
+    """Upewnij się, że cache wskazuje JEDNĄ tożsamość — inaczej zatrzymaj się przed wysyłką.
+
+    Kolejność ``get_accounts()`` nie jest kontraktem MSAL, więc „weź pierwsze" przy dwóch sesjach
+    to losowanie nadawcy. Skutek widzi cały zespół (wiadomości od niewłaściwej osoby) i jest
+    nieodwracalny, a wdrożeniowe „pamiętaj wyczyścić cache" wykonuje się raz i zapomina.
+    """
+    if len(accounts) <= 1:
+        return
+    nazwy = ", ".join(sorted(str(a.get("username", "?")) for a in accounts))
+    raise AmbiguousAccountError(
+        f"Cache tokenu zawiera {len(accounts)} kont ({nazwy}) — nie wiadomo, którą tożsamością "
+        f"pisać. Usuń plik {cache_path}, a potem zaloguj się ponownie: --login"
+    )
+
+
 def _load_cache(cache_path: Path) -> Any:
     import msal
 
@@ -142,6 +167,7 @@ def build_token_provider(
 
     def get_token() -> str:
         accounts = app.get_accounts()
+        _jedyne_konto(accounts, cache_path)
         # `..._with_error` zamiast `acquire_token_silent`: ta druga zwraca None ZARÓWNO przy pustym
         # cache, JAK I przy odrzuconym odświeżeniu, więc nie da się odróżnić „trzeba się zalogować"
         # od „tenant właśnie zmienił politykę". Wersja z błędem niesie kod AADSTS — jedyną rzecz,
@@ -169,6 +195,9 @@ def login_interactive(
     do cache, więc dalsze działanie idzie już cichym odświeżeniem.
     """
     app, cache = app_factory(settings)
+    # Bramka PRZED device-flow: przy dwóch kontach w cache logowanie dołożyłoby TRZECIE, a operator
+    # zobaczyłby „zalogowano" i usługę padającą przy pierwszym odświeżeniu tokenu.
+    _jedyne_konto(app.get_accounts(), settings.token_cache_path)
     flow = app.initiate_device_flow(scopes=list(settings.scopes))
     if "user_code" not in flow:
         raise RuntimeError(

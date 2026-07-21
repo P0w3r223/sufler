@@ -31,17 +31,21 @@ def test_stary_puls_jest_niezdrowy(monkeypatch, tmp_path: Path):
     """Proces, który przestał się budzić, MUSI zostać uznany za martwy."""
     puls = _srodowisko(monkeypatch, tmp_path)
     puls.touch()
-    # Zegar przesunięty o 3 h przy sufitcie 1 h → próg 2 h przekroczony.
+    # Zegar przesunięty o 3 h, próg to `health_max_age_s` (domyślnie 900 s) — dawno przekroczony.
     ok, powod = zdrowy(now=puls.stat().st_mtime + 3 * 3600)
     assert ok is False
     assert "pętla stoi" in powod
 
 
-def test_prog_ma_dolna_granice(monkeypatch, tmp_path: Path):
-    """Niski sufit nasłuchu nie może zamienić healthchecku w migotanie."""
+def test_niski_sufit_nasluchu_nie_powoduje_migotania(monkeypatch, tmp_path: Path):
+    """Nawet przy skrajnie niskim sufitcie nasłuchu próg zostaje na `health_max_age_s`.
+
+    Gdyby próg wracał do wyprowadzania z sufitu, konfiguracja z sufitem 10 s uznawałaby usługę za
+    martwą po kilkudziesięciu sekundach — czyli healthcheck migotałby przy normalnej pracy.
+    """
     puls = _srodowisko(monkeypatch, tmp_path, sufit="10")
     puls.touch()
-    ok, _ = zdrowy(now=puls.stat().st_mtime + 120)  # 2 min: pod progiem minimalnym 300 s
+    ok, _ = zdrowy(now=puls.stat().st_mtime + 120)  # 2 min < 900 s progu
     assert ok is True
 
 

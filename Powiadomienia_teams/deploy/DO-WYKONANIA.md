@@ -1,6 +1,6 @@
 # Do wykonania, zanim obraz zadziała na serwerze
 
-Stan na 2026-07-21. Obraz `powiadomienia-teams:0.2.0` jest **zbudowany i przetestowany** (236 testów
+Stan na 2026-07-21. Obraz `powiadomienia-teams:0.2.0` jest **zbudowany i przetestowany** (243 testy
 w środku obrazu, przebieg próbny przeciwko prawdziwemu Graphowi przeszedł). Poniższe punkty to
 wyłącznie to, czego brakuje **po stronie tenanta i konfiguracji** — nie kodu.
 
@@ -67,9 +67,13 @@ docker run --rm -v powiadomienia-teams-stan:/s alpine rm -f /s/teams_token_cache
 docker compose run --rm -it powiadomienia --login
 ```
 
-**Kasowanie starego cache jest warunkiem poprawności, nie porządkiem.** `graph/auth.py:140` wybiera
-konto przez `accounts[0]`, bez sprawdzania kto to jest — dwa konta w jednym pliku i bot może
-odezwać się niewłaściwą tożsamością, po cichu.
+**Kasowanie starego cache jest warunkiem poprawności, nie porządkiem.** Przy dwóch kontach w jednym
+pliku wybór nadawcy byłby losowy (kolejność `get_accounts()` nie jest kontraktem MSAL), a bot
+odezwałby się do zespołu niewłaściwą tożsamością — nieodwracalnie.
+
+Od wersji 0.2.0 pilnuje tego **kod, a nie procedura**: `graph/auth.py` rzuca `AmbiguousAccountError`
+z instrukcją usunięcia pliku, a `--login` odmawia startu, zamiast dołożyć kolejne konto do cache.
+Jeśli zobaczysz ten komunikat, wykonaj powyższe `rm -f` i powtórz logowanie.
 
 Weryfikacja, kto faktycznie jest głosem bota:
 

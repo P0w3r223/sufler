@@ -4,6 +4,7 @@ import pytest
 
 from powiadomienia_teams.config import Settings
 from powiadomienia_teams.graph.auth import (
+    AmbiguousAccountError,
     AuthExpiredError,
     _load_cache,
     _save_cache,
@@ -197,3 +198,49 @@ def test_msal_dostaje_jawny_timeout(monkeypatch):
 
     assert przekazane.get("timeout") == modul._MSAL_TIMEOUT_S
     assert przekazane["timeout"] > 0
+
+
+def test_wiele_kont_w_cache_zatrzymuje_dostawce_zamiast_losowac_tozsamosc(tmp_path: Path):
+    """Dwie sesje w cache MUSZĄ zatrzymać usługę, a nie zdecydować za operatora.
+
+    Kolejność `get_accounts()` nie jest kontraktem MSAL, więc „weź accounts[0]" to losowanie
+    tożsamości „głosu" bota. Skutek — wiadomości do całego zespołu wysłane z niewłaściwego konta
+    — jest widoczny dla ludzi i nieodwracalny, więc lepszy fail-fast z instrukcją niż milcząca
+    zgadywanka.
+    """
+    sciezka = tmp_path / "c.bin"
+    app = _FakeApp(
+        silent_result={"access_token": "tok"},
+        accounts=({"username": "bot@firma.pl"}, {"username": "ala@firma.pl"}),
+    )
+    provider = build_token_provider(_settings(sciezka), app_factory=_factory(app))
+
+    with pytest.raises(AuthExpiredError) as wyjatek:
+        provider()
+
+    komunikat = str(wyjatek.value)
+    assert "bot@firma.pl" in komunikat and "ala@firma.pl" in komunikat  # KTÓRE konta kolidują
+    assert str(sciezka) in komunikat and "--login" in komunikat  # instrukcja naprawy w komunikacie
+    assert app.silent_calls == 0  # żaden token nie został pobrany „na wszelki wypadek"
+
+
+def test_jedno_konto_w_cache_dziala_bez_zmian(tmp_path: Path):
+    """Kontrola granicy: obrona przed wieloma kontami nie może blokować normalnej pracy."""
+    app = _FakeApp(silent_result={"access_token": "tok"}, accounts=({"username": "bot@firma.pl"},))
+    provider = build_token_provider(_settings(tmp_path / "c.bin"), app_factory=_factory(app))
+    assert provider() == "tok"
+
+
+def test_logowanie_odmawia_przy_wielu_kontach_zamiast_dolozyc_trzecie(tmp_path: Path):
+    """Device-flow przy dwóch kontach w cache dołożyłby TRZECIE i pogłębił problem.
+
+    Operator zobaczyłby „zalogowano", a usługa padłaby dopiero przy pierwszym odświeżeniu tokenu
+    — czyli po wdrożeniu, z komunikatem oderwanym od czynności, która go wywołała.
+    """
+    app = _FakeApp(
+        silent_result={"access_token": "tok"},
+        accounts=({"username": "bot@firma.pl"}, {"username": "ala@firma.pl"}),
+    )
+    with pytest.raises(AmbiguousAccountError, match="--login"):
+        login_interactive(_settings(tmp_path / "c.bin"), app_factory=_factory(app))
+    assert not app.device_flow_initiated  # zatrzymani PRZED rozpoczęciem logowania

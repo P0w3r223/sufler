@@ -1,3 +1,4 @@
+import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ from powiadomienia_teams.app import (
 )
 from powiadomienia_teams.config import Settings
 from powiadomienia_teams.domain.models import Member, Shift, TimeOff, WeekSchedule
-from powiadomienia_teams.graph.auth import AuthExpiredError
+from powiadomienia_teams.graph.auth import AmbiguousAccountError, AuthExpiredError
 from powiadomienia_teams.reminders.replies import newest_incoming
 from powiadomienia_teams.reminders.timeoff import TeamReasons
 from powiadomienia_teams.state import (
@@ -994,6 +995,29 @@ def test_expired_token_is_not_retried(tmp_path: Path, monkeypatch):
     assert proby["n"] == 1
 
 
+def test_wiele_kont_nie_uruchamia_logowania_device_code(tmp_path: Path, monkeypatch):
+    """Dwuznaczna tożsamość: start ma stanąć z instrukcją, a NIE proponować logowania.
+
+    Terminal jest tu obecny, więc zwykła utrata tokenu poszłaby w device-flow. Przy dwóch kontach
+    w cache byłoby to szkodliwe — dołożyłoby trzecie konto zamiast rozwiązać kolizję.
+    """
+    logowania = {"n": 0}
+
+    def fabryka(_settings_arg):
+        def provider() -> str:
+            raise AmbiguousAccountError("dwa konta w cache — usuń plik i zaloguj się ponownie")
+        return provider
+
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: True)})())
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.login_interactive",
+        lambda *_a, **_k: logowania.__setitem__("n", logowania["n"] + 1),
+    )
+    with pytest.raises(SystemExit):
+        _ensure_authenticated(_settings(tmp_path / "s.json"), fabryka, sleep=lambda _s: None)
+    assert logowania["n"] == 0
+
+
 # --- Praca bezobsługowa ------------------------------------------------------
 
 
@@ -1329,3 +1353,104 @@ def test_utrata_sesji_przechodzi_przez_polecenie_jednorazowe():
 
     with pytest.raises(AuthExpiredError):
         _polecenie_jednorazowe(akcja)
+
+
+class _Przerwij(BaseException):
+    """Sygnał wyjścia z nieskończonej pętli usługi.
+
+    Dziedziczy po `BaseException`, bo pętla nasłuchu celowo łapie `Exception` („błąd listenera nie
+    może zabić pętli") — zwykły wyjątek zostałby połknięty i test kręciłby się w kółko.
+    """
+
+
+def _zamrozony_zegar(monkeypatch, zegar: dict) -> None:
+    """Podmień zegar modułu `app` na sterowany słownikiem — czas płynie tylko wtedy, gdy każemy."""
+    import powiadomienia_teams.app as modul
+
+    class _Zegar(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return zegar["teraz"]
+
+    monkeypatch.setattr(modul, "datetime", _Zegar)
+
+
+def test_wolny_nadrobiony_przebieg_nie_ucisza_nasluchu(tmp_path: Path, monkeypatch):
+    """Po przebiegu dłuższym niż `_PONOWIENIE_PRZEBIEGU_S` nasłuch MUSI ruszyć, a nie zamilknąć.
+
+    Przebieg z ponowieniami i dławieniem Graph (budżet 900 s na żądanie × 3 próby) potrafi trwać
+    dłużej niż 30 min. Na NIEODŚWIEŻONYM `now` pobudka wypadała wtedy w przeszłości, więc wewnętrzna
+    pętla nasłuchu nie wykonywała ani jednego obiegu: bot nie odpowiadał nikomu przez całe okno
+    łaski, mimo że proces żył i healthcheck pokazywał „zdrowy".
+    """
+    import powiadomienia_teams.app as modul
+
+    termin = datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)  # piątek 16:00 Europe/Warsaw
+    zegar = {"teraz": termin + timedelta(minutes=1)}  # tuż po terminie → nadrobienie w oknie łaski
+    _zamrozony_zegar(monkeypatch, zegar)
+
+    def uplyw(sekundy: float) -> None:
+        zegar["teraz"] += timedelta(seconds=sekundy)
+
+    class _WolnyIZepsuty(_FakeClient):
+        """Graph dławi: każda próba mieli ~12 min i kończy się błędem (3 próby > 30 min)."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.proby = 0
+
+        def list_members(self, team_id: str):
+            self.proby += 1
+            uplyw(700)
+            raise RuntimeError("Graph dławi")
+
+    wywolania = {"poll": 0}
+
+    def _poll(settings, client, llm):
+        wywolania["poll"] += 1
+        raise _Przerwij  # pierwszy obieg nasłuchu wystarczy — dalej pętla jest nieskończona
+
+    monkeypatch.setattr(modul, "poll_replies", _poll)
+
+    settings = _settings_bezobslugowe(tmp_path / "state.json")
+    client = _WolnyIZepsuty({})
+
+    with pytest.raises(_Przerwij):
+        modul.run_forever(settings, client, llm=None, sleep=uplyw)
+
+    assert wywolania["poll"] == 1  # nasłuch ruszył mimo przebiegu dłuższego niż okno ponowienia
+    assert client.proby == 3  # DOKŁADNIE jeden nadrobiony przebieg (3 ponowienia), nie karuzela
+
+
+def test_utrata_sesji_w_trybie_uslugi_konczy_proces_czysto(tmp_path: Path, monkeypatch):
+    """Wyjście po utracie sesji ma być CICHE: kod 1 i żadnego śladu stosu.
+
+    Alert, log CRITICAL i instrukcja `--login` poszły już z `_handle_auth_loss`, a runbook każe
+    operatorowi patrzeć właśnie w `docker compose logs`. Wyciekający `AuthExpiredError` przykrywał
+    tam te trzy linie dwudziestoma liniami traceback — dokładnie w chwili, gdy czyta je człowiek
+    pod presją czasu.
+    """
+    import sys
+
+    import powiadomienia_teams.app as modul
+
+    for zmienna in [k for k in os.environ if k.startswith("POWIADOMIENIA_")]:
+        monkeypatch.delenv(zmienna, raising=False)  # hermetyzacja: bez wpływu środowiska operatora
+    monkeypatch.setenv("POWIADOMIENIA_CLIENT_ID", "c")
+    monkeypatch.setenv("POWIADOMIENIA_TENANT_ID", "t")
+    monkeypatch.setenv("POWIADOMIENIA_TEAM_ID", "T")
+    monkeypatch.setenv("POWIADOMIENIA_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "true")
+    monkeypatch.setattr(sys, "argv", ["powiadomienia-teams"])  # tryb usługi (bez --once/--login)
+    monkeypatch.setattr(modul, "_ensure_authenticated", lambda settings: (lambda: "tok"))
+
+    def _padnij(settings, client, llm):
+        raise AuthExpiredError("AADSTS50173: token unieważniony")
+
+    monkeypatch.setattr(modul, "run_forever", _padnij)
+
+    with pytest.raises(SystemExit) as wyjscie:
+        modul.main()
+
+    assert wyjscie.value.code == 1  # 1 = „padło w trakcie pracy" (2 zarezerwowane dla konfiguracji)
+    assert wyjscie.value.__cause__ is None  # bez łańcucha wyjątków = bez traceback w logu usługi
