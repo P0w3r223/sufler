@@ -32,6 +32,9 @@ A new inbound door, `workmate-worklogi`, runs every Friday: it reads the past we
 one WorklogPRO import sheet per person, and sends that person a private Teams message containing a
 table of their hours and the path to their file. Only people who actually worked are messaged.
 
+**The reported week is the one that has closed** — the previous Monday–Sunday, not the one the run
+falls in. See § Consequences: the original "current week" choice silently lost every weekend.
+
 ### Excel, not the WorklogPRO GraphQL API
 
 WorklogPRO exposes `addWorklog(authorAccountId: …)` behind a "Log work for others" permission, which
@@ -109,15 +112,40 @@ of twenty does not re-message the first six.
 - **The schema is a hypothesis.** `WORKLOGPRO_HEADERS` comes from vendor documentation whose exact
   casing could not be confirmed; matching is by column name, so a typo invalidates every file. The
   authoritative source is the template downloaded from the import wizard **on this instance**.
-  Guarded by `test_headers_match_the_confirmed_template`.
+  **Since 2026-07-21 a live run refuses to start** without `WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true`
+  — the hypothesis is now a deliberate operator decision instead of a comment nobody reads. Dry runs
+  are unaffected, because a dry run is exactly how you produce the file to compare. The test that
+  pins the tuple is a *change detector*, not a correctness gate: it cannot know what the real
+  headers are, only that nobody edited ours by accident.
 - **Import may be admin-only.** Vendor docs describe the wizard as available to administrators. If
   confirmed, the per-person model collapses into a single consolidated file for an admin — a
   materially different application. Unverified at time of writing.
 - **No file attachment** until `Files.ReadWrite.All` is granted. The path is text, on a share the
   employee must be able to reach.
 - **Ported code can drift** from `Powiadomienia_teams`.
+- **Reporting the current week lost every weekend — corrected 2026-07-21.** The original text
+  claimed hours after the Friday deadline "fall into next week's report". They did not: the next run
+  reported *its own* current week, so Saturday, Sunday and Friday afternoon never reached any sheet,
+  ever. `reported_week` now returns the closed week, which is complete by definition. The cost is a
+  report that is 3–12 days old — cheap for a document that must be reviewed and imported by hand.
 - **Two processes now message the same six people weekly** (Shifts reminders and timesheets). No
   coordination between them; if this becomes noise, merging the schedules is the follow-up.
+- **Formula injection is blocked by the writer, not by mangling the text.** A comment beginning with
+  `=` becomes a formula when a spreadsheet library infers the cell type, and we explicitly tell
+  people to open this file. `SheetWriter` now carries a contract — every cell written as text — and
+  the openpyxl adapter forces the string type. The core strips control characters (the sanitization
+  `WorkEntry` had promised and nobody implemented) but leaves content otherwise untouched, so the
+  comment reaches Jira as written.
+- **Sheet filenames now include `source_id`.** The name alone was not injective: two people sharing
+  a display name overwrote each other's sheet, and the first person's message then pointed at
+  someone else's hours. `_slug` narrowed it further — a name with no ASCII characters collapsed to
+  a constant.
+- **This ADR made most of ADR 0034 dead code**, and the write path was removed on 2026-07-21 (see
+  the superseding note there). What survives is `propose_worklog` — read-only, GitHub-side.
+  Its estimator fits `HoursSource` structurally (`read(since, until) -> list[WorkEntry]`), and
+  wiring it would be a few lines — **do not**. This ADR deliberately left estimation behind for
+  measured data; feeding guessed hours into a sheet a human imports into Jira as fact would
+  reintroduce, one layer lower, exactly the dishonesty the WorklogPRO route was chosen to avoid.
 
 ## Rejected alternatives
 

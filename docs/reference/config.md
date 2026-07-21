@@ -143,6 +143,22 @@ Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.m
 | `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
 | `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |
 
+### Propozycja czasu z commitów ([ADR 0034](../adr/0034-jira-worklog-from-github-commits.md), odczyt)
+
+Narzędzie `propose_worklog` wchodzi **bez bramki**, gdy skonfigurowany jest GitHub — po usunięciu
+ścieżki zapisu (2026-07-21) niczego nie mutuje, a repo bramkuje zapis, nie odczyt (ADR 0006).
+Poniższe pokrętła stroją wyłącznie estymację; wartość spoza zakresu = twardy błąd startu.
+Procedura: [`how-to/worklog-from-commits.md`](../how-to/worklog-from-commits.md).
+
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES` | `90` | Przerwa między commitami kończąca sesję (5..720). |
+| `WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES` | `30` | Czas doliczany przed pierwszym commitem sesji (0..240, ≤ `IDLE_GAP`). |
+| `WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES` | `15` | Kwant zaokrąglenia w górę (`1`/`5`/`10`/`15`/`30`/`60`). |
+| `WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS` | `8.0` | Sufit JEDNEJ sesji — backstop przed absurdem z rzadkiego commitowania (max `24`). |
+| `WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS` | `31` | Szerokość okna jednego `propose_worklog` (backstop `92`). |
+| `WORKMATE_GITHUB_WORKLOG_TZ` | `Europe/Warsaw` | Strefa liczenia doby kalendarzowej (nazwa IANA, `ZoneInfo` — odporna na DST). |
+
 ## Drzwi Jira Server/DC lub Cloud / most (`JiraSettings`, extra `jira`)
 
 Polling instancji Jira ([ADR 0030](../adr/0030-jira-server-read-door.md)) — **Server/DC** (PAT Bearer,
@@ -166,17 +182,6 @@ bramkami. Procedura: [`how-to/jira-bridge.md`](../how-to/jira-bridge.md).
 | `WORKMATE_JIRA_DEFAULT_ISSUE_TYPE` | `Task` | Domyślny typ tworzonego zgłoszenia. |
 | `WORKMATE_JIRA_ENABLE_TRANSITION` | `false` | NIEZALEŻNA bramka tranzycji statusu `transition_jira_issue` ([ADR 0032](../adr/0032-jira-status-transition-capability.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
 | `WORKMATE_JIRA_MAX_TRANSITION_HOPS` | `1` | Sufit hopów walk (1 = single-hop; ≥2 = wielo-hop forced-advance; sufit `10`). |
-| `WORKMATE_JIRA_ENABLE_WORKLOG` | `false` | **BRAMKA** ewidencji czasu ([ADR 0034](../adr/0034-jira-worklog-from-github-commits.md)) — niezależna od zapisu i tranzycji. Wymaga `WRITE_PROJECT` + `SELF_ACCOUNT` **oraz** GitHuba (`TOKEN`/`OWNER`/`REPO`). |
-| `WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY` | `self` | Strategia autorstwa: `self` (jedyna zaimplementowana), `per_user_token`, `tempo` (sloty — start padnie przy włączonej bramce). |
-| `WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF` | `false` | **BRAMKA** zapisu w cudzym imieniu. Jira i tak zapisze autorem konto tokenu — atrybucja jest stratna. |
-| `WORKMATE_JIRA_WORKLOG_MAX_HOURS` | `8.0` | Sufit godzin na jeden wpis (twardy backstop `24`). |
-| `WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS` | `14` | Ile dni wstecz wolno zapisać wpis (backstop `90`). |
-| `WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS` | `31` | Szerokość okna jednego `propose_worklog` (backstop `92`). |
-| `WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES` | `90` | Przerwa między commitami kończąca sesję (5..720). |
-| `WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES` | `30` | Czas doliczany przed pierwszym commitem sesji (0..240, ≤ `IDLE_GAP`). |
-| `WORKMATE_JIRA_WORKLOG_ROUND_MINUTES` | `15` | Kwant zaokrąglenia w górę (`1`/`5`/`10`/`15`/`30`/`60`). |
-| `WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES` | `120` | Strefa liczenia doby kalendarzowej (stały offset, bez DST). |
-| `WORKMATE_JIRA_WORKLOG_DUPLICATE_GUARD` | `true` | Odrzuca drugi wpis tego konta na ten sam dzień w tym samym zgłoszeniu. |
 
 Wątkowanie kanału dla Jiry (B2) korzysta ze wspólnej flagi `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING`
 (sekcja *Push do Teams*) — resolver wątków kojarzy zdarzenia jednego zgłoszenia po `/browse/{KEY}`.
@@ -212,7 +217,8 @@ Drzwi `workmate-worklogi` (extra `worklogi`). Szczegóły: [`how-to/worklogi-wee
 |---|---|---|
 | `WORKMATE_WORKLOGI_ENABLED` | `false` | **BRAMKA** drzwi. Wymaga `OUTPUT_DIR`, `IDENTITIES`, `TEAM_ID`. |
 | `WORKMATE_WORKLOGI_DRY_RUN` | `true` | Tryb próbny: arkusze powstają, wiadomości NIE wychodzą, stan się nie zapisuje. |
-| `WORKMATE_WORKLOGI_OUTPUT_DIR` | — | Katalog arkuszy. **Musi leżeć poza `data/`** (dane osobowe, nie baza wiedzy). |
+| `WORKMATE_WORKLOGI_HEADERS_CONFIRMED` | `false` | **BRAMKA trybu bojowego.** `DRY_RUN=false` bez tego = twardy błąd startu. Ustaw dopiero po porównaniu `WORKLOGPRO_HEADERS` z szablonem kreatora importu ([`how-to/worklogi-weekly.md`](../how-to/worklogi-weekly.md) §1). |
+| `WORKMATE_WORKLOGI_OUTPUT_DIR` | — | Katalog arkuszy. **Musi leżeć poza `data/` ORAZ poza repozytorium** — imienne godziny w drzewie roboczym trafiłyby do gita przy pierwszym `git add .`. Obie kontrole przy starcie. |
 | `WORKMATE_WORKLOGI_IDENTITIES` | — | Plik YAML `source_id → {aad_user_id, jira_user}`. Fail-closed. |
 | `WORKMATE_WORKLOGI_TEAM_ID` | — | Zespół Teams do weryfikacji członkostwa (`TeamMember.Read.All`). |
 | `WORKMATE_WORKLOGI_HOURS_SOURCE` | `json` | Źródło godzin. Na razie tylko atrapa `json`. |

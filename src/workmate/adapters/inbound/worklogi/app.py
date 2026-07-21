@@ -1,8 +1,9 @@
 """Drzwi cotygodniowych kart czasu (ADR 0035) — entry point ``workmate-worklogi``.
 
-W piątek o wyznaczonej godzinie: godziny za mijający tydzień → arkusz importu WorklogPRO per
-osoba → prywatna wiadomość na Teams z zestawieniem i ścieżką pliku. Wiadomość dostają tylko te
-osoby, które faktycznie pracowały.
+W piątek o wyznaczonej godzinie: godziny za tydzień ZAMKNIĘTY (poprzedni pon.–ndz.) → arkusz
+importu WorklogPRO per osoba → prywatna wiadomość na Teams z zestawieniem i ścieżką pliku.
+Wiadomość dostają tylko te osoby, które faktycznie pracowały. Okno liczy ``reported_week``:
+tydzień poprzedni, bo bieżący gubił weekend i piątkowe popołudnie (ADR 0035 § Consequences).
 
 Uruchomienie: ``uv run workmate-worklogi`` (wymaga ``uv sync --extra worklogi``).
 Tryby: ``--once`` (jeden przebieg i koniec), ``--login`` (jednorazowa zgoda device-code),
@@ -92,9 +93,10 @@ def _run_forever(settings: WorklogiSettings, push: TeamsPushSettings, token: Any
     nieaktualnych godzin, tylko poczekać na najbliższy normalny termin.
     """
     tz = ZoneInfo(settings.tz_name)
-    if _catchup_due(settings, tz):
-        logger.info("Wykryto pominięty termin — nadrabiam.")
-        _run_once(settings, push, token)
+    missed = _missed_deadline(settings, tz)
+    if missed is not None:
+        logger.info("Wykryto pominięty termin (%s) — nadrabiam za jego tydzień.", missed)
+        _safe_run_once(settings, push, token, as_of=missed)
     while True:
         target = next_run(
             _now(),
@@ -106,13 +108,38 @@ def _run_forever(settings: WorklogiSettings, push: TeamsPushSettings, token: Any
         logger.info("Następny przebieg: %s.", target)
         while _now() < target:
             time.sleep(min(_MAX_SLEEP_S, max(1.0, (target - _now()).total_seconds())))
-        _run_once(settings, push, token)
+        _safe_run_once(settings, push, token, as_of=target)
 
 
-def _catchup_due(settings: WorklogiSettings, tz: ZoneInfo) -> bool:
-    """Czy ostatni termin minął niedawno, a przebieg go nie obsłużył (proces nie żył)?"""
+def _safe_run_once(
+    settings: WorklogiSettings, push: TeamsPushSettings, token: Any, as_of: datetime
+) -> None:
+    """Przebieg, którego awaria NIE kładzie pętli — proces ma dożyć następnego piątku.
+
+    Bez tego jedna niedostępność (plik godzin w trakcie zapisu przez system źródłowy, 403
+    z Graph, chwilowy brak sieci) wywracała cały proces. Pod systemd z ``Restart=always``
+    wracał, nadrabianie znów było należne, znów padał — pętla restartów, w której nikt nie
+    dostaje nic. Wzorzec przeniesiony z ``Powiadomienia_teams`` razem z resztą modułu.
+    """
+    try:
+        _run_once(settings, push, token, as_of=as_of)
+    except Exception:
+        logger.exception(
+            "Przebieg kart czasu (%s) nie powiódł się — czekam na kolejny termin.", as_of
+        )
+
+
+def _missed_deadline(settings: WorklogiSettings, tz: ZoneInfo) -> datetime | None:
+    """Pominięty termin do nadrobienia (albo ``None``) — ZWRACAMY GO, nie samo „tak/nie".
+
+    Wołający liczy tydzień raportu z TERMINU, nie z „teraz". Termin (piątek) i podniesienie
+    (poniedziałek) leżą po DWÓCH stronach granicy tygodnia, więc raport przeskakiwał o siedem
+    dni: tydzień, który przepadł, nie trafiał do nikogo NIGDY, a osoby zapisane w stanie pod
+    etykietą tygodnia następnego były pomijane w jego prawdziwym przebiegu — traciły oba.
+    Kontrakt przeniesiony z ``Powiadomienia_teams`` (tam ta sama pułapka jest opisana wprost).
+    """
     if settings.max_catchup_days <= 0:
-        return False
+        return None
     last = previous_run(
         _now(),
         tz=tz,
@@ -122,15 +149,26 @@ def _catchup_due(settings: WorklogiSettings, tz: ZoneInfo) -> bool:
     )
     if _now() - last > timedelta(days=settings.max_catchup_days):
         logger.info("Pominięty termin (%s) jest za stary — pomijam nadrabianie.", last)
-        return False
+        return None
     week_start, _ = reported_week(last, tz)
     saved = state_store.load(settings.state_path)
     label = week_label(week_start)
-    return not any(k.startswith(f"{label}:") for k in saved)
+    return None if any(k.startswith(f"{label}:") for k in saved) else last
 
 
-def _run_once(settings: WorklogiSettings, push: TeamsPushSettings, token: Any) -> RunReport:
-    """Wykonaj JEDEN przebieg tygodniowy i zwróć raport."""
+def _run_once(
+    settings: WorklogiSettings,
+    push: TeamsPushSettings,
+    token: Any,
+    as_of: datetime | None = None,
+) -> RunReport:
+    """Wykonaj JEDEN przebieg tygodniowy i zwróć raport.
+
+    ``as_of`` to CHWILA, dla której liczymy tydzień raportu — termin przebiegu, nie zegar.
+    Dzięki temu nadrobienie po awarii raportuje tydzień, który przepadł, a nie bieżący
+    (patrz ``_missed_deadline``). Brak wartości = tryb ``--once``, gdzie „teraz" jest
+    intencją użytkownika.
+    """
     import httpx
 
     from workmate.adapters.outbound.graph_identity_directory import (
@@ -142,6 +180,7 @@ def _run_once(settings: WorklogiSettings, push: TeamsPushSettings, token: Any) -
     from workmate.adapters.outbound.openpyxl_sheet_writer import OpenpyxlSheetWriter
 
     tz = ZoneInfo(settings.tz_name)
+    moment = as_of if as_of is not None else _now()
     saved = state_store.load(settings.state_path)
 
     with httpx.Client(timeout=30) as sync_http:
@@ -149,12 +188,22 @@ def _run_once(settings: WorklogiSettings, push: TeamsPushSettings, token: Any) -
     identities = GraphIdentityDirectory(settings.identities_path, members)
     hours = JsonHoursSource(settings.hours_path)
 
-    async_http = httpx.AsyncClient(timeout=30)
-    notifier = HttpxTeamsNotifier(async_http, token)
-
     def send_html(aad_user_id: str, html: str) -> None:
-        """Most sync→async: przebieg jest wsadowy, a adapter Teams asynchroniczny."""
-        asyncio.run(notifier.send_chat_html(aad_user_id, html))
+        """Most sync→async: przebieg jest wsadowy, a adapter Teams asynchroniczny.
+
+        Klient POWSTAJE I GINIE wewnątrz jednego ``asyncio.run``. Współdzielony między
+        wywołaniami trzymałby w puli połączenie keep-alive przypięte do pętli, którą
+        poprzednie ``asyncio.run`` już ZAMKNĘŁO — kolejna osoba dostawała
+        ``RuntimeError: Event loop is closed``, czyli wiadomość szła do co drugiej osoby.
+        Kilkanaście osób raz w tygodniu, więc koszt zestawienia połączenia jest bez
+        znaczenia wobec ceny pomyłki.
+        """
+
+        async def _send() -> None:
+            async with httpx.AsyncClient(timeout=30) as async_http:
+                await HttpxTeamsNotifier(async_http, token).send_chat_html(aad_user_id, html)
+
+        asyncio.run(_send())
 
     def mark_done(week: str, source_id: str, _outcome: Any) -> None:
         saved[state_store.key(week, source_id)] = _now().isoformat()
@@ -173,21 +222,24 @@ def _run_once(settings: WorklogiSettings, push: TeamsPushSettings, token: Any) -
         only_source_ids=settings.only_source_ids,
         already_done=lambda week, sid: state_store.key(week, sid) in saved,
         mark_done=mark_done,
-        now=_now,
+        now=lambda: moment,
     )
-    try:
-        report = service.run()
-    finally:
-        asyncio.run(async_http.aclose())
-    _prune_state(settings, saved, tz)
+    report = service.run()
+    _prune_state(settings, saved, tz, moment)
     for failure in report.failed:
         logger.warning("NIEUDANE %s (%s): %s", failure.source_id, failure.reason, failure.detail)
     return report
 
 
-def _prune_state(settings: WorklogiSettings, saved: dict[str, str], tz: ZoneInfo) -> None:
-    """Przytnij stan do kilku ostatnich tygodni — plik nie ma rosnąć bez końca."""
-    start, _ = reported_week(_now(), tz)
+def _prune_state(
+    settings: WorklogiSettings, saved: dict[str, str], tz: ZoneInfo, moment: datetime
+) -> None:
+    """Przytnij stan do kilku ostatnich tygodni — plik nie ma rosnąć bez końca.
+
+    ``moment`` to ta sama chwila, dla której liczono raport — inaczej nadrabianie mogłoby
+    wyciąć z okna zachowywanych tygodni ten, który właśnie zapisało.
+    """
+    start, _ = reported_week(moment, tz)
     keep = tuple(week_label(start - timedelta(days=7 * i)) for i in range(_KEEP_WEEKS))
     pruned = state_store.prune(saved, keep_weeks=keep)
     if pruned != saved and not settings.dry_run:

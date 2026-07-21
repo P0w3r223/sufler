@@ -11,7 +11,9 @@ jak się pomylić.
    literówka unieważnia cały plik. Autorytatywnym źródłem jest szablon pobrany z kreatora
    (Apps → WorklogPRO → Import worklogs) na KONKRETNEJ instancji — bo jest generowany pod jej
    atrybuty niestandardowe. Do czasu potwierdzenia traktuj ``WORKLOGPRO_HEADERS`` jak hipotezę;
-   korekta to zmiana tej jednej krotki i testu ``test_headers_match_the_confirmed_template``.
+   korekta to zmiana tej jednej krotki i testu ``test_headers_are_not_changed_by_accident``
+   (to DETEKTOR ZMIANY, nie bramka poprawności — nie wie, jak wyglądają prawdziwe nagłówki).
+   Tryb BOJOWY drzwi nie wystartuje bez ``WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true``.
 """
 
 from __future__ import annotations
@@ -69,7 +71,7 @@ def project_sheet(
     assert_single_person(person.source_id, (entry.source_id for entry in timesheet.entries))
     rows = tuple(
         (
-            entry.issue_key,
+            cell_text(entry.issue_key),
             person.jira_user,
             format_time_spent(entry.minutes),
             format_started(entry.day, start_hour=start_hour, tz=tz),
@@ -110,23 +112,52 @@ def format_started(day: date, *, start_hour: int, tz: ZoneInfo) -> str:
 
 
 def sheet_filename(timesheet: PersonTimesheet) -> str:
-    """Deterministyczna nazwa pliku: ``worklog_<osoba>_<tydzien>.xlsx``.
+    """Deterministyczna nazwa pliku: ``worklog_<osoba>_<source_id>_<tydzien>.xlsx``.
 
     Etykieta tygodnia w nazwie jest częścią obrony przed podwójnym importem — człowiek widzi,
     że dostał TEN SAM arkusz drugi raz (nasza idempotencja jego importu nie obejmuje).
     Determinizm jest też potrzebny przy nadrabianiu: powtórzony przebieg ma nadpisać plik,
     a nie położyć drugi obok.
+
+    ``source_id`` jest w nazwie OBOWIĄZKOWO, obok nazwy człowieka. Sama nazwa nie jest
+    różnowartościowa: dwie osoby o tym samym imieniu i nazwisku dostawały tę samą ścieżkę, więc
+    drugi arkusz NADPISYWAŁ pierwszy, a wiadomość pierwszej osoby wskazywała już cudze godziny.
+    ``_slug`` dodatkowo zwęża przestrzeń — nazwa bez znaków ASCII daje stałe ``bez-nazwy``,
+    czyli kolizję nawet przy różnych nazwiskach. Identyfikator ze źródła jest z definicji
+    unikalny (to po nim rozdzielamy godziny), więc rozstrzyga ostatecznie.
     """
     person = timesheet.person
     who = _slug(person.display_name or person.source_id)
     week = _slug(timesheet.week_label or timesheet.week_start.isoformat())
-    return f"worklog_{who}_{week}.xlsx"
+    return f"worklog_{who}_{_slug(person.source_id)}_{week}.xlsx"
 
 
 def _comment(comment: str, prefix: str) -> str:
     """Złóż komentarz wiersza (opcjonalny prefiks + treść ze źródła), przycięty do limitu."""
-    text = f"{prefix}{comment}".strip()
-    return text[:_MAX_COMMENT]
+    return cell_text(f"{prefix}{comment}")[:_MAX_COMMENT]
+
+
+def cell_text(raw: str) -> str:
+    """Sprowadź tekst ze ŹRÓDŁA do jednej bezpiecznej linii komórki (bez znaków sterujących).
+
+    ``WorkEntry`` deklarował, że treść ze źródła jest sanityzowana — i nikt tego nie robił
+    (``JsonHoursSource`` woła samo ``str(...)``). Kontrakt zadeklarowany i niezaimplementowany
+    jest gorszy niż jego brak: nikt go nie szuka. Egzekwujemy go TU, w projekcji, żeby
+    obowiązywał niezależnie od tego, który adapter dostarczył godziny i który zapisze plik.
+
+    Znaki sterujące WYCINAMY, nie rzucamy: jeden dziwny wpis nie może pozbawić całego zespołu
+    arkuszy. Nowa linia i tab też lecą — w komórce rozbijają wiersz, a w ewentualnym eksporcie
+    CSV rozbijają cały plik. Wstrzyknięcie FORMUŁY (``=cmd|…``) neutralizuje osobna warstwa:
+    ``SheetWriter`` ma kontraktowy obowiązek zapisać każdą komórkę jako tekst — tego rdzeń
+    zagwarantować nie może, bo nie wie, czym plik zostanie zapisany.
+    """
+    # Znak sterujący zamieniamy na SPACJĘ, nie usuwamy: „dwie\nlinie" ma dać „dwie linie",
+    # a nie sklejone „dwielinie". Nadmiar białych znaków zwija się przy ``split``.
+    kept = [
+        " " if (ord(ch) < 0x20 or ord(ch) == 0x7F or 0x80 <= ord(ch) <= 0x9F) else ch
+        for ch in str(raw or "")
+    ]
+    return " ".join("".join(kept).split())
 
 
 def _assert_single_user_cell(expected: str, rows: tuple[tuple[Any, ...], ...]) -> None:

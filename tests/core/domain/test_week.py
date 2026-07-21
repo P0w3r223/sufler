@@ -53,10 +53,26 @@ def test_week_monday_accepts_now_in_another_timezone() -> None:
 # --- okno raportowania -----------------------------------------------------------
 
 
-def test_reported_week_covers_the_week_that_is_ending() -> None:
-    start, end = reported_week(_warsaw(2026, 7, 17, 16), _TZ)  # piątek
-    assert start == _warsaw(2026, 7, 13, 0, 0)
-    assert end == _warsaw(2026, 7, 20, 0, 0)
+def test_reported_week_covers_the_week_that_is_already_closed() -> None:
+    """Piątkowy przebieg raportuje tydzień POPRZEDNI — cały leży w przeszłości."""
+    start, end = reported_week(_warsaw(2026, 7, 17, 16), _TZ)  # piątek W29
+    assert start == _warsaw(2026, 7, 6, 0, 0)
+    assert end == _warsaw(2026, 7, 13, 0, 0)
+
+
+def test_weekend_hours_reach_a_report_instead_of_falling_through() -> None:
+    """Regresja: przy oknie BIEŻĄCYM sobota i piątkowe popołudnie nie trafiały NIGDZIE.
+
+    Przebieg w piątek 17.07 o 16:00 zamykał okno na 20.07, a kolejny (24.07) zaczynał je
+    dopiero 20.07 — godziny z 18–19.07 (weekend) i z piątkowego wieczoru wypadały z OBU.
+    Przy oknie zamkniętym każdy dzień należy dokładnie do jednego raportu.
+    """
+    _, end_now = reported_week(_warsaw(2026, 7, 17, 16), _TZ)
+    start_next, _ = reported_week(_warsaw(2026, 7, 24, 16), _TZ)
+    assert end_now == start_next  # zero luki między kolejnymi przebiegami
+    saturday = _warsaw(2026, 7, 18)
+    start_later, end_later = reported_week(_warsaw(2026, 7, 24, 16), _TZ)
+    assert start_later <= saturday < end_later
 
 
 def test_reported_week_is_half_open() -> None:
@@ -140,7 +156,7 @@ def test_reported_week_boundaries_stay_at_local_midnight_across_fall_back() -> N
     To sedno wyboru ``ZoneInfo`` zamiast stałego offsetu: gdyby okno liczyć w bezwzględnych
     godzinach, koniec wypadłby o 23:00 i praca z niedzielnego wieczoru wypadłaby poza raport.
     """
-    start, end = reported_week(_warsaw(2026, 10, 21), _TZ)
+    start, end = reported_week(_warsaw(2026, 10, 28), _TZ)
     assert (start.hour, end.hour) == (0, 0)
     assert end.date() == start.date() + timedelta(days=7)
     # Realnie tydzień trwa 169 h (doba cofnięcia ma 25 h) — granice i tak stoją o północy.
@@ -151,7 +167,7 @@ def test_reported_week_boundaries_stay_at_local_midnight_across_fall_back() -> N
 
 def test_reported_week_boundaries_stay_at_local_midnight_across_spring_forward() -> None:
     """Tydzień 23–29.03.2026 zawiera przesunięcie zegara w przód — realnie 167 h."""
-    start, end = reported_week(_warsaw(2026, 3, 25), _TZ)
+    start, end = reported_week(_warsaw(2026, 4, 1), _TZ)
     assert (start.hour, end.hour) == (0, 0)
     assert _elapsed(start, end) == timedelta(days=7) - timedelta(hours=1)
 
@@ -160,16 +176,16 @@ def test_reported_week_boundaries_stay_at_local_midnight_across_spring_forward()
 
 
 def test_week_label_uses_iso_week_numbering() -> None:
-    start, _ = reported_week(_warsaw(2026, 7, 17), _TZ)
+    start, _ = reported_week(_warsaw(2026, 7, 24), _TZ)
     assert week_label(start) == "2026-W29"
 
 
 def test_week_label_pads_single_digit_weeks() -> None:
-    start, _ = reported_week(_warsaw(2026, 1, 8), _TZ)
+    start, _ = reported_week(_warsaw(2026, 1, 15), _TZ)
     assert week_label(start) == "2026-W02"
 
 
-@pytest.mark.parametrize("day", [13, 15, 17, 19])
+@pytest.mark.parametrize("day", [20, 22, 24, 26])
 def test_week_label_is_stable_across_the_whole_week(day: int) -> None:
     """Każdy dzień tygodnia daje TĘ SAMĄ etykietę — inaczej nazwa pliku zmieniałaby się w locie."""
     start, _ = reported_week(_warsaw(2026, 7, day), _TZ)

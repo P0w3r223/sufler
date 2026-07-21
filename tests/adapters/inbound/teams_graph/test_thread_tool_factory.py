@@ -101,8 +101,13 @@ def test_bridge_catalog_gate_off_yields_no_thread_factory():
     )
 
     assert factory is None  # brak fabryki = brak reply_on_thread
-    # Odczyt zdarzeń + podsumowanie aktywności projektu (ADR 0029); zapis GitHub/Jira OFF.
-    assert [spec.name for spec in catalog] == ["read_recent_events", "get_project_activity"]
+    # Odczyt zdarzeń, podsumowanie aktywności projektu (ADR 0029) i propozycja czasu z commitów
+    # (ADR 0034 — czysty odczyt, bez bramki); zapis GitHub/Jira OFF, więc nic mutującego.
+    assert [spec.name for spec in catalog] == [
+        "read_recent_events",
+        "get_project_activity",
+        "propose_worklog",
+    ]
 
 
 def test_bridge_catalog_jira_write_on_adds_jira_tools():

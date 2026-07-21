@@ -19,13 +19,18 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import logging
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
 from workmate.core.domain.adf import adf_to_text, text_to_adf
 from workmate.core.errors import WriteError
+
+logger = logging.getLogger(__name__)
 
 # Cap stron na jedno pobranie — chroni przed nieograniczoną paginacją ORAZ przed znanym bugiem
 # ``/search/jql`` (raporty o ``isLast`` nigdy=true i nieskończonym chainingu tokenów).
@@ -58,9 +63,10 @@ class HttpxJiraCloudClient:
     def authenticated_account(self) -> str:
         """Konto uwierzytelnione — na Cloud ``accountId`` (``name``/``key`` usunięte, RODO)."""
         data = self._get_json(f"{self._base_url}/rest/api/3/myself")
-        if isinstance(data, dict):
-            return str(data.get("accountId") or data.get("name") or data.get("key") or "")
-        return ""
+        if not isinstance(data, dict):
+            return ""
+        _warn_on_timezone_skew(data.get("timeZone"))
+        return str(data.get("accountId") or data.get("name") or data.get("key") or "")
 
     def search_issues(
         self, jql: str, *, max_results: int = 50, expand: str = "changelog"
@@ -89,6 +95,7 @@ class HttpxJiraCloudClient:
             page = [i for i in raw if isinstance(i, dict)] if isinstance(raw, list) else []
             for issue in page:
                 _normalize_adf(issue)
+                _warn_if_inline_truncated(issue)
                 issues.append(issue)
             token = body.get("nextPageToken")
             next_token = str(token) if token else ""
@@ -132,73 +139,6 @@ class HttpxJiraCloudClient:
             "url": self._browse(issue_key, comment_id=comment_id),
             "created": str(created.get("created") or ""),
         }
-
-    # --- worklog (ADR 0034, bramkowane) — ewidencja czasu, create-only ---------
-
-    def add_worklog(
-        self,
-        issue_key: str,
-        *,
-        time_spent_seconds: int,
-        started: str,
-        comment: str = "",
-        on_behalf_of: str = "",
-    ) -> dict[str, Any]:
-        """Dopisz wpis czasu; zwróć ``{id, url, created, author_account_id, requested_author}``.
-
-        **Nie wysyłamy pola ``author``** — i nie jest to przeoczenie. Jira Cloud przypisuje
-        worklog kontu uwierzytelnionemu tokenem i pole autora w żądaniu IGNORUJE; wysyłanie go
-        udawałoby zdolność, której API nie ma. ``on_behalf_of`` wraca więc nietknięte jako
-        ``requested_author`` (intencja wołającego), a ``author_account_id`` niesie PRAWDZIWEGO
-        autora z odpowiedzi Jiry. Rozjazd tych dwóch pól jest sygnałem dla serwisu, że atrybucja
-        jest stratna (ADR 0034).
-        """
-        payload: dict[str, Any] = {
-            "timeSpentSeconds": int(time_spent_seconds),
-            "started": started,
-        }
-        if comment:
-            payload["comment"] = text_to_adf(comment)
-        with _as_write_error("dodać wpisu czasu"):
-            created = self._post_json(
-                f"{self._base_url}/rest/api/3/issue/{issue_key}/worklog", payload
-            )
-        author = _as_dict(created.get("author"))
-        return {
-            "id": str(created.get("id") or ""),
-            "url": self._browse(issue_key),
-            "created": str(created.get("created") or ""),
-            "author_account_id": str(author.get("accountId") or ""),
-            "requested_author": on_behalf_of,
-            "time_spent_seconds": int(created.get("timeSpentSeconds") or time_spent_seconds),
-        }
-
-    def read_worklogs(self, issue_key: str, *, max_results: int = 100) -> list[dict[str, Any]]:
-        """Istniejące wpisy czasu zgłoszenia — podstawa strażnika duplikatów (ADR 0034)."""
-        with _as_write_error("odczytać wpisów czasu"):
-            data = self._get_json(
-                f"{self._base_url}/rest/api/3/issue/{issue_key}/worklog",
-                {"maxResults": str(max_results)},
-            )
-        raw = data.get("worklogs") if isinstance(data, dict) else None
-        if not isinstance(raw, list):
-            return []
-        entries: list[dict[str, Any]] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            author = _as_dict(item.get("author"))
-            entries.append(
-                {
-                    "id": str(item.get("id") or ""),
-                    "author_account_id": str(author.get("accountId") or ""),
-                    "started": str(item.get("started") or ""),
-                    "time_spent_seconds": int(item.get("timeSpentSeconds") or 0),
-                    # ADF → tekst NA GRANICY adaptera, jak reszta treści Cloud (ADR 0033).
-                    "comment": adf_to_text(item.get("comment")),
-                }
-            )
-        return entries
 
     # --- transition (ADR 0032, bramkowane) — best-effort chodzenie po workflow ---
 
@@ -285,6 +225,66 @@ class HttpxJiraCloudClient:
         """POST bez parsowania ciała — tranzycja zwraca 204 No Content (``.json()`` by padł)."""
         response = self._client.post(url, json=payload)
         response.raise_for_status()
+
+
+def _warn_on_timezone_skew(account_tz: Any) -> None:
+    """Ostrzeż, gdy strefa konta usługowego różni się od strefy hosta pollera.
+
+    JQL bez strefy interpretuje daty w strefie ZALOGOWANEGO użytkownika, nie instancji
+    (ADR 0033 § Consequences odnotowuje to jako caveat na live-test). Rozjazd przesuwa
+    granicę okna ``updated >= …``, więc zdarzenia tuż przy watermarku mogą wypaść poza
+    zapytanie i nigdy nie trafić do Teams. Ostrzeżenie, nie błąd: rozjazd bywa świadomy
+    (host w UTC), a kolejne warstwy — dokładny filtr świeżości i dedup — łagodzą skutek.
+    """
+    name = str(account_tz or "").strip()
+    if not name:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        account_offset = now.astimezone(ZoneInfo(name)).utcoffset()
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("Strefa konta Jira %r jest nieznana — pomijam kontrolę rozjazdu.", name)
+        return
+    host_offset = now.astimezone().utcoffset()
+    if account_offset != host_offset:
+        logger.warning(
+            "Strefa konta Jira (%s, offset %s) różni się od strefy hosta (offset %s). "
+            "JQL bez strefy liczy daty w strefie KONTA, więc granica okna pollingu jest "
+            "przesunięta — zdarzenia tuż przy watermarku mogą przepaść.",
+            name,
+            account_offset,
+            host_offset,
+        )
+
+
+def _warn_if_inline_truncated(issue: dict[str, Any]) -> None:
+    """Zgłoś GŁOŚNO, gdy bulk ``search/jql`` uciął komentarze albo changelog do 20 pozycji.
+
+    Bez tego utrata jest CICHA: zgłoszenie przechodzi przez poller kompletne z wyglądu,
+    a część komentarzy/tranzycji nigdy nie trafia do Teams. Dla pollera inkrementalnego
+    (krótkie okno od watermarku) cap zwykle wystarcza — ale to założenie trzyma się tylko
+    wtedy, gdy Jira zwraca 20 NAJNOWSZYCH pozycji. Kolejność nie jest udokumentowana
+    i nie została zmierzona na żywej instancji (ADR 0033 § Consequences, follow-up:
+    fallback per-issue). Do czasu pomiaru ostrzeżenie jest jedynym sygnałem, że coś przepadło.
+    """
+    key = str(issue.get("key") or "?")
+    for label, container in (
+        ("komentarze", _as_dict(issue.get("fields")).get("comment")),
+        ("changelog", issue.get("changelog")),
+    ):
+        block = _as_dict(container)
+        total = block.get("total")
+        items = block.get("comments") if label == "komentarze" else block.get("histories")
+        if not isinstance(total, int) or not isinstance(items, list) or total <= len(items):
+            continue
+        logger.warning(
+            "Jira %s: bulk search zwrócił %d z %d pozycji (%s) — reszta NIE trafi do zdarzeń. "
+            "Jeśli powtarza się to na dojrzałych zgłoszeniach, potrzebny jest fallback per-issue.",
+            key,
+            len(items),
+            total,
+            label,
+        )
 
 
 def _normalize_adf(issue: dict[str, Any]) -> None:

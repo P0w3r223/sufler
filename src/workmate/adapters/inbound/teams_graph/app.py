@@ -21,13 +21,13 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from workmate.adapters.inbound import env
 from workmate.adapters.inbound.agent_wiring import build_conversational_responder
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
 from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
-    IMPLEMENTED_WORKLOG_STRATEGIES,
     JIRA_DEPLOYMENTS,
     MAX_JIRA_TRANSITION_HOPS,
     AgentSettings,
@@ -43,9 +43,11 @@ from workmate.config import (
 if TYPE_CHECKING:
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
+    from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.core.application.events import EventService
     from workmate.core.application.github import GithubWriteService
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.ports.github import GithubReadPort
     from workmate.core.ports.thread_links import ThreadLinkStore
 
 logger = logging.getLogger(__name__)
@@ -120,35 +122,37 @@ def _build_bridge_catalog(
     celu — profil per drzwi (ADR 0006/0021/0031). Zdarzenia z zapisu idą jako ``source=teams``
     (strażnik pętli — notifier ich nie odeśle). Gdy zapis GitHub włączony, budujemy też FABRYKĘ
     ``reply_on_thread`` (ADR 0024, Faza 3b) dla wątku powiązanego z issue/PR.
+
+    Propozycja czasu z commitów (ADR 0034) wchodzi BEZ bramki, gdy tylko GitHub jest
+    skonfigurowany — po wycięciu ścieżki zapisu to czysty odczyt, a odczyt jest domyślny.
     """
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.core.application.events import EventService
     from workmate.core.application.tools import build_activity_catalog, build_events_catalog
 
+    # Sufity zdolności mutujących Jiry (limity zapisu, wariant wdrożenia) egzekwował dotąd
+    # WYŁĄCZNIE proces pollera — czyli nie ten, który wykonuje zapis. ``validate_limits``
+    # to część wspólna, bezpieczna dla wdrożeń bez Jiry (nie żąda URL-a ani tokenu).
+    jira_settings.validate_limits()
+
     events = EventService(SqliteEventStore(events_settings.db_path))
     catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
     catalog += _build_jira_catalog(jira_settings, events)
-    catalog += _build_worklog_catalog(jira_settings, github_settings, events)
 
-    if not (
-        github_settings.enable_github_write
-        and github_settings.token
-        and github_settings.owner
-        and github_settings.repo
-    ):
+    if not (github_settings.token and github_settings.owner and github_settings.repo):
         return catalog, None
 
-    import httpx
-
-    from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
     from workmate.core.application.github import GithubWriteService
     from workmate.core.application.tools import build_github_write_catalog
 
-    # Sync klient GitHub żyje przez cały proces (daemon); tool dispatch woła go w wątkach puli.
-    client = HttpxGithubClient(
-        httpx.Client(timeout=30), github_settings.token, api_base=github_settings.api_base
-    )
+    # JEDEN klient GitHub na proces, współdzielony przez odczyt commitów i zapis — dwa klienty
+    # do tego samego hosta trzymałyby dwie pule połączeń bez żadnego zysku.
+    client = _github_client(github_settings)
+    catalog += _build_worklog_catalog(client, github_settings)
+    if not github_settings.enable_github_write:
+        return catalog, None
+
     write_service = GithubWriteService(
         client, owner=github_settings.owner, repo=github_settings.repo, events=events
     )
@@ -217,6 +221,8 @@ def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> li
             f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {jira_settings.max_transition_hops}."
         )
 
+    import atexit
+
     import httpx
 
     from workmate.adapters.outbound.jira_api import build_jira_client
@@ -226,7 +232,10 @@ def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> li
         build_jira_write_catalog,
     )
 
-    client = build_jira_client(httpx.Client(timeout=30), jira_settings)
+    # Klient żyje przez cały proces (daemon), ale pulę połączeń domykamy jawnie przy wyjściu.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    client = build_jira_client(transport, jira_settings)
     write_service = JiraWriteService(
         client,
         project=jira_settings.write_project,
@@ -255,104 +264,59 @@ def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> li
     return catalog
 
 
-def _build_worklog_catalog(
-    jira_settings: JiraSettings,
-    github_settings: GithubSettings,
-    events: EventService,
-) -> list[ToolSpec]:
-    """Bramkowane narzędzia ewidencji czasu (ADR 0034) — propozycja z commitów + zapis do Jiry.
+def _github_client(github_settings: GithubSettings) -> HttpxGithubClient:
+    """Zbuduj sync klienta GitHub żyjącego przez cały proces (daemon).
 
-    Bramka OSOBNA od zapisu i tranzycji (``enable_jira_worklog``): profil „tylko ewidencja" nie
-    wymaga zdolności tworzenia zgłoszeń. Wyłączona → pusto, więc model nie widzi ani narzędzia
-    mutującego, ani odczytu commitów (strukturalna gwarancja profilu per drzwi).
-
-    Zdolność stoi NA DWÓCH nogach — Jira (zapis wpisu) i GitHub (źródło commitów) — więc obie
-    walidujemy tu, razem. Brak konfiguracji GitHuba przy włączonej bramce dałby narzędzie, które
-    startuje i dopiero przy pierwszym użyciu okazuje się puste; to ta sama klasa footguna co
-    „bramka włączona, ale martwa" w ``_build_jira_catalog``. Klient GitHub jest READ-ONLY i
-    NIEZALEŻNY od ``enable_github_write`` — ewidencja czyta commity, nie pisze do repo.
-
-    Nazwę strategii autorstwa i sufity egzekwujemy TU, bo ``JiraSettings.validate`` woła tylko
-    poller Jira (``workmate-jira``), a to te drzwi wykonują zapis (analogicznie do sufitu hopów).
+    Klient trzyma pulę połączeń, więc domykamy go przy wyjściu z procesu — bez tego pula
+    zostaje sierotą i interpreter zamyka gniazda dopiero przy zbieraniu śmieci.
     """
-    if not jira_settings.enable_jira_worklog:
-        return []
-    deployment = jira_settings.deployment.strip().lower()
-    if deployment not in JIRA_DEPLOYMENTS:
-        raise ValueError(
-            "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
-            f"{jira_settings.deployment!r}."
-        )
-    required = [
-        ("WORKMATE_JIRA_TOKEN", jira_settings.token),
-        ("WORKMATE_JIRA_BASE_URL", jira_settings.base_url),
-        ("WORKMATE_JIRA_WRITE_PROJECT", jira_settings.write_project),
-        ("WORKMATE_JIRA_SELF_ACCOUNT", jira_settings.self_account),
-        # Bez źródła commitów propozycja jest martwa — to POŁOWA zdolności, nie dodatek.
-        ("WORKMATE_GITHUB_TOKEN", github_settings.token),
-        ("WORKMATE_GITHUB_OWNER", github_settings.owner),
-        ("WORKMATE_GITHUB_REPO", github_settings.repo),
-    ]
-    if deployment == "cloud":
-        required.append(("WORKMATE_JIRA_EMAIL", jira_settings.email))
-    missing = [name for name, value in required if not value]
-    if missing:
-        raise ValueError(
-            "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga: "
-            + ", ".join(missing)
-            + " w środowisku/.env."
-        )
-    if jira_settings.worklog_author_strategy not in IMPLEMENTED_WORKLOG_STRATEGIES:
-        raise ValueError(
-            f"strategia autorstwa {jira_settings.worklog_author_strategy!r} jest udokumentowanym "
-            "SZKIELETEM, jeszcze niezaimplementowanym (ADR 0034) — użyj 'self'."
-        )
+    import atexit
 
     import httpx
 
     from workmate.adapters.outbound.github_api import HttpxGithubClient
-    from workmate.adapters.outbound.jira_api import build_jira_client
+
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    return HttpxGithubClient(transport, github_settings.token, api_base=github_settings.api_base)
+
+
+def _build_worklog_catalog(
+    client: GithubReadPort, github_settings: GithubSettings
+) -> list[ToolSpec]:
+    """Narzędzie propozycji czasu z commitów (ADR 0034) — czysty ODCZYT, bez bramki.
+
+    Bramki nie ma celowo: po wycięciu ścieżki zapisu narzędzie niczego nie mutuje, a repo trzyma
+    zasadę „odczyt domyślny, bramkujemy zapis" (ADR 0006). Zdolność stoi wyłącznie na GitHubie —
+    klucze Jira wyłuskujemy regexem z treści commitów, więc konfiguracja Jiry jest tu zbędna.
+
+    Sufity estymacji egzekwujemy TU, bo ``GithubSettings.validate`` woła tylko poller GitHuba
+    (``workmate-github``), a to te drzwi liczą propozycję (ta sama asymetria co przy Jirze).
+    """
     from workmate.core.application.tools import build_worklog_catalog
     from workmate.core.application.worklog import WorklogService
-    from workmate.core.application.worklog_author import build_author_strategy
     from workmate.core.domain.worklog import SessionPolicy
 
-    github_client = HttpxGithubClient(
-        httpx.Client(timeout=30), github_settings.token, api_base=github_settings.api_base
-    )
+    github_settings.validate_worklog_limits()
     service = WorklogService(
-        github_client,
-        build_jira_client(httpx.Client(timeout=30), jira_settings),
+        client,
         owner=github_settings.owner,
         repo=github_settings.repo,
-        project=jira_settings.write_project,
-        author_strategy=build_author_strategy(
-            jira_settings.worklog_author_strategy, self_account=jira_settings.self_account
-        ),
         policy=SessionPolicy(
-            idle_gap_minutes=jira_settings.worklog_idle_gap_minutes,
-            ramp_up_minutes=jira_settings.worklog_ramp_up_minutes,
-            round_minutes=jira_settings.worklog_round_minutes,
-            max_session_hours=jira_settings.worklog_max_hours_per_entry,
-            tz_offset_minutes=jira_settings.worklog_tz_offset_minutes,
+            idle_gap_minutes=github_settings.worklog_idle_gap_minutes,
+            ramp_up_minutes=github_settings.worklog_ramp_up_minutes,
+            round_minutes=github_settings.worklog_round_minutes,
+            max_session_hours=github_settings.worklog_max_session_hours,
+            tz=ZoneInfo(github_settings.worklog_tz),
         ),
-        max_hours_per_entry=jira_settings.worklog_max_hours_per_entry,
-        max_backdate_days=jira_settings.worklog_max_backdate_days,
-        max_range_days=jira_settings.worklog_max_range_days,
-        allow_on_behalf=jira_settings.worklog_allow_on_behalf,
-        duplicate_guard=jira_settings.worklog_duplicate_guard,
-        events=events,
+        max_range_days=github_settings.worklog_max_range_days,
     )
     logger.info(
-        "Jira worklog WŁĄCZONY dla projektu %s ze źródłem commitów %s/%s (strategia autorstwa: %s, "
-        "zapis w cudzym imieniu: %s). UWAGA (ADR 0034): Jira zapisuje autorem wpisu KONTO TOKENU — "
-        "wpisy 'w imieniu' innych osób trafią do raportów czasu jako czas tego konta, a informacja "
-        "o właściwej osobie żyje tylko w treści wpisu.",
-        jira_settings.write_project,
+        "Propozycja czasu z commitów WŁĄCZONA dla %s/%s (strefa %s) — narzędzie jest ODCZYTOWE, "
+        "godziny do Jiry wprowadza człowiek arkuszem WorklogPRO (ADR 0035).",
         github_settings.owner,
         github_settings.repo,
-        jira_settings.worklog_author_strategy,
-        "TAK" if jira_settings.worklog_allow_on_behalf else "nie",
+        github_settings.worklog_tz,
     )
     return build_worklog_catalog(service)
 

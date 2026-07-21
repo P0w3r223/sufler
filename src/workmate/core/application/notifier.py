@@ -45,6 +45,9 @@ _KIND_LABELS = {
     "jira_issue_created": "Nowe zgłoszenie",
     "jira_transition": "Zmiana statusu",
     "jira_comment": "Nowy komentarz",
+    # NIKT już nie tworzy tego zdarzenia — ścieżkę zapisu worklogu wycięto (ADR 0034 → 0035).
+    # Etykieta zostaje, bo ``events.db`` jest APPEND-ONLY: wpisy sprzed cięcia nadal tam są
+    # i muszą się renderować. To nie jest martwy kod, tylko obsługa historii.
     "jira_worklog": "Wpis czasu pracy",
 }
 

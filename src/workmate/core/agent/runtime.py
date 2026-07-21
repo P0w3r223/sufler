@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, get_type_hints
+
+from pydantic import TypeAdapter, ValidationError
 
 from workmate.core.agent.prompt import SYSTEM_PROMPT
 from workmate.core.domain.pricing import TokenUsage
@@ -28,7 +30,7 @@ from workmate.core.ports.llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.llm import (
@@ -158,19 +160,54 @@ class AgentRuntime:
         spec = by_name.get(call.name)
         if spec is None:
             return ToolOutput(call.id, f"Nieznane narzędzie: {call.name}", is_error=True)
-        # Argumenty pochodzą od modelu (dane niezaufane). Sprawdzamy TYLKO ich
-        # wiązanie z sygnaturą (zła/brakująca/nadmiarowa nazwa) i zwracamy odzyskiwalny
-        # błąd — model poprawi w kolejnej turze, pętla się nie wywraca. Właściwe
-        # wywołanie jest POZA ``try``, więc wyjątek z ciała narzędzia (defekt kodu)
-        # wypływa głośno, zgodnie z kontraktem rdzenia; błędy domenowe narzędzie łapie
-        # samo i zwraca ``{"error": ...}``.
+        # Argumenty pochodzą od modelu (dane niezaufane). Sprawdzamy wiązanie z sygnaturą
+        # ORAZ typy, i zwracamy odzyskiwalny błąd — model poprawi w kolejnej turze, pętla
+        # się nie wywraca. Właściwe wywołanie jest POZA ``try``, więc wyjątek z ciała
+        # narzędzia (defekt kodu) wypływa głośno, zgodnie z kontraktem rdzenia; błędy
+        # domenowe narzędzie łapie samo i zwraca ``{"error": ...}``.
         try:
-            inspect.signature(spec.fn).bind(**call.arguments)
-        except TypeError as exc:
+            arguments = _coerce_arguments(spec.fn, call.arguments)
+        except (TypeError, ValidationError) as exc:
             return ToolOutput(
                 call.id,
                 f"Nieprawidłowe argumenty narzędzia {call.name}: {exc}",
                 is_error=True,
             )
-        result = spec.fn(**call.arguments)
+        result = spec.fn(**arguments)
         return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))
+
+
+# ``*args``/``**kwargs`` niosą krotkę/słownik, a adnotacja opisuje POJEDYNCZY element —
+# koercja rozminęłaby się z kształtem. Katalog ich nie używa; gdyby zaczął, lepiej
+# przepuścić wartość niż ją zepsuć.
+_VARIADIC = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+
+
+def _coerce_arguments(fn: Callable[..., Any], arguments: dict[str, Any]) -> dict[str, Any]:
+    """Zwiąż argumenty od modelu z sygnaturą i SKOERUJ je do typów z adnotacji.
+
+    Model widzi schemat wyprowadzony z tych samych adnotacji, a JSON nie zna typów
+    Pythona: ``date`` jedzie do niego jako ``{"type": "string", "format": "date"}``, więc
+    model SŁUSZNIE przysyła napis. Bez koercji napis trafiał wprost do arytmetyki dat
+    i wywracał pętlę ``TypeError``-em, którego koperta narzędzi nie łapie — a wyjątek leci
+    PRZED oznaczeniem wiadomości jako obsłużonej, więc ta sama wiadomość mieliła się
+    w kółko (pełna tura LLM za każdym razem) i blokowała kanał aż do restartu.
+
+    Walidujemy CZYSTYM pydantikiem, nie ``func_metadata`` z SDK, bo rdzeń nie importuje
+    SDK. Oba widoki wywodzą się z tych samych adnotacji, więc schemat pokazany modelowi
+    i walidacja tutaj mówią o tym samym.
+
+    ``TypeError`` (zła/brakująca/nadmiarowa nazwa) i ``ValidationError`` (zły typ) wołający
+    zamienia na odzyskiwalny wynik narzędzia — model poprawia się w kolejnej turze.
+    """
+    signature = inspect.signature(fn)
+    bound = signature.bind(**arguments)
+    hints = get_type_hints(fn)
+    coerced: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        annotation = hints.get(name)
+        if annotation is None or signature.parameters[name].kind in _VARIADIC:
+            coerced[name] = value
+            continue
+        coerced[name] = TypeAdapter(annotation).validate_python(value)
+    return coerced

@@ -9,8 +9,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 
 from workmate.adapters.outbound.github_api import HttpxGithubClient
+from workmate.core.ports.github import MAX_COMMITS_PER_FETCH
 
 _API = "https://api.github.com"
 _OWNER, _REPO = "BIAP-Inteligentne-Technologie", "PIWorkmate"
@@ -92,3 +94,42 @@ def test_returns_raw_payload_without_filtering() -> None:
 
     commits = _client(handler).list_commits(_OWNER, _REPO)
     assert commits[0]["commit"]["message"] == "WT-1 abc"
+
+
+@pytest.mark.parametrize("per_page", [100, 50, 25])
+def test_ceiling_is_reached_regardless_of_page_size(per_page: int) -> None:
+    """Sufit MUSI być osiągalny przy każdym rozmiarze strony, bo rdzeń rozpoznaje po nim ucięcie.
+
+    Regresja, której pilnuje ten test: gdyby budżet stron był wspólnym ``_MAX_PAGES``, mniejsza
+    strona dawałaby mniej niż ``MAX_COMMITS_PER_FETCH`` pozycji — a wtedy ucięta historia znowu
+    przechodziłaby jako kompletna, czyli dokładnie ten defekt, który sufit miał zlikwidować.
+    """
+    pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pages.append(1)
+        body = [_commit(f"sha{len(pages)}-{index}") for index in range(per_page)]
+        # Prawdziwy nagłówek ``Link`` GitHuba niesie komplet parametrów, w tym ``per_page``.
+        link = (
+            f"<{_API}/repos/{_OWNER}/{_REPO}/commits"
+            f'?per_page={per_page}&page={len(pages) + 1}>; rel="next"'
+        )
+        return httpx.Response(200, json=body, headers={"Link": link})
+
+    commits = _client(handler).list_commits(_OWNER, _REPO, per_page=per_page)
+    assert len(commits) == MAX_COMMITS_PER_FETCH
+    # Przestajemy pytać, gdy wiadro pełne — nie dobijamy do ogólnego cap-u stron.
+    assert len(pages) == MAX_COMMITS_PER_FETCH // per_page
+
+
+def test_oversized_page_request_is_clamped_to_the_api_maximum() -> None:
+    """GitHub i tak przycina ``per_page`` do 100 — gdybyśmy prosili o więcej, budżet stron
+    liczony z tej liczby byłby zawyżony i wiadro nigdy by się nie zapełniło."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["per_page"] = request.url.params["per_page"]
+        return httpx.Response(200, json=[])
+
+    _client(handler).list_commits(_OWNER, _REPO, per_page=500)
+    assert seen["per_page"] == "100"

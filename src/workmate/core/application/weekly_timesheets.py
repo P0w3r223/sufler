@@ -48,6 +48,9 @@ FAIL_UNKNOWN_PERSON = "unknown_person"
 FAIL_BAD_DATA = "bad_data"
 FAIL_SHEET = "sheet_write_failed"
 FAIL_SEND = "send_failed"
+# Wiadomość WYSZŁA, ale nie udało się tego zapamiętać — przy ponowieniu osoba dostanie ją
+# drugi raz. Osobny powód, bo wymaga innej reakcji człowieka niż nieudana wysyłka.
+FAIL_STATE_WRITE = "state_write_failed"
 
 
 @dataclass(frozen=True)
@@ -118,7 +121,12 @@ class WeeklyTimesheetService:
         self._now = now
 
     def run(self) -> RunReport:
-        """Wykonaj przebieg za tydzień, który właśnie się kończy; zwróć strukturalny raport."""
+        """Wykonaj przebieg za tydzień ZAMKNIĘTY (poprzedni pon.–ndz.); zwróć raport.
+
+        Okno bierze ``reported_week`` i jest to tydzień POPRZEDNI, nie bieżący: okno bieżące
+        gubiło godziny z weekendu i z piątkowego popołudnia BEZPOWROTNIE, bo kolejny przebieg
+        raportował już swój własny tydzień (ADR 0035 § Consequences).
+        """
         week_start, week_end = reported_week(self._now(), self._tz)
         label = week_label(week_start)
         report = RunReport(week_label=label, dry_run=self._dry_run)
@@ -184,9 +192,21 @@ class WeeklyTimesheetService:
             return
 
         outcome = self._deliver(timesheet, label, report)
-        if outcome is not None and not self._dry_run:
+        if outcome is None or self._dry_run:
+            return
+        try:
             # Stan po KAŻDEJ osobie: awaria za chwilę nie może cofnąć tego, co już wyszło.
             self._mark_done(label, timesheet.person.source_id, outcome)
+        except Exception as exc:
+            # Zapis stanu też jest I/O i też potrafi paść (pełny dysk, prawa do pliku). Poza
+            # ``try`` wywracał CAŁY przebieg: reszta kolejki nie dostawała nic, a TA osoba
+            # miała już wysłaną wiadomość i nie była zapisana jako obsłużona — przy ponowieniu
+            # dostałaby ją drugi raz i zaimportowała tydzień dwa razy. Utrata pamięci o jednej
+            # osobie jest zła, ale wywrócenie pętli jest gorsze.
+            report.failed.append(
+                PersonOutcome(source_id=source_id, reason=FAIL_STATE_WRITE, detail=str(exc))
+            )
+            logger.warning("Nie zapisano stanu dla %s: %s", source_id, exc)
 
     def _deliver(
         self, timesheet: PersonTimesheet, label: str, report: RunReport

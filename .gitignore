@@ -31,3 +31,10 @@ RAPORT-*.md
 # Paczki wdrożeniowe Powiadomienia_teams (scripts/pack.sh, scripts/build-image.sh).
 # Budowane z kodu na żądanie — w repo trzymamy przepis, nie wynik.
 powiadomienia-teams-*.tar.gz
+
+# Arkusze kart czasu (ADR 0035) — imienne godziny konkretnych ludzi. Konfiguracja MUSI je
+# kierować poza repo (walidacja OUTPUT_DIR to wymusza); ta reguła jest drugą linią obrony,
+# gdyby ktoś wygenerował je ręcznie w drzewie roboczym. Raz zacommitowane zostają w historii.
+# UWAGA: reguła nie jest zakotwiczona, więc obejmuje CAŁE repo. Gdy zajdzie potrzeba wciągnięcia
+# szablonu WorklogPRO jako fixture'u testowego, dołóż tu wyjątek (!tests/fixtures/*.xlsx).
+*.xlsx

@@ -2,8 +2,9 @@
 
 CZYSTA agregacja: bez I/O, bez SDK, bez zegara (okno dat podaje wołający). Wejściem są już
 zmapowane commity (białą listą pól, w adapterze/serwisie), wyjściem PROPOZYCJA — nigdy zapis.
-Rozdział jest celowy: mutację robi ``application/worklog.py`` na JAWNĄ prośbę człowieka, bo
-wiadomość commita to DANE, nie polecenie (ten sam inwariant co treść notatek, ADR 0006).
+Ścieżki zapisu NIE MA i nie było to uproszczenie implementacji: zapis czasu do Jiry wycięto
+wraz z resztą ADR 0034 (godziny wchodzą dziś arkuszem WorklogPRO, importowanym przez człowieka
+— ADR 0035). Wiadomość commita zostaje DANĄ, nigdy poleceniem (inwariant z ADR 0006).
 
 Model czasu: commity są PUNKTAMI, nie odcinkami — praca między nimi jest niewidoczna. Sesję
 tniemy, gdy przerwa przekroczy próg ALBO zmieni się doba kalendarzowa (wpis worklogu dotyczy
@@ -19,12 +20,22 @@ i per zgłoszenie sumują się DOKŁADNIE do całości, bez dryfu zaokrągleń f
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from workmate.core.domain.guards import JIRA_KEY_RE
+
+# Strefa, w której domyślnie liczymy dobę kalendarzową. Nazwa IANA, nie offset — zmiana czasu
+# przesuwałaby granicę doby o godzinę przez pół roku (patrz ``SessionPolicy.tz``).
+DEFAULT_TZ = ZoneInfo("Europe/Warsaw")
+
+# Ile SHA-ów sesji pokazujemy. Pełna lista przy oknie 500 commitów to kilkanaście kilobajtów
+# w kontekście modelu za każdym wywołaniem — próbka wystarcza do rozpoznania pracy, a licznik
+# (``commit_count``) i tak niesie pełną liczbę.
+_SHA_SAMPLE = 5
 
 # Skan klucza Jira W TEKŚCIE wiadomości commita. Kształt bierzemy z jednoźródłowego
 # ``JIRA_KEY_RE`` (``domain/guards.py``), dokładając granice — bez nich ``ABC-12`` wpadłoby
@@ -53,6 +64,10 @@ _NOTE_DEFAULT_BRANCH = (
     "Widoczne są tylko commity gałęzi domyślnej — praca na niezmerge'owanych gałęziach "
     "nie wchodzi do tego zestawienia."
 )
+_NOTE_TRUNCATED = (
+    "Historia commitów została UCIĘTA na limicie pobrania — GitHub zwraca od najnowszych, więc "
+    "brakuje NAJSTARSZYCH dni okna, a godziny są zaniżone. Zawęź zakres dat albo podaj 'author'."
+)
 
 
 class Commit(BaseModel):
@@ -79,6 +94,7 @@ class WorkSession(BaseModel):
     commit_count: int
     minutes: int
     hours: float
+    # PRÓBKA (najstarsze ``_SHA_SAMPLE``), nie pełna lista — pełną liczbę niesie ``commit_count``.
     shas: tuple[str, ...] = ()
     issue_keys: tuple[str, ...] = ()
     confidence: str = "low"
@@ -134,15 +150,20 @@ class SessionPolicy:
     ``idle_gap_minutes`` — przerwa kończąca sesję. ``ramp_up_minutes`` — praca doliczana PRZED
     pierwszym commitem sesji (commit jest efektem, nie początkiem pracy). ``round_minutes`` —
     zaokrąglenie W GÓRĘ (ewidencja czasu jest kwantowana). ``max_session_hours`` — sufit jednej
-    sesji, backstop przed absurdem z rzadkiego commitowania. ``tz_offset_minutes`` — strefa,
-    w której liczymy dobę kalendarzową (stały offset; patrz ADR 0034 § Consequences — DST).
+    sesji, backstop przed absurdem z rzadkiego commitowania.
+
+    ``tz`` — strefa, w której liczymy dobę kalendarzową. Nazwana strefa IANA, NIE stały offset:
+    pierwotny kompromis ADR 0034 („czystość domeny") upadł, gdy ADR 0035 wprowadził ``week.py``
+    liczący granice przez ``ZoneInfo`` i dodał ``tzdata`` do zależności RDZENIA. Ze stałym
+    offsetem granica doby przez pół roku wypadała o godzinę obok, więc commity z okolic północy
+    lądowały w sąsiednim dniu.
     """
 
     idle_gap_minutes: int = 90
     ramp_up_minutes: int = 30
     round_minutes: int = 15
     max_session_hours: float = 8.0
-    tz_offset_minutes: int = 120
+    tz: ZoneInfo = field(default=DEFAULT_TZ)
 
 
 def normalize_commit_message(raw: str, *, max_len: int = 200) -> str:
@@ -162,27 +183,28 @@ def normalize_commit_message(raw: str, *, max_len: int = 200) -> str:
     return text if len(text) <= max_len else text[: max_len - 1].rstrip() + "…"
 
 
-def extract_issue_keys(message: str, *, project: str = "") -> tuple[str, ...]:
+def extract_issue_keys(message: str) -> tuple[str, ...]:
     """Wyciągnij klucze Jira z wiadomości commita, bez powtórzeń, w kolejności wystąpienia.
 
-    ``project`` (niepusty) zawęża do jednego prefiksu — dzięki temu ``OPS-9`` wspomniane
-    mimochodem nie wejdzie do zestawienia projektu ``WT``. Wyciągamy WYŁĄCZNIE klucze; żadna
+    BEZ zawężania do projektu. Zawężanie miało sens, dopóki propozycja karmiła zapis do
+    konkretnego projektu Jiry (ADR 0034); dziś to czysty raport, a wspomniany mimochodem
+    ``OPS-9`` opisuje pracę, która naprawdę się odbyła. Wyciągamy WYŁĄCZNIE klucze; żadna
     inna treść commita nie ma wpływu na wynik (treść to DANE, nie polecenia).
     """
-    wanted = project.strip().upper()
     seen: dict[str, None] = {}
     for match in _KEY_IN_TEXT_RE.finditer(message or ""):
-        key = match.group(0)
-        if wanted and key.split("-", 1)[0] != wanted:
-            continue
-        seen.setdefault(key, None)
+        seen.setdefault(match.group(0), None)
     return tuple(seen)
 
 
-def local_day(moment: datetime, tz_offset_minutes: int) -> date:
-    """Doba kalendarzowa ``moment`` w strefie o stałym offsecie (naiwny czas = UTC)."""
+def local_day(moment: datetime, tz: ZoneInfo) -> date:
+    """Doba kalendarzowa ``moment`` w strefie ``tz`` (naiwny czas traktujemy jako UTC).
+
+    Konwersja przez ``astimezone`` uwzględnia zmianę czasu — w odróżnieniu od stałego offsetu,
+    który przez pół roku przesuwałby granicę doby o godzinę.
+    """
     aware = moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
-    return (aware.astimezone(timezone.utc) + timedelta(minutes=tz_offset_minutes)).date()
+    return aware.astimezone(tz).date()
 
 
 def estimate_minutes(span_minutes: float, policy: SessionPolicy) -> int:
@@ -225,8 +247,8 @@ def group_sessions(commits: list[Commit], policy: SessionPolicy) -> tuple[WorkSe
     groups: list[list[Commit]] = [[ordered[0]]]
     for previous, current in zip(ordered, ordered[1:], strict=False):
         gap_minutes = (current.authored_at - previous.authored_at).total_seconds() / 60
-        same_day = local_day(current.authored_at, policy.tz_offset_minutes) == local_day(
-            previous.authored_at, policy.tz_offset_minutes
+        same_day = local_day(current.authored_at, policy.tz) == local_day(
+            previous.authored_at, policy.tz
         )
         if gap_minutes > policy.idle_gap_minutes or not same_day:
             groups.append([current])
@@ -241,19 +263,25 @@ def build_proposal(
     since: date,
     until: date,
     policy: SessionPolicy,
-    project: str = "",
     author: str = "",
+    truncated: bool = False,
 ) -> WorklogProposal:
-    """Złóż pełną propozycję: sesje, sumy dzienne, sumy per zgłoszenie i ostrzeżenia."""
+    """Złóż pełną propozycję: sesje, sumy dzienne, sumy per zgłoszenie i ostrzeżenia.
+
+    ``truncated`` mówi, że źródło oddało tylko część commitów okna (sufit pobrania). Wynik jest
+    wtedy ZANIŻONY i musi to powiedzieć wprost — inaczej propozycja wygląda na kompletną.
+    """
     sessions = group_sessions(commits, policy)
     by_day = _totals_by_day(sessions)
-    by_issue, unattributed = _totals_by_issue(sessions, project=project)
+    by_issue, unattributed = _totals_by_issue(sessions)
     total_minutes = sum(session.minutes for session in sessions)
     notes: list[str] = []
     if not commits:
         notes.append(_NOTE_NO_COMMITS)
     else:
         notes.append(_NOTE_DEFAULT_BRANCH)
+    if truncated:
+        notes.append(_NOTE_TRUNCATED)
     if unattributed > 0:
         notes.append(_NOTE_UNATTRIBUTED)
     return WorklogProposal(
@@ -282,13 +310,13 @@ def _as_session(group: list[Commit], policy: SessionPolicy) -> WorkSession:
         for key in extract_issue_keys(commit.message):
             keys.setdefault(key, None)
     return WorkSession(
-        day=local_day(started, policy.tz_offset_minutes),
+        day=local_day(started, policy.tz),
         started_at=started,
         ended_at=ended,
         commit_count=len(group),
         minutes=minutes,
         hours=_hours(minutes),
-        shas=tuple(commit.sha for commit in group),
+        shas=tuple(commit.sha for commit in group[:_SHA_SAMPLE]),
         issue_keys=tuple(keys),
         confidence=session_confidence(span_minutes, len(group), policy),
     )
@@ -319,9 +347,7 @@ def _totals_by_day(sessions: tuple[WorkSession, ...]) -> tuple[DayTotal, ...]:
     return tuple(totals)
 
 
-def _totals_by_issue(
-    sessions: tuple[WorkSession, ...], *, project: str = ""
-) -> tuple[tuple[IssueTotal, ...], int]:
+def _totals_by_issue(sessions: tuple[WorkSession, ...]) -> tuple[tuple[IssueTotal, ...], int]:
     """Rozdziel czas sesji na jej zgłoszenia; zwróć sumy i minuty BEZ przypisania.
 
     Sesja wspominająca kilka kluczy dzieli czas RÓWNO między nie — nie mamy danych, żeby
@@ -334,7 +360,7 @@ def _totals_by_issue(
     days_by_key: dict[str, dict[date, None]] = {}
     unattributed = 0
     for session in sessions:
-        keys = _session_keys(session, project=project)
+        keys = session.issue_keys
         if not keys:
             unattributed += session.minutes
             continue
@@ -354,14 +380,6 @@ def _totals_by_issue(
         for key in sorted(minutes_by_key, key=lambda k: (-minutes_by_key[k], k))
     )
     return totals, unattributed
-
-
-def _session_keys(session: WorkSession, *, project: str) -> tuple[str, ...]:
-    """Klucze sesji zawężone do projektu (pusty ``project`` = bez zawężania)."""
-    wanted = project.strip().upper()
-    if not wanted:
-        return session.issue_keys
-    return tuple(key for key in session.issue_keys if key.split("-", 1)[0] == wanted)
 
 
 def _split_minutes(minutes: int, keys: tuple[str, ...]) -> dict[str, int]:

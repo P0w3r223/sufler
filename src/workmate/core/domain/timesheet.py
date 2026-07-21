@@ -46,8 +46,10 @@ class WorkEntry(BaseModel):
     """Pojedynczy wpis czasu ze źródła: kto, kiedy, na czym, ile.
 
     ``minutes`` zamiast godzin, bo to jednostka bez strat. ``comment`` jest opcjonalny i trafia
-    do arkusza — to DANE ze źródła zewnętrznego, więc adapter go sanityzuje, a warstwa wiadomości
-    escapuje przy renderze.
+    do arkusza — to DANE ze źródła zewnętrznego, więc przechodzi przez sanityzację w projekcji
+    (``timesheet_sheet``: znaki sterujące) i escapowanie w renderze wiadomości (``html.escape``).
+    Sanityzacja mieszka w RDZENIU, nie w adapterze źródła: obowiązuje wtedy każde źródło godzin,
+    także to, którego jeszcze nie napisaliśmy.
     """
 
     source_id: str

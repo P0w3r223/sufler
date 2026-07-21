@@ -148,18 +148,34 @@ class JiraPoller:
         return count
 
     async def _resolve_self_account(self) -> None:
-        """Ustal konto PAT (self-skip), jeśli nie podano w konfiguracji — best-effort."""
-        if self._self_account:
-            return
+        """Ustal konto tokenu (self-skip) i SPRAWDŹ podaną wartość — best-effort przy odczycie.
+
+        Konfiguracja miała pierwszeństwo i nie była z niczym porównywana, a bramki zapisu
+        WYMAGAJĄ jej podania — więc w każdym wdrożeniu, gdzie strażnik pętli ma znaczenie,
+        stał on na niezweryfikowanym napisie. Po przełączeniu ``DEPLOYMENT=server`` → ``cloud``
+        stary login przechodził walidację kształtu tylko dopóty, dopóki przypominał accountId;
+        tu łapiemy też konto po prostu INNE niż to, którym lecimy.
+
+        Rozjazd to twardy błąd: dalsza praca oznacza, że własne zapisy wracają jako cudze
+        zdarzenia i lecą do Teams w pętli (inwariant cross-proces, ADR 0031). Nieudany ODCZYT
+        konta zostaje ostrzeżeniem — brak sieci przy starcie nie może kłaść usługi.
+        """
         loop = asyncio.get_running_loop()
         try:
-            self._self_account = await loop.run_in_executor(
-                None, self._client.authenticated_account
-            )
+            actual = await loop.run_in_executor(None, self._client.authenticated_account)
         except Exception:
             logger.warning(
-                "Nie udało się ustalić konta PAT Jira — self-skip wyłączony (ryzyko pętli)."
+                "Nie udało się ustalić konta Jira — self-skip na wartości z konfiguracji "
+                "(niezweryfikowanej); przy jej braku wyłączony (ryzyko pętli)."
             )
+            return
+        if self._self_account and actual and self._self_account != actual:
+            raise ValueError(
+                f"WORKMATE_JIRA_SELF_ACCOUNT={self._self_account!r} nie jest kontem tokenu "
+                f"({actual!r}) — strażnik pętli self-skip nie zadziała, a poller i drzwi zapisu "
+                "zaczną odsyłać sobie własne zdarzenia. Popraw konfigurację."
+            )
+        self._self_account = self._self_account or actual
 
     def _seed(self, startup_jql_datetime: str) -> None:
         """Zainicjuj watermark = teraz (idempotentnie): ignoruj backlog sprzed uruchomienia.

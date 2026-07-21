@@ -55,11 +55,14 @@ def _sheet(entries: list[WorkEntry], person: Person = _PERSON, **kw):
 # --- nagłówki (HIPOTEZA do potwierdzenia w Etapie 0) ------------------------------
 
 
-def test_headers_match_the_confirmed_template() -> None:
-    """STRAŻNIK schematu. Po pobraniu szablonu z WorklogPRO zaktualizuj TU i w module.
+def test_headers_are_not_changed_by_accident() -> None:
+    """DETEKTOR ZMIANY, nie bramka poprawności — i to rozróżnienie jest tu istotne.
 
-    Dopasowanie kolumn idzie PO NAZWIE, więc różnica w wielkości liter albo spacji unieważnia
-    cały plik. Ten test jest jedynym miejscem, w którym hipoteza jest zapisana wprost.
+    Test nie wie, jak wyglądają prawdziwe nagłówki WorklogPRO; przypina jedynie bieżącą
+    HIPOTEZĘ, żeby nikt nie zmienił jej mimochodem. Poprawność weryfikuje CZŁOWIEK, porównując
+    z szablonem z kreatora importu, a potwierdzenie zapisuje jako
+    ``WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true`` — bez tego tryb bojowy nie startuje (D6).
+    Po pobraniu szablonu zaktualizuj TU i w module.
     """
     assert WORKLOGPRO_HEADERS == (
         "Issue Key/ID",
@@ -144,6 +147,33 @@ def test_comment_prefix_is_prepended() -> None:
     assert row[4] == "[auto] praca"
 
 
+def test_control_characters_from_the_source_are_stripped() -> None:
+    """``WorkEntry`` deklarował sanityzację treści ze źródła i NIKT jej nie robił.
+
+    Kontrakt zadeklarowany i niezaimplementowany jest gorszy niż jego brak — nikt go nie
+    szuka. Nowa linia i tab w komórce rozbijają wiersz (a w eksporcie CSV cały plik), znaki
+    sterujące nie mają w arkuszu żadnego legalnego zastosowania. Wycinamy, nie rzucamy:
+    jeden dziwny wpis nie może pozbawić arkuszy całego zespołu.
+    """
+    rows = _sheet([_entry(15, "WT-12", 60, comment="dwie\nlinie\ti\x00zero")]).rows
+    assert rows[0][4] == "dwie linie i zero"
+
+
+def test_control_characters_in_the_issue_key_are_stripped() -> None:
+    rows = _sheet([_entry(15, "WT-12\r\n", 60)]).rows
+    assert rows[0][0] == "WT-12"
+
+
+def test_formula_prefix_survives_untouched_in_the_projection() -> None:
+    """Rdzeń NIE kaleczy treści — przed formułą broni kontrakt ``SheetWriter`` (zapis jako tekst).
+
+    Apostrof czy obcięcie wjechałyby do Jiry razem z komentarzem, a rdzeń i tak nie wie, czym
+    plik zostanie zapisany; gwarancja musi stać tam, gdzie typ komórki naprawdę powstaje.
+    """
+    rows = _sheet([_entry(15, "WT-12", 60, comment="=SUMA(A1:A2)")]).rows
+    assert rows[0][4] == "=SUMA(A1:A2)"
+
+
 def test_long_comment_is_truncated() -> None:
     (row,) = _sheet([_entry(15, "WT-12", 60, "x" * 900)]).rows
     assert len(row[4]) == 500
@@ -187,7 +217,7 @@ def test_filename_is_ascii_slug_with_week_label() -> None:
         week_end=date(2026, 7, 20),
         week_label="2026-W29",
     )
-    assert sheet_filename(timesheet) == "worklog_mikolaj-anonimowicz_2026-w29.xlsx"
+    assert sheet_filename(timesheet) == "worklog_mikolaj-anonimowicz_emp-042_2026-w29.xlsx"
 
 
 def test_filename_strips_polish_diacritics() -> None:
@@ -195,7 +225,7 @@ def test_filename_strips_polish_diacritics() -> None:
     timesheet = build_timesheet(
         person, [], week_start=date(2026, 7, 13), week_end=date(2026, 7, 20), week_label="2026-W29"
     )
-    assert sheet_filename(timesheet) == "worklog_lukasz-zolc_2026-w29.xlsx"
+    assert sheet_filename(timesheet) == "worklog_lukasz-zolc_emp-042_2026-w29.xlsx"
 
 
 def test_filename_falls_back_to_source_id() -> None:
@@ -204,3 +234,35 @@ def test_filename_falls_back_to_source_id() -> None:
         person, [], week_start=date(2026, 7, 13), week_end=date(2026, 7, 20), week_label="2026-W29"
     )
     assert sheet_filename(timesheet).startswith("worklog_emp-042_")
+
+
+def test_filename_is_unique_for_people_sharing_a_display_name() -> None:
+    """Imiennicy dostawali TĘ SAMĄ ścieżkę: drugi arkusz nadpisywał pierwszy, a wiadomość
+    pierwszej osoby wskazywała już cudze godziny. Nazwa człowieka nie jest różnowartościowa —
+    rozstrzyga ``source_id``, po którym i tak rozdzielamy wpisy.
+    """
+    other = _PERSON.model_copy(update={"source_id": "EMP-999", "jira_user": "m2@example.org"})
+    week = {
+        "week_start": date(2026, 7, 13),
+        "week_end": date(2026, 7, 20),
+        "week_label": "2026-W29",
+    }
+    first = build_timesheet(_PERSON, [], **week)
+    second = build_timesheet(other, [], **week)
+
+    assert sheet_filename(first) != sheet_filename(second)
+
+
+def test_filename_is_unique_even_when_the_slug_collapses() -> None:
+    """Nazwa bez znaków ASCII daje stałe ``bez-nazwy`` — kolizja także przy RÓŻNYCH nazwiskach."""
+    week = {
+        "week_start": date(2026, 7, 13),
+        "week_end": date(2026, 7, 20),
+        "week_label": "2026-W29",
+    }
+    first = build_timesheet(_PERSON.model_copy(update={"display_name": "李"}), [], **week)
+    second = build_timesheet(
+        _PERSON.model_copy(update={"display_name": "王", "source_id": "EMP-999"}), [], **week
+    )
+
+    assert sheet_filename(first) != sheet_filename(second)

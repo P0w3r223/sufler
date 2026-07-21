@@ -322,3 +322,62 @@ def test_transition_issue_survives_failed_followup_get():
     result = _client(handler).transition_issue("WM-5", "11")
     assert result["status"] == "" and result["updated"] == ""
     assert result["url"] == f"{_BASE}/browse/WM-5"
+
+
+# --- widoczność cichych strat ------------------------------------------------------
+
+
+def test_search_warns_when_inline_comments_were_truncated(caplog):
+    """Cap 20/20 w bulk-searchu ma być SŁYSZALNY — inaczej zdarzenia przepadają po cichu.
+
+    Zgłoszenie wygląda na kompletne, a część komentarzy nigdy nie trafi do Teams. Założenie
+    ADR 0033 („poller inkrementalny → wystarcza") trzyma się tylko wtedy, gdy Jira zwraca
+    20 NAJNOWSZYCH pozycji, a kolejność nie jest udokumentowana ani zmierzona.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "issues": [
+                    {
+                        "key": "WT-12",
+                        "fields": {"comment": {"comments": [{"id": "1"}], "total": 25}},
+                    }
+                ],
+                "isLast": True,
+            },
+        )
+
+    _client(handler).search_issues("project = WT")
+
+    assert "WT-12" in caplog.text
+    assert "1 z 25" in caplog.text
+
+
+def test_search_is_quiet_when_nothing_was_truncated(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "issues": [
+                    {"key": "WT-1", "fields": {"comment": {"comments": [{"id": "1"}], "total": 1}}}
+                ],
+                "isLast": True,
+            },
+        )
+
+    _client(handler).search_issues("project = WT")
+
+    assert "przepadn" not in caplog.text and "NIE trafi" not in caplog.text
+
+
+def test_myself_warns_when_account_timezone_differs_from_host(caplog):
+    """JQL bez strefy liczy daty w strefie KONTA — rozjazd przesuwa granicę okna pollingu."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"accountId": "acc-1", "timeZone": "Pacific/Kiritimati"})
+
+    _client(handler).authenticated_account()
+
+    assert "Pacific/Kiritimati" in caplog.text

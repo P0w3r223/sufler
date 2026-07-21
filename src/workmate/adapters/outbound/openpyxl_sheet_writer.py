@@ -45,12 +45,31 @@ class OpenpyxlSheetWriter:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = _SHEET_TITLE
-        sheet.append(list(headers))
-        for row in rows:
-            sheet.append(["" if cell is None else str(cell) for cell in row])
+        _write_text_row(sheet, 1, headers)
+        for offset, row in enumerate(rows, start=2):
+            _write_text_row(sheet, offset, tuple("" if cell is None else str(cell) for cell in row))
         _widen(sheet, headers, rows)
         workbook.save(target)
         logger.info("Arkusz zapisany: %s (%d wierszy)", target, len(rows))
+
+
+def _write_text_row(sheet: Any, index: int, values: tuple[str, ...]) -> None:
+    """Zapisz wiersz, WYMUSZAJĄC typ tekstowy każdej komórki (kontrakt ``SheetWriter``).
+
+    Sam ``append`` nie wystarcza: openpyxl wnioskuje typ z treści i napis zaczynający się od
+    ``=`` zapisuje jako FORMUŁĘ. Komentarz przychodzi ze źródła godzin, którego jeszcze nie
+    znamy, a plik jawnie każemy człowiekowi otworzyć — ``=cmd|'/c calc'!A0`` w komórce to
+    wykonanie kodu na jego maszynie (klasyczne wstrzyknięcie formuły). Docstring tej klasy
+    obiecywał „wszystkie komórki jako TEKST" od początku; egzekwuje to dopiero ten kod.
+
+    Nadpisujemy ``data_type`` PO przypisaniu wartości, bo przypisanie samo je ustawia.
+    Treść zostaje NIETKNIĘTA — żadnego apostrofu ani obcinania, bo komentarz ma dojechać
+    do Jiry dokładnie taki, jaki był.
+    """
+    for column, value in enumerate(values, start=1):
+        cell = sheet.cell(row=index, column=column)
+        cell.value = value
+        cell.data_type = "s"
 
 
 def _widen(sheet: Any, headers: tuple[str, ...], rows: tuple[tuple[Any, ...], ...]) -> None:

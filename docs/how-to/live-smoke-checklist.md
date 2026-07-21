@@ -148,24 +148,22 @@ strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ 
   do celu, echo per hop; na rozgałęzieniu STOP (`branch_point`, bez zgadywania). Raport zawsze
   strukturalny (`reached`/`path`/`stop_reason`); tranzycja nie wraca jako zbędne powiadomienie.
 
-## 16. Teams → Jira: ewidencja czasu z commitów — 🔑 👥 🟪 🐙 (ADR 0034)
+## 16. Teams: propozycja czasu z commitów — 👥 🐙 (ADR 0034, część odczytowa)
 
-- **Krok (propozycja):** ustaw `WORKMATE_JIRA_ENABLE_WORKLOG=true` (+ `WRITE_PROJECT` +
-  `SELF_ACCOUNT` + GitHub `TOKEN`/`OWNER`/`REPO`). Poproś agenta o propozycję ewidencji za tydzień,
-  w którym realnie commitowałeś w `PIWorkmate`, i porównaj wynik z własną pamięcią.
+- **Krok:** wystarczy skonfigurowany GitHub (`TOKEN`/`OWNER`/`REPO`) — narzędzie nie ma bramki, bo
+  po wycięciu ścieżki zapisu (2026-07-21) niczego nie mutuje. Poproś agenta o propozycję ewidencji
+  za tydzień, w którym realnie commitowałeś w `PIWorkmate`, i porównaj wynik z własną pamięcią.
 - **Oczekiwane:** sesje pocięte przerwami i dobami, sumy per zgłoszenie wyciągnięte z kluczy `WT-*`
   w wiadomościach commitów, `confidence` niski przy pojedynczych commitach, `notes` ostrzegające
-  o gałęzi domyślnej. **Nic nie zapisane w Jirze.** Sprawdź też zakres: dzień z jednym commitem na
-  koniec dnia da tylko „rozbieg" (~30 min), nie osiem godzin — to znana, świadoma cecha estymacji.
-- **Krok (zapis własny):** poproś o zapis konkretnej liczby godzin na istniejące `WT-*` za wczoraj.
-  Powtórz TĘ SAMĄ prośbę drugi raz.
-- **Oczekiwane:** pierwszy wpis widoczny w zakładce Work log zgłoszenia; drugi **odrzucony** przez
-  strażnik duplikatów (bez usuwania wpisów duplikat byłby nieusuwalny z poziomu narzędzia).
-- **Krok (cross-user):** ustaw dodatkowo `WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF=true` i poproś
-  o wpis z `on_behalf_of=<accountId Mikołaja>`, `display_name=Mikołaj`.
-- **Oczekiwane:** w UI Jiry kolumna autora pokazuje **konto tokenu (Piotr)**, a treść wpisu zaczyna
-  się od `w imieniu: Mikołaj`; odpowiedź narzędzia niesie pole `note` o stratnej atrybucji, a agent
-  je RELACJONUJE. Bez włączonej drugiej bramki ta sama prośba musi zostać odrzucona.
+  o gałęzi domyślnej. **Nic nie zapisane w Jirze — i nie ma czym zapisać.** Sprawdź też zakres:
+  dzień z jednym commitem na koniec dnia da tylko „rozbieg" (~30 min), nie osiem godzin — to znana,
+  świadoma cecha estymacji.
+- **Krok (ucięcie historii):** poproś o okno 31 dni bez filtra `author` na aktywnym repo.
+- **Oczekiwane:** jeśli commitów było ≥500, w `notes` pojawia się ostrzeżenie o UCIĘTEJ historii
+  (wypadają NAJSTARSZE dni, więc godziny są zaniżone) — a nie cicha, kompletnie wyglądająca suma.
+- **Krok (strefa):** propozycja obejmująca commity z okolic północy przy aktywnej zmianie czasu.
+- **Oczekiwane:** doba liczona wg `WORKMATE_GITHUB_WORKLOG_TZ` (`ZoneInfo`), więc commit z 23:30
+  lokalnego czasu zostaje w swoim dniu po obu stronach przejścia DST.
 
 ## 17. Cotygodniowe karty czasu → Teams — 🔑 👥 🟪 (ADR 0035)
 
@@ -173,12 +171,19 @@ strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ 
   z `WORKLOGPRO_HEADERS`. Zaimportuj 2–3 wiersze ręcznie, potem TE SAME drugi raz. Sprawdź, czy
   import działa z konta BEZ uprawnień admina.
 - **Oczekiwane:** nagłówki zgodne (albo poprawione w stałej + teście); wiadomo, czy powstają
-  duplikaty; wiadomo, czy nie-admin może importować. Bez tego kroku reszta jest niepotwierdzona.
+  duplikaty; wiadomo, czy nie-admin może importować. Dopiero po tym kroku wolno ustawić
+  `WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true` — bez tego przebieg BOJOWY nie wystartuje.
 - **Krok (próbny):** `WORKMATE_WORKLOGI_ENABLED=true`, `DRY_RUN=true`, `ONLY_SOURCE_IDS` = tylko Ty.
   `uv run workmate-worklogi --once`.
 - **Oczekiwane:** arkusz w `OUTPUT_DIR` z Twoimi godzinami, ŻADNEJ wiadomości na Teams, pusty stan.
-  Otwórz plik i zweryfikuj kolumny oraz znacznik `Start Date & Time` z offsetem.
-- **Krok (bojowy, pilotaż):** `DRY_RUN=false`, `ONLY_SOURCE_IDS` = Ty + Mikołaj. Uruchom ponownie.
+  Otwórz plik i zweryfikuj kolumny oraz znacznik `Start Date & Time` z offsetem. Sprawdź też okno:
+  raport dotyczy tygodnia ZAMKNIĘTEGO, więc piątkowy przebieg pokazuje poprzedni pon.–ndz. razem
+  z weekendem (wcześniej te godziny nie trafiały do żadnego arkusza).
+- **Krok (bramka nagłówków):** spróbuj `DRY_RUN=false` BEZ `HEADERS_CONFIRMED=true`.
+- **Oczekiwane:** proces nie startuje, komunikat odsyła do Kroku 0. To jedyna ochrona przed
+  rozesłaniem kilkunastu plików z niepoprawnymi kolumnami.
+- **Krok (bojowy, pilotaż):** `DRY_RUN=false`, `HEADERS_CONFIRMED=true`, `ONLY_SOURCE_IDS` = Ty
+  + Mikołaj. Uruchom ponownie.
 - **Oczekiwane:** prywatna wiadomość 1:1 z **tabelą** (nie `&lt;table&gt;` — to sprawdza
   `send_chat_html`), sumą tygodnia, ścieżką pliku i ostrzeżeniem o dublowaniu. Każdy widzi TYLKO
   swoje godziny. Osoba bez godzin nie dostaje nic.

@@ -17,6 +17,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from datetime import datetime
 
+# Sufit commitów oddawanych przez ``list_commits`` w JEDNYM wywołaniu — CZĘŚĆ KONTRAKTU, nie
+# szczegół adaptera. Rdzeń musi go znać, bo pełne wiadro oznacza ucięcie historii (GitHub zwraca
+# od najnowszych), a propozycja czasu jest wtedy zaniżona i mówi o tym w ``notes``.
+MAX_COMMITS_PER_FETCH = 500
+
 
 class GithubReadPort(Protocol):
     """Odczyt z GitHub (polling PAT): tożsamość konta + issue/PR, komentarze, recenzje i CI."""
@@ -75,6 +80,10 @@ class GithubReadPort(Protocol):
 
         OGRANICZENIE: endpoint zwraca commity GAŁĘZI DOMYŚLNEJ, więc praca na
         niezmerge'owanych gałęziach jest niewidoczna (propozycja mówi o tym wprost w ``notes``).
+
+        SUFIT: najwyżej ``MAX_COMMITS_PER_FETCH`` pozycji, liczonych OD NAJNOWSZYCH. Pełne
+        wiadro znaczy, że najstarsze dni okna wypadły — wołający MUSI to zgłosić, bo inaczej
+        zaniżony wynik wygląda na kompletny.
         """
         ...
 

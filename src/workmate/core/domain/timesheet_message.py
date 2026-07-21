@@ -18,6 +18,7 @@ from datetime import timedelta
 from html import escape
 
 from workmate.core.domain.timesheet import PersonTimesheet
+from workmate.core.domain.timesheet_sheet import cell_text, format_time_spent
 
 # Stopka mówi wprost, że ponowny import tego samego arkusza zdubluje wpisy. To jedyna obrona
 # przed tym ryzykiem — importu dokonuje CZŁOWIEK, więc nasza idempotencja go nie obejmuje
@@ -41,10 +42,14 @@ def render_timesheet_message(timesheet: PersonTimesheet, *, file_path: str = "")
     name = escape(timesheet.person.display_name or timesheet.person.source_id)
     week = escape(timesheet.week_label or f"{timesheet.week_start}–{timesheet.week_end}")
     span = f"{timesheet.week_start.isoformat()} – {_last_day(timesheet)}"
+    total = format_time_spent(timesheet.total_minutes)
     parts = [
         f"<p>Cześć {name}! Twoje godziny za tydzień <b>{week}</b> ({escape(span)}):</p>",
         _table(timesheet),
-        f"<p>Razem: <b>{timesheet.total_hours} h</b></p>",
+        # Suma w tej samej notacji co wiersze ORAZ dziesiętnie — dziesiętna jest do porównania
+        # z ewidencją, notacja Jiry do porównania z arkuszem. Obie liczone z MINUT, więc żadna
+        # nie jest sumą zaokrągleń.
+        f"<p>Razem: <b>{total}</b> ({timesheet.total_hours} h)</p>",
     ]
     if file_path:
         # Ścieżka jako TEKST, nie link: to lokalizacja w sieci firmowej, a klikalny odnośnik
@@ -55,24 +60,31 @@ def render_timesheet_message(timesheet: PersonTimesheet, *, file_path: str = "")
 
 
 def _table(timesheet: PersonTimesheet) -> str:
-    """Tabela wpisów: dzień, zgłoszenie, godziny — jeden wiersz na wpis, jak w arkuszu."""
+    """Tabela wpisów: dzień, zgłoszenie, czas — DOKŁADNIE te wiersze, które trafiły do arkusza.
+
+    Dwie decyzje trzymają wiadomość i arkusz w zgodzie, bo człowiek porównuje je obok siebie
+    i każda różnica podważa jego zaufanie do obu:
+
+    **Ten sam filtr.** Wpisy zerowe (urlop) odpada projekcja arkusza, więc odpadają i tutaj —
+    inaczej wiadomość obiecywała więcej wierszy, niż plik zawierał.
+
+    **Ta sama notacja.** Czas per wiersz szedł jako godziny dziesiętne zaokrąglone do dwóch
+    miejsc, a „Razem" liczyło się z MINUT — suma kolumny nie zgadzała się więc z sumą pod nią
+    (3 × 50 min = 0.83 + 0.83 + 0.83 ≠ 2.5). Notacja Jiry jest dokładna i identyczna z arkuszem.
+    """
     head = (
         f'<tr><th style="{_STYLE_CELL}">Dzień</th>'
         f'<th style="{_STYLE_CELL}">Zgłoszenie</th>'
-        f'<th style="{_STYLE_CELL}">Godziny</th></tr>'
+        f'<th style="{_STYLE_CELL}">Czas</th></tr>'
     )
     rows = [
         f'<tr><td style="{_STYLE_CELL}">{escape(entry.day.isoformat())}</td>'
-        f'<td style="{_STYLE_CELL}">{escape(entry.issue_key)}</td>'
-        f'<td style="{_STYLE_NUM}">{_hours(entry.minutes)}</td></tr>'
+        f'<td style="{_STYLE_CELL}">{escape(cell_text(entry.issue_key))}</td>'
+        f'<td style="{_STYLE_NUM}">{format_time_spent(entry.minutes)}</td></tr>'
         for entry in timesheet.entries
+        if entry.minutes > 0
     ]
     return f'<table style="{_STYLE_TABLE}">{head}{"".join(rows)}</table>'
-
-
-def _hours(minutes: int) -> str:
-    """Godziny dziesiętne jako tekst — liczba nie wymaga escapowania, ale trzymamy jeden format."""
-    return f"{round(minutes / 60, 2)}"
 
 
 def _last_day(timesheet: PersonTimesheet) -> str:

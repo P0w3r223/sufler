@@ -9,10 +9,11 @@ może nadpisać ścieżki pojedynczą zmienną środowiskową.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Dozwolone transporty serwera MCP. "stdio" to lokalny tryb dla Claude Code
 # (Fazy 1 tyg. 1-3); "streamable-http" to wdrożenie sieciowe (tyg. 4, Bramka 3).
@@ -38,16 +39,28 @@ _DEFAULT_EVENTS_DB = Path.home() / ".workmate" / "events.db"
 _DEFAULT_ALLOWED_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
 
 
-def _find_repo_root(start: Path) -> Path:
-    """Znajdź korzeń repozytorium, idąc w górę do katalogu z ``pyproject.toml``.
+def _repo_root_or_none(start: Path) -> Path | None:
+    """Korzeń repozytorium (katalog z ``pyproject.toml``) albo ``None``, gdy go nie ma.
 
-    Pozwala uruchamiać serwer niezależnie od bieżącego katalogu roboczego
-    (np. przez ``uv run`` z dowolnego miejsca), bez zaszywania ścieżek w kodzie.
+    ``None`` znaczy „kod nie leży w drzewie repozytorium" — tak jest po instalacji z wheela
+    albo w obrazie kontenera. Wołający, który pilnuje ścieżek WZGLĘDEM repo, nie ma wtedy
+    czego pilnować i musi kontrolę pominąć, zamiast podstawiać byle katalog.
     """
     for parent in (start, *start.parents):
         if (parent / "pyproject.toml").is_file():
             return parent
-    return Path.cwd()
+    return None
+
+
+def _find_repo_root(start: Path) -> Path:
+    """Korzeń repozytorium do wyznaczania ścieżek domyślnych; awaryjnie katalog roboczy.
+
+    Pozwala uruchamiać serwer niezależnie od bieżącego katalogu roboczego
+    (np. przez ``uv run`` z dowolnego miejsca), bez zaszywania ścieżek w kodzie. Degradacja
+    do ``cwd`` jest tu w porządku (chodzi o miejsce na dane), ale NIE nadaje się do kontroli
+    bezpieczeństwa — te używają ``_repo_root_or_none``.
+    """
+    return _repo_root_or_none(start) or Path.cwd()
 
 
 def _path_from_env(name: str, default: Path) -> Path:
@@ -710,6 +723,18 @@ _ALLOWED_GITHUB_WATCH_KINDS = (
 # przez ``WORKMATE_GITHUB_WATCH_KINDS`` — patrz ADR 0024.
 _DEFAULT_GITHUB_WATCH_KINDS = ("issues", "comments")
 
+# Strojenie estymacji czasu z commitów (ADR 0034, część odczytowa). Pokrętła mieszkały w
+# ``JiraSettings``, dopóki zdolność miała ścieżkę zapisu do Jiry; po jej wycięciu dotyczą
+# WYŁĄCZNIE czytania commitów, więc stoją przy źródle danych. Twarde backstopy chronią przed
+# absurdem wpisanym do ``.env``; egzekwuje je ``validate_worklog_limits`` — wołane przez poller
+# i przez wpięcie drzwi Teams, czyli wszędzie tam, gdzie te wartości są w ogóle czytane.
+MAX_WORKLOG_RANGE_DAYS = 92
+_MAX_WORKLOG_SESSION_HOURS = 24.0
+_MAX_WORKLOG_IDLE_GAP_MIN = 720
+_MAX_WORKLOG_RAMP_UP_MIN = 240
+# Ewidencja czasu jest kwantowana — dopuszczamy tylko dzielniki godziny mające sens w praktyce.
+_ALLOWED_ROUND_MINUTES = (1, 5, 10, 15, 30, 60)
+
 
 @dataclass(frozen=True)
 class GithubSettings:
@@ -721,6 +746,10 @@ class GithubSettings:
     domyślnie wyłączony — drzwi startują read-only (ingest zdarzeń), zgodnie z ADR 0006.
     ``enable_ci_auto_comment`` (ADR 0024, domyślnie OFF) włącza JEDYNY autonomiczny zapis mostu —
     deterministyczny komentarz przy porażce CI na PR; wymaga też ``enable_github_write``.
+
+    Pola ``worklog_*`` stroją ESTYMACJĘ czasu z commitów (ADR 0034) — czysty odczyt, bez bramki
+    (odczyt jest domyślny, ADR 0006). ``worklog_tz`` to nazwa strefy IANA, nie offset: doba
+    kalendarzowa dzieli sesje pracy, a stały offset mylił się o godzinę przez pół roku.
     """
 
     token: str = field(default="", repr=False)
@@ -734,6 +763,12 @@ class GithubSettings:
     enable_ci_auto_comment: bool = False
     state_path: Path = _DEFAULT_GITHUB_STATE
     self_login: str = ""
+    worklog_idle_gap_minutes: int = 90
+    worklog_ramp_up_minutes: int = 30
+    worklog_round_minutes: int = 15
+    worklog_max_session_hours: float = 8.0
+    worklog_max_range_days: int = 31
+    worklog_tz: str = "Europe/Warsaw"
 
     @classmethod
     def from_env(cls) -> GithubSettings:
@@ -751,10 +786,19 @@ class GithubSettings:
             ),
             state_path=_path_from_env("WORKMATE_GITHUB_STATE", _DEFAULT_GITHUB_STATE),
             self_login=os.environ.get("WORKMATE_GITHUB_SELF_LOGIN", ""),
+            worklog_idle_gap_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES", 90),
+            worklog_ramp_up_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES", 30),
+            worklog_round_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES", 15),
+            worklog_max_session_hours=_float_from_env(
+                "WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS", 8.0
+            ),
+            worklog_max_range_days=_int_from_env("WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS", 31),
+            worklog_tz=os.environ.get("WORKMATE_GITHUB_WORKLOG_TZ", "Europe/Warsaw").strip(),
         )
 
     def validate(self) -> None:
         """Twardy błąd startu, gdy brak tożsamości repo/tokenu albo bezsensowne limity."""
+        self.validate_worklog_limits()
         missing = [
             name
             for name, value in (
@@ -813,6 +857,58 @@ class GithubSettings:
                 "WORKMATE_GITHUB_WATCH_KINDS (bez zdarzeń CI nie ma czego komentować)."
             )
 
+    def validate_worklog_limits(self) -> None:
+        """Strojenie estymacji czasu (ADR 0034) — kontrole NIEZALEŻNE od tokenu i repozytorium.
+
+        Wydzielone z ``validate()`` z tego samego powodu co ``JiraSettings.validate_limits``:
+        pełnego ``validate()`` nie da się zawołać z drzwi Teams, bo bezwarunkowo żąda tokenu
+        i repo, więc wywróciłoby każde wdrożenie bez GitHuba. Sufity muszą jednak obowiązywać
+        po stronie, która faktycznie liczy estymację — inaczej absurd z ``.env`` egzekwowałby
+        wyłącznie proces pollera, czyli nie ten, który go używa.
+        """
+        if not 5 <= self.worklog_idle_gap_minutes <= _MAX_WORKLOG_IDLE_GAP_MIN:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES musi być w zakresie "
+                f"5..{_MAX_WORKLOG_IDLE_GAP_MIN}, jest: {self.worklog_idle_gap_minutes}."
+            )
+        if not 0 <= self.worklog_ramp_up_minutes <= _MAX_WORKLOG_RAMP_UP_MIN:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES musi być w zakresie "
+                f"0..{_MAX_WORKLOG_RAMP_UP_MIN}, jest: {self.worklog_ramp_up_minutes}."
+            )
+        # Rozbieg dłuższy niż przerwa kończąca sesję dawałby estymacje NACHODZĄCE na siebie
+        # (doliczony czas sprzed sesji sięgałby w poprzednią) — cichy bezsens, więc odrzucamy.
+        if self.worklog_ramp_up_minutes > self.worklog_idle_gap_minutes:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES nie może przekraczać "
+                "WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES (estymacje sesji zachodziłyby "
+                f"na siebie): {self.worklog_ramp_up_minutes} > {self.worklog_idle_gap_minutes}."
+            )
+        if self.worklog_round_minutes not in _ALLOWED_ROUND_MINUTES:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES musi być jedną z "
+                f"{_ALLOWED_ROUND_MINUTES}, jest: {self.worklog_round_minutes}."
+            )
+        if not 0 < self.worklog_max_session_hours <= _MAX_WORKLOG_SESSION_HOURS:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS musi być w zakresie "
+                f"0..{_MAX_WORKLOG_SESSION_HOURS}, jest: {self.worklog_max_session_hours}."
+            )
+        if not 1 <= self.worklog_max_range_days <= MAX_WORKLOG_RANGE_DAYS:
+            raise ValueError(
+                "WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS musi być w zakresie "
+                f"1..{MAX_WORKLOG_RANGE_DAYS}, jest: {self.worklog_max_range_days}."
+            )
+        # Nazwę strefy sprawdzamy próbą zbudowania ``ZoneInfo``: literówka (``Europe/Warszawa``)
+        # inaczej wywróciłaby pierwsze wywołanie narzędzia, a nie start procesu.
+        try:
+            ZoneInfo(self.worklog_tz)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(
+                f"WORKMATE_GITHUB_WORKLOG_TZ={self.worklog_tz!r} nie jest znaną strefą IANA "
+                "(np. 'Europe/Warsaw')."
+            ) from exc
+
 
 _JIRA_POLL_FLOOR_S = 30
 _DEFAULT_JIRA_STATE = Path.home() / ".workmate" / "jira_state.json"
@@ -822,26 +918,14 @@ _MAX_JIRA_PER_PAGE = 100
 # Domyślnie ``server`` — wstecznie zgodne. PUBLICZNY: egzekwują go i ``JiraSettings.validate``
 # (poller), i wpięcie drzwi zapisu/tranzycji (``_build_jira_catalog``) — spójny fail-fast.
 JIRA_DEPLOYMENTS = ("server", "cloud")
+# Starszy wariant ``accountId`` na Cloud: 24 znaki hex (nowszy ma kształt ``712020:<uuid>``,
+# więc wychwytuje go obecność dwukropka). Kontrola jest CELOWO luźna — ma odsiać login
+# Server/DC wklejony po przełączeniu wariantu, a nie zgadywać przyszłe formaty Atlassiana.
+_LOOKS_LIKE_ACCOUNT_ID = re.compile(r"[0-9a-fA-F]{24}")
 # Sufit hopów chodzenia po workflow (ADR 0032) — twardy backstop przed nieograniczoną wielo-hop
 # mutacją, gdyby operator wpisał absurd. Domyślnie 1 (single-hop, bezpieczny pilotaż). PUBLICZNY:
 # egzekwują go i ``JiraSettings.validate`` (poller), i wpięcie drzwi zapisu/tranzycji (teams_graph).
 MAX_JIRA_TRANSITION_HOPS = 10
-
-# Strategie autorstwa wpisu czasu (ADR 0034). Zaimplementowana jest DZIŚ tylko ``self``;
-# pozostałe to udokumentowane sloty (``application/worklog_author.py``) — konfiguracja odrzuca
-# je przy starcie, żeby operator nie odkrył braku dopiero w środku rozmowy z użytkownikiem.
-# PUBLICZNE, jak ``JIRA_DEPLOYMENTS``: egzekwuje je i ``JiraSettings.validate`` (poller), i
-# wpięcie drzwi ewidencji (``teams_graph``) — spójny fail-fast po obu stronach.
-WORKLOG_AUTHOR_STRATEGIES = ("self", "per_user_token", "tempo")
-IMPLEMENTED_WORKLOG_STRATEGIES = ("self",)
-# Twarde backstopy niezależne od bramki — chronią przed absurdem wpisanym do .env.
-MAX_WORKLOG_HOURS_PER_ENTRY = 24.0
-MAX_WORKLOG_BACKDATE_DAYS = 90
-MAX_WORKLOG_RANGE_DAYS = 92
-_MAX_WORKLOG_IDLE_GAP_MIN = 720
-_MAX_WORKLOG_RAMP_UP_MIN = 240
-# Ewidencja czasu jest kwantowana — dopuszczamy tylko dzielniki godziny mające sens w praktyce.
-_ALLOWED_ROUND_MINUTES = (1, 5, 10, 15, 30, 60)
 
 
 @dataclass(frozen=True)
@@ -865,12 +949,8 @@ class JiraSettings:
     OFF) — profil „tylko-tranzycja" nie wymaga włączonego zapisu. ``max_transition_hops`` (domyślnie
     1 = single-hop, bezpieczny pilotaż) ogranicza wielo-hop walk; >=2 włącza forced-advance.
 
-    Ewidencja czasu (ADR 0034) ma TRZECIĄ, niezależną bramkę ``enable_jira_worklog`` (domyślnie
-    OFF) i wymaga też źródła commitów (ustawienia GitHub — egzekwuje to wpięcie drzwi, bo tu ich
-    nie widać). ``worklog_allow_on_behalf`` to OSOBNA, węższa bramka na zapis w cudzym imieniu:
-    Jira i tak zapisze autorem konto tokenu, więc cudzy czas trafi do raportów jako nasz — to
-    ma być decyzja operatora, nie efekt uboczny włączenia ewidencji. Pozostałe pola ``worklog_*``
-    to strojenie estymacji (``SessionPolicy``) i sufity bezpieczeństwa zapisu.
+    Ewidencji czasu tu NIE MA: ścieżkę zapisu worklogu (ADR 0034) wycięto, a strojenie estymacji
+    z commitów przeniosło się do ``GithubSettings`` — to czysty odczyt GitHuba (ADR 0035).
     """
 
     base_url: str = ""
@@ -887,17 +967,6 @@ class JiraSettings:
     default_issue_type: str = "Task"
     enable_jira_transition: bool = False
     max_transition_hops: int = 1
-    enable_jira_worklog: bool = False
-    worklog_author_strategy: str = "self"
-    worklog_allow_on_behalf: bool = False
-    worklog_max_hours_per_entry: float = 8.0
-    worklog_max_backdate_days: int = 14
-    worklog_max_range_days: int = 31
-    worklog_idle_gap_minutes: int = 90
-    worklog_ramp_up_minutes: int = 30
-    worklog_round_minutes: int = 15
-    worklog_tz_offset_minutes: int = 120
-    worklog_duplicate_guard: bool = True
 
     @classmethod
     def from_env(cls) -> JiraSettings:
@@ -916,27 +985,62 @@ class JiraSettings:
             default_issue_type=os.environ.get("WORKMATE_JIRA_DEFAULT_ISSUE_TYPE", "Task"),
             enable_jira_transition=_bool_from_env("WORKMATE_JIRA_ENABLE_TRANSITION", default=False),
             max_transition_hops=_int_from_env("WORKMATE_JIRA_MAX_TRANSITION_HOPS", 1),
-            enable_jira_worklog=_bool_from_env("WORKMATE_JIRA_ENABLE_WORKLOG", default=False),
-            worklog_author_strategy=os.environ.get("WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY", "self")
-            .strip()
-            .lower(),
-            worklog_allow_on_behalf=_bool_from_env(
-                "WORKMATE_JIRA_WORKLOG_ALLOW_ON_BEHALF", default=False
-            ),
-            worklog_max_hours_per_entry=_float_from_env("WORKMATE_JIRA_WORKLOG_MAX_HOURS", 8.0),
-            worklog_max_backdate_days=_int_from_env("WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS", 14),
-            worklog_max_range_days=_int_from_env("WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS", 31),
-            worklog_idle_gap_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES", 90),
-            worklog_ramp_up_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES", 30),
-            worklog_round_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_ROUND_MINUTES", 15),
-            worklog_tz_offset_minutes=_int_from_env("WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES", 120),
-            worklog_duplicate_guard=_bool_from_env(
-                "WORKMATE_JIRA_WORKLOG_DUPLICATE_GUARD", default=True
-            ),
         )
+
+    def validate_limits(self) -> None:
+        """Kontrole NIEZALEŻNE od tego, kto buduje klienta Jiry — wołane z OBU stron.
+
+        ``validate()`` opisuje kontrakt PROCESU POLLERA: bezwarunkowo żąda URL-a, tokenu
+        i listy projektów. Drzwi Teams budują klienta Jiry tylko warunkowo (bramka zapisu
+        lub ewidencji), więc nie mogą wołać całości — wdrożenie bez Jiry przestałoby
+        startować. Tu zostaje to, co obowiązuje ZAWSZE: nazwa wariantu wdrożenia, e-mail
+        na Cloud oraz sufity zdolności mutujących.
+
+        Powód wydzielenia: te sufity są backstopem przed absurdem w ``.env``
+        (``MAX_HOURS=100``, ``TZ_OFFSET_MINUTES=1500``), a egzekwował je wyłącznie proces
+        pollera — czyli NIE ten, który wykonuje zapis. Drzwi Teams obiecywały to
+        w docstringu i nie robiły.
+        """
+        deployment = self.deployment.strip().lower()
+        if deployment not in JIRA_DEPLOYMENTS:
+            raise ValueError(
+                "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
+                f"{self.deployment!r}."
+            )
+        # Cloud uwierzytelnia się Basic auth (email + API token); Server/DC — PAT Bearer (bez
+        # e-maila). Brak e-maila na Cloud = niedziałające auth — twardy błąd startu (fail-fast).
+        if deployment == "cloud" and not self.email:
+            raise ValueError(
+                "WORKMATE_JIRA_DEPLOYMENT=cloud wymaga WORKMATE_JIRA_EMAIL "
+                "(e-mail konta Atlassian do Basic-auth z API tokenem)."
+            )
+        # Na Cloud tożsamość to ``accountId`` (``name``/``key`` usunięte, RODO), na Server/DC —
+        # login PAT. Przełączenie DEPLOYMENT bez podmiany konta CICHO psuje strażnik pętli
+        # self-skip: porównanie aktora zdarzenia z ``self_account`` nigdy nie trafia, więc poller
+        # i drzwi zapisu zaczynają odsyłać sobie nawzajem własne zapisy. Login rozpoznajemy po
+        # tym, że nie ma ani dwukropka (``712020:uuid``), ani kształtu 24 znaków hex.
+        if (
+            deployment == "cloud"
+            and self.self_account
+            and ":" not in self.self_account
+            and not _LOOKS_LIKE_ACCOUNT_ID.fullmatch(self.self_account)
+        ):
+            raise ValueError(
+                f"WORKMATE_JIRA_SELF_ACCOUNT={self.self_account!r} wygląda na login Server/DC, "
+                "a WORKMATE_JIRA_DEPLOYMENT=cloud wymaga accountId (np. '712020:4788230b-…' "
+                "albo 24 znaki hex) — inaczej strażnik pętli self-skip po cichu przestaje działać."
+            )
+        # Sufit hopów w rozsądnym zakresie (1 = single-hop; >1 = wielo-hop forced-advance).
+        # Walidujemy zawsze — absurd (0, ujemna, ogromna) to twardy błąd niezależnie od bramki.
+        if not 1 <= self.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS:
+            raise ValueError(
+                "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
+                f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
+            )
 
     def validate(self) -> None:
         """Twardy błąd startu, gdy brak URL/tokenu/projektów, złe limity lub sprzeczny zapis."""
+        self.validate_limits()
         missing = [
             name
             for name, value in (
@@ -950,19 +1054,6 @@ class JiraSettings:
                 "Drzwi Jira wymagają URL i tokenu: brakuje "
                 + ", ".join(missing)
                 + " w środowisku/.env."
-            )
-        deployment = self.deployment.strip().lower()
-        if deployment not in JIRA_DEPLOYMENTS:
-            raise ValueError(
-                "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
-                f"{self.deployment!r}."
-            )
-        # Cloud uwierzytelnia się Basic auth (email + API token); Server/DC — PAT Bearer (bez
-        # e-maila). Brak e-maila na Cloud = niedziałające auth — twardy błąd startu (fail-fast).
-        if deployment == "cloud" and not self.email:
-            raise ValueError(
-                "WORKMATE_JIRA_DEPLOYMENT=cloud wymaga WORKMATE_JIRA_EMAIL "
-                "(e-mail konta Atlassian do Basic-auth z API tokenem)."
             )
         if not self.watch_projects:
             raise ValueError(
@@ -1006,91 +1097,6 @@ class JiraSettings:
             raise ValueError(
                 "WORKMATE_JIRA_ENABLE_TRANSITION=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
                 "(konto PAT — strażnik pętli self-skip)."
-            )
-        # Sufit hopów w rozsądnym zakresie (1 = single-hop; >1 = wielo-hop forced-advance).
-        # Walidujemy zawsze — absurd (0, ujemna, ogromna) to twardy błąd niezależnie od bramki.
-        if not 1 <= self.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS:
-            raise ValueError(
-                "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
-                f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {self.max_transition_hops}."
-            )
-        self._validate_worklog()
-
-    def _validate_worklog(self) -> None:
-        """Reguły ewidencji czasu (ADR 0034) — te same klasy fail-fast co zapis i tranzycja.
-
-        Zakresy liczbowe i nazwę strategii walidujemy ZAWSZE, nie tylko przy włączonej bramce:
-        literówka w ``.env`` nie może spać do dnia, w którym ktoś przestawi flagę.
-        """
-        # Ewidencja to zdolność mutująca — potrzebuje projektu (strażnik klucza) i konta
-        # (strażnik pętli oraz „kto jest self" dla strategii autorstwa). Ta sama para co zapis.
-        if self.enable_jira_worklog and not self.write_project:
-            raise ValueError(
-                "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga WORKMATE_JIRA_WRITE_PROJECT "
-                "(strażnik projektu — wpis czasu trafia tylko do swojego projektu)."
-            )
-        if self.enable_jira_worklog and not self.self_account:
-            raise ValueError(
-                "WORKMATE_JIRA_ENABLE_WORKLOG=true wymaga WORKMATE_JIRA_SELF_ACCOUNT "
-                "(konto tokenu — strażnik pętli i podstawa strategii autorstwa)."
-            )
-        if self.worklog_author_strategy not in WORKLOG_AUTHOR_STRATEGIES:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_AUTHOR_STRATEGY musi być jedną z "
-                f"{', '.join(WORKLOG_AUTHOR_STRATEGIES)}, jest: {self.worklog_author_strategy!r}."
-            )
-        # Slot wybrany przy WŁĄCZONEJ bramce = narzędzie, które padnie dopiero przy pierwszym
-        # zapisie. Lepiej nie wystartować, niż obiecać zdolność, której nie ma (ADR 0034).
-        if (
-            self.enable_jira_worklog
-            and self.worklog_author_strategy not in IMPLEMENTED_WORKLOG_STRATEGIES
-        ):
-            raise ValueError(
-                f"strategia autorstwa {self.worklog_author_strategy!r} jest udokumentowanym "
-                "SZKIELETEM, jeszcze niezaimplementowanym (ADR 0034) — użyj 'self'."
-            )
-        if not 0 < self.worklog_max_hours_per_entry <= MAX_WORKLOG_HOURS_PER_ENTRY:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_MAX_HOURS musi być w zakresie "
-                f"0..{MAX_WORKLOG_HOURS_PER_ENTRY}, jest: {self.worklog_max_hours_per_entry}."
-            )
-        if not 0 <= self.worklog_max_backdate_days <= MAX_WORKLOG_BACKDATE_DAYS:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_MAX_BACKDATE_DAYS musi być w zakresie "
-                f"0..{MAX_WORKLOG_BACKDATE_DAYS}, jest: {self.worklog_max_backdate_days}."
-            )
-        if not 1 <= self.worklog_max_range_days <= MAX_WORKLOG_RANGE_DAYS:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_MAX_RANGE_DAYS musi być w zakresie "
-                f"1..{MAX_WORKLOG_RANGE_DAYS}, jest: {self.worklog_max_range_days}."
-            )
-        if not 5 <= self.worklog_idle_gap_minutes <= _MAX_WORKLOG_IDLE_GAP_MIN:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES musi być w zakresie "
-                f"5..{_MAX_WORKLOG_IDLE_GAP_MIN}, jest: {self.worklog_idle_gap_minutes}."
-            )
-        if not 0 <= self.worklog_ramp_up_minutes <= _MAX_WORKLOG_RAMP_UP_MIN:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES musi być w zakresie "
-                f"0..{_MAX_WORKLOG_RAMP_UP_MIN}, jest: {self.worklog_ramp_up_minutes}."
-            )
-        # Rozbieg dłuższy niż przerwa kończąca sesję dawałby estymacje NACHODZĄCE na siebie
-        # (doliczony czas sprzed sesji sięgałby w poprzednią) — cichy bezsens, więc odrzucamy.
-        if self.worklog_ramp_up_minutes > self.worklog_idle_gap_minutes:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_RAMP_UP_MINUTES nie może przekraczać "
-                "WORKMATE_JIRA_WORKLOG_IDLE_GAP_MINUTES (estymacje sesji zachodziłyby na siebie): "
-                f"{self.worklog_ramp_up_minutes} > {self.worklog_idle_gap_minutes}."
-            )
-        if self.worklog_round_minutes not in _ALLOWED_ROUND_MINUTES:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_ROUND_MINUTES musi być jedną z "
-                f"{_ALLOWED_ROUND_MINUTES}, jest: {self.worklog_round_minutes}."
-            )
-        if not -720 <= self.worklog_tz_offset_minutes <= 840:
-            raise ValueError(
-                "WORKMATE_JIRA_WORKLOG_TZ_OFFSET_MINUTES musi być w zakresie -720..840, "
-                f"jest: {self.worklog_tz_offset_minutes}."
             )
 
 
@@ -1206,9 +1212,11 @@ _ALLOWED_WORKLOGI_SOURCES = ("json",)
 class WorklogiSettings:
     """Konfiguracja drzwi cotygodniowych kart czasu (ADR 0035).
 
-    Przebieg: w ``run_weekday`` o ``run_hour`` bierze godziny za mijający tydzień, generuje arkusz
-    importu WorklogPRO per osoba i wysyła jej prywatną wiadomość na Teams. Domyślnie WYŁĄCZONY
-    (``enabled``) i dodatkowo w trybie PRÓBNYM (``dry_run``) — arkusze powstają, wiadomości nie.
+    Przebieg: w ``run_weekday`` o ``run_hour`` bierze godziny za tydzień ZAMKNIĘTY (poprzedni
+    pon.–ndz.), generuje arkusz importu WorklogPRO per osoba i wysyła jej prywatną wiadomość na
+    Teams. Domyślnie WYŁĄCZONY (``enabled``) i dodatkowo w trybie PRÓBNYM (``dry_run``) — arkusze
+    powstają, wiadomości nie. Tryb bojowy wymaga ponadto ``headers_confirmed``: nagłówki arkusza
+    są HIPOTEZĄ, a WorklogPRO dopasowuje kolumny po nazwie.
 
     Zdolność stoi na dwóch nogach: godziny (``hours_source``) i tożsamości (``identities_path``
     + Graph po ``team_id``). Braku ustawień GitHuba/Teams ta klasa nie widzi — egzekwuje je
@@ -1217,6 +1225,7 @@ class WorklogiSettings:
 
     enabled: bool = False
     dry_run: bool = True
+    headers_confirmed: bool = False
     output_dir: Path = Path()
     identities_path: Path = Path()
     team_id: str = ""
@@ -1237,6 +1246,7 @@ class WorklogiSettings:
         return cls(
             enabled=_bool_from_env("WORKMATE_WORKLOGI_ENABLED", default=False),
             dry_run=_bool_from_env("WORKMATE_WORKLOGI_DRY_RUN", default=True),
+            headers_confirmed=_bool_from_env("WORKMATE_WORKLOGI_HEADERS_CONFIRMED", default=False),
             output_dir=_path_from_env("WORKMATE_WORKLOGI_OUTPUT_DIR", Path()),
             identities_path=_path_from_env("WORKMATE_WORKLOGI_IDENTITIES", Path()),
             team_id=os.environ.get("WORKMATE_WORKLOGI_TEAM_ID", "").strip(),
@@ -1291,7 +1301,26 @@ class WorklogiSettings:
                 f"mapa tożsamości nie istnieje: {self.identities_path} — bez niej NIKT nie "
                 "dostanie arkusza (fail-closed, ADR 0035)."
             )
+        self._validate_headers_confirmed()
         self._validate_output_dir(data_dir)
+
+    def _validate_headers_confirmed(self) -> None:
+        """Tryb BOJOWY wymaga POTWIERDZONYCH nagłówków WorklogPRO; próbny działa bez tego.
+
+        ``WORKLOGPRO_HEADERS`` pochodzi z dokumentacji producenta, nie z kreatora importu tej
+        instancji — a WorklogPRO dopasowuje kolumny PO NAZWIE, więc literówka unieważnia KAŻDY
+        wygenerowany plik. Dotąd ta hipoteza żyła wyłącznie w komentarzu, czyli pierwsze
+        uruchomienie bojowe mogło rozesłać kilkanaście bezużytecznych arkuszy, zanim ktokolwiek
+        by to zauważył. Flaga zamienia cichą hipotezę w świadomą decyzję operatora, NIE blokując
+        przebiegu na sucho — bo to właśnie on ma posłużyć do porównania z szablonem.
+        """
+        if not self.dry_run and not self.headers_confirmed:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_DRY_RUN=false wymaga WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true. "
+                "Nagłówki arkusza są HIPOTEZĄ z dokumentacji producenta: pobierz szablon "
+                "(Apps → WorklogPRO → Import worklogs), porównaj z WORKLOGPRO_HEADERS i dopiero "
+                "wtedy przestaw flagę — procedura w docs/how-to/worklogi-weekly.md (Etap 0)."
+            )
 
     def _validate_ranges(self) -> None:
         """Zakresy liczbowe i rozwiązywalność strefy — sprawdzane zawsze, nie tylko pod bramką."""
@@ -1330,11 +1359,14 @@ class WorklogiSettings:
             )
 
     def _validate_output_dir(self, data_dir: Path) -> None:
-        """Katalog arkuszy MUSI leżeć poza bazą wiedzy — wzorzec ``WorkspaceSettings`` (ADR 0018).
+        """Katalog arkuszy MUSI leżeć poza bazą wiedzy ORAZ poza repozytorium.
 
-        Arkusze to artefakty operacyjne z danymi osobowymi (kto ile pracował). W ``data/`` trafiłyby
-        do bazy, którą agent czyta i indeksuje — czyli cudze godziny wyciekłyby do odpowiedzi
-        modelu. Osobny inwariant niż izolacja osób, ta sama klasa błędu.
+        Dwa różne wycieki, jedna kontrola. W ``data/`` (wzorzec ``WorkspaceSettings``, ADR 0018)
+        arkusze trafiłyby do bazy, którą agent czyta i indeksuje — cudze godziny wyszłyby
+        w odpowiedzi modelu. Gdziekolwiek indziej w repo (``OUTPUT_DIR=arkusze``) lądują
+        w drzewie roboczym, gotowe do ``git add .`` — imienne godziny w publicznej historii
+        gita są nieusuwalne w praktyce. Dokumentacja obiecywała „poza data/ I poza repo"
+        od początku; kontrola sprawdzała tylko pierwszą połowę.
         """
         resolved_out = self.output_dir.resolve()
         resolved_data = data_dir.resolve()
@@ -1343,4 +1375,17 @@ class WorklogiSettings:
                 f"WORKMATE_WORKLOGI_OUTPUT_DIR nie może leżeć wewnątrz katalogu danych "
                 f"({resolved_data}) — arkusze z godzinami ludzi to nie baza wiedzy, "
                 f"jest: {resolved_out}."
+            )
+        # Gdy kodu nie da się umiejscowić w repozytorium (wheel w venv, obraz kontenera), nie ma
+        # czego pilnować — pomijamy kontrolę zamiast porównywać z katalogiem roboczym procesu.
+        # ``_find_repo_root`` degraduje do ``cwd``, więc bez tego odrzucalibyśmy dowolny katalog
+        # pod CWD z komunikatem mówiącym „wewnątrz repozytorium": fałszywy alarm z mylącym powodem.
+        repo_root = _repo_root_or_none(Path(__file__).resolve())
+        if repo_root is not None and (
+            resolved_out == repo_root or repo_root in resolved_out.parents
+        ):
+            raise ValueError(
+                f"WORKMATE_WORKLOGI_OUTPUT_DIR nie może leżeć wewnątrz repozytorium "
+                f"({repo_root}) — arkusze z imiennymi godzinami trafiłyby do drzewa roboczego "
+                f"i pierwszego 'git add .', jest: {resolved_out}."
             )

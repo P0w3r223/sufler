@@ -1,7 +1,8 @@
-"""Testy katalogu narzędzi ewidencji czasu (ADR 0034).
+"""Testy katalogu narzędzia propozycji czasu (ADR 0034, część odczytowa).
 
-Katalog jest cienki, ale niesie dwa inwarianty warte przypięcia: koperta zamienia ``WriteError``
-w ``{"error": ...}`` (jedna zła prośba nie wywraca tury) oraz opis narzędzia = docstring.
+Katalog jest cienki, ale niesie inwarianty warte przypięcia: koperta zamienia
+``InvalidRequestError`` w ``{"error": ...}`` (jedna zła prośba nie wywraca tury), opis narzędzia
+= docstring, a po wycięciu ścieżki zapisu powierzchnia ma być JEDNONARZĘDZIOWA i tylko odczytowa.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from typing import Any
 
 from workmate.core.application.tools import build_worklog_catalog
 from workmate.core.domain.worklog import SessionPolicy, build_proposal
-from workmate.core.errors import WriteError
+from workmate.core.errors import InvalidRequestError
 
 
 class _FakeWorklogService:
@@ -27,41 +28,27 @@ class _FakeWorklogService:
             raise self.error
         return build_proposal([], since=since, until=until, policy=SessionPolicy())
 
-    def log_jira_worklog(
-        self,
-        issue_key: str,
-        hours: float,
-        on: date,
-        comment: str = "",
-        on_behalf_of: str = "",
-        display_name: str = "",
-    ) -> dict[str, Any]:
-        self.calls.append((issue_key, hours, on, comment, on_behalf_of, display_name))
-        if self.error:
-            raise self.error
-        return {"logged": True, "issue_key": issue_key}
-
 
 def _catalog(error: Exception | None = None):
     service = _FakeWorklogService(error)
     return service, {spec.name: spec for spec in build_worklog_catalog(service)}  # type: ignore[arg-type]
 
 
-def test_catalog_exposes_exactly_the_two_worklog_tools() -> None:
+def test_catalog_exposes_only_the_read_tool() -> None:
+    """Ścieżka zapisu wycięta — obecność ``log_jira_worklog`` byłaby regresją, nie dodatkiem."""
     _, specs = _catalog()
-    assert set(specs) == {"propose_worklog", "log_jira_worklog"}
+    assert set(specs) == {"propose_worklog"}
 
 
-def test_descriptions_come_from_docstrings() -> None:
+def test_description_comes_from_the_docstring() -> None:
     _, specs = _catalog()
     assert "ODCZYT" in specs["propose_worklog"].description
-    assert "NIEODWRACALNY" in specs["log_jira_worklog"].description
 
 
-def test_write_tool_description_warns_about_attribution() -> None:
-    """Model MUSI widzieć w opisie, że ``on_behalf_of`` nie zmienia autora w Jirze."""
+def test_description_tells_the_model_that_nothing_can_be_written() -> None:
+    """Model musi wiedzieć, że nie ma dokąd zapisać godzin — inaczej będzie szukał narzędzia."""
     _, specs = _catalog()
-    assert "konto tokenu" in specs["log_jira_worklog"].description
+    assert "człowiek" in specs["propose_worklog"].description
 
 
 def test_proposal_is_serialized_to_plain_json() -> None:
@@ -71,19 +58,12 @@ def test_proposal_is_serialized_to_plain_json() -> None:
     assert result["sessions"] == []
 
 
-def test_write_error_is_enveloped_not_raised() -> None:
-    _, specs = _catalog(WriteError("klucz odrzucony"))
-    assert specs["log_jira_worklog"].fn("OPS-1", 2.0, date(2026, 7, 19)) == {
-        "error": "klucz odrzucony"
-    }
-
-
-def test_read_error_is_enveloped_too() -> None:
-    _, specs = _catalog(WriteError("zakres odrzucony"))
+def test_read_error_is_enveloped_not_raised() -> None:
+    _, specs = _catalog(InvalidRequestError("zakres odrzucony"))
     assert "error" in specs["propose_worklog"].fn(date(2026, 7, 13), date(2026, 7, 19))
 
 
-def test_write_tool_forwards_all_arguments() -> None:
+def test_arguments_are_forwarded() -> None:
     service, specs = _catalog()
-    specs["log_jira_worklog"].fn("WT-1", 1.5, date(2026, 7, 19), "opis", "acc-1", "Mikołaj")
-    assert service.calls[0] == ("WT-1", 1.5, date(2026, 7, 19), "opis", "acc-1", "Mikołaj")
+    specs["propose_worklog"].fn(date(2026, 7, 13), date(2026, 7, 19), "P0w3r223")
+    assert service.calls[0] == (date(2026, 7, 13), date(2026, 7, 19), "P0w3r223")
