@@ -3,7 +3,7 @@
 # Obraz usługi powiadomienia-teams. Wielostopniowy: zależności i testy zostają w warstwach
 # pośrednich, do finalnego obrazu trafia tylko gotowe środowisko i kod.
 #
-# Budowanie:  docker build -t powiadomienia-teams:0.2.0 .
+# Budowanie:  docker build -t powiadomienia-teams:0.2.1 .
 # Testy biegną W TRAKCIE budowania — obraz nie powstanie, jeśli któryś padnie (patrz etap `test`).
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ HEALTHCHECK --interval=5m --timeout=15s --start-period=3m --retries=3 \
 # żeby ustalić, co właściwie działa, gdy tagi zostały nadpisane albo zdublowane. Deklaracja stoi TUŻ przed
 # LABEL celowo: `ARG` unieważnia cache wszystkich kolejnych warstw, więc wyżej kosztowałaby pełne
 # `apt-get update && upgrade` przy każdym podbiciu wersji.
-ARG WERSJA=0.2.0
+ARG WERSJA=0.2.1
 
 LABEL org.opencontainers.image.title="powiadomienia-teams" \
       org.opencontainers.image.description="Cotygodniowe przypomnienia o zmianach (Microsoft Shifts)" \

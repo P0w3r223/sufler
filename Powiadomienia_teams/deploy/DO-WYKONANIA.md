@@ -1,8 +1,10 @@
 # Do wykonania, zanim obraz zadziała na serwerze
 
-Stan na 2026-07-21. Obraz `powiadomienia-teams:0.2.0` jest **zbudowany i przetestowany** (243 testy
-w środku obrazu, przebieg próbny przeciwko prawdziwemu Graphowi przeszedł). Poniższe punkty to
-wyłącznie to, czego brakuje **po stronie tenanta i konfiguracji** — nie kodu.
+Stan na 2026-07-22. Aktualna wersja to **0.2.1** — obraz `0.2.0` z 21.07 jest NIEAKTUALNY i nie
+należy go uruchamiać (ADR 0003: wygaszanie bez dowodu; szczegóły w README-docker.md, „Znane
+ograniczenia"). Obraz 0.2.1 buduje się na serwerze z nowej paczki źródłowej; 259 testów biegnie
+w trakcie budowania. Poniższe punkty to poza tym wyłącznie to, czego brakuje **po stronie tenanta
+i konfiguracji** — nie kodu.
 
 Kolejność ma znaczenie: krok 2 nie da się wykonać bez 1, a 5 bez 3.
 

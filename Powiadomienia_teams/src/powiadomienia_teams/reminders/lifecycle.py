@@ -6,12 +6,30 @@ testowalna. Wygaśnięcie mierzymy od OSTATNIEJ AKTYWNOŚCI (watermark), a nie o
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Protocol, TypeVar
 
 from powiadomienia_teams.graph.mapping import parse_graph_datetime
 from powiadomienia_teams.state import APPLIED, DECLINED, EXPIRED, PendingReminder
 
 _TERMINAL = frozenset({APPLIED, DECLINED, EXPIRED})
+
+
+class ReadOutcome(Enum):
+    """Co ustalił odczyt czatu tej osoby w BIEŻĄCYM przebiegu.
+
+    To przesłanka orzeczenia o wygaśnięciu, nie szczegół techniczny: komunikat domknięcia mówi
+    „Nie dostałem odpowiedzi", czyli twierdzi coś o ZACHOWANIU PRACOWNIKA. Wolno je wypowiedzieć
+    wyłącznie wtedy, gdy naprawdę zajrzeliśmy do czatu i naprawdę nic tam nie było.
+    """
+
+    HANDLED = "handled"  # była nowa wiadomość i została obsłużona
+    NOTHING_NEW = "nothing_new"  # odczyt się powiódł, nowej wiadomości nie ma
+    # Nic pewnego nie ustaliliśmy: odczyt czatu padł ALBO obsługa wywróciła się w połowie. Jedno
+    # i drugie znaczy to samo dla wygaszania — nie ma podstaw, by twierdzić „nie odpisał".
+    UNKNOWN = "unknown"
 
 
 def _anchor(pending: PendingReminder) -> datetime | None:
@@ -32,9 +50,58 @@ def _anchor(pending: PendingReminder) -> datetime | None:
 
 
 def is_expired(pending: PendingReminder, now: datetime, window_hours: int) -> bool:
-    """Czy minęło okno odpowiedzi (brak aktywności przez ``window_hours``). Bez kotwicy → False."""
+    """Czy minął TERMIN okna (brak aktywności przez ``window_hours``). Bez kotwicy → False.
+
+    Czysty predykat czasu — sam w sobie NIE wystarcza do wygaszenia; patrz ``should_expire``.
+    """
     anchor = _anchor(pending)
     return anchor is not None and now >= anchor + timedelta(hours=window_hours)
+
+
+def should_expire(
+    pending: PendingReminder, now: datetime, window_hours: int, *, read: ReadOutcome
+) -> bool:
+    """Czy wolno ORZEC wygaśnięcie: minął termin ORAZ mamy na to dowód z udanego odczytu.
+
+    Sam termin nie wystarcza, bo mierzymy go znacznikami czasu wiadomości (czas serwera Graph),
+    a orzekamy o czymś innym: że pracownik miał szansę odpowiedzieć i tego nie zrobił. Te dwie
+    rzeczy rozjeżdżają się, gdy usługa NIE SŁUCHAŁA — po przestoju dłuższym niż okno (utrata
+    sesji czeka na ręczne ``--login``) budżet ciszy jest wypalony, choć nikt nie milczał.
+
+    Bez tego warunku pierwszy przebieg po przestoju wysyłał w JEDNYM cyklu prośbę o potwierdzenie
+    i zaraz po niej „Nie dostałem odpowiedzi", a pending lądował w terminalnym ``EXPIRED`` — więc
+    „tak" pracownika nie było już nigdy czytane. ``UNKNOWN`` blokuje wygaszenie z tego samego
+    powodu: awaria odczytu czatu to brak dowodu, a nie dowód braku.
+    """
+    if read is not ReadOutcome.NOTHING_NEW:
+        return False
+    return is_expired(pending, now, window_hours)
+
+
+class _MaZakonczenie(Protocol):
+    """Cokolwiek, co ma koniec w czasie — ``Shift`` i ``TimeOff`` spełniają to strukturalnie."""
+
+    @property
+    def end(self) -> datetime: ...
+
+
+_T = TypeVar("_T", bound=_MaZakonczenie)
+
+
+def still_writable(items: Iterable[_T], now: datetime) -> tuple[_T, ...]:
+    """Zostaw wpisy, które jeszcze się nie skończyły — reszty nie ma po co zapisywać.
+
+    Okno odpowiedzi jest obietnicą wobec pracownika, ale użyteczność zapisu ma własny termin.
+    Kryterium to KONIEC wpisu, nie początek: zmiana trwająca w tej chwili jest nadal prawdziwa
+    i warto mieć ją w grafiku, natomiast zmiana zakończona wczoraj zaśmieca grafik dniem, który
+    minął — a to menedżer czyta jako stan faktyczny.
+
+    Filtr stoi TU, a nie w regule zamykającej całą rozmowę, bo tamta jest zbyt tępa: zamykała
+    temat po czasie ODCZYTU, więc „tak" wysłane o 23:58 przepadało, gdy najbliższy przebieg
+    wypadał po północy — mimo że nie minął jeszcze ani jeden dzień. Ratujemy część tygodnia,
+    która wciąż jest przed nami, zamiast odrzucać wszystko albo zapisywać przeszłość.
+    """
+    return tuple(item for item in items if item.end > now)
 
 
 def prune_terminal(

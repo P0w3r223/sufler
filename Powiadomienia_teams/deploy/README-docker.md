@@ -309,6 +309,22 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 | Pracownik nie dostał prośby o potwierdzenie | Nieudana wysyłka nie jest ponawiana; status już zmieniony | Napisz do niego ręcznie |
 | `--login` przy działającej usłudze | Omija blokadę jednej instancji i pisze do cache równolegle | Zawsze `docker compose stop` przed logowaniem (krok 4) |
 
-Naprawione w tej wersji, wcześniej wymienione jako ograniczenia: brak timeoutu Anthropica,
+Naprawione w 0.2.0, wcześniej wymienione jako ograniczenia: brak timeoutu Anthropica,
 `Retry-After` bez sufitu, stan nadpisywany bez kopii, ciche ucięcie paginacji, JSON złego kształtu
 kończący się pętlą zamiast prośbą o doprecyzowanie.
+
+Naprawione w **0.2.1** ([ADR 0003](../docs/adr/0003-expiry-requires-evidence.md)): po przestoju
+dłuższym niż okno odpowiedzi (np. utrata sesji przez weekend) pierwszy przebieg po powrocie wysyłał
+pracownikowi prośbę o potwierdzenie i zaraz po niej „Nie dostałem odpowiedzi", a temat zamykał
+terminalnie — jego „tak" nie było już nigdy czytane. Ta sama wada zamieniała awarię odczytu czatu
+w ciche wygaszenie. Wygaszenie wymaga teraz DOWODU: udanego odczytu, który nic nie przyniósł.
+Potwierdzenie w trakcie tygodnia docelowego zapisuje tę część tygodnia, która jeszcze przed nami —
+dni już zakończone są odsiewane, a gdy nie zostaje nic, temat domyka własny, prawdziwy komunikat
+zamiast „zapisałem" albo „nie dostałem odpowiedzi". Osoba, która odpisała, ale nie potwierdziła,
+też ma odtąd własny komunikat. W podsumowaniu dla administratora rubryka „wygasłe bez odpowiedzi"
+nazywa się teraz **„zamknięte bez zapisu"** — obejmuje trzy różne powody, więc stara etykieta
+wprowadzała w błąd przy decyzji, do kogo napisać ręcznie.
+
+> `POWIADOMIENIA_SEND_EXPIRY_MESSAGE=false` wycisza komunikaty tematów, które gasną **same**
+> (brak odpowiedzi, brak potwierdzenia). Nie wycisza odpowiedzi na jawne „tak" pracownika —
+> także wtedy, gdy odpowiedzią jest „nie ma już czego zapisać".

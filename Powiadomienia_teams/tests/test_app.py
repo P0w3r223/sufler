@@ -732,6 +732,176 @@ def test_late_reply_within_window_is_processed_not_expired(tmp_path: Path):
     assert all("nic nie zapisuję" not in html for _c, html in client.sent)  # brak EXPIRED_TEXT
 
 
+def _po_przestoju(state_path: Path) -> None:
+    """Stan sprzed przestoju: nudge w piątek, cisza usługi, tydzień docelowy jeszcze nie ruszył."""
+    nudge = "2026-07-17T09:00:00Z"  # piątek
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
+                status="awaiting_reply", watermark=nudge, nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+
+# Tick w niedzielę 12:00 UTC — 51 h po nudge'u (okno 48 h minęło), ale wciąż daleko przed granicą
+# strażnika tygodnia, która biegnie w czasie LOKALNYM: poniedziałek 00:00 w Warszawie to 22:00 UTC
+# w niedzielę. Margines jest tu celowo szeroki z obu stron (3 h po oknie, 10 h przed strażnikiem),
+# żeby te testy mierzyły ścieżkę dowodu, a nie odległość od granicy strefy czasowej.
+_PO_PRZESTOJU = datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc)
+
+
+def test_reply_read_after_window_is_honoured_not_expired(tmp_path: Path):
+    # REGRESJA (przestój usługi dłuższy niż okno): pracownik odpisał w oknie, ale nikt nie słuchał.
+    # Pierwszy przebieg po powrocie MUSI obsłużyć odpowiedź i NIE wygasić jej w tym samym cyklu —
+    # inaczej dostaje prośbę o potwierdzenie i zaraz po niej „nie dostałem odpowiedzi", a jego
+    # „tak" nie zostanie już nigdy odczytane (EXPIRED jest terminalny).
+    state_path = tmp_path / "state.json"
+    _po_przestoju(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-17T10:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings(state_path), client, llm, now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM  # obsłużona, nie wygaszona
+    assert len(client.sent) == 1  # WYŁĄCZNIE prośba o potwierdzenie
+    assert all("nic nie zapisuję" not in html for _c, html in client.sent)
+
+
+def test_failed_chat_read_does_not_expire(tmp_path: Path):
+    # REGRESJA: awaria odczytu czatu to BRAK DOWODU, a nie dowód braku. Bez tego awaria Graph
+    # wygaszała ludzi, których czatu nigdy nie udało się przeczytać, i mówiła im nieprawdę
+    # („Nie dostałem odpowiedzi") — cicha utrata grafiku na cały tydzień.
+    state_path = tmp_path / "state.json"
+    _po_przestoju(state_path)
+
+    class _OdczytPada(_FakeClient):
+        def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
+            raise RuntimeError("Graph 500")
+
+    client = _OdczytPada({})
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == "awaiting_reply"  # otwarty, czeka na kolejny tick
+    assert client.sent == []  # ani domknięcia, ani żadnej innej wiadomości
+
+
+def test_genuine_silence_still_expires_after_successful_read(tmp_path: Path):
+    # Kontrola w drugą stronę: udany odczyt, który NIC nie przyniósł, wygasza normalnie —
+    # warunek dowodu nie może zamienić wygaszania w martwy przepis.
+    state_path = tmp_path / "state.json"
+    _po_przestoju(state_path)
+    client = _FakeClient({"chat1": []})  # odczyt się udał, czat pusty
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == "expired"
+    assert len(client.sent) == 1
+    assert "Nie dostałem odpowiedzi" in client.sent[0][1]  # tutaj to zdanie jest PRAWDZIWE
+
+
+def test_no_confirm_gets_its_own_message_not_no_reply(tmp_path: Path):
+    # Pracownik ODPISAŁ (godzinę po prośbie), zabrakło tylko „tak". „Nie dostałem odpowiedzi"
+    # zarzucałoby mu milczenie, którego nie było — to osobny powód i osobny komunikat.
+    state_path = tmp_path / "state.json"
+    odpowiedz = "2026-07-17T10:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
+                status=AWAITING_CONFIRM, watermark=odpowiedz, nudged_at="2026-07-17T09:00:00Z",
+                resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    client = _FakeClient({"chat1": []})  # udany odczyt, cisza po prośbie o potwierdzenie
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == "expired"
+    assert client.created == []  # brak „tak" → ŻADNEGO zapisu
+    assert len(client.sent) == 1
+    assert "potwierdzenia" in client.sent[0][1]
+    assert "Nie dostałem odpowiedzi" not in client.sent[0][1]
+
+
+def _potwierdzenie_na(state_path: Path, resolved: list[dict[str, Any]]) -> None:
+    """Pending czekający na »tak«, z ustalonym grafikiem na tydzień od 2026-07-20."""
+    odpowiedz = "2026-07-19T10:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
+                status=AWAITING_CONFIRM, watermark=odpowiedz, nudged_at="2026-07-17T09:00:00Z",
+                resolved=resolved,
+            )
+        },
+    )
+
+
+# Wtorek 12:00 UTC tygodnia docelowego. Poniedziałkowa zmiana (08:00–16:00 lokalnie = 06:00–14:00
+# UTC) jest wtedy zamknięta i przepadła; piątkowa wciąż przed nami.
+_WTOREK = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+
+
+def test_confirmation_writes_only_the_days_still_ahead(tmp_path: Path):
+    # Sedno ADR 0003: „tak" potwierdzone w środku tygodnia zapisuje RESZTĘ tygodnia. Nie wszystko
+    # (poniedziałek już był — w grafiku byłby fałszywym stanem faktycznym) i nie nic (piątek
+    # pracownik właśnie zaklepał i ma prawo go dostać).
+    state_path = tmp_path / "state.json"
+    _potwierdzenie_na(state_path, [
+        {"weekday": 0, "start": "08:00", "end": "16:00"},  # poniedziałek — minął
+        {"weekday": 4, "start": "08:00", "end": "16:00"},  # piątek — przed nami
+    ])
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T11:00:00Z", "tak")]})
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_WTOREK)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == APPLIED
+    assert len(client.created) == 1  # WYŁĄCZNIE piątek
+    assert client.created[0].start.astimezone(_settings(state_path).tz).weekday() == 4
+    # I — równie ważne — bot MÓWI, że zapis jest częściowy. „Zapisałem Twoje zmiany" byłoby
+    # nieprawdą wobec poniedziałku, a dziura w grafiku zostałaby niewidoczna dla obu stron.
+    assert "Zapisałem Twoje zmiany" not in client.sent[-1][1]
+    assert "część tygodnia" in client.sent[-1][1]
+
+
+def test_full_write_still_says_plainly_that_everything_is_saved(tmp_path: Path):
+    # Kontrola: gdy NIC nie odpadło, komunikat zostaje ten zwykły. Inaczej rozróżnienie zapisu
+    # częściowego rozmyłoby się w ostrzeżenie wysyłane zawsze — i przestałoby cokolwiek znaczyć.
+    state_path = tmp_path / "state.json"
+    _potwierdzenie_na(state_path, [{"weekday": 4, "start": "08:00", "end": "16:00"}])  # piątek
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T11:00:00Z", "tak")]})
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_WTOREK)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == APPLIED
+    assert len(client.created) == 1
+    assert "Zapisałem Twoje zmiany" in client.sent[-1][1]
+
+
+def test_confirmation_with_nothing_left_closes_with_truthful_message(tmp_path: Path):
+    # Gdy nie zostaje ANI JEDEN dzień, „tak" nie może skończyć się statusem APPLIED i komunikatem
+    # „zapisałem" — bo nic nie zapisano. Powód domknięcia jest inny niż cisza, więc i komunikat
+    # jest inny: EXPIRED_TEXT zarzucałby brak odpowiedzi, a odpowiedź właśnie przyszła.
+    state_path = tmp_path / "state.json"
+    _potwierdzenie_na(state_path, [{"weekday": 0, "start": "08:00", "end": "16:00"}])
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T11:00:00Z", "tak")]})
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_WTOREK)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == "expired"
+    assert client.created == []  # nic nie trafia do grafiku wstecz
+    assert len(client.sent) == 1
+    assert "już się zaczął" in client.sent[0][1]
+    assert "Nie dostałem odpowiedzi" not in client.sent[0][1]
+
+
 def test_expiry_message_suppressed_when_disabled(tmp_path: Path):
     state_path = tmp_path / "state.json"
     old = "2026-07-14T10:00:00Z"
@@ -1216,7 +1386,10 @@ def test_podsumowanie_liczy_statusy_i_idzie_do_administratora(tmp_path: Path):
     assert chat_id == "chat-admin-1"
     assert "oczekuje na odpowiedź: 1" in html
     assert "zapisane grafiki: 1" in html
-    assert "wygasłe bez odpowiedzi: 1" in html
+    # Etykieta celowo NIE mówi „wygasłe bez odpowiedzi": ten sam licznik obejmuje też brak
+    # potwierdzenia i domknięcie „tydzień już trwa" (ADR 0003), a administrator działa na jego
+    # podstawie ręcznie.
+    assert "zamknięte bez zapisu: 1" in html
 
 
 def test_podsumowanie_pomijane_bez_administratora(tmp_path: Path):
