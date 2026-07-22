@@ -313,7 +313,8 @@ Naprawione w 0.2.0, wcześniej wymienione jako ograniczenia: brak timeoutu Anthr
 `Retry-After` bez sufitu, stan nadpisywany bez kopii, ciche ucięcie paginacji, JSON złego kształtu
 kończący się pętlą zamiast prośbą o doprecyzowanie.
 
-Naprawione w **0.2.1** ([ADR 0003](../docs/adr/0003-expiry-requires-evidence.md)): po przestoju
+Naprawione w **0.2.1** (uzasadnienie: ADR 0003 `docs/adr/0003-expiry-requires-evidence.md`
+w repozytorium — paczka wdrożeniowa nie zawiera katalogu `docs/`): po przestoju
 dłuższym niż okno odpowiedzi (np. utrata sesji przez weekend) pierwszy przebieg po powrocie wysyłał
 pracownikowi prośbę o potwierdzenie i zaraz po niej „Nie dostałem odpowiedzi", a temat zamykał
 terminalnie — jego „tak" nie było już nigdy czytane. Ta sama wada zamieniała awarię odczytu czatu
