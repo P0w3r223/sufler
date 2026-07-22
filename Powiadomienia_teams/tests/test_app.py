@@ -124,6 +124,14 @@ def _settings(state_path: Path) -> Settings:
     )
 
 
+# Zegar testów nasłuchu. Atrapy czatu datują wiadomości na 2026-07-19T18:0x, więc godzinę później
+# okno odpowiedzi (48 h) jest jawnie otwarte. Bez wstrzykniętego `now` poll_replies bierze zegar
+# SYSTEMOWY i po 2026-07-21 18:00 UTC wygasza te wpisy jako `expired` — wynik testu zależałby wtedy
+# od DATY URUCHOMIENIA, a że pakiet jest bramką w Dockerfile, budowanie obrazu padałoby samo z
+# siebie, bez żadnej zmiany w kodzie. Wygasanie ma własne testy, z jawnym `now`.
+_NIEDZIELA_19 = datetime(2026, 7, 19, 19, 0, tzinfo=timezone.utc)
+
+
 def test_two_way_flow_reply_confirm_apply(tmp_path: Path):
     state_path = tmp_path / "state.json"
     save_state(
@@ -144,7 +152,7 @@ def test_two_way_flow_reply_confirm_apply(tmp_path: Path):
     llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
 
     # 1. odpowiedź „ok" → interpretacja confirm → prośba o potwierdzenie
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
     after_first = load_state(state_path)["u1"]
     assert after_first.status == AWAITING_CONFIRM
     assert after_first.resolved == [{"weekday": 0, "start": "08:00", "end": "16:00", "theme": None}]
@@ -153,7 +161,7 @@ def test_two_way_flow_reply_confirm_apply(tmp_path: Path):
 
     # 2. „tak" → zapis do Shifts + udostępnienie + status applied
     client.messages["chat1"].append(_msg("u1", "2026-07-19T18:05:00Z", "tak"))
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
     after_second = load_state(state_path)["u1"]
     assert after_second.status == APPLIED
     assert len(client.created) == 1
@@ -178,7 +186,7 @@ def test_affirmative_with_hours_reinterprets_not_applies(tmp_path: Path):
     client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak ale piątek 10-20")]})
     llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":4,"start":"10:00","end":"20:00"}]}')
 
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
     after = load_state(state_path)["u1"]
     assert after.status == AWAITING_CONFIRM  # reinterpretacja, nie zapis
     assert client.created == []
@@ -215,7 +223,13 @@ def test_confirm_with_absence_correction_reinterprets_not_applies(tmp_path: Path
         '{"weekday":4,"start":"09:00","end":"17:00"}],'
         '"time_off":[{"weekday":3,"powod":"nieobecność"}]}'
     )
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    # Ten test stoi na INNYM tygodniu niż reszta pliku (wiadomość z 2026-08-02), więc ma własny
+    # zegar — godzinę po WŁASNEJ wiadomości, tak jak `_NIEDZIELA_19` godzinę po swoich. Chodzi
+    # o spójną oś czasu, nie o samo przejście: z `_NIEDZIELA_19` (dwa tygodnie WCZEŚNIEJ niż
+    # wiadomość) test też by przeszedł, bo `is_expired` daje wtedy False.
+    poll_replies(  # type: ignore[arg-type]
+        settings, client, llm, now=datetime(2026, 8, 2, 19, 0, tzinfo=timezone.utc)
+    )
 
     after = load_state(state_path)["u1"]
     assert after.status == AWAITING_CONFIRM  # reinterpretacja, nie zapis
@@ -246,12 +260,12 @@ def test_write_failure_is_at_most_once(tmp_path: Path):
             raise RuntimeError("500")
 
     client = _FailingClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
-    poll_replies(settings, client, _FakeLlm("{}"))  # type: ignore[arg-type]
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
     after = load_state(state_path)["u1"]
     assert after.status == APPLIED  # commit przed zapisem → nie zostanie ponowione
 
     # ponowny przebieg: brak nowej wiadomości po watermarku → żadnego dubla zapisu
-    poll_replies(settings, client, _FakeLlm("{}"))  # type: ignore[arg-type]
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
     assert client.created == []
     assert len(client.sent) == 1  # tylko komunikat o nieudanym zapisie
 
@@ -447,7 +461,7 @@ def test_llm_free_text_never_relayed_to_employee(tmp_path: Path):
     )
     llm = _FakeLlm('{"action":"unclear","shifts":[],"note":"SEKRETNY-PROMPT-XYZ"}')
 
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
     relayed = "".join(html for _chat, html in client.sent)
     assert "SEKRETNY-PROMPT-XYZ" not in relayed
     assert client.created == []  # nic nie zapisano
@@ -506,7 +520,7 @@ def test_vacation_reply_resolves_reason_at_confirm(tmp_path: Path):
         '{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}],'
         '"time_off":[{"weekday":4,"powod":"urlop"}]}'
     )
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
 
     after = load_state(state_path)["u1"]
     assert after.status == AWAITING_CONFIRM
@@ -543,7 +557,7 @@ def test_whole_week_vacation_without_team_reasons_is_unclear(tmp_path: Path):
         '{"action":"modify","shifts":[],"time_off":['
         '{"weekday":0,"powod":"urlop"},{"weekday":4,"powod":"urlop"}]}'
     )
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
 
     after = load_state(state_path)["u1"]
     assert after.status == "awaiting_reply"  # unclear nie zmienia statusu
@@ -570,7 +584,7 @@ def test_time_off_written_for_addressee_on_confirm(tmp_path: Path):
     settings = _settings(state_path)
     client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
 
-    poll_replies(settings, client, _FakeLlm("{}"))  # type: ignore[arg-type]
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
 
     assert len(client.created) == 1  # zmiana w poniedziałek
     assert len(client.time_off) == 1  # piątek wolny
@@ -602,9 +616,9 @@ def test_reply_referencing_another_person_writes_only_for_addressee(tmp_path: Pa
     # schemat wyjścia modelu nie ma pola użytkownika — zmiany i tak przypisze build_schedule do u1
     llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
 
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]  # interpretacja → awaiting_confirm
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]  # → awaiting_confirm
     client.messages["chat1"].append(_msg("u1", "2026-07-19T18:05:00Z", "tak"))
-    poll_replies(settings, client, llm)  # type: ignore[arg-type]  # potwierdzenie → zapis
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]  # potwierdzenie → zapis
 
     assert client.created  # coś zapisano
     assert all(s.user_id == "u1" for s in client.created)  # wyłącznie adresat, nigdy „Adam"
@@ -629,7 +643,7 @@ def test_decline_ends_listening_without_changes(tmp_path: Path):
     )
     llm = _FakeLlm('{"action":"decline","shifts":[],"time_off":[]}')
 
-    poll_replies(settings, client, llm, now=datetime(2026, 7, 19, 19, 0, tzinfo=timezone.utc))  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
     after = load_state(state_path)["u1"]
     assert after.status == "declined"  # odmowa zapisana jako status terminalny
     assert client.created == [] and client.time_off == []  # NIC nie zapisano
@@ -637,7 +651,9 @@ def test_decline_ends_listening_without_changes(tmp_path: Path):
 
     # Kolejny przebieg: DECLINED jest terminalny → koniec nasłuchu, nowa wiadomość NIE jest czytana.
     client.messages["chat1"].append(_msg("u1", "2026-07-19T20:00:00Z", "a jednak pon 8-16"))
-    poll_replies(settings, client, llm, now=datetime(2026, 7, 19, 21, 0, tzinfo=timezone.utc))  # type: ignore[arg-type]
+    # +2 h: PO tej nowej wiadomości (20:00), żeby test sprawdzał terminalność DECLINED, a nie to,
+    # że wiadomość jest jeszcze w przyszłości względem zegara.
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19 + timedelta(hours=2))  # type: ignore[arg-type]
     assert load_state(state_path)["u1"].status == "declined"  # bez zmian
     assert client.created == [] and len(client.sent) == 1  # brak dalszej reakcji
 
@@ -813,7 +829,7 @@ def test_dry_run_skips_listener(tmp_path: Path):
     )
     dry = Settings(client_id="c", tenant_id="t", team_id="T", state_path=state_path, dry_run=True)
     client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
-    poll_replies(dry, client, _FakeLlm("{}"))  # type: ignore[arg-type]
+    poll_replies(dry, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
     assert client.sent == []  # dry-run: nic nie ruszone
 
 
