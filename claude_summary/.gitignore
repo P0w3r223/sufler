@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.env
+
+# Wynik narzędzia może zawierać prywatną treść promptów — nigdy nie commitować.
+/out/
+summary_*.md
+summary_*.json
