@@ -8,7 +8,7 @@
 #     EKSPORT=1 bash scripts/build-image.sh
 #
 # Inna wersja:
-#     WERSJA=0.2.0 bash scripts/build-image.sh
+#     WERSJA=0.2.1 bash scripts/build-image.sh
 #
 # Budowanie wymaga dostępu do sieci: docker.io (python:3.11-slim + repozytoria Debiana),
 # ghcr.io (uv), PyPI.
@@ -16,7 +16,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-WERSJA="${WERSJA:-0.2.0}"
+WERSJA="${WERSJA:-0.2.1}"
 OBRAZ="powiadomienia-teams:${WERSJA}"
 EKSPORT="${EKSPORT:-0}"
 # Serwer to linux/amd64. Przy budowaniu na miejscu platforma i tak się zgadza; zmienna ma znaczenie

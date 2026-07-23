@@ -19,6 +19,11 @@ a po oknie `reply_window_hours` bez reakcji uprzejmie zamyka temat. Pełny zamys
 - **Nasłuch (ADR 0002):** adaptacyjny backoff (`scheduler/backoff.py`), wygasanie okna odpowiedzi
   i sprzątanie stanu (`reminders/lifecycle.py`), odporny na długie działanie provider tokenu
   (silent-only, `--login` tylko ze startu). Wielozespołowość zaprojektowana (ADR 0001), odłożona.
+- **Wygaszanie po dowodzie (ADR 0003):** temat zamyka się dopiero po UDANYM odczycie czatu, który
+  nic nie przyniósł — przestój usługi ani awaria Graph nie wypalają już cudzego okna odpowiedzi
+  i nie kończą się nieprawdziwym „nie dostałem odpowiedzi". Potwierdzenie w trakcie tygodnia
+  docelowego zapisuje tę część tygodnia, która jeszcze przed nami; dni zakończone są odsiewane,
+  żeby nie wpisywać do grafiku przeszłości.
 
 ## Uruchomienie na żywo
 
@@ -65,7 +70,8 @@ Skopiuj `.env.example` → `.env` i uzupełnij. Zmienne mają prefiks `POWIADOMI
 - `CLIENT_ID`, `TENANT_ID`, `TEAM_ID` — wymagane (tożsamość aplikacji + zespół).
 - **`ONLY_USER_IDS`** — wybór osób: lista AAD user-id po przecinku (puste = wszyscy bez zmian).
 - `RUN_WEEKDAY` (domyślnie `4` = piątek), `RUN_HOUR` (16), `TIMEZONE` (`Europe/Warsaw`).
-- `REPLY_WINDOW_HOURS` (48) — po tylu h ciszy zamknij okno; `SEND_EXPIRY_MESSAGE` (true) — czy
+- `REPLY_WINDOW_HOURS` (48) — po tylu h ciszy zamknij okno (liczone od ostatniej aktywności,
+  a zamknięcie wymaga UDANEGO odczytu czatu — ADR 0003); `SEND_EXPIRY_MESSAGE` (true) — czy
   wysłać wtedy uprzejme domknięcie.
 - `POLL_INTERVAL_S` (10, bazowy odstęp nasłuchu) i `POLL_MAX_INTERVAL_S` (3600, górny limit
   backoffu — nieobecny pracownik = sprawdzanie czatu raz na godzinę; obsłużona odpowiedź

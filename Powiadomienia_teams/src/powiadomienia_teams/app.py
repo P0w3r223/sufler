@@ -31,7 +31,7 @@ from powiadomienia_teams.agent.interpreter import (
     schedule_to_intervals,
 )
 from powiadomienia_teams.config import ConfigError, Settings, TeamContext
-from powiadomienia_teams.domain.models import Member
+from powiadomienia_teams.domain.models import Member, TimeOff, WeekSchedule
 from powiadomienia_teams.graph.auth import (
     AmbiguousAccountError,
     AuthExpiredError,
@@ -44,6 +44,9 @@ from powiadomienia_teams.messages import (
     APPLIED_TEXT,
     DECLINED_TEXT,
     EXPIRED_TEXT,
+    NO_CONFIRM_TEXT,
+    PARTIAL_APPLIED_TEXT,
+    STALE_WEEK_TEXT,
     UNCLEAR_TEXT,
     WRITE_FAILED_TEXT,
     build_confirm_text,
@@ -53,7 +56,12 @@ from powiadomienia_teams.messages import (
 )
 from powiadomienia_teams.reminders.detect import members_without_shifts
 from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
-from powiadomienia_teams.reminders.lifecycle import is_expired, prune_terminal
+from powiadomienia_teams.reminders.lifecycle import (
+    ReadOutcome,
+    prune_terminal,
+    should_expire,
+    still_writable,
+)
 from powiadomienia_teams.reminders.propose import proposal_from_last_week
 from powiadomienia_teams.reminders.replies import (
     is_pure_affirmation,
@@ -202,23 +210,44 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     return missing
 
 
+def _build_writable(
+    pending: st.PendingReminder, tz: ZoneInfo, group_id: str | None, now: datetime
+) -> tuple[WeekSchedule, tuple[TimeOff, ...], int]:
+    """Zbuduj to, co JESZCZE warto zapisać — czysto, bez I/O, żeby dało się to sprawdzić przed
+    nieodwracalnym krokiem.
+
+    Wpisy już zakończone są odsiewane (``still_writable``): tydzień docelowy mógł się zacząć,
+    zanim pracownik potwierdził, a zmiana sprzed dwóch dni wpisana do grafiku jest dla menedżera
+    fałszywym stanem faktycznym. Pusty wynik znaczy „nie ma czego zapisać" i MUSI zostać
+    obsłużony przez wołającego, zanim ustawi APPLIED.
+
+    Trzeci element to LICZBA odsianych wpisów. Bez niej zapis częściowy byłby nie do odróżnienia
+    od pełnego i pracownik dostawałby „zapisałem Twoje zmiany" na komplet, którego nie zapisano —
+    dziura w grafiku niewidoczna dla obu stron.
+    """
+    week_start = date.fromisoformat(pending.week_start)
+    pelny = build_schedule(pending.member_id, week_start, pending.resolved, tz, group_id)
+    # Powody czasu wolnego rozstrzygnięte już przy potwierdzeniu — tu tylko budujemy wpisy
+    # (bez odczytu z Graph w sekcji krytycznej po APPLIED).
+    pelne_time_offs = build_time_offs(pending.member_id, week_start, pending.resolved_time_off, tz)
+    zmiany = still_writable(pelny.shifts, now)
+    time_offs = still_writable(pelne_time_offs, now)
+    pominiete = (len(pelny.shifts) - len(zmiany)) + (len(pelne_time_offs) - len(time_offs))
+    return WeekSchedule(pelny.member_id, pelny.week_start, zmiany), time_offs, pominiete
+
+
 def _apply_schedule(
-    client: GraphClient, ctx: TeamContext, pending: st.PendingReminder, tz: ZoneInfo
+    client: GraphClient,
+    ctx: TeamContext,
+    pending: st.PendingReminder,
+    schedule: WeekSchedule,
+    time_offs: tuple[TimeOff, ...],
 ) -> None:
     """Zapisz ustalony grafik i czas wolny do Shifts (zespół z `ctx`, nie z globalnych ustawień).
 
     ``sharedShift``/``sharedTimeOff`` publikują wpis od razu (potwierdzone smoke-testem), więc
-    osobny ``share`` jest zbędny; pracownik i tak dostaje potwierdzenie na czacie. Powody czasu
-    wolnego są już rozstrzygnięte (``reason_id`` w stanie z etapu potwierdzenia) — tu żadnego
-    odczytu z Graph, żeby nie poszerzać okna awarii po ustawieniu APPLIED.
+    osobny ``share`` jest zbędny; pracownik i tak dostaje potwierdzenie na czacie.
     """
-    week_start = date.fromisoformat(pending.week_start)
-    schedule = build_schedule(
-        pending.member_id, week_start, pending.resolved, tz, ctx.scheduling_group_id
-    )
-    # Powody czasu wolnego rozstrzygnięte już przy potwierdzeniu — tu tylko budujemy wpisy
-    # (bez odczytu z Graph w sekcji krytycznej po APPLIED).
-    time_offs = build_time_offs(pending.member_id, week_start, pending.resolved_time_off, tz)
     # Nigdy nie zapisz nic cudzą tożsamością (obejmuje zmiany i czas wolny).
     ensure_single_owner(pending.member_id, schedule, time_offs)
     for shift in schedule.shifts:
@@ -230,7 +259,11 @@ def _apply_schedule(
 def poll_replies(
     settings: Settings, client: GraphClient, llm: LlmClient, *, now: datetime | None = None
 ) -> PollOutcome:
-    """Wygaś ciche okna, potem przetwórz odpowiedzi: interpretuj → potwierdź → (po »tak«) zapisz.
+    """Przetwórz odpowiedzi (interpretuj → potwierdź → po »tak« zapisz), POTEM wygaś ciche okna.
+
+    Kolejność jest niezmiennikiem bezpieczeństwa, nie szczegółem: odczyt MUSI wyprzedzać
+    wygaszanie, inaczej ktoś, kto właśnie odpisał, dostaje domknięcie „nie dostałem odpowiedzi"
+    w tym samym przebiegu (ADR 0003).
 
     Każdy pending obsługiwany jest w izolacji (błąd jednego nie kładzie pozostałych), a stan
     zapisywany PRZED nieodwracalnymi skutkami (zapis do Shifts, wysyłka domknięcia) — semantyka
@@ -256,45 +289,94 @@ def poll_replies(
 
     # 1. NAJPIERW odczytaj i przetwórz odpowiedzi. Świeża odpowiedź przesuwa watermark, więc krok 2
     #    nie zamknie okna komuś, kto właśnie odpisał — brak wyścigu na krawędzi okna odpowiedzi.
-    progressed = False
+    #    Wynik zapamiętujemy PER OSOBA: jeden bool na cały przebieg gubił informację o tym, kogo
+    #    faktycznie udało się przeczytać, a bez niej krok 2 wygaszał także tych, których właśnie
+    #    obsłużono albo których czatu nie dało się odczytać.
+    outcomes: dict[str, ReadOutcome] = {}
     for pending in open_items:
         try:
-            progressed |= _process_pending(settings, client, llm, ctx, pending, me_id, tz, state)
+            outcomes[pending.member_id] = _process_pending(
+                settings, client, llm, ctx, pending, me_id, tz, state, now
+            )
         except AuthExpiredError:
             raise  # utrata tokenu zatrzymuje usługę — nie myl jej z awarią jednej odpowiedzi
         except Exception:
             # Izolacja per-osoba — błąd jednej odpowiedzi nie blokuje pozostałych.
+            outcomes[pending.member_id] = ReadOutcome.UNKNOWN
             logger.exception("Nie udało się obsłużyć odpowiedzi dla %s", pending.member_name)
 
-    # 2. Wygaś te, które PO odczycie wciąż są otwarte i minęło ich okno (bez świeżej aktywności).
+    # 2. Wygaś te, które PO odczycie wciąż są otwarte, minął im termin I MAMY NA TO DOWÓD: udany
+    #    odczyt, który nic nie przyniósł. Domyślne UNKNOWN dla braku wpisu w `outcomes` to
+    #    zabezpieczenie, a NIE opis osiągalnej dziś ścieżki (każdy wpis ze `still_open` przeszedł
+    #    przez pętlę wyżej): bezpieczna wartość domyślna nie może zależeć od tego, czy ktoś kiedyś
+    #    doda tam wcześniejsze wyjście z pętli. Milczenie usługi nie jest milczeniem pracownika.
     #    Commit EXPIRED PRZED wysyłką domknięcia — semantyka „co najwyżej raz" (jak przy zapisie).
     still_open = [
         p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
     ]
-    newly_expired = [p for p in still_open if is_expired(p, now, settings.reply_window_hours)]
-    if newly_expired:
-        for pending in newly_expired:
-            pending.status = st.EXPIRED
-        st.save_state(settings.state_path, state)
-        if settings.send_expiry_message:
-            _notify_expired(client, newly_expired)
+    newly_expired = [
+        p
+        for p in still_open
+        if should_expire(
+            p,
+            now,
+            settings.reply_window_hours,
+            read=outcomes.get(p.member_id, ReadOutcome.UNKNOWN),
+        )
+    ]
+    # Rozdział po statusie, bo powody są RÓŻNE i każdy komunikat musi być prawdziwy: kto nie
+    # odpisał w ogóle, słyszy „nie dostałem odpowiedzi"; kto odpisał, ale nie potwierdził —
+    # „nie doczekałem się potwierdzenia". Podział PRZED `_close`, bo ono nadpisuje status.
+    bez_odpowiedzi = [p for p in newly_expired if p.status == st.AWAITING_REPLY]
+    bez_potwierdzenia = [p for p in newly_expired if p.status == st.AWAITING_CONFIRM]
+    if bez_odpowiedzi:
+        _close(settings, client, state, bez_odpowiedzi, EXPIRED_TEXT, "brak odpowiedzi")
+    if bez_potwierdzenia:
+        _close(settings, client, state, bez_potwierdzenia, NO_CONFIRM_TEXT, "brak potwierdzenia")
 
     # Ostatnia aktywność liczona z wciąż otwartych (po przetworzeniu): świeża odpowiedź skróci
     # następny odstęp, cisza go wydłuży (patrz ``_poll_delay``/``next_poll_delay``).
+    progressed = any(outcome is ReadOutcome.HANDLED for outcome in outcomes.values())
     active = [p for p in still_open if p.status != st.EXPIRED]
     return PollOutcome(len(active), now if progressed else _latest_activity(active))
 
 
-def _notify_expired(client: GraphClient, expired: list[st.PendingReminder]) -> None:
-    """Wyślij uprzejme domknięcie osobom z wygasłym oknem (stan EXPIRED już utrwalony).
+def _close(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    closed: list[st.PendingReminder],
+    text: str,
+    powod: str,
+) -> None:
+    """Zamknij tematy terminalnie: status EXPIRED utrwalony PRZED wysyłką (»co najwyżej raz«)."""
+    for pending in closed:
+        pending.status = st.EXPIRED
+    st.save_state(settings.state_path, state)
+    if settings.send_expiry_message:
+        _notify_closed(client, closed, text, powod)
+
+
+def _notify_closed(
+    client: GraphClient, closed: list[st.PendingReminder], text: str, powod: str
+) -> None:
+    """Wyślij uprzejme domknięcie osobom z zamkniętym tematem (stan EXPIRED już utrwalony).
 
     Izolacja per-osoba; nieudana wysyłka jest tylko logowana — status jest już terminalny, więc
-    ani nie ponowimy zapisu, ani nie zdublujemy wiadomości przy kolejnym przebiegu.
+    ani nie ponowimy zapisu, ani nie zdublujemy wiadomości przy kolejnym przebiegu. Treść jest
+    parametrem, bo powody domknięcia są różne i KAŻDY komunikat musi być prawdziwy: „nie dostałem
+    odpowiedzi" wolno napisać tylko temu, kto faktycznie nie odpisał.
     """
-    for pending in expired:
+    for pending in closed:
         try:
-            client.send_chat_message(pending.chat_id, to_html(EXPIRED_TEXT))
-            logger.info("Zamknięto okno odpowiedzi dla %s (brak odpowiedzi)", pending.member_name)
+            client.send_chat_message(pending.chat_id, to_html(text))
+            logger.info("Zamknięto temat dla %s (%s)", pending.member_name, powod)
+        except AuthExpiredError:
+            # Utrata sesji dotyczy całej usługi, nie tej jednej wiadomości. Bez tego wyjątku
+            # przebieg, w którym WSZYSTKIE tematy były domykane, kończyłby się cicho, a utrata
+            # tokenu wyszłaby dopiero z pulsu — do 24 h później. Status jest już utrwalony,
+            # więc wyjście tutaj niczego nie psuje.
+            raise
         except Exception:
             logger.exception("Nie udało się wysłać domknięcia do %s", pending.member_name)
 
@@ -329,15 +411,18 @@ def _process_pending(
     me_id: str,
     tz: ZoneInfo,
     state: dict[str, st.PendingReminder],
-) -> bool:
+    now: datetime,
+) -> ReadOutcome:
     """Dispatcher jednej odpowiedzi: czyste »tak« → zapis; wszystko inne → interpretacja.
 
-    Zwraca ``True``, gdy była nowa wiadomość do obsłużenia — sygnał dla ``_poll_delay``, żeby
-    zresetować backoff do odstępu bazowego (rozmowa trwa, nie ma po co czekać do sufitu).
+    Zwraca wynik odczytu — ``HANDLED`` jest sygnałem dla ``_poll_delay``, żeby zresetować backoff
+    do odstępu bazowego (rozmowa trwa, nie ma po co czekać do sufitu), a ``NOTHING_NEW`` jest
+    JEDYNĄ przesłanką uprawniającą do wygaszenia (patrz ``lifecycle.should_expire``). Wyjątek
+    oznacza ``UNKNOWN`` i jest nadawany w miejscu wywołania.
     """
     incoming = newest_incoming(client.list_chat_messages(pending.chat_id), me_id, pending.watermark)
     if incoming is None:
-        return False
+        return ReadOutcome.NOTHING_NEW
     watermark = str(incoming.get("createdDateTime", ""))
     text = message_text(incoming)
 
@@ -346,7 +431,7 @@ def _process_pending(
     # żeby nie zapisać starej propozycji mimo prośby o zmianę.
     try:
         if pending.status == st.AWAITING_CONFIRM and is_pure_affirmation(text):
-            _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark)
+            _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark, now)
         else:
             _interpret_and_confirm(settings, client, llm, ctx, pending, text, tz, state, watermark)
     except AuthExpiredError:
@@ -354,7 +439,7 @@ def _process_pending(
     except Exception:
         _record_failure(settings, client, state, pending, watermark)
         raise  # wyżej loguje ślad — tu tylko decydujemy, czy próbować jeszcze raz
-    return True
+    return ReadOutcome.HANDLED
 
 
 _MAX_PENDING_FAILURES = 3
@@ -406,12 +491,33 @@ def _apply_confirmed_yes(
     tz: ZoneInfo,
     state: dict[str, st.PendingReminder],
     watermark: str,
+    now: datetime,
 ) -> None:
     """Czyste »tak« na etapie potwierdzenia → nieodwracalny zapis (commit stanu PRZED zapisem)."""
+    # Co zostało do zapisania, liczymy PRZED commitem: to czysta operacja, a jej pusty wynik
+    # znaczy zupełnie co innego niż udany zapis i musi dać inny status oraz inny komunikat.
+    schedule, time_offs, pominiete = _build_writable(pending, tz, ctx.scheduling_group_id, now)
+    if not schedule.shifts and not time_offs:
+        pending.status = st.EXPIRED
+        _commit(settings, state, pending, watermark)
+        # Ta wysyłka NIE podlega `send_expiry_message`: to odpowiedź na jawne „tak" pracownika,
+        # a milczenie po potwierdzeniu jest gorsze niż samo domknięcie. Własny `try` — awaria
+        # wysyłki nie może lecieć wyżej jako „nie udało się obsłużyć odpowiedzi": stan jest już
+        # utrwalony i terminalny, więc ponowienia i tak nie będzie.
+        try:
+            client.send_chat_message(pending.chat_id, to_html(STALE_WEEK_TEXT))
+        except Exception:
+            logger.exception(
+                "Domknięto temat %s (miniony tydzień), ale nie udało się wysłać wiadomości",
+                pending.member_name,
+            )
+        logger.info("Nic już do zapisania dla %s — tydzień docelowy minął", pending.member_name)
+        return
+
     pending.status = st.APPLIED
     _commit(settings, state, pending, watermark)  # commit PRZED zapisem — brak dubli przy awarii
     try:
-        _apply_schedule(client, ctx, pending, tz)
+        _apply_schedule(client, ctx, pending, schedule, time_offs)
     except CrossUserWriteError:
         # Tripwire bezpieczeństwa — to NIE zwykła awaria sieci: odrzucono próbę zapisu grafiku
         # cudzą tożsamością. Loguj głośno (CRITICAL, ze śladem), osobno od transientnych 5xx.
@@ -428,9 +534,16 @@ def _apply_confirmed_yes(
         return
     # Zapis się POWIÓDŁ — potwierdzenie idzie osobno: nieudana wysyłka potwierdzenia to NIE błąd
     # zapisu, więc nie wysyłaj mylnego „uzupełnij ręcznie" (zmiany są już w Shifts).
+    # Zapis CZĘŚCIOWY dostaje własny tekst: „zapisałem Twoje zmiany" byłoby nieprawdą wobec dni,
+    # które odpadły, a pracownik nie miałby jak się o tej dziurze dowiedzieć.
+    tresc = PARTIAL_APPLIED_TEXT if pominiete else APPLIED_TEXT
     try:
-        client.send_chat_message(pending.chat_id, to_html(APPLIED_TEXT))
-        logger.info("Zapisano grafik dla %s", pending.member_name)
+        client.send_chat_message(pending.chat_id, to_html(tresc))
+        logger.info(
+            "Zapisano grafik dla %s (wpisów pominiętych jako zakończone: %d)",
+            pending.member_name,
+            pominiete,
+        )
     except Exception:
         logger.exception(
             "Zapisano grafik dla %s, ale nie udało się wysłać potwierdzenia", pending.member_name

@@ -1,6 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
-from powiadomienia_teams.reminders.lifecycle import is_expired, prune_terminal
+from powiadomienia_teams.domain.models import TimeOff
+from powiadomienia_teams.reminders.lifecycle import (
+    ReadOutcome,
+    is_expired,
+    prune_terminal,
+    should_expire,
+    still_writable,
+)
 from powiadomienia_teams.state import APPLIED, AWAITING_REPLY, EXPIRED, PendingReminder
 
 UTC = timezone.utc
@@ -66,3 +73,74 @@ def test_prune_returns_new_dict_without_mutating_input():
     state = {"old": _pending(status=APPLIED, watermark=_iso(NOW - timedelta(hours=200)))}
     prune_terminal(state, NOW, 48)
     assert "old" in state  # wejście nietknięte
+
+
+# --- should_expire: termin to za mało, potrzebny DOWÓD (ADR 0003) ---------------------------
+
+_PO_TERMINIE = _iso(NOW - timedelta(hours=49))
+
+
+def test_should_expire_only_on_successful_read_finding_nothing():
+    p = _pending(nudged_at=_PO_TERMINIE)
+    assert should_expire(p, NOW, 48, read=ReadOutcome.NOTHING_NEW) is True
+
+
+def test_handled_reply_blocks_expiry_even_after_deadline():
+    # Przestój dłuższy niż okno: odpowiedź czekała w czacie i właśnie została obsłużona. Wygaszenie
+    # w tym samym przebiegu wysłałoby prośbę o potwierdzenie i zaraz po niej „brak odpowiedzi".
+    p = _pending(nudged_at=_PO_TERMINIE)
+    assert should_expire(p, NOW, 48, read=ReadOutcome.HANDLED) is False
+
+
+def test_failed_read_blocks_expiry_even_after_deadline():
+    # Brak dowodu to nie dowód braku — awaria odczytu nie może kosztować pracownika grafiku.
+    p = _pending(nudged_at=_PO_TERMINIE)
+    assert should_expire(p, NOW, 48, read=ReadOutcome.UNKNOWN) is False
+
+
+def test_evidence_alone_does_not_expire_before_deadline():
+    # Kontrola w drugą stronę: dowód bez upływu terminu też nie wygasza.
+    p = _pending(nudged_at=_iso(NOW - timedelta(hours=1)))
+    assert should_expire(p, NOW, 48, read=ReadOutcome.NOTHING_NEW) is False
+
+
+# --- still_writable: użyteczność zapisu ma własny termin (ADR 0003) -------------------------
+
+
+def _zmiana(start_h: int, end_h: int) -> TimeOff:
+    """Wpis z konkretnym oknem czasu. TimeOff wystarcza — filtr patrzy wyłącznie na `end`."""
+    return TimeOff(
+        "u1",
+        NOW.replace(hour=0) + timedelta(hours=start_h),
+        NOW.replace(hour=0) + timedelta(hours=end_h),
+        "TOR_URLOP",
+    )
+
+
+def test_finished_entries_are_dropped():
+    # NOW to 12:00. Wpis 8:00-10:00 już się skończył — w grafiku byłby fałszywym stanem faktycznym.
+    assert still_writable([_zmiana(8, 10)], NOW) == ()
+
+
+def test_entry_in_progress_is_kept():
+    # 8:00-16:00 trwa w tej chwili: praca jest realna, więc wpis nadal wart zapisania. Kryterium
+    # to KONIEC, nie początek — inaczej gubilibyśmy dzień, który właśnie się dzieje.
+    wpis = _zmiana(8, 16)
+    assert still_writable([wpis], NOW) == (wpis,)
+
+
+def test_future_entries_are_kept():
+    wpis = _zmiana(30, 38)  # jutro
+    assert still_writable([wpis], NOW) == (wpis,)
+
+
+def test_partially_past_week_keeps_only_the_rest():
+    # Sedno decyzji: „tak" potwierdzone w środku tygodnia zapisuje RESZTĘ tygodnia, a nie nic
+    # (jak przy zamykaniu całego tematu) i nie wszystko (jak przed tą zmianą).
+    minione, trwajace, przyszle = _zmiana(0, 6), _zmiana(8, 16), _zmiana(30, 38)
+    assert still_writable([minione, trwajace, przyszle], NOW) == (trwajace, przyszle)
+
+
+def test_empty_input_gives_empty_result():
+    # Pusty wynik jest sygnałem „nie ma czego zapisać" dla wołającego — nie może rzucać.
+    assert still_writable([], NOW) == ()

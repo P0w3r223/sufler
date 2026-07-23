@@ -16,6 +16,14 @@ DECLINED_TEXT = (
     "Odezwę się ponownie przy kolejnym grafiku."
 )
 APPLIED_TEXT = "Gotowe ✅ Zapisałem Twoje zmiany na przyszły tydzień. Dzięki!"
+# Gdy część potwierdzonych dni odpadła, bo zdążyła się skończyć. APPLIED_TEXT byłby tu podwójnie
+# nieprawdziwy: zapisano MNIEJ, niż pracownik potwierdził, i nie na „przyszły" tydzień — w tym
+# przypadku tydzień docelowy zawsze już trwa. Bez tego rozróżnienia dziura w grafiku jest
+# niewidoczna dla obu stron: pracownik ma potwierdzenie, menedżer widzi niepełny tydzień.
+PARTIAL_APPLIED_TEXT = (
+    "Zapisałem tę część tygodnia, która jest jeszcze przed nami ✅ Dni, które już minęły, "
+    "nie trafiły do grafiku — jeśli mają tam być, napisz proszę do przełożonego."
+)
 WRITE_FAILED_TEXT = (
     "Nie udało mi się zapisać wszystkiego 😕 Zajrzyj proszę do zakładki »Zmiany« w Teams i "
     "sprawdź, czego brakuje — część mogła się już zapisać. Uzupełnij tylko brakujące dni."
@@ -26,6 +34,18 @@ UNCLEAR_TEXT = (
 )
 EXPIRED_TEXT = (
     "Nie dostałem odpowiedzi, więc na razie nic nie zapisuję. Kiedy będziesz gotowy/gotowa, "
+    "napisz, kiedy pracujesz — wrócę do tego przy kolejnym przypomnieniu."
+)
+# Osobny komunikat, bo EXPIRED_TEXT twierdziłby NIEPRAWDĘ: tutaj odpowiedź mogła przyjść (albo
+# właśnie przyszła), tylko tydzień docelowy zdążył się zacząć i nie ma już czego zapisać.
+STALE_WEEK_TEXT = (
+    "Tydzień, którego dotyczyło przypomnienie, już się zaczął — nie zapisuję go automatycznie. "
+    "Jeśli grafik nadal wymaga uzupełnienia, napisz proszę do przełożonego."
+)
+# Trzeci powód domknięcia. Pracownik ODPISAŁ (czasem minutę po prośbie), zabrakło tylko „tak" —
+# EXPIRED_TEXT zarzucałby mu milczenie, którego nie było.
+NO_CONFIRM_TEXT = (
+    "Nie doczekałem się potwierdzenia, więc nic nie zapisuję. Kiedy będziesz gotowy/gotowa, "
     "napisz, kiedy pracujesz — wrócę do tego przy kolejnym przypomnieniu."
 )
 
@@ -122,7 +142,10 @@ def build_summary_text(
         f"• czeka na potwierdzenie: {do_potwierdzenia}",
         f"• zapisane grafiki: {zapisane}",
         f"• odmowy: {odmowy}",
-        f"• wygasłe bez odpowiedzi: {wygasle}",
+        # NIE „wygasłe bez odpowiedzi": w EXPIRED lądują trzy różne rzeczy — prawdziwa cisza, brak
+        # potwierdzenia po odpowiedzi i domknięcie „tydzień już trwa". Administrator decyduje na
+        # tej podstawie, do kogo napisać ręcznie, więc etykieta musi być prawdziwa dla wszystkich.
+        f"• zamknięte bez zapisu: {wygasle}",
         f"Następny przebieg: {nastepny_przebieg}",
     ]
     return "\n".join(lines)

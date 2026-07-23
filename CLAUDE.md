@@ -56,9 +56,29 @@ sub-projekt Powiadomienia → `Powiadomienia_teams/PLAN.md`.
   (statusy `AWAITING_REPLY`/`AWAITING_CONFIRM`/`APPLIED`/`DECLINED`/`EXPIRED`), `single_instance.py`
   (blokada jednej instancji). Niezmienniki: zapis tylko po jawnym „tak" pracownika (spirit ADR 0006),
   strażnik cross-user (odpowiedź nie zmieni cudzego grafiku), watermark z czasu SERWERA, **jedna prośba
-  na osobę na tydzień** (idempotencja `run_once` obejmuje też statusy terminalne). ADR-y sub-projektu:
-  `docs/adr/0001` (multi-team — szew gotowy, pełne wsparcie ODŁOŻONE), `0002` (adaptacyjny listener —
-  kompletny). Pełny status i decyzje: `Powiadomienia_teams/PLAN.md`.
+  na osobę na tydzień** (idempotencja `run_once` obejmuje też statusy terminalne), **wygaszenie
+  wymaga DOWODU** — udanego odczytu czatu, który nic nie przyniósł (`lifecycle.should_expire`;
+  przestój usługi ani awaria odczytu NIE wypalają okna odpowiedzi, a „nie dostałem odpowiedzi"
+  nie pada bez pokrycia); użyteczność zapisu egzekwowana PER WPIS przy zapisie (`still_writable` —
+  odsiew wpisów już ZAKOŃCZONYCH, liczone przed commitem APPLIED; pusty wynik → osobny, prawdziwy
+  komunikat zamiast „zapisałem"). ADR-y sub-projektu: `docs/adr/0001` (multi-team — szew gotowy,
+  pełne wsparcie ODŁOŻONE), `0002` (adaptacyjny listener — kompletny), `0003` (wygaszanie po
+  dowodzie — kompletny). Pełny status i decyzje: `Powiadomienia_teams/PLAN.md`.
+- `claude_summary/` — SAMODZIELNY pod-projekt uv (własny `pyproject.toml`, styl heksagonalny):
+  narzędzie CLI zestawiające DZIENNĄ aktywność osoby z historii promptów Claude Code
+  (`~/.claude/projects/*.jsonl`) i commitów wskazanego repo — materiał dla agenta Jira/worklog
+  (ścieżka ADR 0034/0035). Rdzeń: `transcripts.py` (dyskryminator realnego promptu:
+  `promptSource=="typed"` + `origin.kind=="human"`, string content, bez `toolUseResult`/sub-agenta),
+  `redaction.py` (**ZAWSZE włączona redakcja NA GRANICY** — sekrety/konta/IP/GUID/ścieżki → etykiety,
+  wklejone logi przycięte do wiodącej instrukcji, czyste zrzuty pominięte; ADR 0003), `grouping.py`
+  (konwersja UTC→lokalna PRZED dniem), `render.py` (JSON = kontrakt dla agenta + Markdown). Adaptery:
+  `transcript_files.py` (korelacja repo↔sesja: nazwa folderu z myślnikami + filtr `cwd`), `git_log.py`
+  (czysty `parse_git_log` + cienki `subprocess`, filtr autora), `anthropic_summarizer.py` (opcjonalna
+  proza `--llm`, leniwy import, extra `agent`). Niezmienniki: **twarda bramka zgody fail-closed**
+  (`--consent`/`CLAUDE_SUMMARY_CONSENT=1`); surowa treść promptu NIE wchodzi do modeli/JSON/LLM
+  (redakcja na granicy parsowania); wynik POZA repo (`~/.claude-summary`, w `.gitignore`) — może nieść
+  prywatną treść. ADR-y: `docs/adr/0001` (struktura + dyskryminator + korelacja), `0002` (warstwa LLM),
+  `0003` (redakcja). Pełny status: `claude_summary/PLAN.md`.
 
 ## Komendy
 - Instalacja: `uv sync` (extras: `agent`, `teams`, `telegram`, `teams-graph`, `github`, `jira`, `retrieval`)
@@ -74,6 +94,8 @@ sub-projekt Powiadomienia → `Powiadomienia_teams/PLAN.md`.
 - Mikro-eval retrievalu: `uv run pytest tests/test_retrieval_eval.py` (bramka jakości rankingu)
 - Sub-projekt Powiadomienia (własny venv): `cd Powiadomienia_teams && uv run pytest`;
   na żywo `powiadomienia-teams` (`--once` / `--login`)
+- Sub-projekt claude_summary (własny venv): `cd claude_summary && uv sync --extra agent && uv run pytest`;
+  na żywo `uv run claude-summary --consent --repo <ścieżka>` (`--llm` / `--format md|json|both`)
 
 ## Powiadomienia_teams — sekrety i konfiguracja
 Sekrety WYŁĄCZNIE poza repo; w CLAUDE.md tylko wskaźniki. Pełne lokalizacje sekretów i NIE-sekretne ID
