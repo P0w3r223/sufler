@@ -689,3 +689,82 @@ def test_run_once_with_shifts_fills_comment_from_claude_summary(
     rows = [tuple(r) for r in load_workbook(xlsx).worksheets[0].iter_rows(values_only=True)]
     assert rows[1][0] == "WT-7"  # Issue Key/ID — klucz z commitu
     assert rows[1][4] == "Robił WT-7."  # Comment — opis dnia z claude_summary
+
+
+def test_run_once_with_shifts_full_assembly_hours_issues_and_comment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Złożenie S1-S5: realne godziny Shifts DZIELONE na dwa klucze z commitów, oba z opisem dnia.
+
+    Jeden pełny bieg na sucho przez prawdziwe adaptery (store, xlsx, mapa tożsamości, projekcja);
+    podmienione tylko wejścia sieciowe: odczyt zmian (Graph) i commitów (GitHub).
+    """
+    from datetime import timezone
+
+    from openpyxl import load_workbook
+
+    from workmate.adapters.outbound import graph_shift_source
+    from workmate.core.domain.shift_hours import ShiftBlock
+    from workmate.core.domain.worklog import Commit
+
+    identities = tmp_path / "id.yaml"
+    identities.write_text(
+        "EMP-042:\n  aad_user_id: aad-mikolaj\n  jira_user: mikolaj@example.com\n"
+        "  git_email: mikolaj@example.com\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "workmate.adapters.outbound.graph_identity_directory.fetch_team_members",
+        lambda *_a, **_k: {"aad-mikolaj": "Mikołaj"},
+    )
+    summary_dir = tmp_path / "sum"
+    summary_dir.mkdir()
+    (summary_dir / "m.json").write_text(
+        __import__("json").dumps(
+            {
+                "person": "mikolaj@example.com",
+                "days": [
+                    {
+                        "date": "2026-07-15",
+                        "llm_prose": "Robił WT-1 i WT-2.",
+                        "commits": [],
+                        "prompts": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    block = ShiftBlock(
+        user_id="aad-mikolaj",
+        start=datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc),  # 8h → 480 min
+        end=datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(graph_shift_source.GraphShiftSource, "read_blocks", lambda self: [block])
+
+    class FakeCommits:
+        def commits_for(self, git_email, since, until):
+            at = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+            return [Commit(sha="a", message="WT-1 rano", authored_at=at),
+                    Commit(sha="b", message="WT-2 po", authored_at=at)]
+
+    monkeypatch.setattr(app, "_build_commit_source", lambda tz: FakeCommits())
+
+    settings = _settings(
+        hours_source="shifts",
+        identities_path=identities,
+        output_dir=tmp_path / "out",
+        fallback_issue="BIAP-1",
+        summary_dir=summary_dir,
+        state_path=tmp_path / "s.json",
+        dry_run=True,
+    )
+
+    report = app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert report.sent[0].minutes == 480  # suma dnia = realne 8h, mimo podziału na dwa klucze
+    xlsx = next((tmp_path / "out").glob("*.xlsx"))
+    rows = [tuple(r) for r in load_workbook(xlsx).worksheets[0].iter_rows(values_only=True)]
+    data = sorted(rows[1:], key=lambda r: r[0])  # po Issue Key/ID
+    assert [(r[0], r[2]) for r in data] == [("WT-1", "4h"), ("WT-2", "4h")]  # 240 min = 4h każdy
+    assert {r[4] for r in data} == {"Robił WT-1 i WT-2."}  # opis dnia na obu wierszach

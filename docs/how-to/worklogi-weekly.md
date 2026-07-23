@@ -74,9 +74,13 @@ w całości na koszykowe issue. Współdzielony `git_email` u dwóch osób = twa
 wiadomości, z wpisem w raporcie przebiegu. Nigdy nie zgadujemy po nazwisku — zły `jira_user`
 zaimportuje czyjeś godziny na cudze konto Jiry, a tego (ADR 0034) nie da się cofnąć narzędziem.
 
-## 4. Źródło godzin (na razie atrapa)
+## 4. Źródło godzin
 
-Docelowy system nie jest ustalony, więc czytamy plik JSON:
+Wybiera je `WORKMATE_WORKLOGI_HOURS_SOURCE`: `json` (atrapa) albo `shifts` (realne dane, ADR 0036).
+
+### 4a. `json` — atrapa
+
+Prosty plik do testów i pilotażu bez Graph/GitHub:
 
 ```json
 [
@@ -86,8 +90,38 @@ Docelowy system nie jest ustalony, więc czytamy plik JSON:
 ]
 ```
 
-Podmiana na realne źródło to jedna klasa spełniająca port `HoursSource` i jedna linia w wiringu
-drzwi — rdzeń się nie zmieni.
+### 4b. `shifts` — realne dane (Microsoft Shifts + commity + claude_summary, ADR 0036)
+
+Składa wpis karty czasu z trzech źródeł, bez estymacji ilości godzin:
+
+1. **Godziny** = realne, opublikowane zmiany z **Microsoft Shifts** (Graph, ten sam zespół i
+   logowanie co wyżej), pocięte na doby lokalne.
+2. **Zgłoszenie** = klucze Jira z **commitów** osoby danego dnia (gałąź domyślna); realne minuty
+   dnia dzielone równo między dotknięte klucze, a czas dni bez klucza → **koszykowe issue**.
+3. **Komentarz** = opis dnia z **`claude_summary`** (co osoba robiła), ten sam na wszystkich
+   wierszach zgłoszeń danego dnia.
+
+```dotenv
+WORKMATE_WORKLOGI_HOURS_SOURCE=shifts
+# Koszyk na czas dni bez klucza z commitów (kształt PROJ-123).
+WORKMATE_WORKLOGI_FALLBACK_ISSUE=BIAP-1
+# Katalog zebranych wyników claude_summary (JSON). POZA repo (prywatna treść).
+WORKMATE_WORKLOGI_SUMMARY_DIR=D:/worklogi/summaries
+```
+
+**Warunki:**
+- `identities.yaml` musi mieć `git_email` osoby (§3) — bez niego jej godziny idą w całości na koszyk,
+  a komentarze są puste (degradacja, nie błąd).
+- **GitHub** (opcjonalny): `WORKMATE_GITHUB_TOKEN`/`_OWNER`/`_REPO`. Bez niego wszystkie godziny na
+  koszyk (klucze issue wymagają commitów).
+- **claude_summary**: wrzuć do `SUMMARY_DIR` pliki JSON z narzędzia `claude_summary` (pole `person`
+  = e-mail git osoby). Na pilotaż **operator umieszcza je ręcznie** — katalog jest INPUTEM ZAUFANYM
+  (plik jest przypisywany osobie z pola `person`, więc dbaj, kto do niego pisze). Docelowe,
+  uwierzytelnione zbieranie (Teams DM z wiązaniem po nadawcy) projektuje ADR 0037; build odłożony
+  do czasu, aż rdzeń pójdzie bojowo.
+
+Wszystkie trzy wejścia degradują niezależnie: brak Shifts/GitHub/claude_summary nie wywraca
+przebiegu, tylko zubaża wynik (mniej godzin / koszyk / pusty komentarz).
 
 ## 5. Uruchomienie
 
@@ -121,3 +155,6 @@ o tej samej nazwie nadpisywały sobie arkusze.
 | Schemat niepotwierdzony | Zły nagłówek = plik nie do importu | Bramka §1 |
 | Import może być admin-only | Model „plik per osoba" upada | Do sprawdzenia w §1 |
 | Raport dotyczy tygodnia zamkniętego | Zestawienie sprzed 3–12 dni | Świadomy wybór: okno bieżące gubiło weekend BEZPOWROTNIE |
+| `shifts`: >500 commitów autora/tydzień | Najstarsze dni bez klucza → koszyk | Uczciwa degradacja; praktycznie niemożliwe dla 1 osoby/tydzień (ADR 0036) |
+| `shifts`: zbieranie claude_summary | Operator wrzuca pliki ręcznie | Automatyzacja odłożona (ADR 0036 § roadmap S6) |
+| `shifts`: tylko commity gałęzi domyślnej | Praca na niezmerge'owanych gałęziach → koszyk | Ograniczenie GitHub API (ADR 0034) |

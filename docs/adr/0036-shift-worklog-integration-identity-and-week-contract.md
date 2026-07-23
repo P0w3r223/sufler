@@ -1,7 +1,9 @@
 # ADR 0036 — Weekly worklog integration: identity bridge, week/date contract, composite hours source
 
 Date: 2026-07-23
-Status: accepted (Session 1 of a multi-session build)
+Status: accepted (assembled S1–S5: identity, Shifts hours, commit issue-attribution, claude_summary
+comments, wired into the `workmate-worklogi` door and covered by an end-to-end dry-run test; go-live
+still gated on operator confirming `WORKLOGPRO_HEADERS` — S5 § go-live)
 Author: Patryk
 Related to: 0034 (worklog from commits, write path removed), 0035 (WorklogPRO sheets + Teams DM)
 
@@ -85,5 +87,6 @@ issue key in commits, so no sheet row is left without an `issue_key` (WorklogPRO
 
 S1 identity bridge + week/date contract + config (this ADR). S2 real hours from Shifts (Graph). S3
 issue attribution from commits + fallback. S4 `claude_summary` comments. S5 assembly + header
-confirmation + dry-run→live. S6 (later) collection from user machines + scale. First tester: the
-author, single person, dry-run.
+confirmation + dry-run→live. S6 (later) collection from user machines + scale — designed in
+[[0037-claude-summary-collection-authenticated-teams-dm]] (authenticated Teams DM; manual for pilot,
+build deferred to post go-live). First tester: the author, single person, dry-run.
