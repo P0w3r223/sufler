@@ -21,18 +21,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date, datetime, time, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from workmate.core.domain.guards import bounded
-from workmate.core.domain.jira_time import parse_jira_timestamp
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.domain.worklog import (
-    Commit,
     SessionPolicy,
     WorklogProposal,
     build_proposal,
     local_day,
-    normalize_commit_message,
+    map_github_commits,
 )
 from workmate.core.errors import InvalidRequestError
 from workmate.core.ports.github import MAX_COMMITS_PER_FETCH
@@ -87,7 +85,7 @@ class WorklogService:
             author=author,
         )
         return build_proposal(
-            self._as_commits(raw),
+            map_github_commits(raw),
             since=since,
             until=until,
             policy=self._policy,
@@ -118,44 +116,9 @@ class WorklogService:
                     f"zakres odrzucony: {label} okna ({day}) jest w przyszłości."
                 )
 
-    def _as_commits(self, raw: list[dict[str, Any]]) -> list[Commit]:
-        """Zmapuj surowe JSON-y GitHuba na model domeny — BIAŁĄ LISTĄ pól (bez diffów).
-
-        Wpisy bez rozpoznawalnego znacznika czasu pomijamy: to ścieżka odczytu, więc jeden
-        dziwny commit nie może wywrócić raportu (ale nie zgadujemy też jego daty).
-        """
-        commits: list[Commit] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            payload = _as_dict(item.get("commit"))
-            git_author = _as_dict(payload.get("author"))
-            # Znacznik GitHuba (``2026-07-15T09:12:00Z``) mieści się w tym samym parserze:
-            # ``%z`` przyjmuje ``Z`` od Pythona 3.7, a ``fromisoformat`` domyka resztę wariantów.
-            authored_at = parse_jira_timestamp(git_author.get("date"))
-            if authored_at is None:
-                continue
-            account = _as_dict(item.get("author"))
-            commits.append(
-                Commit(
-                    sha=str(item.get("sha") or ""),
-                    message=normalize_commit_message(str(payload.get("message") or "")),
-                    authored_at=authored_at,
-                    author_login=str(account.get("login") or ""),
-                    author_email=str(git_author.get("email") or ""),
-                    url=str(item.get("html_url") or ""),
-                )
-            )
-        return commits
-
     def _today(self) -> date:
         """Dzisiaj w strefie z polityki — granice dat liczymy tak samo jak doby sesji."""
         return local_day(self._now(), self._policy.tz)
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    """Zwróć zagnieżdżony obiekt JSON jako słownik albo pusty — odporność na dziwny kształt."""
-    return value if isinstance(value, dict) else {}
 
 
 def _start_of_day(day: date, tz: ZoneInfo) -> datetime:

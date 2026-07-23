@@ -27,19 +27,23 @@ class TimesheetError(WorkMateError):
 
 
 class Person(BaseModel):
-    """Rozwiązana tożsamość pracownika — trzy identyfikatory z trzech różnych systemów.
+    """Rozwiązana tożsamość pracownika — identyfikatory z różnych systemów, żaden z pozostałych.
 
-    ``source_id`` to klucz ze źródła godzin, ``aad_user_id`` adresuje czat Teams, a ``jira_user``
-    (e-mail albo accountId) trafia do kolumny ``User`` arkusza. Żaden z nich nie da się wyprowadzić
-    z pozostałych — dlatego mapowanie jest jawną konfiguracją, a nie dopasowaniem po nazwisku
-    (zły ``jira_user`` zaimportowałby czyjeś godziny na CUDZE konto Jiry, a worklogi są
-    create-only i nieusuwalne narzędziem — ADR 0034).
+    ``source_id`` to klucz ze źródła godzin, ``aad_user_id`` adresuje czat Teams i wskazuje osobę
+    w grafiku Shifts, ``jira_user`` (e-mail albo accountId) trafia do kolumny ``User`` arkusza.
+    ``git_email`` (OPCJONALNY) to most do commitów i ``claude_summary`` — pozwala przypisać pracę
+    danego dnia do zgłoszeń Jira (klucze z commitów) i opisu (ADR 0036). Puste ``git_email`` znaczy
+    „brak atrybucji per-commit": godziny tej osoby trafią w całości na koszykowe issue.
+
+    Mapowanie jest jawną konfiguracją, nie dopasowaniem po nazwisku: zły ``jira_user`` wpisze czyjeś
+    godziny na CUDZE konto Jiry, a worklogi są create-only i nieusuwalne narzędziem (ADR 0034).
     """
 
     source_id: str
     aad_user_id: str
     jira_user: str
     display_name: str = ""
+    git_email: str = ""
 
 
 class WorkEntry(BaseModel):

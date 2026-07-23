@@ -14,7 +14,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Protocol
 
+from workmate.core.domain.shift_hours import ShiftBlock
 from workmate.core.domain.timesheet import Person, WorkEntry
+from workmate.core.domain.worklog import Commit
 
 
 class HoursSource(Protocol):
@@ -66,4 +68,51 @@ class IdentityDirectory(Protocol):
 
     def resolve(self, source_id: str) -> Person | None:
         """Zwróć tożsamość dla ``source_id`` albo ``None``, gdy nie da się jej ustalić PEWNIE."""
+        ...
+
+
+class ShiftSource(Protocol):
+    """Źródło OPUBLIKOWANYCH bloków zmian (Microsoft Shifts, ADR 0036) — jedyne miejsce zna Graph.
+
+    Zwraca wszystkie bloki zespołu; okno tygodnia i podział na doby lokalne robi rdzeń
+    (``shift_hours.minutes_by_person_day``) — ta sama zasada co przy ``HoursSource`` (logika czasu
+    w rdzeniu, nie w adapterze).
+    """
+
+    def read_blocks(self) -> list[ShiftBlock]:
+        """Opublikowane bloki zmian zespołu (świadomy ``datetime`` UTC)."""
+        ...
+
+
+class AadIdentityLookup(Protocol):
+    """Odwrotny lookup: konto Teams/Shifts (``aad_user_id``) → osoba, albo ``None`` (fail-closed).
+
+    Wąski kontrakt dla złożonego źródła godzin: zmiana niesie ``aad_user_id``, a wpis karty czasu
+    jest kluczowany ``source_id`` — most między nimi to ten lookup (spełnia go katalog tożsamości).
+    """
+
+    def resolve_by_aad_user_id(self, aad_user_id: str) -> Person | None: ...
+
+
+class CommitSource(Protocol):
+    """Źródło commitów osoby (po e-mailu git) w oknie — do przypisania godzin do issue (ADR 0036).
+
+    Wąski kontrakt: „daj commity tej osoby z okna". Klucze Jira wyłuskuje z nich rdzeń
+    (``issue_attribution``); adapter tylko pobiera i mapuje białą listą pól.
+    """
+
+    def commits_for(self, git_email: str, since: date, until: date) -> list[Commit]:
+        """Commity autora ``git_email`` z okna PÓŁOTWARTEGO ``[since, until)`` (gałąź domyślna)."""
+        ...
+
+
+class TaskSummarySource(Protocol):
+    """Źródło dziennych opisów pracy (``claude_summary``) — komentarz per dzień do arkusza (0036).
+
+    Wąski kontrakt: „daj opis każdego dnia tej osoby w oknie". Adapter wie, gdzie leżą zebrane
+    wyniki ``claude_summary``; rdzeń tylko wpina komentarz do wpisu karty czasu.
+    """
+
+    def comments_by_day(self, git_email: str, since: date, until: date) -> dict[date, str]:
+        """Komentarze dnia dla osoby (po e-mailu git) z okna PÓŁOTWARTEGO ``[since, until)``."""
         ...

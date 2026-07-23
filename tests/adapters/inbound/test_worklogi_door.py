@@ -249,6 +249,69 @@ def test_from_env_reads_the_surface(monkeypatch) -> None:
     assert settings.run_hour == 15
 
 
+# --- źródło "shifts" (ADR 0036) ---------------------------------------------------
+
+
+def _shifts(tmp_path: Path, **kw) -> WorklogiSettings:
+    base: dict = {
+        "hours_source": "shifts",
+        "identities_path": _identity_file(tmp_path),
+        "output_dir": tmp_path / "out",
+        "fallback_issue": "BIAP-1",
+        "summary_dir": tmp_path / "summaries",
+    }
+    base.update(kw)
+    return _settings(**base)
+
+
+def test_shifts_source_passes_validation_with_its_targets(tmp_path: Path) -> None:
+    _shifts(tmp_path).validate(data_dir=tmp_path / "data")
+
+
+def test_shifts_requires_fallback_issue(tmp_path: Path) -> None:
+    """Bez koszyka dni bez klucza z commitów dałyby wiersze bez issue_key — import by padł."""
+    with pytest.raises(ValueError, match="FALLBACK_ISSUE"):
+        _shifts(tmp_path, fallback_issue="").validate(data_dir=tmp_path / "data")
+
+
+def test_shifts_fallback_issue_must_look_like_a_jira_key(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="PROJ-123"):
+        _shifts(tmp_path, fallback_issue="BADKEY").validate(data_dir=tmp_path / "data")
+
+
+def test_shifts_requires_summary_dir(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="SUMMARY_DIR"):
+        _shifts(tmp_path, summary_dir=Path()).validate(data_dir=tmp_path / "data")
+
+
+def test_json_source_does_not_require_shifts_fields(tmp_path: Path) -> None:
+    """Zero zmian zachowania dla JSON: koszyk i katalog claude_summary są nieistotne."""
+    _settings(identities_path=_identity_file(tmp_path), output_dir=tmp_path / "out").validate(
+        data_dir=tmp_path / "data"
+    )
+
+
+def test_from_env_reads_shifts_fields(monkeypatch) -> None:
+    monkeypatch.setenv("WORKMATE_WORKLOGI_HOURS_SOURCE", "shifts")
+    monkeypatch.setenv("WORKMATE_WORKLOGI_FALLBACK_ISSUE", "biap-2")  # normalizowane do wielkich
+    monkeypatch.setenv("WORKMATE_WORKLOGI_SUMMARY_DIR", "D:/summaries")
+    settings = WorklogiSettings.from_env()
+    assert settings.hours_source == "shifts"
+    assert settings.fallback_issue == "BIAP-2"
+    assert str(settings.summary_dir) not in ("", ".")
+
+
+def test_unknown_hours_source_is_rejected(tmp_path: Path) -> None:
+    """Rozszerzenie listy o „shifts" nie może rozszczelnić bramki — literówka w źródle godzin
+    ma PAŚĆ przy starcie, a nie po cichu udać JSON (ADR 0036 dołożył tylko jedną wartość)."""
+    with pytest.raises(ValueError, match="HOURS_SOURCE musi być jednym z"):
+        _settings(
+            identities_path=_identity_file(tmp_path),
+            output_dir=tmp_path / "out",
+            hours_source="rcp",
+        ).validate(data_dir=tmp_path / "data")
+
+
 def test_teams_push_scopes_include_team_members() -> None:
     """Lista osób z Graph wymaga TeamMember.Read.All — ta sama aplikacja co Powiadomienia_teams."""
     from workmate.config import TeamsPushSettings
@@ -437,3 +500,271 @@ def test_run_once_fails_closed_for_a_person_outside_the_identity_map(
 
     assert [outcome.reason for outcome in report.failed] == ["unknown_person"]
     assert not list((tmp_path / "out").glob("*.xlsx"))
+
+
+def test_build_hours_source_dispatches_on_configured_source(tmp_path: Path) -> None:
+    """Fabryka wybiera źródło po configu — bez sieci (konstrukcja adaptera nie dotyka Graph)."""
+    from workmate.adapters.outbound.json_hours_source import JsonHoursSource
+    from workmate.core.application.shift_hours_source import ShiftsHoursSource
+
+    tz = ZoneInfo("Europe/Warsaw")
+    json_src = app._build_hours_source(
+        _settings(hours_path=tmp_path / "h.json"), object(), lambda: "t", tz
+    )
+    assert isinstance(json_src, JsonHoursSource)
+    shifts_src = app._build_hours_source(
+        _settings(hours_source="shifts", fallback_issue="BIAP-1"), object(), lambda: "t", tz
+    )
+    assert isinstance(shifts_src, ShiftsHoursSource)
+
+
+def test_run_once_with_shifts_writes_a_sheet_from_real_hours(tmp_path: Path, monkeypatch) -> None:
+    """Deliverable S2: dry-run daje arkusz z REALNYCH godzin Shifts na koszykowym issue (ADR 0036).
+
+    Podmieniamy JEDYNIE odczyt bloków z Graph (``read_blocks``); reszta ścieżki — mapowanie
+    aad→osoba, budowa zestawienia, zapis xlsx — jest prawdziwa.
+    """
+    from dataclasses import replace
+    from datetime import timezone
+
+    from workmate.adapters.outbound import graph_shift_source
+    from workmate.core.domain.shift_hours import ShiftBlock
+
+    block = ShiftBlock(
+        user_id="aad-mikolaj",  # ta sama osoba co w mapie tożsamości z ``_wired``
+        start=datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc),  # 08:00–16:00 lokalnie = 8h
+        end=datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(graph_shift_source.GraphShiftSource, "read_blocks", lambda self: [block])
+    monkeypatch.setattr(app, "_build_commit_source", lambda tz: None)  # bez GitHuba → koszyk
+    settings = replace(
+        _wired(tmp_path, monkeypatch, hours="[]"),
+        hours_source="shifts",
+        fallback_issue="BIAP-1",
+        summary_dir=tmp_path / "sum",
+    )
+
+    report = app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert [outcome.source_id for outcome in report.sent] == ["EMP-042"]
+    assert report.sent[0].minutes == 480  # 8h realnie ze zmiany, nie estymacja
+    assert list((tmp_path / "out").glob("*.xlsx"))
+
+
+def test_run_once_with_shifts_attributes_hours_to_commit_issue_keys(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Deliverable S3: godziny Shifts trafiają na klucz Jira z commitu dnia (nie na koszyk).
+
+    Podmieniamy odczyt zmian (``read_blocks``) i źródło commitów (``_build_commit_source``);
+    reszta — mapowanie aad→osoba, przypisanie issue, zapis xlsx — jest prawdziwa. Czytamy
+    wygenerowany arkusz i sprawdzamy kolumnę ``Issue Key/ID``.
+    """
+    from datetime import timezone
+
+    from openpyxl import load_workbook
+
+    from workmate.adapters.outbound import graph_shift_source
+    from workmate.core.domain.shift_hours import ShiftBlock
+    from workmate.core.domain.worklog import Commit
+
+    identities = tmp_path / "id.yaml"
+    identities.write_text(
+        "EMP-042:\n  aad_user_id: aad-mikolaj\n  jira_user: mikolaj@example.com\n"
+        "  git_email: mikolaj@example.com\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "workmate.adapters.outbound.graph_identity_directory.fetch_team_members",
+        lambda *_a, **_k: {"aad-mikolaj": "Mikołaj"},
+    )
+    block = ShiftBlock(
+        user_id="aad-mikolaj",
+        start=datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc),  # 8h dnia 15
+        end=datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(graph_shift_source.GraphShiftSource, "read_blocks", lambda self: [block])
+
+    class FakeCommits:
+        def commits_for(self, git_email, since, until):
+            return [
+                Commit(
+                    sha="s",
+                    message="WT-7 robota",
+                    authored_at=datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc),
+                )
+            ]
+
+    monkeypatch.setattr(app, "_build_commit_source", lambda tz: FakeCommits())
+
+    settings = _settings(
+        hours_source="shifts",
+        identities_path=identities,
+        output_dir=tmp_path / "out",
+        fallback_issue="BIAP-1",
+        summary_dir=tmp_path / "sum",
+        state_path=tmp_path / "s.json",
+        dry_run=True,
+    )
+
+    report = app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert report.sent[0].minutes == 480
+    xlsx = next((tmp_path / "out").glob("*.xlsx"))
+    rows = [tuple(r) for r in load_workbook(xlsx).worksheets[0].iter_rows(values_only=True)]
+    assert rows[1][0] == "WT-7"  # kolumna Issue Key/ID — realny klucz z commitu, nie koszyk
+
+
+def test_run_once_with_shifts_fills_comment_from_claude_summary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Deliverable S4: kolumna ``Comment`` arkusza niesie opis dnia z claude_summary.
+
+    Prawdziwy store (katalog JSON), podmieniony jest tylko odczyt zmian i commitów.
+    """
+    import json as _json
+    from datetime import timezone
+
+    from openpyxl import load_workbook
+
+    from workmate.adapters.outbound import graph_shift_source
+    from workmate.core.domain.shift_hours import ShiftBlock
+    from workmate.core.domain.worklog import Commit
+
+    identities = tmp_path / "id.yaml"
+    identities.write_text(
+        "EMP-042:\n  aad_user_id: aad-mikolaj\n  jira_user: mikolaj@example.com\n"
+        "  git_email: mikolaj@example.com\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "workmate.adapters.outbound.graph_identity_directory.fetch_team_members",
+        lambda *_a, **_k: {"aad-mikolaj": "Mikołaj"},
+    )
+    summary_dir = tmp_path / "sum"
+    summary_dir.mkdir()
+    (summary_dir / "mikolaj.json").write_text(
+        _json.dumps(
+            {
+                "person": "mikolaj@example.com",
+                "days": [
+                    {"date": "2026-07-15", "llm_prose": "Robił WT-7.", "commits": [], "prompts": []}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    block = ShiftBlock(
+        user_id="aad-mikolaj",
+        start=datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(graph_shift_source.GraphShiftSource, "read_blocks", lambda self: [block])
+
+    class FakeCommits:
+        def commits_for(self, git_email, since, until):
+            return [
+                Commit(
+                    sha="s",
+                    message="WT-7 robota",
+                    authored_at=datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc),
+                )
+            ]
+
+    monkeypatch.setattr(app, "_build_commit_source", lambda tz: FakeCommits())
+
+    settings = _settings(
+        hours_source="shifts",
+        identities_path=identities,
+        output_dir=tmp_path / "out",
+        fallback_issue="BIAP-1",
+        summary_dir=summary_dir,
+        state_path=tmp_path / "s.json",
+        dry_run=True,
+    )
+
+    app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    xlsx = next((tmp_path / "out").glob("*.xlsx"))
+    rows = [tuple(r) for r in load_workbook(xlsx).worksheets[0].iter_rows(values_only=True)]
+    assert rows[1][0] == "WT-7"  # Issue Key/ID — klucz z commitu
+    assert rows[1][4] == "Robił WT-7."  # Comment — opis dnia z claude_summary
+
+
+def test_run_once_with_shifts_full_assembly_hours_issues_and_comment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Złożenie S1-S5: realne godziny Shifts DZIELONE na dwa klucze z commitów, oba z opisem dnia.
+
+    Jeden pełny bieg na sucho przez prawdziwe adaptery (store, xlsx, mapa tożsamości, projekcja);
+    podmienione tylko wejścia sieciowe: odczyt zmian (Graph) i commitów (GitHub).
+    """
+    from datetime import timezone
+
+    from openpyxl import load_workbook
+
+    from workmate.adapters.outbound import graph_shift_source
+    from workmate.core.domain.shift_hours import ShiftBlock
+    from workmate.core.domain.worklog import Commit
+
+    identities = tmp_path / "id.yaml"
+    identities.write_text(
+        "EMP-042:\n  aad_user_id: aad-mikolaj\n  jira_user: mikolaj@example.com\n"
+        "  git_email: mikolaj@example.com\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "workmate.adapters.outbound.graph_identity_directory.fetch_team_members",
+        lambda *_a, **_k: {"aad-mikolaj": "Mikołaj"},
+    )
+    summary_dir = tmp_path / "sum"
+    summary_dir.mkdir()
+    (summary_dir / "m.json").write_text(
+        __import__("json").dumps(
+            {
+                "person": "mikolaj@example.com",
+                "days": [
+                    {
+                        "date": "2026-07-15",
+                        "llm_prose": "Robił WT-1 i WT-2.",
+                        "commits": [],
+                        "prompts": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    block = ShiftBlock(
+        user_id="aad-mikolaj",
+        start=datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc),  # 8h → 480 min
+        end=datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(graph_shift_source.GraphShiftSource, "read_blocks", lambda self: [block])
+
+    class FakeCommits:
+        def commits_for(self, git_email, since, until):
+            at = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+            return [Commit(sha="a", message="WT-1 rano", authored_at=at),
+                    Commit(sha="b", message="WT-2 po", authored_at=at)]
+
+    monkeypatch.setattr(app, "_build_commit_source", lambda tz: FakeCommits())
+
+    settings = _settings(
+        hours_source="shifts",
+        identities_path=identities,
+        output_dir=tmp_path / "out",
+        fallback_issue="BIAP-1",
+        summary_dir=summary_dir,
+        state_path=tmp_path / "s.json",
+        dry_run=True,
+    )
+
+    report = app._run_once(settings, TeamsPushSettings(), lambda: "tok", as_of=_friday(24))
+
+    assert report.sent[0].minutes == 480  # suma dnia = realne 8h, mimo podziału na dwa klucze
+    xlsx = next((tmp_path / "out").glob("*.xlsx"))
+    rows = [tuple(r) for r in load_workbook(xlsx).worksheets[0].iter_rows(values_only=True)]
+    data = sorted(rows[1:], key=lambda r: r[0])  # po Issue Key/ID
+    assert [(r[0], r[2]) for r in data] == [("WT-1", "4h"), ("WT-2", "4h")]  # 240 min = 4h każdy
+    assert {r[4] for r in data} == {"Robił WT-1 i WT-2."}  # opis dnia na obu wierszach

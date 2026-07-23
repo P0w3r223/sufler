@@ -87,7 +87,7 @@ def test_follows_link_header_pagination() -> None:
 
 
 def test_returns_raw_payload_without_filtering() -> None:
-    """Klient nie mapuje — biała lista pól to zadanie rdzenia (``WorklogService._as_commits``)."""
+    """Klient nie mapuje — biała lista pól to zadanie rdzenia (``worklog.map_github_commits``)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[_commit("abc")])

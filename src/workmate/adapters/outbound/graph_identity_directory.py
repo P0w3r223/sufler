@@ -1,10 +1,11 @@
-"""Katalog tożsamości (ADR 0035) — Graph daje konto Teams, konfiguracja daje konto Jiry.
+"""Katalog tożsamości (ADR 0035/0036) — Graph daje konto Teams, konfiguracja daje resztę.
 
-Trzy systemy, trzy identyfikatory i żaden nie wynika z pozostałych:
+Systemy i identyfikatory, żaden nie wynika z pozostałych:
 
 - ``source_id`` — klucz ze źródła godzin (numer pracownika, login RCP, cokolwiek);
-- ``aad_user_id`` — adres czatu 1:1 w Teams;
-- ``jira_user`` — e-mail albo ``accountId`` do kolumny ``User`` arkusza.
+- ``aad_user_id`` — adres czatu 1:1 w Teams; ten sam identyfikator wskazuje osobę w grafiku Shifts;
+- ``jira_user`` — e-mail albo ``accountId`` do kolumny ``User`` arkusza;
+- ``git_email`` (OPCJONALNY, ADR 0036) — most do commitów i ``claude_summary``.
 
 Graph (``GET /teams/{id}/members``, scope ``TeamMember.Read.All``) dostarcza AAD i nazwę
 wyświetlaną oraz WALIDUJE, że osoba nadal jest w zespole. Konta Jiry Graph nie zna — bywa nim
@@ -15,11 +16,17 @@ czyli żaden plik i żadna wiadomość. Nigdy nie dopasowujemy po nazwisku: zły
 czyjeś godziny na CUDZE konto Jiry przy imporcie, a worklogi są create-only i nieusuwalne
 narzędziem (ADR 0034). Brak wiadomości jest naprawialny; cudzy czas w czyjejś ewidencji nie.
 
+Odwrotne lookupy (ADR 0036): ``resolve_by_aad_user_id`` (wejście od Shifts) i
+``resolve_by_git_email`` (wejście od commitów/claude_summary) — również fail-closed i, w wariancie
+Graph, bramkowane członkostwem. Kolizje identyfikatorów wyklucza ``_reject_shared_identifiers`` już
+przy ładowaniu, więc każda wartość w indeksie odwrotnym należy do dokładnie jednej osoby.
+
 Format ``identities.yaml``::
 
     EMP-042:
       aad_user_id: 8a1f-...
       jira_user: mikolaj@example.org
+      git_email: mikolaj@example.org          # opcjonalnie, most do commitów/claude_summary
       display_name: Mikołaj Anonimowicz   # opcjonalnie, nadpisuje nazwę z Graph
 """
 
@@ -40,11 +47,27 @@ _GRAPH = "https://graph.microsoft.com/v1.0"
 _MAX_MEMBER_PAGES = 10
 
 
+def _reverse_index(people: dict[str, Person], attr: str) -> dict[str, Person]:
+    """Odwrotny indeks „wartość pola → osoba" po NIEPUSTYM polu (np. ``aad_user_id``/``git_email``).
+
+    Puste wartości pomijamy — ``git_email`` jest opcjonalny, więc wielu ludzi bez niego nie tworzy
+    kolizji. Różnowartościowość niepustych wartości gwarantuje ``_reject_shared_identifiers``.
+    """
+    index: dict[str, Person] = {}
+    for person in people.values():
+        value = getattr(person, attr)
+        if value:
+            index[value] = person
+    return index
+
+
 class YamlIdentityDirectory:
     """Mapowanie wyłącznie z pliku — bez Graph. Działa offline i na dowolnym tenancie."""
 
     def __init__(self, path: Path) -> None:
         self._people = _load_map(path)
+        self._by_aad = _reverse_index(self._people, "aad_user_id")
+        self._by_git_email = _reverse_index(self._people, "git_email")
         self._path = path
 
     def resolve(self, source_id: str) -> Person | None:
@@ -55,6 +78,17 @@ class YamlIdentityDirectory:
             )
             return None
         return entry
+
+    def resolve_by_aad_user_id(self, aad_user_id: str) -> Person | None:
+        """Osoba adresowana danym kontem Teams (wejście od Shifts) albo ``None`` (fail-closed)."""
+        return self._by_aad.get(aad_user_id)
+
+    def resolve_by_git_email(self, git_email: str) -> Person | None:
+        """Osoba o danym e-mailu git (wejście od commitów/claude_summary) albo ``None``.
+
+        Case-insensitive: indeks trzyma e-maile małymi literami, więc lookup też kanonizujemy.
+        """
+        return self._by_git_email.get(git_email.strip().lower()) if git_email else None
 
 
 class GraphIdentityDirectory:
@@ -67,6 +101,8 @@ class GraphIdentityDirectory:
 
     def __init__(self, path: Path, members: dict[str, str]) -> None:
         self._people = _load_map(path)
+        self._by_aad = _reverse_index(self._people, "aad_user_id")
+        self._by_git_email = _reverse_index(self._people, "git_email")
         self._members = members
         self._path = path
 
@@ -77,13 +113,34 @@ class GraphIdentityDirectory:
                 "Brak %s w mapie tożsamości %s — pomijam (fail-closed).", source_id, self._path
             )
             return None
+        return self._gate(entry)
+
+    def resolve_by_aad_user_id(self, aad_user_id: str) -> Person | None:
+        """Osoba adresowana danym kontem Teams (wejście od Shifts), bramkowana członkostwem."""
+        return self._gate(self._by_aad.get(aad_user_id))
+
+    def resolve_by_git_email(self, git_email: str) -> Person | None:
+        """Osoba o danym e-mailu git (wejście od commitów/summary), bramkowana członkostwem.
+
+        Case-insensitive — indeks i lookup kanonizujemy do małych liter (git ignoruje wielkość).
+        """
+        return self._gate(self._by_git_email.get(git_email.strip().lower())) if git_email else None
+
+    def _gate(self, entry: Person | None) -> Person | None:
+        """Wspólna bramka fail-closed: osoba musi być AKTUALNYM członkiem zespołu; nazwa z Graph.
+
+        Jedno miejsce dla wszystkich trzech ścieżek (``resolve`` i oba odwrotne lookupy), żeby
+        kontrola członkostwa nie rozjechała się między nimi.
+        """
+        if entry is None:
+            return None
         if entry.aad_user_id not in self._members:
             # Osoba wypisana z zespołu (odejście, zmiana projektu) — nie wysyłamy jej nic,
             # a operator widzi to w logu. Cichy zapis byłby gorszy: arkusz powstałby dla kogoś,
             # kto już nie jest odbiorcą.
             logger.warning(
                 "Osoba %s (%s) nie jest członkiem zespołu — pomijam (fail-closed).",
-                source_id,
+                entry.source_id,
                 entry.aad_user_id,
             )
             return None
@@ -162,6 +219,9 @@ def _load_map(path: Path) -> dict[str, Person]:
             aad_user_id=str(entry["aad_user_id"]),
             jira_user=str(entry["jira_user"]),
             display_name=str(entry.get("display_name") or ""),
+            # Git ignoruje wielkość liter e-maila autora; kanonizujemy do małych, żeby commit
+            # „Mikolaj@EXAMPLE.org" trafił na tę samą osobę co wpis „mikolaj@example.org" (ADR 0036).
+            git_email=str(entry.get("git_email") or "").strip().lower(),
         )
     _reject_shared_identifiers(people, path)
     logger.info("Mapa tożsamości %s: %d osób.", path, len(people))
@@ -169,21 +229,27 @@ def _load_map(path: Path) -> dict[str, Person]:
 
 
 def _reject_shared_identifiers(people: dict[str, Person], path: Path) -> None:
-    """Dwie osoby NIE MOGĄ dzielić konta Teams ani konta Jiry — twardy błąd startu.
+    """Dwie osoby NIE MOGĄ dzielić konta Teams, konta Jiry ani e-maila git — twardy błąd startu.
 
     Fail-closed pilnował dotąd wyłącznie osi „brak wpisu". Oś „ten sam identyfikator u dwóch
     osób" była otwarta, a to właśnie ona jest nieodwracalna: skopiowany w YAML-u blok bez
     podmiany ``jira_user`` sprawia, że arkusz drugiej osoby ma w KAŻDEJ komórce cudze konto,
     więc jej tydzień wjeżdża do Jiry na cudze nazwisko — create-only, bez usuwania z poziomu
-    narzędzi. Ten sam ``aad_user_id`` wysyła komuś cudzą tabelę godzin.
+    narzędzi. Ten sam ``aad_user_id`` wysyła komuś cudzą tabelę godzin, a współdzielony
+    ``git_email`` przypisałby czyjeś commity (i opis) drugiej osobie (ADR 0036).
 
     Strażniki ``assert_single_person`` tego nie łapią: sprawdzają JEDNORODNOŚĆ zestawienia,
     a oba zestawienia są wewnętrznie spójne — po prostu wskazują na złą osobę.
+
+    ``git_email`` jest OPCJONALNY: puste wartości pomijamy (brak atrybucji per-commit to nie
+    kolizja); pilnujemy różnowartościowości tylko wśród NIEPUSTYCH.
     """
-    for field in ("aad_user_id", "jira_user"):
+    for field in ("aad_user_id", "jira_user", "git_email"):
         seen: dict[str, str] = {}
         for person in people.values():
             value = getattr(person, field)
+            if not value:
+                continue  # git_email opcjonalny — pusty nie koliduje
             if value in seen:
                 raise ValueError(
                     f"mapa tożsamości {path}: {field}={value!r} występuje u dwóch osób "

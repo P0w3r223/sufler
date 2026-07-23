@@ -17,6 +17,7 @@ from workmate.core.domain.worklog import (
     extract_issue_keys,
     group_sessions,
     local_day,
+    map_github_commits,
     normalize_commit_message,
     session_confidence,
 )
@@ -314,3 +315,68 @@ def test_truncated_history_is_announced_in_notes() -> None:
 
 def test_complete_history_carries_no_truncation_note() -> None:
     assert not any("UCIĘTA" in note for note in _proposal([]).notes)
+
+
+# --- mapowanie surowego JSON GitHuba (biała lista, ADR 0034/0036) -----------------
+#
+# ``map_github_commits`` to JEDYNY, współdzielony mapper propozycji czasu (ADR 0034) i źródła
+# commitów kart czasu (ADR 0036) — jego biała lista pól i odporność na dziwny kształt muszą być
+# testowane WPROST, nie tylko przez ścieżki, które go wołają.
+
+
+def _raw(
+    sha: str = "abc",
+    message: str = "WT-7 robota",
+    when: str = "2026-07-15T09:12:00Z",
+    login: str = "P0w3r223",
+    email: str = "piotr@example.com",
+) -> dict:
+    return {
+        "sha": sha,
+        "html_url": f"https://github.com/x/y/commit/{sha}",
+        "author": {"login": login},
+        "commit": {"message": message, "author": {"date": when, "email": email}},
+    }
+
+
+def test_map_whitelists_every_field_and_normalizes_the_message() -> None:
+    (commit,) = map_github_commits([_raw(message="WT-7 robota\n\ndługi opis")])
+    assert commit.sha == "abc"
+    assert commit.message == "WT-7 robota"  # pierwsza linia, znormalizowana
+    assert commit.authored_at == datetime(2026, 7, 15, 9, 12, tzinfo=timezone.utc)
+    assert commit.author_login == "P0w3r223"  # z item.author.login (konto GitHub)
+    assert commit.author_email == "piotr@example.com"  # z item.commit.author.email (autor git)
+    assert commit.url == "https://github.com/x/y/commit/abc"
+
+
+def test_map_skips_entries_without_a_parseable_timestamp() -> None:
+    """Ścieżka ODCZYTU: daty nie zgadujemy — dziwny commit odpada, nie wywraca raportu."""
+    raw = [_raw("good"), _raw("bad", when="kiedyś"), _raw("empty", when="")]
+    assert [c.sha for c in map_github_commits(raw)] == ["good"]
+
+
+def test_map_skips_non_dict_items_in_the_list() -> None:
+    """Element listy o nie-obiektowym kształcie (śmieć z API) pomijamy zamiast rzucać."""
+    assert [c.sha for c in map_github_commits([_raw("ok"), "śmieć", 123, None])] == ["ok"]  # type: ignore[list-item]
+
+
+def test_map_tolerates_missing_nested_objects_with_safe_defaults() -> None:
+    """``_as_dict`` osłania brak/dziwny kształt ``commit``/``author`` — pola opcjonalne → puste.
+
+    Znacznik czasu wciąż jest (żyje w ``commit.author.date``), więc commit MAPUJE się z pustym
+    loginem, e-mailem i URL-em zamiast wysypać cały przebieg.
+    """
+    raw = {"sha": "s", "commit": {"author": {"date": "2026-07-15T09:12:00Z"}}}
+    (commit,) = map_github_commits([raw])
+    assert commit.sha == "s"
+    empty = (commit.author_login, commit.author_email, commit.url, commit.message)
+    assert empty == ("", "", "", "")
+
+
+def test_map_ignores_a_non_dict_commit_object() -> None:
+    """Gdy ``commit`` nie jest słownikiem, brak znacznika czasu → wpis odpada (nie rzuca)."""
+    assert map_github_commits([{"sha": "s", "commit": "nie-slownik"}]) == []
+
+
+def test_map_on_empty_input_yields_no_commits() -> None:
+    assert map_github_commits([]) == []
