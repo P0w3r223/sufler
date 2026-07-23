@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from workmate.adapters.inbound import env
@@ -36,6 +36,9 @@ from workmate.adapters.inbound.worklogi import state as state_store
 from workmate.config import Settings, TeamsPushSettings, WorklogiSettings
 from workmate.core.application.weekly_timesheets import RunReport, WeeklyTimesheetService
 from workmate.core.domain.week import next_run, previous_run, reported_week, week_label
+
+if TYPE_CHECKING:
+    from workmate.core.ports.timesheets import CommitSource, HoursSource, TaskSummarySource
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +159,67 @@ def _missed_deadline(settings: WorklogiSettings, tz: ZoneInfo) -> datetime | Non
     return None if any(k.startswith(f"{label}:") for k in saved) else last
 
 
+def _build_hours_source(
+    settings: WorklogiSettings, identities: Any, token: Any, tz: ZoneInfo
+) -> HoursSource:
+    """Wybierz źródło godzin: ``json`` (atrapa) albo ``shifts`` (Shifts + claude_summary, ADR 0036).
+
+    Wybór w JEDNYM miejscu, żeby żaden przyszły punkt składania nie zapomniał gałęzi. Konstrukcja
+    adaptera nie dotyka Graph (odczyt dopiero w ``read``), więc dispatch jest testowalny bez sieci.
+    """
+    from workmate.adapters.outbound.json_hours_source import JsonHoursSource
+
+    if settings.hours_source == "shifts":
+        from workmate.adapters.outbound.graph_shift_source import GraphShiftSource
+        from workmate.core.application.shift_hours_source import ShiftsHoursSource
+
+        shift_source = GraphShiftSource(token, settings.team_id)
+        return ShiftsHoursSource(
+            shift_source,
+            identities,
+            fallback_issue=settings.fallback_issue,
+            tz=tz,
+            commits=_build_commit_source(tz),
+            summaries=_build_summary_source(settings),
+        )
+    return JsonHoursSource(settings.hours_path)
+
+
+def _build_summary_source(settings: WorklogiSettings) -> TaskSummarySource:
+    """Źródło opisów dnia (``claude_summary``) — czyta katalog ``summary_dir`` (ADR 0036).
+
+    Brak katalogu/plików = puste komentarze (degradacja w adapterze), więc nie ma tu gałęzi
+    ``None``: store jest zawsze bezpieczny, a wymóg ``summary_dir`` egzekwuje walidacja configu.
+    """
+    from workmate.adapters.outbound.claude_summary_store import ClaudeSummaryStore
+
+    return ClaudeSummaryStore(settings.summary_dir)
+
+
+def _build_commit_source(tz: ZoneInfo) -> CommitSource | None:
+    """Źródło commitów do przypisania godzin na zgłoszenia (ADR 0036) albo ``None``.
+
+    GitHub jest OPCJONALNY: bez skonfigurowanego tokenu/repo źródło jest ``None`` i cały czas trafia
+    na koszykowe issue (degradacja, nie błąd). Konstrukcja klienta jest leniwa i bez sieci — odczyt
+    dopiero w ``read``, więc dispatch pozostaje testowalny.
+    """
+    from workmate.config import GithubSettings
+
+    github = GithubSettings.from_env()
+    if not (github.token and github.owner and github.repo):
+        logger.info("GitHub nieskonfigurowany — godziny bez kluczy z commitów trafią na koszyk.")
+        return None
+    from workmate.adapters.outbound.github_commit_source import GithubCommitSource
+
+    return GithubCommitSource(
+        token=github.token,
+        owner=github.owner,
+        repo=github.repo,
+        tz=tz,
+        api_base=github.api_base,
+    )
+
+
 def _run_once(
     settings: WorklogiSettings,
     push: TeamsPushSettings,
@@ -176,7 +240,6 @@ def _run_once(
         fetch_team_members,
     )
     from workmate.adapters.outbound.graph_teams_notifier import HttpxTeamsNotifier
-    from workmate.adapters.outbound.json_hours_source import JsonHoursSource
     from workmate.adapters.outbound.openpyxl_sheet_writer import OpenpyxlSheetWriter
 
     tz = ZoneInfo(settings.tz_name)
@@ -186,7 +249,7 @@ def _run_once(
     with httpx.Client(timeout=30) as sync_http:
         members = fetch_team_members(sync_http, settings.team_id, token())
     identities = GraphIdentityDirectory(settings.identities_path, members)
-    hours = JsonHoursSource(settings.hours_path)
+    hours = _build_hours_source(settings, identities, token, tz)
 
     def send_html(aad_user_id: str, html: str) -> None:
         """Most sync→async: przebieg jest wsadowy, a adapter Teams asynchroniczny.

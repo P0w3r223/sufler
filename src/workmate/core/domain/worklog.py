@@ -22,11 +22,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from workmate.core.domain.guards import JIRA_KEY_RE
+from workmate.core.domain.jira_time import parse_jira_timestamp
 
 # Strefa, w której domyślnie liczymy dobę kalendarzową. Nazwa IANA, nie offset — zmiana czasu
 # przesuwałaby granicę doby o godzinę przez pół roku (patrz ``SessionPolicy.tz``).
@@ -195,6 +197,46 @@ def extract_issue_keys(message: str) -> tuple[str, ...]:
     for match in _KEY_IN_TEXT_RE.finditer(message or ""):
         seen.setdefault(match.group(0), None)
     return tuple(seen)
+
+
+def map_github_commits(raw: list[dict[str, Any]]) -> list[Commit]:
+    """Zmapuj surowe JSON-y GitHuba (``/commits``) na model domeny — BIAŁĄ LISTĄ pól (bez diffów).
+
+    Wpisy bez rozpoznawalnego znacznika czasu pomijamy: ścieżka ODCZYTU, więc jeden dziwny commit
+    nie może wywrócić raportu (daty nie zgadujemy). Wiadomość normalizujemy (pierwsza linia, bez
+    znaków sterujących) — to DANE, użyte wyłącznie do wyłuskania kluczy Jira i podglądu.
+
+    Wspólny mapper dla propozycji czasu (ADR 0034) i źródła commitów kart czasu (ADR 0036) —
+    jedna, testowana biała lista zamiast dwóch, które mogłyby się rozjechać.
+    """
+    commits: list[Commit] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        payload = _as_dict(item.get("commit"))
+        git_author = _as_dict(payload.get("author"))
+        # Znacznik GitHuba (``2026-07-15T09:12:00Z``) mieści się w tym samym parserze:
+        # ``%z`` przyjmuje ``Z`` od Pythona 3.7, a ``fromisoformat`` domyka resztę wariantów.
+        authored_at = parse_jira_timestamp(git_author.get("date"))
+        if authored_at is None:
+            continue
+        account = _as_dict(item.get("author"))
+        commits.append(
+            Commit(
+                sha=str(item.get("sha") or ""),
+                message=normalize_commit_message(str(payload.get("message") or "")),
+                authored_at=authored_at,
+                author_login=str(account.get("login") or ""),
+                author_email=str(git_author.get("email") or ""),
+                url=str(item.get("html_url") or ""),
+            )
+        )
+    return commits
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """Zagnieżdżony obiekt JSON jako słownik albo pusty — odporność na dziwny kształt."""
+    return value if isinstance(value, dict) else {}
 
 
 def local_day(moment: datetime, tz: ZoneInfo) -> date:

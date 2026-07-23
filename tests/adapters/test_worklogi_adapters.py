@@ -17,6 +17,7 @@ from workmate.adapters.outbound.graph_identity_directory import (
     YamlIdentityDirectory,
     fetch_team_members,
 )
+from workmate.adapters.outbound.graph_shift_source import GraphShiftSource
 from workmate.adapters.outbound.json_hours_source import JsonHoursSource
 from workmate.adapters.outbound.openpyxl_sheet_writer import OpenpyxlSheetWriter
 from workmate.core.domain.timesheet import TimesheetError
@@ -161,6 +162,7 @@ _YAML = """
 EMP-042:
   aad_user_id: aad-mikolaj
   jira_user: mikolaj@example.org
+  git_email: mikolaj@example.org
   display_name: Mikołaj Anonimowicz
 EMP-017:
   aad_user_id: aad-piotr
@@ -220,6 +222,68 @@ def test_two_people_sharing_a_teams_account_fail_at_startup(tmp_path: Path) -> N
     )
     with pytest.raises(ValueError, match="aad_user_id"):
         YamlIdentityDirectory(_identities(tmp_path, duplikat))
+
+
+# --- most tożsamości: git_email + odwrotne lookupy (ADR 0036) ---------------------
+
+
+def test_yaml_parses_optional_git_email(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    with_email = directory.resolve("EMP-042")
+    without_email = directory.resolve("EMP-017")
+    assert with_email is not None and with_email.git_email == "mikolaj@example.org"
+    assert without_email is not None and without_email.git_email == ""  # opcjonalny
+
+
+def test_resolve_by_git_email_maps_back_to_person(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_git_email("mikolaj@example.org")
+    assert person is not None and person.source_id == "EMP-042"
+
+
+def test_resolve_by_git_email_is_fail_closed(tmp_path: Path) -> None:
+    """Nieznany e-mail (commit obcej osoby) i pusty e-mail → None, nigdy zgadywanie."""
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    assert directory.resolve_by_git_email("ktos-obcy@example.com") is None
+    assert directory.resolve_by_git_email("") is None
+
+
+def test_resolve_by_aad_user_id_maps_back_to_person(tmp_path: Path) -> None:
+    """Wejście od Shifts: aad_user_id → osoba (albo None dla obcego)."""
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_aad_user_id("aad-mikolaj")
+    assert person is not None and person.source_id == "EMP-042"
+    assert directory.resolve_by_aad_user_id("aad-obcy") is None
+
+
+def test_graph_reverse_lookups_honor_team_membership(tmp_path: Path) -> None:
+    """Odwrotne lookupy przez Graph też są bramkowane członkostwem — osoba spoza zespołu → None."""
+    directory = GraphIdentityDirectory(_identities(tmp_path), {"aad-mikolaj": "Mikołaj A."})
+    assert directory.resolve_by_git_email("mikolaj@example.org") is not None
+    assert directory.resolve_by_aad_user_id("aad-mikolaj") is not None
+    # EMP-017 (aad-piotr) nie jest w zespole → oba lookupy fail-closed.
+    assert directory.resolve_by_aad_user_id("aad-piotr") is None
+
+
+def test_two_people_sharing_a_git_email_fail_at_startup(tmp_path: Path) -> None:
+    """Współdzielony git_email przypisałby czyjeś commity drugiej osobie (ADR 0036)."""
+    duplikat = (
+        "EMP-1:\n  aad_user_id: aad-1\n  jira_user: a@x.pl\n  git_email: dev@x.pl\n"
+        "EMP-2:\n  aad_user_id: aad-2\n  jira_user: b@x.pl\n  git_email: dev@x.pl\n"
+    )
+    with pytest.raises(ValueError, match="git_email"):
+        YamlIdentityDirectory(_identities(tmp_path, duplikat))
+
+
+def test_empty_git_email_is_not_a_collision(tmp_path: Path) -> None:
+    """Kilka osób bez git_email to norma (opcjonalny), nie kolizja — mapa ma się załadować."""
+    bez = (
+        "EMP-1:\n  aad_user_id: aad-1\n  jira_user: a@x.pl\n"
+        "EMP-2:\n  aad_user_id: aad-2\n  jira_user: b@x.pl\n"
+    )
+    directory = YamlIdentityDirectory(_identities(tmp_path, bez))
+    assert directory.resolve("EMP-1") is not None
+    assert directory.resolve_by_git_email("") is None
 
 
 def test_graph_directory_requires_current_team_membership(tmp_path: Path) -> None:
@@ -318,3 +382,111 @@ def test_fetch_team_members_succeeds_when_the_list_ends() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     assert fetch_team_members(client, "team-1", "tok") == {"aad-1": "Ala"}
+
+
+# --- źródło zmian z Graph (Shifts, ADR 0036) --------------------------------------
+
+_SHARED = {"startDateTime": "2026-07-15T06:00:00Z", "endDateTime": "2026-07-15T14:00:00Z"}
+
+
+def _shift_source(handler) -> GraphShiftSource:
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return GraphShiftSource(lambda: "tok", "team-1", client=client)
+
+
+def test_shift_source_parses_only_published_shifts_with_a_user() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer tok"
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {"userId": "aad-1", "sharedShift": dict(_SHARED)},
+                    {"userId": "aad-2", "draftShift": dict(_SHARED)},  # robocza — pomijamy
+                    {"userId": "", "sharedShift": dict(_SHARED)},  # bez userId
+                    "śmieć",
+                ]
+            },
+        )
+
+    blocks = _shift_source(handler).read_blocks()
+    assert [b.user_id for b in blocks] == ["aad-1"]  # tylko opublikowana z userId
+    assert blocks[0].start.tzinfo is not None  # świadomy datetime
+
+
+def test_shift_source_skips_bad_dates_and_inverted_ranges() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {"userId": "a", "sharedShift": {**_SHARED, "startDateTime": "niedata"}},
+                    {  # koniec przed startem
+                        "userId": "b",
+                        "sharedShift": {
+                            "startDateTime": "2026-07-15T14:00:00Z",
+                            "endDateTime": "2026-07-15T06:00:00Z",
+                        },
+                    },
+                ]
+            },
+        )
+
+    assert _shift_source(handler).read_blocks() == []
+
+
+def test_shift_source_follows_pagination() -> None:
+    pages = {
+        "/v1.0/teams/team-1/schedule/shifts": {
+            "value": [{"userId": "a", "sharedShift": dict(_SHARED)}],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/next",
+        },
+        "/v1.0/next": {"value": [{"userId": "b", "sharedShift": dict(_SHARED)}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=pages[request.url.path])
+
+    assert {b.user_id for b in _shift_source(handler).read_blocks()} == {"a", "b"}
+
+
+def test_shift_source_fails_loudly_when_the_page_cap_cuts_the_list() -> None:
+    """Ucięcie grafiku = zaniżone godziny w arkuszu importowanym jako fakt — twardy błąd."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "value": [{"userId": "a", "sharedShift": dict(_SHARED)}],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/next",
+            },
+        )
+
+    with pytest.raises(ValueError, match="NIEKOMPLETNA"):
+        _shift_source(handler).read_blocks()
+
+
+# --- git_email case-insensitive (ADR 0036, L3) ------------------------------------
+
+
+def test_git_email_is_canonicalized_to_lowercase(tmp_path: Path) -> None:
+    """Git ignoruje wielkość liter e-maila autora — kanonizujemy przy ładowaniu do małych."""
+    yaml = "EMP-1:\n  aad_user_id: a\n  jira_user: j@x.pl\n  git_email: Dev@Example.PL\n"
+    person = YamlIdentityDirectory(_identities(tmp_path, yaml)).resolve("EMP-1")
+    assert person is not None and person.git_email == "dev@example.pl"
+
+
+def test_git_email_lookup_is_case_insensitive(tmp_path: Path) -> None:
+    yaml = "EMP-1:\n  aad_user_id: a\n  jira_user: j@x.pl\n  git_email: dev@example.pl\n"
+    directory = YamlIdentityDirectory(_identities(tmp_path, yaml))
+    assert directory.resolve_by_git_email("DEV@Example.PL") is not None  # inny case → ta sama osoba
+
+
+def test_shared_git_email_differing_only_in_case_is_rejected(tmp_path: Path) -> None:
+    """Dwie osoby z tym samym e-mailem różniącym się wielkością liter to wciąż kolizja."""
+    yaml = (
+        "EMP-1:\n  aad_user_id: a1\n  jira_user: a@x.pl\n  git_email: Dev@x.pl\n"
+        "EMP-2:\n  aad_user_id: a2\n  jira_user: b@x.pl\n  git_email: dev@X.pl\n"
+    )
+    with pytest.raises(ValueError, match="git_email"):
+        YamlIdentityDirectory(_identities(tmp_path, yaml))

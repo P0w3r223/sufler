@@ -62,8 +62,13 @@ Dlatego mapowanie jest jawne:
 EMP-042:
   aad_user_id: 712020-...          # z Graph / scripts/lista_czlonkow.py
   jira_user: mikolaj@example.org        # e-mail albo accountId Atlassiana
+  git_email: mikolaj@example.org        # opcjonalnie (ADR 0036): most do commitów i claude_summary
   display_name: Mikołaj Anonimowicz # opcjonalnie, nadpisuje nazwę z Graph
 ```
+
+`git_email` jest OPCJONALNY — używa go dopiero źródło `shifts` (ADR 0036), by przypisać czyjeś
+commity danego dnia do kluczy Jira i wpiąć opis z `claude_summary`. Puste = godziny tej osoby
+w całości na koszykowe issue. Współdzielony `git_email` u dwóch osób = twardy błąd startu.
 
 **Fail-closed:** nieznany `source_id`, brak `jira_user` albo osoba spoza zespołu = brak pliku i brak
 wiadomości, z wpisem w raporcie przebiegu. Nigdy nie zgadujemy po nazwisku — zły `jira_user`

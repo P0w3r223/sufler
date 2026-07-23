@@ -1205,7 +1205,9 @@ _DEFAULT_WORKLOGI_TZ = "Europe/Warsaw"
 # Sufity zdrowego rozsądku — chronią przed absurdem wpisanym do .env, niezależnie od bramki.
 MAX_WORKLOGI_HOURS_PER_DAY = 24.0
 MAX_WORKLOGI_CATCHUP_DAYS = 14
-_ALLOWED_WORKLOGI_SOURCES = ("json",)
+# "json" = atrapa (RCP/eksport jeszcze nieznany); "shifts" = realne godziny z Microsoft Shifts
+# przez Graph + klucze issue z commitów + opis z claude_summary (ADR 0036, integracja wieloetapowa).
+_ALLOWED_WORKLOGI_SOURCES = ("json", "shifts")
 
 
 @dataclass(frozen=True)
@@ -1232,6 +1234,10 @@ class WorklogiSettings:
     state_path: Path = _DEFAULT_WORKLOGI_STATE
     hours_source: str = "json"
     hours_path: Path = Path()
+    # Źródło "shifts" (ADR 0036): koszykowe issue na czas bez klucza z commitów + katalog wyników
+    # claude_summary (opis dnia → komentarz). Wymagane TYLKO gdy hours_source == "shifts".
+    fallback_issue: str = ""
+    summary_dir: Path = Path()
     tz_name: str = _DEFAULT_WORKLOGI_TZ
     run_weekday: int = 4  # piątek (0=poniedziałek)
     run_hour: int = 16
@@ -1253,6 +1259,8 @@ class WorklogiSettings:
             state_path=_path_from_env("WORKMATE_WORKLOGI_STATE", _DEFAULT_WORKLOGI_STATE),
             hours_source=os.environ.get("WORKMATE_WORKLOGI_HOURS_SOURCE", "json").strip().lower(),
             hours_path=_path_from_env("WORKMATE_WORKLOGI_HOURS_PATH", Path()),
+            fallback_issue=os.environ.get("WORKMATE_WORKLOGI_FALLBACK_ISSUE", "").strip().upper(),
+            summary_dir=_path_from_env("WORKMATE_WORKLOGI_SUMMARY_DIR", Path()),
             tz_name=os.environ.get("WORKMATE_WORKLOGI_TZ", _DEFAULT_WORKLOGI_TZ).strip(),
             run_weekday=_int_from_env("WORKMATE_WORKLOGI_RUN_WEEKDAY", 4),
             run_hour=_int_from_env("WORKMATE_WORKLOGI_RUN_HOUR", 16),
@@ -1296,6 +1304,8 @@ class WorklogiSettings:
             raise ValueError(
                 "WORKMATE_WORKLOGI_HOURS_SOURCE=json wymaga WORKMATE_WORKLOGI_HOURS_PATH."
             )
+        if self.hours_source == "shifts":
+            self._validate_shifts_source()
         if not self.identities_path.is_file():
             raise ValueError(
                 f"mapa tożsamości nie istnieje: {self.identities_path} — bez niej NIKT nie "
@@ -1320,6 +1330,32 @@ class WorklogiSettings:
                 "Nagłówki arkusza są HIPOTEZĄ z dokumentacji producenta: pobierz szablon "
                 "(Apps → WorklogPRO → Import worklogs), porównaj z WORKLOGPRO_HEADERS i dopiero "
                 "wtedy przestaw flagę — procedura w docs/how-to/worklogi-weekly.md (Etap 0)."
+            )
+
+    def _validate_shifts_source(self) -> None:
+        """Źródło "shifts" (ADR 0036) wymaga koszykowego issue i katalogu claude_summary.
+
+        Koszyk (``fallback_issue``) łapie czas dni bez klucza z commitów — bez niego arkusz miałby
+        wiersze bez ``issue_key`` i import WorklogPRO by je odrzucił. Kształt ``PROJ-123`` sprawdza
+        ten sam wzorzec co strażniki Jiry (``guards.JIRA_KEY_RE``); import jest lokalny, by nie
+        było cyklu importu przy ładowaniu configu.
+        """
+        from workmate.core.domain.guards import JIRA_KEY_RE
+
+        if not self.fallback_issue:
+            raise ValueError(
+                "WORKMATE_WORKLOGI_HOURS_SOURCE=shifts wymaga WORKMATE_WORKLOGI_FALLBACK_ISSUE "
+                "(koszykowe issue na czas bez klucza z commitów, np. BIAP-1)."
+            )
+        if not JIRA_KEY_RE.fullmatch(self.fallback_issue):
+            raise ValueError(
+                "WORKMATE_WORKLOGI_FALLBACK_ISSUE musi mieć kształt PROJ-123, jest: "
+                f"{self.fallback_issue!r}."
+            )
+        if str(self.summary_dir) in ("", "."):
+            raise ValueError(
+                "WORKMATE_WORKLOGI_HOURS_SOURCE=shifts wymaga WORKMATE_WORKLOGI_SUMMARY_DIR "
+                "(katalog wyników claude_summary do komentarzy dnia)."
             )
 
     def _validate_ranges(self) -> None:
