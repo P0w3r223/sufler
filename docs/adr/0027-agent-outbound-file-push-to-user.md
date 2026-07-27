@@ -9,6 +9,11 @@ Related to: docs/adr/0026-agent-file-reply-in-thread.md, docs/adr/0016-user-mult
 
 ---
 
+> **Update 2026-07-27:** Admin consent for `Files.ReadWrite.All` has since been granted — the write
+> scope is available. The file variant is **no longer scope-blocked** (only `TeamsFileSender` + the
+> outbound-attachment build remains); the images-only variant was already deliverable. The rest of
+> this decision stands.
+
 ## Context
 
 Inbound multimodal attachments exist (ADR 0016): a user uploads an image or document and the agent reads

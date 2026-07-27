@@ -14,12 +14,13 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
+from workmate.core.application.events import EventService
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import build_tool_catalog
+from workmate.core.application.tools import build_events_since_catalog, build_tool_catalog
 
 
 def register_tools(
@@ -35,4 +36,17 @@ def register_tools(
     tylko narzędzia odczytu; gdy podane, dochodzi mutujące ``save_note``.
     """
     for spec in build_tool_catalog(notes, projects, write_service=write_service):
+        mcp.add_tool(spec.fn)
+
+
+def register_event_tools(mcp: FastMCP, events: EventService) -> None:
+    """Zarejestruj KURSOROWY odczyt zdarzeń (``read_events_since``) na drzwiach MCP (A3, ADR 0040).
+
+    Osobne od ``register_tools`` (4+1 ZAMROŻONE, Bramka 1) — to celowe, ADR-owane, ADDYTYWNE
+    rozszerzenie powierzchni: sesja Claude Code, inaczej niż runtime agenta WorkMate, nie dostaje
+    ``extra_catalog``, więc kursorowy odczyt musi wejść wprost na FastMCP. Read-only ⇒ bez bramki
+    (ADR 0002/0006). Wchodzi tylko przy podłączonym moście — patrz
+    ``_events_service_if_present``.
+    """
+    for spec in build_events_since_catalog(events):
         mcp.add_tool(spec.fn)

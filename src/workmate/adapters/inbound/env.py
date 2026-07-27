@@ -8,8 +8,26 @@ oba warianty, żeby ``.env`` z Windowsa działał tak samo jak z powłoki unikso
 
 from __future__ import annotations
 
+import contextlib
 import os
+import sys
 from pathlib import Path
+
+
+def force_utf8_io() -> None:
+    """Wymuś UTF-8 na stdin/stdout/stderr — inaczej polskie znaki psują się w konsoli.
+
+    Python na Windows domyślnie pisze w kodowaniu lokalnym (cp1250), a nowoczesne
+    terminale (Git Bash/MinTTY, Windows Terminal, VS Code) renderują UTF-8 — stąd
+    „krzaki" w diakrytykach. ``reconfigure`` jest bezpieczne i idempotentne; strumienie
+    bez tej metody (np. atrapa w testach) po cichu pomijamy. Wspólne dla drzwi inbound,
+    które piszą po polsku do konsoli (CLI, harness M3).
+    """
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            with contextlib.suppress(ValueError, OSError):
+                reconfigure(encoding="utf-8")
 
 
 def apply_env_file(env_file: Path) -> None:

@@ -59,11 +59,17 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 
 ## 7. Summarizer M3 — jakość i poprawność JSON — 🔑 (ADR 0009)
 
-- **Krok:** podaj realny transkrypt do `AnthropicMeetingSummarizer.summarize`
-  (`InMemoryTranscriptSource` wystarcza — realny fetch z Graph jest ☁️ Azure-gated i pozostaje
-  odłożony). Czysta obróbka otoku JSON (`_extract_json`) jest już pokryta testem jednostkowym.
-- **Oczekiwane:** model zwraca JSON walidujący się do `MeetingSummary` (`model_validate_json`),
-  a jakość streszczenia (tytuł, decyzje, action items) jest sensowna.
+- **Krok:** uruchom **lokalny harness M3** na realnym transkrypcie (patrz
+  [`meeting-note-harness.md`](meeting-note-harness.md)):
+  `echo "…transkrypt…" | uv run workmate-meeting --project scada-integration --date 2026-07-20`
+  (albo `--transcript spotkanie.txt`). Harness spina cały przepływ M3 wobec Claude:
+  `InMemoryTranscriptSource` → `AnthropicMeetingSummarizer` → złożenie `NoteMetadata` → zapis. Realny
+  fetch z Graph jest ☁️ Azure-gated i pozostaje odłożony; czysta obróbka otoku JSON (`_extract_json`)
+  jest pokryta testem jednostkowym.
+- **Oczekiwane:** model zwraca JSON walidujący się do `MeetingSummary` (`model_validate_json`) —
+  harness kończy raportem `✓ Notatka M3 złożona…` z tytułem, uczestnikami i licznikami
+  decyzji/action items; jakość streszczenia jest sensowna. Domyślnie plik ląduje w katalogu
+  tymczasowym harnessu (NIE w `data/notes/`).
 
 ## 8. GitHub → EventStore (ingest) — 🐙 (ADR 0019/0020)
 

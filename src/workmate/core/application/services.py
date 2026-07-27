@@ -19,7 +19,7 @@ from workmate.core.domain.models import (
 )
 from workmate.core.domain.notes import notes_of_project
 from workmate.core.domain.paths import note_id as build_note_id
-from workmate.core.domain.ranking import bm25_rank
+from workmate.core.domain.ranking import bm25_rank, reciprocal_rank_fusion
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
 from workmate.core.ports.repositories import (
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from workmate.core.application.events import EventService
-    from workmate.core.ports.text import Lemmatizer
+    from workmate.core.ports.text import Lemmatizer, SemanticRanker
 
 # Maksymalna długość fragmentu (snippet) zwracanego w wynikach wyszukiwania.
 _SNIPPET_LENGTH = 200
@@ -51,11 +51,27 @@ class NotesService:
     ``lemmatizer`` (opcjonalny, ADR 0023) włącza ranking BM25 nad LEMATAMI — sprowadza polską
     fleksję do lematów, więc „integracji" trafia „integracja". Bez niego (``None``) serwis używa
     dawnego scorera podłańcuchowego (zgodność wsteczna: istniejące wywołania i testy bez zmian).
+
+    ``semantic`` (opcjonalny, ADR 0039, Faza B) dokłada warstwę DENSE: ranking osadzeń fuzowany z
+    BM25 przez ``reciprocal_rank_fusion``. Działa TYLKO obok ``lemmatizer`` (fuzja w gałęzi BM25);
+    domyślnie ``None`` (za bramką mikro-evalu). ``rrf_k`` stroi dyskonto rang RRF; ``dense_top_n``
+    (0 = całość) opcjonalnie przycina ogon rankingu dense.
     """
 
-    def __init__(self, notes: NotesRepository, *, lemmatizer: Lemmatizer | None = None) -> None:
+    def __init__(
+        self,
+        notes: NotesRepository,
+        *,
+        lemmatizer: Lemmatizer | None = None,
+        semantic: SemanticRanker | None = None,
+        rrf_k: int = 60,
+        dense_top_n: int = 0,
+    ) -> None:
         self._notes = notes
         self._lemmatizer = lemmatizer
+        self._semantic = semantic
+        self._rrf_k = rrf_k
+        self._dense_top_n = dense_top_n
 
     def search_notes(
         self,
@@ -93,14 +109,50 @@ class NotesService:
             if not query_lemmas:  # brak tokenów słownych (np. sama interpunkcja) → jak puste
                 return [(note, 1.0) for note in candidates]
             docs = {note.id: self._doc_lemmas(note) for note in candidates}
-            scores = bm25_rank(query_lemmas, docs)
+            bm25_scores = bm25_rank(query_lemmas, docs)
             by_id = {note.id: note for note in candidates}
-            return [(by_id[note_id], score) for note_id, score in scores.items()]
+            if self._semantic is None:
+                return [(by_id[note_id], score) for note_id, score in bm25_scores.items()]
+            return self._fuse(query, candidates, bm25_scores, by_id)
 
-        # Fallback bez lematyzatora — dawny scorer podłańcuchowy (zgodność wsteczna).
+        # Fallback bez lematyzatora — dawny scorer podłańcuchowy (zgodność wsteczna). Warstwa dense
+        # (ADR 0039) wpina się TYLKO w gałąź z lematyzatorem; bez niego jest pomijana (wiring drzwi
+        # buduje ranker dense wyłącznie obok lematyzatora — brak cichego no-opu).
         return [
             (note, float(score)) for note in candidates if (score := _score(note, raw_terms)) > 0
         ]
+
+    def _fuse(
+        self,
+        query: str,
+        candidates: list[Note],
+        bm25_scores: dict[str, float],
+        by_id: dict[str, Note],
+    ) -> list[tuple[Note, float]]:
+        """Połącz ranking BM25 i semantyczny przez RRF (ADR 0039, Faza B).
+
+        RRF jest ranga-zależne, więc łączy niekompatybilne skale (BM25 vs cosinus) bez
+        normalizacji. Dense szereguje WSZYSTKICH kandydatów, więc fuzja może wypłynąć notatkę
+        bez pokrycia słów (parafrazę), której BM25 nie trafił. Wynik dostaje syntetyczny, ściśle
+        malejący wynik = odległość od końca fuzji, żeby sort po ``(score, date)`` zachował
+        kolejność RRF (unikalne wyniki → data nie rozstrzyga).
+        """
+        # BM25 wnosi tylko notatki z trafieniem (> 0), uszeregowane po trafności (remis: data).
+        bm25_ids = [
+            note.id
+            for note in sorted(
+                candidates,
+                key=lambda n: (bm25_scores.get(n.id, 0.0), n.metadata.date),
+                reverse=True,
+            )
+            if bm25_scores.get(note.id, 0.0) > 0.0
+        ]
+        dense_ids = self._semantic.rank(query, candidates) if self._semantic else []
+        if self._dense_top_n:
+            dense_ids = dense_ids[: self._dense_top_n]
+        fused = reciprocal_rank_fusion(bm25_ids, dense_ids, k=self._rrf_k)
+        total = len(fused)
+        return [(by_id[nid], float(total - rank)) for rank, nid in enumerate(fused) if nid in by_id]
 
     def _doc_lemmas(self, note: Note) -> list[str]:
         """Worek lematów notatki: wszystkie pola, z tytułem POWTÓRZONYM (waga tytułu ×3).

@@ -25,6 +25,11 @@ BotFramework-Emulator-main/
 # Tymczasowe worktree agentów Claude Code
 .claude/worktrees/
 
+# Lokalny indeks CodeGraph (graf kodu per maszyna, odbudowywalny przez `codegraph init`)
+.codegraph/
+# Eksport CodeGraph (artefakt binarny, nie kod) — odbudowywalny, nie commitować.
+codegraph-*.zip
+
 # Artefakty dostarczane klientowi (raporty weryfikacji) — nie commitować.
 RAPORT-*.md
 

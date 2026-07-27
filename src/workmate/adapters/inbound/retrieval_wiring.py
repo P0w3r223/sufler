@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from workmate.config import RetrievalSettings
-    from workmate.core.ports.text import Lemmatizer
+    from workmate.core.ports.text import Lemmatizer, SemanticRanker
 
 logger = logging.getLogger(__name__)
 
@@ -40,3 +40,38 @@ def build_lemmatizer(settings: RetrievalSettings) -> Lemmatizer | None:
         )
         return None
     return lemmatizer
+
+
+def build_semantic_ranker(settings: RetrievalSettings) -> SemanticRanker | None:
+    """Zbuduj ranker semantyczny (dense) albo ``None`` (wyłączony / brak extra ``retrieval-dense``).
+
+    Analogicznie do ``build_lemmatizer``: łagodna degradacja do samego BM25. Import adaptera i
+    fastembed jest LENIWY; ``warmup`` na starcie wymusza załadowanie modelu, żeby zła konfiguracja
+    (brak extra, brak modelu, brak sieci przy pierwszym pobraniu) degradowała TU — fail-fast w
+    wiringu — a nie przy każdym ``search_notes``.
+    """
+    if not settings.enable_dense:
+        return None
+    from workmate.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
+
+    try:
+        ranker = OnnxSemanticRanker(
+            model=settings.dense_model,
+            index_path=settings.index_path,
+            min_similarity=settings.dense_min_similarity,
+        )
+        ranker.warmup()
+    except ImportError:
+        logger.info(
+            "Extra 'retrieval-dense' (fastembed/onnxruntime) niedostępny — wyszukiwanie bez "
+            "warstwy semantycznej. Zainstaluj: uv sync --extra retrieval-dense"
+        )
+        return None
+    except Exception:  # noqa: BLE001 — dowolny błąd modelu/IO = degradacja do samego BM25
+        logger.warning(
+            "Warstwa semantyczna (model=%r) nie wystartowała — wyszukiwanie bez dense.",
+            settings.dense_model,
+            exc_info=True,
+        )
+        return None
+    return ranker

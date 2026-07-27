@@ -14,6 +14,7 @@ Funkcje są czyste/importowalne — z tego korzysta test-strażnik ``tests/test_
 from __future__ import annotations
 
 import math
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -94,11 +95,36 @@ def _build_services() -> dict[str, NotesService]:
         services["lexical-PL"] = NotesService(repo, lemmatizer=SimplemmaLemmatizer())
     except ImportError:
         print("[uwaga] brak extra 'retrieval' (simplemma) — pomijam konfigurację lexical-PL.\n")
-    # Faza B: services["hybrid"] = NotesService(repo, lemmatizer=…, semantic=…)  # gdy dense gotowe
+    # Faza B (ADR 0039): hybrid = lexical-PL + dense (RRF). Wymaga extra 'retrieval' i
+    # 'retrieval-dense'; brak któregokolwiek → pomijamy 'hybrid' (eval liczy pozostałe).
+    if "lexical-PL" in services:
+        try:
+            from workmate.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
+            from workmate.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
+            from workmate.config import RetrievalSettings
+
+            rset = RetrievalSettings.from_env()
+            ranker = OnnxSemanticRanker(
+                model=rset.dense_model,
+                index_path=rset.index_path,
+                min_similarity=rset.dense_min_similarity,
+            )
+            services["hybrid"] = NotesService(
+                repo,
+                lemmatizer=SimplemmaLemmatizer(),
+                semantic=ranker,
+                rrf_k=rset.rrf_k,
+                dense_top_n=rset.dense_top_n,
+            )
+        except Exception as exc:  # noqa: BLE001 — brak dense/modelu = pomiń hybrid, licz resztę
+            print(f"[uwaga] warstwa dense niedostępna — pomijam konfigurację 'hybrid' ({exc}).\n")
     return services
 
 
 def main() -> None:
+    # Windows: domyślna konsola (cp1250) nie zniesie Δ/≥/— w wydruku — wymuś UTF-8.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     golden = load_golden()
     services = _build_services()
     results = {name: evaluate(svc, golden) for name, svc in services.items()}
@@ -119,10 +145,26 @@ def main() -> None:
             f"Faza A (lexical-PL vs baseline): ΔnDCG@5 = {d:+.3f} — "
             f"{'POPRAWA' if d > 0 else 'brak poprawy'}."
         )
-    print(
-        "\nBramka Fazy B: dołóż konfigurację 'hybrid' (dense+RRF), gdy powstanie; dense TYLKO "
-        f"gdy nDCG@5(hybrid) − nDCG@5(lexical-PL) ≥ {_DENSE_GATE_NDCG5:.2f} bez regresji recall@10."
-    )
+    if {"lexical-PL", "hybrid"} <= results.keys():
+        d5 = results["hybrid"]["ndcg@5"] - results["lexical-PL"]["ndcg@5"]
+        dr = results["hybrid"]["recall@10"] - results["lexical-PL"]["recall@10"]
+        passed = d5 >= _DENSE_GATE_NDCG5 and dr >= 0.0
+        print("\n" + "=" * 70)
+        print(
+            f"Bramka Fazy B (hybrid vs lexical-PL): ΔnDCG@5 = {d5:+.3f} "
+            f"(próg ≥ {_DENSE_GATE_NDCG5:.2f}), Δrecall@10 = {dr:+.3f} → "
+            + (
+                "PRZECHODZI — włącz dense (WORKMATE_RETRIEVAL_ENABLE_DENSE=true)."
+                if passed
+                else "NIE przechodzi — zostań przy lexical-PL (dense za flagą OFF)."
+            )
+        )
+    else:
+        print(
+            "\nBramka Fazy B: uruchom z extra 'retrieval-dense' (konfiguracja 'hybrid'), by "
+            f"zmierzyć dense; wchodzi TYLKO gdy ΔnDCG@5 ≥ {_DENSE_GATE_NDCG5:.2f} bez regresji "
+            "recall@10."
+        )
 
 
 if __name__ == "__main__":

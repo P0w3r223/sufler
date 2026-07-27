@@ -150,7 +150,7 @@ o tej samej nazwie nadpisywały sobie arkusze.
 
 | Ograniczenie | Skutek | Status |
 |---|---|---|
-| Brak załącznika w Teams | Ścieżka jako tekst, plik na udziale | Czeka na `Files.ReadWrite.All` (ADR 0026/0027) |
+| Brak załącznika w Teams | Ścieżka jako tekst, plik na udziale | Scope `Files.ReadWrite.All` nadany (2026-07-27); czeka na build `TeamsFileSender` (ADR 0026/0027) |
 | Ponowny import dubluje wpisy | Człowiek importuje sam | Mitygacja: etykieta tygodnia + ostrzeżenie |
 | Schemat niepotwierdzony | Zły nagłówek = plik nie do importu | Bramka §1 |
 | Import może być admin-only | Model „plik per osoba" upada | Do sprawdzenia w §1 |
