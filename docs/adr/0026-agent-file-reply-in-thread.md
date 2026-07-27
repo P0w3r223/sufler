@@ -9,6 +9,11 @@ Related to: docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-thr
 
 ---
 
+> **Update 2026-07-27:** Admin consent for `Files.ReadWrite.All` has since been granted — the write
+> scope is available. The blocker described below (pending write-scope admin consent / device-code
+> re-consent) is **no longer current**; only the build remains (`TeamsFileSender` + render/upload).
+> The rest of this decision stands.
+
 ## Context
 
 The outbound direction of every door is **text only**. `Responder.respond(...) -> str`; the Teams

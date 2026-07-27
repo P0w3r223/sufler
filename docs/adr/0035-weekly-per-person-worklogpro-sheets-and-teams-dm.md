@@ -10,6 +10,11 @@ Related to: docs/adr/0006-write-capability-gate-2.md,
   docs/adr/0027-agent-outbound-file-push-to-user.md,
   docs/adr/0034-jira-worklog-from-github-commits.md
 
+> **Update 2026-07-27:** `Files.ReadWrite.All` admin consent has since been granted. The "no file
+> attachment until the scope is granted" limitation noted below is **resolved** — the WorklogPRO sheet
+> can ship as a Teams attachment once `TeamsFileSender` (ADR 0026/0027) is built. Option A (person
+> imports their own sheet) remains the default.
+
 ---
 
 ## Context

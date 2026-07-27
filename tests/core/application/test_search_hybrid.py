@@ -123,3 +123,65 @@ def test_real_simplemma_matches_polish_inflection():
     # Realna fleksja: zapytanie w innej formie niż w notatce, mimo to trafia.
     assert [r.id for r in svc.search_notes("integracja")] == ["mpwik/scada/2025-06-12-w"]
     assert [r.id for r in svc.search_notes("koszt")] == ["mpwik/scada/2025-06-12-w"]
+
+
+# ── Faza B: fuzja warstwy dense (ADR 0039) ──────────────────────────────────────
+
+
+class _StubSemanticRanker:
+    """Atrapa rankera dense: zwraca skonfigurowaną kolejność id (reszta kandydatów na końcu)."""
+
+    def __init__(self, order: list[str]) -> None:
+        self._order = order
+
+    def rank(self, query, candidates) -> list[str]:
+        ids = [n.id for n in candidates]
+        ranked = [i for i in self._order if i in ids]
+        return ranked + [i for i in ids if i not in ranked]
+
+
+def _corpus() -> FakeNotesRepository:
+    return FakeNotesRepository(
+        [
+            make_note("x/y/2025-01-01-a", project="p", title="Raport koszt", on=date(2025, 1, 1)),
+            make_note("x/y/2025-01-02-b", project="p", title="Notatka ogólna", on=date(2025, 1, 2)),
+            make_note("x/y/2025-01-03-c", project="p", title="Inna sprawa", on=date(2025, 1, 3)),
+        ]
+    )
+
+
+def test_dense_surfaces_note_that_bm25_misses():
+    repo = _corpus()
+    # „koszty"→lemat „koszt" trafia leksykalnie tylko notatkę A; B nie ma pokrycia słów.
+    lexical = NotesService(repo, lemmatizer=_StubLemmatizer())
+    assert {r.id for r in lexical.search_notes("koszty")} == {"x/y/2025-01-01-a"}
+    # Dense (atrapa) stawia B wysoko → fuzja RRF wypływa B mimo braku pokrycia leksykalnego.
+    hybrid = NotesService(
+        repo, lemmatizer=_StubLemmatizer(), semantic=_StubSemanticRanker(["x/y/2025-01-02-b"])
+    )
+    ids = {r.id for r in hybrid.search_notes("koszty")}
+    assert "x/y/2025-01-02-b" in ids  # dense dołożył notatkę, której BM25 nie znalazł
+    assert "x/y/2025-01-01-a" in ids  # trafienie leksykalne dalej obecne
+
+
+def test_dense_top_n_caps_dense_contribution():
+    repo = _corpus()
+    order = ["x/y/2025-01-03-c", "x/y/2025-01-02-b", "x/y/2025-01-01-a"]
+    # Bez limitu: dense wnosi całą listę → C i B obecne mimo braku pokrycia leksykalnego.
+    full = NotesService(repo, lemmatizer=_StubLemmatizer(), semantic=_StubSemanticRanker(order))
+    assert {"x/y/2025-01-03-c", "x/y/2025-01-02-b"} <= {r.id for r in full.search_notes("koszty")}
+    # dense_top_n=1: dense wnosi tylko czoło (C) → B już NIE wypływa przez dense.
+    capped = NotesService(
+        repo, lemmatizer=_StubLemmatizer(), semantic=_StubSemanticRanker(order), dense_top_n=1
+    )
+    ids = {r.id for r in capped.search_notes("koszty")}
+    assert "x/y/2025-01-03-c" in ids
+    assert "x/y/2025-01-02-b" not in ids
+
+
+def test_dense_ignored_without_lemmatizer():
+    repo = _corpus()
+    # Bez lematyzatora serwis jest na ścieżce podłańcuchowej — dense NIE jest konsultowany.
+    svc = NotesService(repo, semantic=_StubSemanticRanker(["x/y/2025-01-02-b"]))
+    # „koszt" to podłańcuch tytułu „Raport koszt" (A); B/C bez trafienia i bez dense → nieobecne.
+    assert [r.id for r in svc.search_notes("koszt")] == ["x/y/2025-01-01-a"]

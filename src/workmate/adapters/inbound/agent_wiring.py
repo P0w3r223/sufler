@@ -19,7 +19,7 @@ from workmate.adapters.inbound.responder import (
     Responder,
     SafeResponder,
 )
-from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer
+from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer, build_semantic_ranker
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
@@ -70,9 +70,19 @@ def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
     """
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
-    lemmatizer = build_lemmatizer(RetrievalSettings.from_env())
+    retrieval = RetrievalSettings.from_env()
+    lemmatizer = build_lemmatizer(retrieval)
+    # Dense (ADR 0039, Faza B) żyje w gałęzi BM25 — budujemy go TYLKO obok lematyzatora (bez niego
+    # byłby cichym no-opem). Drzwi agenta są długożyjące, więc model osadzeń ładuje się raz.
+    semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
     return (
-        NotesService(notes_repo, lemmatizer=lemmatizer),
+        NotesService(
+            notes_repo,
+            lemmatizer=lemmatizer,
+            semantic=semantic,
+            rrf_k=retrieval.rrf_k,
+            dense_top_n=retrieval.dense_top_n,
+        ),
         ProjectsService(projects_repo, notes_repo, events=_events_if_present()),
     )
 

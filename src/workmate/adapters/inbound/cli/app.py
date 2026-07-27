@@ -18,7 +18,6 @@ czytelnym komunikatem, nie surowym ``ImportError``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -51,28 +50,13 @@ _BANNER = (
 )
 
 
-def _force_utf8_io() -> None:
-    """Wymuś UTF-8 na wejściu/wyjściu — inaczej polskie znaki psują się w konsoli.
-
-    Python na Windows domyślnie pisze w kodowaniu lokalnym (cp1250), a nowoczesne
-    terminale (Git Bash/MinTTY, Windows Terminal, VS Code) renderują UTF-8 — stąd
-    „krzaki" w diakrytykach. ``reconfigure`` jest bezpieczne i idempotentne; strumienie
-    bez tej metody (np. atrapa w testach) po cichu pomijamy.
-    """
-    for stream in (sys.stdout, sys.stderr, sys.stdin):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            with contextlib.suppress(ValueError, OSError):
-                reconfigure(encoding="utf-8")
-
-
 def main() -> None:
     """Odpal runtime: jednorazowe zapytanie (argv/potok), czat (TTY) albo podgląd historii.
 
     ``--history [kanał]`` to czysty ODCZYT archiwum rozmów (SQLite) — nie wymaga klucza
     API ani runtime, więc rozgałęziamy przed ich budową i walidacją sekretu.
     """
-    _force_utf8_io()
+    env.force_utf8_io()
     env.load_dotenv()
 
     argv = sys.argv[1:]

@@ -87,6 +87,14 @@ worklogi = [
 retrieval = [
     "simplemma>=1.0",
 ]
+# Warstwa DENSE retrievalu (ADR 0039, Faza B) — osadzenia semantyczne przez ONNX Runtime
+# (fastembed, BEZ torch) + numpy do cosinusa. Cięższa niż `retrieval` (onnxruntime ~+150 MB),
+# więc OSOBNY extra, domyślnie NIEinstalowany; import leniwy w adapterze. Wchodzi na produkcję
+# TYLKO po przejściu bramki mikro-evalu (eval/retrieval_eval.py, próg z ADR 0039).
+retrieval-dense = [
+    "fastembed>=0.4",
+    "numpy>=1.26",
+]
 
 [project.scripts]
 # Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
@@ -95,6 +103,8 @@ workmate = "workmate.server:main"
 workmate-teams = "workmate.adapters.inbound.teams.app:main"
 # Lokalny harness runtime'u agenta (Faza 2, M1): `uv run workmate-agent`.
 workmate-agent = "workmate.adapters.inbound.cli.app:main"
+# Lokalny harness przepływu „notatka ze spotkania" (Faza 2, M3 / ADR 0009): `uv run workmate-meeting`.
+workmate-meeting = "workmate.adapters.inbound.cli.meeting:main"
 # Proces drzwi Telegram (Faza 2), long polling: `uv run workmate-telegram`.
 workmate-telegram = "workmate.adapters.inbound.telegram.app:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
@@ -105,6 +115,8 @@ workmate-github = "workmate.adapters.inbound.github.app:main"
 workmate-jira = "workmate.adapters.inbound.jira.app:main"
 # Proces drzwi kart czasu (ADR 0035), cotygodniowy: `uv run workmate-worklogi`.
 workmate-worklogi = "workmate.adapters.inbound.worklogi.app:main"
+# Drzwi worklog self-service na żądanie (ADR 0038): `uv run workmate-worklog-selfservice`.
+workmate-worklog-selfservice = "workmate.adapters.inbound.worklog_selfservice.app:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
@@ -176,6 +188,12 @@ ignore_missing_imports = true
 # rdzenia nie może się o niego wywrócić.
 [[tool.mypy.overrides]]
 module = ["simplemma.*"]
+ignore_missing_imports = true
+
+# fastembed + numpy (extra `retrieval-dense`, ADR 0039) — import LENIWY w adapterze outbound,
+# więc mypy rdzenia nie może się o nie wywrócić.
+[[tool.mypy.overrides]]
+module = ["fastembed.*", "numpy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
