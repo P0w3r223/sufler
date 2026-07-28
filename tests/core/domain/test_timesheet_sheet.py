@@ -98,6 +98,18 @@ def test_time_spent_rejects_non_positive() -> None:
         format_time_spent(0)
 
 
+@pytest.mark.parametrize("minutes", [-1, -60, -455])
+def test_time_spent_rejects_negative_minutes(minutes: int) -> None:
+    """Ujemny czas to osobna granica niż zero — bez strażnika ``divmod(-5, 60)`` dałoby „-1h 55m".
+
+    ``build_timesheet`` odsiewa ujemne wpisy wcześniej, ale ta funkcja jest publiczna i musi bronić
+    się sama: gdyby przyszłe źródło ominęło agregację, do CUDZEJ Jiry nie może wjechać worklog
+    z ujemnym czasem zamiast twardego błędu.
+    """
+    with pytest.raises(ValueError, match="dodatni"):
+        format_time_spent(minutes)
+
+
 # --- znacznik startu -------------------------------------------------------------
 
 
@@ -114,6 +126,28 @@ def test_started_offset_follows_dst() -> None:
 
 def test_started_honours_configured_hour() -> None:
     assert format_started(date(2026, 7, 15), start_hour=9, tz=_TZ).startswith("2026-07-15T09:00")
+
+
+def test_started_at_midnight_stamps_a_clean_zero_hour() -> None:
+    """``start_hour=0`` to skraj dozwolonego (config 0..23) — musi dać czysty ``T00:00:00``.
+
+    Godzina zero nie może się zgubić ani przewinąć na poprzedni dzień: znacznik startu wpisu trafia
+    do cudzej Jiry, więc dryf o dobę fałszowałby datę pracy.
+    """
+    assert format_started(date(2026, 7, 15), start_hour=0, tz=_TZ) == "2026-07-15T00:00:00.000+0200"
+
+
+def test_started_offset_is_correct_on_the_dst_changeover_days() -> None:
+    """Sam DZIEŃ zmiany czasu — docstring obiecuje offset „poprawny po obu stronach".
+
+    W Polsce 2026 zegar skacze do przodu 29 III, cofa się 25 X (obie zmiany nocą, o 02:00/03:00).
+    O 8:00 jesteśmy już po przeskoku, więc dzień wiosenny ma nieść ``+0200``, a jesienny ``+0100``.
+    Zły offset akurat w te dni = zły znacznik godziny w cudzej, nieodwracalnej Jirze.
+    """
+    wiosna = format_started(date(2026, 3, 29), start_hour=8, tz=_TZ)
+    jesien = format_started(date(2026, 10, 25), start_hour=8, tz=_TZ)
+    assert wiosna.endswith("+0200")
+    assert jesien.endswith("+0100")
 
 
 # --- wiersze ---------------------------------------------------------------------
@@ -182,6 +216,46 @@ def test_long_comment_is_truncated() -> None:
 def test_rows_are_deterministic_for_the_same_week() -> None:
     entries = [_entry(16, "WT-14", 60), _entry(15, "WT-99", 60)]
     assert _sheet(entries).rows == _sheet(list(reversed(entries))).rows
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("treść\x85z\x9fkontrolnymi", "treść z kontrolnymi"),  # C1: NEL (0x85) + APC (0x9F)
+        ("koniec\x7frekordu", "koniec rekordu"),  # DEL (0x7F)
+    ],
+)
+def test_high_control_characters_are_stripped_too(raw: str, expected: str) -> None:
+    """Sanityzacja obejmuje też DEL (0x7F) i pas C1 (0x80–0x9F), nie tylko klasyczne poniżej 0x20.
+
+    Te znaki wpadają przy mojibake z Windows-1252; w komórce nie mają legalnego zastosowania,
+    a w eksporcie CSV potrafią rozjechać parser importu tak samo jak wstrzyknięta nowa linia.
+    Istniejące testy dotykały wyłącznie ``\\n``/``\\t``/``\\x00`` — tu domykamy pozostałe gałęzie.
+    """
+    (row,) = _sheet([_entry(15, "WT-12", 60, comment=raw)]).rows
+    assert row[4] == expected
+
+
+def test_legitimate_unicode_survives_sanitisation() -> None:
+    """Sanityzacja tnie WYŁĄCZNIE znaki sterujące — polskie litery i emoji zostają nietknięte.
+
+    ``cell_text`` to nie ``_slug`` (ten spłaszcza treść do ASCII na potrzeby NAZWY PLIKU). Komentarz
+    „źdźbło ćmy" ma dojść do Jiry w całości; regresja „sanityzacja = tylko ASCII" okaleczyłaby treść
+    wpisu każdego, kto pisze po polsku.
+    """
+    (row,) = _sheet([_entry(15, "WT-12", 60, comment="źdźbło ćmy 🌾")]).rows
+    assert row[4] == "źdźbło ćmy 🌾"
+
+
+def test_projection_of_only_zero_minute_entries_is_headerful_but_rowless() -> None:
+    """Osoba z samym urlopem daje arkusz z nagłówkami i BEZ wierszy — nie wyjątek i nie pusty plik.
+
+    Filtr zerowych wpisów redukuje kolumnę ``User`` do zera komórek; strażnik tożsamości nie może
+    się na tym wywrócić (pusty zbiór jest spójny), a przebieg ma iść dalej dla pozostałych osób.
+    """
+    sheet = _sheet([_entry(15, "WT-12", 0), _entry(16, "WT-14", 0)])
+    assert sheet.headers == WORKLOGPRO_HEADERS
+    assert sheet.rows == ()
 
 
 # --- strażniki tożsamości --------------------------------------------------------
@@ -266,3 +340,52 @@ def test_filename_is_unique_even_when_the_slug_collapses() -> None:
     )
 
     assert sheet_filename(first) != sheet_filename(second)
+
+
+def test_filename_is_deterministic_across_repeated_runs() -> None:
+    """Powtórzony przebieg MUSI dać tę samą nazwę — nadrobienie NADPISUJE plik, nie kładzie drugi.
+
+    To rdzeń obrony przed podwójnym importem (krok 3 Etapu 0, którego świadomie nie robimy na żywo):
+    gdyby nazwa dryfowała między przebiegami, człowiek dostałby dwa arkusze TEGO SAMEGO tygodnia
+    i mógłby zaimportować oba, a worklogi są create-only i nieusuwalne narzędziem (ADR 0034).
+    """
+    week = {
+        "week_start": date(2026, 7, 13),
+        "week_end": date(2026, 7, 20),
+        "week_label": "2026-W29",
+    }
+    first = build_timesheet(_PERSON, [_entry(15, "WT-12", 60)], **week)
+    second = build_timesheet(_PERSON, [_entry(15, "WT-12", 60)], **week)
+
+    assert sheet_filename(first) == sheet_filename(second)
+
+
+def test_filename_falls_back_to_week_start_when_label_is_missing() -> None:
+    """Bez etykiety nazwa bierze datę początku okna — nadal NIESIE tydzień (anty-duplikat).
+
+    ``week_label`` bywa puste (źródło go nie poda); nazwa nie może wtedy zgubić tygodnia, bo to on
+    pozwala człowiekowi rozpoznać „ten sam arkusz drugi raz". Gałąź ``or week_start.isoformat()``
+    była dotąd nietknięta — wszystkie testy nazwy podawały etykietę.
+    """
+    timesheet = build_timesheet(
+        _PERSON, [], week_start=date(2026, 7, 13), week_end=date(2026, 7, 20)
+    )
+    assert sheet_filename(timesheet) == "worklog_mikolaj-anonimowicz_emp-042_2026-07-13.xlsx"
+
+
+def test_filename_slugs_a_filesystem_hostile_week_label() -> None:
+    """Ukośnik/spacja w etykiecie tygodnia nie może wprowadzić separatora ścieżki do nazwy.
+
+    Etykieta też przechodzi przez ``_slug``; ``2026 / W29`` musi spłaszczyć się do ``2026-w29``,
+    inaczej ``/`` rozbiłby nazwę na podkatalog (arkusz wylądowałby nie tam, gdzie trzeba).
+    """
+    timesheet = build_timesheet(
+        _PERSON,
+        [],
+        week_start=date(2026, 7, 13),
+        week_end=date(2026, 7, 20),
+        week_label="2026 / W29",
+    )
+    name = sheet_filename(timesheet)
+    assert "/" not in name and " " not in name
+    assert name == "worklog_mikolaj-anonimowicz_emp-042_2026-w29.xlsx"
