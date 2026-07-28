@@ -41,6 +41,7 @@ from workmate.config import (
 )
 
 if TYPE_CHECKING:
+    from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
     from workmate.adapters.outbound.github_api import HttpxGithubClient
@@ -97,6 +98,21 @@ def main() -> None:
     extra_catalog, thread_factory = _build_bridge_catalog(
         EventsSettings.from_env(), GithubSettings.from_env(), JiraSettings.from_env()
     )
+    # ADR 0026 (A′2): dokładamy fabrykę `reply_with_file`, niezależnie bramkowaną od zapisu GitHub.
+    thread_factory = _compose_thread_factories(
+        thread_factory, _build_file_reply_factory(settings, token_provider)
+    )
+    # ADR 0027 (A′3): OSOBNE fabryki push-u 1:1 — klucz = nadawca, nie wątek. Obraz inline
+    # (`send_image_to_user`) i dokument (`send_document_to_user`) są niezależnie bramkowane
+    # (dokument wymaga szerszego zakresu Files.ReadWrite.All), więc składamy je w jedną fabrykę.
+    user_push_factory = _compose_user_push_factories(
+        _build_user_push_factory(settings, token_provider),
+        _build_user_doc_push_factory(settings, token_provider),
+    )
+    # Produkcyjne M3 (ADR 0009 §4 / 0041): komenda ZAPISU /notatka z drzwi Teams, osobno bramkowana.
+    meeting_router = _build_meeting_note_router(
+        settings, token_provider, core_settings, agent_settings
+    )
     responder = _build_responder(
         core_settings,
         agent_settings,
@@ -104,6 +120,8 @@ def main() -> None:
         workspace_settings,
         extra_catalog,
         thread_factory,
+        user_push_factory,
+        meeting_router,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -347,6 +365,303 @@ def _make_thread_tool_factory(
     return factory
 
 
+def _build_file_reply_factory(
+    settings: TeamsGraphSettings, token_provider: Callable[[], str]
+) -> Callable[[str], list[ToolSpec]] | None:
+    """Fabryka ``reply_with_file`` per turę (ADR 0026, A′2) — odpowiedź plikiem w wątku Teams.
+
+    ``None``, gdy bramka ``enable_file_reply`` wyłączona (domyślnie, ADR 0006). Włączona: buduje
+    SYNCHRONICZNY ``HttpxGraphFileSender`` (jak zapis GitHub Gate-4 — narzędzia agenta biegną
+    synchronicznie w puli wątków) na TYM SAMYM delegowanym tokenie co poller, oraz renderer
+    dokumentów. Cel dostawy (``team/channel/root``) wyłuskujemy z ``external_id`` wątku, NIE od
+    modelu — plik ląduje wyłącznie w wątku bieżącej rozmowy (kontrola kompensująca, ADR 0026).
+    """
+    if not settings.enable_file_reply:
+        return None
+    try:
+        import atexit
+
+        import httpx
+
+        from workmate.adapters.outbound.document_renderer import DefaultDocumentRenderer
+        from workmate.adapters.outbound.graph_file_sender import HttpxGraphFileSender
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.core.application.tools import build_file_reply_catalog
+
+    # Sync klient żyje przez proces (daemon); pulę połączeń domykamy jawnie przy wyjściu.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    sender = HttpxGraphFileSender(transport, token_provider)
+    renderer = DefaultDocumentRenderer()
+    max_bytes = settings.max_file_reply_kb * 1024
+    logger.info(
+        "Odpowiedź plikiem WŁĄCZONA (ADR 0026) — agent Teams może załączać md/txt/pdf/docx w "
+        "wątku. Wymaga zakresu 'Files.ReadWrite.All' na tokenie; limit pliku %d KB.",
+        settings.max_file_reply_kb,
+    )
+
+    def factory(external_id: str) -> list[ToolSpec]:
+        parts = external_id.split("/")
+        if len(parts) != 3:
+            return []
+        team_id, channel_id, root_id = parts
+        return build_file_reply_catalog(
+            sender, renderer, team_id, channel_id, root_id, max_bytes=max_bytes
+        )
+
+    return factory
+
+
+def _build_user_push_factory(
+    settings: TeamsGraphSettings, token_provider: Callable[[], str]
+) -> Callable[[str], list[ToolSpec]] | None:
+    """Fabryka ``send_image_to_user`` per turę (ADR 0027, A′3) — push obrazu do rozmówcy 1:1.
+
+    ``None``, gdy bramka ``enable_user_file_push`` wyłączona (domyślnie, ADR 0006). Włączona: buduje
+    SYNCHRONICZNY ``HttpxGraphUserImagePush`` (jak plik ADR 0026 — narzędzia agenta biegną
+    synchronicznie w puli wątków) na TYM SAMYM delegowanym tokenie co poller. Cel (odbiorca) NIE
+    pochodzi z ``external_id`` wątku, lecz z ``sender_id`` bieżącej wiadomości — dlatego to OSOBNA
+    fabryka (klucz = nadawca), nie składana z fabrykami wątkowymi. Obraz idzie INLINE
+    (hostedContents), bez dysku SharePoint, więc bez zakresu ``Files.*`` — ale 1:1 wymaga czatu.
+    """
+    if not settings.enable_user_file_push:
+        return None
+    try:
+        import atexit
+
+        import httpx
+
+        from workmate.adapters.outbound.graph_user_push import HttpxGraphUserImagePush
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.core.application.tools import build_user_image_push_catalog
+
+    # Sync klient żyje przez proces (daemon); pulę połączeń domykamy jawnie przy wyjściu.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    sender = HttpxGraphUserImagePush(transport, token_provider)
+    max_bytes = settings.max_user_image_kb * 1024
+    logger.info(
+        "Push obrazu do usera WŁĄCZONY (ADR 0027) — agent Teams może odesłać obraz rozmówcy 1:1. "
+        "Wymaga zakresów czatu (Chat.Create/ChatMessage.Send) na tokenie; limit obrazu %d KB.",
+        settings.max_user_image_kb,
+    )
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        if not sender_id:
+            return []
+        return build_user_image_push_catalog(sender, sender_id, max_bytes=max_bytes)
+
+    return factory
+
+
+def _build_user_doc_push_factory(
+    settings: TeamsGraphSettings, token_provider: Callable[[], str]
+) -> Callable[[str], list[ToolSpec]] | None:
+    """Fabryka ``send_document_to_user`` per turę (ADR 0027, wariant plikowy) — push pliku 1:1.
+
+    ``None``, gdy bramka ``enable_user_doc_push`` wyłączona (domyślnie, ADR 0006). Włączona: buduje
+    SYNCHRONICZNY ``HttpxGraphUserDocPush`` (jak plik ADR 0026 — narzędzia agenta biegną
+    synchronicznie w puli wątków) na TYM SAMYM delegowanym tokenie co poller, oraz renderer
+    dokumentów. Cel (odbiorca) pochodzi z ``sender_id`` bieżącej wiadomości (jak wariant obrazowy),
+    NIE od modelu. W odróżnieniu od obrazu plik ląduje na OneDrive bota → wymaga zakresu
+    ``Files.ReadWrite.All`` obok zakresów czatu (walidacja fail-fast w ``config``).
+    """
+    if not settings.enable_user_doc_push:
+        return None
+    try:
+        import atexit
+
+        import httpx
+
+        from workmate.adapters.outbound.document_renderer import DefaultDocumentRenderer
+        from workmate.adapters.outbound.graph_user_doc_push import HttpxGraphUserDocPush
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.core.application.tools import build_user_doc_push_catalog
+
+    # Sync klient żyje przez proces (daemon); pulę połączeń domykamy jawnie przy wyjściu.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    sender = HttpxGraphUserDocPush(transport, token_provider)
+    renderer = DefaultDocumentRenderer()
+    max_bytes = settings.max_user_doc_kb * 1024
+    logger.info(
+        "Push dokumentu do usera WŁĄCZONY (ADR 0027) — agent Teams może odesłać plik (md/txt/pdf/"
+        "docx) rozmówcy 1:1. Wymaga zakresów czatu ORAZ 'Files.ReadWrite.All' na tokenie; limit "
+        "pliku %d KB.",
+        settings.max_user_doc_kb,
+    )
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        if not sender_id:
+            return []
+        return build_user_doc_push_catalog(sender, renderer, sender_id, max_bytes=max_bytes)
+
+    return factory
+
+
+def _build_meeting_note_router(
+    settings: TeamsGraphSettings,
+    token_provider: Callable[[], str],
+    core_settings: Settings,
+    agent_settings: AgentSettings,
+) -> MeetingNoteRouter | None:
+    """Router komendy ZAPISU ``/notatka`` (produkcyjne M3, ADR 0009 §4 / 0041) albo ``None``.
+
+    ``None``, gdy bramka ``enable_meeting_note_write`` wyłączona (domyślnie, ADR 0006). Włączona:
+    składa przepływ M3 z realnych adapterów — transkrypt z Graph (``HttpxGraphTranscriptSource`` na
+    tym samym delegowanym tokenie co poller), streszczenie przez Claude (adapter summarizera, extra
+    ``agent``) i ZAPIS przez bramkowany, DOPISUJĄCY ``NotesWriteService`` (create-only, ADR
+    0006) do PRAWDZIWEJ bazy ``data/notes/``. Config waliduje, że transkrypt jest włączony (skąd
+    wziąć treść). ``project``/``date``/``ref`` bierze router z argumentów komendy, nie z treści.
+    """
+    if not settings.enable_meeting_note_write:
+        return None
+    try:
+        from workmate.adapters.outbound.anthropic_summarizer import AnthropicMeetingSummarizer
+        from workmate.adapters.outbound.transcript_sources import HttpxGraphTranscriptSource
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+    from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+    from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
+    from workmate.core.application.meeting_notes import MeetingNoteService
+    from workmate.core.application.services import NotesWriteService
+
+    transcripts = HttpxGraphTranscriptSource(token_provider)
+    summarizer = AnthropicMeetingSummarizer(agent_settings)
+    write_service = NotesWriteService(
+        MarkdownNotesWriter(core_settings.notes_dir),
+        YamlProjectsRepository(core_settings.projects_registry),
+    )
+    # Autoryzacja nadawcy (B2 / ADR 0042): AAD id → członek pionu przez katalog tożsamości
+    # (fail-closed; config wymusił istnienie pliku). Ten sam port co worklogi; wariant plikowy
+    # bez dodatkowego zakresu Graph (GraphIdentityDirectory to drop-in hardening, patrz ADR 0042).
+    authorizer = MeetingNoteAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
+    # Async (B3 / ADR 0043): przy włączonej bramce async router dostaje scheduler (pula wątków) i
+    # callback (sync poster do wątku); inaczej ``(None, None)`` → router liczy inline (0041).
+    scheduler, callback = _build_async_note_dispatch(settings, token_provider)
+    logger.info(
+        "Komenda /notatka WŁĄCZONA (ADR 0009/0041) — agent Teams może złożyć notatkę ze spotkania "
+        "z transkryptu Graph do data/notes/ (zapis create-only, ADR 0006). Autoryzacja nadawcy "
+        "przez mapę tożsamości %s (członkostwo, ADR 0042). Tryb: %s. Wymaga zakresów transkryptu "
+        "na tokenie oraz extra 'agent' (Claude).",
+        settings.meeting_note_identities,
+        "ASYNC (ack + tło + callback, ADR 0043)" if scheduler else "synchroniczny (inline)",
+    )
+    return MeetingNoteRouter(
+        MeetingNoteService(transcripts, summarizer, write_service),
+        authorizer=authorizer,
+        scheduler=scheduler,
+        callback=callback,
+    )
+
+
+def _build_async_note_dispatch(
+    settings: TeamsGraphSettings, token_provider: Callable[[], str]
+) -> tuple[Callable[[Callable[[], None]], None] | None, Callable[[str, str], None] | None]:
+    """Scheduler (pula wątków) + callback (sync poster do wątku) dla async ``/notatka`` (ADR 0043).
+
+    ``(None, None)``, gdy ``enable_meeting_note_async`` wyłączona — router liczy inline (0041).
+    Włączona: OGRANICZONA pula wątków (``meeting_note_async_workers`` = sufit równoległych łańcuchów
+    transkrypt+Claude) i ``HttpxGraphThreadReplyPoster`` (sync, ten sam delegowany token co poller).
+    Callback wyłuskuje cel ``team/channel/root`` z ``external_id`` wątku (NIE od modelu) i tam
+    wrzuca wynik. Pula i klient żyją przez proces; domykamy je przy wyjściu (jak inne sync klienty).
+    """
+    if not settings.enable_meeting_note_async:
+        return None, None
+    import atexit
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        import httpx
+
+        from workmate.adapters.outbound.graph_thread_reply import HttpxGraphThreadReplyPoster
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+
+    executor = ThreadPoolExecutor(
+        max_workers=settings.meeting_note_async_workers, thread_name_prefix="meeting-note"
+    )
+    atexit.register(lambda: executor.shutdown(wait=False))
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    poster = HttpxGraphThreadReplyPoster(transport, token_provider)
+
+    def scheduler(thunk: Callable[[], None]) -> None:
+        # Zlecenie do puli jest NIEBLOKUJĄCE; Future świadomie porzucamy (wynik idzie do wątku,
+        # nie do wołającego). Przekroczenie puli → zadania czekają w kolejce (bounded równoległość).
+        executor.submit(thunk)
+
+    def callback(external_id: str, text: str) -> None:
+        parts = external_id.split("/")
+        if len(parts) != 3:
+            logger.warning("Zły external_id callbacku /notatka: %r — pomijam.", external_id)
+            return
+        team_id, channel_id, root_id = parts
+        poster.post(team_id, channel_id, root_id, text)
+
+    logger.info(
+        "Async /notatka WŁĄCZONY (ADR 0043) — ACK natychmiast, łańcuch w tle (%d wątków), wynik do "
+        "wątku kanału. Idempotencja (deterministyczny id) chroni retry.",
+        settings.meeting_note_async_workers,
+    )
+    return scheduler, callback
+
+
+def _compose_user_push_factories(
+    *factories: Callable[[str], list[ToolSpec]] | None,
+) -> Callable[[str], list[ToolSpec]] | None:
+    """Złóż fabryki push-u 1:1 (obraz + dokument) w jedną; ``None`` gdy żadna bramka nie jest ON.
+
+    Obie kluczowane ``sender_id`` (odbiorca = nadawca bieżącej wiadomości, ADR 0027) i niezależnie
+    bramkowane, a responder przyjmuje JEDNĄ ``user_push_tool_factory`` — łączymy je konkatenacją
+    wyników, by obie zdolności współistniały bez zmiany kontraktu respondera (jak
+    ``_compose_thread_factories`` dla narzędzi wątkowych).
+    """
+    active = [f for f in factories if f is not None]
+    if not active:
+        return None
+    if len(active) == 1:
+        return active[0]
+
+    def combined(sender_id: str) -> list[ToolSpec]:
+        tools: list[ToolSpec] = []
+        for factory in active:
+            tools.extend(factory(sender_id))
+        return tools
+
+    return combined
+
+
+def _compose_thread_factories(
+    *factories: Callable[[str], list[ToolSpec]] | None,
+) -> Callable[[str], list[ToolSpec]] | None:
+    """Złóż kilka fabryk narzędzi wątkowych w jedną (konkatenacja wyników); ``None`` gdy żadnej.
+
+    Responder przyjmuje JEDNĄ ``thread_tool_factory``, a jeden wątek może dostać i
+    ``reply_on_thread`` (GitHub, ADR 0024), i ``reply_with_file`` (ADR 0026) — każde osobno
+    bramkowane. Łączymy je, żeby obie zdolności współistniały bez zmiany kontraktu respondera.
+    """
+    active = [f for f in factories if f is not None]
+    if not active:
+        return None
+    if len(active) == 1:
+        return active[0]
+
+    def combined(external_id: str) -> list[ToolSpec]:
+        tools: list[ToolSpec] = []
+        for factory in active:
+            tools.extend(factory(external_id))
+        return tools
+
+    return combined
+
+
 def _build_responder(
     core_settings: Settings,
     agent_settings: AgentSettings,
@@ -354,12 +669,16 @@ def _build_responder(
     workspace_settings: WorkspaceSettings,
     extra_catalog: list[ToolSpec],
     thread_factory: Callable[[str], list[ToolSpec]] | None = None,
+    user_push_factory: Callable[[str], list[ToolSpec]] | None = None,
+    meeting_router: MeetingNoteRouter | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
     (ADR 0018) włącza OSOBNA bramka ``enable_workspace`` (env ``WORKMATE_ENABLE_WORKSPACE``),
     niezależna od zapisu notatek. ``extra_catalog`` (ADR 0019/0021) dokłada narzędzia warstwy
-    spajającej, a ``thread_factory`` (ADR 0024, Faza 3b) — per-turowe ``reply_on_thread``.
+    spajającej, ``thread_factory`` (ADR 0024, Faza 3b) — per-turowe ``reply_on_thread``, a
+    ``user_push_factory`` (ADR 0027, A′3) — per-turowe ``send_image_to_user`` (obraz inline) oraz
+    ``send_document_to_user`` (plik-załącznik) wiązane z nadawcą, niezależnie bramkowane.
     ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi osobno od bota."""
     return build_conversational_responder(
         core_settings,
@@ -372,6 +691,8 @@ def _build_responder(
         workspace_settings=workspace_settings,
         extra_catalog=extra_catalog,
         thread_tool_factory=thread_factory,
+        user_push_tool_factory=user_push_factory,
+        meeting_notes=meeting_router,
     )
 
 

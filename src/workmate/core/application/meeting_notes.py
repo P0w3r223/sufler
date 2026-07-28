@@ -12,9 +12,11 @@ przekierować notatki do cudzego projektu przez wstrzyknięte pola.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workmate.core.domain.notes import build_note_metadata
+from workmate.core.errors import NoteExistsError
 
 if TYPE_CHECKING:
     from datetime import date
@@ -24,8 +26,22 @@ if TYPE_CHECKING:
     from workmate.core.ports.meeting import MeetingSummarizer, TranscriptSource
 
 
+@dataclass(frozen=True)
+class MeetingNoteOutcome:
+    """Wynik złożenia notatki ze spotkania (ADR 0043).
+
+    ``created=True`` → notatkę zapisano w tym przebiegu (``note`` niesie pełną treść).
+    ``created=False`` → notatka tego spotkania JUŻ istniała (idempotencja): pobór transkryptu i
+    Claude POMINIĘTO, ``note`` jest ``None`` (ta ścieżka nie ma readera bazy — mamy tylko id).
+    """
+
+    note_id: str
+    created: bool
+    note: Note | None
+
+
 class MeetingNoteService:
-    """Złóż notatkę ze spotkania: transkrypt → streszczenie → zapis (gated, append-only)."""
+    """Złóż notatkę ze spotkania: transkrypt → streszczenie → zapis (gated, idempotentny)."""
 
     def __init__(
         self,
@@ -37,12 +53,23 @@ class MeetingNoteService:
         self._summarizer = summarizer
         self._write_service = write_service
 
-    def note_from_meeting(self, meeting_ref: str, *, project: str, meeting_date: date) -> Note:
-        """Pobierz transkrypt, streść i zapisz notatkę; zwróć zapisaną notatkę.
+    def note_from_meeting(
+        self, meeting_ref: str, *, project: str, meeting_date: date
+    ) -> MeetingNoteOutcome:
+        """Pobierz transkrypt, streść i zapisz notatkę; ZWRÓĆ wynik (utworzona / już była).
 
-        ``project`` i ``meeting_date`` pochodzą z kontekstu wywołania (drzwi/rejestr),
-        nie z treści transkryptu — to one wyznaczają miejsce zapisu.
+        ``project`` i ``meeting_date`` pochodzą z kontekstu wywołania (drzwi/rejestr), nie z treści
+        transkryptu — to one wyznaczają miejsce zapisu. Idempotencja (ADR 0043): jeśli notatka tego
+        spotkania (deterministyczny id z ``meeting_ref``) już istnieje, KRÓTKO zwracamy ``created=
+        False`` bez poboru transkryptu i bez kosztu Claude. Wyścig domyka create-only zapis.
         """
+        # Tani strażnik PRZED I/O: literówka w projekcie nie ma płacić za transkrypt + Claude.
+        self._write_service.require_project(project)
+        existing_id = self._write_service.meeting_note_id(
+            meeting_ref, project=project, date=meeting_date
+        )
+        if existing_id is not None:
+            return MeetingNoteOutcome(note_id=existing_id, created=False, note=None)
         transcript = self._transcripts.fetch(meeting_ref)
         summary = self._summarizer.summarize(transcript)
         metadata = build_note_metadata(
@@ -55,4 +82,16 @@ class MeetingNoteService:
             open_questions=summary.open_questions,
             tags=summary.tags,
         )
-        return self._write_service.save_note(metadata, summary.body)
+        try:
+            note = self._write_service.save_meeting_note(
+                metadata, summary.body, meeting_ref=meeting_ref
+            )
+        except NoteExistsError:
+            # Wyścig (ADR 0043): pre-check przeszedł, ale RÓWNOLEGŁE zadanie zapisało notatkę tego
+            # spotkania pierwsze (create-only). To NIE porażka — idempotentnie raportujemy „już
+            # złożona" tym samym deterministycznym id, spójnie z pre-checkiem.
+            settled_id = self._write_service.meeting_note_id(
+                meeting_ref, project=project, date=meeting_date
+            )
+            return MeetingNoteOutcome(note_id=settled_id or "", created=False, note=None)
+        return MeetingNoteOutcome(note_id=note.id, created=True, note=note)

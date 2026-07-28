@@ -48,6 +48,7 @@ from workmate.core.application.workspace import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.config import (
         AgentSettings,
         ConversationSettings,
@@ -206,6 +207,8 @@ def build_conversational_responder(
     workspace_settings: WorkspaceSettings | None = None,
     extra_catalog: Sequence[ToolSpec] = (),
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+    user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+    meeting_notes: MeetingNoteRouter | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -215,6 +218,8 @@ def build_conversational_responder(
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
+    ``thread_tool_factory``/``user_push_tool_factory`` (ADR 0024/0027) wstrzykują narzędzia PER TURĘ
+    wiązane, odpowiednio, z wątkiem (external_id) i z nadawcą (sender_id) — poza powierzchnią MCP.
     """
     runtime = build_agent_runtime_or_exit(
         settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
@@ -244,6 +249,8 @@ def build_conversational_responder(
         commands=router,
         workspace_catalog_factory=workspace_factory,
         thread_tool_factory=thread_tool_factory,
+        user_push_tool_factory=user_push_tool_factory,
+        meeting_notes=meeting_notes,
     )
     return SafeResponder(inner) if safe else inner
 

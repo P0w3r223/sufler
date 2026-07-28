@@ -28,6 +28,7 @@ def make_handle_message(
             InboundMessage(
                 text=message.text,
                 sender=message.sender_name,
+                sender_id=message.sender_id,
                 conversation_id=conversation_id,
                 attachments=message.attachments,
             )

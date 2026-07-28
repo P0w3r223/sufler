@@ -61,10 +61,16 @@ def telegram_command_names() -> list[str]:
 
 @dataclass(frozen=True)
 class CommandContext:
-    """Kontekst wykonania komendy: kanał drzwi i identyfikator rozmowy (klucz pamięci wątku)."""
+    """Kontekst wykonania komendy: kanał drzwi i identyfikator rozmowy (klucz pamięci wątku).
+
+    ``sender_id`` (AAD id nadawcy, addytywne, domyślnie puste) niesie TOŻSAMOŚĆ do autoryzacji
+    zapisu (``/notatka``, B2 / ADR 0042). Read-only ``CommandRouter`` go IGNORUJE — komendy odczytu
+    nie zależą od nadawcy; pole jest tu, bo oba routery dzielą ten sam kontekst szwu drzwi.
+    """
 
     channel: str
     external_id: str
+    sender_id: str = ""
 
 
 class CommandRouter:

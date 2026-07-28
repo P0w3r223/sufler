@@ -495,6 +495,41 @@ _MIN_IMAGE_EDGE_PX = 256
 # bajtów do API (tylko tekst), więc sufit 32 MB base64 ich nie dotyczy — limit jest tylko
 # barierą na ekstrakcję/pamięć. Prezentacje z obrazkami rutynowo mają 10–50 MB.
 _MAX_EXTRACT_MB_CEILING = 100
+# Zakres zapisu Graph wymagany do wgrania pliku na dysk kanału (ADR 0026, bramka enable_file_reply).
+# Nadany 2026-07-27 (zgoda admina). Włączona bramka BEZ tego zakresu = martwa (403 przy uploadzie),
+# więc walidacja żąda go WPROST — fail-fast zamiast cichej bramki „włączonej, ale niedziałającej".
+_FILE_REPLY_WRITE_SCOPE = "Files.ReadWrite.All"
+# Sufit rozmiaru ZRENDEROWANEGO pliku odpowiedzi (KB). Treść pochodzi od modelu (ograniczona
+# max_tokens), ale twardy limit domyka powierzchnię eksfiltracji przy wstrzyknięciu (ADR 0026).
+_MAX_FILE_REPLY_KB_CEILING = 4096
+# Zakresy czatu wymagane do wysłania OBRAZU 1:1 do usera (ADR 0027, bramka enable_user_file_push).
+# Obraz idzie INLINE (hostedContents) — bez zakresu Files.* — ale dostawa na czat 1:1 wymaga tych
+# zakresów. Są JUŻ skonsentowane przez admina (używa ich Powiadomienia_teams/TeamsPush) i dzielą
+# cache MSAL z tymi drzwiami; brakuje ich tylko na TOKENIE pollera kanału, więc włączenie bramki =
+# dodanie ich do WORKMATE_TEAMS_GRAPH_SCOPES + ponowna zgoda device-code (bez nowej zgody admina).
+# Walidacja żąda ich WPROST — fail-fast zamiast cichej bramki „włączonej, ale niedziałającej" (403).
+_USER_PUSH_CHAT_SCOPES = ("Chat.Create", "ChatMessage.Send")
+# Sufit rozmiaru obrazu push-owanego do usera (KB). Bajty pochodzą od modelu; twardy limit domyka
+# powierzchnię eksfiltracji i mieści się w limicie żądania Graph (~32 MB po base64) (ADR 0027).
+_MAX_USER_IMAGE_KB_CEILING = 4096
+# Zapis wymagany do wysłania DOKUMENTU 1:1 (ADR 0027, wariant PLIKOWY, bramka enable_user_doc_push).
+# Wariant plikowy wgrywa TYLKO na WŁASNY OneDrive bota (``PUT /me/drive/root``) i udostępnia WŁASNY
+# item (``invite``) — do tego wystarcza WĘŻSZY ``Files.ReadWrite`` (pełny dostęp do plików
+# ZALOGOWANEGO usera). ``Files.ReadWrite.All`` (też cudze pliki i witryny SharePoint) jest SZERSZY
+# niż tu trzeba, ale AKCEPTOWANY, bo ADR 0026 (upload na dysk KANAŁU) i tak go konsentuje — operator
+# chcący TYLKO push dokumentu może nadać węższy (least-privilege). Wymagamy co najmniej JEDNEGO z
+# pary; zakresy CZATU (dostawa 1:1) osobno w ``_USER_PUSH_CHAT_SCOPES``. (Że ``invite`` działa pod
+# węższym ``Files.ReadWrite`` — do potwierdzenia na live-smoke; patrz research-doc.)
+_USER_DOC_PUSH_WRITE_SCOPES = ("Files.ReadWrite", _FILE_REPLY_WRITE_SCOPE)
+# Sufit rozmiaru ZRENDEROWANEGO dokumentu push-owanego do usera (KB). Treść od modelu; twardy limit
+# domyka powierzchnię eksfiltracji przy wstrzyknięciu (jak odpowiedź plikiem, ADR 0026/0027).
+_MAX_USER_DOC_KB_CEILING = 4096
+# Zakresy delegowane wymagane do produkcyjnego M3 (ADR 0009, B1, bramka enable_meeting_transcript):
+# odczyt TREŚCI transkryptu (``OnlineMeetingTranscript.Read.All``) oraz rozwiązanie spotkania po
+# ``joinWebUrl`` (``OnlineMeetings.Read``). Oba wymagają ZGODY ADMINA (nowe zakresy, jeszcze nie
+# skonsentowane — w przeciwieństwie do zakresów czatu/plików). Włączona bramka BEZ nich = martwa
+# (403 przy pobraniu), więc walidacja żąda ich WPROST — fail-fast zamiast cichej, martwej bramki.
+_MEETING_TRANSCRIPT_SCOPES = ("OnlineMeetingTranscript.Read.All", "OnlineMeetings.Read")
 
 
 def _parse_watch_pairs(value: str) -> tuple[tuple[str, str], ...]:
@@ -538,6 +573,33 @@ class TeamsGraphSettings:
     max_total_attachment_mb: int = 20  # sumaryczny budżet base64 — chroni sufit 32 MB żądania API
     max_extract_mb: int = 50  # sufit pliku ekstrahowanego do tekstu (docx/xlsx/pptx/txt)
     max_image_edge_px: int = 2048  # dłuższa krawędź obrazu (px) — powyżej downscaling
+    # Odpowiedź plikiem w wątku (ADR 0026, A′2) — OSOBNA bramka zapisu, domyślnie OFF (ADR 0006).
+    enable_file_reply: bool = False
+    max_file_reply_kb: int = 512  # sufit rozmiaru zrenderowanego pliku odpowiedzi
+    # Push OBRAZU do rozmówcy 1:1 (ADR 0027, A′3) — OSOBNA bramka zapisu, domyślnie OFF (ADR 0006).
+    enable_user_file_push: bool = False
+    max_user_image_kb: int = 1024  # sufit rozmiaru obrazu push-owanego do usera
+    # Push DOKUMENTU (md/txt/pdf/docx) do rozmówcy 1:1 (ADR 0027, plik) — OSOBNA bramka od
+    # obrazowej, bo wymaga SZERSZEGO zakresu (Files.ReadWrite.All), domyślnie OFF (ADR 0006).
+    enable_user_doc_push: bool = False
+    max_user_doc_kb: int = 512  # sufit rozmiaru zrenderowanego dokumentu push-owanego do usera
+    # Produkcyjne M3: pobranie transkryptu spotkania z Graph (ADR 0009, B1) — OSOBNA bramka,
+    # domyślnie OFF, bo wymaga NOWYCH zakresów admina (patrz ``_MEETING_TRANSCRIPT_SCOPES``).
+    enable_meeting_transcript: bool = False
+    # Produkcyjne M3 — ZAPIS notatki komendą ``/notatka`` z drzwi Teams (ADR 0009 §4 / 0041). To
+    # decyzja zaufania Gate-2 (zapis z mniej zaufanych drzwi), więc OSOBNA bramka, domyślnie OFF
+    # (ADR 0006). Wymaga włączonego ``enable_meeting_transcript`` (skąd wziąć transkrypt).
+    enable_meeting_note_write: bool = False
+    # Autoryzacja nadawcy ``/notatka`` (B2 / ADR 0042): plik mapy tożsamości (może być TEN SAM
+    # co worklogów). Rozwiązuje AAD id nadawcy na członka pionu; nieznany → odmowa (fail-closed).
+    # Przy włączonej bramce zapisu WYMAGANY (walidacja) — bez niego „każdy pisze do wszystkiego".
+    meeting_note_identities: Path = Path()
+    # Async ``/notatka`` (B3 / ADR 0043): zamiast składać notatkę inline (blokuje poller na czas
+    # transkrypt+Claude), router odsyła ACK natychmiast i liczy w tle, a wynik wrzuca do wątku.
+    # OSOBNA bramka, domyślnie OFF (ADR 0006); wymaga włączonej bramki zapisu (to jej tryb).
+    enable_meeting_note_async: bool = False
+    # Górny limit RÓWNOLEGŁYCH notatek w tle (pula wątków) — sufit jednoczesnych wywołań Claude.
+    meeting_note_async_workers: int = 2
 
     @property
     def authority(self) -> str:
@@ -566,6 +628,31 @@ class TeamsGraphSettings:
             ),
             max_extract_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB", 50),
             max_image_edge_px=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE", 2048),
+            enable_file_reply=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY", default=False
+            ),
+            max_file_reply_kb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_FILE_REPLY_KB", 512),
+            enable_user_file_push=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", default=False
+            ),
+            max_user_image_kb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_USER_IMAGE_KB", 1024),
+            enable_user_doc_push=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH", default=False
+            ),
+            max_user_doc_kb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_USER_DOC_KB", 512),
+            enable_meeting_transcript=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT", default=False
+            ),
+            enable_meeting_note_write=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE", default=False
+            ),
+            meeting_note_identities=_path_from_env("WORKMATE_TEAMS_GRAPH_IDENTITIES", Path()),
+            enable_meeting_note_async=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC", default=False
+            ),
+            meeting_note_async_workers=_int_from_env(
+                "WORKMATE_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS", 2
+            ),
         )
 
     def validate(self) -> None:
@@ -636,6 +723,93 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE musi być w zakresie "
                 f"{_MIN_IMAGE_EDGE_PX}..{_MAX_IMAGE_EDGE_PX_CEILING} (px), jest: "
                 f"{self.max_image_edge_px}."
+            )
+        if self.enable_file_reply:
+            # Bramka ON bez zakresu zapisu = 403 przy pierwszym uploadzie. Fail-fast na starcie
+            # (jak przy Jira/GitHub write): włączona, ale martwa bramka byłaby footgunem (ADR 0026).
+            if _FILE_REPLY_WRITE_SCOPE not in self.scopes:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY=true wymaga zakresu "
+                    f"'{_FILE_REPLY_WRITE_SCOPE}' w WORKMATE_TEAMS_GRAPH_SCOPES (po nadaniu przez "
+                    "admina usuń cache tokenu, by wymusić ponowną zgodę device-code)."
+                )
+            if not 1 <= self.max_file_reply_kb <= _MAX_FILE_REPLY_KB_CEILING:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_MAX_FILE_REPLY_KB musi być w zakresie "
+                    f"1..{_MAX_FILE_REPLY_KB_CEILING}, jest: {self.max_file_reply_kb}."
+                )
+        if self.enable_user_file_push:
+            # Bramka ON bez zakresów czatu = 403 przy pierwszym push-u. Fail-fast (ADR 0027):
+            # zakresy są skonsentowane przez admina, ale muszą być na TOKENIE tych drzwi.
+            missing = [s for s in _USER_PUSH_CHAT_SCOPES if s not in self.scopes]
+            if missing:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH=true wymaga zakresów "
+                    f"{', '.join(missing)} w WORKMATE_TEAMS_GRAPH_SCOPES (skonsentowane przez "
+                    "admina; usuń cache tokenu, by wymusić ponowną zgodę device-code)."
+                )
+            if not 1 <= self.max_user_image_kb <= _MAX_USER_IMAGE_KB_CEILING:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_MAX_USER_IMAGE_KB musi być w zakresie "
+                    f"1..{_MAX_USER_IMAGE_KB_CEILING}, jest: {self.max_user_image_kb}."
+                )
+        if self.enable_user_doc_push:
+            # Bramka ON bez zakresów = 403 przy uploadzie/wysyłce. Fail-fast (ADR 0027, wariant
+            # plikowy): zakresy CZATU (dostawa 1:1) ORAZ co najmniej JEDEN zapis do plików (upload
+            # na własny OneDrive) — węższy Files.ReadWrite lub szerszy Files.ReadWrite.All.
+            missing = [s for s in _USER_PUSH_CHAT_SCOPES if s not in self.scopes]
+            if not any(s in self.scopes for s in _USER_DOC_PUSH_WRITE_SCOPES):
+                missing.append("Files.ReadWrite (lub Files.ReadWrite.All)")
+            if missing:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH=true wymaga zakresów "
+                    f"{', '.join(missing)} w WORKMATE_TEAMS_GRAPH_SCOPES (skonsentowane przez "
+                    "admina; usuń cache tokenu, by wymusić ponowną zgodę device-code)."
+                )
+            if not 1 <= self.max_user_doc_kb <= _MAX_USER_DOC_KB_CEILING:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_MAX_USER_DOC_KB musi być w zakresie "
+                    f"1..{_MAX_USER_DOC_KB_CEILING}, jest: {self.max_user_doc_kb}."
+                )
+        if self.enable_meeting_transcript:
+            # Bramka ON bez zakresów transkryptu = 403 przy pobraniu. Fail-fast (ADR 0009, B1):
+            # to NOWE zakresy admina — dopóki nie nadane i nie ma ich na TOKENIE tych drzwi, bramka
+            # byłaby martwa. Po nadaniu przez admina usuń cache tokenu, by wymusić ponowną zgodę.
+            missing = [s for s in _MEETING_TRANSCRIPT_SCOPES if s not in self.scopes]
+            if missing:
+                raise ValueError(
+                    "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true wymaga zakresów "
+                    f"{', '.join(missing)} w WORKMATE_TEAMS_GRAPH_SCOPES (nadaje ADMIN w Entra; "
+                    "po nadaniu usuń cache tokenu, by wymusić ponowną zgodę device-code)."
+                )
+        if self.enable_meeting_note_write and not self.enable_meeting_transcript:
+            # Zapis notatki komendą /notatka bez źródła transkryptu = martwa bramka. Fail-fast
+            # (ADR 0009/0041): najpierw włącz transkrypt (i jego zakresy), potem zapis z drzwi.
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true wymaga też "
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true (skąd wziąć transkrypt)."
+            )
+        if self.enable_meeting_note_async and not self.enable_meeting_note_write:
+            # Async to TRYB ścieżki zapisu /notatka, nie samodzielna zdolność — bez włączonego
+            # zapisu nie ma czego wykonywać w tle. Fail-fast (ADR 0043).
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC=true wymaga też "
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true (async = tryb zapisu)."
+            )
+        if self.enable_meeting_note_async and self.meeting_note_async_workers < 1:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS musi być ≥ 1, jest: "
+                f"{self.meeting_note_async_workers}."
+            )
+        if self.enable_meeting_note_write and not self.meeting_note_identities.is_file():
+            # Autoryzacja jest WBUDOWANA w bramkę zapisu (B2 / ADR 0042): bez mapy tożsamości
+            # każdy nadawca pisałby do dowolnego projektu (ryzyko KRYTYCZNE). Fail-fast — nie
+            # pozwalamy włączyć zapisu bez źródła autoryzacji (nie osobny toggle, bo domyślne
+            # „OFF autoryzacji" = „każdy pisze"). Może wskazywać TEN SAM plik co worklogi.
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true wymaga "
+                "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
+                f"autoryzuje zapis, ADR 0042); brak pliku: {self.meeting_note_identities}."
             )
 
 
@@ -1235,6 +1409,11 @@ MAX_WORKLOGI_CATCHUP_DAYS = 14
 # "json" = atrapa (RCP/eksport jeszcze nieznany); "shifts" = realne godziny z Microsoft Shifts
 # przez Graph + klucze issue z commitów + opis z claude_summary (ADR 0036, integracja wieloetapowa).
 _ALLOWED_WORKLOGI_SOURCES = ("json", "shifts")
+# Dostawa arkusza ZAŁĄCZNIKIEM (A′4, ADR 0035/0038 przez 0027) wgrywa plik na OneDrive „głosu" bota,
+# więc token push MUSI nieść zapis do plików — akceptujemy WĘŻSZY Files.ReadWrite (własny dysk
+# wystarcza) lub SZERSZY Files.ReadWrite.All. Egzekwuje to wiring drzwi (jak inne scope'y Teams),
+# bo ``WorklogiSettings`` nie widzi ustawień push (ta sama zasada co przy GitHub/Teams).
+WORKLOG_ATTACHMENT_WRITE_SCOPES = _USER_DOC_PUSH_WRITE_SCOPES
 
 
 @dataclass(frozen=True)
@@ -1273,6 +1452,9 @@ class WorklogiSettings:
     max_hours_per_day: float = 16.0
     max_catchup_days: int = 3
     only_source_ids: tuple[str, ...] = ()
+    # Dostawa arkusza ZAŁĄCZNIKIEM zamiast ścieżki tekstem (A′4, ADR 0035/0038 przez 0027).
+    # Domyślnie OFF: wymaga szerszego tokenu push (Files.ReadWrite[.All]) — scope'y sprawdza wiring.
+    enable_attachment: bool = False
 
     @classmethod
     def from_env(cls) -> WorklogiSettings:
@@ -1296,6 +1478,7 @@ class WorklogiSettings:
             max_hours_per_day=_float_from_env("WORKMATE_WORKLOGI_MAX_HOURS_PER_DAY", 16.0),
             max_catchup_days=_int_from_env("WORKMATE_WORKLOGI_MAX_CATCHUP_DAYS", 3),
             only_source_ids=_list_from_env("WORKMATE_WORKLOGI_ONLY_SOURCE_IDS", ()),
+            enable_attachment=_bool_from_env("WORKMATE_WORKLOGI_ENABLE_ATTACHMENT", default=False),
         )
 
     def validate(self, *, data_dir: Path) -> None:

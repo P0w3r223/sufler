@@ -26,6 +26,16 @@ class WriteError(WorkMateError):
     """
 
 
+class NoteExistsError(WriteError):
+    """Notatka o tym samym id już istnieje — zapis create-only odrzucony (kolizja).
+
+    Podklasa ``WriteError`` (istniejące ``except WriteError`` dalej łapią), ale WYRÓŻNIONA, by
+    idempotentna ścieżka notatki ze spotkania (ADR 0043) odróżniła „już złożona" (wyścig zapisu:
+    pre-check przeszedł, równoległe zadanie zapisało pierwsze) od realnej porażki zapisu i
+    zaraportowała to jako pominięcie, nie błąd.
+    """
+
+
 class InvalidRequestError(WorkMateError):
     """Prośba wołającego jest niepoprawna (zły zakres, wartość spoza limitu) — bez mutacji.
 
@@ -33,6 +43,16 @@ class InvalidRequestError(WorkMateError):
     złe". Na czystej ścieżce ODCZYTU to drugie jest myleniem czytelnika dokładnie tam, gdzie
     szuka dowodu, że zapisu nie ma. Granica traktuje go tak samo — koperta łapie
     ``WorkMateError`` i zwraca ``{"error": ...}``.
+    """
+
+
+class NoteAuthorizationError(WorkMateError):
+    """Nadawca nie ma prawa złożyć notatki ze spotkania (B2 / ADR 0042).
+
+    Podnoszony PRZED jakimkolwiek pobraniem transkryptu, gdy tożsamość nadawcy (AAD id)
+    nie rozwiązuje się do rozpoznanego członka pionu (fail-closed). To błąd *oczekiwany*
+    (autoryzacja), nie defekt — drzwi degradują go do czytelnej odmowy, nie do tracebacku.
+    Osobny od ``WriteError``: „nie wolno" to inny komunikat niż „zapis się nie udał".
     """
 
 
