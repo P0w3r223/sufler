@@ -2,7 +2,7 @@
 
 Date: 2026-07-23
 Status: accepted
-Author: Patryk
+Author: P0w3r223
 Related to: [[0001-structure-and-prompt-discriminator]], Powiadomienia_teams `agent/interpreter.py`
 
 ---

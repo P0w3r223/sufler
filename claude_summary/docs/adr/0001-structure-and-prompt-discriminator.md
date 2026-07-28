@@ -2,7 +2,7 @@
 
 Date: 2026-07-23
 Status: accepted
-Author: Patryk
+Author: P0w3r223
 Related to: WorkMate ADR 0034/0035 (worklog/Jira), Powiadomienia_teams (subproject template)
 
 ---

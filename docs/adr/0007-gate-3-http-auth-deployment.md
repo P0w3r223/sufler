@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 Status: accepted
-Author: Patryk
+Author: P0w3r223
 Related to: supersedes docs/adr/0004-transport-stdio-then-http.md; builds on docs/adr/0006-write-capability-gate-2.md; docs/roadmap.md (Gate 3)
 
 ---

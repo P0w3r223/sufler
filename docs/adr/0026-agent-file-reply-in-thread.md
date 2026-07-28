@@ -1,7 +1,7 @@
 # 0026. Reply in a Teams thread with a rendered file (md/txt/pdf/docx)
 
 Date: 2026-07-17
-Status: proposed
+Status: accepted (implemented 2026-07-27 — A′1 primitive + A′2 consumer)
 Author: P0w3r223
 Related to: docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md,
   docs/adr/0018-agent-working-directory.md, docs/adr/0016-user-multimodal-attachments.md,
@@ -90,3 +90,28 @@ no longer inbound-only).
   document it in the deploy checklist.
 - B and C (ADR 0027) share the `TeamsFileSender` primitive — build it once here, reuse for user push.
 - Everything reversible: `enable_file_reply` defaults to today's text-only behavior.
+
+## Implementation (2026-07-27)
+
+- **A′1 — primitive.** Core port `TeamsFileSender` (`core/ports/file_output.py`) + sync Graph adapter
+  `HttpxGraphFileSender` (`adapters/outbound/graph_file_sender.py`): `upload_channel_file`
+  (GET filesFolder → PUT content) then `post_reply_with_attachment` (reference attachment bound to
+  body via `<attachment id="GUID">`). Retry policy mirrors `graph_teams_notifier` (429 always; the
+  file-carrying reply never; folder read + idempotent upload yes); 404 → `ThreadRootGone`.
+- **A′2 — consumer.** Core port `DocumentRenderer` + `FILE_REPLY_FORMATS` map
+  (`core/ports/document.py`) with adapter `DefaultDocumentRenderer`
+  (`adapters/outbound/document_renderer.py`): `md`/`txt` are raw UTF-8, `docx` via `python-docx`,
+  `pdf` via `fpdf2` with a **bundled Unicode font** (`assets/DejaVuSans.ttf`, DejaVu license) — the
+  built-in Helvetica is latin-1 and would crash on Polish glyphs. Core `build_file_reply_catalog`
+  (`core/application/tools.py`) exposes the per-turn `reply_with_file(content, file_format, filename)`
+  tool: target `team/channel/root` is pre-bound from the thread `external_id` (never from the model),
+  format/size/empty guards raise `InvalidRequestError` → `{"error": ...}` (degrade to text), the
+  caption HTML is core-built and escaped. Wired in `teams_graph/app.py`
+  (`_build_file_reply_factory` + `_compose_thread_factories`, composed with the ADR-0024 GitHub thread
+  factory), gated by `enable_file_reply` (OFF) with fail-fast validation that `Files.ReadWrite.All` is
+  in scopes and a `max_file_reply_kb` bound. New extra `file-reply` (`fpdf2`). Uploaded filenames are
+  content-addressed (`<slug>-<hash8>.<fmt>`) so a retried turn overwrites idempotently while distinct
+  content never clobbers another reply in the channel. The DejaVu font is force-included in the wheel
+  (`[tool.hatch.build.targets.wheel] artifacts`, verified in `dist/*.whl`). Gate: ruff+mypy clean,
+  pytest 1492 (+32); `@code-reviewer` conditional-approve (no CRIT/HIGH), the two MEDIUMs addressed.
+  Real upload/tile = operator (device-code re-consent for the write scope).

@@ -1,7 +1,7 @@
 # 0027. Agent sends images/files to a user on Teams (outbound attachments)
 
 Date: 2026-07-17
-Status: proposed
+Status: accepted (images + file variants delivered 2026-07-27)
 Author: P0w3r223
 Related to: docs/adr/0026-agent-file-reply-in-thread.md, docs/adr/0016-user-multimodal-attachments.md,
   docs/adr/0022-proactive-dual-target-teams-push.md, docs/adr/0015-teams-delegated-graph-polling.md,
@@ -13,6 +13,64 @@ Related to: docs/adr/0026-agent-file-reply-in-thread.md, docs/adr/0016-user-mult
 > scope is available. The file variant is **no longer scope-blocked** (only `TeamsFileSender` + the
 > outbound-attachment build remains); the images-only variant was already deliverable. The rest of
 > this decision stands.
+>
+> **Delivery note (A′3, 2026-07-27):** the **images-only** variant is **built** — tool
+> `send_image_to_user` (`core/application/tools.py`), gated behind `enable_user_file_push` (default
+> OFF). Two corrections to this ADR surfaced during the build:
+>
+> 1. **"No new scope" was only half true.** The hostedContents *mechanism* needs no `Files.*` scope,
+>    but **1:1 chat delivery** requires chat scopes (`Chat.Create`, `ChatMessage.Send`) that the
+>    channel-poller token does **not** carry (it holds only `ChannelMessage.Send`). Those scopes are
+>    **already admin-consented** (used by `Powiadomienia_teams`/TeamsPush) and share the MSAL cache,
+>    so enabling the gate needs **no new admin consent** — only adding them to
+>    `WORKMATE_TEAMS_GRAPH_SCOPES` + a device-code re-consent. `config.validate` now fails fast on the
+>    gate without those scopes (mirrors `enable_file_reply` → `Files.ReadWrite.All`).
+> 2. **Sync port, not an async-notifier method.** This ADR said the async `TeamsNotifier` would gain
+>    an attachment method, but agent tools dispatch **synchronously** (thread pool). Consistent with
+>    ADR 0026's `TeamsFileSender`, the 1:1 image push is a **sync** port `UserImageSender`
+>    (`core/ports/user_push.py`) + sync adapter `HttpxGraphUserImagePush`
+>    (`adapters/outbound/graph_user_push.py`) — not a method on `graph_teams_notifier` (async).
+>
+> **Delivery note (file variant, 2026-07-27):** the **file** variant is now **built** — tool
+> `send_document_to_user` (`core/application/tools.py`), gated behind a **separate**
+> `enable_user_doc_push` (default OFF). Design points that refined this ADR during the build:
+>
+> 1. **Not `TeamsFileSender`, a new sync port.** This ADR said the file variant would "reuse
+>    `TeamsFileSender`", but that primitive uploads to a **channel's** SharePoint drive
+>    (`GET …/filesFolder` → `PUT`) — a 1:1 chat has **no channel drive**, so the file must live in
+>    the sender's **OneDrive**. The mechanism is therefore a distinct sync port `UserDocSender`
+>    (`core/ports/user_doc_push.py`) + adapter `HttpxGraphUserDocPush`
+>    (`adapters/outbound/graph_user_doc_push.py`): `PUT /me/drive/root:/…:/content` →
+>    `POST /me/drive/items/{id}/invite` (grant the recipient read — **required**, else the card is
+>    unopenable) → `POST /chats` → `POST /chats/{id}/messages` with a `reference` attachment. See
+>    `docs/research/graph-1to1-chat-file-attachment.md`.
+> 2. **A separate gate, not the image gate.** Images ride hostedContents inline and need **no**
+>    `Files.*` scope; the file variant needs `Files.ReadWrite.All` **on top of** the chat scopes.
+>    Sharing one gate would force the broad write scope on image-only users, so the file variant has
+>    its own `enable_user_doc_push` (chat scopes + `Files.ReadWrite.All`, `config.validate`
+>    fail-fast). Both push factories are keyed by `sender_id` and composed into one per-turn factory.
+> 3. **Rendering reuses ADR 0026.** The tool renders content → bytes via the existing
+>    `DocumentRenderer` (`FILE_REPLY_FORMATS`: md/txt/pdf/docx), so `send_document_to_user` is the
+>    1:1-delivery mirror of `reply_with_file` (extra `file-reply` for pdf/docx).
+>
+> Live-smoke caveats (research-doc): `webUrl` vs `webDavUrl` as `contentUrl`, and whether an
+> org-link vs per-user `invite` reliably makes the Teams card openable — to verify on first real run.
+> Both `send_image_to_user` and `send_document_to_user` are delivered; nothing outbound remains here.
+>
+> **Accepted-for-pilot / follow-ups (from code review):**
+> - **Least-privilege scope.** The doc upload/`invite` touch only the bot's **own** OneDrive, so
+>   delegated `Files.ReadWrite` suffices; validation accepts **either** `Files.ReadWrite` or the
+>   broader `Files.ReadWrite.All` (the latter is already consented for ADR 0026's channel upload). The
+>   narrow scope's sufficiency for `invite` is a live-smoke confirmation item.
+> - **Artifact retention.** Pushed docs go to a dedicated OneDrive subfolder (`WorkMate-push/`, not
+>   the drive root), created idempotently. **TTL cleanup is deferred to the pilot** — rendered files
+>   linger with a standing per-user `read` grant (info-disclosure boundary unchanged: only the bound
+>   sender can open them). A hard message-POST failure after the `invite` leaves an orphaned grant;
+>   the same future cleanup covers it. Accepted for the OFF-by-default pilot.
+> - **Retry-loop duplication.** `_request`/`_retry_after`/`_member`/retry constants are near-identical
+>   across `graph_user_doc_push`, `graph_user_push`, and `graph_file_sender`, and have begun to
+>   diverge. Extracting a shared `_graph_request` helper is a **tracked follow-up** (deferred here to
+>   avoid destabilizing the already-delivered image/channel adapters in this change).
 
 ## Context
 
@@ -71,9 +129,12 @@ user).
 
 - `sender_id` propagation is additive and backward-compatible (`selection.py` already parses it →
   `handler.py` → `InboundMessage`); nothing that ignores the new field breaks.
-- `core/ports/notifications.py` gains an attachment method; `graph_teams_notifier.py` gains the 1:1
-  file/image send; `config.py` gains the gate. Reuses `TeamsFileSender` from ADR 0026 — no second
-  outbound-attachment primitive.
+- ~~`core/ports/notifications.py` gains an attachment method; `graph_teams_notifier.py` gains the 1:1
+  file/image send~~ — **superseded by the delivery note above:** the images-only build added a **sync**
+  port `core/ports/user_push.py` (`UserImageSender`) + adapter `adapters/outbound/graph_user_push.py`
+  (`HttpxGraphUserImagePush`), because agent tools dispatch synchronously (the async notifier would
+  not fit). `config.py` gains the `enable_user_file_push` gate. The **file** variant will reuse
+  `TeamsFileSender` from ADR 0026 — no second outbound-attachment primitive.
 - Medium blast radius; images-only variant is deliverable without the write-scope blocker, so it can ship
   ahead of ADR 0026's file path.
 - Reversible: `enable_user_file_push` defaults to today's no-outbound-attachment behavior.

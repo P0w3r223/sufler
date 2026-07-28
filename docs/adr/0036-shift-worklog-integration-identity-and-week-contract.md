@@ -4,7 +4,7 @@ Date: 2026-07-23
 Status: accepted (assembled S1–S5: identity, Shifts hours, commit issue-attribution, claude_summary
 comments, wired into the `workmate-worklogi` door and covered by an end-to-end dry-run test; go-live
 still gated on operator confirming `WORKLOGPRO_HEADERS` — S5 § go-live)
-Author: Patryk
+Author: P0w3r223
 Related to: 0034 (worklog from commits, write path removed), 0035 (WorklogPRO sheets + Teams DM)
 
 ---

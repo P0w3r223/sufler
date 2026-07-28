@@ -2,7 +2,7 @@
 
 Date: 2026-07-27
 Status: accepted
-Author: Patryk
+Author: P0w3r223
 Related to: [ADR 0019](0019-shared-event-store.md) (the shared EventStore),
   [ADR 0008](0008-agent-runtime-and-tool-catalog.md) (single-source tool catalog + frozen MCP surface),
   [ADR 0022](0022-proactive-dual-target-teams-push.md) (out-of-band Teams push),
