@@ -18,6 +18,7 @@ from workmate.core.domain.models import (
     ProjectStatus,
 )
 from workmate.core.domain.notes import notes_of_project
+from workmate.core.domain.paths import meeting_note_id as build_meeting_note_id
 from workmate.core.domain.paths import note_id as build_note_id
 from workmate.core.domain.ranking import bm25_rank, reciprocal_rank_fusion
 from workmate.core.domain.sanitize import reject_dangerous_content
@@ -29,7 +30,7 @@ from workmate.core.ports.repositories import (
 )
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import date, datetime
 
     from workmate.core.application.events import EventService
     from workmate.core.ports.text import Lemmatizer, SemanticRanker
@@ -315,6 +316,59 @@ class NotesWriteService:
         while self._writer.exists(f"{base_id}-{suffix}"):
             suffix += 1
         return f"{base_id}-{suffix}"
+
+    def require_project(self, project: str) -> None:
+        """Rzuć ``WriteError``, gdy projekt nie istnieje w rejestrze — tani strażnik przed I/O.
+
+        Pozwala ścieżce notatki ze spotkania odrzucić literówkę w projekcie ZANIM zapłaci za pobór
+        transkryptu i wywołanie Claude (w trybie async koszt idzie po cichu w tle, ADR 0043).
+        """
+        if self._projects.get(project) is None:
+            raise WriteError(f"projekt nie istnieje w rejestrze: {project!r}")
+
+    def meeting_note_id(self, meeting_ref: str, *, project: str, date: date) -> str | None:
+        """Deterministyczny id notatki tego spotkania, jeśli JUŻ istnieje; inaczej ``None``.
+
+        Pre-check idempotencji (ADR 0043): pozwala przypadkowi użycia SPOTKANIA pominąć pobór
+        transkryptu i wywołanie Claude, gdy notatka już jest. ``None`` też przy nieznanym projekcie
+        — właściwy ``WriteError`` podniesie dopiero ``save_meeting_note`` (jedno miejsce błędu).
+        """
+        proj = self._projects.get(project)
+        if proj is None:
+            return None
+        note_id = build_meeting_note_id(proj.company, proj.key, date, meeting_ref)
+        return note_id if self._writer.exists(note_id) else None
+
+    def save_meeting_note(self, metadata: NoteMetadata, body: str, *, meeting_ref: str) -> Note:
+        """Zapisz notatkę ze spotkania z id DETERMINISTYCZNYM z ``meeting_ref`` (ADR 0043).
+
+        Jak ``save_note`` (sanityzacja, rejestr projektu), ale id nie wywodzi się z tytułu Claude,
+        lecz ze stałego ``meeting_ref`` — create-only na TYM id: ponowienie tego samego spotkania
+        rzuca ``WriteError('już istnieje')`` zamiast dokładać duplikat ``-2``. Wołający robi
+        wcześniej ``meeting_note_id`` (tania idempotencja bez kosztu Claude); ten zapis domyka
+        wyścig (dwa równoległe przebiegi jednego spotkania → drugi dostanie kolizję create-only).
+        """
+        reject_dangerous_content(
+            metadata.title,
+            body,
+            *metadata.participants,
+            *metadata.decisions,
+            *metadata.action_items,
+            *metadata.open_questions,
+            *metadata.tags,
+        )
+        project = self._projects.get(metadata.project)
+        if project is None:
+            raise WriteError(f"projekt nie istnieje w rejestrze: {metadata.project!r}")
+        try:
+            note_id = build_meeting_note_id(
+                project.company, project.key, metadata.date, meeting_ref
+            )
+        except ValueError as exc:
+            raise WriteError(str(exc)) from exc
+        note = Note(id=note_id, metadata=metadata, body=body.strip())
+        self._writer.write(note)  # create-only; kolizja → WriteError (idempotencja)
+        return note
 
 
 def _score(note: Note, terms: list[str]) -> int:

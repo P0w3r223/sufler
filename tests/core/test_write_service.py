@@ -106,3 +106,60 @@ def test_save_note_collision_picks_lowest_free_suffix():
         "mpwik/scada-integration/2025-06-12-przeglad-api-2",
         "mpwik/scada-integration/2025-06-12-przeglad-api-3",
     ]
+
+
+# --- notatka ze spotkania: id deterministyczny + idempotencja (ADR 0043) -----
+
+
+def test_save_meeting_note_id_is_deterministic_from_ref_not_title():
+    # id spotkania wywodzi się z meeting_ref, NIE ze slug tytułu Claude: ten sam ref (inny
+    # tytuł) → ten sam id (klucz idempotencji), inny ref → inny id.
+    svc_a = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    svc_b = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    svc_c = NotesWriteService(FakeNotesWriter(), _projects_repo())
+
+    a = svc_a.save_meeting_note(_metadata(title="Przeglad"), body="t", meeting_ref="join-abc")
+    b = svc_b.save_meeting_note(_metadata(title="Zupelnie inny"), body="t", meeting_ref="join-abc")
+    c = svc_c.save_meeting_note(_metadata(title="Przeglad"), body="t", meeting_ref="join-XYZ")
+
+    assert a.id.startswith("mpwik/scada-integration/2025-06-12-mtg-")
+    assert b.id == a.id  # ten sam ref → ten sam id, mimo innego tytułu
+    assert c.id != a.id  # inny ref → inny id
+
+
+def test_meeting_note_id_precheck_reflects_existing():
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+
+    on = date(2025, 6, 12)
+    assert service.meeting_note_id("join-abc", project="scada-integration", date=on) is None
+    saved = service.save_meeting_note(_metadata(), body="t", meeting_ref="join-abc")
+    assert service.meeting_note_id("join-abc", project="scada-integration", date=on) == saved.id
+
+
+def test_meeting_note_id_unknown_project_returns_none():
+    service = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    assert service.meeting_note_id("ref", project="nieznany", date=date(2025, 6, 12)) is None
+
+
+def test_save_meeting_note_is_create_only_on_repeat(tmp_path):
+    # Z REALNYM create-only writerem: ponowny zapis tego samego spotkania rzuca (kolizja),
+    # zamiast tworzyć duplikat -2 — to jest gwarancja idempotencji na poziomie FS (ADR 0043).
+    from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+
+    service = NotesWriteService(MarkdownNotesWriter(tmp_path), _projects_repo())
+    service.save_meeting_note(_metadata(), body="pierwsza", meeting_ref="join-abc")
+
+    with pytest.raises(WriteError):
+        service.save_meeting_note(_metadata(title="Inny"), body="druga", meeting_ref="join-abc")
+
+
+def test_require_project_raises_on_unknown_before_io():
+    service = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    with pytest.raises(WriteError):
+        service.require_project("nieznany")
+
+
+def test_require_project_ok_for_known():
+    service = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    service.require_project("scada-integration")  # nie rzuca

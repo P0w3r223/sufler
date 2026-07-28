@@ -33,9 +33,7 @@ class RecordingSheetWriter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...], tuple[tuple[Any, ...], ...]]] = []
 
-    def write(
-        self, path: str, headers: tuple[str, ...], rows: tuple[tuple[Any, ...], ...]
-    ) -> None:
+    def write(self, path: str, headers: tuple[str, ...], rows: tuple[tuple[Any, ...], ...]) -> None:
         self.calls.append((path, headers, rows))
 
 
@@ -163,9 +161,9 @@ def test_run_writes_sheet_and_returns_path() -> None:
 def test_run_without_hours_writes_nothing() -> None:
     writer = RecordingSheetWriter()
     # Bloki nadawcy poza oknem submisji → brak godzin.
-    result = _service(
-        FakeShiftSource([_block("aad-1", 6, 14, day=5)]), writer
-    ).run(_person(), _summary())
+    result = _service(FakeShiftSource([_block("aad-1", 6, 14, day=5)]), writer).run(
+        _person(), _summary()
+    )
     assert result.file_path == ""
     assert writer.calls == []
     assert not result.timesheet.worked()
@@ -200,6 +198,36 @@ def test_handle_success_produces_sheet_and_reply() -> None:
     assert len(writer.calls) == 1
 
 
+def test_handle_attachment_mode_omits_the_path_and_keeps_it_for_the_door() -> None:
+    """A′4: z ``deliver_as_attachment`` treść mówi „w załączniku", ale ``file_path`` zostaje.
+
+    Ścieżka jest potrzebna DRZWIOM (wczytują bajta do wgrania), tylko nie pokazujemy jej w treści.
+    """
+    writer = RecordingSheetWriter()
+    outcome = handle_submission(
+        _service(FakeShiftSource([_block("aad-1", 6, 14)]), writer),
+        _person(),
+        _raw_payload(days=[{"date": "2026-07-15", "commits": [{"message": "WT-1 x"}]}]),
+        deliver_as_attachment=True,
+    )
+    assert outcome.is_success
+    assert outcome.file_path.endswith(".xlsx")  # drzwi dostają ścieżkę do wczytania bajtów
+    assert "załączniku" in outcome.reply_html
+    assert "<code>" not in outcome.reply_html  # ścieżka NIE wyciekła do treści
+    assert "/out/" not in outcome.reply_html
+
+
+def test_handle_default_still_shows_the_path_fallback() -> None:
+    """Domyślnie (bez flagi) zostaje fallback ścieżką — jak dotąd."""
+    writer = RecordingSheetWriter()
+    outcome = handle_submission(
+        _service(FakeShiftSource([_block("aad-1", 6, 14)]), writer),
+        _person(),
+        _raw_payload(days=[{"date": "2026-07-15", "commits": [{"message": "WT-1 x"}]}]),
+    )
+    assert "<code>" in outcome.reply_html  # akapit ze ścieżką obecny
+
+
 def test_handle_rejects_foreign_export_no_sheet() -> None:
     writer = RecordingSheetWriter()
     outcome = handle_submission(
@@ -215,9 +243,7 @@ def test_handle_rejects_foreign_export_no_sheet() -> None:
 
 def test_handle_rejects_bad_shape() -> None:
     writer = RecordingSheetWriter()
-    outcome = handle_submission(
-        _service(FakeShiftSource([]), writer), _person(), ["nie", "obiekt"]
-    )
+    outcome = handle_submission(_service(FakeShiftSource([]), writer), _person(), ["nie", "obiekt"])
     assert outcome.reason == REASON_REJECTED
     assert writer.calls == []
 

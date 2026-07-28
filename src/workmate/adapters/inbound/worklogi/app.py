@@ -33,6 +33,10 @@ from workmate.adapters.inbound.single_instance import (
     acquire_single_instance_lock,
 )
 from workmate.adapters.inbound.worklogi import state as state_store
+from workmate.adapters.inbound.worklogi.attachment_delivery import (
+    require_attachment_scopes,
+    send_worklog_document,
+)
 from workmate.config import Settings, TeamsPushSettings, WorklogiSettings
 from workmate.core.application.weekly_timesheets import RunReport, WeeklyTimesheetService
 from workmate.core.domain.week import next_run, previous_run, reported_week, week_label
@@ -64,6 +68,7 @@ def main() -> None:
         )
     push = TeamsPushSettings.from_env()
     _require_teams(push)
+    require_attachment_scopes(settings, push)
 
     token_provider = _build_token_provider(push)
     if args.login:
@@ -286,6 +291,11 @@ def _run_once(
         already_done=lambda week, sid: state_store.key(week, sid) in saved,
         mark_done=mark_done,
         now=lambda: moment,
+        send_document=(
+            (lambda aad, path, html: send_worklog_document(token, aad, path, html))
+            if settings.enable_attachment
+            else None
+        ),
     )
     report = service.run()
     _prune_state(settings, saved, tz, moment)

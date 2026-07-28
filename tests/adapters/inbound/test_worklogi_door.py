@@ -745,8 +745,10 @@ def test_run_once_with_shifts_full_assembly_hours_issues_and_comment(
     class FakeCommits:
         def commits_for(self, git_email, since, until):
             at = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
-            return [Commit(sha="a", message="WT-1 rano", authored_at=at),
-                    Commit(sha="b", message="WT-2 po", authored_at=at)]
+            return [
+                Commit(sha="a", message="WT-1 rano", authored_at=at),
+                Commit(sha="b", message="WT-2 po", authored_at=at),
+            ]
 
     monkeypatch.setattr(app, "_build_commit_source", lambda tz: FakeCommits())
 

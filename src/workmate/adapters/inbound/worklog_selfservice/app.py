@@ -2,9 +2,10 @@
 
 Interaktywny, jednoosobowy odpowiednik wsadowego ``workmate-worklogi``: bierze PRZYSŁANY wynik
 ``claude_summary`` jednej osoby, dobiera jej REALNE godziny z Microsoft Shifts, składa arkusz
-importu WorklogPRO i (opcjonalnie) odsyła osobie na Teams prywatną wiadomość ze ścieżką pliku —
-dostawę pliku ZAŁĄCZNIKIEM projektuje ADR 0026/0027 (M4, wymaga scope admina), tu jest FALLBACK
-ścieżką, jak w drzwiach wsadowych (ADR 0035 § how-to).
+importu WorklogPRO i (opcjonalnie) odsyła osobie na Teams prywatną wiadomość. Dostawa: domyślnie
+FALLBACK ścieżką (jak w drzwiach wsadowych, ADR 0035 § how-to); z flagą
+``WORKMATE_WORKLOGI_ENABLE_ATTACHMENT`` (A′4, ADR 0038 przez 0027) arkusz jedzie realnym
+ZAŁĄCZNIKIEM przez ``UserDocSender`` (wymaga ``Files.ReadWrite[.All]`` w zakresach push).
 
 **Tryb pilotażu = operator (ADR 0037).** Live, uwierzytelnione zbieranie z czatu 1:1 (nadawca =
 tożsamość) projektuje ADR 0037/0038 (M5); do tego czasu operator podaje submisję (``--submission``)
@@ -29,6 +30,10 @@ from zoneinfo import ZoneInfo
 
 from workmate.adapters.inbound import env
 from workmate.adapters.inbound.worklog_selfservice import state as state_store
+from workmate.adapters.inbound.worklogi.attachment_delivery import (
+    require_attachment_scopes,
+    send_worklog_document,
+)
 from workmate.config import Settings, TeamsPushSettings, WorklogiSettings
 from workmate.core.application.selfservice_worklog import SelfServiceWorklog, handle_submission
 
@@ -49,6 +54,7 @@ def main() -> None:  # pragma: no cover - kompozycja I/O; logika w handlerze jes
     settings.validate(data_dir=Settings.from_env().data_dir)
     push = TeamsPushSettings.from_env()
     _require_teams(push)
+    require_attachment_scopes(settings, push)
 
     token_provider = _build_token_provider(push)
     if args.login:
@@ -110,7 +116,9 @@ def _run_once(
         start_hour=settings.start_hour,
         max_minutes_per_day=round(settings.max_hours_per_day * 60),
     )
-    outcome = handle_submission(worklog, person, payload)
+    outcome = handle_submission(
+        worklog, person, payload, deliver_as_attachment=settings.enable_attachment
+    )
     logger.info(
         "Wynik %s: %s, arkusz=%s, %d min.",
         person.source_id,
@@ -130,7 +138,11 @@ def _run_once(
         logger.info("Submisja %s już obsłużona (%s) — nie wysyłam ponownie.", sid, saved[sid])
         return
 
-    _send_html(token, person.aad_user_id, outcome.reply_html)
+    if settings.enable_attachment and outcome.is_success and outcome.file_path:
+        # Dostawa ZAŁĄCZNIKIEM: reply_html jest już w trybie „w załączniku" (handle_submission).
+        send_worklog_document(token, person.aad_user_id, outcome.file_path, outcome.reply_html)
+    else:
+        _send_html(token, person.aad_user_id, outcome.reply_html)
     if outcome.is_success:
         saved[sid] = _now().isoformat()
         state_store.save(state_path, saved)

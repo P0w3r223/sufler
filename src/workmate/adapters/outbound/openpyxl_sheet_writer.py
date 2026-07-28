@@ -21,6 +21,9 @@ _MISSING = "Zapis arkuszy wymaga extra 'worklogi'. Zainstaluj: uv sync --extra w
 # Nazwa arkusza w skoroszycie. WorklogPRO czyta PIERWSZY arkusz, ale czytelna nazwa pomaga
 # człowiekowi, który otworzy plik przed importem.
 _SHEET_TITLE = "Worklogi"
+# Typ MIME skoroszytu .xlsx (OOXML) — jedno źródło prawdy dla dostawy arkusza ZAŁĄCZNIKIEM (A′4):
+# drzwi podają go do ``UserDocSender.send_document_to_user`` jako ``content_type`` uploadu.
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 class OpenpyxlSheetWriter:

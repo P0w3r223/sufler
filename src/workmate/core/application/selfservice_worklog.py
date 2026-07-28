@@ -179,7 +179,11 @@ class SelfServiceOutcome:
 
 
 def handle_submission(
-    worklog: SelfServiceWorklog, person: Person, payload: Any
+    worklog: SelfServiceWorklog,
+    person: Person,
+    payload: Any,
+    *,
+    deliver_as_attachment: bool = False,
 ) -> SelfServiceOutcome:
     """Obsłuż jedną submisję ROZWIĄZANEJ już osoby: parsuj → zweryfikuj → złóż → odpowiedź.
 
@@ -187,6 +191,14 @@ def handle_submission(
     (aad nadawcy w trybie live, ``source_id`` w trybie operatora) należy do DRZWI — tu dostajemy
     gotowy ``Person``, więc handler jest jeden dla obu trybów i w całości testowalny na atrapach.
     Idempotencję (dedup submisji) i samą WYSYŁKĘ też robią drzwi; handler tylko liczy odpowiedź.
+
+    ``deliver_as_attachment`` — gdy drzwi odeślą arkusz ZAŁĄCZNIKIEM (ADR 0038 przez 0027), treść
+    mówi „w załączniku" i nie pokazuje ścieżki serwerowej. ``file_path`` w wyniku zostaje ZAWSZE:
+    drzwi potrzebują go, by wczytać bajty do wgrania. Domyślnie fallback ścieżką (jak dotąd).
+
+    Tryb treści bierzemy z tego samego predykatu, którym drzwi wybierają MECHANIZM (jest plik do
+    wgrania): „w załączniku" tylko gdy realnie jest co załączyć. Bez tego pęknięty inwariant (sukces
+    bez ścieżki) dałby treść „arkusz w załączniku" przy dostawie tekstem — obietnica bez pliku.
     """
     try:
         summary = parse_submitted_summary(payload)
@@ -202,8 +214,13 @@ def handle_submission(
             reason=REASON_NO_WORK,
             week_label=timesheet.week_label,
         )
+    reply_html = (
+        render_timesheet_message(timesheet, attached=True)
+        if deliver_as_attachment and result.file_path
+        else render_timesheet_message(timesheet, file_path=result.file_path)
+    )
     return SelfServiceOutcome(
-        reply_html=render_timesheet_message(timesheet, file_path=result.file_path),
+        reply_html=reply_html,
         reason=REASON_OK,
         file_path=result.file_path,
         week_label=timesheet.week_label,
