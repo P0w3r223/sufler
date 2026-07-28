@@ -1,0 +1,147 @@
+# Flota WorkMate na Ubuntu — serwer MCP + drzwi mostu (ADR 0044).
+#
+# Docelowa lokalizacja: /opt/sufler/deploy/docker/  (obok: env, nginx.conf, certs/)
+# Konfiguracja przez ./env (chmod 640 — zawiera sekrety: klucz Claude, PAT-y, tokeny).
+#
+# Segmenty włączasz PROFILAMI (COMPOSE_PROFILES w env albo --profile):
+#   mcp       → serwer MCP (streamable-http) + nginx (TLS/SSE)
+#   bridge    → drzwi github + jira + teams-graph (trójstronny most)
+#   worklogi  → cotygodniowe karty czasu (ADR 0035, domyślnie OFF — patrz env)
+#   telegram  → bot Telegram (long polling)
+#   tools     → worklog-selfservice + zadania jednorazowe (--login, discovery); NIE autostart
+#
+#   docker compose --profile mcp --profile bridge up -d     # most + serwer wiedzy
+#   docker compose logs -f
+#   docker compose down                                      # wolumeny ZOSTAJĄ
+#
+# NAJPIERW jednorazowy priming logowań device-code (MSAL) — patrz README.md § Pierwsze uruchomienie.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Wspólny szkielet drzwi/serwera: jeden obraz (wiele entrypointów przez `command`), wspólny wolumen
+# stanu (współdzielony events.db — ADR 0019), baza wiedzy montowana RO, utwardzenie jak w podprojekcie.
+x-workmate-common: &workmate-common
+  image: workmate:1.3.0
+  build:
+    context: ../..
+    dockerfile: deploy/docker/Dockerfile
+    args:
+      WERSJA: "1.3.0"
+  env_file:
+    - ./env
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  read_only: true          # zapisywalne są tylko wolumeny stanu
+  tmpfs:
+    - /tmp:size=64m         # pliki tymczasowe SQLite (VACUUM/sort) i tempfile — rootfs jest RO
+  volumes:
+    - state:/var/lib/workmate           # events.db, conversations.db, *_state.json, cache MSAL, tokens.json
+    - ../../data:/app/data:ro           # baza wiedzy (notatki) — zarządzana na hoście przez `git pull`
+  logging: *logging
+
+services:
+  # --- Serwer MCP (HTTP + auth per osoba, read-only konstrukcyjnie — ADR 0007) --------------------
+  mcp:
+    <<: *workmate-common
+    profiles: [mcp]
+    command: ["workmate"]
+    environment:
+      WORKMATE_TRANSPORT: streamable-http
+      WORKMATE_BIND_HOST: 0.0.0.0        # tylko sieć wewnętrzna compose; publiczny wjazd przez nginx
+      WORKMATE_BIND_PORT: "8000"
+    expose:
+      - "8000"
+    healthcheck:
+      # 401 bez tokenu = drzwi żyją; sam fakt nasłuchu na 8000 wystarcza za puls.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # --- nginx: terminacja TLS + proxy SSE do serwera MCP ------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: [mcp]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      mcp:
+        condition: service_healthy    # nie wpuszczaj ruchu, zanim serwer MCP nie nasłuchuje (brak 502)
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/workmate.conf:ro
+      - ./certs:/etc/nginx/certs:ro     # workmate.crt + workmate.key (poza repo)
+    logging: *logging
+
+  # --- Drzwi GitHub (polling PAT → events.db → push Teams) — ADR 0020 ----------------------------
+  github:
+    <<: *workmate-common
+    profiles: [bridge]
+    command: ["workmate-github"]
+
+  # --- Drzwi Jira (Server/DC lub Cloud) — ADR 0030/0033 ------------------------------------------
+  jira:
+    <<: *workmate-common
+    profiles: [bridge]
+    command: ["workmate-jira"]
+
+  # --- Drzwi Teams (delegowany Graph) + runtime agenta — ADR 0015/0016 ---------------------------
+  # Czyta events.db (github/jira), odpowiada na kanale, pcha zdarzenia do Teams. WYMAGA
+  # WORKMATE_TEAMS_GRAPH_WATCH i primingu device-code (inaczej tryb odkrywania kończy proces).
+  teams-graph:
+    <<: *workmate-common
+    profiles: [bridge]
+    command: ["workmate-teams-graph"]
+
+  # --- Cotygodniowe karty czasu (scheduler wewnętrzny, single-instance lock) — ADR 0035 ----------
+  # Domyślnie OFF (WORKMATE_WORKLOGI_ENABLED=false → proces kończy się z komunikatem). Osobny
+  # wolumen na imienne godziny (PII) — POZA data/ i repo. Priming device-code jak niżej.
+  worklogi:
+    <<: *workmate-common
+    profiles: [worklogi]
+    command: ["workmate-worklogi"]
+    # on-failure (nie unless-stopped): przy WORKMATE_WORKLOGI_ENABLED=false proces kończy się exit 0
+    # — to poprawny stan wyłączenia, nie awaria, więc NIE restartuj go w pętli.
+    restart: on-failure
+    volumes:
+      - state:/var/lib/workmate
+      - ../../data:/app/data:ro
+      - worklogi-out:/var/lib/workmate-out
+
+  # --- Bot Telegram (long polling) + runtime agenta ----------------------------------------------
+  telegram:
+    <<: *workmate-common
+    profiles: [telegram]
+    command: ["workmate-telegram"]
+
+  # --- Worklog self-service NA ŻĄDANIE (ADR 0038) — NIE autostart -------------------------------
+  # Uruchamiaj per zgłoszenie:
+  #   docker compose run --rm worklog-selfservice --submission /var/lib/workmate-out/x.json --source-id ID --send
+  # oraz priming: docker compose run --rm worklog-selfservice --login
+  worklog-selfservice:
+    <<: *workmate-common
+    profiles: [tools]
+    restart: "no"
+    # Entrypoint MUSI zawierać skrypt, bo `docker compose run <svc> <flagi>` ZASTĘPUJE `command`.
+    # Gdyby program siedział w `command`, `run --rm worklog-selfservice --login` uruchomiłoby
+    # `tini -- --login` (exec nazwy flagi → błąd). Tu flagi doklejają się jako argumenty skryptu.
+    entrypoint: ["/usr/bin/tini", "--", "workmate-worklog-selfservice"]
+    volumes:
+      - state:/var/lib/workmate
+      - ../../data:/app/data:ro
+      - worklogi-out:/var/lib/workmate-out
+
+volumes:
+  state:
+    name: workmate-state
+  worklogi-out:
+    name: workmate-worklogi-out

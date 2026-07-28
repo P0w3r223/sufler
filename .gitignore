@@ -43,3 +43,8 @@ powiadomienia-teams-*.tar.gz
 # UWAGA: reguła nie jest zakotwiczona, więc obejmuje CAŁE repo. Gdy zajdzie potrzeba wciągnięcia
 # szablonu WorklogPRO jako fixture'u testowego, dołóż tu wyjątek (!tests/fixtures/*.xlsx).
 *.xlsx
+
+# Sekrety wdrożenia kontenerowego (ADR 0044) — plik `env` (klucze/tokeny) i certy TLS. W repo
+# trzymamy tylko env.example; realny env i certs/ wchodzą przez env_file/wolumen w runtime.
+deploy/docker/env
+deploy/docker/certs/

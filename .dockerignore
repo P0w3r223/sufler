@@ -1,0 +1,45 @@
+# Kontekst budowania obrazu WorkMate (deploy/docker/Dockerfile). Im mniejszy, tym szybszy build.
+# SEKRETY: .env wykluczony JAWNIE — konfiguracja wchodzi przez env_file w URUCHOMIENIU, nigdy
+# przez warstwę obrazu (warstwy są nieusuwalne i wędrują razem z obrazem).
+.env
+.env.*
+!.env.example
+# Sekrety wdrożenia kontenerowego nazywają się `env` (nie `.env`) i leżą w deploy/docker/ obok
+# certów TLS — wzorce `.env*` ich NIE łapią. Wykluczamy je z kontekstu wprost (defense-in-depth:
+# nawet gdyby ktoś dodał `COPY deploy/ …`, sekrety nie wejdą do warstw).
+deploy/**/env
+deploy/**/env.*
+!deploy/**/env.example
+deploy/docker/certs/
+
+# Środowiska i cache narzędzi — nie wchodzą do obrazu.
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.testmondata*
+
+# Historia i metadane repo.
+.git/
+.gitignore
+.github/
+.codegraph/
+.claude/
+
+# Samodzielne pod-projekty uv (własne obrazy/venvy) — NIE są częścią obrazu głównego WorkMate.
+Powiadomienia_teams/
+claude_summary/
+
+# Dokumentacja, sesje i artefakty deweloperskie — niepotrzebne w obrazie.
+docs/
+dist/
+*.tar.gz
+
+# Uwaga: data/, src/, tests/, eval/, pyproject.toml, uv.lock CELOWO zostają — build ich potrzebuje.
