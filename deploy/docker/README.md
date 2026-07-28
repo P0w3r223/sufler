@@ -85,6 +85,20 @@ docker compose logs -f
 Serwer MCP odpowiada na `https://<host>/` (nginx → mcp:8000). Klient dev używa `.mcp.json` typu `http`
 z tokenem bearer ze zmiennej środowiskowej.
 
+## Zapis `/notatka` z Teams (opcjonalny override RW)
+
+Domyślnie `data/` jest montowane RO wszędzie (secure-by-default, ADR 0007) — serwer MCP na HTTP nie
+wystawia zapisu KONSTRUKCYJNIE. Produkcyjny zapis `/notatka` (ADR 0041) pisze do `data/notes/`, więc
+drzwi `teams-graph` potrzebują tam dostępu RW. Zapewnia go JAWNY override `docker-compose.notatka.yml`
+— nakłada wąski montaż RW **tylko** na `data/notes` (rejestr projektów i reszta bazy zostają RO):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.notatka.yml --profile bridge up -d
+```
+
+Wymaga też w `env`: `WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true` (+ `_ENABLE_MEETING_TRANSCRIPT`,
+`_IDENTITIES`). To NIE `docker-compose.override.yml` — nie ładuje się automatycznie, RW włączasz świadomie.
+
 ## Worklog self-service (na żądanie — profil `tools`)
 
 Nie startuje automatycznie. Uruchamiaj per zgłoszenie:

@@ -62,8 +62,8 @@ def build_web_app(settings: TeamsSettings, responder: Responder) -> Any:
 
 def main() -> None:
     """Uruchom proces drzwi Teams z runtime agenta (katalog read-only)."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
     settings = TeamsSettings.from_env()
     settings.validate()
 

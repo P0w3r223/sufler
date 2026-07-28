@@ -61,6 +61,8 @@ class JiraPoller:
         self_account: str = "",
         project_map: dict[str, str] | None = None,
         clock: Callable[[], datetime] = _now_local,
+        stop: asyncio.Event | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> None:
         self._client = client
         self._events = events
@@ -73,24 +75,56 @@ class JiraPoller:
         self._self_account = self_account
         self._project_map = project_map or {}
         self._clock = clock
+        self._stop = stop
+        self._heartbeat = heartbeat
 
     async def run(self) -> None:
-        """Pętla główna: co ``poll_interval`` odpytaj Jirę o nowe/zmienione issue i przyjmij je."""
+        """Pętla główna: co ``poll_interval`` odpytaj Jirę o nowe/zmienione issue i przyjmij je.
+
+        Sygnał ``stop`` (SIGTERM w ``app.py``) kończy pętlę PO utrwaleniu bieżącej rundy —
+        graceful shutdown: ``docker stop`` nie ubija procesu w połowie zapisu (kontrakt R1).
+        """
         await self._resolve_self_account()
         self._seed(self._clock().isoformat())
         logger.info(
-            "Nasłuch Jira %s (projekty=%s, delegowany PAT, konto=%s). Ctrl+C kończy.",
+            "Nasłuch Jira %s (projekty=%s, delegowany PAT, konto=%s). Ctrl+C/SIGTERM kończy.",
             self._base_url,
             ", ".join(self._watch_projects) or "?",
             self._self_account or "?",
         )
-        while True:
+        while not self._stopping():
             try:
-                await self.poll_once()
+                await self.poll_once()  # utrwala watermark na końcu rundy
             except Exception:
                 # Błąd rundy (sieć/JQL/kształt) nie kładzie pętli — ponowimy za chwilę.
                 logger.exception("Błąd pollingu Jira %s", self._base_url)
+            else:
+                # Puls TYLKO po udanej rundzie (R5) — jałowa pętla (np. błąd w kółko) nie odświeża
+                # pliku, więc healthcheck po wieku pulsu wykryje zawieszenie.
+                self._beat()
+            if await self._sleep_or_stop():
+                break
+        logger.info("Drzwi Jira: zatrzymanie na sygnał, stan zapisany.")
+
+    def _beat(self) -> None:
+        """Odśwież puls żywotności, jeśli wstrzyknięto (R5). Bez callbacku — no-op (dev/testy)."""
+        if self._heartbeat is not None:
+            self._heartbeat()
+
+    def _stopping(self) -> bool:
+        """True, gdy ``app.py`` ustawił ``stop`` (SIGTERM/SIGINT) — pętla ma się zakończyć."""
+        return self._stop is not None and self._stop.is_set()
+
+    async def _sleep_or_stop(self) -> bool:
+        """Czekaj ``poll_interval`` albo do sygnału stop; zwróć True, gdy stop (przerwij pętlę)."""
+        if self._stop is None:
             await asyncio.sleep(self._poll_interval)
+            return False
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
+        except asyncio.TimeoutError:
+            return False
+        return True
 
     async def poll_once(self) -> int:
         """Jedna runda: zbuduj JQL, pobierz issue, zmapuj/przefiltruj, przyjmij, przesuń watermark.

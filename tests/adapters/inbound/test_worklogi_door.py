@@ -770,3 +770,21 @@ def test_run_once_with_shifts_full_assembly_hours_issues_and_comment(
     data = sorted(rows[1:], key=lambda r: r[0])  # po Issue Key/ID
     assert [(r[0], r[2]) for r in data] == [("WT-1", "4h"), ("WT-2", "4h")]  # 240 min = 4h każdy
     assert {r[4] for r in data} == {"Robił WT-1 i WT-2."}  # opis dnia na obu wierszach
+
+
+def test_run_forever_exits_without_running_when_stop_is_set(monkeypatch) -> None:
+    """Graceful shutdown (R1): flaga stop przed pętlą → żaden przebieg, czyste wyjście."""
+    import threading
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(app, "_missed_deadline", lambda *a, **k: None)
+    runs: list[int] = []
+    monkeypatch.setattr(app, "_safe_run_once", lambda *a, **k: runs.append(1))
+
+    stop = threading.Event()
+    stop.set()
+    settings = SimpleNamespace(tz_name="Europe/Warsaw", run_weekday=4, run_hour=16, run_minute=0)
+
+    app._run_forever(settings, None, None, stop=stop)
+
+    assert runs == []  # stop ustawiony przed pętlą → nic nie wysłano, pętla nie ruszyła

@@ -17,7 +17,9 @@ linia: ``RuntimeResponder`` → ``EchoResponder`` (patrz ``adapters/inbound/resp
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import signal
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -38,6 +40,7 @@ from workmate.config import (
     Settings,
     TeamsGraphSettings,
     WorkspaceSettings,
+    require_writable,
 )
 
 if TYPE_CHECKING:
@@ -60,11 +63,15 @@ _MISSING_TEAMS_GRAPH = (
 
 def main() -> None:
     """Uruchom proces drzwi Teams (delegowany polling) z runtime agenta (read-only)."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
 
     settings = TeamsGraphSettings.from_env()
     settings.validate()
+    # R/L1: stan wątków i cache MSAL (refresh-token) na wolumenie MUSZĄ być zapisywalne — fail-fast,
+    # nim ruszy odkrywanie/polling (inaczej cache device-code przepada i logujemy się w kółko).
+    require_writable(settings.state_path, "WORKMATE_TEAMS_GRAPH_STATE")
+    require_writable(settings.token_cache_path, "WORKMATE_TEAMS_GRAPH_TOKEN_CACHE")
 
     try:
         from workmate.adapters.inbound.teams_graph.auth import build_token_provider
@@ -86,6 +93,10 @@ def main() -> None:
     conv_settings.validate()
     workspace_settings = WorkspaceSettings.from_env()
     workspace_settings.validate(data_dir=core_settings.data_dir)
+    # R/L1: pamięć rozmów agenta i wspólny events.db MUSZĄ być zapisywalne (tryb watch pisze oba).
+    events_settings = EventsSettings.from_env()
+    require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
+    require_writable(conv_settings.db_path, "WORKMATE_CONVERSATIONS_DB")
     if workspace_settings.enabled:
         # TTL sprzątanie katalogu roboczego (ADR 0018) — raz na starcie, backstop przeciw rośnięciu.
         removed = prune_stale(
@@ -96,7 +107,7 @@ def main() -> None:
         if removed:
             logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
     extra_catalog, thread_factory = _build_bridge_catalog(
-        EventsSettings.from_env(), GithubSettings.from_env(), JiraSettings.from_env()
+        events_settings, GithubSettings.from_env(), JiraSettings.from_env()
     )
     # ADR 0026 (A′2): dokładamy fabrykę `reply_with_file`, niezależnie bramkowaną od zapisu GitHub.
     thread_factory = _compose_thread_factories(
@@ -707,6 +718,7 @@ async def _run(
         from workmate.adapters.inbound.teams_graph.graph import HttpxGraphChannelClient
     except ImportError as exc:
         raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.adapters.inbound.heartbeat import heartbeat_path, write_heartbeat
     from workmate.adapters.inbound.teams_graph import state as state_store
     from workmate.adapters.inbound.teams_graph.attachments import (
         AttachmentLimits,
@@ -715,6 +727,17 @@ async def _run(
     from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
 
     initial_state = state_store.load(settings.state_path)
+    # Puls żywotności (R5): siostra pliku stanu na wolumenie, odświeżana po każdej udanej rundzie.
+    hb_path = heartbeat_path(settings.state_path)
+
+    # Graceful shutdown (R1): SIGTERM/SIGINT → poller dokańcza rundę kanałów, zapisuje i wraca.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # Windows nie ma add_signal_handler — tam zamknięcie idzie przez KeyboardInterrupt (SIGINT).
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop.set)
+
     async with httpx.AsyncClient(timeout=30) as http:
         client = HttpxGraphChannelClient(http, token_provider)
         materializer = AttachmentMaterializer(
@@ -738,6 +761,8 @@ async def _run(
             poll_interval=settings.poll_interval_s,
             active_idle=timedelta(hours=settings.active_idle_hours),
             materializer=materializer,
+            stop=stop,
+            heartbeat=lambda: write_heartbeat(hb_path),
         )
         await poller.run()
 

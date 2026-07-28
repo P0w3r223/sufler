@@ -101,6 +101,8 @@ class ChannelPoller:
         active_idle: timedelta,
         clock: Callable[[], datetime] = _utcnow,
         materializer: AttachmentMaterializer | None = None,
+        stop: asyncio.Event | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> None:
         self._client = client
         self._handle = handle
@@ -115,24 +117,33 @@ class ChannelPoller:
         # Materializacja załączników (I/O) — ``None`` wyłącza obsługę plików/obrazów
         # (drzwi tekstowe, testy bez sieci); wpięta w ``app.py`` na kliencie Graph.
         self._materializer = materializer
+        self._stop = stop
+        self._heartbeat = heartbeat
 
     async def run(self) -> None:
-        """Pętla główna: co ``poll_interval`` odpytaj każdy kanał i odpowiedz na nowe wpisy."""
+        """Pętla główna: co ``poll_interval`` odpytaj każdy kanał i odpowiedz na nowe wpisy.
+
+        Sygnał ``stop`` (SIGTERM w ``app.py``) kończy pętlę PO utrwaleniu bieżącej rundy —
+        graceful shutdown: bieżąca runda kanałów dochodzi do zapisu, zanim proces wyjdzie (R1).
+        """
         await self._client.refresh_auth()
         me_id = await self._client.get_me_id()
         # Watermark startowy = teraz: nie odpowiadamy na backlog sprzed uruchomienia.
         self._seed(self._clock().isoformat())
         logger.info(
-            "Nasłuch %d kanałów Teams (delegowany, jako user_id=%s). Ctrl+C kończy.",
+            "Nasłuch %d kanałów Teams (delegowany, jako user_id=%s). Ctrl+C/SIGTERM kończy.",
             len(self._watch),
             me_id,
         )
-        while True:
+        while not self._stopping():
             try:
                 await self._client.refresh_auth()
             except Exception:
+                # Odświeżenie tokenu padło → NIE bijemy pulsu (jałowa pętla auth), healthcheck
+                # po wieku pulsu wykryje token, którego nie da się odnowić bez re-primingu.
                 logger.exception("Nie udało się odświeżyć tokenu Graph — ponowię za chwilę")
-                await asyncio.sleep(self._poll_interval)
+                if await self._sleep_or_stop():
+                    break
                 continue
             for team_id, channel_id in self._watch:
                 try:
@@ -142,7 +153,31 @@ class ChannelPoller:
                     logger.exception("Błąd pollingu kanału %s/%s", team_id, channel_id)
                 await asyncio.sleep(_INTER_CHANNEL_SLEEP_S)
             self._persist(self._state)
+            # Puls PO domkniętej rundzie kanałów (R5) — auth odświeżone i stan utrwalony.
+            self._beat()
+            if await self._sleep_or_stop():
+                break
+        logger.info("Drzwi Teams: zatrzymanie na sygnał, stan zapisany.")
+
+    def _beat(self) -> None:
+        """Odśwież puls żywotności, jeśli wstrzyknięto (R5). Bez callbacku — no-op (dev/testy)."""
+        if self._heartbeat is not None:
+            self._heartbeat()
+
+    def _stopping(self) -> bool:
+        """True, gdy ``app.py`` ustawił ``stop`` (SIGTERM/SIGINT) — pętla ma się zakończyć."""
+        return self._stop is not None and self._stop.is_set()
+
+    async def _sleep_or_stop(self) -> bool:
+        """Czekaj ``poll_interval`` albo do sygnału stop; zwróć True, gdy stop (przerwij pętlę)."""
+        if self._stop is None:
             await asyncio.sleep(self._poll_interval)
+            return False
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
+        except asyncio.TimeoutError:
+            return False
+        return True
 
     async def _poll_channel(self, team_id: str, channel_id: str, me_id: str) -> None:
         key = f"{team_id}/{channel_id}"

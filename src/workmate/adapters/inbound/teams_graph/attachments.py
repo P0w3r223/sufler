@@ -3,7 +3,9 @@
 Tu żyje I/O (pobranie z Graph przez wstrzyknięty port) + kodowanie base64 + rozpoznanie i
 przetworzenie obrazów (sniff po ZAWARTOŚCI + downscaling) + ekstrakcja tekstu z dokumentów
 (``.docx``/``.xlsx``/``.pptx`` i plików tekstowych — Claude API nie przyjmuje ich natywnie) +
-walidacja limitów. Biblioteki (``python-docx``/``openpyxl``/``python-pptx``/``Pillow``)
+walidacja limitów. PDF idzie do API natywnie jako blok ``document`` (base64, bez ekstrakcji —
+API czyta go wprost), więc NIE wymaga biblioteki czytającej PDF.
+Biblioteki (``python-docx``/``openpyxl``/``python-pptx``/``Pillow``)
 importowane LENIWIE (extra ``teams-graph``). Błąd/limit/nieobsługiwany typ NIE kładzie pollera
 — zamiast bajtów wstawiamy krótką notkę tekstową (agent poinformuje użytkownika). Treść
 załącznika to DANE, nie polecenia — nie interpretujemy jej tutaj.

@@ -12,12 +12,14 @@ Importy ``httpx``/MSAL są leniwe; brak extra kończy się czytelnym komunikatem
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import signal
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound import env
-from workmate.config import EventsSettings, GithubSettings, TeamsPushSettings
+from workmate.config import EventsSettings, GithubSettings, TeamsPushSettings, require_writable
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,14 +38,18 @@ _MISSING_PUSH = (
 
 def main() -> None:
     """Uruchom proces drzwi GitHub (polling PAT) + opcjonalny push zdarzeń do Teams."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
 
     settings = GithubSettings.from_env()
     settings.validate()
     events_settings = EventsSettings.from_env()
     push_settings = TeamsPushSettings.from_env()
     push_settings.validate()
+    # R/L1: watermark drzwi i wspólny events.db MUSZĄ być zapisywalne — inaczej stan leci w próżnię
+    # na koncie kontenera z niezapisywalnym ~ (fail-fast na starcie, nie cichy crash-loop w pętli).
+    require_writable(settings.state_path, "WORKMATE_GITHUB_STATE")
+    require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
     asyncio.run(_run(settings, events_settings, push_settings))
 
 
@@ -75,6 +81,7 @@ async def _run(
         raise SystemExit(_MISSING_GITHUB) from exc
     from workmate.adapters.inbound.github import state as state_store
     from workmate.adapters.inbound.github.poller import GithubPoller
+    from workmate.adapters.inbound.heartbeat import heartbeat_path, write_heartbeat
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.config import Settings
@@ -86,6 +93,20 @@ async def _run(
 
     def persist(current: dict[str, Any]) -> None:
         state_store.save(settings.state_path, current)
+
+    # Puls żywotności (R5): siostra pliku stanu na wolumenie, odświeżana po każdej udanej rundzie.
+    hb_path = heartbeat_path(settings.state_path)
+
+    def beat() -> None:
+        write_heartbeat(hb_path)
+
+    # Graceful shutdown (R1): SIGTERM/SIGINT → poller dokańcza rundę, zapisuje i wraca.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # Windows nie ma add_signal_handler — tam zamknięcie idzie przez KeyboardInterrupt (SIGINT).
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop.set)
 
     # Poller używa sync klienta (wołanego w puli wątków), notifier — async; osobne menedżery.
     async with httpx.AsyncClient(timeout=30) as async_http:
@@ -103,20 +124,24 @@ async def _run(
                 per_page=settings.per_page,
                 self_login=settings.self_login,
                 project=project,
+                stop=stop,
+                heartbeat=beat,
             )
-            tasks = [poller.run()]
+            tasks = [asyncio.create_task(poller.run())]
             if push_settings.enabled:
                 thread_links = _build_thread_links(events_settings, push_settings)
                 tasks.append(
-                    _build_notifier(
-                        async_http,
-                        events,
-                        state,
-                        persist,
-                        settings,
-                        push_settings,
-                        thread_links,
-                    ).pump()
+                    asyncio.create_task(
+                        _build_notifier(
+                            async_http,
+                            events,
+                            state,
+                            persist,
+                            settings,
+                            push_settings,
+                            thread_links,
+                        ).pump()
+                    )
                 )
             else:
                 logger.info(
@@ -134,9 +159,19 @@ async def _run(
                     persist(state)
 
                 tasks.append(
-                    _pump_ci_autocomment(ci_auto, save_ci_cursor, settings.poll_interval_s)
+                    asyncio.create_task(
+                        _pump_ci_autocomment(ci_auto, save_ci_cursor, settings.poll_interval_s)
+                    )
                 )
-            await asyncio.gather(*tasks)
+            # Poller kończy się kooperacyjnie po sygnale stop (dokończ rundę → zapisz → wróć);
+            # pętle poboczne (notifier push, kursor CI) anulujemy — zapisy stanu są atomowe,
+            # a push jest at-least-once, więc anulowanie w połowie nie uszkadza stanu.
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()  # propaguj awarię pętli (restart); czysty stop = brak wyjątku
 
 
 def _build_thread_links(events_settings: EventsSettings, push_settings: TeamsPushSettings) -> Any:

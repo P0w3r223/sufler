@@ -124,6 +124,9 @@ workmate-jira = "workmate.adapters.inbound.jira.app:main"
 workmate-worklogi = "workmate.adapters.inbound.worklogi.app:main"
 # Drzwi worklog self-service na żądanie (ADR 0038): `uv run workmate-worklog-selfservice`.
 workmate-worklog-selfservice = "workmate.adapters.inbound.worklog_selfservice.app:main"
+# Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez
+# compose (`docker compose ps` → healthy/unhealthy), nie ręcznie: `workmate-heartbeat-check --file … --max-age …`.
+workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).

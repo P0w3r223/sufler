@@ -46,8 +46,8 @@ _MISSING_EXTRA = (
 
 def main() -> None:  # pragma: no cover - kompozycja I/O; logika w handlerze jest testowana
     """Uruchom drzwi self-service: jedna submisja → arkusz + (opcjonalnie) wiadomość na Teams."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
     args = _parse_args()
 
     settings = WorklogiSettings.from_env()
