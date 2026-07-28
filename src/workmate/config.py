@@ -19,9 +19,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # (Fazy 1 tyg. 1-3); "streamable-http" to wdrożenie sieciowe (tyg. 4, Bramka 3).
 _ALLOWED_TRANSPORTS = ("stdio", "streamable-http")
 
-# Domyślny magazyn tokenów drzwi HTTP (ADR 0007): POZA repo i poza data/, żeby
-# sekrety były poza zasięgiem narzędzi. Nadpisywalny przez WORKMATE_TOKENS_FILE.
-_DEFAULT_TOKENS_FILE = Path("C:/ProgramData/WorkMate/tokens.json")
+# Domyślny magazyn tokenów drzwi HTTP (ADR 0007): POZA repo i poza data/, żeby sekrety były poza
+# zasięgiem narzędzi. Domyślna ZALEŻNA OD PLATFORMY (L1): na Windows katalog systemowy ProgramData,
+# na POSIX wolumen stanu floty (/var/lib/workmate — spójne z docker-compose). Bez tego windowsowa
+# ścieżka "C:/..." na Linuksie stawała się KATALOGIEM WZGLĘDNYM pod CWD (bez sensu). Nadpisywalna
+# przez WORKMATE_TOKENS_FILE; przy złym/nieobecnym pliku start HTTP jest fail-fast (server.py,
+# TokenVerifier.from_file).
+_DEFAULT_TOKENS_FILE = (
+    Path("C:/ProgramData/WorkMate/tokens.json")
+    if os.name == "nt"
+    else Path("/var/lib/workmate/tokens.json")
+)
 
 # Domyślna baza rozmów (SQLite, ADR 0010): POZA repo i poza data/ — to dane
 # operacyjne (historia czatu), nie baza wiedzy. Katalog domowy (pisemny bez
@@ -110,6 +118,35 @@ def _list_from_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 def _optional_path_from_env(name: str) -> Path | None:
     value = os.environ.get(name)
     return Path(value).expanduser() if value else None
+
+
+def require_writable(path: Path, env_var: str) -> None:
+    """Twardy błąd startu, gdy katalog dla TRWAŁEJ ścieżki nie przyjmie zapisu (R/L1, GAPS).
+
+    Domyślne ścieżki stanu i baz (stałe ``_DEFAULT_*``) celują w ``~/.workmate``, a konto
+    kontenera ma ``--no-create-home`` i rootfs ``read_only`` (Dockerfile/compose) — bez nadpisania
+    env (``deploy/docker/env.example``) katalog jest niezapisywalny. Bez tej kontroli poller
+    odkrywa to dopiero przy pierwszym zapisie, w pętli łapiącej wyjątki: cichy crash-loop bez
+    utrwalonego watermarku (stan „w próżnię"). Sprawdzamy WCZEŚNIE i głośno — tworzymy katalog
+    docelowy i piszemy plik próbny; ``env_var`` w komunikacie wskazuje, co nadpisać.
+
+    Wołać na starcie drzwi (obok ``settings.validate()``), a NIE w samym ``validate`` — tam efekt
+    uboczny ``mkdir`` zaśmiecałby testy konfiguracji, które wołają ``validate`` z domyślnymi
+    ścieżkami. Zapis próbny jest szczery (tak samo pisze ``state.save``): łapie też rootfs
+    ``read_only``, którego same bity uprawnień nie ujawniają.
+    """
+    target_dir = path.expanduser().parent
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        probe = target_dir / f".workmate-writetest-{os.getpid()}"
+        probe.write_text("", encoding="ascii")
+        probe.unlink()
+    except OSError as exc:
+        raise ValueError(
+            f"Trwała ścieżka {path} nie jest zapisywalna: {exc}. Ustaw {env_var} na katalog "
+            "dostępny do zapisu (na flocie wolumen /var/lib/workmate — patrz "
+            "deploy/docker/env.example)."
+        ) from exc
 
 
 @dataclass(frozen=True)
