@@ -24,6 +24,7 @@ from workmate.config import (
     ConversationSettings,
     Settings,
     TelegramSettings,
+    require_writable,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,8 @@ _MISSING_TELEGRAM = "Drzwi Telegram wymagają extra 'telegram'. Zainstaluj: uv s
 
 def main() -> None:
     """Uruchom proces drzwi Telegram (long polling) z runtime agenta (read-only)."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
 
     settings = Settings.from_env()
     telegram_settings = TelegramSettings.from_env()
@@ -43,6 +44,9 @@ def main() -> None:
     agent_settings.validate()
     conversation_settings = ConversationSettings.from_env()
     conversation_settings.validate()
+    # R/L1: baza rozmów agenta na wolumenie MUSI być zapisywalna — inaczej pamięć leci w próżnię
+    # (na koncie kontenera z niezapisywalnym ~). Fail-fast na starcie, nie przy pierwszej rozmowie.
+    require_writable(conversation_settings.db_path, "WORKMATE_CONVERSATIONS_DB")
 
     # Telegram = drzwi MNIEJ ZAUFANE (ADR 0006): katalog READ-ONLY (``enable_write=False``),
     # owinięte w ``SafeResponder`` (łagodna degradacja). Recepta pamięci + komend read-only
@@ -65,8 +69,11 @@ def main() -> None:
 
     logger.info(
         "Drzwi Telegram wystartowały (long polling, runtime agenta read-only). "
-        "Ctrl+C, aby zatrzymać."
+        "Ctrl+C/SIGTERM, aby zatrzymać."
     )
+    # Graceful shutdown (R1): własnego handlera SIGTERM tu NIE instalujemy — ``run_polling`` z
+    # python-telegram-bot sam łapie SIGINT/SIGTERM/SIGABRT i domyka pętlę czysto. Drzwi są
+    # READ-ONLY (brak pliku stanu do utrwalenia), więc nie ma czego zapisać przed wyjściem.
     app.run_polling()
 
 

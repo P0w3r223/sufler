@@ -115,6 +115,20 @@ def test_path_is_plain_text_not_a_link() -> None:
     assert "<a " not in html
 
 
+def test_attached_mode_says_in_attachment_not_the_path() -> None:
+    """A′4: przy dostawie załącznikiem mówimy „w załączniku" i NIE pokazujemy ścieżki serwerowej."""
+    html = _rendered([_entry(15, "WT-12", 60)], file_path=r"D:\srv\a.xlsx", attached=True)
+    assert "załączniku" in html
+    assert "<code>" not in html  # brak akapitu ze ścieżką
+    assert "D:\\srv" not in html
+
+
+def test_attached_takes_precedence_over_file_path() -> None:
+    """``attached`` ma pierwszeństwo — ścieżka nie wycieka nawet gdy podana obok."""
+    html = _rendered([_entry(15, "WT-12", 60)], file_path=r"D:\tajne\a.xlsx", attached=True)
+    assert "tajne" not in html
+
+
 def test_warns_that_reimport_duplicates_entries() -> None:
     """Jedyna obrona przed podwójnym importem — import robi człowiek, nie my."""
     assert "zdubluje" in _rendered([_entry(15, "WT-12", 60)])

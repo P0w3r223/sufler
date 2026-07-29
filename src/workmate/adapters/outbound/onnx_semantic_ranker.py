@@ -141,6 +141,4 @@ class OnnxSemanticRanker:
         q = self._embed(self._query_prefix() + query)
         sims = matrix @ q  # wektory znormalizowane L2 → iloczyn skalarny = cosinus
         order = self._np.argsort(-sims)  # malejąco po podobieństwie
-        return [
-            candidates[int(i)].id for i in order if float(sims[int(i)]) >= self._min_similarity
-        ]
+        return [candidates[int(i)].id for i in order if float(sims[int(i)]) >= self._min_similarity]

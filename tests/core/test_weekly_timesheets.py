@@ -80,6 +80,16 @@ class _RecordingSender:
         self.sent.append((aad_user_id, html))
 
 
+class _RecordingDocSender:
+    """Atrapa dostawy ZAŁĄCZNIKIEM (A′4): zapisuje (aad, ścieżka_arkusza, html)."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str, str]] = []
+
+    def __call__(self, aad_user_id: str, file_path: str, html: str) -> None:
+        self.sent.append((aad_user_id, file_path, html))
+
+
 def _service(
     entries: list[WorkEntry],
     *,
@@ -286,6 +296,43 @@ def test_summary_counts_all_three_buckets() -> None:
 def test_summary_marks_dry_run() -> None:
     service, _, _ = _service([_entry("EMP-042", 15, 60)], dry_run=True)
     assert "PRÓBNY" in service.run().summary()
+
+
+# --- dostawa załącznikiem (A′4) --------------------------------------------------
+
+
+def test_send_document_is_used_instead_of_send_html_when_injected() -> None:
+    """Z wstrzykniętym ``send_document`` arkusz jedzie załącznikiem, nie ścieżką tekstem."""
+    docs = _RecordingDocSender()
+    service, writer, sender = _service([_entry("EMP-042", 15, 180)], send_document=docs)
+    report = service.run()
+    assert sender.sent == []  # ścieżka tekstowa NIE użyta
+    ((aad, path, html),) = docs.sent
+    assert aad == "aad-mikolaj"
+    assert path == "D:/worklogi/worklog_mikolaj_emp-042_2026-w29.xlsx"  # rdzeń podaje ścieżkę
+    assert len(writer.written) == 1  # arkusz nadal powstaje na dysku
+    assert [o.source_id for o in report.sent] == ["EMP-042"]
+
+
+def test_attachment_message_says_in_attachment_not_the_path() -> None:
+    """Treść przy dostawie załącznikiem jest w trybie „w załączniku" — bez ścieżki serwerowej."""
+    docs = _RecordingDocSender()
+    service, _, _ = _service([_entry("EMP-042", 15, 60)], send_document=docs)
+    service.run()
+    ((_, _, html),) = docs.sent
+    assert "załączniku" in html
+    assert "<code>" not in html  # brak akapitu ze ścieżką
+
+
+def test_dry_run_with_attachment_writes_sheet_but_sends_nothing() -> None:
+    """Tryb próbny wstrzymuje wysyłkę także przy dostawie załącznikiem — plik nadal powstaje."""
+    docs = _RecordingDocSender()
+    service, writer, sender = _service(
+        [_entry("EMP-042", 15, 60)], send_document=docs, dry_run=True
+    )
+    service.run()
+    assert docs.sent == [] and sender.sent == []
+    assert len(writer.written) == 1
 
 
 # --- izolacja osób w treści ------------------------------------------------------

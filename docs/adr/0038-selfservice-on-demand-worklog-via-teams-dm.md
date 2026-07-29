@@ -1,9 +1,9 @@
 # 0038. Self-service on-demand worklog: authenticated Teams DM submission → WorklogPRO sheet reply
 
 Date: 2026-07-24
-Status: proposed (built: submission parse + single-person compose + operator-pilot door with
-  path-fallback delivery; live 1:1 intake + file-attachment reply pending — M4/M5)
-Author: Patryk
+Status: proposed (built: submission parse + single-person compose + operator-pilot door;
+  file-attachment reply delivered A′4 2026-07-28; live 1:1 intake pending — M5)
+Author: P0w3r223
 Related to: [[0035-weekly-per-person-worklogpro-sheets-and-teams-dm]],
   [[0036-shift-worklog-integration-identity-and-week-contract]],
   [[0037-claude-summary-collection-authenticated-teams-dm]],
@@ -13,6 +13,14 @@ Related to: [[0035-weekly-per-person-worklogpro-sheets-and-teams-dm]],
 > **Update 2026-07-27:** `Files.ReadWrite.All` admin consent has been granted — the file-attachment
 > reply (M4) is no longer scope-blocked; only the build (`TeamsFileSender`, ADR 0026/0027) remains.
 > The live 1:1 intake (M5) is unaffected by this update.
+>
+> **Delivery note (A′4, 2026-07-28):** the file-attachment reply is now **built**, gated behind
+> `WORKMATE_WORKLOGI_ENABLE_ATTACHMENT` (default OFF, shared with the batch door ADR 0035). When on,
+> `handle_submission(deliver_as_attachment=True)` renders the reply in **attachment mode** (no server
+> path) and the door delivers the `.xlsx` via `UserDocSender.send_document_to_user` (OneDrive upload
+> → `invite` → 1:1 chat → `reference` attachment), passing the rich reply HTML as `caption_html`.
+> `file_path` is still returned — the door needs it to read the bytes to upload. Path-fallback stays
+> the default when the gate is off. Real upload = operator (device-code re-consent for the file scope).
 
 ---
 

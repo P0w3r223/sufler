@@ -43,9 +43,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from workmate.adapters.inbound.commands import CommandRouter
+    from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.core.agent.runtime import AgentRuntime
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
+    from workmate.core.application.metrics import MetricsService
     from workmate.core.application.services import NotesWriteService
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
@@ -76,12 +78,15 @@ class InboundMessage:
     ``text`` wystarcza echu; ``sender``/``conversation_id`` niosą atrybucję, której
     przyszłe ``save_note`` użyje bez zmiany sygnatury szwu (pola addytywne). ``attachments``
     (addytywne, domyślnie puste) niosą treść multimodalną z drzwi, które ją materializują.
+    ``sender_id`` (AAD id nadawcy, addytywne) niesie CEL wyjściowej dostawy 1:1 (ADR 0027) —
+    drzwi bez tego pojęcia zostawiają je puste, a narzędzie push-u się nie zbuduje.
     """
 
     text: str
     sender: str = ""
     conversation_id: str = ""
     attachments: tuple[Attachment, ...] = ()
+    sender_id: str = ""
 
 
 class Responder(Protocol):
@@ -159,6 +164,9 @@ class ConversationalResponder:
         commands: CommandRouter | None = None,
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+        user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+        meeting_notes: MeetingNoteRouter | None = None,
+        metrics: MetricsService | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
@@ -170,9 +178,20 @@ class ConversationalResponder:
         # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
         # ``reply_on_thread`` z PRE-ZWIĄZANYM numerem — model nie przekieruje na inne issue.
         self._thread_tool_factory = thread_tool_factory
+        # Fabryka narzędzia PUSH-U OBRAZU do rozmówcy 1:1 (ADR 0027, A′3); ``None`` → brak (inne
+        # drzwi lub bramka off). Klucz to ``sender_id`` (AAD id nadawcy), NIE external_id wątku:
+        # cel dostawy jest PRE-ZWIĄZANY z nadawcy, model nie podaje odbiorcy (anty-eksfiltracja).
+        self._user_push_tool_factory = user_push_tool_factory
         # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
         # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
         self._commands = commands
+        # OSOBNY router komendy ZAPISU ``/notatka`` (produkcyjne M3, ADR 0009/0041); ``None`` →
+        # brak (bramka off / inne drzwi). Read-only ``CommandRouter`` zostaje read-only (ADR 0017);
+        # ta komenda pisze notatkę i biegnie POZA ``_store_lock`` (pobór Graph + Claude są wolne).
+        self._meeting_notes = meeting_notes
+        # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
+        # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
+        self._metrics = metrics
         # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
         # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
         # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
@@ -197,6 +216,17 @@ class ConversationalResponder:
     def _respond_sync(self, message: InboundMessage) -> str:
         # Klucz wątku: rozmowa z kanału (czat/wątek), a gdy jej brak — nadawca.
         external_id = message.conversation_id or message.sender or "default"
+        # Metryka wywołania (Tor A): best-effort, PRZED dispatchem, więc liczy też komendy. Nadawca
+        # jest pseudonimizowany w serwisie; błąd licznika (np. blokada SQLite) NIE może zabić tury.
+        if self._metrics is not None:
+            try:
+                self._metrics.record(
+                    self._channel, message.sender_id or message.sender, self._clock()
+                )
+            except Exception:
+                logger.warning(
+                    "Nie udało się zapisać metryki wywołania (kanał %r) — pomijam", self._channel
+                )
         # Komenda read-only (``/pomoc``, ``/nowa``, ``/szukaj``, …): wykonaj i zwróć odpowiedź
         # PRZED pętlą agenta — bez wołania LLM i bez ``record_run`` (komenda ≠ tura rozmowy,
         # nie liczy się do limitu kontekstu ani FTS). ``dispatch`` = ``None`` → to zwykła wiadomość.
@@ -205,6 +235,18 @@ class ConversationalResponder:
                 reply = self._commands.dispatch(
                     message.text, CommandContext(self._channel, external_id)
                 )
+            if reply is not None:
+                return reply
+        # Komenda ZAPISU ``/notatka`` (produkcyjne M3, ADR 0009/0041) — POZA ``_store_lock`` (pobór
+        # transkryptu z Graph + streszczenie Claude są wolne, a save_note ma własną create-only
+        # bezpieczną współbieżność). ``None`` = to nie ta komenda → normalna tura agenta niżej.
+        if self._meeting_notes is not None:
+            # ``sender_id`` (AAD id nadawcy) NIESIE tożsamość do autoryzacji zapisu (B2 / ADR 0042):
+            # router rozstrzyga członkostwo, zanim ruszy transkrypt. Read-only dispatch wyżej go
+            # nie potrzebuje (komendy odczytu nie zależą od nadawcy).
+            reply = self._meeting_notes.dispatch(
+                message.text, CommandContext(self._channel, external_id, message.sender_id)
+            )
             if reply is not None:
                 return reply
         now = self._clock()  # dla kryterium bezczynności (ADR 0012)
@@ -230,6 +272,17 @@ class ConversationalResponder:
             except Exception:
                 logger.warning(
                     "Nie udało się zbudować narzędzia wątku dla %r — pomijam", external_id
+                )
+        # Narzędzie push-u obrazu 1:1 (ADR 0027, A′3): dokładane, gdy wiadomość niesie ``sender_id``
+        # (drzwi Teams) i bramka włączona. Cel wiąże się z NADAWCY (nie od modelu). Jak wyżej —
+        # opcjonalne wzbogacenie: błąd budowy nie może zabić tury, degradujemy i logujemy.
+        if self._user_push_tool_factory is not None and message.sender_id:
+            try:
+                extra_tools.extend(self._user_push_tool_factory(message.sender_id))
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzia push-u obrazu dla nadawcy %r — pomijam",
+                    message.sender_id,
                 )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
         result = self._runtime.run_turn(

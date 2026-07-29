@@ -2,7 +2,7 @@
 
 Date: 2026-07-27
 Status: accepted
-Author: Patryk
+Author: P0w3r223
 Related to: [ADR 0023](0023-hybrid-local-retrieval.md) (makes its deferred Phase B concrete),
   [ADR 0008](0008-agent-runtime-and-tool-catalog.md), roadmap §7 (Phase 3 — "embeddings + ranking")
 

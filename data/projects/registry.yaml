@@ -26,7 +26,7 @@ projects:
     last_updated: 2025-06-24
     # Mapowanie na systemy zewnętrzne (ADR 0028) — per-projektowe źródło prawdy dla mostu.
     github_repos: ["BIAP-Inteligentne-Technologie/PIWorkmate"]
-    jira_project_key: WM   # przykład — dostosuj po skonfigurowaniu Jira Server/DC
+    jira_project_key: WT   # BIAP Jira Cloud (example.atlassian.net) — nasłuchiwany projekt (C2)
 
   - key: smart-metering
     company: enerkom

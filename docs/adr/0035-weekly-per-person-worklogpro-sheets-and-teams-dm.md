@@ -14,6 +14,34 @@ Related to: docs/adr/0006-write-capability-gate-2.md,
 > attachment until the scope is granted" limitation noted below is **resolved** — the WorklogPRO sheet
 > can ship as a Teams attachment once `TeamsFileSender` (ADR 0026/0027) is built. Option A (person
 > imports their own sheet) remains the default.
+>
+> **Delivery note (A′4, 2026-07-28):** attachment delivery is now **built**, gated behind
+> `WORKMATE_WORKLOGI_ENABLE_ATTACHMENT` (default OFF). When on, the weekly run delivers the `.xlsx`
+> as a **real Teams attachment** instead of naming a server path. Design points:
+>
+> 1. **Not `TeamsFileSender` — reuses `UserDocSender` (ADR 0027 file variant).** `TeamsFileSender`
+>    uploads to a **channel** drive; the worklog DM is a **1:1 chat** with no channel drive, so the
+>    sheet goes to the bot's **OneDrive** via `HttpxGraphUserDocPush.send_document_to_user`. The port
+>    gained an optional `caption_html` so the **rich** `render_timesheet_message` HTML (hours table +
+>    import instructions) rides **with** the attachment card, not a second bare message.
+> 2. **Core stays I/O-free.** `WeeklyTimesheetService` gained an optional injected
+>    `send_document(aad, sheet_path, body_html)`; the **adapter** closure reads the `.xlsx` bytes from
+>    disk (core only passes the path). Dry-run still writes the sheet and sends nothing — unchanged.
+>    `render_timesheet_message(attached=True)` drops the server-path line (recipient can't reach it).
+> 3. **Least-privilege, fail-fast.** Attachment upload needs `Files.ReadWrite` (narrow — own drive) or
+>    `Files.ReadWrite.All` in `WORKMATE_TEAMS_PUSH_SCOPES`; the door wiring fails fast on the gate
+>    without it. The batch and self-service (ADR 0038) doors share the **same gate and one delivery
+>    module** (`adapters/inbound/worklogi/attachment_delivery.py`: `send_worklog_document` +
+>    `require_attachment_scopes`) — extracted after code review so a change can't drift between the two
+>    entry points. Real upload = operator (device-code re-consent for the file scope).
+>
+> **Code review (2026-07-28):** ✅ approve, no CRIT/HIGH. The `caption_html` trusted-HTML contract was
+> traced end-to-end with no injection path (the `claude_summary` comment never reaches the message —
+> only the formula-hardened XLSX cell). Addressed: the MEDIUM (delivery duplicated across both doors →
+> extracted the shared module above) and a LOW (self-service content-mode now keys on the same
+> file-present predicate as the delivery mechanism). Accepted follow-ups: no explicit byte cap on the
+> worklog sheet (system-generated, one person/week — not model-supplied); the narrow-`Files.ReadWrite`
+> sufficiency for `invite`, and adding chat scopes to push validation, remain live-smoke items.
 
 ---
 

@@ -110,6 +110,7 @@ def _make_poller(
     watch: tuple[tuple[str, str], ...] = (("team", "chan"),),
     state: dict[str, Any] | None = None,
     clock: Any = lambda: _NOW,
+    stop: Any = None,
 ) -> tuple[ChannelPoller, list[int]]:
     persist_calls: list[int] = []
     poller = ChannelPoller(
@@ -123,6 +124,7 @@ def _make_poller(
         poll_interval=0,
         active_idle=_ACTIVE_IDLE,
         clock=clock,
+        stop=stop,
     )
     return poller, persist_calls
 
@@ -460,3 +462,32 @@ def test_run_isolates_single_channel_failure_from_the_rest(monkeypatch):
 
     # Dobry kanał odpowiedział mimo wyjątku ze złego.
     assert client.posted == [("good", "c2", "g", "odp")]
+
+
+def test_run_finishes_current_round_then_exits_on_stop(monkeypatch):
+    """Graceful shutdown (R1): stop kończy pętlę PO utrwaleniu rundy (dokończ → zapisz → wróć)."""
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(poller_module.asyncio, "sleep", _no_sleep)  # drzemki kanału natychmiastowe
+
+    root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z", text="x")
+    client = FakeGraphClient([{"roots": [root], "replies": {}}])
+    handler = RecordingHandler("odp")
+    clock = lambda: datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc)  # noqa: E731
+    stop = asyncio.Event()
+    poller, persist_calls = _make_poller(client, handler, clock=clock, stop=stop)
+
+    original_persist = poller._persist
+
+    def _persist_then_stop(s: Any) -> None:
+        original_persist(s)  # utrwal rundę…
+        stop.set()  # …i dopiero potem zasygnalizuj stop
+
+    poller._persist = _persist_then_stop  # type: ignore[method-assign]
+
+    asyncio.run(asyncio.wait_for(poller.run(), timeout=5))
+
+    assert persist_calls == [1]  # dokładnie jedna runda utrwalona, potem wyjście
+    assert client.posted == [("team", "chan", "root-1", "odp")]  # runda dokończona przed stopem

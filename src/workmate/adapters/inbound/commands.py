@@ -61,10 +61,16 @@ def telegram_command_names() -> list[str]:
 
 @dataclass(frozen=True)
 class CommandContext:
-    """Kontekst wykonania komendy: kanał drzwi i identyfikator rozmowy (klucz pamięci wątku)."""
+    """Kontekst wykonania komendy: kanał drzwi i identyfikator rozmowy (klucz pamięci wątku).
+
+    ``sender_id`` (AAD id nadawcy, addytywne, domyślnie puste) niesie TOŻSAMOŚĆ do autoryzacji
+    zapisu (``/notatka``, B2 / ADR 0042). Read-only ``CommandRouter`` go IGNORUJE — komendy odczytu
+    nie zależą od nadawcy; pole jest tu, bo oba routery dzielą ten sam kontekst szwu drzwi.
+    """
 
     channel: str
     external_id: str
+    sender_id: str = ""
 
 
 class CommandRouter:
@@ -79,9 +85,14 @@ class CommandRouter:
         self,
         conversations: ConversationService,
         read_tools: Mapping[str, Callable[..., dict[str, Any]]],
+        *,
+        supports_attachments: bool = False,
     ) -> None:
         self._conversations = conversations
         self._tools = read_tools
+        # F8: przykład o załącznikach w /pomoc tylko na drzwiach, które je materializują
+        # (teams-graph) — na drzwiach tekstowych byłby mylną obietnicą.
+        self._supports_attachments = supports_attachments
         handlers = {
             "/pomoc": self._help,
             "/nowa": self._new_thread,
@@ -112,8 +123,22 @@ class CommandRouter:
     # --- handlery (formatowanie dict → tekst to warstwa adaptera) ---------------
 
     def _help(self, args: str, ctx: CommandContext) -> str:
-        lines = ["Dostępne komendy:"]
+        lines = [
+            "Jestem WorkMate — wspólna baza wiedzy pionu (notatki ze spotkań i status "
+            "projektów). Zapytaj mnie zwykłym zdaniem albo użyj komendy.",
+            "",
+            "Dostępne komendy:",
+        ]
         lines += [f"{' / '.join(spec.tokens)} — {spec.summary}" for spec in COMMAND_SPECS]
+        lines += [
+            "",
+            "Przykłady pytań:",
+            "• czy robiliśmy już integrację SCADA?",
+            "• jaki jest status projektu smart-metering?",
+            "• co ustaliliśmy na ostatnim spotkaniu w omnichannel?",
+        ]
+        if self._supports_attachments:
+            lines.append("• wrzuć zrzut ekranu HMI lub PDF specyfikacji i zapytaj o jego treść")
         return "\n".join(lines)
 
     def _new_thread(self, args: str, ctx: CommandContext) -> str:

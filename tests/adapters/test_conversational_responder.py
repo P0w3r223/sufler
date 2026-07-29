@@ -467,3 +467,40 @@ def test_no_compaction_keeps_full_history_in_replay():
     assert active is not None
     assert store.active_summary(active.id) is None
     assert all(not m.archived for m in store.messages(active.id))
+
+
+def test_metrics_records_call_per_turn():
+    """Metryka (Tor A): tura na drzwiach zapisuje wywołanie z pseudonimem nadawcy."""
+    from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
+    from workmate.core.application.metrics import MetricsService
+
+    convs = ConversationService(SqliteConversationStore(":memory:"), max_context_tokens=1000)
+    metrics_store = SqliteMetricsStore(":memory:")
+    responder = ConversationalResponder(
+        _FakeRuntime("ok"), convs, channel="teams", metrics=MetricsService(metrics_store)
+    )
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="czesc", conversation_id="c", sender_id="aad-1"))
+    )
+
+    (door,) = metrics_store.summary().by_door
+    assert door.door == "teams"
+    assert door.calls == 1
+    assert door.unique_users == 1
+
+
+def test_metrics_failure_does_not_break_turn():
+    """Błąd licznika (best-effort) nie może wywrócić tury — odpowiedź nadal wraca."""
+
+    class _BoomMetrics:
+        def record(self, *_a: object, **_k: object) -> None:
+            raise RuntimeError("licznik padł")
+
+    convs = ConversationService(SqliteConversationStore(":memory:"), max_context_tokens=1000)
+    responder = ConversationalResponder(
+        _FakeRuntime("ok"), convs, channel="teams", metrics=_BoomMetrics()  # type: ignore[arg-type]
+    )
+
+    reply = asyncio.run(responder.respond(InboundMessage(text="czesc", conversation_id="c")))
+    assert reply == "ok"

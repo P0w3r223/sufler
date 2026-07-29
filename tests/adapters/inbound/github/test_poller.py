@@ -136,7 +136,17 @@ def _review(
     }
 
 
-def _poller(client, store, *, state=None, self_login="bot", watch=("issues", "comments")):
+def _poller(
+    client,
+    store,
+    *,
+    state=None,
+    self_login="bot",
+    watch=("issues", "comments"),
+    persist=None,
+    stop=None,
+    heartbeat=None,
+):
     return GithubPoller(
         client,
         EventService(store),
@@ -144,10 +154,12 @@ def _poller(client, store, *, state=None, self_login="bot", watch=("issues", "co
         repo="r",
         watch_kinds=watch,
         state=state if state is not None else {},
-        persist=lambda s: None,
+        persist=persist if persist is not None else (lambda s: None),
         poll_interval=1,
         per_page=50,
         self_login=self_login,
+        stop=stop,
+        heartbeat=heartbeat,
     )
 
 
@@ -157,6 +169,74 @@ def test_poll_once_ingests_new_events():
     ingested = asyncio.run(_poller(client, store).poll_once())
     assert ingested == 2
     assert {r.external_id for r in store.rows} == {"1", "2"}
+
+
+def test_run_finishes_current_cycle_then_exits_on_stop():
+    """Graceful shutdown (R1): stop kończy pętlę PO jednej rundzie i zapisie, bez zapętlenia."""
+    stop = asyncio.Event()
+    persisted: list = []
+    poller = _poller(
+        _FakeClient(),
+        _FakeStore(),
+        persist=lambda s: persisted.append(dict(s)),
+        stop=stop,
+    )
+    calls = 0
+
+    async def _one_round():
+        nonlocal calls
+        calls += 1
+        poller._persist(poller._state)  # runda utrwala stan (jak poll_once)
+        stop.set()  # sygnał przychodzi w trakcie rundy
+
+    poller.poll_once = _one_round  # type: ignore[method-assign]
+
+    asyncio.run(asyncio.wait_for(poller.run(), timeout=5))
+
+    assert calls == 1  # dokładnie jedna runda — pętla nie kręci się w kółko
+    assert persisted  # stan zapisany przed wyjściem
+
+
+def test_run_beats_heartbeat_after_successful_round():
+    """Puls żywotności (R5) bije PO udanej rundzie — sygnał 'poller pracuje' dla healthchecku."""
+    stop = asyncio.Event()
+    beats = 0
+
+    def _beat():
+        nonlocal beats
+        beats += 1
+
+    poller = _poller(_FakeClient(), _FakeStore(), stop=stop, heartbeat=_beat)
+
+    async def _one_round():
+        stop.set()  # zakończ pętlę po tej rundzie
+        return 0
+
+    poller.poll_once = _one_round  # type: ignore[method-assign]
+    asyncio.run(asyncio.wait_for(poller.run(), timeout=5))
+
+    assert beats == 1  # dokładnie jeden puls za jedną udaną rundę
+
+
+def test_run_skips_heartbeat_when_round_fails():
+    """Jałowa pętla (runda rzuca w kółko) NIE bije pulsu — plik się starzeje, wykryje to check."""
+    stop = asyncio.Event()
+    beats = 0
+
+    def _beat():
+        nonlocal beats
+        beats += 1
+
+    poller = _poller(_FakeClient(), _FakeStore(), stop=stop, heartbeat=_beat)
+
+    async def _failing_round():
+        stop.set()  # zakończ pętlę po tej (nieudanej) rundzie
+        raise RuntimeError("token nie do odnowienia")
+
+    poller.poll_once = _failing_round  # type: ignore[method-assign]
+    asyncio.run(asyncio.wait_for(poller.run(), timeout=5))
+
+    assert beats == 0  # runda padła → brak pulsu
 
 
 def test_poll_once_skips_self_authored():

@@ -12,7 +12,7 @@ from datetime import date
 
 import pytest
 
-from workmate.core.domain.paths import note_id, slugify
+from workmate.core.domain.paths import meeting_note_id, note_id, slugify
 
 # Musi być spójne z _SLUG_MAX_LENGTH w paths.py (górny limit długości sluga).
 _SLUG_MAX_LENGTH = 80
@@ -83,3 +83,36 @@ def test_note_id_has_company_project_date_slug_shape():
 def test_note_id_raises_when_title_has_no_usable_slug():
     with pytest.raises(ValueError):
         note_id("mpwik", "scada-integration", date(2025, 6, 12), "日本語")
+
+
+# --- meeting_note_id: deterministyczny id spotkania (idempotencja, ADR 0043) --
+
+
+def test_meeting_note_id_is_deterministic_for_same_ref():
+    a = meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "https://join/abc")
+    b = meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "https://join/abc")
+    assert a == b
+    assert a.startswith("mpwik/scada-integration/2025-06-12-mtg-")
+
+
+def test_meeting_note_id_differs_for_different_ref():
+    a = meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "ref-1")
+    b = meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "ref-2")
+    assert a != b
+
+
+def test_meeting_note_id_ignores_surrounding_whitespace():
+    a = meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "ref")
+    b = meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "  ref  ")
+    assert a == b
+
+
+def test_meeting_note_id_empty_ref_raises():
+    with pytest.raises(ValueError):
+        meeting_note_id("mpwik", "scada-integration", date(2025, 6, 12), "   ")
+
+
+def test_meeting_note_id_rejects_path_traversal_segments():
+    # Firma/projekt spoza rejestru z '/' albo '..' nie może wpłynąć do ścieżki notatki.
+    with pytest.raises(ValueError):
+        meeting_note_id("../etc", "scada-integration", date(2025, 6, 12), "ref")

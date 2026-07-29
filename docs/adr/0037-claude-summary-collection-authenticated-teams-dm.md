@@ -2,7 +2,7 @@
 
 Date: 2026-07-23
 Status: proposed (build deferred to post go-live; manual collection for the pilot)
-Author: Patryk
+Author: P0w3r223
 Related to: [[0036-shift-worklog-integration-identity-and-week-contract]], 0035 (WorklogPRO sheets),
 0015/0016 (Teams delegated door + attachments), `Powiadomienia_teams` (1:1 chat lifecycle)
 

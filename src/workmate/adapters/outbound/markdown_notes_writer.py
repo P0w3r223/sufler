@@ -17,12 +17,13 @@ więc kolejność pól odpowiada modelowi (title, project, date, …), a
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 
 import yaml
 
 from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.errors import WriteError
+from workmate.core.errors import NoteExistsError, WriteError
 
 _FRONTMATTER_FENCE = "---"
 
@@ -56,17 +57,20 @@ def _render(metadata: NoteMetadata, body: str) -> str:
 def _atomic_create(path: Path, content: str) -> None:
     """Zapis atomowy i create-only.
 
-    Pełna treść trafia do pliku tymczasowego, a ``os.link`` publikuje ją pod
-    docelową nazwą — atomowo i tylko, gdy cel nie istnieje. Kolizja (``FileExists``)
-    i błąd I/O (``OSError``) są opakowywane w ``WriteError``, więc granica MCP
-    degraduje łagodnie (``{"error": ...}``) zamiast wywracać serwer.
+    Pełna treść trafia do pliku tymczasowego, a ``os.link`` publikuje ją pod docelową nazwą —
+    atomowo i tylko, gdy cel nie istnieje. Nazwa tymczasowego jest UNIKALNA per zapis
+    (``pid`` + ``uuid``): dwa RÓWNOLEGŁE pisarze tego samego id (deterministyczny id notatki ze
+    spotkania + pula wątków async, ADR 0043) NIE mogą dzielić jednego pliku tymczasowego — inaczej
+    ``write_text`` jednego wątku (truncate) nadpisałby inode, do którego drugi wątek właśnie
+    dolinkował opublikowaną notatkę. Kolizja finalnej nazwy (``FileExists``) → ``NoteExistsError``
+    (wyróżniona, by ścieżka idempotentna zaraportowała „już złożona"); inny I/O → ``WriteError``.
     """
-    tmp = path.with_name(f"{path.name}.tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         tmp.write_text(content, encoding="utf-8")
         os.link(tmp, path)
     except FileExistsError as exc:
-        raise WriteError(f"notatka już istnieje: {path.name}") from exc
+        raise NoteExistsError(f"notatka już istnieje: {path.name}") from exc
     except OSError as exc:
         raise WriteError(f"nie udało się zapisać notatki {path.name}: {exc}") from exc
     finally:

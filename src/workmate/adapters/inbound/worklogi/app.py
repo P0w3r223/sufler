@@ -21,19 +21,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
+import signal
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from workmate.adapters.inbound import env
+from workmate.adapters.inbound.heartbeat import heartbeat_path, write_heartbeat
 from workmate.adapters.inbound.single_instance import (
     AlreadyRunningError,
     acquire_single_instance_lock,
 )
 from workmate.adapters.inbound.worklogi import state as state_store
-from workmate.config import Settings, TeamsPushSettings, WorklogiSettings
+from workmate.adapters.inbound.worklogi.attachment_delivery import (
+    require_attachment_scopes,
+    send_worklog_document,
+)
+from workmate.config import Settings, TeamsPushSettings, WorklogiSettings, require_writable
 from workmate.core.application.weekly_timesheets import RunReport, WeeklyTimesheetService
 from workmate.core.domain.week import next_run, previous_run, reported_week, week_label
 
@@ -52,8 +60,8 @@ _MAX_SLEEP_S = 900
 
 def main() -> None:
     """Uruchom drzwi kart czasu: jeden przebieg, pętla albo jednorazowe logowanie."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
     args = _parse_args()
 
     settings = WorklogiSettings.from_env()
@@ -64,6 +72,7 @@ def main() -> None:
         )
     push = TeamsPushSettings.from_env()
     _require_teams(push)
+    require_attachment_scopes(settings, push)
 
     token_provider = _build_token_provider(push)
     if args.login:
@@ -72,6 +81,10 @@ def main() -> None:
         logger.info("Zalogowano — token w cache %s.", push.token_cache_path)
         return
 
+    # R/L1: stan tygodniowy (dedup „kto już dostał arkusz") na wolumenie MUSI być zapisywalny —
+    # inaczej po restarcie ktoś dostaje arkusz drugi raz. Fail-fast, nim weźmiemy lock (też na
+    # tej ścieżce) i ruszymy przebieg. Tryb --login pomijamy — pisze tylko cache, nie stan.
+    require_writable(settings.state_path, "WORKMATE_WORKLOGI_STATE")
     try:
         with acquire_single_instance_lock(settings.state_path):
             if args.once:
@@ -89,18 +102,51 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _run_forever(settings: WorklogiSettings, push: TeamsPushSettings, token: Any) -> None:
+def _install_stop_flag() -> threading.Event:
+    """Zainstaluj handler SIGTERM/SIGINT ustawiający flagę zatrzymania (graceful shutdown, R1).
+
+    Pętla jest synchroniczna, więc sygnał chwytamy klasycznym ``signal.signal`` (nie
+    ``add_signal_handler``). Handler tylko USTAWIA flagę — właściwe zamknięcie robi pętla,
+    która budzi się z drzemki (sufit ``_MAX_SLEEP_S``) i kończy po dokończeniu przebiegu.
+    """
+    stop = threading.Event()
+
+    def _request_stop(_signum: int, _frame: Any) -> None:
+        stop.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # Poza wątkiem głównym signal.signal rzuca ValueError — wtedy domyślne zamknięcie.
+        with contextlib.suppress(ValueError):
+            signal.signal(sig, _request_stop)
+    return stop
+
+
+def _run_forever(
+    settings: WorklogiSettings,
+    push: TeamsPushSettings,
+    token: Any,
+    *,
+    stop: threading.Event | None = None,
+) -> None:
     """Pętla: nadrób pominięty termin, potem czekaj na kolejne piątki.
 
     Nadrabianie ma SUFIT (``max_catchup_days``): po dłuższej przerwie lepiej nie rozsyłać
-    nieaktualnych godzin, tylko poczekać na najbliższy normalny termin.
+    nieaktualnych godzin, tylko poczekać na najbliższy normalny termin. Sygnał stop kończy
+    pętlę po dokończeniu bieżącego przebiegu (stan i tak utrwalany inkrementalnie, po osobie).
     """
+    if stop is None:
+        stop = _install_stop_flag()
     tz = ZoneInfo(settings.tz_name)
+    # Puls żywotności (R5): scheduler nie ma poll_interval, więc okno healthchecku opieramy o
+    # sufit drzemki (_MAX_SLEEP_S). Bijemy przy każdym wybudzeniu — „healthy" znaczy „scheduler
+    # żyje i czeka na piątek", nie „w tym tygodniu coś wysłał".
+    hb = heartbeat_path(settings.state_path)
+    write_heartbeat(hb)
     missed = _missed_deadline(settings, tz)
-    if missed is not None:
+    if missed is not None and not stop.is_set():
         logger.info("Wykryto pominięty termin (%s) — nadrabiam za jego tydzień.", missed)
         _safe_run_once(settings, push, token, as_of=missed)
-    while True:
+    while not stop.is_set():
         target = next_run(
             _now(),
             tz=tz,
@@ -109,9 +155,14 @@ def _run_forever(settings: WorklogiSettings, push: TeamsPushSettings, token: Any
             minute=settings.run_minute,
         )
         logger.info("Następny przebieg: %s.", target)
-        while _now() < target:
+        while _now() < target and not stop.is_set():
+            write_heartbeat(hb)  # przy każdym wybudzeniu — luka między pulsami ≤ _MAX_SLEEP_S
             time.sleep(min(_MAX_SLEEP_S, max(1.0, (target - _now()).total_seconds())))
+        if stop.is_set():
+            break
         _safe_run_once(settings, push, token, as_of=target)
+        write_heartbeat(hb)  # po tygodniowym przebiegu
+    logger.info("Drzwi kart czasu: zatrzymanie na sygnał, stan utrwalony.")
 
 
 def _safe_run_once(
@@ -286,6 +337,11 @@ def _run_once(
         already_done=lambda week, sid: state_store.key(week, sid) in saved,
         mark_done=mark_done,
         now=lambda: moment,
+        send_document=(
+            (lambda aad, path, html: send_worklog_document(token, aad, path, html))
+            if settings.enable_attachment
+            else None
+        ),
     )
     report = service.run()
     _prune_state(settings, saved, tz, moment)

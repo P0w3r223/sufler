@@ -88,19 +88,56 @@ def _issue(
     return raw
 
 
-def _poller(client, store, *, state=None, self_account="svc-bot", watch=("WM",), project_map=None):
+def _poller(
+    client,
+    store,
+    *,
+    state=None,
+    self_account="svc-bot",
+    watch=("WM",),
+    project_map=None,
+    persist=None,
+    stop=None,
+):
     return JiraPoller(
         client,
         EventService(store),
         base_url="https://jira.example.com",
         watch_projects=watch,
         state=state if state is not None else {},
-        persist=lambda s: None,
+        persist=persist if persist is not None else (lambda s: None),
         poll_interval=1,
         per_page=50,
         self_account=self_account,
         project_map=project_map,
+        stop=stop,
     )
+
+
+def test_run_finishes_current_cycle_then_exits_on_stop():
+    """Graceful shutdown (R1): stop kończy pętlę PO jednej rundzie i zapisie, bez zapętlenia."""
+    stop = asyncio.Event()
+    persisted: list = []
+    poller = _poller(
+        _FakeClient(),
+        _FakeStore(),
+        persist=lambda s: persisted.append(dict(s)),
+        stop=stop,
+    )
+    calls = 0
+
+    async def _one_round():
+        nonlocal calls
+        calls += 1
+        poller._persist(poller._state)  # runda utrwala stan (jak poll_once)
+        stop.set()  # sygnał przychodzi w trakcie rundy
+
+    poller.poll_once = _one_round  # type: ignore[method-assign]
+
+    asyncio.run(asyncio.wait_for(poller.run(), timeout=5))
+
+    assert calls == 1  # dokładnie jedna runda — pętla nie kręci się w kółko
+    assert persisted  # stan zapisany przed wyjściem
 
 
 def test_poll_once_ingests_created_transition_comment():

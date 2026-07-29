@@ -63,6 +63,26 @@ def test_handler_passes_text_sender_and_conversation_id_to_responder():
     }
 
 
+def test_handler_carries_sender_id_for_user_push_target():
+    """Szew niesie ``sender_id`` (AAD id nadawcy) → CEL wyjściowej dostawy 1:1 (ADR 0027).
+
+    Bez tego pola narzędzie push-u obrazu się nie zbuduje w responderze, więc handler MUSI je
+    przenieść z ``ChannelMessage.sender_id`` do ``InboundMessage.sender_id`` bez zmian.
+    """
+    captured: dict[str, str] = {}
+
+    class _Capture:
+        async def respond(self, message: InboundMessage) -> str:
+            captured["sender_id"] = message.sender_id
+            return "ok"
+
+    handle = make_handle_message(_Capture())
+
+    asyncio.run(handle(_msg(sender_id="u-anna-aad"), "team/chan/root"))
+
+    assert captured["sender_id"] == "u-anna-aad"
+
+
 def test_handler_returns_injected_responder_reply():
     """Szew działa: handler zwraca dokładnie to, co wstrzyknięty responder."""
 

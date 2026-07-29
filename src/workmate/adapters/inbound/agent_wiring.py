@@ -27,12 +27,15 @@ from workmate.adapters.outbound.filesystem_workspace import (
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
 from workmate.config import RetrievalSettings
+from workmate.core.agent.prompt import SYSTEM_PROMPT, system_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
 from workmate.core.application.events import EventService
+from workmate.core.application.metrics import MetricsService
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
@@ -48,6 +51,7 @@ from workmate.core.application.workspace import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.config import (
         AgentSettings,
         ConversationSettings,
@@ -110,6 +114,7 @@ def build_agent_runtime(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
@@ -118,6 +123,8 @@ def build_agent_runtime(
     (mniej zaufane drzwi, np. Telegram — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
     STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
     bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
+    ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
+    materializujemy załączniki); domyślnie bazowy ``SYSTEM_PROMPT``.
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -134,6 +141,7 @@ def build_agent_runtime(
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
         [*catalog, *extra_catalog],
+        system_prompt=system_prompt,
         max_tool_iterations=agent_settings.max_tool_iterations,
     )
 
@@ -144,6 +152,7 @@ def build_agent_runtime_or_exit(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
@@ -151,7 +160,11 @@ def build_agent_runtime_or_exit(
     """
     try:
         return build_agent_runtime(
-            settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
+            settings,
+            agent_settings,
+            enable_write=enable_write,
+            extra_catalog=extra_catalog,
+            system_prompt=system_prompt,
         )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
@@ -206,6 +219,9 @@ def build_conversational_responder(
     workspace_settings: WorkspaceSettings | None = None,
     extra_catalog: Sequence[ToolSpec] = (),
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+    user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+    meeting_notes: MeetingNoteRouter | None = None,
+    supports_attachments: bool = False,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -215,9 +231,17 @@ def build_conversational_responder(
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
+    ``thread_tool_factory``/``user_push_tool_factory`` (ADR 0024/0027) wstrzykują narzędzia PER TURĘ
+    wiązane, odpowiednio, z wątkiem (external_id) i z nadawcą (sender_id) — poza powierzchnią MCP.
+    ``supports_attachments`` (F8) uwidacznia zdolność multimodalną (prompt + ``/pomoc``) tylko na
+    drzwiach z materializerem załączników — inaczej byłaby mylną obietnicą na drzwiach tekstowych.
     """
     runtime = build_agent_runtime_or_exit(
-        settings, agent_settings, enable_write=enable_write, extra_catalog=extra_catalog
+        settings,
+        agent_settings,
+        enable_write=enable_write,
+        extra_catalog=extra_catalog,
+        system_prompt=system_prompt_for(attachments=supports_attachments),
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -228,11 +252,20 @@ def build_conversational_responder(
     )
     compaction = build_compaction_service(agent_settings, conversation_settings, store)
     router = CommandRouter(
-        conversations, {spec.name: spec.fn for spec in build_read_catalog(settings)}
+        conversations,
+        {spec.name: spec.fn for spec in build_read_catalog(settings)},
+        supports_attachments=supports_attachments,
     )
     workspace_factory = (
         _build_workspace_factory(workspace_settings)
         if enable_workspace and workspace_settings is not None
+        else None
+    )
+    # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
+    # responder nie zapisuje nic. Jeden punkt wpięcia obejmuje wszystkie drzwi agentowe.
+    metrics = (
+        MetricsService(SqliteMetricsStore(settings.metrics_db))
+        if settings.metrics_db is not None
         else None
     )
     inner = ConversationalResponder(
@@ -244,6 +277,9 @@ def build_conversational_responder(
         commands=router,
         workspace_catalog_factory=workspace_factory,
         thread_tool_factory=thread_tool_factory,
+        user_push_tool_factory=user_push_tool_factory,
+        meeting_notes=meeting_notes,
+        metrics=metrics,
     )
     return SafeResponder(inner) if safe else inner
 

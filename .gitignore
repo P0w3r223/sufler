@@ -27,6 +27,8 @@ BotFramework-Emulator-main/
 
 # Lokalny indeks CodeGraph (graf kodu per maszyna, odbudowywalny przez `codegraph init`)
 .codegraph/
+# Lokalny indeks code-review-graph (crg, graf kodu per maszyna, odbudowywalny przez `crg build`)
+.code-review-graph/
 # Eksport CodeGraph (artefakt binarny, nie kod) — odbudowywalny, nie commitować.
 codegraph-*.zip
 
@@ -43,3 +45,8 @@ powiadomienia-teams-*.tar.gz
 # UWAGA: reguła nie jest zakotwiczona, więc obejmuje CAŁE repo. Gdy zajdzie potrzeba wciągnięcia
 # szablonu WorklogPRO jako fixture'u testowego, dołóż tu wyjątek (!tests/fixtures/*.xlsx).
 *.xlsx
+
+# Sekrety wdrożenia kontenerowego (ADR 0044) — plik `env` (klucze/tokeny) i certy TLS. W repo
+# trzymamy tylko env.example; realny env i certs/ wchodzą przez env_file/wolumen w runtime.
+deploy/docker/env
+deploy/docker/certs/

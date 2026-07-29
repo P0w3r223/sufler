@@ -95,6 +95,13 @@ retrieval-dense = [
     "fastembed>=0.4",
     "numpy>=1.26",
 ]
+# Odpowiedź agenta PLIKIEM w wątku Teams (ADR 0026, A′2) — renderer PDF (fpdf2 z osadzonym fontem
+# Unicode DejaVu). Format `docx` idzie przez python-docx z extra `teams-graph`, a `md`/`txt` to
+# czyste bajty bez zależności. OSOBNY extra: zdolność jest bramkowana (enable_file_reply) i
+# doinstalowuje się tylko tam, gdzie włączona; import fpdf2 jest leniwy w adapterze.
+file-reply = [
+    "fpdf2>=2.8",
+]
 
 [project.scripts]
 # Komenda uruchamiająca serwer MCP (używana przez `.mcp.json`: `uv run workmate`).
@@ -117,6 +124,15 @@ workmate-jira = "workmate.adapters.inbound.jira.app:main"
 workmate-worklogi = "workmate.adapters.inbound.worklogi.app:main"
 # Drzwi worklog self-service na żądanie (ADR 0038): `uv run workmate-worklog-selfservice`.
 workmate-worklog-selfservice = "workmate.adapters.inbound.worklog_selfservice.app:main"
+# Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez
+# compose (`docker compose ps` → healthy/unhealthy), nie ręcznie: `workmate-heartbeat-check --file … --max-age …`.
+workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"
+# Raport metryk użycia (Tor A): zwija licznik SQLite do tabeli. `workmate-metrics [--db …]`
+# (domyślnie WORKMATE_METRICS_DB — ta sama ścieżka, która włącza zbieranie).
+workmate-metrics = "workmate.adapters.inbound.metrics_report:main"
+# Seed korpusu (W0): importuje lokalne markdowny (README/ADR) do notatek. Domyślnie dry-run;
+# zapis dopiero z `--write`. `workmate-seed-corpus --source <dir> --project <klucz> [--write]`.
+workmate-seed-corpus = "workmate.adapters.inbound.seed_corpus:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).
@@ -136,6 +152,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/workmate"]
+# Zasoby NIE-Pythonowe (osadzony font Unicode do renderowania PDF, ADR 0026) MUSZĄ trafić do wheela.
+# Jawny `artifacts` gwarantuje spakowanie niezależnie od domyślnej selekcji plików build-backendu.
+artifacts = ["src/workmate/adapters/outbound/assets/*"]
 
 [tool.ruff]
 line-length = 100
@@ -194,6 +213,12 @@ ignore_missing_imports = true
 # więc mypy rdzenia nie może się o nie wywrócić.
 [[tool.mypy.overrides]]
 module = ["fastembed.*", "numpy.*"]
+ignore_missing_imports = true
+
+# fpdf2 (extra `file-reply`, ADR 0026) — renderer PDF; import LENIWY w adapterze outbound, więc
+# mypy rdzenia nie może się o niego wywrócić (moduł importowy nazywa się `fpdf`).
+[[tool.mypy.overrides]]
+module = ["fpdf.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

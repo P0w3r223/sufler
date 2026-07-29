@@ -1,11 +1,16 @@
 """Entry point lokalnego harnessu M3 „nowa notatka ze spotkania": ``uv run workmate-meeting``.
 
-Uruchamia CAŁY przepływ M3 (Faza 2 / ADR 0009) end-to-end LOKALNIE, bez Azure/Graph:
-wklejony transkrypt → streszczenie przez Claude (``AnthropicMeetingSummarizer``) →
-złożenie ``NoteMetadata`` w ZAMROŻONYM schemacie → zapis przez bramkowany, DOPISUJĄCY
-``NotesWriteService``. Źródłem transkryptu jest ``InMemoryTranscriptSource`` — realny
-``GraphTranscriptSource`` jest odłożony do dostępu Azure/M365 (świadomy stub). To domyka
-follow-up z ADR 0009: przebieg M3 wobec Claude na wklejonym transkrypcie, bez infrastruktury MS.
+Uruchamia CAŁY przepływ M3 (Faza 2 / ADR 0009) end-to-end: transkrypt → streszczenie przez
+Claude (``AnthropicMeetingSummarizer``) → złożenie ``NoteMetadata`` w ZAMROŻONYM schemacie →
+zapis przez bramkowany, DOPISUJĄCY ``NotesWriteService``. Źródło transkryptu wybiera ``--source``:
+
+- ``memory`` (domyślnie) — wklejony transkrypt (plik/stdin) przez ``InMemoryTranscriptSource``;
+  cały przepływ LOKALNIE, bez Azure. Domyka follow-up z ADR 0009.
+- ``graph`` — REALNE pobranie z Microsoft Graph (``HttpxGraphTranscriptSource``, B1) po
+  ``--meeting <joinWebUrl|id>``. To ścieżka LIVE-SMOKE produkcyjnego M3: wymaga nadanych przez
+  admina zakresów (``OnlineMeetingTranscript.Read.All`` + ``OnlineMeetings.Read``) i bramki
+  ``WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true``. Patrz
+  ``docs/how-to/meeting-transcript-live-smoke.md``.
 
 Bezpieczeństwo/konwencja:
 - O miejscu zapisu (``project``, ``date``) decyduje WYWOŁUJĄCY (flagi), nie treść transkryptu
@@ -41,8 +46,9 @@ from workmate.core.application.services import NotesWriteService
 from workmate.core.errors import LLMError, WorkMateError
 
 if TYPE_CHECKING:
-    from workmate.core.domain.models import Note
-    from workmate.core.ports.meeting import MeetingSummarizer
+    from workmate.adapters.outbound.anthropic_summarizer import AnthropicMeetingSummarizer
+    from workmate.core.application.meeting_notes import MeetingNoteOutcome
+    from workmate.core.ports.meeting import MeetingNoteVerifier, MeetingSummarizer
 
 _DEFAULT_MEETING_REF = "harness-meeting"
 
@@ -54,17 +60,18 @@ def run_harness(
     meeting_date: date,
     summarizer: MeetingSummarizer,
     write_service: NotesWriteService,
+    verifier: MeetingNoteVerifier | None = None,
     meeting_ref: str = _DEFAULT_MEETING_REF,
-) -> Note:
-    """Złóż przepływ M3 na wklejonym transkrypcie i zwróć zapisaną notatkę.
+) -> MeetingNoteOutcome:
+    """Złóż przepływ M3 na wklejonym transkrypcie i zwróć wynik (utworzona / już była).
 
-    Sam wiring harnessu: ``InMemoryTranscriptSource`` (jedno mapowanie
-    ``meeting_ref`` → ``transcript``) + wstrzyknięty ``summarizer`` i ``write_service``,
-    spięte przez rdzeniowy ``MeetingNoteService``. Bez I/O konsoli i bez budowy adapterów —
-    dzięki temu testujemy go na atrapie summarizera i prawdziwym zapisie do katalogu tymczasowego.
+    Sam wiring harnessu: ``InMemoryTranscriptSource`` (jedno mapowanie ``meeting_ref`` →
+    ``transcript``) + wstrzyknięty ``summarizer``, opcjonalny ``verifier`` (pass 2, ADR 0047) i
+    ``write_service``, spięte przez rdzeniowy ``MeetingNoteService``. Bez I/O konsoli i bez budowy
+    adapterów — dzięki temu testujemy go na atrapach i prawdziwym zapisie do katalogu tymczasowego.
     """
     transcripts = InMemoryTranscriptSource({meeting_ref: transcript})
-    service = MeetingNoteService(transcripts, summarizer, write_service)
+    service = MeetingNoteService(transcripts, summarizer, write_service, verifier=verifier)
     return service.note_from_meeting(meeting_ref, project=project, meeting_date=meeting_date)
 
 
@@ -85,10 +92,23 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Data spotkania w formacie YYYY-MM-DD (o dacie decyduje wywołujący, nie transkrypt).",
     )
     parser.add_argument(
+        "--source",
+        choices=("memory", "graph"),
+        default="memory",
+        help="Źródło transkryptu: 'memory' (plik/stdin, lokalnie) albo 'graph' (Microsoft Graph "
+        "po --meeting; wymaga zakresów admina i bramki, patrz how-to live-smoke).",
+    )
+    parser.add_argument(
+        "--meeting",
+        default=None,
+        help="Dla --source graph: joinWebUrl spotkania (zaczyna się od http) albo id spotkania.",
+    )
+    parser.add_argument(
         "--transcript",
         type=Path,
         default=None,
-        help="Ścieżka pliku z transkryptem (UTF-8). Bez tej flagi transkrypt czytany z stdin.",
+        help="Ścieżka pliku z transkryptem (UTF-8). Bez tej flagi transkrypt czytany z stdin "
+        "(dotyczy --source memory).",
     )
     parser.add_argument(
         "--meeting-ref",
@@ -102,6 +122,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Katalog docelowy notatki. Domyślnie katalog tymczasowy harnessu "
         "(NIE zaśmieca data/notes/). Podaj data/notes/, by zapisać do bazy świadomie.",
+    )
+    parser.add_argument(
+        "--verify",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Druga przelotka-krytyk (ADR 0047): usuwa twierdzenia bez pokrycia w transkrypcie. "
+        "Domyślnie WŁĄCZONA w harnessie (weryfikacja jakości), ~2× koszt Claude. "
+        "--no-verify wyłącza.",
     )
     return parser.parse_args(argv)
 
@@ -141,7 +169,7 @@ def _read_transcript(transcript_path: Path | None) -> str:
     return text
 
 
-def _build_summarizer_or_exit(agent_settings: AgentSettings) -> MeetingSummarizer:
+def _build_summarizer_or_exit(agent_settings: AgentSettings) -> AnthropicMeetingSummarizer:
     """Zbuduj adapter streszczający nad Claude API; brak extra ``agent`` → czytelny komunikat.
 
     Import ``anthropic`` dzieje się dopiero w konstruktorze adaptera (leniwy) — bez extra
@@ -157,13 +185,63 @@ def _build_summarizer_or_exit(agent_settings: AgentSettings) -> MeetingSummarize
         ) from exc
 
 
+def _fetch_graph_transcript(meeting_ref: str) -> str:
+    """Pobierz transkrypt spotkania z Microsoft Graph (B1) — ścieżka live-smoke produkcyjnego M3.
+
+    Fail-fast i czytelnie (nie traceback): brak tożsamości Entra / wyłączona bramka / brak zakresu
+    → ``validate()`` rzuca ``ValueError`` z instrukcją; brak extra ``teams-graph`` → ``ImportError``
+    tłumaczony na instrukcję instalacji; błąd Graph (403/404/pusty transkrypt) → komunikat z
+    kontekstem. Token to device-code (pierwszy raz logowanie w przeglądarce), jak inne drzwi Graph.
+    """
+    from workmate.config import TeamsGraphSettings
+
+    settings = TeamsGraphSettings.from_env()
+    try:
+        settings.validate()
+        if not settings.enable_meeting_transcript:
+            raise ValueError(
+                "Pobranie z Graph wymaga WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true "
+                "(oraz zakresów admina OnlineMeetingTranscript.Read.All + OnlineMeetings.Read). "
+                "Patrz docs/how-to/meeting-transcript-live-smoke.md."
+            )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    try:
+        from workmate.adapters.inbound.teams_graph.auth import build_token_provider
+        from workmate.adapters.outbound.transcript_sources import HttpxGraphTranscriptSource
+    except ImportError as exc:
+        raise SystemExit(
+            "Brak zależności Graph (extra 'teams-graph'). Zainstaluj: uv sync --extra teams-graph."
+        ) from exc
+
+    source = HttpxGraphTranscriptSource(build_token_provider(settings))
+    try:
+        return source.fetch(meeting_ref)
+    except (ValueError, KeyError) as exc:
+        raise SystemExit(f"Nie udało się pobrać transkryptu z Graph: {exc}") from exc
+
+
 def _default_out_dir() -> Path:
     """Domyślny katalog wyjściowy harnessu (temp) — poza repo i poza ``data/notes/``."""
     return Path(tempfile.gettempdir()) / "workmate-m3-harness"
 
 
-def _format_result(note: Note, out_dir: Path, *, is_default_out: bool) -> str:
-    """Zwięzły raport z przebiegu: id, ścieżka, pola strukturalne złożonej notatki."""
+def _format_result(outcome: MeetingNoteOutcome, out_dir: Path, *, is_default_out: bool) -> str:
+    """Zwięzły raport z przebiegu: id, ścieżka, pola strukturalne złożonej notatki.
+
+    Gdy notatka tego spotkania już istniała (idempotencja, ADR 0043) — raport o pominięciu
+    (bez poboru transkryptu i Claude), bo ``outcome.note`` jest wtedy ``None``.
+    """
+    if outcome.note is None:
+        return "\n".join(
+            [
+                "✓ Notatka M3 tego spotkania była już złożona wcześniej (idempotencja, ADR 0043)",
+                f"  id:          {outcome.note_id}",
+                f"  plik:        {out_dir / f'{outcome.note_id}.md'}",
+            ]
+        )
+    note = outcome.note
     metadata = note.metadata
     location = "katalog tymczasowy harnessu" if is_default_out else "wskazany katalog"
     return "\n".join(
@@ -197,21 +275,29 @@ def main() -> None:
         raise SystemExit(str(exc)) from exc
 
     settings = Settings.from_env()
-    transcript = _read_transcript(args.transcript)
+    if args.source == "graph":
+        if not args.meeting:
+            raise SystemExit("--source graph wymaga --meeting <joinWebUrl albo id spotkania>.")
+        transcript = _fetch_graph_transcript(args.meeting)
+    else:
+        transcript = _read_transcript(args.transcript)
     out_dir = args.out or _default_out_dir()
     is_default_out = args.out is None
 
     projects_repo = YamlProjectsRepository(settings.projects_registry)
     write_service = NotesWriteService(MarkdownNotesWriter(out_dir), projects_repo)
     summarizer = _build_summarizer_or_exit(agent_settings)
+    # Ten sam adapter to oba porty (draft + krytyk). --verify (ON domyślnie) włącza pass 2.
+    verifier: MeetingNoteVerifier | None = summarizer if args.verify else None
 
     try:
-        note = run_harness(
+        outcome = run_harness(
             transcript,
             project=args.project,
             meeting_date=args.date,
             summarizer=summarizer,
             write_service=write_service,
+            verifier=verifier,
             meeting_ref=args.meeting_ref,
         )
     except LLMError as exc:
@@ -220,7 +306,7 @@ def main() -> None:
         # Nieznany projekt w rejestrze, kolizja zapisu itp. — czytelnie, nie traceback.
         raise SystemExit(f"Nie udało się zapisać notatki: {exc}") from exc
 
-    print(_format_result(note, out_dir, is_default_out=is_default_out))
+    print(_format_result(outcome, out_dir, is_default_out=is_default_out))
 
 
 if __name__ == "__main__":

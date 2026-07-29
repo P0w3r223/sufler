@@ -4,6 +4,11 @@
       "type": "stdio",
       "command": "uv",
       "args": ["run", "--directory", "${CLAUDE_PROJECT_DIR:-.}", "workmate"]
+    },
+    "code-review-graph": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["code-review-graph", "serve", "--repo", "${CLAUDE_PROJECT_DIR:-.}"]
     }
   }
 }

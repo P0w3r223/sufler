@@ -12,9 +12,14 @@ import pytest
 
 from workmate.adapters.inbound.teams_graph.app import (
     _build_bridge_catalog,
+    _build_file_reply_factory,
+    _build_user_doc_push_factory,
+    _build_user_push_factory,
+    _compose_thread_factories,
+    _compose_user_push_factories,
     _make_thread_tool_factory,
 )
-from workmate.config import EventsSettings, GithubSettings, JiraSettings
+from workmate.config import EventsSettings, GithubSettings, JiraSettings, TeamsGraphSettings
 from workmate.core.application.github import GithubWriteService
 
 
@@ -148,3 +153,110 @@ def test_bridge_catalog_jira_write_on_without_project_fails_fast():
             GithubSettings(enable_github_write=False),
             JiraSettings(enable_jira_write=True, token="t", base_url="https://j"),
         )
+
+
+# --- fabryka reply_with_file (ADR 0026, A′2) + kompozycja fabryk wątkowych --------
+
+
+def test_file_reply_factory_off_by_default_is_none():
+    """Strukturalna gwarancja: bramka OFF → fabryka pliku NIE powstaje (brak powierzchni zapisu)."""
+    assert _build_file_reply_factory(TeamsGraphSettings(), lambda: "tok") is None
+
+
+def test_file_reply_factory_on_yields_scoped_reply_with_file_tool():
+    """Bramka ON → dla poprawnego wątku (team/channel/root) agent dostaje ``reply_with_file``."""
+    settings = TeamsGraphSettings(enable_file_reply=True, max_file_reply_kb=256)
+    factory = _build_file_reply_factory(settings, lambda: "tok")
+    assert factory is not None
+    assert [spec.name for spec in factory("team-1/chan-1/root-9")] == ["reply_with_file"]
+    # Źle uformowany external_id (nie 3 części) → pusta lista, bez wyjątku (jak fabryka GitHub).
+    assert factory("u1") == []
+
+
+def test_compose_thread_factories_concatenates_and_ignores_none():
+    combined = _compose_thread_factories(None, lambda eid: ["a"], None, lambda eid: ["b", "c"])
+    assert combined is not None
+    assert combined("team/chan/root") == ["a", "b", "c"]
+
+
+def test_compose_thread_factories_all_none_is_none():
+    assert _compose_thread_factories(None, None) is None
+
+
+def test_compose_thread_factories_single_returns_it_directly():
+    only = _make_thread_tool_factory(_FakeThreadLinks({}), _write_service(_RecordingWriter()))
+    assert _compose_thread_factories(None, only) is only
+
+
+# --- fabryka send_image_to_user (ADR 0027, A′3) — klucz = nadawca, nie wątek -----
+
+# Zakresy czatu wymagane bramką push-u; dokładamy do domyślnych, by konfiguracja była spójna.
+_CHAT_SCOPES = ("Chat.Create", "ChatMessage.Send")
+
+
+def test_user_push_factory_off_by_default_is_none():
+    """Strukturalna gwarancja: bramka OFF → fabryka push-u NIE powstaje (brak zapisu)."""
+    assert _build_user_push_factory(TeamsGraphSettings(), lambda: "tok") is None
+
+
+def test_user_push_factory_on_yields_scoped_send_image_tool():
+    """Bramka ON → nadawca (sender_id) dostaje ``send_image_to_user``; pusty nadawca → []."""
+    settings = TeamsGraphSettings(
+        enable_user_file_push=True,
+        max_user_image_kb=256,
+        scopes=(*TeamsGraphSettings().scopes, *_CHAT_SCOPES),
+    )
+    factory = _build_user_push_factory(settings, lambda: "tok")
+    assert factory is not None
+    # Klucz to sender_id (AAD id nadawcy), NIE external_id wątku — narzędzie dla realnego nadawcy.
+    assert [spec.name for spec in factory("u-anna-aad")] == ["send_image_to_user"]
+    # Pusty sender_id (drzwi bez pojęcia nadawcy) → brak celu → pusta lista, bez wyjątku.
+    assert factory("") == []
+
+
+# --- fabryka send_document_to_user (ADR 0027, wariant plikowy) + kompozycja push-u --------
+
+# Dokument wymaga zakresów czatu ORAZ zapisu (upload na OneDrive) — dokładamy oba do domyślnych.
+_DOC_SCOPES = (*_CHAT_SCOPES, "Files.ReadWrite.All")
+
+
+def test_user_doc_push_factory_off_by_default_is_none():
+    """Strukturalna gwarancja: bramka OFF → fabryka dokumentu NIE powstaje (brak zapisu)."""
+    assert _build_user_doc_push_factory(TeamsGraphSettings(), lambda: "tok") is None
+
+
+def test_user_doc_push_factory_on_yields_scoped_send_document_tool():
+    """Bramka ON → nadawca (sender_id) dostaje ``send_document_to_user``; pusty nadawca → []."""
+    settings = TeamsGraphSettings(
+        enable_user_doc_push=True,
+        max_user_doc_kb=256,
+        scopes=(*TeamsGraphSettings().scopes, *_DOC_SCOPES),
+    )
+    factory = _build_user_doc_push_factory(settings, lambda: "tok")
+    assert factory is not None
+    assert [spec.name for spec in factory("u-anna-aad")] == ["send_document_to_user"]
+    assert factory("") == []  # pusty sender_id → brak celu → pusta lista
+
+
+def test_compose_user_push_factories_concatenates_image_and_doc():
+    """Obraz + dokument (obie kluczowane sender_id) łączą się w jedną fabrykę per turę."""
+    combined = _compose_user_push_factories(
+        lambda sid: ["send_image_to_user"], lambda sid: ["send_document_to_user"]
+    )
+    assert combined is not None
+    assert combined("u-anna") == ["send_image_to_user", "send_document_to_user"]
+
+
+def test_compose_user_push_factories_all_none_is_none():
+    assert _compose_user_push_factories(None, None) is None
+
+
+def test_compose_user_push_factories_single_returns_it_directly():
+    only = _build_user_push_factory(
+        TeamsGraphSettings(
+            enable_user_file_push=True, scopes=(*TeamsGraphSettings().scopes, *_CHAT_SCOPES)
+        ),
+        lambda: "tok",
+    )
+    assert only is not None
+    assert _compose_user_push_factories(None, only) is only

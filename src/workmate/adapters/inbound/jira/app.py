@@ -16,12 +16,14 @@ kończy się czytelnym komunikatem, nie ``ImportError``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import signal
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound import env
-from workmate.config import EventsSettings, JiraSettings, TeamsPushSettings
+from workmate.config import EventsSettings, JiraSettings, TeamsPushSettings, require_writable
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,14 +41,18 @@ _MISSING_PUSH = (
 
 def main() -> None:
     """Uruchom proces drzwi Jira (polling PAT) + opcjonalny push zdarzeń do Teams."""
-    logging.basicConfig(level=logging.INFO)
     env.load_dotenv()
+    env.configure_logging()
 
     settings = JiraSettings.from_env()
     settings.validate()
     events_settings = EventsSettings.from_env()
     push_settings = TeamsPushSettings.from_env()
     push_settings.validate()
+    # R/L1: watermark drzwi i wspólny events.db MUSZĄ być zapisywalne — inaczej stan leci w próżnię
+    # na koncie kontenera z niezapisywalnym ~ (fail-fast na starcie, nie cichy crash-loop w pętli).
+    require_writable(settings.state_path, "WORKMATE_JIRA_STATE")
+    require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
     asyncio.run(_run(settings, events_settings, push_settings))
 
 
@@ -79,6 +85,7 @@ async def _run(
         import httpx
     except ImportError as exc:
         raise SystemExit(_MISSING_JIRA) from exc
+    from workmate.adapters.inbound.heartbeat import heartbeat_path, write_heartbeat
     from workmate.adapters.inbound.jira import state as state_store
     from workmate.adapters.inbound.jira.poller import JiraPoller
     from workmate.adapters.outbound.jira_api import build_jira_client
@@ -92,6 +99,20 @@ async def _run(
 
     def persist(current: dict[str, Any]) -> None:
         state_store.save(settings.state_path, current)
+
+    # Puls żywotności (R5): siostra pliku stanu na wolumenie, odświeżana po każdej udanej rundzie.
+    hb_path = heartbeat_path(settings.state_path)
+
+    def beat() -> None:
+        write_heartbeat(hb_path)
+
+    # Graceful shutdown (R1): SIGTERM/SIGINT → poller dokańcza rundę, zapisuje i wraca.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # Windows nie ma add_signal_handler — tam zamknięcie idzie przez KeyboardInterrupt (SIGINT).
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop.set)
 
     # Poller używa sync klienta (wołanego w puli wątków), notifier — async; osobne menedżery.
     async with httpx.AsyncClient(timeout=30) as async_http:
@@ -108,20 +129,37 @@ async def _run(
                 per_page=settings.per_page,
                 self_account=settings.self_account,
                 project_map=project_map,
+                stop=stop,
+                heartbeat=beat,
             )
-            tasks = [poller.run()]
+            tasks = [asyncio.create_task(poller.run())]
             if push_settings.enabled:
                 thread_links = _build_thread_links(events_settings, push_settings)
                 tasks.append(
-                    _build_notifier(
-                        async_http, events, state, persist, settings, push_settings, thread_links
-                    ).pump()
+                    asyncio.create_task(
+                        _build_notifier(
+                            async_http,
+                            events,
+                            state,
+                            persist,
+                            settings,
+                            push_settings,
+                            thread_links,
+                        ).pump()
+                    )
                 )
             else:
                 logger.info(
                     "Push do Teams wyłączony (żaden cel) — drzwi Jira działają ingest-only."
                 )
-            await asyncio.gather(*tasks)
+            # Poller kończy się kooperacyjnie po sygnale stop; notifier push anulujemy —
+            # zapisy stanu są atomowe, a push jest at-least-once (bez utraty/uszkodzenia).
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()  # propaguj awarię pętli (restart); czysty stop = brak wyjątku
 
 
 def _build_thread_links(events_settings: EventsSettings, push_settings: TeamsPushSettings) -> Any:

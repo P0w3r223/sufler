@@ -102,6 +102,7 @@ class WeeklyTimesheetService:
         already_done: Callable[[str, str], bool] | None = None,
         mark_done: Callable[[str, str, PersonOutcome], None] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(tz=ZoneInfo("UTC")),
+        send_document: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._hours = hours
         self._identities = identities
@@ -110,6 +111,10 @@ class WeeklyTimesheetService:
         # a ten przebieg jest wsadowy i synchroniczny. Mostkowanie tych światów należy do drzwi,
         # nie do rdzenia — dzięki temu testujemy pętlę zwykłą funkcją zapisującą wywołania.
         self._send_html = send_html
+        # Opcjonalna dostawa ZAŁĄCZNIKIEM (ADR 0035/0038 przez 0027): (aad, ścieżka_arkusza, html).
+        # Podana = plik jedzie realnym załącznikiem zamiast ścieżki tekstem; adapter czyta bajty z
+        # dysku (rdzeń pozostaje bez I/O). Brak = zachowanie dotychczasowe (ścieżka w treści).
+        self._send_document = send_document
         self._output_dir = output_dir.rstrip("/\\")
         self._tz = tz
         self._start_hour = start_hour
@@ -239,7 +244,16 @@ class WeeklyTimesheetService:
             )
             return outcome
         try:
-            self._send_html(person.aad_user_id, render_timesheet_message(timesheet, file_path=path))
+            if self._send_document is not None:
+                # Dostawa załącznikiem: rdzeń przekazuje ścieżkę arkusza (adapter czyta bajty) i
+                # bogaty HTML w trybie „w załączniku" (bez ścieżki serwerowej w treści).
+                self._send_document(
+                    person.aad_user_id, path, render_timesheet_message(timesheet, attached=True)
+                )
+            else:
+                self._send_html(
+                    person.aad_user_id, render_timesheet_message(timesheet, file_path=path)
+                )
         except Exception as exc:
             # Plik został — następny przebieg go nadpisze i ponowi wysyłkę (osoba nie jest
             # oznaczona jako obsłużona, bo ``_process_one`` woła ``mark_done`` tylko po sukcesie).

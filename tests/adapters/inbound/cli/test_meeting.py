@@ -29,6 +29,7 @@ from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.config import AgentSettings
 from workmate.core.application.services import NotesWriteService
 from workmate.core.domain.models import MeetingSummary, Project
+from workmate.core.domain.transcript import SpeakerRoster
 from workmate.core.errors import LLMError, WriteError
 
 
@@ -39,7 +40,7 @@ class _FakeSummarizer:
         self._summary = summary
         self.seen: list[str] = []
 
-    def summarize(self, transcript: str) -> MeetingSummary:
+    def summarize(self, transcript: str, roster: SpeakerRoster) -> MeetingSummary:
         self.seen.append(transcript)
         return self._summary
 
@@ -67,7 +68,7 @@ def _write_service(out_dir: Path) -> NotesWriteService:
 def test_run_harness_writes_note_to_disk_without_claude(tmp_path: Path):
     summarizer = _FakeSummarizer(_summary())
 
-    note = run_harness(
+    outcome = run_harness(
         "Transkrypt: ... ustalenia ...",
         project="scada-integration",
         meeting_date=date(2026, 7, 20),
@@ -77,7 +78,11 @@ def test_run_harness_writes_note_to_disk_without_claude(tmp_path: Path):
 
     # Transkrypt trafił do summarizera; miejsce zapisu z wywołania (firma z rejestru).
     assert summarizer.seen == ["Transkrypt: ... ustalenia ..."]
-    assert note.id == "mpwik/scada-integration/2026-07-20-przeglad-api"
+    assert outcome.created is True
+    assert outcome.note is not None
+    note = outcome.note
+    # id deterministyczny z meeting_ref (nie ze slug tytułu Claude), ADR 0043.
+    assert note.id.startswith("mpwik/scada-integration/2026-07-20-mtg-")
     # Notatka realnie zapisana na dysku w KATALOGU HARNESSU (nie w data/notes/).
     written = tmp_path / f"{note.id}.md"
     assert written.is_file()
@@ -86,7 +91,7 @@ def test_run_harness_writes_note_to_disk_without_claude(tmp_path: Path):
 
 def test_run_harness_location_from_caller_not_transcript(tmp_path: Path):
     # Streszczenie nie niesie project/date — o dacie/projekcie decyduje wywołujący (ADR 0009 §3).
-    note = run_harness(
+    outcome = run_harness(
         "dowolna tresc",
         project="scada-integration",
         meeting_date=date(2024, 1, 2),
@@ -94,9 +99,10 @@ def test_run_harness_location_from_caller_not_transcript(tmp_path: Path):
         write_service=_write_service(tmp_path),
     )
 
-    assert note.metadata.project == "scada-integration"
-    assert note.metadata.date == date(2024, 1, 2)
-    assert note.id == "mpwik/scada-integration/2024-01-02-przeglad-api"
+    assert outcome.note is not None
+    assert outcome.note.metadata.project == "scada-integration"
+    assert outcome.note.metadata.date == date(2024, 1, 2)
+    assert outcome.note.id.startswith("mpwik/scada-integration/2024-01-02-mtg-")
 
 
 def test_run_harness_unknown_project_raises_write_error(tmp_path: Path):
@@ -156,7 +162,7 @@ def test_parse_date_invalid_raises():
 
 
 def test_format_result_reports_id_title_and_counts(tmp_path: Path):
-    note = run_harness(
+    outcome = run_harness(
         "tresc",
         project="scada-integration",
         meeting_date=date(2026, 7, 20),
@@ -164,9 +170,9 @@ def test_format_result_reports_id_title_and_counts(tmp_path: Path):
         write_service=_write_service(tmp_path),
     )
 
-    report = _format_result(note, tmp_path, is_default_out=False)
+    report = _format_result(outcome, tmp_path, is_default_out=False)
 
-    assert note.id in report
+    assert outcome.note_id in report
     assert "Przeglad API" in report
     assert "Anna Kowalska" in report
     assert "decyzje:     1" in report
@@ -202,8 +208,15 @@ def test_main_maps_llm_error_to_clean_exit(monkeypatch: pytest.MonkeyPatch, tmp_
     transcript.write_text("dowolny transkrypt", encoding="utf-8")
     monkeypatch.setattr(
         "sys.argv",
-        ["workmate-meeting", "--project", "scada-integration",
-         "--date", "2026-07-20", "--transcript", str(transcript)],
+        [
+            "workmate-meeting",
+            "--project",
+            "scada-integration",
+            "--date",
+            "2026-07-20",
+            "--transcript",
+            str(transcript),
+        ],
     )
     monkeypatch.setattr(AgentSettings, "from_env", staticmethod(lambda: AgentSettings(api_key="x")))
     # Bez Claude: podmień budowę summarizera i sam przepływ (błąd zgłasza run_harness).

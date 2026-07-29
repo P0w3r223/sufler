@@ -59,6 +59,8 @@ class GithubPoller:
         self_login: str = "",
         project: str = "",
         clock: Callable[[], datetime] = _utcnow,
+        stop: asyncio.Event | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> None:
         self._client = client
         self._events = events
@@ -72,26 +74,58 @@ class GithubPoller:
         self._self_login = self_login
         self._project = project
         self._clock = clock
+        self._stop = stop
+        self._heartbeat = heartbeat
 
     async def run(self) -> None:
-        """Pętla główna: co ``poll_interval`` odpytaj repo o nowe issue/komentarze i przyjmij je."""
+        """Pętla główna: co ``poll_interval`` odpytaj repo o nowe issue/komentarze i przyjmij je.
+
+        Sygnał ``stop`` (SIGTERM w ``app.py``) kończy pętlę PO utrwaleniu bieżącej rundy —
+        graceful shutdown: ``docker stop`` nie ubija procesu w połowie zapisu (kontrakt R1).
+        """
         await self._resolve_self_login()
         # Seed w formacie GitHuba (``…Z``), NIE ``isoformat`` (``+00:00``): watermarki CI/recenzji
         # są porównywane leksykograficznie ze znacznikami GitHuba, więc format musi być zgodny.
         self._seed(_iso_z(self._clock()))
         logger.info(
-            "Nasłuch GitHub %s/%s (delegowany PAT, konto=%s). Ctrl+C kończy.",
+            "Nasłuch GitHub %s/%s (delegowany PAT, konto=%s). Ctrl+C/SIGTERM kończy.",
             self._owner,
             self._repo,
             self._self_login or "?",
         )
-        while True:
+        while not self._stopping():
             try:
-                await self.poll_once()
+                await self.poll_once()  # utrwala watermark na końcu rundy
             except Exception:
                 # Błąd rundy (sieć/limit/kształt) nie kładzie pętli — ponowimy za chwilę.
                 logger.exception("Błąd pollingu GitHub %s/%s", self._owner, self._repo)
+            else:
+                # Puls TYLKO po udanej rundzie (R5) — jałowa pętla (np. błąd w kółko) nie odświeża
+                # pliku, więc healthcheck po wieku pulsu wykryje zawieszenie.
+                self._beat()
+            if await self._sleep_or_stop():
+                break
+        logger.info("Drzwi GitHub: zatrzymanie na sygnał, stan zapisany.")
+
+    def _beat(self) -> None:
+        """Odśwież puls żywotności, jeśli wstrzyknięto (R5). Bez callbacku — no-op (dev/testy)."""
+        if self._heartbeat is not None:
+            self._heartbeat()
+
+    def _stopping(self) -> bool:
+        """True, gdy ``app.py`` ustawił ``stop`` (SIGTERM/SIGINT) — pętla ma się zakończyć."""
+        return self._stop is not None and self._stop.is_set()
+
+    async def _sleep_or_stop(self) -> bool:
+        """Czekaj ``poll_interval`` albo do sygnału stop; zwróć True, gdy stop (przerwij pętlę)."""
+        if self._stop is None:
             await asyncio.sleep(self._poll_interval)
+            return False
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
+        except asyncio.TimeoutError:
+            return False
+        return True
 
     async def poll_once(self) -> int:
         """Jedna runda: pobierz, zmapuj/przefiltruj, przyjmij do magazynu, przesuń watermark.

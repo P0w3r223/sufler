@@ -33,11 +33,19 @@ _STYLE_CELL = "border:1px solid #ccc;padding:4px 8px"
 _STYLE_NUM = "border:1px solid #ccc;padding:4px 8px;text-align:right"
 
 
-def render_timesheet_message(timesheet: PersonTimesheet, *, file_path: str = "") -> str:
-    """Złóż wiadomość 1:1 z kartą czasu: nagłówek, tabela wpisów, suma, ścieżka pliku i stopka.
+def render_timesheet_message(
+    timesheet: PersonTimesheet, *, file_path: str = "", attached: bool = False
+) -> str:
+    """Złóż wiadomość 1:1 z kartą czasu: nagłówek, tabela wpisów, suma, wskazanie pliku i stopka.
 
     Zakłada, że osoba PRACOWAŁA (``timesheet.worked()``) — pustej karty nie wysyłamy w ogóle,
     więc nie ma tu gałęzi „brak godzin". Wołający sprawdza predykat przed renderem.
+
+    Dwie ROZŁĄCZNE ścieżki wskazania arkusza (ADR 0035/0038):
+    - ``attached=True`` — plik jedzie ZAŁĄCZNIKIEM tej wiadomości (dostawa przez ``UserDocSender``);
+      mówimy „w załączniku" i NIE pokazujemy ścieżki serwerowej (odbiorca i tak jej nie dosięga).
+    - w przeciwnym razie, gdy ``file_path`` niepuste — fallback: pokazujemy ścieżkę pliku TEKSTEM.
+    ``attached`` ma pierwszeństwo: przy dostawie załącznikiem ścieżka jest bez znaczenia.
     """
     name = escape(timesheet.person.display_name or timesheet.person.source_id)
     week = escape(timesheet.week_label or f"{timesheet.week_start}–{timesheet.week_end}")
@@ -51,7 +59,9 @@ def render_timesheet_message(timesheet: PersonTimesheet, *, file_path: str = "")
         # nie jest sumą zaokrągleń.
         f"<p>Razem: <b>{total}</b> ({timesheet.total_hours} h)</p>",
     ]
-    if file_path:
+    if attached:
+        parts.append("<p>📎 Arkusz importu WorklogPRO jest w <b>załączniku</b> tej wiadomości.</p>")
+    elif file_path:
         # Ścieżka jako TEKST, nie link: to lokalizacja w sieci firmowej, a klikalny odnośnik
         # w wiadomości od bota jest wzorcem, którego nie chcemy uczyć ludzi ufać.
         parts.append(f"<p>Arkusz do importu: <code>{escape(file_path)}</code></p>")

@@ -4,7 +4,8 @@ Harness `workmate-meeting` uruchamia CAŁY przepływ M3 (Faza 2 / [ADR 0009](../
 end-to-end LOKALNIE, bez Azure/Graph: **wklejony transkrypt → streszczenie przez Claude
 (`AnthropicMeetingSummarizer`) → złożenie `NoteMetadata` (zamrożony schemat) → zapis przez
 bramkowany, dopisujący `NotesWriteService`**. Źródłem transkryptu jest `InMemoryTranscriptSource`;
-realny `GraphTranscriptSource` jest odłożony do dostępu Azure/M365 (świadomy stub). To domyka
+realny wariant Graph (`--source graph`, `HttpxGraphTranscriptSource`, B1) już istnieje — ten harness
+opisuje przepływ LOKALNY (`--source memory`), bez Azure. To domyka
 follow-up z ADR 0009 — możliwość przejścia M3 wobec Claude na wklejonym transkrypcie.
 
 ## Wymagania

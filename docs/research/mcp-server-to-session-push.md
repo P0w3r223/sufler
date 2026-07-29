@@ -2,7 +2,7 @@
 
 Date: 2026-07-27
 Status: accepted
-Author: Patryk
+Author: P0w3r223
 Related to: [ADR 0040](../adr/0040-eventstore-to-mcp-session-cursor-read.md), [ADR 0019](../adr/0019-shared-event-store.md)
 
 ---

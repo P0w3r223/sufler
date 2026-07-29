@@ -9,9 +9,22 @@ oba warianty, żeby ``.env`` z Windowsa działał tak samo jak z powłoki unikso
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import sys
 from pathlib import Path
+
+
+def configure_logging(level: str | None = None) -> None:
+    """Skonfiguruj root logger wg ``WORKMATE_LOG_LEVEL`` (domyślnie ``INFO``).
+
+    Wspólne dla drzwi inbound — inaczej każdy entrypoint zaszywa ``INFO`` na sztywno i
+    ``WORKMATE_LOG_LEVEL=DEBUG`` nie ma efektu (a serwer HTTP już bierze poziom z
+    ``settings.log_level``, ``server.py``). Wołać PO ``load_dotenv``, żeby poziom z ``.env``
+    również zadziałał; ta sama zmienna, którą czyta ``Settings.log_level`` (``config.py``).
+    """
+    resolved = (level or os.environ.get("WORKMATE_LOG_LEVEL", "INFO")).upper()
+    logging.basicConfig(level=resolved)
 
 
 def force_utf8_io() -> None:

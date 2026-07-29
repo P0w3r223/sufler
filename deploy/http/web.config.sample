@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Szkielet IIS reverse-proxy dla WorkMate (Bramka 3, ADR 0007).
+  Terminuje TLS na 443 i przekazuje /mcp na uvicorn (loopback 127.0.0.1:8000).
+
+  Wymagania na serwerze:
+    * URL Rewrite  (https://www.iis.net/downloads/microsoft/url-rewrite)
+    * Application Request Routing (ARR)  — dostarcza proxy dla akcji Rewrite na URL http://
+    * Certyfikat firmowy powiązany z hostem workmate.firma.pl na porcie 443.
+
+  KRYTYCZNE dla streamable-http: WYŁĄCZ buforowanie odpowiedzi. SSE/chunked
+  strumieniuje — z buforowaniem klient MCP zawiśnie. ARR `responseBufferLimit`
+  ustawia się w applicationHost.config (system.webServer/proxy) i domyślnie jest
+  zablokowany do nadpisania w web.config — patrz sekcja niżej i notka na końcu.
+
+  Skopiuj do katalogu witryny jako `web.config` i podmień workmate.firma.pl.
+-->
+<configuration>
+  <system.webServer>
+
+    <!-- Reverse proxy: https://workmate.firma.pl/mcp  ->  http://127.0.0.1:8000/mcp -->
+    <rewrite>
+      <rules>
+        <rule name="WorkMate MCP reverse proxy" stopProcessing="true">
+          <match url="^mcp(/.*)?$" />
+          <action type="Rewrite" url="http://127.0.0.1:8000/mcp{R:1}" />
+          <!--
+            Zachowaj publiczny Host (wtedy podaj go w WORKMATE_ALLOWED_HOSTS w OBU
+            formach: bez portu i z ":*"). Alternatywa: przepisz Host na 127.0.0.1.
+          -->
+          <serverVariables>
+            <set name="HTTP_X_FORWARDED_PROTO" value="https" />
+          </serverVariables>
+        </rule>
+      </rules>
+    </rewrite>
+
+    <!--
+      ARR na poziomie witryny. `preserveHostHeader="true"` przekazuje publiczny
+      Host do uvicorn; `responseBufferLimit="0"` wyłącza buforowanie (SSE).
+      To sekcja ARR `system.webServer/proxy` — BEZ namespace `urn:aspnetcore`
+      (tamten należy do modułu ASP.NET Core i tu byłby ignorowany → buforowanie SSE
+      zostałoby włączone, klient MCP zawisłby).
+      UWAGA: sekcja proxy bywa zablokowana w applicationHost.config — jeśli IIS
+      zgłosi błąd 500.19 „lock", odblokuj ją (patrz notka na końcu) albo ustaw
+      responseBufferLimit=0 bezpośrednio w applicationHost.config.
+    -->
+    <proxy enabled="true" preserveHostHeader="true" responseBufferLimit="0" />
+
+    <!-- Bez cache'owania odpowiedzi proxy. -->
+    <caching enabled="false" enableKernelCache="false" />
+
+  </system.webServer>
+</configuration>
+
+<!--
+  Gdyby sekcja <proxy> była zablokowana (typowe), ustaw ją RAZ na serwerze:
+
+    %windir%\system32\inetsrv\appcmd.exe unlock config ^
+      -section:system.webServer/proxy
+
+  albo w applicationHost.config:
+
+    <system.webServer>
+      <proxy enabled="true" preserveHostHeader="true" responseBufferLimit="0" />
+    </system.webServer>
+
+  Weryfikacja po wdrożeniu: deploy/http/smoke-transport.ps1
+-->
