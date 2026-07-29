@@ -19,6 +19,15 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from workmate.adapters.inbound.document_text import (
+    TEXT_EXTS as _TEXT_EXTS,
+)
+from workmate.adapters.inbound.document_text import (
+    extract_docx,
+    extract_pptx,
+    extract_text,
+    extract_xlsx,
+)
 from workmate.core.ports.llm import Attachment
 
 if TYPE_CHECKING:
@@ -45,11 +54,6 @@ _SUPPORTED_IMAGE = {
 # ustawia ``img.format="HEIF"`` dla .heic i .heif.
 _PHOTO_SOURCE_FORMATS = {"HEIF"}
 _JPEG_QUALITY = 85
-# Rozszerzenia traktowane jako czysty tekst (dekodowanie UTF-8, bez base64).
-_TEXT_EXTS = {"txt", "md", "csv", "log", "json", "xml", "yaml", "yml"}
-# Górne capy ekstrakcji — chronią przed absurdalnie dużym plikiem (bloki wracają co turę).
-_MAX_TEXT_CHARS = 200_000
-_MAX_SHEET_ROWS = 2000
 # Sufit liczby pikseli obrazu do LOKALNEGO dekodowania (downscaling). Powyżej nie dekodujemy
 # (bomba dekompresji / wielki skan mógłby zjeść setki MB RAM i położyć pollera) — oddajemy
 # oryginał (Anthropic skaluje serwerowo) albo degradujemy do notki. 40 MP ≈ 160 MB RGBA.
@@ -196,13 +200,13 @@ def _build(
         pdf = Attachment("document", "application/pdf", ref.name, data_base64=_b64(data))
         return pdf, len(data)
     if ext == "docx":
-        return Attachment("text", "text/plain", ref.name, text=_extract_docx(data)), 0
+        return Attachment("text", "text/plain", ref.name, text=extract_docx(data)), 0
     if ext == "xlsx":
-        return Attachment("text", "text/plain", ref.name, text=_extract_xlsx(data)), 0
+        return Attachment("text", "text/plain", ref.name, text=extract_xlsx(data)), 0
     if ext == "pptx":
-        return Attachment("text", "text/plain", ref.name, text=_extract_pptx(data)), 0
+        return Attachment("text", "text/plain", ref.name, text=extract_pptx(data)), 0
     if ext in _TEXT_EXTS:
-        return Attachment("text", "text/plain", ref.name, text=_extract_text(data)), 0
+        return Attachment("text", "text/plain", ref.name, text=extract_text(data)), 0
     return None
 
 
@@ -296,68 +300,6 @@ def _sniff_image(data: bytes) -> tuple[str, bytes] | None:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp", data
     return None
-
-
-def _extract_docx(data: bytes) -> str:
-    """Wyciągnij tekst z .docx: akapity + komórki tabel (``python-docx``, import leniwy)."""
-    from docx import Document
-
-    doc = Document(io.BytesIO(data))
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
-    for table in doc.tables:
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            if any(cells):
-                parts.append(" | ".join(cells))
-    return "\n".join(parts).strip()
-
-
-def _extract_xlsx(data: bytes) -> str:
-    """Wyciągnij tekst z .xlsx: per arkusz nagłówek + wiersze (``openpyxl``, import leniwy)."""
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    try:
-        parts: list[str] = []
-        for sheet in workbook.worksheets:
-            parts.append(f"# Arkusz: {sheet.title}")
-            rows = 0
-            for row in sheet.iter_rows(values_only=True):
-                cells = [str(value) for value in row if value is not None]
-                if not cells:
-                    continue
-                parts.append(" | ".join(cells))
-                rows += 1
-                if rows >= _MAX_SHEET_ROWS:
-                    parts.append("… (obcięto wiersze)")
-                    break
-        return "\n".join(parts).strip()
-    finally:
-        workbook.close()
-
-
-def _extract_pptx(data: bytes) -> str:
-    """Wyciągnij tekst z .pptx: per slajd tekst z kształtów (``python-pptx``, import leniwy)."""
-    from pptx import Presentation
-
-    prs = Presentation(io.BytesIO(data))
-    parts: list[str] = []
-    for index, slide in enumerate(prs.slides, start=1):
-        parts.append(f"# Slajd {index}")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                text = shape.text_frame.text.strip()
-                if text:
-                    parts.append(text)
-    return "\n".join(parts).strip()
-
-
-def _extract_text(data: bytes) -> str:
-    """Zdekoduj plik tekstowy (UTF-8, nieznane bajty zastąpione) z górnym capem długości."""
-    text = data.decode("utf-8", errors="replace")
-    if len(text) > _MAX_TEXT_CHARS:
-        text = text[:_MAX_TEXT_CHARS] + "\n… (obcięto)"
-    return text.strip()
 
 
 def _b64(data: bytes) -> str:

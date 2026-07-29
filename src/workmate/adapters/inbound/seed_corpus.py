@@ -1,9 +1,11 @@
-"""Seed korpusu (W0) — ``workmate-seed-corpus`` importuje lokalne markdowny do notatek.
+"""Seed korpusu (W0) — ``workmate-seed-corpus`` importuje lokalne dokumenty do notatek.
 
 Zimny start: świeży korpus jest pusty, więc bot nie ma czego przeszukać (zasila F3/F4/F5).
-Ten entrypoint bierze katalog dokumentów (README/ADR), wyprowadza z każdego DETERMINISTYCZNĄ
-notatkę i dokłada ją przez SANKCJONOWANĄ ścieżkę zapisu (``NotesWriteService.save_note``) — nie
-nowe narzędzie mutujące, więc golden MCP i ``NoteMetadata`` zostają nietknięte (reguły 2/3/6).
+Ten entrypoint bierze katalog dokumentów (md/txt oraz docx/xlsx/pptx/pdf — te binarne ekstrahuje
+do tekstu przez ``document_text``), wyprowadza z każdego DETERMINISTYCZNĄ notatkę i dokłada ją
+przez SANKCJONOWANĄ ścieżkę zapisu (``NotesWriteService.save_note``) — nie nowe narzędzie
+mutujące, więc golden MCP i ``NoteMetadata`` zostają nietknięte (reguły 2/3/6). Źródłem może być
+folder zsynchronizowany z SharePointem (OneDrive) — importer nie sięga sam do sieci.
 
 Dedup po id: id notatki wywodzi się ze STAŁYCH (projekt z zaufanego argumentu + data z nagłówka
 ``Date:`` albo ``--date`` + tytuł z pierwszego ``# H1``), więc powtórny przebieg wykrywa
@@ -26,6 +28,11 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from workmate.adapters.inbound.document_text import (
+    SUPPORTED_EXTS,
+    DocumentExtractionError,
+    extract_text_from_path,
+)
 from workmate.config import Settings
 from workmate.core.application.services import NotesWriteService, WriteError
 from workmate.core.domain.models import NoteMetadata
@@ -166,19 +173,31 @@ def format_report(results: Sequence[SeedResult], *, write: bool) -> str:
     return "\n".join(lines)
 
 
-def _load_documents(source_dir: Path, pattern: str, *, recursive: bool) -> list[tuple[str, str]]:
-    """Wczytaj markdowny z katalogu jako (ścieżka względna POSIX, treść), posortowane stabilnie.
+def _load_documents(
+    source_dir: Path, pattern: str, *, recursive: bool
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Wczytaj obsługiwane dokumenty jako (ścieżka względna POSIX, tekst); stabilnie posortowane.
 
-    Dekodujemy z ``errors="replace"`` — pojedynczy plik w cp1250/latin-2 (realne na Windows,
-    o czym ostrzega docstring modułu) nie może wywrócić całej partii ``UnicodeDecodeError``em;
-    symetria z reconfiguracją wyjścia w ``main``.
+    Zwraca ``(dokumenty, pominięte)``. Rozszerzenie decyduje o ekstrakcji: md/txt/… czytamy jako
+    tekst, docx/xlsx/pptx/pdf ekstrahujemy do tekstu (``document_text``). Plik o nieznanym
+    rozszerzeniu ALBO nieczytelny (uszkodzony/zaszyfrowany) trafia do ``pominięte`` z powodem —
+    NIE wywraca partii ani nie udaje pustej notatki. ``pominięte`` niesie (ścieżka, powód).
     """
     matches = source_dir.rglob(pattern) if recursive else source_dir.glob(pattern)
     files = sorted(p for p in matches if p.is_file())
-    return [
-        (p.relative_to(source_dir).as_posix(), p.read_text(encoding="utf-8", errors="replace"))
-        for p in files
-    ]
+    documents: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str]] = []
+    for path in files:
+        rel = path.relative_to(source_dir).as_posix()
+        ext = path.suffix.lstrip(".").lower()
+        if ext not in SUPPORTED_EXTS:
+            skipped.append((rel, f"nieobsługiwane rozszerzenie .{ext or '(brak)'}"))
+            continue
+        try:
+            documents.append((rel, extract_text_from_path(path)))
+        except DocumentExtractionError as exc:
+            skipped.append((rel, str(exc)))
+    return documents, skipped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -194,7 +213,11 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_FALLBACK_DATE.isoformat(),
         help="data dla dokumentów bez nagłówka Date: (RRRR-MM-DD, domyślnie stała)",
     )
-    parser.add_argument("--glob", default="*.md", help="wzorzec plików (domyślnie *.md)")
+    parser.add_argument(
+        "--glob",
+        default="*",
+        help="wzorzec plików (domyślnie * — filtrowane po obsługiwanych rozszerzeniach)",
+    )
     parser.add_argument(
         "--recursive", action="store_true", help="przeszukaj też podkatalogi"
     )
@@ -232,7 +255,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Projekt nie istnieje w rejestrze: {args.project!r}")
         return 1
 
-    documents = _load_documents(source_dir, args.glob, recursive=args.recursive)
+    documents, skipped = _load_documents(source_dir, args.glob, recursive=args.recursive)
+    if skipped:
+        print("Pominięte pliki (nie zaimportowano):")
+        for rel, reason in skipped:
+            print(f"• {rel} — {reason}")
     writer = MarkdownNotesWriter(settings.notes_dir)
     service = NotesWriteService(writer, projects)
     results = apply_seed(

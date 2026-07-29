@@ -15,6 +15,7 @@ from workmate.adapters.inbound.seed_corpus import (
     ACTION_CREATED,
     ACTION_SKIP,
     ACTION_WOULD_CREATE,
+    _load_documents,
     apply_seed,
     derive_note,
     format_report,
@@ -147,6 +148,43 @@ def test_intra_batch_collision_is_faithful_dry_run_vs_write():
     )
     assert [r.action for r in wet] == [ACTION_CREATED, ACTION_COLLISION]
     assert len(wet_writer.saved) == 1  # kolizja NIE utworzyła drugiej notatki
+
+
+# --- _load_documents: dyspozycja formatów i pominięcia -------------------------
+
+
+def test_load_documents_reads_text_and_extracts_office(tmp_path):
+    """Katalog md/txt/docx → wszystkie wczytane jako (ścieżka, tekst); binarny ekstrahowany."""
+    from docx import Document
+
+    (tmp_path / "notatka.md").write_text("# Tytuł\n\ntreść", encoding="utf-8")
+    (tmp_path / "plik.txt").write_text("zwykły tekst", encoding="utf-8")
+    doc = Document()
+    doc.add_paragraph("Ustalenia z Worda")
+    doc.save(tmp_path / "spec.docx")
+
+    documents, skipped = _load_documents(tmp_path, "*", recursive=False)
+
+    by_path = dict(documents)
+    assert by_path["notatka.md"].startswith("# Tytuł")
+    assert by_path["plik.txt"] == "zwykły tekst"
+    assert "Ustalenia z Worda" in by_path["spec.docx"]
+    assert skipped == []
+
+
+def test_load_documents_skips_unsupported_and_corrupt_with_reason(tmp_path):
+    """Nieobsługiwane rozszerzenie i uszkodzony docx → 'pominięte', bez wywracania partii."""
+    (tmp_path / "ok.md").write_text("dobra notatka", encoding="utf-8")
+    (tmp_path / "obraz.png").write_bytes(b"\x89PNG\r\n")
+    (tmp_path / "zepsuty.docx").write_bytes(b"to nie jest zip")
+
+    documents, skipped = _load_documents(tmp_path, "*", recursive=False)
+
+    assert [src for src, _ in documents] == ["ok.md"]
+    reasons = dict(skipped)
+    assert set(reasons) == {"obraz.png", "zepsuty.docx"}
+    assert "nieobsługiwane" in reasons["obraz.png"]  # powód niesie rozszerzenie
+    assert reasons["zepsuty.docx"]  # uszkodzony plik → niepusty powód (nie wywraca partii)
 
 
 def test_report_summarizes_actions():
