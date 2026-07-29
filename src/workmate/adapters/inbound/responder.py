@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from workmate.core.agent.runtime import AgentRuntime
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
+    from workmate.core.application.metrics import MetricsService
     from workmate.core.application.services import NotesWriteService
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
@@ -165,6 +166,7 @@ class ConversationalResponder:
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
+        metrics: MetricsService | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
@@ -187,6 +189,9 @@ class ConversationalResponder:
         # brak (bramka off / inne drzwi). Read-only ``CommandRouter`` zostaje read-only (ADR 0017);
         # ta komenda pisze notatkę i biegnie POZA ``_store_lock`` (pobór Graph + Claude są wolne).
         self._meeting_notes = meeting_notes
+        # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
+        # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
+        self._metrics = metrics
         # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
         # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
         # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
@@ -211,6 +216,17 @@ class ConversationalResponder:
     def _respond_sync(self, message: InboundMessage) -> str:
         # Klucz wątku: rozmowa z kanału (czat/wątek), a gdy jej brak — nadawca.
         external_id = message.conversation_id or message.sender or "default"
+        # Metryka wywołania (Tor A): best-effort, PRZED dispatchem, więc liczy też komendy. Nadawca
+        # jest pseudonimizowany w serwisie; błąd licznika (np. blokada SQLite) NIE może zabić tury.
+        if self._metrics is not None:
+            try:
+                self._metrics.record(
+                    self._channel, message.sender_id or message.sender, self._clock()
+                )
+            except Exception:
+                logger.warning(
+                    "Nie udało się zapisać metryki wywołania (kanał %r) — pomijam", self._channel
+                )
         # Komenda read-only (``/pomoc``, ``/nowa``, ``/szukaj``, …): wykonaj i zwróć odpowiedź
         # PRZED pętlą agenta — bez wołania LLM i bez ``record_run`` (komenda ≠ tura rozmowy,
         # nie liczy się do limitu kontekstu ani FTS). ``dispatch`` = ``None`` → to zwykła wiadomość.

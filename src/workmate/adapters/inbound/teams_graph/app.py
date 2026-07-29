@@ -707,6 +707,7 @@ def _build_responder(
         thread_tool_factory=thread_factory,
         user_push_tool_factory=user_push_factory,
         meeting_notes=meeting_router,
+        supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
     )
 
 

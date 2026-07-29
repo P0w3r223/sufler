@@ -173,6 +173,10 @@ class Settings:
     allowed_origins: tuple[str, ...]
     tls_certfile: Path | None
     tls_keyfile: Path | None
+    # Metryki użycia (Tor A): ścieżka pliku SQLite licznika wywołań. ``None`` (brak
+    # WORKMATE_METRICS_DB) = metryki wyłączone (drzwi nie zapisują nic). Osobny plik od
+    # events.db/conversations.db — dane operacyjne poza bazą wiedzy; pseudonim zamiast tożsamości.
+    metrics_db: Path | None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -204,6 +208,7 @@ class Settings:
             allowed_origins=_list_from_env("WORKMATE_ALLOWED_ORIGINS", ()),
             tls_certfile=_optional_path_from_env("WORKMATE_TLS_CERTFILE"),
             tls_keyfile=_optional_path_from_env("WORKMATE_TLS_KEYFILE"),
+            metrics_db=_optional_path_from_env("WORKMATE_METRICS_DB"),
         )
 
 

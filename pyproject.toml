@@ -127,6 +127,12 @@ workmate-worklog-selfservice = "workmate.adapters.inbound.worklog_selfservice.ap
 # Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez
 # compose (`docker compose ps` → healthy/unhealthy), nie ręcznie: `workmate-heartbeat-check --file … --max-age …`.
 workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"
+# Raport metryk użycia (Tor A): zwija licznik SQLite do tabeli. `workmate-metrics [--db …]`
+# (domyślnie WORKMATE_METRICS_DB — ta sama ścieżka, która włącza zbieranie).
+workmate-metrics = "workmate.adapters.inbound.metrics_report:main"
+# Seed korpusu (W0): importuje lokalne markdowny (README/ADR) do notatek. Domyślnie dry-run;
+# zapis dopiero z `--write`. `workmate-seed-corpus --source <dir> --project <klucz> [--write]`.
+workmate-seed-corpus = "workmate.adapters.inbound.seed_corpus:main"
 
 # Narzędzia deweloperskie (PEP 735) — nie trafiają do dystrybucji.
 # Instalacja: `uv sync` (grupa `dev` jest domyślnie włączana przez uv).

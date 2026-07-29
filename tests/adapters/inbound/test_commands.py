@@ -60,9 +60,13 @@ def _service() -> ConversationService:
 def _router(
     canned: dict[str, dict[str, object]] | None = None,
     service: ConversationService | None = None,
+    *,
+    supports_attachments: bool = False,
 ) -> tuple[CommandRouter, _SpyTools]:
     tools = _SpyTools(canned or {})
-    router = CommandRouter(service or _service(), tools.as_map())
+    router = CommandRouter(
+        service or _service(), tools.as_map(), supports_attachments=supports_attachments
+    )
     return router, tools
 
 
@@ -121,6 +125,31 @@ def test_help_lists_every_command_token():
 def test_help_alias_works():
     router, _ = _router()
     assert router.dispatch("/help", _CTX) == router.dispatch("/pomoc", _CTX)
+
+
+def test_help_includes_intro_and_examples():
+    """``/pomoc`` prowadzi za rękę: krótkie intro + sekcja przykładowych pytań (F7)."""
+    router, _ = _router()
+    out = router.dispatch("/pomoc", _CTX)
+    assert out is not None
+    assert "WorkMate" in out
+    assert "Przykłady pytań:" in out
+    assert out.count("•") >= 3
+
+
+def test_help_surfaces_attachment_capability_only_when_supported():
+    """``/pomoc`` uwidacznia multimodal (F8) tylko na drzwiach z plikami, nie globalnie."""
+    on, _ = _router(supports_attachments=True)
+    out_on = on.dispatch("/pomoc", _CTX)
+    assert out_on is not None
+    lowered = out_on.lower()
+    assert "wrzuć" in lowered
+    assert "hmi" in lowered or "pdf" in lowered
+
+    off, _ = _router(supports_attachments=False)
+    out_off = off.dispatch("/pomoc", _CTX)
+    assert out_off is not None
+    assert "wrzuć" not in out_off.lower()  # drzwi tekstowe nie obiecują załączników
 
 
 # --- /nowa (start_new_thread) ---------------------------------------------------
