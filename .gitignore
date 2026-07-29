@@ -27,6 +27,8 @@ BotFramework-Emulator-main/
 
 # Lokalny indeks CodeGraph (graf kodu per maszyna, odbudowywalny przez `codegraph init`)
 .codegraph/
+# Lokalny indeks code-review-graph (crg, graf kodu per maszyna, odbudowywalny przez `crg build`)
+.code-review-graph/
 # Eksport CodeGraph (artefakt binarny, nie kod) — odbudowywalny, nie commitować.
 codegraph-*.zip
 
