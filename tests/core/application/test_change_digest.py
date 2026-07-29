@@ -79,6 +79,16 @@ def test_since_counts_by_source():
     assert digest.by_source == (("github", 2), ("jira", 1))
 
 
+def test_since_counts_in_window_regardless_of_scan_order():
+    # ``recent`` sortuje po id (ingestii), NIE po occurred_at — filtr/fold nie mogą zakładać
+    # kolejności po dacie. Mieszamy porządek: wynik zależy od zawartości okna, nie pozycji.
+    events = [_event(day=10, ident=5), _event(day=20, ident=4), _event(day=7, ident=3)]
+
+    digest = ChangeDigestService(_FakeEvents(events)).since(date(2026, 7, 8))
+
+    assert digest.total == 2  # day10 i day20 (>= 8); day7 odpada — bez względu na kolejność skanu
+
+
 def test_since_marks_truncated_when_scan_cap_hits_within_window():
     # Sufit 2, a wszystkie 3 zdarzenia są w oknie: skanujemy tylko 2 najnowsze, więc poza sufitem
     # mogą być kolejne → truncated. Liczymy tylko to, co zeskanowaliśmy.

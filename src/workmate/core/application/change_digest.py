@@ -2,9 +2,10 @@
 
 Fold zdarzeń warstwy spajającej: ``EventService.recent`` (najnowsze pierwsze) filtrowany po
 ``occurred_at.date() >= since``, pogrupowany po projekcie i źródle. Magazyn nie ma zapytania po
-dacie, więc skanujemy okno ``scan_limit`` najnowszych i filtrujemy w pamięci — deterministycznie,
-bez zmiany portu ``EventStore``. Gdy nawet NAJSTARSZE zeskanowane zdarzenie mieści się w oknie,
-mogło ich być więcej (``truncated``) — nie ucinamy po cichu. Brak mostu zdarzeń → pusty digest.
+dacie, więc skanujemy ``scan_limit`` najnowszych (``recent`` sortuje po id/ingestii) i filtrujemy
+w pamięci. Poller ingeruje ~na bieżąco, więc id ≈ ``occurred_at``; przy trafieniu w sufit skanu z
+trafieniami w oknie ustawiamy ``truncated`` (okno mogło mieć więcej — nie ucinamy po cichu). Duży
+backfill starych zdarzeń osłabiłby to założenie, ale pipeline go nie robi. Brak mostu → pusto.
 """
 
 from __future__ import annotations
@@ -38,11 +39,14 @@ class ChangeDigestService:
         """Złóż digest zmian od ``day`` (włącznie). Bez mostu zdarzeń → pusty digest."""
         if self._events is None:
             return ChangeDigest(since=day, total=0, by_source=(), projects=(), truncated=False)
-        scanned = self._events.recent(limit=self._scan_limit)  # najnowsze pierwsze
+        scanned = self._events.recent(limit=self._scan_limit)  # najnowsze wg ingestii (id) pierwsze
         window = [e for e in scanned if e.occurred_at.date() >= day]
-        # Ucięcie: trafiliśmy w sufit, a najstarsze zeskanowane wciąż mieści się w oknie → poza
-        # sufitem mogą być kolejne zdarzenia z okna, których nie policzyliśmy.
-        truncated = len(scanned) >= self._scan_limit and bool(window) and window[-1] is scanned[-1]
+        # Ucięcie NIEZALEŻNE od kolejności: trafienie w sufit skanu Z trafieniami w oknie znaczy, że
+        # poza sufitem mogą być kolejne zdarzenia z okna. Skan idzie po id (ingestii), a poller
+        # ingeruje ~na bieżąco, więc id ≈ occurred_at — bardzo stara ``since`` na dużej bazie jest
+        # wtedy przybliżeniem, SYGNALIZOWANYM flagą (nie ucinanym po cichu). NIE opieramy flagi na
+        # tożsamości/pozycji elementu, bo ``recent`` nie gwarantuje sortu po ``occurred_at``.
+        truncated = len(scanned) >= self._scan_limit and bool(window)
         return ChangeDigest(
             since=day,
             total=len(window),

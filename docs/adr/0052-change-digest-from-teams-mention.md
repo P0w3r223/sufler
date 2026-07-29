@@ -54,9 +54,12 @@ mention argument, never from thread content; event content is DATA, never comman
 3. **Read-only ⇒ NO write gate; date-window truncation is surfaced, not silent.** The digest reads only
    bridge events, so it needs no `save_note`, no new MCP tool, and no identity map. A single flag
    `enable_change_digest` (`WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST`, default OFF) gates the router; no
-   `validate` precondition. Because the store has no date query, the service scans `scan_limit` recent events;
-   if the cap is hit and even the oldest scanned event is still within the window, more may exist beyond it —
-   `ChangeDigest.truncated` is set and rendered as a note, so a capped count never reads as complete.
+   `validate` precondition. Because the store has no date query, the service scans the `scan_limit`
+   most-recently-ingested events (`recent` is id-ordered; the poller ingests near-real-time, so id ≈
+   `occurred_at`). The truncation flag is deliberately order-independent: if the scan cap is hit AND any
+   in-window events were found, `ChangeDigest.truncated` is set and rendered as a note, so a capped window
+   never reads as complete — it does not rely on the scanned slice being sorted by `occurred_at`. A large
+   backfill of old events would weaken the id ≈ `occurred_at` assumption, but the pipeline does not backfill.
 
 4. **PDF reuses the shared file-reply delivery.** `| pdf` calls the same `_build_thread_pdf_delivery` closure
    as F4 (single `build_file_reply_catalog` pipeline: render → `_safe_doc_name` → upload → post), available
