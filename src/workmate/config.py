@@ -646,6 +646,11 @@ class TeamsGraphSettings:
     enable_meeting_note_async: bool = False
     # Górny limit RÓWNOLEGŁYCH notatek w tle (pula wątków) — sufit jednoczesnych wywołań Claude.
     meeting_note_async_workers: int = 2
+    # Przechwycenie „zapisz to" z WĄTKU po @wzmiance bota (ADR 0048, F2). OSOBNA bramka zapisu,
+    # domyślnie OFF (ADR 0006). Niezależna od transkryptu spotkania (materiałem jest treść wątku),
+    # ale — jak /notatka — wymaga mapy tożsamości (autoryzacja B2 wbudowana w bramkę zapisu).
+    # Tryb async współdzieli przełącznik ``enable_meeting_note_async`` (ta sama pula/poster).
+    enable_thread_note_capture: bool = False
 
     @property
     def authority(self) -> str:
@@ -698,6 +703,9 @@ class TeamsGraphSettings:
             ),
             meeting_note_async_workers=_int_from_env(
                 "WORKMATE_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS", 2
+            ),
+            enable_thread_note_capture=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", default=False
             ),
         )
 
@@ -856,6 +864,16 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true wymaga "
                 "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
                 f"autoryzuje zapis, ADR 0042); brak pliku: {self.meeting_note_identities}."
+            )
+        if self.enable_thread_note_capture and not self.meeting_note_identities.is_file():
+            # „Zapisz to" pisze notatkę z drzwi Teams (ADR 0048) → autoryzacja WBUDOWANA w bramkę
+            # (B2 / ADR 0042), jak /notatka: bez mapy tożsamości każdy nadawca zapisałby wątek do
+            # dowolnego projektu. Fail-fast (ten sam plik co /notatka i worklogi). Transkryptu NIE
+            # wymaga — materiałem jest treść wątku, nie WebVTT spotkania.
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE=true wymaga "
+                "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
+                f"autoryzuje zapis, ADR 0042/0048); brak pliku: {self.meeting_note_identities}."
             )
 
 

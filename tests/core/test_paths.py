@@ -12,7 +12,7 @@ from datetime import date
 
 import pytest
 
-from workmate.core.domain.paths import meeting_note_id, note_id, slugify
+from workmate.core.domain.paths import meeting_note_id, note_id, slugify, thread_note_id
 
 # Musi być spójne z _SLUG_MAX_LENGTH w paths.py (górny limit długości sluga).
 _SLUG_MAX_LENGTH = 80
@@ -116,3 +116,48 @@ def test_meeting_note_id_rejects_path_traversal_segments():
     # Firma/projekt spoza rejestru z '/' albo '..' nie może wpłynąć do ścieżki notatki.
     with pytest.raises(ValueError):
         meeting_note_id("../etc", "scada-integration", date(2025, 6, 12), "ref")
+
+
+# --- thread_note_id: deterministyczny id notatki z wątku „zapisz to" (ADR 0048) ---
+
+
+def test_thread_note_id_is_deterministic_for_same_source_message_id():
+    # Klon idempotencji 0043 dla wątku: ten sam id wzmianki (crash-retry) → TEN SAM id notatki.
+    a = thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "msg-abc")
+    b = thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "msg-abc")
+    assert a == b
+    assert a.startswith("mpwik/scada-integration/2025-06-12-thr-")
+
+
+def test_thread_note_id_differs_for_different_source_message_id():
+    a = thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "msg-1")
+    b = thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "msg-2")
+    assert a != b
+
+
+def test_thread_note_id_ignores_surrounding_whitespace():
+    a = thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "msg")
+    b = thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "  msg  ")
+    assert a == b
+
+
+def test_thread_note_id_empty_source_message_id_raises():
+    with pytest.raises(ValueError):
+        thread_note_id("mpwik", "scada-integration", date(2025, 6, 12), "   ")
+
+
+def test_thread_note_id_rejects_path_traversal_segments():
+    # Firma/projekt spoza rejestru z '/' albo '..' nie może wpłynąć do ścieżki notatki.
+    with pytest.raises(ValueError):
+        thread_note_id("mpwik", "../etc", date(2025, 6, 12), "msg")
+
+
+def test_thread_note_id_prefix_differs_from_meeting_note_id():
+    # Ten sam klucz i firma/projekt/data, a jednak INNY id: prefiks '-thr-' (wątek) vs '-mtg-'
+    # (spotkanie) odróżnia notatkę z wątku od notatki ze spotkania w tej samej ścieżce (ADR 0048).
+    on = date(2025, 6, 12)
+    thr = thread_note_id("mpwik", "scada-integration", on, "same-ref")
+    mtg = meeting_note_id("mpwik", "scada-integration", on, "same-ref")
+    assert thr != mtg
+    assert "-thr-" in thr
+    assert "-mtg-" not in thr

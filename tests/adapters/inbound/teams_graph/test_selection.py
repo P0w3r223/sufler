@@ -17,6 +17,7 @@ from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import (
     AttachmentRef,
     ChannelMessage,
+    _parse_mention_ids,
     _parse_refs,
     iso_gt,
     normalize,
@@ -161,6 +162,68 @@ def test_normalize_bot_message_has_empty_sender_id():
 
     assert msg is not None
     assert msg.sender_id == ""
+
+
+# --- normalize.mentions_bot + _parse_mention_ids (wyzwalacz „zapisz to", ADR 0048) ---
+
+
+def test_normalize_sets_mentions_bot_when_me_id_is_mentioned():
+    # ``me_id`` (AAD id bota) wśród @wzmiankowanych → sygnał wyzwalacza „zapisz to".
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="@WorkMate zapisz to")
+    raw["mentions"] = [{"mentioned": {"user": {"id": _ME}}}]
+
+    msg = normalize(raw, _ME)
+
+    assert msg is not None
+    assert msg.mentions_bot is True
+
+
+def test_normalize_mentions_bot_false_without_me_id():
+    # Drzwi/testy bez ``me_id`` (pusty) → mentions_bot domyślnie False, nawet gdy wzmianka jest.
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z")
+    raw["mentions"] = [{"mentioned": {"user": {"id": _ME}}}]
+
+    msg = normalize(raw)  # brak me_id
+
+    assert msg is not None
+    assert msg.mentions_bot is False
+
+
+def test_normalize_mentions_bot_false_when_someone_else_mentioned():
+    # Wzmianka innego użytkownika (nie bota) nie jest wyzwalaczem.
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z")
+    raw["mentions"] = [{"mentioned": {"user": {"id": "u-inny"}}}]
+
+    msg = normalize(raw, _ME)
+
+    assert msg is not None
+    assert msg.mentions_bot is False
+
+
+def test_normalize_mentions_bot_false_when_no_mentions():
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z")  # brak klucza mentions
+
+    msg = normalize(raw, _ME)
+
+    assert msg is not None
+    assert msg.mentions_bot is False
+
+
+def test_parse_mention_ids_extracts_user_ids_and_skips_non_user_mentions():
+    # Wzmianki kanału/zespołu nie mają ``user`` — wyłuskujemy TYLKO id użytkowników.
+    raw = {
+        "mentions": [
+            {"mentioned": {"user": {"id": "u1"}}},
+            {"mentioned": {"conversation": {"id": "channel-x"}}},  # wzmianka kanału (bez user)
+            {"mentioned": {"user": {"id": "u2"}}},
+        ]
+    }
+
+    assert _parse_mention_ids(raw) == frozenset({"u1", "u2"})
+
+
+def test_parse_mention_ids_empty_without_mentions():
+    assert _parse_mention_ids({}) == frozenset()
 
 
 # --- _parse_refs / normalize: załączniki (ADR 0016) -------------------------

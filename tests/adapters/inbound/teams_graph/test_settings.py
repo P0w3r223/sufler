@@ -533,6 +533,47 @@ def test_from_env_reads_async_gate_and_workers(monkeypatch):
     assert settings.meeting_note_async_workers == 5
 
 
+# --- „zapisz to": przechwycenie wątku (F2 / ADR 0048) ----------------------
+
+
+def test_validate_thread_note_capture_off_needs_no_identities():
+    """Bramka OFF nie żąda mapy tożsamości — domyślny config przechodzi."""
+    _valid(enable_thread_note_capture=False).validate()  # nie rzuca
+
+
+def test_validate_thread_note_capture_on_without_identities_fails():
+    # Zapis z wątku ma WBUDOWANĄ autoryzację (B2 / ADR 0042): bez mapy tożsamości każdy nadawca
+    # zapisałby wątek do dowolnego projektu → fail-fast (jak /notatka).
+    with pytest.raises(ValueError, match="ENABLE_THREAD_NOTE_CAPTURE"):
+        _valid(enable_thread_note_capture=True).validate()
+
+
+def test_validate_thread_note_capture_on_with_identities_passes_without_transcript(tmp_path):
+    # ON wymaga TYLKO mapy tożsamości — materiałem jest treść WĄTKU, NIE transkrypt WebVTT
+    # (inaczej niż /notatka). Bramka transkryptu może zostać OFF.
+    identities = tmp_path / "identities.yaml"
+    identities.write_text("", encoding="utf-8")
+    _valid(
+        enable_thread_note_capture=True,
+        enable_meeting_transcript=False,
+        meeting_note_identities=identities,
+    ).validate()  # nie rzuca
+
+
+def test_from_env_defaults_thread_note_capture_off(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", raising=False)
+
+    assert TeamsGraphSettings.from_env().enable_thread_note_capture is False
+
+
+def test_from_env_reads_thread_note_capture_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", "true")
+
+    assert TeamsGraphSettings.from_env().enable_thread_note_capture is True
+
+
 # --- from_env ---------------------------------------------------------------
 
 

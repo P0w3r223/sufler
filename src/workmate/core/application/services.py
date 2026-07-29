@@ -20,6 +20,7 @@ from workmate.core.domain.models import (
 from workmate.core.domain.notes import notes_of_project
 from workmate.core.domain.paths import meeting_note_id as build_meeting_note_id
 from workmate.core.domain.paths import note_id as build_note_id
+from workmate.core.domain.paths import thread_note_id as build_thread_note_id
 from workmate.core.domain.ranking import bm25_rank, reciprocal_rank_fusion
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
@@ -368,6 +369,51 @@ class NotesWriteService:
             raise WriteError(str(exc)) from exc
         note = Note(id=note_id, metadata=metadata, body=body.strip())
         self._writer.write(note)  # create-only; kolizja → WriteError (idempotencja)
+        return note
+
+    def thread_note_id(self, source_message_id: str, *, project: str, date: date) -> str | None:
+        """Deterministyczny id notatki tego wątku, jeśli JUŻ istnieje; inaczej ``None`` (ADR 0048).
+
+        Pre-check idempotencji (klon 0043): pozwala przypadkowi użycia „zapisz to" pominąć pobór
+        wątku i wywołanie Claude, gdy notatka wzmianki już jest. ``None`` też przy nieznanym
+        projekcie — właściwy ``WriteError`` podniesie dopiero ``save_thread_note``.
+        """
+        proj = self._projects.get(project)
+        if proj is None:
+            return None
+        note_id = build_thread_note_id(proj.company, proj.key, date, source_message_id)
+        return note_id if self._writer.exists(note_id) else None
+
+    def save_thread_note(
+        self, metadata: NoteMetadata, body: str, *, source_message_id: str
+    ) -> Note:
+        """Zapisz notatkę z wątku z id DETERMINISTYCZNYM z ``source_message_id`` (ADR 0048 §5).
+
+        Lustro ``save_meeting_note`` dla przechwycenia „zapisz to": id nie wywodzi się z tytułu
+        Claude, lecz z ID WIADOMOŚCI-WZMIANKI — create-only na tym id, więc ponowienie tej samej
+        wzmianki rzuca kolizję zamiast dokładać duplikat ``-2``. Wołający robi wcześniej tani
+        ``thread_note_id`` (idempotencja bez kosztu Claude); ten zapis domyka wyścig.
+        """
+        reject_dangerous_content(
+            metadata.title,
+            body,
+            *metadata.participants,
+            *metadata.decisions,
+            *metadata.action_items,
+            *metadata.open_questions,
+            *metadata.tags,
+        )
+        project = self._projects.get(metadata.project)
+        if project is None:
+            raise WriteError(f"projekt nie istnieje w rejestrze: {metadata.project!r}")
+        try:
+            note_id = build_thread_note_id(
+                project.company, project.key, metadata.date, source_message_id
+            )
+        except ValueError as exc:
+            raise WriteError(str(exc)) from exc
+        note = Note(id=note_id, metadata=metadata, body=body.strip())
+        self._writer.write(note)  # create-only; kolizja → NoteExistsError (idempotencja)
         return note
 
 

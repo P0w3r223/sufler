@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
+    from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.core.application.events import EventService
     from workmate.core.application.github import GithubWriteService
@@ -124,6 +125,10 @@ def main() -> None:
     meeting_router = _build_meeting_note_router(
         settings, token_provider, core_settings, agent_settings
     )
+    # Przechwycenie „zapisz to" z wątku (ADR 0048, F2): @wzmianka bota → notatka, osobno bramkowana.
+    thread_router = _build_thread_note_router(
+        settings, token_provider, core_settings, agent_settings
+    )
     responder = _build_responder(
         core_settings,
         agent_settings,
@@ -133,6 +138,7 @@ def main() -> None:
         thread_factory,
         user_push_factory,
         meeting_router,
+        thread_router,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -575,6 +581,68 @@ def _build_meeting_note_router(
     )
 
 
+def _build_thread_note_router(
+    settings: TeamsGraphSettings,
+    token_provider: Callable[[], str],
+    core_settings: Settings,
+    agent_settings: AgentSettings,
+) -> ThreadNoteRouter | None:
+    """Router przechwycenia „zapisz to" z wątku (ADR 0048, F2) albo ``None``.
+
+    ``None``, gdy bramka ``enable_thread_note_capture`` wyłączona (domyślnie, ADR 0006). Włączona:
+    składa przepływ z realnych adapterów — treść wątku z Graph (``HttpxGraphThreadSource`` na tym
+    samym delegowanym tokenie co poller, SYNC), streszczenie przez Claude (reuse summarizera M3) i
+    ZAPIS przez create-only ``NotesWriteService`` do ``data/notes/``. Autoryzacja nadawcy (B2 /
+    ADR 0042) reużywa mapy tożsamości (config wymusił plik). Async współdzieli pulę/poster
+    ``/notatka`` (``_build_async_note_dispatch``). ``project`` bierze router z argumentu wzmianki,
+    nie z treści wątku (ADR 0009 §3).
+    """
+    if not settings.enable_thread_note_capture:
+        return None
+    import atexit
+
+    try:
+        import httpx
+
+        from workmate.adapters.outbound.anthropic_summarizer import AnthropicMeetingSummarizer
+        from workmate.adapters.outbound.graph_thread_source import HttpxGraphThreadSource
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+    from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+    from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
+    from workmate.core.application.services import NotesWriteService
+    from workmate.core.application.thread_notes import ThreadNoteService
+
+    # Sync klient httpx żyje przez proces (jak poster async_dispatch); domykamy przy wyjściu.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    source = HttpxGraphThreadSource(transport, token_provider)
+    summarizer = AnthropicMeetingSummarizer(agent_settings)
+    verifier = summarizer if agent_settings.verify_meeting_note else None
+    write_service = NotesWriteService(
+        MarkdownNotesWriter(core_settings.notes_dir),
+        YamlProjectsRepository(core_settings.projects_registry),
+    )
+    authorizer = MeetingNoteAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
+    scheduler, callback = _build_async_note_dispatch(settings, token_provider)
+    logger.info(
+        "Przechwycenie 'zapisz to' WŁĄCZONE (ADR 0048) — @wzmianka bota z dyrektywą zapisuje wątek "
+        "kanału jako notatkę do data/notes/ (create-only, ADR 0006). Autoryzacja nadawcy przez "
+        "mapę tożsamości %s (członkostwo, ADR 0042). Tryb: %s.",
+        settings.meeting_note_identities,
+        "ASYNC (ack + tło + callback, ADR 0043)" if scheduler else "synchroniczny (inline)",
+    )
+    return ThreadNoteRouter(
+        ThreadNoteService(source, summarizer, write_service, verifier=verifier),
+        authorizer=authorizer,
+        scheduler=scheduler,
+        callback=callback,
+    )
+
+
 def _build_async_note_dispatch(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> tuple[Callable[[Callable[[], None]], None] | None, Callable[[str, str], None] | None]:
@@ -685,6 +753,7 @@ def _build_responder(
     thread_factory: Callable[[str], list[ToolSpec]] | None = None,
     user_push_factory: Callable[[str], list[ToolSpec]] | None = None,
     meeting_router: MeetingNoteRouter | None = None,
+    thread_router: ThreadNoteRouter | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -707,6 +776,7 @@ def _build_responder(
         thread_tool_factory=thread_factory,
         user_push_tool_factory=user_push_factory,
         meeting_notes=meeting_router,
+        thread_note=thread_router,
         supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
     )
 
