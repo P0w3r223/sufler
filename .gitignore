@@ -46,6 +46,10 @@ powiadomienia-teams-*.tar.gz
 # szablonu WorklogPRO jako fixture'u testowego, dołóż tu wyjątek (!tests/fixtures/*.xlsx).
 *.xlsx
 
+# Prywatne materiały rozmów imiennych (nie część kodu; zostają lokalnie) — decyzja operatora.
+Rozmowa_Piotr.docx
+notatka_rozmowa_Piotr_Czastkiewicz.md
+
 # Sekrety wdrożenia kontenerowego (ADR 0044) — plik `env` (klucze/tokeny) i certy TLS. W repo
 # trzymamy tylko env.example; realny env i certs/ wchodzą przez env_file/wolumen w runtime.
 deploy/docker/env
