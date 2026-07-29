@@ -79,6 +79,12 @@ def test_validate_ranges_checked_even_when_disabled():
         TeamsDigestSettings(enabled=False, run_hour=99).validate()
 
 
+def test_validate_rejects_unknown_timezone():
+    """Zła strefa wywala się fail-fast w validate (przed lockiem), nie surowo w pętli."""
+    with pytest.raises(ValueError, match="TZ"):
+        TeamsDigestSettings(tz_name="Europe/Warszawa").validate()
+
+
 # --- from_env --------------------------------------------------------------
 
 

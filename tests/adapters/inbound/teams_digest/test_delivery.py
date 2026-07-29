@@ -100,6 +100,17 @@ def test_empty_week_is_not_sent_but_marked():
     assert marked == ["u1", "u2"]  # ale tydzień oznaczony (spójna detekcja nadrabiania)
 
 
+def test_duplicate_recipient_is_sent_only_once():
+    # Powtórzony AAD id na liście (błąd env) NIE może dać dwóch DM-ów tej samej osobie.
+    service = _FakeService(_FakeDigest(total=2))
+
+    report, sent, marked = _run(service, recipients=["u1", "u1", "u2"])
+
+    assert [r for r, _ in sent] == ["u1", "u2"]
+    assert marked == ["u1", "u2"]
+    assert report.sent == ("u1", "u2")
+
+
 def test_failed_send_is_not_marked_and_reported():
     service = _FakeService(_FakeDigest(total=4))
 

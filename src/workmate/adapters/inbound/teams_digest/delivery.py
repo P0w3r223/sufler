@@ -55,7 +55,9 @@ def deliver_weekly_digest(
     ``mark(odbiorca)`` utrwala „obsłużony". Awaria pojedynczej wysyłki NIE kładzie przebiegu —
     logujemy i pomijamy oznaczenie (ponowienie w kolejnym przebiegu). Zwraca raport.
     """
-    targets = tuple(recipients)
+    # Deduplikacja z zachowaniem kolejności: powtórzony AAD id na liście env NIE może dać dwóch
+    # DM-ów tej samej osobie (gwarancja „nigdy dwa razy"). ``already`` liczymy raz przed pętlą.
+    targets = tuple(dict.fromkeys(recipients))
     digest = change_service.since(since)
     if digest.total == 0:
         # Pusty tydzień: bez wysyłki, ale ZAZNACZAMY jako obsłużony (spójna detekcja nadrabiania —

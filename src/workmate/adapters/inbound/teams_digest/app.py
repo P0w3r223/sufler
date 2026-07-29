@@ -155,7 +155,7 @@ def _missed_deadline(settings: TeamsDigestSettings, tz: ZoneInfo) -> datetime | 
         hour=settings.run_hour,
         minute=settings.run_minute,
     )
-    if (_now() - last).days > settings.max_catchup_days:
+    if _now() - last > timedelta(days=settings.max_catchup_days):
         return None
     saved = state_store.load(settings.state_path)
     label = week_label(last.astimezone(tz))
@@ -209,12 +209,13 @@ def _run_once(
     )
     _prune_state(settings, saved, local)
     logger.info(
-        "Digest %s: wysłano %d, pominięto %d (już), nieudanych %d%s.",
+        "Digest %s: wysłano %d, pominięto %d (już), nieudanych %d%s%s.",
         report.week_label,
         len(report.sent),
         len(report.already),
         len(report.failed),
         " (pusty tydzień)" if report.skipped_empty else "",
+        " [dry-run — nic nie wysłano]" if settings.dry_run else "",
     )
     return report
 

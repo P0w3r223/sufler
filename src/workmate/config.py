@@ -1765,7 +1765,14 @@ class TeamsDigestSettings:
         )
 
     def validate(self) -> None:
-        """Twardy błąd startu przy absurdach; zakresy sprawdzamy ZAWSZE (jak worklogi)."""
+        """Twardy błąd startu przy absurdach; zakresy i strefę sprawdzamy ZAWSZE (jak worklogi)."""
+        try:
+            ZoneInfo(self.tz_name)
+        except Exception as exc:
+            raise ValueError(
+                f"WORKMATE_TEAMS_DIGEST_TZ={self.tz_name!r} nie jest znaną strefą czasową "
+                "(na Windows wymaga pakietu 'tzdata')."
+            ) from exc
         if not 0 <= self.run_weekday <= 6:
             raise ValueError(
                 f"WORKMATE_TEAMS_DIGEST_RUN_WEEKDAY musi być 0..6 (pon.=0), jest {self.run_weekday}"
