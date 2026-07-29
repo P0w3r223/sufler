@@ -28,7 +28,10 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 
 # Najpierw same metadane — warstwa zależności przeżyje w cache dopóki nie zmieni się lock.
-COPY pyproject.toml uv.lock ./
+# README.md musi tu wejść: pyproject deklaruje `readme = "README.md"`, więc hatchling wymaga go
+# przy budowaniu projektu (drugi `uv sync` niżej, bez `--no-install-project`) — inaczej build pada
+# na `OSError: Readme file does not exist: README.md`.
+COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev \
         --extra agent --extra github --extra jira --extra teams-graph \
@@ -52,6 +55,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY tests/ ./tests/
 COPY eval/ ./eval/
 COPY data/ ./data/
+# `tests/deploy/test_manage_tokens.py` ładuje moduł z deploy/http/manage_tokens.py przy kolekcji —
+# bez tego COPY pytest przerywa się na `FileNotFoundError` (etap `runtime` kopiuje go osobno, niżej).
+COPY deploy/http/ ./deploy/http/
 # Bieg NA TYM Pythonie i TEJ architekturze, na której obraz pojedzie — w szczególności
 # potwierdza gałąź POSIX `fcntl` w single_instance.py, nieuruchamialną na maszynie deweloperskiej.
 RUN uv run --no-sync pytest -q && touch /app/.tests-passed

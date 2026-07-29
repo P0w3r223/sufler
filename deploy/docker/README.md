@@ -69,9 +69,9 @@ Zmiana zakresów (SCOPES) wymaga ponownego `--login` (usuń odpowiedni `*_token_
 ```bash
 # Wygeneruj token per osoba (surowy token przekaż bezpiecznym kanałem; magazyn trzyma tylko sha256):
 docker compose run --rm mcp python deploy/http/manage_tokens.py \
-    --store /var/lib/workmate/tokens.json issue --person anna.kowalska
+    issue --store /var/lib/workmate/tokens.json --person anna.kowalska
 docker compose run --rm mcp python deploy/http/manage_tokens.py \
-    --store /var/lib/workmate/tokens.json verify
+    verify --store /var/lib/workmate/tokens.json
 ```
 
 ## 5. Start
