@@ -574,6 +574,29 @@ def test_from_env_reads_thread_note_capture_gate(monkeypatch):
     assert TeamsGraphSettings.from_env().enable_thread_note_capture is True
 
 
+# --- one-pager „ogarnij mnie na <projekt>" (F4 / ADR 0051) ------------------
+
+
+def test_validate_project_brief_on_needs_no_identities_or_scopes():
+    # One-pager jest READ-ONLY (status + notatki): włączenie NIE wymaga mapy tożsamości, zakresu
+    # zapisu ani transkryptu — inaczej niż bramki zapisu. Domyślny config z samą flagą przechodzi.
+    _valid(enable_project_brief=True).validate()  # nie rzuca
+
+
+def test_from_env_defaults_project_brief_off(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", raising=False)
+
+    assert TeamsGraphSettings.from_env().enable_project_brief is False
+
+
+def test_from_env_reads_project_brief_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", "true")
+
+    assert TeamsGraphSettings.from_env().enable_project_brief is True
+
+
 # --- from_env ---------------------------------------------------------------
 
 

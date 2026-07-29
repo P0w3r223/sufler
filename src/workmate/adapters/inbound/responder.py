@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
+from workmate.adapters.inbound.brief_command import BriefContext
 from workmate.adapters.inbound.commands import CommandContext
 from workmate.adapters.inbound.thread_note_command import ThreadNoteContext
 from workmate.core.domain.workspace import WorkspaceScope
@@ -43,6 +44,7 @@ _TRUNCATED_STOP = "max_tokens"
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from workmate.adapters.inbound.brief_command import BriefRouter
     from workmate.adapters.inbound.commands import CommandRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
@@ -176,6 +178,7 @@ class ConversationalResponder:
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
         thread_note: ThreadNoteRouter | None = None,
+        project_brief: BriefRouter | None = None,
         metrics: MetricsService | None = None,
     ) -> None:
         self._runtime = runtime
@@ -203,6 +206,11 @@ class ConversationalResponder:
         # drzwi). Wyzwalany @wzmianką bota + dyrektywą; pisze notatkę z WĄTKU (nie ze spotkania) i
         # biegnie POZA ``_store_lock`` (pobór wątku + Claude są wolne), jak router spotkań.
         self._thread_note = thread_note
+        # OSOBNY router one-pagera „ogarnij mnie na <projekt>" (ADR 0051, F4); ``None`` → brak
+        # (bramka off / inne drzwi). Wyzwalany @wzmianką bota + dyrektywą; READ-ONLY (status +
+        # notatki), więc bez bramki zapisu/autoryzacji; biegnie POZA ``_store_lock`` (odczyt
+        # notatek/statusu bywa wolny), jak pozostałe routery dyrektyw.
+        self._project_brief = project_brief
         # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
         # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
         self._metrics = metrics
@@ -276,6 +284,18 @@ class ConversationalResponder:
                     source_timestamp=message.source_timestamp,
                     sender_id=message.sender_id,
                     mentions_bot=message.mentions_bot,
+                ),
+            )
+            if reply is not None:
+                return reply
+        # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4) — POZA ``_store_lock`` (odczyt
+        # notatek/statusu). Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura
+        # agenta niżej. ``external_id`` (team/channel/root) = cel ewentualnej dostawy PDF w wątku.
+        if self._project_brief is not None:
+            reply = self._project_brief.dispatch(
+                message.text,
+                BriefContext(
+                    external_id=external_id, mentions_bot=message.mentions_bot
                 ),
             )
             if reply is not None:

@@ -651,6 +651,12 @@ class TeamsGraphSettings:
     # ale — jak /notatka — wymaga mapy tożsamości (autoryzacja B2 wbudowana w bramkę zapisu).
     # Tryb async współdzieli przełącznik ``enable_meeting_note_async`` (ta sama pula/poster).
     enable_thread_note_capture: bool = False
+    # One-pager „ogarnij mnie na <projekt>" po @wzmiance bota (ADR 0051, F4). READ-ONLY (status +
+    # notatki), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez wymogu mapy
+    # tożsamości ani RW-montażu (nic nie zapisuje). Dostawa PDF ``| pdf`` reużywa kanału file-reply:
+    # aktywna tylko przy dodatkowo włączonym ``enable_file_reply`` (jego zakres/sender); inaczej
+    # ``| pdf`` degraduje do odpowiedzi tekstem.
+    enable_project_brief: bool = False
 
     @property
     def authority(self) -> str:
@@ -706,6 +712,9 @@ class TeamsGraphSettings:
             ),
             enable_thread_note_capture=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", default=False
+            ),
+            enable_project_brief=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False
             ),
         )
 

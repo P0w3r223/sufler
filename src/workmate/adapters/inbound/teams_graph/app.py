@@ -44,6 +44,7 @@ from workmate.config import (
 )
 
 if TYPE_CHECKING:
+    from workmate.adapters.inbound.brief_command import BriefRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
@@ -129,6 +130,9 @@ def main() -> None:
     thread_router = _build_thread_note_router(
         settings, token_provider, core_settings, agent_settings
     )
+    # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4): @wzmianka bota → brief (read-only),
+    # osobno bramkowana. Dostawa PDF reużywa kanału file-reply (settings/token_provider).
+    brief_router = _build_brief_router(settings, token_provider, core_settings, events_settings)
     responder = _build_responder(
         core_settings,
         agent_settings,
@@ -139,6 +143,7 @@ def main() -> None:
         user_push_factory,
         meeting_router,
         thread_router,
+        brief_router,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -643,6 +648,102 @@ def _build_thread_note_router(
     )
 
 
+def _build_brief_router(
+    settings: TeamsGraphSettings,
+    token_provider: Callable[[], str],
+    core_settings: Settings,
+    events_settings: EventsSettings,
+) -> BriefRouter | None:
+    """Router one-pagera „ogarnij mnie na <projekt>" (ADR 0051, F4) albo ``None``.
+
+    ``None``, gdy bramka ``enable_project_brief`` wyłączona (domyślnie). Włączona: składa READ-ONLY
+    ``ProjectBriefService`` nad tymi samymi repo notatek/projektów co runtime — status (pełna
+    synteza, aktywność GitHub gdy most zdarzeń istnieje) + ostatnie notatki. Bez zapisu, bez
+    autoryzacji nadawcy, bez nowego narzędzia MCP (golden surface nietknięty). Dostawa PDF ``| pdf``
+    reużywa kanał file-reply — aktywna tylko przy dodatkowo włączonym ``enable_file_reply``.
+    """
+    if not settings.enable_project_brief:
+        return None
+    from pathlib import Path
+
+    from workmate.adapters.inbound.brief_command import BriefRouter
+    from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+    from workmate.core.application.events import EventService
+    from workmate.core.application.project_brief import ProjectBriefService
+    from workmate.core.application.services import NotesService, ProjectsService
+
+    notes_repo = MarkdownNotesRepository(core_settings.notes_dir)
+    projects_repo = YamlProjectsRepository(core_settings.projects_registry)
+    # Aktywność GitHub w statusie (ADR 0029) tylko gdy most zdarzeń w użyciu (plik istnieje); bez
+    # niego status pokaże zera aktywności (dozwolona degradacja, jak drzwi MCP bez mostu).
+    events_db = Path(str(events_settings.db_path)).expanduser()
+    events = EventService(SqliteEventStore(events_settings.db_path)) if events_db.exists() else None
+    # Empty-query search zwraca notatki po dacie (nie rankinguje zapytania), więc NotesService bez
+    # extra retrievalu — brief listuje NAJŚWIEŻSZE notatki projektu.
+    service = ProjectBriefService(
+        NotesService(notes_repo),
+        ProjectsService(projects_repo, notes_repo, events=events),
+    )
+    deliver_pdf = _build_brief_pdf_delivery(settings, token_provider)
+    logger.info(
+        "One-pager 'ogarnij mnie na <projekt>' WŁĄCZONY (ADR 0051) — @wzmianka bota zwraca brief "
+        "projektu (status + ostatnie notatki), READ-ONLY. Dostawa PDF: %s.",
+        "włączona (reuse file-reply)" if deliver_pdf else "wyłączona (| pdf → tekst)",
+    )
+    return BriefRouter(service, deliver_pdf=deliver_pdf)
+
+
+def _build_brief_pdf_delivery(
+    settings: TeamsGraphSettings, token_provider: Callable[[], str]
+) -> Callable[[str, str, str], None] | None:
+    """Zamknięcie dostawy one-pagera PLIKIEM PDF w wątku (ADR 0051) albo ``None``.
+
+    Reużywa kanał file-reply (ADR 0026): renderer dokumentów + ``HttpxGraphFileSender`` na TYM SAMYM
+    delegowanym tokenie co poller. Aktywne TYLKO przy włączonej bramce ``enable_file_reply`` (jej
+    zakres ``Files.ReadWrite.All`` i sender) — inaczej ``None`` i ``| pdf`` degraduje do tekstu.
+    Cel (``team/channel/root``) wyłuskujemy z ZAUFANEGO ``external_id`` wątku, NIE od modelu.
+    """
+    if not settings.enable_file_reply:
+        return None
+    try:
+        import atexit
+
+        import httpx
+
+        from workmate.adapters.outbound.document_renderer import DefaultDocumentRenderer
+        from workmate.adapters.outbound.graph_file_sender import HttpxGraphFileSender
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+
+    # Sync klient żyje przez proces (jak inne sync sendery); pulę połączeń domykamy przy wyjściu.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    sender = HttpxGraphFileSender(transport, token_provider)
+    renderer = DefaultDocumentRenderer()
+    max_bytes = settings.max_file_reply_kb * 1024
+
+    def deliver(external_id: str, filename: str, content: str) -> None:
+        parts = external_id.split("/")
+        if len(parts) != 3:
+            raise ValueError(f"zły external_id wątku briefu (team/channel/root): {external_id!r}")
+        team_id, channel_id, root_id = parts
+        rendered = renderer.render(content, "pdf")
+        if len(rendered.content) > max_bytes:
+            raise ValueError(
+                f"One-pager PDF ({len(rendered.content)} B) przekracza limit {max_bytes} B."
+            )
+        uploaded = sender.upload_channel_file(
+            team_id, channel_id, filename, rendered.content, rendered.content_type
+        )
+        sender.post_reply_with_attachment(
+            team_id, channel_id, root_id, "One-pager projektu (PDF).", uploaded
+        )
+
+    return deliver
+
+
 def _build_async_note_dispatch(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> tuple[Callable[[Callable[[], None]], None] | None, Callable[[str, str], None] | None]:
@@ -754,6 +855,7 @@ def _build_responder(
     user_push_factory: Callable[[str], list[ToolSpec]] | None = None,
     meeting_router: MeetingNoteRouter | None = None,
     thread_router: ThreadNoteRouter | None = None,
+    brief_router: BriefRouter | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -777,6 +879,7 @@ def _build_responder(
         user_push_tool_factory=user_push_factory,
         meeting_notes=meeting_router,
         thread_note=thread_router,
+        project_brief=brief_router,
         supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
     )
 

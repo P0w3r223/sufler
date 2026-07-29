@@ -51,6 +51,11 @@ from workmate.core.domain.models import (
 #   adapters/inbound/teams_graph/test_selection.py (normalize.mentions_bot), oraz nowe:
 #   core/test_thread_notes.py, adapters/inbound/test_thread_note_command.py,
 #   adapters/test_graph_thread_source.py. teams_graph/test_settings.py jest już aktywny.
+# AKTYWNE — F4 one-pager „ogarnij mnie na <projekt>" (ADR 0051): 3 NOWE pliki zbierane domyślnie
+#   (brak wpisów poniżej): core/domain/test_project_brief.py (render to_text),
+#   core/application/test_project_brief.py (złożenie serwisu),
+#   adapters/inbound/test_brief_command.py (router). Przypadek flagi enable_project_brief dołożony
+#   do już aktywnego teams_graph/test_settings.py.
 collect_ignore = [
     "adapters/inbound/cli/test_meeting.py",
     "adapters/inbound/github/test_poller.py",
