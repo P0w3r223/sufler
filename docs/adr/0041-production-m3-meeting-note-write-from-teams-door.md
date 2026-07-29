@@ -1,7 +1,7 @@
 # 0041 — Production M3: gated meeting-note write from the Teams door
 
 Date: 2026-07-28
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0009](0009-meeting-note-flow-and-write-surface.md) (M3, §4 Gate-2 deferral),
 [ADR 0006](0006-write-capability-gate-2.md) (write gate), [ADR 0017](0017-read-only-command-dispatcher.md)

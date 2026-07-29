@@ -1,7 +1,7 @@
 # 0043 — Async meeting-note execution with a Teams-thread callback
 
 Date: 2026-07-28
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0041](0041-production-m3-meeting-note-write-from-teams-door.md) (production `/notatka`),
 [ADR 0042](0042-meeting-note-sender-authorization.md) (sender authorization),

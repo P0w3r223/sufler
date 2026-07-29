@@ -1,7 +1,7 @@
 # 0042 — Meeting-note sender authorization (Entra identity → membership gate)
 
 Date: 2026-07-28
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0041](0041-production-m3-meeting-note-write-from-teams-door.md) (production `/notatka`),
 [ADR 0009](0009-meeting-note-flow-and-write-surface.md) (M3, §3 caller-controls-location),
