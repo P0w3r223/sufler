@@ -56,6 +56,10 @@ from workmate.core.domain.models import (
 #   core/application/test_project_brief.py (złożenie serwisu),
 #   adapters/inbound/test_brief_command.py (router). Przypadek flagi enable_project_brief dołożony
 #   do już aktywnego teams_graph/test_settings.py.
+# AKTYWNE — F5 digest „co się zmieniło od <data>" (ADR 0052): 3 NOWE pliki zbierane domyślnie:
+#   core/domain/test_change_digest.py (render), core/application/test_change_digest.py (fold),
+#   adapters/inbound/test_change_command.py (router). Przypadek flagi enable_change_digest dołożony
+#   do teams_graph/test_settings.py.
 collect_ignore = [
     "adapters/inbound/cli/test_meeting.py",
     "adapters/inbound/github/test_poller.py",

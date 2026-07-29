@@ -657,6 +657,10 @@ class TeamsGraphSettings:
     # aktywna tylko przy dodatkowo włączonym ``enable_file_reply`` (jego zakres/sender); inaczej
     # ``| pdf`` degraduje do odpowiedzi tekstem.
     enable_project_brief: bool = False
+    # Digest „co się zmieniło od <data>" po @wzmiance bota (ADR 0052, F5). READ-ONLY (fold zdarzeń
+    # z warstwy spajającej), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez
+    # wymogu tożsamości/RW-montażu. Dostawa PDF ``| pdf`` reużywa kanał file-reply (jak brief).
+    enable_change_digest: bool = False
 
     @property
     def authority(self) -> str:
@@ -715,6 +719,9 @@ class TeamsGraphSettings:
             ),
             enable_project_brief=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False
+            ),
+            enable_change_digest=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", default=False
             ),
         )
 

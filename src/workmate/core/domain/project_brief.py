@@ -12,9 +12,9 @@ statusu to DANE, nie polecenia). Ten sam skielet renderu dziedziczą później F
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
 
 from workmate.core.domain.models import NoteSummary, ProjectStatus
+from workmate.core.domain.text_format import fmt_date, fmt_seconds
 
 # Sufit notatek listowanych w one-pagerze — brief STRESZCZA stan, nie jest pełnym indeksem.
 DEFAULT_BRIEF_NOTES = 5
@@ -34,16 +34,17 @@ class ProjectBrief:
             f"# One-pager: {s.name} ({s.company}/{s.key})",
             "",
             f"**Status:** {s.status} · **zdrowie:** {s.health} · **faza:** {s.phase}",
-            f"**Zaktualizowano:** {_fmt_date(s.last_updated)}",
+            f"**Zaktualizowano:** {fmt_date(s.last_updated)}",
         ]
         if s.summary.strip():
             lines += ["", s.summary.strip()]
         lines += [
             "",
-            f"**Notatki:** {s.notes_count} (ostatnia: {_fmt_date(s.latest_note_date)}) · "
+            f"**Notatki:** {s.notes_count} (ostatnia: {fmt_date(s.latest_note_date)}) · "
             f"**otwarte action items:** {s.open_action_items}",
             f"**Aktywność GitHub:** {s.recent_activity_count} zdarzeń "
-            f"(ostatnia: {_fmt_dt(s.latest_activity_at)}) · **nieudane CI:** {s.failing_ci_count}",
+            f"(ostatnia: {fmt_seconds(s.latest_activity_at)}) · "
+            f"**nieudane CI:** {s.failing_ci_count}",
             "",
             "## Ostatnie notatki",
         ]
@@ -57,17 +58,4 @@ class ProjectBrief:
 def _note_line(note: NoteSummary) -> str:
     """Jeden wiersz listy notatek: ``- <data> — <tytuł> (<uczestnicy>)``."""
     who = ", ".join(note.participants) if note.participants else "brak uczestników"
-    return f"- {_fmt_date(note.date)} — {note.title} ({who})"
-
-
-def _fmt_date(value: date | None) -> str:
-    """Data ISO albo kreska, gdy brak (``None``) — bez zależności od locale."""
-    return value.isoformat() if value is not None else "—"
-
-
-def _fmt_dt(value: datetime | None) -> str:
-    """Znacznik czasu do sekund albo kreska, gdy brak — czytelny w one-pagerze."""
-    if value is None:
-        return "—"
-    text = value.isoformat()
-    return text[:19] if len(text) > 19 else text
+    return f"- {fmt_date(note.date)} — {note.title} ({who})"

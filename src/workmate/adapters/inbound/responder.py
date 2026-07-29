@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
 from workmate.adapters.inbound.brief_command import BriefContext
+from workmate.adapters.inbound.change_command import ChangeDigestContext
 from workmate.adapters.inbound.commands import CommandContext
 from workmate.adapters.inbound.thread_note_command import ThreadNoteContext
 from workmate.core.domain.workspace import WorkspaceScope
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from workmate.adapters.inbound.brief_command import BriefRouter
+    from workmate.adapters.inbound.change_command import ChangeDigestRouter
     from workmate.adapters.inbound.commands import CommandRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
@@ -179,6 +181,7 @@ class ConversationalResponder:
         meeting_notes: MeetingNoteRouter | None = None,
         thread_note: ThreadNoteRouter | None = None,
         project_brief: BriefRouter | None = None,
+        change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
     ) -> None:
         self._runtime = runtime
@@ -211,6 +214,10 @@ class ConversationalResponder:
         # notatki), więc bez bramki zapisu/autoryzacji; biegnie POZA ``_store_lock`` (odczyt
         # notatek/statusu bywa wolny), jak pozostałe routery dyrektyw.
         self._project_brief = project_brief
+        # OSOBNY router digestu „co się zmieniło od <data>" (ADR 0052, F5); ``None`` → brak
+        # (bramka off / inne drzwi). Wyzwalany @wzmianką bota + dyrektywą; READ-ONLY (fold
+        # zdarzeń), poza ``_store_lock``, jak brief.
+        self._change_digest = change_digest
         # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
         # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
         self._metrics = metrics
@@ -295,6 +302,17 @@ class ConversationalResponder:
             reply = self._project_brief.dispatch(
                 message.text,
                 BriefContext(
+                    external_id=external_id, mentions_bot=message.mentions_bot
+                ),
+            )
+            if reply is not None:
+                return reply
+        # Digest „co się zmieniło od <data>" (ADR 0052, F5) — POZA ``_store_lock`` (fold zdarzeń).
+        # Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura agenta niżej.
+        if self._change_digest is not None:
+            reply = self._change_digest.dispatch(
+                message.text,
+                ChangeDigestContext(
                     external_id=external_id, mentions_bot=message.mentions_bot
                 ),
             )

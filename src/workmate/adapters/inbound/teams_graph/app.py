@@ -45,6 +45,7 @@ from workmate.config import (
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.brief_command import BriefRouter
+    from workmate.adapters.inbound.change_command import ChangeDigestRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.responder import Responder
     from workmate.adapters.inbound.teams_graph.poller import HandleMessage
@@ -130,9 +131,17 @@ def main() -> None:
     thread_router = _build_thread_note_router(
         settings, token_provider, core_settings, agent_settings
     )
-    # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4): @wzmianka bota → brief (read-only),
-    # osobno bramkowana. Dostawa PDF reużywa kanału file-reply (settings/token_provider).
-    brief_router = _build_brief_router(settings, token_provider, core_settings, events_settings)
+    # Współdzielona dostawa PDF w wątku (ADR 0026) dla read-only jednostronicówek — jeden sender/
+    # klient, budowany tylko gdy brief (F4) lub digest (F5) jest włączony.
+    thread_pdf = (
+        _build_thread_pdf_delivery(settings, token_provider)
+        if settings.enable_project_brief or settings.enable_change_digest
+        else None
+    )
+    # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4) i digest „co się zmieniło od <data>"
+    # (ADR 0052, F5): @wzmianka bota → read-only jednostronicówka, każda osobno bramkowana.
+    brief_router = _build_brief_router(settings, core_settings, events_settings, thread_pdf)
+    change_router = _build_change_digest_router(settings, events_settings, thread_pdf)
     responder = _build_responder(
         core_settings,
         agent_settings,
@@ -144,6 +153,7 @@ def main() -> None:
         meeting_router,
         thread_router,
         brief_router,
+        change_router,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -648,45 +658,52 @@ def _build_thread_note_router(
     )
 
 
+def _events_service(events_settings: EventsSettings) -> EventService | None:
+    """``EventService`` nad wspólnym ``events.db`` TYLKO gdy plik istnieje (most zdarzeń w użyciu).
+
+    Wspólny helper dla briefu (aktywność w statusie, ADR 0029) i digestu (fold zdarzeń, ADR 0052).
+    Bez pliku ``None`` — drzwi nie tworzą pustego ``events.db`` tylko pod odczyt.
+    """
+    from pathlib import Path
+
+    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from workmate.core.application.events import EventService
+
+    if not Path(str(events_settings.db_path)).expanduser().exists():
+        return None
+    return EventService(SqliteEventStore(events_settings.db_path))
+
+
 def _build_brief_router(
     settings: TeamsGraphSettings,
-    token_provider: Callable[[], str],
     core_settings: Settings,
     events_settings: EventsSettings,
+    deliver_pdf: Callable[[str, str, str], None] | None,
 ) -> BriefRouter | None:
     """Router one-pagera „ogarnij mnie na <projekt>" (ADR 0051, F4) albo ``None``.
 
     ``None``, gdy bramka ``enable_project_brief`` wyłączona (domyślnie). Włączona: składa READ-ONLY
     ``ProjectBriefService`` nad tymi samymi repo notatek/projektów co runtime — status (pełna
     synteza, aktywność GitHub gdy most zdarzeń istnieje) + ostatnie notatki. Bez zapisu, bez
-    autoryzacji nadawcy, bez nowego narzędzia MCP (golden surface nietknięty). Dostawa PDF ``| pdf``
-    reużywa kanał file-reply — aktywna tylko przy dodatkowo włączonym ``enable_file_reply``.
+    autoryzacji nadawcy, bez nowego narzędzia MCP (golden surface nietknięty). ``deliver_pdf``
+    (współdzielony, ADR 0026) wysyła ``| pdf`` plikiem; ``None`` → ``| pdf`` degraduje do tekstu.
     """
     if not settings.enable_project_brief:
         return None
-    from pathlib import Path
-
     from workmate.adapters.inbound.brief_command import BriefRouter
     from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
-    from workmate.core.application.events import EventService
     from workmate.core.application.project_brief import ProjectBriefService
     from workmate.core.application.services import NotesService, ProjectsService
 
     notes_repo = MarkdownNotesRepository(core_settings.notes_dir)
     projects_repo = YamlProjectsRepository(core_settings.projects_registry)
-    # Aktywność GitHub w statusie (ADR 0029) tylko gdy most zdarzeń w użyciu (plik istnieje); bez
-    # niego status pokaże zera aktywności (dozwolona degradacja, jak drzwi MCP bez mostu).
-    events_db = Path(str(events_settings.db_path)).expanduser()
-    events = EventService(SqliteEventStore(events_settings.db_path)) if events_db.exists() else None
     # Empty-query search zwraca notatki po dacie (nie rankinguje zapytania), więc NotesService bez
     # extra retrievalu — brief listuje NAJŚWIEŻSZE notatki projektu.
     service = ProjectBriefService(
         NotesService(notes_repo),
-        ProjectsService(projects_repo, notes_repo, events=events),
+        ProjectsService(projects_repo, notes_repo, events=_events_service(events_settings)),
     )
-    deliver_pdf = _build_brief_pdf_delivery(settings, token_provider)
     logger.info(
         "One-pager 'ogarnij mnie na <projekt>' WŁĄCZONY (ADR 0051) — @wzmianka bota zwraca brief "
         "projektu (status + ostatnie notatki), READ-ONLY. Dostawa PDF: %s.",
@@ -695,15 +712,41 @@ def _build_brief_router(
     return BriefRouter(service, deliver_pdf=deliver_pdf)
 
 
-def _build_brief_pdf_delivery(
+def _build_change_digest_router(
+    settings: TeamsGraphSettings,
+    events_settings: EventsSettings,
+    deliver_pdf: Callable[[str, str, str], None] | None,
+) -> ChangeDigestRouter | None:
+    """Router digestu „co się zmieniło od <data>" (ADR 0052, F5) albo ``None``.
+
+    ``None``, gdy bramka ``enable_change_digest`` wyłączona (domyślnie). Włączona: składa READ-ONLY
+    ``ChangeDigestService`` nad wspólnym ``events.db`` (fold zdarzeń od daty, per projekt). Bez
+    mostu zdarzeń → digest pusty (dozwolona degradacja). Bez zapisu/autoryzacji/nowego narzędzia.
+    ``deliver_pdf`` (współdzielony z briefem) wysyła ``| pdf`` plikiem; inaczej degraduje do tekstu.
+    """
+    if not settings.enable_change_digest:
+        return None
+    from workmate.adapters.inbound.change_command import ChangeDigestRouter
+    from workmate.core.application.change_digest import ChangeDigestService
+
+    service = ChangeDigestService(_events_service(events_settings))
+    logger.info(
+        "Digest 'co się zmieniło od <data>' WŁĄCZONY (ADR 0052) — @wzmianka bota zwraca przegląd "
+        "zmian od daty (fold zdarzeń per projekt), READ-ONLY. Dostawa PDF: %s.",
+        "włączona (reuse file-reply)" if deliver_pdf else "wyłączona (| pdf → tekst)",
+    )
+    return ChangeDigestRouter(service, deliver_pdf=deliver_pdf)
+
+
+def _build_thread_pdf_delivery(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> Callable[[str, str, str], None] | None:
-    """Zamknięcie dostawy one-pagera PLIKIEM PDF w wątku (ADR 0051) albo ``None``.
+    """Współdzielone zamknięcie dostawy PLIKIEM PDF w wątku (ADR 0026) — brief (F4) i digest (F5).
 
-    Reużywa kanał file-reply (ADR 0026): renderer dokumentów + ``HttpxGraphFileSender`` na TYM SAMYM
-    delegowanym tokenie co poller. Aktywne TYLKO przy włączonej bramce ``enable_file_reply`` (jej
-    zakres ``Files.ReadWrite.All`` i sender) — inaczej ``None`` i ``| pdf`` degraduje do tekstu.
-    Cel (``team/channel/root``) wyłuskujemy z ZAUFANEGO ``external_id`` wątku, NIE od modelu.
+    Reużywa kanał file-reply: renderer dokumentów + ``HttpxGraphFileSender`` na TYM SAMYM
+    delegowanym tokenie co poller. Aktywne TYLKO przy włączonej bramce ``enable_file_reply`` (zakres
+    ``Files.ReadWrite.All`` i sender) — inaczej ``None`` i ``| pdf`` degraduje do tekstu. Cel
+    (``team/channel/root``) wyłuskujemy z ZAUFANEGO ``external_id`` wątku, NIE od modelu.
     """
     if not settings.enable_file_reply:
         return None
@@ -728,7 +771,7 @@ def _build_brief_pdf_delivery(
     def deliver(external_id: str, base_name: str, content: str) -> None:
         parts = external_id.split("/")
         if len(parts) != 3:
-            raise ValueError(f"zły external_id wątku briefu (team/channel/root): {external_id!r}")
+            raise ValueError(f"zły external_id wątku (team/channel/root): {external_id!r}")
         team_id, channel_id, root_id = parts
         # Reuse JEDNOŹRÓDŁOWEGO pipeline'u file-reply (ADR 0026, reguła 6): render → walidacja →
         # ``_safe_doc_name`` (hardening nazwy) → upload → post. Bez duplikacji sekwencji tutaj.
@@ -856,6 +899,7 @@ def _build_responder(
     meeting_router: MeetingNoteRouter | None = None,
     thread_router: ThreadNoteRouter | None = None,
     brief_router: BriefRouter | None = None,
+    change_router: ChangeDigestRouter | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -880,6 +924,7 @@ def _build_responder(
         meeting_notes=meeting_router,
         thread_note=thread_router,
         project_brief=brief_router,
+        change_digest=change_router,
         supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
     )
 

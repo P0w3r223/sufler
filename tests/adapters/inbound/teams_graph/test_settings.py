@@ -597,6 +597,28 @@ def test_from_env_reads_project_brief_gate(monkeypatch):
     assert TeamsGraphSettings.from_env().enable_project_brief is True
 
 
+# --- digest „co się zmieniło od <data>" (F5 / ADR 0052) ---------------------
+
+
+def test_validate_change_digest_on_needs_no_identities_or_scopes():
+    # Digest jest READ-ONLY (fold zdarzeń): włączenie NIE wymaga tożsamości/zakresu/transkryptu.
+    _valid(enable_change_digest=True).validate()  # nie rzuca
+
+
+def test_from_env_defaults_change_digest_off(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", raising=False)
+
+    assert TeamsGraphSettings.from_env().enable_change_digest is False
+
+
+def test_from_env_reads_change_digest_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", "true")
+
+    assert TeamsGraphSettings.from_env().enable_change_digest is True
+
+
 # --- from_env ---------------------------------------------------------------
 
 
