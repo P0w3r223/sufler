@@ -131,6 +131,8 @@ workmate-github = "workmate.adapters.inbound.github.app:main"
 workmate-jira = "workmate.adapters.inbound.jira.app:main"
 # Proces drzwi kart czasu (ADR 0035), cotygodniowy: `uv run workmate-worklogi`.
 workmate-worklogi = "workmate.adapters.inbound.worklogi.app:main"
+# Proces proaktywnego digestu zmian (ADR 0053, F6), cotygodniowy: `uv run workmate-teams-digest`.
+workmate-teams-digest = "workmate.adapters.inbound.teams_digest.app:main"
 # Drzwi worklog self-service na żądanie (ADR 0038): `uv run workmate-worklog-selfservice`.
 workmate-worklog-selfservice = "workmate.adapters.inbound.worklog_selfservice.app:main"
 # Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez

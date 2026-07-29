@@ -60,6 +60,9 @@ from workmate.core.domain.models import (
 #   core/domain/test_change_digest.py (render), core/application/test_change_digest.py (fold),
 #   adapters/inbound/test_change_command.py (router). Przypadek flagi enable_change_digest dołożony
 #   do teams_graph/test_settings.py.
+# AKTYWNE — F6 proaktywny digest tygodniowy (ADR 0053): 2 NOWE pliki zbierane domyślnie:
+#   test_teams_digest_settings.py (bramka odbiorców + harmonogram),
+#   adapters/inbound/teams_digest/test_delivery.py (orkiestracja przebiegu, deliver_weekly_digest).
 collect_ignore = [
     "adapters/inbound/cli/test_meeting.py",
     "adapters/inbound/github/test_poller.py",
