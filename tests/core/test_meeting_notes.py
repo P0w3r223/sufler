@@ -14,6 +14,7 @@ from tests.conftest import FakeNotesWriter, FakeProjectsRepository
 from workmate.core.application.meeting_notes import MeetingNoteService
 from workmate.core.application.services import NotesWriteService
 from workmate.core.domain.models import MeetingSummary, Project
+from workmate.core.domain.transcript import SpeakerRoster
 
 
 class _RecordingTranscripts:
@@ -29,15 +30,35 @@ class _RecordingTranscripts:
 
 
 class _RecordingSummarizer:
-    """Atrapa ``MeetingSummarizer`` — zwraca stałe streszczenie i notuje wejście."""
+    """Atrapa ``MeetingSummarizer`` — zwraca stałe streszczenie i notuje wejście (+ roster)."""
 
     def __init__(self, summary: MeetingSummary) -> None:
         self._summary = summary
         self.seen: list[str] = []
+        self.rosters: list[SpeakerRoster] = []
 
-    def summarize(self, transcript: str) -> MeetingSummary:
+    def summarize(self, transcript: str, roster: SpeakerRoster) -> MeetingSummary:
         self.seen.append(transcript)
+        self.rosters.append(roster)
         return self._summary
+
+
+class _RecordingVerifier:
+    """Atrapa ``MeetingNoteVerifier`` — zwraca podstawione streszczenie i notuje wejście."""
+
+    def __init__(self, verified: MeetingSummary) -> None:
+        self._verified = verified
+        self.seen_drafts: list[MeetingSummary] = []
+        self.seen_transcripts: list[str] = []
+        self.seen_rosters: list[SpeakerRoster] = []
+
+    def verify(
+        self, draft: MeetingSummary, transcript: str, roster: SpeakerRoster
+    ) -> MeetingSummary:
+        self.seen_drafts.append(draft)
+        self.seen_transcripts.append(transcript)
+        self.seen_rosters.append(roster)
+        return self._verified
 
 
 def _projects_repo() -> FakeProjectsRepository:
@@ -67,11 +88,14 @@ def _summary() -> MeetingSummary:
 
 
 def _service(
-    transcripts: _RecordingTranscripts, summarizer: _RecordingSummarizer
+    transcripts: _RecordingTranscripts,
+    summarizer: _RecordingSummarizer,
+    verifier: _RecordingVerifier | None = None,
 ) -> tuple[MeetingNoteService, FakeNotesWriter]:
     writer = FakeNotesWriter()
     write_service = NotesWriteService(writer, _projects_repo())
-    return MeetingNoteService(transcripts, summarizer, write_service), writer
+    service = MeetingNoteService(transcripts, summarizer, write_service, verifier=verifier)
+    return service, writer
 
 
 def test_note_from_meeting_summarizes_transcript_and_saves():
@@ -170,3 +194,97 @@ def test_distinct_meeting_refs_same_date_are_separate_notes():
 
     assert a.note_id != b.note_id
     assert set(writer.saved) == {a.note_id, b.note_id}
+
+
+def test_participants_come_from_roster_not_from_summary():
+    # RDZEŃ anty-halucynacji (ADR 0047): uczestnicy notatki pochodzą z DETERMINISTYCZNEGO rostera
+    # (etykiety mówców w transkrypcie), a NIE z pola participants zwróconego przez model.
+    transcript = (
+        "Anna Kowalska: pierwsze zdanie spotkania.\n"
+        "Jan Nowak: drugie zdanie spotkania.\n"
+        "Anna Kowalska: trzecie zdanie.\n"
+    )
+    transcripts = _RecordingTranscripts(transcript)
+    # Model „halucynuje" nieistniejące nazwisko w participants — musi zostać ZIGNOROWANE.
+    bogus = _summary().model_copy(update={"participants": ["Wymyślony Ktoś"]})
+    summarizer = _RecordingSummarizer(bogus)
+    service, _ = _service(transcripts, summarizer)
+
+    outcome = service.note_from_meeting(
+        "m1", project="scada-integration", meeting_date=date(2025, 6, 12)
+    )
+
+    assert outcome.note is not None
+    assert outcome.note.metadata.participants == ["Anna Kowalska", "Jan Nowak"]
+    assert "Wymyślony Ktoś" not in outcome.note.metadata.participants
+    # Summarizer dostał roster (kotwiczenie), nie tylko surowy transkrypt.
+    assert summarizer.rosters[0].speakers == ("Anna Kowalska", "Jan Nowak")
+
+
+def test_verifier_pass_replaces_draft_when_provided():
+    # Gdy wstrzyknięty jest weryfikator (pass 2, ADR 0047), to JEGO wynik trafia do notatki,
+    # a nie surowy draft summarizera. Weryfikator dostaje draft + transkrypt.
+    transcripts = _RecordingTranscripts("Anna Kowalska: cos.\nJan Nowak: cos innego.\n")
+    draft = _summary()
+    verified = _summary().model_copy(
+        update={"decisions": ["Tylko poparte transkryptem"], "tags": ["zweryfikowane"]}
+    )
+    summarizer = _RecordingSummarizer(draft)
+    verifier = _RecordingVerifier(verified)
+    service, _ = _service(transcripts, summarizer, verifier)
+
+    outcome = service.note_from_meeting(
+        "m1", project="scada-integration", meeting_date=date(2025, 6, 12)
+    )
+
+    assert outcome.note is not None
+    assert outcome.note.metadata.decisions == ["Tylko poparte transkryptem"]
+    assert outcome.note.metadata.tags == ["zweryfikowane"]
+    # Weryfikator dostał DRAFT summarizera i ten sam transkrypt.
+    assert verifier.seen_drafts == [draft]
+    assert verifier.seen_transcripts == ["Anna Kowalska: cos.\nJan Nowak: cos innego.\n"]
+
+
+def test_participants_come_from_roster_even_with_verifier_enabled():
+    # RDZEŃ anty-halucynacji przy WŁĄCZONYM passie 2 (ADR 0047): weryfikator też może zhalucynować
+    # tożsamość w participants — a mimo to uczestnicy notatki MUSZĄ pochodzić z deterministycznego
+    # rostera, nie z wyniku modelu. Bez tego testu regres „participants = wynik weryfikatora"
+    # przeszedłby niezauważony (istniejący test verifiera nie sprawdza participants).
+    transcript = (
+        "Anna Kowalska: pierwsze zdanie spotkania.\n"
+        "Jan Nowak: drugie zdanie spotkania.\n"
+        "Anna Kowalska: trzecie zdanie.\n"
+    )
+    transcripts = _RecordingTranscripts(transcript)
+    draft = _summary()
+    # Pass 2 „halucynuje" nazwisko spoza transkryptu w participants — musi zostać ZIGNOROWANE.
+    verified = _summary().model_copy(update={"participants": ["Zmyślony Krytyk"]})
+    summarizer = _RecordingSummarizer(draft)
+    verifier = _RecordingVerifier(verified)
+    service, _ = _service(transcripts, summarizer, verifier)
+
+    outcome = service.note_from_meeting(
+        "m1", project="scada-integration", meeting_date=date(2025, 6, 12)
+    )
+
+    assert outcome.note is not None
+    # Uczestnicy z DETERMINISTYCZNEGO rostera, nie z (zhalucynowanego) wyniku weryfikatora.
+    assert outcome.note.metadata.participants == ["Anna Kowalska", "Jan Nowak"]
+    assert "Zmyślony Krytyk" not in outcome.note.metadata.participants
+    # Weryfikator dostał TEN SAM deterministyczny roster (allowlist) co summarizer — bez niego
+    # pass 2 nie mógłby egzekwować listy dozwolonych nazwisk.
+    assert verifier.seen_rosters[0].speakers == ("Anna Kowalska", "Jan Nowak")
+
+
+def test_without_verifier_draft_is_used_directly():
+    # Domyślnie (verifier=None) zachowanie jednoprzelotowe (ADR 0041) — draft trafia wprost.
+    transcripts = _RecordingTranscripts("Anna Kowalska: raz.\nJan Nowak: dwa.\n")
+    summarizer = _RecordingSummarizer(_summary())
+    service, _ = _service(transcripts, summarizer, verifier=None)
+
+    outcome = service.note_from_meeting(
+        "m1", project="scada-integration", meeting_date=date(2025, 6, 12)
+    )
+
+    assert outcome.note is not None
+    assert outcome.note.metadata.decisions == ["Zamrozic kontrakt v1"]

@@ -40,6 +40,11 @@ from workmate.core.domain.models import (
 # AKTYWNE — bieżąca praca A′4 (dostawa worklogu ZAŁĄCZNIKIEM, ADR 0035/0038 przez 0027):
 #   adapters/test_graph_user_doc_push.py (już aktywny), core/test_weekly_timesheets.py,
 #   core/test_selfservice_worklog.py, core/domain/test_timesheet_message.py.
+# AKTYWNE — poprawka B1/M3 (sufit max_tokens streszczenia, próg strumieniowania SDK):
+#   adapters/test_anthropic_summarizer.py.
+# AKTYWNE — przebudowa M3/ADR 0047 (kotwiczenie mówców + weryfikacja anty-halucynacji):
+#   core/domain/test_transcript.py (nowy, parser mówców), core/test_meeting_notes.py (rdzeń: roster
+#   + verifier + participants z rostera, nie z LLM).
 collect_ignore = [
     "adapters/inbound/cli/test_meeting.py",
     "adapters/inbound/github/test_poller.py",
@@ -67,7 +72,6 @@ collect_ignore = [
     "adapters/telegram/test_handler.py",
     "adapters/telegram/test_settings.py",
     "adapters/test_anthropic_llm.py",
-    "adapters/test_anthropic_summarizer.py",
     "adapters/test_auth.py",
     "adapters/test_claude_summary_store.py",
     "adapters/test_cli_app.py",
@@ -118,7 +122,6 @@ collect_ignore = [
     "core/test_jira_transition_service.py",
     "core/test_jira_write_service.py",
     "core/test_llm_ports.py",
-    "core/test_meeting_notes.py",
     "core/test_notifier.py",
     "core/test_paths.py",
     "core/test_pricing.py",

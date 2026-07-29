@@ -46,8 +46,9 @@ from workmate.core.application.services import NotesWriteService
 from workmate.core.errors import LLMError, WorkMateError
 
 if TYPE_CHECKING:
+    from workmate.adapters.outbound.anthropic_summarizer import AnthropicMeetingSummarizer
     from workmate.core.application.meeting_notes import MeetingNoteOutcome
-    from workmate.core.ports.meeting import MeetingSummarizer
+    from workmate.core.ports.meeting import MeetingNoteVerifier, MeetingSummarizer
 
 _DEFAULT_MEETING_REF = "harness-meeting"
 
@@ -59,17 +60,18 @@ def run_harness(
     meeting_date: date,
     summarizer: MeetingSummarizer,
     write_service: NotesWriteService,
+    verifier: MeetingNoteVerifier | None = None,
     meeting_ref: str = _DEFAULT_MEETING_REF,
 ) -> MeetingNoteOutcome:
     """Złóż przepływ M3 na wklejonym transkrypcie i zwróć wynik (utworzona / już była).
 
-    Sam wiring harnessu: ``InMemoryTranscriptSource`` (jedno mapowanie
-    ``meeting_ref`` → ``transcript``) + wstrzyknięty ``summarizer`` i ``write_service``,
-    spięte przez rdzeniowy ``MeetingNoteService``. Bez I/O konsoli i bez budowy adapterów —
-    dzięki temu testujemy go na atrapie summarizera i prawdziwym zapisie do katalogu tymczasowego.
+    Sam wiring harnessu: ``InMemoryTranscriptSource`` (jedno mapowanie ``meeting_ref`` →
+    ``transcript``) + wstrzyknięty ``summarizer``, opcjonalny ``verifier`` (pass 2, ADR 0047) i
+    ``write_service``, spięte przez rdzeniowy ``MeetingNoteService``. Bez I/O konsoli i bez budowy
+    adapterów — dzięki temu testujemy go na atrapach i prawdziwym zapisie do katalogu tymczasowego.
     """
     transcripts = InMemoryTranscriptSource({meeting_ref: transcript})
-    service = MeetingNoteService(transcripts, summarizer, write_service)
+    service = MeetingNoteService(transcripts, summarizer, write_service, verifier=verifier)
     return service.note_from_meeting(meeting_ref, project=project, meeting_date=meeting_date)
 
 
@@ -121,6 +123,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Katalog docelowy notatki. Domyślnie katalog tymczasowy harnessu "
         "(NIE zaśmieca data/notes/). Podaj data/notes/, by zapisać do bazy świadomie.",
     )
+    parser.add_argument(
+        "--verify",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Druga przelotka-krytyk (ADR 0047): usuwa twierdzenia bez pokrycia w transkrypcie. "
+        "Domyślnie WŁĄCZONA w harnessie (weryfikacja jakości), ~2× koszt Claude. "
+        "--no-verify wyłącza.",
+    )
     return parser.parse_args(argv)
 
 
@@ -159,7 +169,7 @@ def _read_transcript(transcript_path: Path | None) -> str:
     return text
 
 
-def _build_summarizer_or_exit(agent_settings: AgentSettings) -> MeetingSummarizer:
+def _build_summarizer_or_exit(agent_settings: AgentSettings) -> AnthropicMeetingSummarizer:
     """Zbuduj adapter streszczający nad Claude API; brak extra ``agent`` → czytelny komunikat.
 
     Import ``anthropic`` dzieje się dopiero w konstruktorze adaptera (leniwy) — bez extra
@@ -277,6 +287,8 @@ def main() -> None:
     projects_repo = YamlProjectsRepository(settings.projects_registry)
     write_service = NotesWriteService(MarkdownNotesWriter(out_dir), projects_repo)
     summarizer = _build_summarizer_or_exit(agent_settings)
+    # Ten sam adapter to oba porty (draft + krytyk). --verify (ON domyślnie) włącza pass 2.
+    verifier: MeetingNoteVerifier | None = summarizer if args.verify else None
 
     try:
         outcome = run_harness(
@@ -285,6 +297,7 @@ def main() -> None:
             meeting_date=args.date,
             summarizer=summarizer,
             write_service=write_service,
+            verifier=verifier,
             meeting_ref=args.meeting_ref,
         )
     except LLMError as exc:

@@ -290,6 +290,9 @@ class AgentSettings:
     max_tokens: int = 128000
     max_tool_iterations: int = 8
     thinking_type: str = "adaptive"
+    # Druga przelotka-krytyk notatki M3 (ADR 0047): domyślnie OFF (zachowuje jednoprzelotowe 0041),
+    # ~2× koszt gdy ON. To toggle jakości, NIE bramka zapisu — flip nie wymaga zgody zespołu.
+    verify_meeting_note: bool = False
 
     @classmethod
     def from_env(cls) -> AgentSettings:
@@ -303,6 +306,7 @@ class AgentSettings:
             max_tokens=_int_from_env("WORKMATE_AGENT_MAX_TOKENS", 128000),
             max_tool_iterations=_int_from_env("WORKMATE_AGENT_MAX_TOOL_ITERATIONS", 8),
             thinking_type=os.environ.get("WORKMATE_AGENT_THINKING", "adaptive"),
+            verify_meeting_note=_bool_from_env("WORKMATE_AGENT_VERIFY_MEETING_NOTE", False),
         )
 
     def validate(self) -> None:

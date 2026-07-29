@@ -18,6 +18,7 @@ from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.core.application.meeting_notes import MeetingNoteService
 from workmate.core.application.services import NotesWriteService
 from workmate.core.domain.models import MeetingSummary, Project
+from workmate.core.domain.transcript import SpeakerRoster
 
 
 class _FixedTranscripts:
@@ -31,7 +32,7 @@ class _BarrierSummarizer:
     def __init__(self, barrier: threading.Barrier) -> None:
         self._barrier = barrier
 
-    def summarize(self, transcript: str) -> MeetingSummary:
+    def summarize(self, transcript: str, roster: SpeakerRoster) -> MeetingSummary:
         self._barrier.wait(timeout=5)
         return MeetingSummary(
             title="Przeglad",

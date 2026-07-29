@@ -29,6 +29,7 @@ from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.config import AgentSettings
 from workmate.core.application.services import NotesWriteService
 from workmate.core.domain.models import MeetingSummary, Project
+from workmate.core.domain.transcript import SpeakerRoster
 from workmate.core.errors import LLMError, WriteError
 
 
@@ -39,7 +40,7 @@ class _FakeSummarizer:
         self._summary = summary
         self.seen: list[str] = []
 
-    def summarize(self, transcript: str) -> MeetingSummary:
+    def summarize(self, transcript: str, roster: SpeakerRoster) -> MeetingSummary:
         self.seen.append(transcript)
         return self._summary
 

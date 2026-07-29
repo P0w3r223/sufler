@@ -545,6 +545,9 @@ def _build_meeting_note_router(
 
     transcripts = HttpxGraphTranscriptSource(token_provider)
     summarizer = AnthropicMeetingSummarizer(agent_settings)
+    # Pass 2 (ADR 0047): ten sam adapter jest też krytykiem. Włączany flagą jakości (OFF domyślnie,
+    # ~2× koszt) — NIE bramka zapisu. None → jednoprzelotowo (0041).
+    verifier = summarizer if agent_settings.verify_meeting_note else None
     write_service = NotesWriteService(
         MarkdownNotesWriter(core_settings.notes_dir),
         YamlProjectsRepository(core_settings.projects_registry),
@@ -565,7 +568,7 @@ def _build_meeting_note_router(
         "ASYNC (ack + tło + callback, ADR 0043)" if scheduler else "synchroniczny (inline)",
     )
     return MeetingNoteRouter(
-        MeetingNoteService(transcripts, summarizer, write_service),
+        MeetingNoteService(transcripts, summarizer, write_service, verifier=verifier),
         authorizer=authorizer,
         scheduler=scheduler,
         callback=callback,

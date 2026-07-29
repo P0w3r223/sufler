@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workmate.core.domain.notes import build_note_metadata
+from workmate.core.domain.transcript import parse_speaker_roster
 from workmate.core.errors import NoteExistsError
 
 if TYPE_CHECKING:
@@ -23,7 +24,11 @@ if TYPE_CHECKING:
 
     from workmate.core.application.services import NotesWriteService
     from workmate.core.domain.models import Note
-    from workmate.core.ports.meeting import MeetingSummarizer, TranscriptSource
+    from workmate.core.ports.meeting import (
+        MeetingNoteVerifier,
+        MeetingSummarizer,
+        TranscriptSource,
+    )
 
 
 @dataclass(frozen=True)
@@ -48,10 +53,13 @@ class MeetingNoteService:
         transcripts: TranscriptSource,
         summarizer: MeetingSummarizer,
         write_service: NotesWriteService,
+        verifier: MeetingNoteVerifier | None = None,
     ) -> None:
         self._transcripts = transcripts
         self._summarizer = summarizer
         self._write_service = write_service
+        # Pass 2 (ADR 0047), opcjonalny jak authorizer/scheduler: None → jednoprzelotowo (0041).
+        self._verifier = verifier
 
     def note_from_meeting(
         self, meeting_ref: str, *, project: str, meeting_date: date
@@ -71,12 +79,19 @@ class MeetingNoteService:
         if existing_id is not None:
             return MeetingNoteOutcome(note_id=existing_id, created=False, note=None)
         transcript = self._transcripts.fetch(meeting_ref)
-        summary = self._summarizer.summarize(transcript)
+        # Kotwiczenie mówców (ADR 0047): DETERMINISTYCZNIE z transkryptu, nie z LLM. Roster jest
+        # jednocześnie allowlistą nazwisk dla obu przelotek i jedynym źródłem pola participants.
+        roster = parse_speaker_roster(transcript)
+        summary = self._summarizer.summarize(transcript, roster)
+        if self._verifier is not None:
+            # Pass 2 (ADR 0047): krytyk usuwa twierdzenia bez pokrycia w transkrypcie.
+            summary = self._verifier.verify(summary, transcript, roster)
         metadata = build_note_metadata(
             title=summary.title,
             project=project,
             date=meeting_date,
-            participants=summary.participants,
+            # participants NIE z modelu (anty-halucynacja) — tylko z deterministycznego rostera.
+            participants=roster.participants(),
             decisions=summary.decisions,
             action_items=summary.action_items,
             open_questions=summary.open_questions,
