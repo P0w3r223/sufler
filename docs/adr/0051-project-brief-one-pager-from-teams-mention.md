@@ -56,12 +56,13 @@ is DATA, never commands.
    (`WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF`, default OFF) gates the router for staged rollout, consistent
    with the gated-build discipline — but `validate` adds no fail-fast precondition (nothing extra is required).
 
-4. **PDF is an optional projection of the SAME text, reusing the file-reply channel.** When `| pdf` is
-   requested, the router renders `to_text()` via the existing `DocumentRenderer` (fpdf2) and posts it to the
-   thread via the existing `TeamsFileSender` (ADR 0026). PDF delivery is available only when
-   `enable_file_reply` is ALSO on (it reuses that sender and its `Files.ReadWrite.All` scope). Absent that —
-   or on any delivery failure — the brief degrades to the inline text answer with a one-line note. The delivery
-   target (`team/channel/root`) is bound from the trusted `external_id`, never from the model.
+4. **PDF is an optional projection of the SAME text, reusing the file-reply pipeline.** When `| pdf` is
+   requested, delivery calls the single-source `build_file_reply_catalog` pipeline (ADR 0026) — the same
+   render → `_safe_doc_name` → upload → post sequence, filename hardening, and size cap the agent's
+   `reply_with_file` uses — rather than re-implementing it. PDF delivery is available only when
+   `enable_file_reply` is ALSO on (it reuses that pipeline and its `Files.ReadWrite.All` scope). Absent that —
+   or on any expected delivery error — the brief degrades to the inline text answer with a one-line note. The
+   delivery target (`team/channel/root`) is bound from the trusted `external_id`, never from the model.
 
 ## Consequences
 

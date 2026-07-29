@@ -65,8 +65,8 @@ class BriefRouter:
         deliver_pdf: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._service = service
-        # Dostawa PDF (external_id, nazwa pliku, treść Markdown) → wysyłka plikiem w wątku; ``None``
-        # → tryb PDF niedostępny (bramka file-reply off), ``| pdf`` degraduje do tekstu.
+        # Dostawa PDF (external_id, BAZA nazwy bez rozszerzenia, treść Markdown) → wysyłka plikiem
+        # w wątku; ``None`` → tryb PDF niedostępny (file-reply off), ``| pdf`` degraduje do tekstu.
         self._deliver_pdf = deliver_pdf
 
     def dispatch(self, text: str, ctx: BriefContext) -> str | None:
@@ -102,7 +102,7 @@ class BriefRouter:
         if self._deliver_pdf is None:
             return f"{text}\n\n_(PDF niedostępny — odpowiedź plikiem wyłączona; podaję treścią.)_"
         try:
-            self._deliver_pdf(ctx.external_id, f"brief-{project}.pdf", text)
+            self._deliver_pdf(ctx.external_id, f"brief-{project}", text)
         except Exception:
             logger.exception("Nie udało się wysłać one-pagera PDF (projekt %r)", project)
             return f"{text}\n\n_(Nie udało się wysłać PDF — podaję treścią.)_"

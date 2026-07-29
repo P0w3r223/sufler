@@ -716,30 +716,30 @@ def _build_brief_pdf_delivery(
         from workmate.adapters.outbound.graph_file_sender import HttpxGraphFileSender
     except ImportError as exc:
         raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.core.application.tools import build_file_reply_catalog
 
-    # Sync klient żyje przez proces (jak inne sync sendery); pulę połączeń domykamy przy wyjściu.
+    # Sync klient żyje przez proces (jak inne sync sendery tu); pulę domykamy przy wyjściu.
     transport = httpx.Client(timeout=30)
     atexit.register(transport.close)
     sender = HttpxGraphFileSender(transport, token_provider)
     renderer = DefaultDocumentRenderer()
     max_bytes = settings.max_file_reply_kb * 1024
 
-    def deliver(external_id: str, filename: str, content: str) -> None:
+    def deliver(external_id: str, base_name: str, content: str) -> None:
         parts = external_id.split("/")
         if len(parts) != 3:
             raise ValueError(f"zły external_id wątku briefu (team/channel/root): {external_id!r}")
         team_id, channel_id, root_id = parts
-        rendered = renderer.render(content, "pdf")
-        if len(rendered.content) > max_bytes:
-            raise ValueError(
-                f"One-pager PDF ({len(rendered.content)} B) przekracza limit {max_bytes} B."
-            )
-        uploaded = sender.upload_channel_file(
-            team_id, channel_id, filename, rendered.content, rendered.content_type
+        # Reuse JEDNOŹRÓDŁOWEGO pipeline'u file-reply (ADR 0026, reguła 6): render → walidacja →
+        # ``_safe_doc_name`` (hardening nazwy) → upload → post. Bez duplikacji sekwencji tutaj.
+        (spec,) = build_file_reply_catalog(
+            sender, renderer, team_id, channel_id, root_id, max_bytes=max_bytes
         )
-        sender.post_reply_with_attachment(
-            team_id, channel_id, root_id, "One-pager projektu (PDF).", uploaded
-        )
+        result = spec.fn(content, "pdf", base_name)
+        if "error" in result:
+            # Błąd oczekiwany (zły format/za duży/ThreadRootGone) → wywal, router zdegraduje do
+            # tekstu. Twarde awarie infrastruktury pipeline PUSZCZA wyżej (SafeResponder je złapie).
+            raise RuntimeError(str(result["error"]))
 
     return deliver
 

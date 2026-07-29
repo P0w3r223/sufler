@@ -110,7 +110,8 @@ def test_pdf_flag_delivers_file_and_confirms():
 
     reply = router.dispatch("@WorkMate ogarnij mnie na workmate | pdf", _ctx())
 
-    assert calls == [(_EID, "brief-workmate.pdf", "TREŚĆ")]
+    # BAZA nazwy bez rozszerzenia — pipeline file-reply (``_safe_doc_name``) dokłada ``.pdf``.
+    assert calls == [(_EID, "brief-workmate", "TREŚĆ")]
     assert reply is not None and "PDF w tym wątku" in reply
 
 
