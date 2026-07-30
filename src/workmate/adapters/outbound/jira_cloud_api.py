@@ -12,7 +12,8 @@ ale UCINA każde do 20 pozycji. Dla pollera inkrementalnego (krótkie okno od wa
 to praktycznie zawsze wystarcza; przy >20 zmianach/komentarzach jednego zgłoszenia MIĘDZY pollami
 część historii może zostać pominięta — świadome ograniczenie pilotażu (fallback per-issue: osobny
 ``GET /issue/{key}/changelog`` i ``/comment`` — patrz ADR 0033, TODO). Zapis (Gate 5 / ADR 0031) to
-CREATE-ONLY i tłumaczy błąd HTTP na domenowy ``WriteError`` (jak Server/DC).
+CREATE-ONLY i tłumaczy błąd HTTP na domenowy ``WriteError`` (jak Server/DC). Transport idzie przez
+``jira_http.request_with_retry`` — retry na 429/503 (A4).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from workmate.adapters.outbound.jira_http import request_with_retry
 from workmate.core.domain.adf import adf_to_text, text_to_adf
 from workmate.core.errors import WriteError
 
@@ -211,20 +213,15 @@ class HttpxJiraCloudClient:
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
-        response = self._client.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
+        return request_with_retry(self._client, "GET", url, params=params).json()
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.post(url, json=payload)
-        response.raise_for_status()
-        data = response.json()
+        data = request_with_retry(self._client, "POST", url, json=payload).json()
         return data if isinstance(data, dict) else {}
 
     def _post_no_content(self, url: str, payload: dict[str, Any]) -> None:
         """POST bez parsowania ciała — tranzycja zwraca 204 No Content (``.json()`` by padł)."""
-        response = self._client.post(url, json=payload)
-        response.raise_for_status()
+        request_with_retry(self._client, "POST", url, json=payload)
 
 
 def _warn_on_timezone_skew(account_tz: Any) -> None:

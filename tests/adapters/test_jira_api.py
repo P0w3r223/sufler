@@ -104,6 +104,23 @@ def test_add_comment_posts_body_and_normalizes_url():
     assert result["created"] == "2026-07-15T11:00:00.000+0200"
 
 
+def test_create_issue_retries_on_429_then_succeeds():
+    """Retry (A4) działa przez publiczne API klienta, nie tylko w izolacji ``jira_http``."""
+    calls = {"post": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            calls["post"] += 1
+            if calls["post"] == 1:
+                return httpx.Response(429, headers={"Retry-After": "0"})
+            return httpx.Response(201, json={"key": "WM-9"})
+        return httpx.Response(200, json={"fields": {"created": "2026-07-15T10:00:00.000+0200"}})
+
+    result = _client(handler).create_issue("WM", "Task", "Tytuł", "Opis")
+    assert calls["post"] == 2
+    assert result["key"] == "WM-9"
+
+
 def test_create_issue_translates_http_error_to_write_error():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"errors": {"summary": "wymagane"}})
