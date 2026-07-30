@@ -23,7 +23,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
+from workmate.adapters.inbound.brief_command import BriefContext
+from workmate.adapters.inbound.change_command import ChangeDigestContext
 from workmate.adapters.inbound.commands import CommandContext
+from workmate.adapters.inbound.thread_note_command import ThreadNoteContext
 from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
@@ -42,8 +45,11 @@ _TRUNCATED_STOP = "max_tokens"
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from workmate.adapters.inbound.brief_command import BriefRouter
+    from workmate.adapters.inbound.change_command import ChangeDigestRouter
     from workmate.adapters.inbound.commands import CommandRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
+    from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
     from workmate.core.agent.runtime import AgentRuntime
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
@@ -87,6 +93,13 @@ class InboundMessage:
     conversation_id: str = ""
     attachments: tuple[Attachment, ...] = ()
     sender_id: str = ""
+    # Szew „zapisz to" (ADR 0048), addytywne: ``mentions_bot`` = wiadomość @wzmiankuje bota
+    # (warunek wyzwalacza); ``source_message_id`` = id wzmianki (klucz idempotencji, §5);
+    # ``source_timestamp`` = Graph ``created`` wzmianki (deterministyczna data notatki). Drzwi bez
+    # tego pojęcia zostawiają je puste/False, a router „zapisz to" nie zbuduje się (bramka OFF).
+    mentions_bot: bool = False
+    source_message_id: str = ""
+    source_timestamp: str = ""
 
 
 class Responder(Protocol):
@@ -166,6 +179,9 @@ class ConversationalResponder:
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
+        thread_note: ThreadNoteRouter | None = None,
+        project_brief: BriefRouter | None = None,
+        change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
     ) -> None:
         self._runtime = runtime
@@ -189,6 +205,19 @@ class ConversationalResponder:
         # brak (bramka off / inne drzwi). Read-only ``CommandRouter`` zostaje read-only (ADR 0017);
         # ta komenda pisze notatkę i biegnie POZA ``_store_lock`` (pobór Graph + Claude są wolne).
         self._meeting_notes = meeting_notes
+        # OSOBNY router przechwycenia „zapisz to" (ADR 0048, F2); ``None`` → brak (bramka off / inne
+        # drzwi). Wyzwalany @wzmianką bota + dyrektywą; pisze notatkę z WĄTKU (nie ze spotkania) i
+        # biegnie POZA ``_store_lock`` (pobór wątku + Claude są wolne), jak router spotkań.
+        self._thread_note = thread_note
+        # OSOBNY router one-pagera „ogarnij mnie na <projekt>" (ADR 0051, F4); ``None`` → brak
+        # (bramka off / inne drzwi). Wyzwalany @wzmianką bota + dyrektywą; READ-ONLY (status +
+        # notatki), więc bez bramki zapisu/autoryzacji; biegnie POZA ``_store_lock`` (odczyt
+        # notatek/statusu bywa wolny), jak pozostałe routery dyrektyw.
+        self._project_brief = project_brief
+        # OSOBNY router digestu „co się zmieniło od <data>" (ADR 0052, F5); ``None`` → brak
+        # (bramka off / inne drzwi). Wyzwalany @wzmianką bota + dyrektywą; READ-ONLY (fold
+        # zdarzeń), poza ``_store_lock``, jak brief.
+        self._change_digest = change_digest
         # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
         # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
         self._metrics = metrics
@@ -246,6 +275,46 @@ class ConversationalResponder:
             # nie potrzebuje (komendy odczytu nie zależą od nadawcy).
             reply = self._meeting_notes.dispatch(
                 message.text, CommandContext(self._channel, external_id, message.sender_id)
+            )
+            if reply is not None:
+                return reply
+        # Wyzwalacz „zapisz to" (ADR 0048, F2) — POZA ``_store_lock`` (pobór wątku + Claude wolne).
+        # Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura agenta niżej.
+        # ``external_id`` (team/channel/root) = cel poboru/odpowiedzi; ``source_*`` niosą klucz
+        # idempotencji (id wzmianki) i deterministyczną datę (Graph timestamp), nie zegar obsługi.
+        if self._thread_note is not None:
+            reply = self._thread_note.dispatch(
+                message.text,
+                ThreadNoteContext(
+                    external_id=external_id,
+                    source_message_id=message.source_message_id,
+                    source_timestamp=message.source_timestamp,
+                    sender_id=message.sender_id,
+                    mentions_bot=message.mentions_bot,
+                ),
+            )
+            if reply is not None:
+                return reply
+        # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4) — POZA ``_store_lock`` (odczyt
+        # notatek/statusu). Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura
+        # agenta niżej. ``external_id`` (team/channel/root) = cel ewentualnej dostawy PDF w wątku.
+        if self._project_brief is not None:
+            reply = self._project_brief.dispatch(
+                message.text,
+                BriefContext(
+                    external_id=external_id, mentions_bot=message.mentions_bot
+                ),
+            )
+            if reply is not None:
+                return reply
+        # Digest „co się zmieniło od <data>" (ADR 0052, F5) — POZA ``_store_lock`` (fold zdarzeń).
+        # Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura agenta niżej.
+        if self._change_digest is not None:
+            reply = self._change_digest.dispatch(
+                message.text,
+                ChangeDigestContext(
+                    external_id=external_id, mentions_bot=message.mentions_bot
+                ),
             )
             if reply is not None:
                 return reply

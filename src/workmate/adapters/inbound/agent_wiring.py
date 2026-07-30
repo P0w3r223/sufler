@@ -51,7 +51,10 @@ from workmate.core.application.workspace import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from workmate.adapters.inbound.brief_command import BriefRouter
+    from workmate.adapters.inbound.change_command import ChangeDigestRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
+    from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
     from workmate.config import (
         AgentSettings,
         ConversationSettings,
@@ -221,6 +224,9 @@ def build_conversational_responder(
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     meeting_notes: MeetingNoteRouter | None = None,
+    thread_note: ThreadNoteRouter | None = None,
+    project_brief: BriefRouter | None = None,
+    change_digest: ChangeDigestRouter | None = None,
     supports_attachments: bool = False,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
@@ -279,6 +285,9 @@ def build_conversational_responder(
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
         meeting_notes=meeting_notes,
+        thread_note=thread_note,
+        project_brief=project_brief,
+        change_digest=change_digest,
         metrics=metrics,
     )
     return SafeResponder(inner) if safe else inner

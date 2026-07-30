@@ -4,6 +4,7 @@ Importowany LENIWIE (wymaga extra ``jira`` — ``httpx``). Sync (nie async): pol
 w puli wątków (jak ``github_api``). PAT to SEKRET — wstrzykiwany, nigdy logowany. Paginacja po
 ``startAt`` (odpowiedź ``/search`` to KOPERTA ``{issues, total, startAt, maxResults}``, nie goła
 lista). Zapis (Gate 5 / ADR 0031) jest CREATE-ONLY i tłumaczy błąd HTTP na domenowy ``WriteError``.
+Transport idzie przez ``jira_http.request_with_retry`` — retry na 429/503 (A4).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from workmate.adapters.outbound.jira_http import request_with_retry
 from workmate.core.errors import WriteError
 
 if TYPE_CHECKING:
@@ -190,20 +192,15 @@ class HttpxJiraClient:
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
-        response = self._client.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
+        return request_with_retry(self._client, "GET", url, params=params).json()
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.post(url, json=payload)
-        response.raise_for_status()
-        data = response.json()
+        data = request_with_retry(self._client, "POST", url, json=payload).json()
         return data if isinstance(data, dict) else {}
 
     def _post_no_content(self, url: str, payload: dict[str, Any]) -> None:
         """POST bez parsowania ciała — tranzycja zwraca 204 No Content (``.json()`` by padł)."""
-        response = self._client.post(url, json=payload)
-        response.raise_for_status()
+        request_with_retry(self._client, "POST", url, json=payload)
 
 
 def _status_name(fields: Any) -> str:

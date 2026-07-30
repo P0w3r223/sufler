@@ -45,6 +45,24 @@ from workmate.core.domain.models import (
 # AKTYWNE — przebudowa M3/ADR 0047 (kotwiczenie mówców + weryfikacja anty-halucynacji):
 #   core/domain/test_transcript.py (nowy, parser mówców), core/test_meeting_notes.py (rdzeń: roster
 #   + verifier + participants z rostera, nie z LLM).
+# AKTYWNE — F2 „zapisz to" (przechwycenie WĄTKU po @wzmiance bota, ADR 0048): aktywowano 3 pliki
+#   testowe modyfikowane pod F2 (usunięte z listy poniżej) + 3 nowe pliki (zbierane domyślnie):
+#   core/test_paths.py (thread_note_id), core/test_write_service.py (save_thread_note + pre-check),
+#   adapters/inbound/teams_graph/test_selection.py (normalize.mentions_bot), oraz nowe:
+#   core/test_thread_notes.py, adapters/inbound/test_thread_note_command.py,
+#   adapters/test_graph_thread_source.py. teams_graph/test_settings.py jest już aktywny.
+# AKTYWNE — F4 one-pager „ogarnij mnie na <projekt>" (ADR 0051): 3 NOWE pliki zbierane domyślnie
+#   (brak wpisów poniżej): core/domain/test_project_brief.py (render to_text),
+#   core/application/test_project_brief.py (złożenie serwisu),
+#   adapters/inbound/test_brief_command.py (router). Przypadek flagi enable_project_brief dołożony
+#   do już aktywnego teams_graph/test_settings.py.
+# AKTYWNE — F5 digest „co się zmieniło od <data>" (ADR 0052): 3 NOWE pliki zbierane domyślnie:
+#   core/domain/test_change_digest.py (render), core/application/test_change_digest.py (fold),
+#   adapters/inbound/test_change_command.py (router). Przypadek flagi enable_change_digest dołożony
+#   do teams_graph/test_settings.py.
+# AKTYWNE — F6 proaktywny digest tygodniowy (ADR 0053): 2 NOWE pliki zbierane domyślnie:
+#   test_teams_digest_settings.py (bramka odbiorców + harmonogram),
+#   adapters/inbound/teams_digest/test_delivery.py (orkiestracja przebiegu, deliver_weekly_digest).
 collect_ignore = [
     "adapters/inbound/cli/test_meeting.py",
     "adapters/inbound/github/test_poller.py",
@@ -58,7 +76,6 @@ collect_ignore = [
     "adapters/inbound/teams_graph/test_graph.py",
     "adapters/inbound/teams_graph/test_jira_catalog_wiring.py",
     "adapters/inbound/teams_graph/test_poller.py",
-    "adapters/inbound/teams_graph/test_selection.py",
     "adapters/inbound/teams_graph/test_state.py",
     "adapters/inbound/teams_graph/test_worklog_catalog_wiring.py",
     "adapters/inbound/test_agent_wiring.py",
@@ -123,7 +140,6 @@ collect_ignore = [
     "core/test_jira_write_service.py",
     "core/test_llm_ports.py",
     "core/test_notifier.py",
-    "core/test_paths.py",
     "core/test_pricing.py",
     "core/test_services.py",
     "core/test_shift_hours_source.py",
@@ -134,7 +150,6 @@ collect_ignore = [
     "core/test_workspace_domain.py",
     "core/test_workspace_service.py",
     "core/test_workspace_tools.py",
-    "core/test_write_service.py",
     "test_agent_settings.py",
     "test_bridge_connectivity.py",
     "test_conversation_settings.py",

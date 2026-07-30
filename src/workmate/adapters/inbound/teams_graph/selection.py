@@ -61,6 +61,10 @@ class ChannelMessage:
     attachment_refs: tuple[AttachmentRef, ...] = ()
     # MATERIALIZOWANE załączniki (base64/tekst) — dokłada je poller przez adapter I/O.
     attachments: tuple[Attachment, ...] = ()
+    # Czy wiadomość @wzmiankuje BOTA (ADR 0048) — sygnał wyzwalacza „zapisz to". Liczony w
+    # ``normalize`` z ``me_id`` (znanym w pollerze), bo sama treść wzmianki nie wystarcza:
+    # potrzebny jest AAD id bota. Addytywne, domyślnie ``False`` (drzwi/testy bez ``me_id``).
+    mentions_bot: bool = False
 
 
 def parse_iso(value: str) -> datetime:
@@ -87,12 +91,13 @@ def _strip_html(raw: str | None) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", raw or "")).strip()
 
 
-def normalize(raw: dict[str, Any]) -> ChannelMessage | None:
+def normalize(raw: dict[str, Any], me_id: str = "") -> ChannelMessage | None:
     """Zmapuj surową wiadomość Graph; ``None`` gdy to nie treść do odpowiedzi.
 
     Odrzucamy zdarzenia systemowe (``messageType != 'message'``), skasowane i puste —
     nie ma na co odpowiadać. „Puste" to brak tekstu ORAZ brak załączników: wiadomość
-    z samym plikiem/obrazem (bez podpisu) NADAL wymaga odpowiedzi.
+    z samym plikiem/obrazem (bez podpisu) NADAL wymaga odpowiedzi. ``me_id`` (AAD id bota)
+    służy TYLKO wyliczeniu ``mentions_bot`` (wyzwalacz „zapisz to", ADR 0048); pusty → ``False``.
     """
     if raw.get("messageType") != "message" or raw.get("deletedDateTime"):
         return None
@@ -111,7 +116,24 @@ def normalize(raw: dict[str, Any]) -> ChannelMessage | None:
         sender_name=user.get("displayName") or "?",
         text=text,
         attachment_refs=refs,
+        mentions_bot=bool(me_id) and me_id in _parse_mention_ids(raw),
     )
+
+
+def _parse_mention_ids(raw: dict[str, Any]) -> frozenset[str]:
+    """AAD id użytkowników @wzmiankowanych w wiadomości — z ``mentions[].mentioned.user.id``.
+
+    Graph zwraca ``mentions`` jako listę pozycji ``{mentioned: {user: {id}}}``. Wyłuskujemy same
+    id użytkowników (wzmianki kanału/zespołu nie mają ``user``) — to jedyny pewny sygnał, że
+    wiadomość celuje w bota (``me_id`` w trybie delegowanym JEST użytkownikiem).
+    """
+    ids: set[str] = set()
+    for mention in raw.get("mentions") or []:
+        user = (mention.get("mentioned") or {}).get("user") or {}
+        uid = user.get("id")
+        if uid:
+            ids.add(uid)
+    return frozenset(ids)
 
 
 def _parse_refs(raw: dict[str, Any], body_html: str | None) -> tuple[AttachmentRef, ...]:
@@ -259,7 +281,7 @@ def _append_actionable(
     replied: set[str],
 ) -> None:
     """Dołóż wiadomość do obsługi, jeśli to treść od innego człowieka i jeszcze nie odpisana."""
-    msg = normalize(raw)
+    msg = normalize(raw, me_id)  # me_id → wyliczenie mentions_bot (wyzwalacz „zapisz to", ADR 0048)
     if msg and _from_other_human(msg, me_id) and msg.id not in replied:
         messages.append(msg)
 

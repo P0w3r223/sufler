@@ -533,6 +533,92 @@ def test_from_env_reads_async_gate_and_workers(monkeypatch):
     assert settings.meeting_note_async_workers == 5
 
 
+# --- „zapisz to": przechwycenie wątku (F2 / ADR 0048) ----------------------
+
+
+def test_validate_thread_note_capture_off_needs_no_identities():
+    """Bramka OFF nie żąda mapy tożsamości — domyślny config przechodzi."""
+    _valid(enable_thread_note_capture=False).validate()  # nie rzuca
+
+
+def test_validate_thread_note_capture_on_without_identities_fails():
+    # Zapis z wątku ma WBUDOWANĄ autoryzację (B2 / ADR 0042): bez mapy tożsamości każdy nadawca
+    # zapisałby wątek do dowolnego projektu → fail-fast (jak /notatka).
+    with pytest.raises(ValueError, match="ENABLE_THREAD_NOTE_CAPTURE"):
+        _valid(enable_thread_note_capture=True).validate()
+
+
+def test_validate_thread_note_capture_on_with_identities_passes_without_transcript(tmp_path):
+    # ON wymaga TYLKO mapy tożsamości — materiałem jest treść WĄTKU, NIE transkrypt WebVTT
+    # (inaczej niż /notatka). Bramka transkryptu może zostać OFF.
+    identities = tmp_path / "identities.yaml"
+    identities.write_text("", encoding="utf-8")
+    _valid(
+        enable_thread_note_capture=True,
+        enable_meeting_transcript=False,
+        meeting_note_identities=identities,
+    ).validate()  # nie rzuca
+
+
+def test_from_env_defaults_thread_note_capture_off(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", raising=False)
+
+    assert TeamsGraphSettings.from_env().enable_thread_note_capture is False
+
+
+def test_from_env_reads_thread_note_capture_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", "true")
+
+    assert TeamsGraphSettings.from_env().enable_thread_note_capture is True
+
+
+# --- one-pager „ogarnij mnie na <projekt>" (F4 / ADR 0051) ------------------
+
+
+def test_validate_project_brief_on_needs_no_identities_or_scopes():
+    # One-pager jest READ-ONLY (status + notatki): włączenie NIE wymaga mapy tożsamości, zakresu
+    # zapisu ani transkryptu — inaczej niż bramki zapisu. Domyślny config z samą flagą przechodzi.
+    _valid(enable_project_brief=True).validate()  # nie rzuca
+
+
+def test_from_env_defaults_project_brief_off(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", raising=False)
+
+    assert TeamsGraphSettings.from_env().enable_project_brief is False
+
+
+def test_from_env_reads_project_brief_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", "true")
+
+    assert TeamsGraphSettings.from_env().enable_project_brief is True
+
+
+# --- digest „co się zmieniło od <data>" (F5 / ADR 0052) ---------------------
+
+
+def test_validate_change_digest_on_needs_no_identities_or_scopes():
+    # Digest jest READ-ONLY (fold zdarzeń): włączenie NIE wymaga tożsamości/zakresu/transkryptu.
+    _valid(enable_change_digest=True).validate()  # nie rzuca
+
+
+def test_from_env_defaults_change_digest_off(monkeypatch):
+    for var in _TEAMS_GRAPH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", raising=False)
+
+    assert TeamsGraphSettings.from_env().enable_change_digest is False
+
+
+def test_from_env_reads_change_digest_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", "true")
+
+    assert TeamsGraphSettings.from_env().enable_change_digest is True
+
+
 # --- from_env ---------------------------------------------------------------
 
 

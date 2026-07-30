@@ -163,3 +163,52 @@ def test_require_project_raises_on_unknown_before_io():
 def test_require_project_ok_for_known():
     service = NotesWriteService(FakeNotesWriter(), _projects_repo())
     service.require_project("scada-integration")  # nie rzuca
+
+
+# --- notatka z wątku „zapisz to": id deterministyczny + idempotencja (ADR 0048) ---
+
+
+def test_save_thread_note_id_is_deterministic_from_source_message_id_not_title():
+    # Lustro save_meeting_note: id wątku wywodzi się z source_message_id (id wzmianki), NIE ze slug
+    # tytułu Claude — ten sam id wzmianki (inny tytuł) → ten sam id, inny id wzmianki → inny id.
+    svc_a = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    svc_b = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    svc_c = NotesWriteService(FakeNotesWriter(), _projects_repo())
+
+    a = svc_a.save_thread_note(_metadata(title="Przeglad"), body="t", source_message_id="msg-abc")
+    b = svc_b.save_thread_note(
+        _metadata(title="Zupelnie inny"), body="t", source_message_id="msg-abc"
+    )
+    c = svc_c.save_thread_note(_metadata(title="Przeglad"), body="t", source_message_id="msg-XYZ")
+
+    assert a.id.startswith("mpwik/scada-integration/2025-06-12-thr-")
+    assert b.id == a.id  # ten sam id wzmianki → ten sam id notatki, mimo innego tytułu
+    assert c.id != a.id  # inny id wzmianki → inny id notatki
+
+
+def test_thread_note_id_precheck_reflects_existing():
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+
+    on = date(2025, 6, 12)
+    assert service.thread_note_id("msg-abc", project="scada-integration", date=on) is None
+    saved = service.save_thread_note(_metadata(), body="t", source_message_id="msg-abc")
+    assert service.thread_note_id("msg-abc", project="scada-integration", date=on) == saved.id
+
+
+def test_thread_note_id_unknown_project_returns_none():
+    service = NotesWriteService(FakeNotesWriter(), _projects_repo())
+    assert service.thread_note_id("msg", project="nieznany", date=date(2025, 6, 12)) is None
+
+
+def test_save_thread_note_is_create_only_on_repeat(tmp_path):
+    # Z REALNYM create-only writerem: ponowny zapis tej samej wzmianki rzuca NoteExistsError
+    # (kolizja), zamiast tworzyć duplikat -2 — gwarancja idempotencji na poziomie FS (ADR 0048).
+    from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+    from workmate.core.errors import NoteExistsError
+
+    service = NotesWriteService(MarkdownNotesWriter(tmp_path), _projects_repo())
+    service.save_thread_note(_metadata(), body="pierwsza", source_message_id="msg-abc")
+
+    with pytest.raises(NoteExistsError):
+        service.save_thread_note(_metadata(title="Inny"), body="druga", source_message_id="msg-abc")

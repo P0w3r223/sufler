@@ -81,3 +81,23 @@ def meeting_note_id(company: str, project: str, on: date, meeting_ref: str) -> s
         raise ValueError("meeting_ref nie może być pusty (brak klucza idempotencji notatki).")
     digest = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:_MEETING_REF_DIGEST_LEN]
     return f"{company}/{project}/{on.isoformat()}-mtg-{digest}"
+
+
+def thread_note_id(company: str, project: str, on: date, source_message_id: str) -> str:
+    """Deterministyczny id notatki z wątku „zapisz to": ``<firma>/<projekt>/<data>-thr-<hash>``.
+
+    Analog ``meeting_note_id`` dla przechwycenia wątku Teams (ADR 0048 §5). Klucz idempotencji to
+    ID WIADOMOŚCI-WZMIANKI (``source_message_id``), a NIE tytuł generowany przez Claude: ponowna
+    ta sama wzmianka (crash-retry) daje TEN SAM id, więc create-only writer wykrywa kolizję zamiast
+    tworzyć duplikat ``-2`` (klon idempotencji 0043). Id wiadomości Graph nie jest bezpiecznym
+    slugiem, więc skracamy go do stabilnego skrótu SHA-256. Prefiks ``-thr-`` (nie ``-mtg-``)
+    odróżnia notatkę z wątku od notatki ze spotkania w tej samej firmie/projekcie/dacie.
+    """
+    _reject_path_segments(company, project)
+    ref = source_message_id.strip()
+    if not ref:
+        raise ValueError(
+            "source_message_id nie może być pusty (brak klucza idempotencji notatki z wątku)."
+        )
+    digest = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:_MEETING_REF_DIGEST_LEN]
+    return f"{company}/{project}/{on.isoformat()}-thr-{digest}"

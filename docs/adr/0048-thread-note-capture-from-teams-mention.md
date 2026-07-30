@@ -75,9 +75,14 @@ authorization is a pure core decision over a port (ADR 0042); thread content is 
 
 8. **Gated OFF by default** — new `TeamsGraphSettings.enable_thread_note_capture`, which **requires**
    `WORKMATE_TEAMS_GRAPH_IDENTITIES` (authorization is intrinsic to the write gate, not a second toggle —
-   ADR 0042) and the RW mount of `data/notes` (same as `/notatka`). Validated fail-fast: gate on without a
-   target is a hard startup error, never a dead gate. **This ADR stays `proposed` until the team accepts
-   enabling thread capture.**
+   ADR 0042) and the RW mount of `data/notes` (same as `/notatka`). It does **not** require
+   `enable_meeting_transcript` — the source material is thread text, not a WebVTT transcript, so no
+   transcript scopes are needed. The **inline** router is self-sufficient; the **async** mode reuses the
+   `/notatka` scheduler/poster (`enable_meeting_note_async`), which by its own fail-fast chain pulls in the
+   full meeting-note write path — so async thread capture presently implies enabling `/notatka` too. Inline
+   is the standalone default; a dedicated async toggle is a later, additive option (§Follow-ups). Validated
+   fail-fast: gate on without a target is a hard startup error, never a dead gate. **This ADR stays
+   `proposed` until the team accepts enabling thread capture.**
 
 ## Alternatives considered
 
