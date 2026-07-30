@@ -19,6 +19,7 @@ operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
 | `web.config.sample` | IIS reverse proxy (ARR) + wyłączone buforowanie SSE. | wdrożenie |
 | `install-service.ps1` | Rejestracja uvicorn jako usługi Windows (NSSM). Domyślnie dry-run. | wdrożenie |
 | `smoke-transport.ps1` | Weryfikacja 401/401/200/421 po wdrożeniu. | po wdrożeniu |
+| `mcp.team.json.sample` | Szablon `.mcp.json` dla zespołu (transport HTTP + token) — repo-`.mcp.json` zostaje na `stdio`. | onboarding dev |
 
 ## Kolejność wdrożenia
 
@@ -40,8 +41,9 @@ operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
 
 4. **Smoke transportu** (po wdrożeniu): `smoke-transport.ps1 -BaseUrl https://workmate.firma.pl`.
 
-5. **Klient**: dev używa `.mcp.json` typu `http` z tokenem ze zmiennej środowiskowej
-   (runbook §5). Repo-`.mcp.json` zostaje na `stdio`.
+5. **Klient**: skopiuj [`mcp.team.json.sample`](mcp.team.json.sample) → `.mcp.json` LOKALNY
+   (poza repo albo w `.gitignore`), podmień `<HOST>`/`<TOKEN>` na własne. Repo-`.mcp.json`
+   celowo zostaje na `stdio` (dev bez serwera nadal działa lokalnie). Szczegóły: runbook §5.
 
 ## Rotacja i rewokacja
 

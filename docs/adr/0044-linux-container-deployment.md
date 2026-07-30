@@ -22,7 +22,6 @@ WorkMate is not one process. It is a fleet:
 - `workmate-github`, `workmate-jira`, `workmate-teams-graph` — outbound long-polling doors.
 - `workmate-worklogi` — weekly scheduler (internal loop, single-instance lock, ADR 0035).
 - `workmate-worklog-selfservice` — **on-demand** invocation (`--submission`/`--source-id`, ADR 0038).
-- `workmate-telegram` — long-polling bot door.
 
 Two cross-cutting invariants constrain the topology:
 
@@ -36,7 +35,7 @@ Two cross-cutting invariants constrain the topology:
 Ship a container deployment under `deploy/docker/`, mirroring the `Powiadomienia_teams/` pattern:
 
 - **One image, many entrypoints.** A single multi-stage `Dockerfile` (build context = repo root) with all
-  fleet extras (`agent github jira teams-graph worklogi telegram file-reply retrieval`). The image
+  fleet extras (`agent github jira teams-graph worklogi file-reply retrieval`). The image
   `ENTRYPOINT` is `tini --`; each Compose service sets its own `command:` (`workmate`, `workmate-github`,
   …). The test stage runs the full pytest gate during build — the runtime image cannot be produced from
   red source (house guarantee, matches the sub-project).
@@ -87,3 +86,25 @@ Hardening mirrors the sub-project: non-root uid `10001`, `read_only` rootfs with
 - Operators must remember the interactive MSAL priming step before starting `teams-graph`/`worklogi`; the
   README makes it the explicit first run-step. A lost refresh token still needs a human `--login`
   (unchanged from ADR 0015/0035).
+
+## Update (2026-07-30)
+
+The `workmate-telegram` door is removed from the fleet — decided unused, not worth maintaining a
+second bot SDK for zero real users. The image no longer ships the `telegram` extra or the
+`telegram` Compose service/profile; every reference above is historical (the topology at the time
+of the original decision), not current.
+
+## Update (2026-07-30, D1-D3 scope change)
+
+Two more doors named above are gone: `workmate-jira` (the poller/push/write door — ADR 0054
+reduced Jira to one read-only capability, "my tasks", called directly from `teams-graph`/MCP, no
+separate process) and `workmate-worklogi` + `workmate-worklog-selfservice` (WorklogPRO withdrawn
+in full, ADR 0055). The `bridge` profile now runs only `github` + `teams-graph`; the `worklogi`
+and `tools` Compose profiles no longer exist (no services reference them); the `worklogi-out`
+volume is removed. `propose_worklog` (ADR 0034, read-only commit-time estimator) is unaffected —
+it was never a separate process, only an agent tool on the `teams-graph`/MCP surface.
+
+One operational gap this creates: `worklog-selfservice --login` was the standing way to prime the
+shared Teams-push MSAL token cache (`teams_push_token_cache.bin`, ADR 0022) without waiting for a
+real GitHub event. No replacement shipped in this change — see
+`deploy/docker/README.md` § Lista kontrolna dnia wdrożenia.

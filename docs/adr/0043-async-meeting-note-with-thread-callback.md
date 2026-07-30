@@ -90,6 +90,11 @@ internal tool); authorization stays synchronous/fail-fast (ADR 0042) — only th
 - **Ephemeral, by choice:** a crash loses an in-flight task; the user re-runs `/notatka` and the
   idempotent id makes the retry safe. Persistence (EventStore job) remains a later, additive upgrade.
 
+## Update (2026-07-30)
+
+`enable_meeting_note_async` flipped to `true` in `deploy/docker/env`. Live-smoke (ack + callback +
+forced-retry idempotency) still pending — blocked on the same parked meeting live-smoke as ADR 0041.
+
 ## Follow-ups
 
 - On acceptance: flip to `accepted`; live-smoke ack + callback + a forced-retry idempotency check.

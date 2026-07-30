@@ -2,7 +2,9 @@
 
 Sedno różnic wobec Server/DC (ADR 0033): nagłówek Basic (email:api_token), konto = ``accountId``
 (/rest/api/3/myself), wyszukiwanie ``POST /search/jql`` z paginacją kursorową (``nextPageToken``/
-``isLast``, bez ``total``), treść ``description``/``comment.body`` kodowana/dekodowana jako ADF.
+``isLast``, bez ``total``), opis zgłoszenia kodowany/dekodowany jako ADF. Zapis/tranzycja
+(ADR 0031/0032) i pola komentarzy zostały USUNIĘTE razem z mostem (ADR 0054) — klient jest dziś
+wyłącznie odczytowy, na potrzeby "moich zadań".
 """
 
 from __future__ import annotations
@@ -11,11 +13,9 @@ import base64
 import json
 
 import httpx
-import pytest
 
 from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
-from workmate.core.domain.adf import adf_to_text, text_to_adf
-from workmate.core.errors import WriteError
+from workmate.core.domain.adf import text_to_adf
 
 _BASE = "https://acme.atlassian.net"
 
@@ -61,7 +61,19 @@ def test_search_uses_post_search_jql_with_body():
     assert "project=WM" in seen["body"]["jql"]
     assert seen["body"]["expand"] == "changelog"
     assert seen["body"]["maxResults"] == 25
-    assert "comment" in seen["body"]["fields"]  # komentarze inline
+    assert "priority" in seen["body"]["fields"] and "duedate" in seen["body"]["fields"]
+
+
+def test_search_omits_expand_when_empty():
+    """"Moje zadania" (ADR 0054) nie potrzebuje changelogu — puste ``expand`` nic nie wysyła."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"issues": [], "isLast": True})
+
+    _client(handler).search_issues("project=WM", expand="")
+    assert "expand" not in seen["body"]
 
 
 def test_search_paginates_by_next_page_token():
@@ -146,30 +158,20 @@ def test_search_empty_page_with_token_stops_no_extra_call():
     assert issues == []
 
 
-def test_search_flattens_adf_description_and_comment_bodies():
+def test_search_flattens_adf_description():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
                 "isLast": True,
                 "issues": [
-                    {
-                        "key": "WM-1",
-                        "fields": {
-                            "description": text_to_adf("Opis w ADF"),
-                            "comment": {
-                                "comments": [{"id": "1", "body": text_to_adf("komentarz ADF")}]
-                            },
-                        },
-                    }
+                    {"key": "WM-1", "fields": {"description": text_to_adf("Opis w ADF")}}
                 ],
             },
         )
 
     issues = _client(handler).search_issues("project=WM")
-    fields = issues[0]["fields"]
-    assert fields["description"] == "Opis w ADF"  # spłaszczone do stringa
-    assert fields["comment"]["comments"][0]["body"] == "komentarz ADF"
+    assert issues[0]["fields"]["description"] == "Opis w ADF"  # spłaszczone do stringa
 
 
 def test_search_preserves_none_description():
@@ -183,197 +185,8 @@ def test_search_preserves_none_description():
     assert issues[0]["fields"]["description"] is None  # jak Server/DC: brak opisu → None
 
 
-def test_search_tolerates_comment_without_body_and_non_dict_entries():
-    # Odporność spłaszczania: komentarz BEZ ``body`` (Cloud potrafi go pominąć) oraz nie-dict wpis
-    # nie mogą wywrócić klienta AttributeError/KeyError — flatten pomija je, resztę tłumaczy.
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "isLast": True,
-                "issues": [
-                    {
-                        "key": "WM-1",
-                        "fields": {
-                            "comment": {
-                                "comments": [
-                                    {"id": "1"},  # brak ``body`` — nie tykamy
-                                    "śmieć",  # nie-dict — pomijany
-                                    {"id": "2", "body": text_to_adf("realny komentarz")},
-                                ]
-                            }
-                        },
-                    }
-                ],
-            },
-        )
-
-    issues = _client(handler).search_issues("project=WM")
-    comments = issues[0]["fields"]["comment"]["comments"]
-    assert "body" not in comments[0]  # nietknięty (brak body)
-    assert comments[2]["body"] == "realny komentarz"  # spłaszczony do tekstu
-
-
-# --- write (ADR 0031) — ADF encode ------------------------------------------
-
-
-def test_create_issue_encodes_description_as_adf_and_fetches_created():
-    seen: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            assert request.url.path == "/rest/api/3/issue"
-            seen["payload"] = json.loads(request.content)
-            return httpx.Response(201, json={"key": "WM-9"})
-        seen["get_fields"] = request.url.params.get("fields")
-        return httpx.Response(200, json={"fields": {"created": "2026-07-15T10:00:00.000+0200"}})
-
-    result = _client(handler).create_issue("WM", "Task", "Tytuł", "Opis", ("pilne",))
-    assert result["key"] == "WM-9"
-    assert result["url"] == f"{_BASE}/browse/WM-9"
-    assert result["created"] == "2026-07-15T10:00:00.000+0200"
-    fields = seen["payload"]["fields"]
-    assert fields["project"] == {"key": "WM"}
-    assert fields["summary"] == "Tytuł" and fields["labels"] == ["pilne"]
-    assert isinstance(fields["description"], dict) and fields["description"]["type"] == "doc"
-    assert adf_to_text(fields["description"]) == "Opis"  # zakodowane jako ADF
-
-
-def test_add_comment_encodes_body_as_adf():
-    seen: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/rest/api/3/issue/WM-5/comment"
-        seen["payload"] = json.loads(request.content)
-        return httpx.Response(201, json={"id": "5001", "created": "2026-07-15T11:00:00.000+0200"})
-
-    result = _client(handler).add_comment("WM-5", "treść komentarza")
-    assert result["id"] == "5001"
-    assert result["url"] == f"{_BASE}/browse/WM-5?focusedCommentId=5001"
-    assert isinstance(seen["payload"]["body"], dict)
-    assert adf_to_text(seen["payload"]["body"]) == "treść komentarza"
-
-
-def test_create_issue_translates_http_error_to_write_error():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"errors": {"summary": "wymagane"}})
-
-    with pytest.raises(WriteError, match="utworzyć zgłoszenia"):
-        _client(handler).create_issue("WM", "Task", "", "opis")
-
-
-# --- transition (ADR 0032) — v3 paths ---------------------------------------
-
-
-def test_read_transitions_parses_current_status_and_neighbors():
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/rest/api/3/issue/WM-5"
-        assert request.url.params.get("expand") == "transitions"
-        return httpx.Response(
-            200,
-            json={
-                "fields": {"status": {"name": "To Do"}},
-                "transitions": [
-                    {"id": "11", "name": "Start Progress", "to": {"name": "In Progress"}}
-                ],
-            },
-        )
-
-    snap = _client(handler).read_transitions("WM-5")
-    assert snap["current_status"] == "To Do"
-    assert snap["transitions"] == [
-        {"id": "11", "name": "Start Progress", "to_status": "In Progress"}
-    ]
-
-
-def test_transition_issue_posts_id_and_fetches_status_updated():
-    seen: dict = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            assert request.url.path == "/rest/api/3/issue/WM-5/transitions"
-            seen["payload"] = json.loads(request.content)
-            return httpx.Response(204)
-        return httpx.Response(
-            200,
-            json={
-                "fields": {
-                    "status": {"name": "In Progress"},
-                    "updated": "2026-07-15T10:00:00.000+0200",
-                }
-            },
-        )
-
-    result = _client(handler).transition_issue("WM-5", "11")
-    assert seen["payload"] == {"transition": {"id": "11"}}
-    assert result == {
-        "url": f"{_BASE}/browse/WM-5",
-        "status": "In Progress",
-        "updated": "2026-07-15T10:00:00.000+0200",
-    }
-
-
-def test_transition_issue_survives_failed_followup_get():
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            return httpx.Response(204)
-        return httpx.Response(500)
-
-    result = _client(handler).transition_issue("WM-5", "11")
-    assert result["status"] == "" and result["updated"] == ""
-    assert result["url"] == f"{_BASE}/browse/WM-5"
-
-
-# --- widoczność cichych strat ------------------------------------------------------
-
-
-def test_search_warns_when_inline_comments_were_truncated(caplog):
-    """Cap 20/20 w bulk-searchu ma być SŁYSZALNY — inaczej zdarzenia przepadają po cichu.
-
-    Zgłoszenie wygląda na kompletne, a część komentarzy nigdy nie trafi do Teams. Założenie
-    ADR 0033 („poller inkrementalny → wystarcza") trzyma się tylko wtedy, gdy Jira zwraca
-    20 NAJNOWSZYCH pozycji, a kolejność nie jest udokumentowana ani zmierzona.
-    """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "issues": [
-                    {
-                        "key": "WT-12",
-                        "fields": {"comment": {"comments": [{"id": "1"}], "total": 25}},
-                    }
-                ],
-                "isLast": True,
-            },
-        )
-
-    _client(handler).search_issues("project = WT")
-
-    assert "WT-12" in caplog.text
-    assert "1 z 25" in caplog.text
-
-
-def test_search_is_quiet_when_nothing_was_truncated(caplog):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "issues": [
-                    {"key": "WT-1", "fields": {"comment": {"comments": [{"id": "1"}], "total": 1}}}
-                ],
-                "isLast": True,
-            },
-        )
-
-    _client(handler).search_issues("project = WT")
-
-    assert "przepadn" not in caplog.text and "NIE trafi" not in caplog.text
-
-
 def test_myself_warns_when_account_timezone_differs_from_host(caplog):
-    """JQL bez strefy liczy daty w strefie KONTA — rozjazd przesuwa granicę okna pollingu."""
+    """JQL bez strefy liczy daty w strefie KONTA — rozjazd przesuwa interpretację dat granicznych"""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"accountId": "acc-1", "timeZone": "Pacific/Kiritimati"})

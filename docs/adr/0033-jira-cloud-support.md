@@ -1,7 +1,9 @@
 # 0033. Jira Cloud support — dual-provider adapter (REST v3 + ADF, Basic auth)
 
 Date: 2026-07-20
-Status: accepted
+Status: accepted (amended by docs/adr/0054-reduce-jira-to-read-only-my-tasks.md, 2026-07-30 — the
+  write/transition halves of this dual-provider client are removed; the read half (search/auth,
+  both Server/DC and Cloud) survives and is reused by "my tasks")
 Author: P0w3r223
 Related to: docs/adr/0030-jira-server-read-door.md,
   docs/adr/0031-jira-write-capability-gate-5.md,

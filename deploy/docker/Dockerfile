@@ -10,7 +10,7 @@
 
 # Extras całej floty — jedno źródło prawdy dla wszystkich etapów.
 # agent (runtime Claude), github/jira/teams-graph (drzwi mostu), worklogi (+file-reply dla
-# self-service), telegram, retrieval (lematyzacja PL). Dense retrieval (ADR 0039) celowo POMINIĘTY
+# self-service), retrieval (lematyzacja PL). Dense retrieval (ADR 0039) celowo POMINIĘTY
 # — wchodzi dopiero za bramką mikro-evalu.
 
 # ---------------------------------------------------------------------------
@@ -35,13 +35,13 @@ COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev \
         --extra agent --extra github --extra jira --extra teams-graph \
-        --extra worklogi --extra telegram --extra file-reply --extra retrieval
+        --extra worklogi --extra file-reply --extra retrieval
 
 COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev \
         --extra agent --extra github --extra jira --extra teams-graph \
-        --extra worklogi --extra telegram --extra file-reply --extra retrieval
+        --extra worklogi --extra file-reply --extra retrieval
 
 # ---------------------------------------------------------------------------
 # 2. Testy — bramka jakości wpięta w budowanie
@@ -51,7 +51,7 @@ FROM deps AS test
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked \
         --extra agent --extra github --extra jira --extra teams-graph \
-        --extra worklogi --extra telegram --extra file-reply --extra retrieval
+        --extra worklogi --extra file-reply --extra retrieval
 COPY tests/ ./tests/
 COPY eval/ ./eval/
 COPY data/ ./data/

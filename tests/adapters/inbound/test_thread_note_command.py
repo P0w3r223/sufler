@@ -15,8 +15,8 @@ from datetime import date
 from workmate.adapters.inbound.thread_note_command import ThreadNoteContext, ThreadNoteRouter
 from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
 from workmate.core.application.thread_notes import ThreadNoteOutcome
+from workmate.core.domain.identity import Person
 from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.domain.timesheet import Person
 from workmate.core.errors import LLMError, WriteError
 
 _TS = "2026-07-28T10:00:00Z"  # Graph ``created`` wzmianki → data notatki 2026-07-28.

@@ -10,7 +10,9 @@ Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonyc
   notatek działają na plikach z `data/`.
 - **Runtime agenta** (drzwi Teams/Telegram/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
   jego brak to twardy błąd startu, nie tryb degradacji.
-- **Most GitHub / Jira / push do Teams** — wymagają PAT GitHub, PAT Jira i/lub cache tokenu Microsoft Graph.
+- **Most GitHub / push do Teams** — wymagają PAT GitHub i/lub cache tokenu Microsoft Graph.
+- **Jira** — wyłącznie odczyt „moje zadania" (`get_my_jira_tasks` / `/moje-zadania`); wymaga PAT/API
+  tokenu Jira, ale bez pollera ani mostu do Teams ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)).
 
 Sekrety trzymamy **wyłącznie poza repo** (env / plik poza `data/`). Wszystkie bramki zapisu
 (`*_ENABLE_WRITE`, `*_ENABLE_TRANSITION`, `*_ENABLE_CHANNEL*`, `*_CI_AUTO_COMMENT`, `ENABLE_WORKSPACE`)
@@ -159,12 +161,14 @@ Procedura: [`how-to/worklog-from-commits.md`](../how-to/worklog-from-commits.md)
 | `WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS` | `31` | Szerokość okna jednego `propose_worklog` (backstop `92`). |
 | `WORKMATE_GITHUB_WORKLOG_TZ` | `Europe/Warsaw` | Strefa liczenia doby kalendarzowej (nazwa IANA, `ZoneInfo` — odporna na DST). |
 
-## Drzwi Jira Server/DC lub Cloud / most (`JiraSettings`, extra `jira`)
+## Drzwi Jira Server/DC lub Cloud — TYLKO odczyt „moje zadania" (`JiraSettings`, extra `jira`)
 
-Polling instancji Jira ([ADR 0030](../adr/0030-jira-server-read-door.md)) — **Server/DC** (PAT Bearer,
+Jira jest zredukowana do JEDNEJ, wyłącznie odczytowej zdolności ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md),
+supersedes [0031](../adr/0031-jira-write-capability-gate-5.md)/[0032](../adr/0032-jira-status-transition-capability.md)):
+narzędzie `get_my_jira_tasks` zwraca TYLKO otwarte zadania przypisane pytającemu, zero parametrów.
+Nie ma już pollera (`workmate-jira`), pushu do Teams ani mostu Teams↔Jira. **Server/DC** (PAT Bearer,
 REST v2) lub **Cloud** ([ADR 0033](../adr/0033-jira-cloud-support.md); Basic email+API-token, REST
-v3/ADF, `search/jql`) wg `WORKMATE_JIRA_DEPLOYMENT`; zapis (Gate 5) i tranzycja statusu za NIEZALEŻNYMI
-bramkami. Procedura: [`how-to/jira-bridge.md`](../how-to/jira-bridge.md).
+v3/ADF, `search/jql`) wg `WORKMATE_JIRA_DEPLOYMENT`. Procedura: [`how-to/jira-my-tasks.md`](../how-to/jira-my-tasks.md).
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
@@ -172,19 +176,11 @@ bramkami. Procedura: [`how-to/jira-bridge.md`](../how-to/jira-bridge.md).
 | `WORKMATE_JIRA_BASE_URL` | *(wymagane)* | URL instancji. Server/DC = własny host; Cloud = `https://<site>.atlassian.net`. |
 | `WORKMATE_JIRA_TOKEN` | *(wymagane)* | **Sekret.** PAT (Server/DC) lub API token z id.atlassian.com (Cloud). |
 | `WORKMATE_JIRA_EMAIL` | — | E-mail konta do Basic-auth. **Wymagany na Cloud** (`deployment=cloud`); pusty na Server/DC. |
-| `WORKMATE_JIRA_WATCH_PROJECTS` | *(wymagane)* | Klucze projektów do nasłuchu (po przecinku, np. `WM,OPS`); mapowanie na projekt WorkMate z rejestru (`jira_project_key`, [ADR 0028](../adr/0028-project-repo-jira-mapping-and-event-dimension.md)). |
-| `WORKMATE_JIRA_POLL_INTERVAL` | `60` (podłoga `30`) | Odstęp odpytań (s). |
-| `WORKMATE_JIRA_PER_PAGE` | `50` | Rozmiar strony. |
-| `WORKMATE_JIRA_STATE` | `~/.workmate/jira_state.json` | Watermark (`updated`) + kursor notifiera. |
-| `WORKMATE_JIRA_SELF_ACCOUNT` | login/`accountId` | Strażnik pętli self-skip: login PAT (Server/DC) lub `accountId` (Cloud). **Wymagane** przy włączonym zapisie/tranzycji. |
-| `WORKMATE_JIRA_ENABLE_WRITE` | `false` | Gate 5: zapis create-only `create_jira_issue`/`comment_jira_issue` ([ADR 0031](../adr/0031-jira-write-capability-gate-5.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
-| `WORKMATE_JIRA_WRITE_PROJECT` | — | Projekt tworzenia/tranzycji (z konfiguracji, nie z treści prośby). Wymagany przy zapisie/tranzycji. |
-| `WORKMATE_JIRA_DEFAULT_ISSUE_TYPE` | `Task` | Domyślny typ tworzonego zgłoszenia. |
-| `WORKMATE_JIRA_ENABLE_TRANSITION` | `false` | NIEZALEŻNA bramka tranzycji statusu `transition_jira_issue` ([ADR 0032](../adr/0032-jira-status-transition-capability.md)). Wymaga `_WRITE_PROJECT` + `_SELF_ACCOUNT`. |
-| `WORKMATE_JIRA_MAX_TRANSITION_HOPS` | `1` | Sufit hopów walk (1 = single-hop; ≥2 = wielo-hop forced-advance; sufit `10`). |
+| `WORKMATE_JIRA_MY_ACCOUNT` | — | Principal, którego zadania wystawia narzędzie MCP na drzwiach stdio (Claude Code/CLI). Bez tej zmiennej narzędzie NIE wchodzi — z góry skonfigurowany, jeden na proces (nie nadaje się na współdzielony serwer HTTP z wieloma osobami). Na drzwiach Teams tożsamość idzie zamiast tego z mapy AAD→Jira (`WORKMATE_TEAMS_GRAPH_IDENTITIES`, pole `jira_user`). |
 
-Wątkowanie kanału dla Jiry (B2) korzysta ze wspólnej flagi `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING`
-(sekcja *Push do Teams*) — resolver wątków kojarzy zdarzenia jednego zgłoszenia po `/browse/{KEY}`.
+Wątkowanie i tranzycja statusu, poller, push do Teams i zapis (create/comment) — **usunięte w
+całości**. Watch-listy projektów, self-skip, interwał pollingu, projekt zapisu itd. nie mają już
+zastosowania (nie ma czego pollingować ani co zapisywać).
 
 ## Drzwi Telegram (`TelegramSettings`, extra `telegram`)
 
@@ -209,25 +205,12 @@ Lokalny wariant przez Bot Framework Emulator/Azure ([`how-to/teams-bot.md`](../h
 `config.py` szuka korzenia repozytorium, idąc w górę do katalogu z `pyproject.toml`. Dzięki temu
 serwer działa niezależnie od bieżącego katalogu roboczego, bez zaszywania ścieżek w kodzie.
 
-## Cotygodniowe karty czasu ([ADR 0035](../adr/0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md))
+## Karty czasu (WorklogPRO) — WYCOFANE
 
-Drzwi `workmate-worklogi` (extra `worklogi`). Szczegóły: [`how-to/worklogi-weekly.md`](../how-to/worklogi-weekly.md).
-
-| Zmienna | Domyślnie | Znaczenie |
-|---|---|---|
-| `WORKMATE_WORKLOGI_ENABLED` | `false` | **BRAMKA** drzwi. Wymaga `OUTPUT_DIR`, `IDENTITIES`, `TEAM_ID`. |
-| `WORKMATE_WORKLOGI_DRY_RUN` | `true` | Tryb próbny: arkusze powstają, wiadomości NIE wychodzą, stan się nie zapisuje. |
-| `WORKMATE_WORKLOGI_HEADERS_CONFIRMED` | `false` | **BRAMKA trybu bojowego.** `DRY_RUN=false` bez tego = twardy błąd startu. Ustaw dopiero po porównaniu `WORKLOGPRO_HEADERS` z szablonem kreatora importu ([`how-to/worklogi-weekly.md`](../how-to/worklogi-weekly.md) §1). |
-| `WORKMATE_WORKLOGI_OUTPUT_DIR` | — | Katalog arkuszy. **Musi leżeć poza `data/` ORAZ poza repozytorium** — imienne godziny w drzewie roboczym trafiłyby do gita przy pierwszym `git add .`. Obie kontrole przy starcie. |
-| `WORKMATE_WORKLOGI_IDENTITIES` | — | Plik YAML `source_id → {aad_user_id, jira_user}`. Fail-closed. |
-| `WORKMATE_WORKLOGI_TEAM_ID` | — | Zespół Teams do weryfikacji członkostwa (`TeamMember.Read.All`). |
-| `WORKMATE_WORKLOGI_HOURS_SOURCE` | `json` | Źródło godzin. Na razie tylko atrapa `json`. |
-| `WORKMATE_WORKLOGI_HOURS_PATH` | — | Ścieżka pliku ze źródłem godzin (dla `json`). |
-| `WORKMATE_WORKLOGI_STATE` | `~/.workmate/worklogi_state.json` | Stan idempotencji per tydzień i osoba. |
-| `WORKMATE_WORKLOGI_RUN_WEEKDAY` | `4` | Dzień przebiegu (0=poniedziałek, 4=piątek). |
-| `WORKMATE_WORKLOGI_RUN_HOUR` / `_RUN_MINUTE` | `16` / `0` | Godzina przebiegu w strefie `TZ`. |
-| `WORKMATE_WORKLOGI_TZ` | `Europe/Warsaw` | Strefa granic tygodnia (`ZoneInfo`; walidowana przy starcie). |
-| `WORKMATE_WORKLOGI_START_HOUR` | `8` | Godzina stemplowania wpisu w arkuszu (domyślna WorklogPRO). |
-| `WORKMATE_WORKLOGI_MAX_HOURS_PER_DAY` | `16.0` | Sufit zdrowego rozsądku na dobę (backstop `24`). |
-| `WORKMATE_WORKLOGI_MAX_CATCHUP_DAYS` | `3` | Ile dni wstecz wolno nadrobić pominięty termin (backstop `14`). |
-| `WORKMATE_WORKLOGI_ONLY_SOURCE_IDS` | — | Filtr pilotażowy (puste = wszyscy ze źródła). |
+Cały moduł cotygodniowych kart czasu (generowanie arkuszy WorklogPRO, wysyłka DM, self-service na
+żądanie) został wycofany z projektu w całości ([ADR 0055](../adr/0055-withdraw-worklogpro-timesheets.md),
+supersedes 0035/0036/0037/0038) — to decyzja trwała, nie pauza. `WorklogiSettings`, drzwi
+`workmate-worklogi`/`workmate-worklog-selfservice` i wszystkie zmienne `WORKMATE_WORKLOGI_*` nie
+istnieją już w `config.py`. Propozycja czasu z commitów GitHub (`propose_worklog`, czyste odczytowe
+narzędzie, [ADR 0034](../adr/0034-jira-worklog-from-github-commits.md)) **zostaje bez zmian** — patrz
+sekcja *Propozycja czasu z commitów* wyżej (`GithubSettings`).

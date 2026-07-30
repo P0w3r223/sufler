@@ -13,8 +13,8 @@ from workmate.adapters.inbound.commands import CommandContext
 from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
 from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
 from workmate.core.application.meeting_notes import MeetingNoteOutcome
+from workmate.core.domain.identity import Person
 from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.domain.timesheet import Person
 from workmate.core.errors import LLMError, WriteError
 
 

@@ -139,7 +139,7 @@ class SqliteConversationStore:
         self._conn.row_factory = sqlite3.Row
         # busy_timeout: gdy inny PROCES (drugie drzwi) trzyma zapis, poczekaj zamiast
         # natychmiastowego SQLITE_BUSY → OperationalError. WAL: lepsza współbieżność
-        # czytelnik/zapisujący dla bazy plikowej, bo Teams i Telegram (osobne procesy)
+        # czytelnik/zapisujący dla bazy plikowej, bo drzwi agentowe (osobne procesy)
         # domyślnie dzielą ten sam plik. Na ``:memory:`` WAL jest no-op — nieszkodliwe.
         self._conn.execute("PRAGMA busy_timeout = 5000")
         self._conn.execute("PRAGMA journal_mode = WAL")

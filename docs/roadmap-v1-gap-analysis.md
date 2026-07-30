@@ -10,7 +10,8 @@ Related to: [`roadmap.md`](roadmap.md), `roadmap_workmate.pdf` (Roadmap V1)
 ## Wniosek
 
 Zdecydowana **większość celów Roadmapy V1 jest zrealizowana**, a projekt wyszedł poza V1
-(most Jira, Telegram, cotygodniowe worklogi). Domknięte: **Faza 1**, **Faza 2 · M1/M2**,
+(Telegram; historycznie też most Jira i cotygodniowe worklogi — oba **wycofane 2026-07-30**,
+patrz Update D1/D2 niżej). Domknięte: **Faza 1**, **Faza 2 · M1/M2**,
 **Faza 3 (GitHub)** — ta ostatnia rozszerzona o dwukierunkowy most PR/CI/review. Pozostają
 pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń do sesji MCP.
 
@@ -20,6 +21,17 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
 > **nie są już zablokowane** — pozostaje sam build `TeamsFileSender`. Dlatego przesunięto je z grupy
 > „Azure-gated" do etapów wczesnych.
 
+> **Update (2026-07-30, D1/D2 scope change):** dwie wiążące decyzje zredukowały zakres opisany
+> niżej. **D1 (ADR 0054):** Jira zredukowana do JEDNEJ, wyłącznie odczytowej zdolności „moje
+> zadania" — poller, push Jira→Teams, most Teams↔Jira i całe pisanie (create/comment/transition)
+> **usunięte w całości** (supersedes ADR 0031/0032). **D2 (ADR 0055):** karty czasu WorklogPRO
+> (cotygodniowe arkusze + self-service) **wycofane z projektu w całości** — decyzja trwała, nie
+> pauza (supersedes ADR 0035/0036/0037/0038; nie dotyczy ADR 0034 — `propose_worklog` zostaje bez
+> zmian). Pozycje **C2** i **C3** niżej opisują sesje SPRZED tej decyzji (2026-07-28) — dokumentują,
+> co zostało zbudowane i zwalidowane na żywo PRZED wycofaniem; nie traktuj ich jako otwartych zadań
+> do dokończenia. Adnotacje „SUPERSEDED (D1/D2)" przy poszczególnych pozycjach wskazują, co
+> dokładnie straciło aktualność.
+
 ## Status celów V1
 
 | Cel Roadmapy V1 | Status | Dowód w kodzie |
@@ -28,7 +40,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
 | Faza 2 · M1 — runtime agenta w rdzeniu | ✅ domknięte | `core/agent/`, ADR 0008/0010–0014 |
 | Faza 2 · M2 — adapter Teams (@wzmianka → odpowiedź) | ✅ domknięte (delegowany Graph) | `adapters/inbound/teams_graph`, ADR 0015/0016 |
 | Faza 2 · M3 — przepływ „nowa notatka ze spotkania" | ✅ kod kompletny (2026-07-28), gated OFF; live-smoke zaparkowany (brak realnego id spotkania) | `core/application/meeting_notes.py`; realny `HttpxGraphTranscriptSource` + `/notatka` (ADR 0041), bramki OFF |
-| Faza 2 · M4 — async + mapowanie tożsamości Entra/AD + zapis bramkowany | ✅ kod kompletny (2026-07-28), gated OFF: zapis + autoryzacja nadawcy (ADR 0042) + async (ADR 0043) | `save_note` gated ✅; tożsamość = katalog worklogów, fail-closed |
+| Faza 2 · M4 — async + mapowanie tożsamości Entra/AD + zapis bramkowany | ✅ kod kompletny (2026-07-28), gated OFF: zapis + autoryzacja nadawcy (ADR 0042) + async (ADR 0043) | `save_note` gated ✅; tożsamość — `core/domain/identity.py` (fail-closed; skonsolidowana z timesheet.py 2026-07-30, ADR 0055) |
 | Faza 3 — GitHub issues jako drzwi | ✅ domknięte i rozszerzone | `adapters/inbound/github`, ADR 0019–0024 |
 | Faza 3 — lepszy retrieval / RAG (osadzenia + ranking) | 🟡 tylko leksykalny BM25 | ADR 0023; brak zależności vector/embedding |
 | Faza 3 — push zdarzeń do sesji Claude Code (kanały MCP) | ✅ domknięte pull-em (push niedostępny) | `read_events_since` na drzwiach MCP (ADR 0040); research `docs/research/mcp-server-to-session-push.md` |
@@ -107,7 +119,9 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   `docs/research/graph-1to1-chat-file-attachment.md`. Bramka: ruff+mypy czyste, pytest 226 (zakres
   celowo zawężony) — +~45. ADR 0027 → **accepted (images + file delivered)**. Realny push = operator
   (device-code na czat + upload; live-smoke: `webUrl` vs `webDavUrl`, org-link vs `invite`).
-- [x] **A′4. Dostawa worklogu załącznikiem** (0035/0038) — ZROBIONE (2026-07-28): oba drzwi worklogów
+- [x] **A′4. Dostawa worklogu załącznikiem** (0035/0038) — **SUPERSEDED (D2, ADR 0055, 2026-07-30):**
+  oba drzwi worklogów opisane niżej ZOSTAŁY WYCOFANE z projektu w całości — pozycja dokumentuje
+  historyczny build (2026-07-28), nie stan bieżący. ZROBIONE (2026-07-28): oba drzwi worklogów
   (wsadowe ADR 0035 + self-service ADR 0038) odsyłają arkusz `.xlsx` realnym ZAŁĄCZNIKIEM zamiast
   ścieżki tekstem, bramka `WORKMATE_WORKLOGI_ENABLE_ATTACHMENT` (OFF). Reużywa `UserDocSender`
   (ADR 0027, wariant plikowy — NIE `TeamsFileSender`, bo czat 1:1 nie ma dysku kanału → OneDrive
@@ -172,7 +186,12 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   token→weryfikator. Bramka: ruff+mypy czyste, pytest **358**. `@code-reviewer`: brak CRIT/HIGH, 5×MEDIUM
   + 3×LOW naprawione. **Część tokenowa uruchamialna offline już teraz;** do zrobienia na serwerze: IIS +
   usługa Windows + ACL NTFS na `tokens.json` + live smoke transportu (M4/M5 = jawne TODO w README).
-- [~] **C2. Jira — live-smoke — POZ. 11 (read-path) ZWALIDOWANA NA ŻYWO (2026-07-28); poz. 11 ingest + 12–15 czekają na 2. konto Jira / device-code Teams.**
+- [~] **C2. Jira — live-smoke — SUPERSEDED (D1, ADR 0054, 2026-07-30) w części poz. 12–15.**
+  Poller ingest (poz. 11), push do Teams (poz. 12–13), zapis i tranzycja (poz. 14–15) opisane niżej
+  zostały USUNIĘTE W CAŁOŚCI — pozostaje wyłącznie odczyt „moje zadania" (nowa poz. 11,
+  [`live-smoke-checklist.md`](how-to/live-smoke-checklist.md)). „Do zrobienia (operator)" niżej jest
+  NIEAKTUALNE — nie ma już czego dokańczać, poller i push nie istnieją. Reszta akapitu (do
+  2026-07-28) dokumentuje historyczny build/walidację PRZED wycofaniem.
   Żywa instancja `example.atlassian.net`, projekt **WT** („WorkMate Test"), wariant `cloud` (Basic
   `email:api_token`, REST v3/ADF, `search/jql`). Potwierdzone read-only wobec Jiry (do TYMCZASOWEGO
   `events.db`, bez zapisów): (a) łączność + auth; (b) **fail-fast strażnika pętli** — `SELF_ACCOUNT`
@@ -183,10 +202,12 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   miał placeholder `jira_project_key: WM`, a `.env` nasłuchuje `WT` → ustawiono `WT` na projekcie
   `workmate` (bramka zielona, pytest **358**). **Blokada początkowa (rozwiązana):** stary token dawał
   `401 AUTHENTICATED_FAILED` — operator odświeżył API token w `.env`. **Do zrobienia (operator):**
-  niepominięty ingest (zmiana w WT z INNEGO konta Jira niż token) oraz poz. 12–15 (push do Teams:
-  `WORKMATE_TEAMS_PUSH_*` + device-code) — patrz [`live-smoke-checklist.md`](how-to/live-smoke-checklist.md) #11–15.
-  **Narzędzie:** promowano skrypty smoke do repo — `deploy/jira/preflight.py` (read-only preflight
-  poz. 11: łączność+auth+`SELF_ACCOUNT`+pipeline do temp-db) + `deploy/jira/README.md`. Config push do
+  niepominięty ingest (zmiana w WT z INNEGO konta Jira niż token) oraz push do Teams — OBA
+  usunięte razem z poller-em/mostem (D1, patrz adnotacja SUPERSEDED wyżej); nowe „moje zadania" to
+  poz. 11 w [`live-smoke-checklist.md`](how-to/live-smoke-checklist.md).
+  **Narzędzie (historyczne):** promowano skrypty smoke do repo — dawny `deploy/jira/preflight.py`
+  (read-only preflight poz. 11 SPRZED D1: łączność+auth+`SELF_ACCOUNT`+pipeline do temp-db) +
+  `deploy/jira/README.md`; oba zastąpione nową, czysto odczytową wersją (ADR 0054). Config push do
   Teams wpisany do nadrzędnego `.env` (`WORKMATE_TEAMS_PUSH_*`: client/tenant/team z Powiadomienia,
   **cele OFF** — nic nie wychodzi). Blokada poz. 13: `CHANNEL_ID` nieznany (Powiadomienia używa
   Shifts+DM, nie kanału) — do odkrycia `GET /teams/{team}/channels`. Bramka: ruff+mypy czyste, pytest **358**.
@@ -202,8 +223,13 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   uzbrojony DM zadziała od bota bez device-code. **Cel kanałowy poz. 13 odkryty:** zespół
   „Workmate-Teams" (`27fefc2f…`) / kanał „ogólny" (`19:7xExC…`), przez `/me/joinedTeams` +
   `/teams/{team}/channels`; wpisany do `.env`, `ENABLE_CHANNEL=false` (odkryty, nie włączony).
-- [~] **C3. Worklog — go-live — NARZĘDZIE + BRAMKI ZWALIDOWANE NA ŻYWO (2026-07-28); Krok 0 (szablon
-  WorklogPRO), przebieg próbny i pilotaż bojowy czekają na operatora.** Wypromowano
+- [~] **C3. Worklog — go-live — SUPERSEDED (D2, ADR 0055, 2026-07-30).** Karty czasu WorklogPRO
+  (cotygodniowe arkusze + self-service) **wycofane z projektu w całości** — decyzja trwała, nie
+  pauza. „Krok 0 / przebieg próbny / pilotaż bojowy czekają na operatora" niżej NIGDY się nie
+  odbędą — nie brakuje operatora, brakuje przedmiotu (drzwi usunięte). Akapit niżej (do 2026-07-28)
+  jest zapisem historycznym tego, co zbudowano i zwalidowano PRZED wycofaniem.
+  NARZĘDZIE + BRAMKI ZWALIDOWANE NA ŻYWO (2026-07-28); Krok 0 (szablon
+  WorklogPRO), przebieg próbny i pilotaż bojowy czekają na operatora. Wypromowano
   `deploy/worklogi/preflight.py` + README (mirror `deploy/jira/`): read-only raport configu,
   realna `WorklogiSettings.validate` wobec `.env`, DOWÓD na żywo, że `DRY_RUN=false` bez
   `HEADERS_CONFIRMED=true` jest blokowane (strażnik z `config.py`), oraz generator PRZYKŁADOWEGO

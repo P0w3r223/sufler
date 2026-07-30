@@ -65,6 +65,16 @@ class LLMError(WorkMateError):
     """
 
 
+class JiraReadError(WorkMateError):
+    """Odczyt z Jiry (ADR 0054, "moje zadania") się nie udał: auth, throttling, timeout, sieć.
+
+    Adapter tłumaczy tu błąd transportu (401/403/429/timeout), żeby narzędzie zwróciło czytelny
+    komunikat zamiast surowego ``httpx.HTTPError``. Osobny od ``WriteError`` — to ścieżka ODCZYTU,
+    nic nie mutuje; osobny od ``RepositoryError`` — źródło jest zewnętrznym API, nie magazynem
+    lokalnym.
+    """
+
+
 class ThreadRootGone(WorkMateError):
     """Root wątku na kanale Teams już nie istnieje (odpowiedź na usunięty post, ADR 0024).
 

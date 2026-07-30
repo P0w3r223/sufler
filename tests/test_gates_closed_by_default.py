@@ -4,7 +4,7 @@ Rozproszone `default=False` w ``config.py`` łatwo przestawić — przy dopisywa
 scalaniu, przy „tymczasowym" włączeniu do testów. Ten test zbiera je w jednym miejscu i traktuje
 domyślną wartość jak KONTRAKT, nie szczegół implementacji.
 
-Inwariant (CLAUDE.md, ADR 0006/0021/0031/0032/0034/0035): odczyt jest domyślny, każdy zapis wchodzi
+Inwariant (CLAUDE.md, ADR 0006/0021/0034): odczyt jest domyślny, każdy zapis wchodzi
 przez własną bramkę wyłączoną z fabryki, a operator włącza ją świadomie. Jeśli ten test padnie,
 NIE „naprawiaj" go zmianą oczekiwanej wartości — to sygnał, że ktoś otworzył bramkę domyślnie.
 
@@ -18,9 +18,7 @@ import pytest
 
 from workmate.config import (
     GithubSettings,
-    JiraSettings,
     TeamsPushSettings,
-    WorklogiSettings,
     WorkspaceSettings,
 )
 
@@ -28,9 +26,6 @@ from workmate.config import (
 _MUTATING_GATES = (
     ("WORKMATE_GITHUB_ENABLE_WRITE", "GitHub: tworzenie issue/komentarzy (Gate 4)"),
     ("WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", "GitHub: autonomiczny auto-komentarz CI"),
-    ("WORKMATE_JIRA_ENABLE_WRITE", "Jira: tworzenie zgłoszeń/komentarzy (Gate 5)"),
-    ("WORKMATE_JIRA_ENABLE_TRANSITION", "Jira: tranzycja statusu"),
-    ("WORKMATE_WORKLOGI_ENABLED", "Karty czasu: cotygodniowa wysyłka do ludzi"),
     ("WORKMATE_TEAMS_PUSH_ENABLE_CHAT", "Teams: proaktywny czat 1:1"),
     ("WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL", "Teams: proaktywny post na kanale"),
     ("WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING", "Teams: wątkowanie kanału"),
@@ -43,21 +38,16 @@ def clean_env(monkeypatch):
     """Zdejmij wszystkie bramki ze środowiska — testujemy domyślne wartości KODU."""
     for name, _ in _MUTATING_GATES:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.delenv("WORKMATE_WORKLOGI_DRY_RUN", raising=False)
     return monkeypatch
 
 
 def _all_gates() -> dict[str, bool]:
     """Bieżący stan wszystkich bramek, zebrany z dataclass ustawień."""
-    jira = JiraSettings.from_env()
     github = GithubSettings.from_env()
     push = TeamsPushSettings.from_env()
     return {
         "WORKMATE_GITHUB_ENABLE_WRITE": github.enable_github_write,
         "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT": github.enable_ci_auto_comment,
-        "WORKMATE_JIRA_ENABLE_WRITE": jira.enable_jira_write,
-        "WORKMATE_JIRA_ENABLE_TRANSITION": jira.enable_jira_transition,
-        "WORKMATE_WORKLOGI_ENABLED": WorklogiSettings.from_env().enabled,
         "WORKMATE_TEAMS_PUSH_ENABLE_CHAT": push.enable_chat,
         "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL": push.enable_channel,
         "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING": push.enable_channel_threading,
@@ -76,11 +66,6 @@ def test_gate_is_closed_by_default(name: str, opis: str, clean_env) -> None:
 def test_every_known_gate_is_covered(clean_env) -> None:
     """Nowa bramka musi trafić na listę — inaczej wymknęłaby się temu testowi."""
     assert set(_all_gates()) == {name for name, _ in _MUTATING_GATES}
-
-
-def test_worklogi_starts_in_dry_run(clean_env) -> None:
-    """Sama bramka nie wystarcza: po włączeniu drzwi NADAL nic nie wychodzi do ludzi."""
-    assert WorklogiSettings.from_env().dry_run is True
 
 
 def test_notes_write_stays_the_only_default_on_capability(clean_env) -> None:

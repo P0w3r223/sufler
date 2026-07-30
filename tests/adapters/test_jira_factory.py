@@ -13,7 +13,6 @@ def _settings(**kw) -> JiraSettings:
     base: dict = {
         "base_url": "https://acme.example",
         "token": "secret",
-        "watch_projects": ("WM",),
     }
     base.update(kw)
     return JiraSettings(**base)

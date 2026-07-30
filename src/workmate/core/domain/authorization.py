@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from workmate.core.domain.timesheet import Person
+    from workmate.core.domain.identity import Person
 
 
 @dataclass(frozen=True)
@@ -29,8 +29,8 @@ class Actor:
     """Rozpoznany członek pionu — tożsamość zmapowana z konta Entra/AAD (B2 / ADR 0042).
 
     Minimalny value object: tyle, ile trzeba do decyzji i do czytelnego logu odmowy. Świadomie
-    węższy niż ``Person`` (który niesie identyfikatory Jiry/git do worklogów) — autoryzacja
-    notatki potrzebuje wyłącznie „kto to jest", nie mapowań na inne systemy.
+    węższy niż ``Person`` (który niesie też konto Jiry, ADR 0054) — autoryzacja notatki potrzebuje
+    wyłącznie „kto to jest", nie mapowań na inne systemy.
     """
 
     aad_user_id: str

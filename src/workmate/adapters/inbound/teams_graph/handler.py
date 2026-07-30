@@ -1,6 +1,6 @@
 """Handler wiadomości kanału → responder (szew). Wolny od SDK/httpx, testowalny atrapą.
 
-Analogicznie do ``teams/bot.py::make_on_message`` i ``telegram/bot.py`` — z drzwi
+Analogicznie do ``teams/bot.py::make_on_message`` — z drzwi
 wychodzi jedynie ``InboundMessage``, a co bot odpowiada, decyduje wstrzyknięty
 ``Responder`` (echo / runtime agenta / … — podmiana to jedna linia w ``app.py``).
 """

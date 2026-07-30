@@ -37,9 +37,6 @@ from workmate.core.domain.models import (
 #   adapters/test_conversational_responder_user_push.py, core/test_file_reply_tools.py,
 #   core/test_user_image_push_tools.py, oraz w adapters/inbound/teams_graph/:
 #   test_handler.py, test_settings.py, test_thread_tool_factory.py.
-# AKTYWNE — bieżąca praca A′4 (dostawa worklogu ZAŁĄCZNIKIEM, ADR 0035/0038 przez 0027):
-#   adapters/test_graph_user_doc_push.py (już aktywny), core/test_weekly_timesheets.py,
-#   core/test_selfservice_worklog.py, core/domain/test_timesheet_message.py.
 # AKTYWNE — poprawka B1/M3 (sufit max_tokens streszczenia, próg strumieniowania SDK):
 #   adapters/test_anthropic_summarizer.py.
 # AKTYWNE — przebudowa M3/ADR 0047 (kotwiczenie mówców + weryfikacja anty-halucynacji):
@@ -63,40 +60,35 @@ from workmate.core.domain.models import (
 # AKTYWNE — F6 proaktywny digest tygodniowy (ADR 0053): 2 NOWE pliki zbierane domyślnie:
 #   test_teams_digest_settings.py (bramka odbiorców + harmonogram),
 #   adapters/inbound/teams_digest/test_delivery.py (orkiestracja przebiegu, deliver_weekly_digest).
+# 2026-07-30 (D1-D3, ADR 0054/0055): most Jira (push/poller/zapis) i moduł WorklogPRO USUNIĘTE
+# fizycznie z repo — wpisy poniżej wskazujące na te pliki skasowano (nie tylko z listy: pliki same
+# już nie istnieją). Testy read-only Jiry (test_jira_api/test_jira_cloud_api/test_jira_factory/
+# test_jira_settings.py) i propose_worklog (test_worklog_catalog/service.py,
+# teams_graph/test_worklog_catalog_wiring.py) ZOSTAJĄ na liście (nietknięty wcześniejszy zakres
+# dezaktywacji) — zweryfikowane jawnym uruchomieniem po zmianach zakresu, nie przez pełny przebieg.
 collect_ignore = [
     "adapters/inbound/cli/test_meeting.py",
     "adapters/inbound/github/test_poller.py",
     "adapters/inbound/github/test_selection.py",
-    "adapters/inbound/jira/test_app.py",
-    "adapters/inbound/jira/test_cloud_integration.py",
-    "adapters/inbound/jira/test_poller.py",
-    "adapters/inbound/jira/test_selection.py",
     "adapters/inbound/teams_graph/test_attachments.py",
     "adapters/inbound/teams_graph/test_formatting.py",
     "adapters/inbound/teams_graph/test_graph.py",
-    "adapters/inbound/teams_graph/test_jira_catalog_wiring.py",
     "adapters/inbound/teams_graph/test_poller.py",
     "adapters/inbound/teams_graph/test_state.py",
     "adapters/inbound/teams_graph/test_worklog_catalog_wiring.py",
     "adapters/inbound/test_agent_wiring.py",
     "adapters/inbound/test_commands.py",
-    "adapters/inbound/test_worklog_selfservice_state.py",
-    "adapters/inbound/test_worklogi_door.py",
     "adapters/teams/test_handler.py",
     "adapters/teams/test_responder.py",
     "adapters/teams/test_runtime_responder.py",
     "adapters/teams/test_settings.py",
-    "adapters/telegram/test_handler.py",
-    "adapters/telegram/test_settings.py",
     "adapters/test_anthropic_llm.py",
     "adapters/test_auth.py",
-    "adapters/test_claude_summary_store.py",
     "adapters/test_cli_app.py",
     "adapters/test_conversational_responder.py",
     "adapters/test_conversational_responder_thread_tools.py",
     "adapters/test_env.py",
     "adapters/test_github_api.py",
-    "adapters/test_github_commit_source.py",
     "adapters/test_github_commits.py",
     "adapters/test_graph_file_sender.py",
     "adapters/test_graph_teams_notifier.py",
@@ -111,21 +103,14 @@ collect_ignore = [
     "adapters/test_sqlite_events.py",
     "adapters/test_sqlite_thread_links.py",
     "adapters/test_tools_read.py",
-    "adapters/test_worklogi_adapters.py",
     "adapters/test_workspace_filesystem.py",
     "adapters/test_yaml_projects_repo.py",
     "core/application/test_ci_autocomment.py",
     "core/application/test_search_hybrid.py",
     "core/domain/test_adf.py",
     "core/domain/test_ci.py",
-    "core/domain/test_day_comment.py",
-    "core/domain/test_issue_attribution.py",
     "core/domain/test_ranking.py",
-    "core/domain/test_shift_hours.py",
-    "core/domain/test_submitted_summary.py",
     "core/domain/test_threads.py",
-    "core/domain/test_timesheet.py",
-    "core/domain/test_timesheet_sheet.py",
     "core/domain/test_week.py",
     "core/domain/test_worklog_domain.py",
     "core/test_agent_runtime.py",
@@ -135,14 +120,10 @@ collect_ignore = [
     "core/test_events.py",
     "core/test_events_since_tool.py",
     "core/test_github_write_service.py",
-    "core/test_jira_transition_catalog.py",
-    "core/test_jira_transition_service.py",
-    "core/test_jira_write_service.py",
     "core/test_llm_ports.py",
     "core/test_notifier.py",
     "core/test_pricing.py",
     "core/test_services.py",
-    "core/test_shift_hours_source.py",
     "core/test_thread_reply_catalog.py",
     "core/test_tools_bridge.py",
     "core/test_worklog_catalog.py",

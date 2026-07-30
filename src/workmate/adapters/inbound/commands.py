@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.conversations import ConversationService
+    from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import Conversation
 
 # Odpowiedzi komendy startu wątku (przeniesione z respondera — należą do handlera ``/nowa``).
@@ -39,7 +40,7 @@ class CommandSpec:
     summary: str
 
 
-# JEDNO ŹRÓDŁO komend: zasila ``/pomoc``, wiązanie handlerów i nazwy dla Telegrama.
+# JEDNO ŹRÓDŁO komend: zasila ``/pomoc`` i wiązanie handlerów.
 COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(("/pomoc", "/help"), "Lista dostępnych komend."),
     CommandSpec(("/nowa", "/nowy", "/new"), "Rozpocznij nowy wątek rozmowy."),
@@ -47,16 +48,8 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(("/projekty",), "Lista projektów pionu."),
     CommandSpec(("/status",), "Status projektu: /status [projekt] (bez arg — bieżący wątek)."),
     CommandSpec(("/historia",), "Ostatnie rozmowy z archiwum."),
+    CommandSpec(("/moje-zadania", "/zadania"), "Twoje otwarte zadania z Jiry (ADR 0054)."),
 )
-
-
-def telegram_command_names() -> list[str]:
-    """Nazwy komend BEZ ukośnika do ``CommandHandler`` PTB — jedno źródło z ``COMMAND_SPECS``.
-
-    Telegram (python-telegram-bot) filtruje wiadomości-komendy (``~COMMAND``), więc każda
-    komenda z ukośnikiem musi być tu wymieniona, by w ogóle dotrzeć do handlera i szwu.
-    """
-    return [token[1:] for spec in COMMAND_SPECS for token in spec.tokens]
 
 
 @dataclass(frozen=True)
@@ -64,8 +57,9 @@ class CommandContext:
     """Kontekst wykonania komendy: kanał drzwi i identyfikator rozmowy (klucz pamięci wątku).
 
     ``sender_id`` (AAD id nadawcy, addytywne, domyślnie puste) niesie TOŻSAMOŚĆ do autoryzacji
-    zapisu (``/notatka``, B2 / ADR 0042). Read-only ``CommandRouter`` go IGNORUJE — komendy odczytu
-    nie zależą od nadawcy; pole jest tu, bo oba routery dzielą ten sam kontekst szwu drzwi.
+    zapisu (``/notatka``, B2 / ADR 0042) ORAZ do odczytu zawężonego do nadawcy (``/moje-zadania``,
+    ADR 0054). Większość komend odczytu go ignoruje — pole jest tu, bo wszystkie routery dzielą ten
+    sam kontekst szwu drzwi.
     """
 
     channel: str
@@ -87,12 +81,18 @@ class CommandRouter:
         read_tools: Mapping[str, Callable[..., dict[str, Any]]],
         *,
         supports_attachments: bool = False,
+        my_jira_tasks: Callable[[str], Sequence[ToolSpec]] | None = None,
     ) -> None:
         self._conversations = conversations
         self._tools = read_tools
         # F8: przykład o załącznikach w /pomoc tylko na drzwiach, które je materializują
         # (teams-graph) — na drzwiach tekstowych byłby mylną obietnicą.
         self._supports_attachments = supports_attachments
+        # Fabryka narzędzia "moje zadania" (ADR 0054), PER NADAWCA (jak thread/user-push factory)
+        # — ``None`` gdy Jira/tożsamość nie są skonfigurowane na tych drzwiach (komenda odpowiada
+        # czytelną odmową zamiast crashować). Zwraca gotowy ``ToolSpec``, którego ``fn()`` router
+        # woła bezpośrednio — ta sama fabryka zasila per-turowy katalog agenta.
+        self._my_jira_tasks = my_jira_tasks
         handlers = {
             "/pomoc": self._help,
             "/nowa": self._new_thread,
@@ -100,6 +100,7 @@ class CommandRouter:
             "/projekty": self._projects,
             "/status": self._status,
             "/historia": self._history,
+            "/moje-zadania": self._my_tasks,
         }
         # Rozwiń aliasy z rejestru; KeyError = rejestr i handlery się rozjechały (guard w testach).
         self._by_token = {
@@ -112,7 +113,7 @@ class CommandRouter:
         if not stripped:
             return None
         parts = stripped.split(None, 1)
-        # Pierwszy token; obcięcie sufiksu ``@bot`` (grupy Telegrama); lowercase.
+        # Pierwszy token; obcięcie sufiksu ``@bot`` (konwencja komend grupowych); lowercase.
         token = parts[0].split("@", 1)[0].lower()
         handler = self._by_token.get(token)
         if handler is None:
@@ -171,6 +172,17 @@ class CommandRouter:
             )
         return "\n".join(lines)
 
+    def _my_tasks(self, args: str, ctx: CommandContext) -> str:
+        if self._my_jira_tasks is None:
+            return "Ta komenda nie jest skonfigurowana na tych drzwiach."
+        tools = self._my_jira_tasks(ctx.sender_id)
+        if not tools:
+            return (
+                "Nie udało się ustalić Twojego konta Jira — zgłoś się do administratora "
+                "(fail-closed, ADR 0054)."
+            )
+        return _format_my_tasks(tools[0].fn())
+
     def _thread_status(self, conv: Conversation | None) -> str:
         if conv is None or conv.message_count == 0:
             return "Brak aktywnego wątku. Napisz coś, aby zacząć rozmowę."
@@ -207,6 +219,22 @@ def _format_projects(data: dict[str, Any]) -> str:
     for p in projects:
         company = f" ({p['company']})" if p.get("company") else ""
         lines.append(f"• {p['key']}{company} — {p['name']}")
+    return "\n".join(lines)
+
+
+def _format_my_tasks(data: dict[str, Any]) -> str:
+    if "error" in data:
+        return f"Błąd: {data['error']}"
+    tasks = data.get("tasks", [])
+    if not tasks:
+        return "Nie masz otwartych zadań w Jirze."
+    lines = [f"Twoje otwarte zadania ({len(tasks)}):"]
+    for t in tasks:
+        priority = f" [{t['priority']}]" if t.get("priority") else ""
+        due = f" · termin {t['due_date']}" if t.get("due_date") else ""
+        lines.append(f"• {t['key']}{priority} — {t['summary']} ({t['status']}){due}")
+        if t.get("url"):
+            lines.append(f"  {t['url']}")
     return "\n".join(lines)
 
 

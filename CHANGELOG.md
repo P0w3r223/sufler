@@ -6,6 +6,55 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Usunięte
+- **Jira zredukowana do jednej, wyłącznie odczytowej zdolności „moje zadania"** (ADR 0054,
+  supersedes ADR 0031 [zapis], ADR 0032 [tranzycja]; amends ADR 0028, ADR 0030). Usunięte w
+  całości: poller Jira→`EventStore` (proces `workmate-jira`), push zdarzeń Jira→Teams, most
+  Teams↔Jira, narzędzia zapisu `create_jira_issue`/`comment_jira_issue`/`transition_jira_issue`
+  oraz cały pakiet `adapters/inbound/jira/`. Zostały: `JiraReadPort` (`authenticated_account`,
+  `search_issues`), klienci `HttpxJiraClient`/`HttpxJiraCloudClient` (metody zapisu/tranzycji
+  usunięte) i `JiraSettings` przycięty do `base_url`/`token`/`deployment`/`email`/`my_account`
+  (zniknęły `watch_projects`, `poll_interval_s`, `per_page`, `state_path`, `self_account`,
+  `enable_jira_write`, `write_project`, `default_issue_type`, `enable_jira_transition`,
+  `max_transition_hops`). Stary preflight pollera (`deploy/jira/preflight.py`) zastąpiony
+  READ-ONLY wersją (auth + próbne `search_issues` + opcjonalna weryfikacja tożsamości AAD).
+- **Karty czasu WorklogPRO wycofane z projektu w całości** (ADR 0055, supersedes ADR 0035/0036/
+  0037/0038; NIE dotyczy ADR 0034 — `propose_worklog` zostaje bez zmian). To decyzja trwała, nie
+  pauza. Usunięte: generowanie cotygodniowych arkuszy WorklogPRO i wysyłka DM, self-service na
+  żądanie, cała domena (`timesheet.py`, `timesheet_sheet.py`, `timesheet_message.py`,
+  `shift_hours.py`, `issue_attribution.py`, `submitted_summary.py`, `day_comment.py`) i warstwa
+  aplikacji/adapterów (`weekly_timesheets.py`, `selfservice_worklog.py`, `shift_hours_source.py`,
+  `graph_shift_source.py`, `github_commit_source.py`, `claude_summary_store.py`,
+  `json_hours_source.py`, `openpyxl_sheet_writer.py`), drzwi `adapters/inbound/worklogi/` i
+  `adapters/inbound/worklog_selfservice/`, `WorklogiSettings`, extra `worklogi` oraz entrypointy
+  `workmate-worklogi`/`workmate-worklog-selfservice`.
+
+### Dodane
+- **Narzędzie `get_my_jira_tasks`** (ADR 0054) — zero parametrów, zwraca TYLKO otwarte zadania
+  Jira przypisane PYTAJĄCEMU (nigdy zadania kogoś innego). Dwie powierzchnie: komenda Teams
+  `/moje-zadania` (alias `/zadania`, tożsamość z mapy AAD→Jira `WORKMATE_TEAMS_GRAPH_IDENTITIES`,
+  pole `jira_user`) oraz narzędzie MCP na drzwiach stdio (Claude Code/CLI), wchodzące TYLKO gdy
+  ustawiono `WORKMATE_JIRA_MY_ACCOUNT` — jeden, z góry skonfigurowany principal, nienadający się na
+  współdzielony serwer HTTP z wieloma osobami.
+
+### Zmienione
+- **Tożsamość skonsolidowana**: `Person` i mapa AAD→Jira przeniesione z `core/domain/timesheet.py`
+  do nowego `core/domain/identity.py` (bez pola `git_email`, specyficznego dla worklogu); port
+  `AadIdentityLookup` przeniesiony z `core/ports/timesheets.py` do nowego `core/ports/identity.py`.
+  Katalog tożsamości `adapters/outbound/graph_identity_directory.py` przycięty do samego
+  `YamlIdentityDirectory` (usunięte `GraphIdentityDirectory`, `fetch_team_members`,
+  `resolve_by_git_email` — używane wyłącznie przez usunięte drzwi worklogu).
+- `graph_teams_notifier.py` — usunięta metoda `send_chat_html` (używana wyłącznie przez
+  wiadomości WorklogPRO); reszta notifiera bez zmian.
+
+### Naprawione
+- **`get_my_jira_tasks` na drzwiach HTTP: gwarancja konstrukcyjna, nie tylko konwencja.**
+  `_build_http_server` wymusza teraz `transport="streamable-http"` (obok istniejącego
+  `enable_write=False`), więc `build_server` blokuje rejestrację "moich zadań" na tym transporcie
+  NIEZALEŻNIE od `WORKMATE_JIRA_MY_ACCOUNT` w env — jeden principal na proces nie może bezpiecznie
+  obsłużyć wielu osób na współdzielonym serwerze HTTP (ta sama klasa gwarancji co `save_note`,
+  ADR 0007).
+
 ## [1.3.0] — 2026-07-21
 
 ### Dodane

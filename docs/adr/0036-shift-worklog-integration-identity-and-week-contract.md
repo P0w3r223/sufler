@@ -1,9 +1,11 @@
 # ADR 0036 — Weekly worklog integration: identity bridge, week/date contract, composite hours source
 
 Date: 2026-07-23
-Status: accepted (assembled S1–S5: identity, Shifts hours, commit issue-attribution, claude_summary
-comments, wired into the `workmate-worklogi` door and covered by an end-to-end dry-run test; go-live
-still gated on operator confirming `WORKLOGPRO_HEADERS` — S5 § go-live)
+Status: superseded by docs/adr/0055-withdraw-worklogpro-timesheets.md (2026-07-30 scope decision:
+  WorklogPRO / timesheets module withdrawn from the project). Formerly: accepted (assembled S1–S5:
+  identity, Shifts hours, commit issue-attribution, claude_summary comments, wired into the
+  `workmate-worklogi` door and covered by an end-to-end dry-run test; go-live still gated on operator
+  confirming `WORKLOGPRO_HEADERS` — S5 § go-live)
 Author: P0w3r223
 Related to: 0034 (worklog from commits, write path removed), 0035 (WorklogPRO sheets + Teams DM)
 

@@ -18,7 +18,7 @@ from workmate.core.domain.authorization import Actor, actor_from_person, can_wri
 from workmate.core.errors import NoteAuthorizationError
 
 if TYPE_CHECKING:
-    from workmate.core.ports.timesheets import AadIdentityLookup
+    from workmate.core.ports.identity import AadIdentityLookup
 
 
 class MeetingNoteAuthorizer:

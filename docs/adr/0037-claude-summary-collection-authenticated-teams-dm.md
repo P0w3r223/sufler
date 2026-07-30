@@ -1,7 +1,10 @@
 # ADR 0037 — Collecting `claude_summary` output: authenticated Teams DM (design), manual for pilot
 
 Date: 2026-07-23
-Status: proposed (build deferred to post go-live; manual collection for the pilot)
+Status: superseded by docs/adr/0055-withdraw-worklogpro-timesheets.md (2026-07-30 scope decision:
+  WorklogPRO / timesheets module withdrawn from the project — this design was never built and its
+  target pipeline no longer exists). Formerly: proposed (build deferred to post go-live; manual
+  collection for the pilot)
 Author: P0w3r223
 Related to: [[0036-shift-worklog-integration-identity-and-week-contract]], 0035 (WorklogPRO sheets),
 0015/0016 (Teams delegated door + attachments), `Powiadomienia_teams` (1:1 chat lifecycle)

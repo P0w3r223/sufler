@@ -1,7 +1,8 @@
 # 0032. Jira (Server/DC) status transition: transition_jira_issue — gated best-effort workflow walk
 
 Date: 2026-07-18
-Status: accepted
+Status: superseded by docs/adr/0054-reduce-jira-to-read-only-my-tasks.md (2026-07-30 scope decision:
+  Jira transition capability removed)
 Author: P0w3r223
 Related to: docs/adr/0031-jira-write-capability-gate-5.md,
   docs/adr/0021-github-write-capability-gate-4.md, docs/adr/0006-write-capability-gate-2.md,

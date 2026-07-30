@@ -148,7 +148,7 @@ def _print_history(*, channel: str | None = None) -> None:
     """Wypisz archiwum rozmów agenta (wszystkie drzwi) — odczyt bazy SQLite.
 
     Wspólna baza rozmów jest niezależna od drzwi (ADR 0010): ten podgląd pokazuje
-    rozmowy z CLI, Telegrama i przyszłego Teams jednakowo (rozróżnia je ``channel``).
+    rozmowy z CLI i Teams jednakowo (rozróżnia je ``channel``).
     Sam podgląd nie dopisuje rozmów, ale pierwsze otwarcie istniejącej starej bazy
     uruchamia jednorazową migrację schematu (dodanie kolumn/FK, ADR 0011/0012) — więc
     na bazie tylko-do-odczytu na dysku może się nie powieść. Świeżej bazy nie tworzy

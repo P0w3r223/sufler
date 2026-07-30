@@ -11,11 +11,53 @@ from dataclasses import replace
 
 from workmate.adapters.outbound.sqlite_events import SqliteEventStore
 from workmate.config import Settings
-from workmate.server import _build_http_server
+from workmate.server import _build_http_server, build_server
 
 _READ_TOOLS = {"search_notes", "get_note", "list_projects", "get_project_status"}
 # Kursorowy odczyt EventStore (ADR 0040) — dokłada się na drzwiach HTTP, gdy most jest w użyciu.
 _EVENT_TOOL = "read_events_since"
+# "Moje zadania" Jira (ADR 0054) — addytywne, tylko gdy operator skonfigurował stały principal.
+_MY_JIRA_TASKS_TOOL = "get_my_jira_tasks"
+
+
+def test_my_jira_tasks_absent_without_configured_account(monkeypatch):
+    monkeypatch.delenv("WORKMATE_JIRA_MY_ACCOUNT", raising=False)
+    server = build_server(Settings.from_env())
+    names = {t.name for t in server._tool_manager.list_tools()}
+    assert _MY_JIRA_TASKS_TOOL not in names
+
+
+def test_my_jira_tasks_present_when_account_and_read_configured(monkeypatch):
+    monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example.org")
+    monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "pat-secret")
+    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+    server = build_server(Settings.from_env())
+    names = {t.name for t in server._tool_manager.list_tools()}
+    assert _MY_JIRA_TASKS_TOOL in names
+
+
+def test_my_jira_tasks_absent_when_account_set_but_base_url_missing(monkeypatch):
+    """Konto bez URL-a/tokenu Jiry to niekompletny cel — narzędzie NIE wchodzi (fail-quiet, nie
+    fail-fast: to zdolność addytywna serwera MCP, jak kursor zdarzeń)."""
+    monkeypatch.delenv("WORKMATE_JIRA_BASE_URL", raising=False)
+    monkeypatch.delenv("WORKMATE_JIRA_TOKEN", raising=False)
+    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+    server = build_server(Settings.from_env())
+    names = {t.name for t in server._tool_manager.list_tools()}
+    assert _MY_JIRA_TASKS_TOOL not in names
+
+
+def test_my_jira_tasks_absent_from_http_even_when_account_configured(monkeypatch):
+    """KONSTRUKCYJNE (jak `save_note`): jeden principal na proces nie może obsłużyć wielu osób
+    na współdzielonym HTTP — narzędzie znika niezależnie od `WORKMATE_JIRA_MY_ACCOUNT` w env."""
+    monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example.org")
+    monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "pat-secret")
+    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+
+    server = _build_http_server(replace(Settings.from_env(), enable_write=True))
+    names = {t.name for t in server._tool_manager.list_tools()}
+
+    assert _MY_JIRA_TASKS_TOOL not in names
 
 
 def test_http_server_is_read_only_even_when_enable_write_true():
