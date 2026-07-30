@@ -1,0 +1,76 @@
+"""Testy katalogu tożsamości (``YamlIdentityDirectory``, ADR 0042/0054) — mapa AAD → Jira.
+
+``GraphIdentityDirectory``/``fetch_team_members`` (wariant z weryfikacją członkostwa przez Graph)
+i ``resolve_by_git_email``/``git_email`` zniknęły razem z modułem kart czasu, który był ich
+jedynym konsumentem (ADR 0055) — dziś jest tylko wariant plikowy, współdzielony przez autoryzację
+notatki ze spotkania i "moje zadania" Jira.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+
+_YAML = """
+EMP-042:
+  aad_user_id: aad-mikolaj
+  jira_user: mikolaj@example.org
+  display_name: Mikołaj Anonimowicz
+EMP-017:
+  aad_user_id: aad-piotr
+  jira_user: piotr@example.com
+"""
+
+
+def _identities(tmp_path: Path, payload: str = _YAML) -> Path:
+    path = tmp_path / "identities.yaml"
+    path.write_text(payload, encoding="utf-8")
+    return path
+
+
+def test_resolve_by_aad_user_id_maps_to_person(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_aad_user_id("aad-mikolaj")
+    assert person is not None
+    assert person.source_id == "EMP-042"
+    assert person.jira_user == "mikolaj@example.org"
+    assert person.display_name == "Mikołaj Anonimowicz"
+
+
+def test_resolve_by_aad_user_id_is_fail_closed_for_unknown_account(tmp_path: Path) -> None:
+    """Nigdy dopasowanie po nazwisku — nieznane konto to zawsze ``None``."""
+    assert YamlIdentityDirectory(_identities(tmp_path)).resolve_by_aad_user_id("aad-obcy") is None
+
+
+def test_missing_identity_file_fails_at_startup(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="brak pliku mapy"):
+        YamlIdentityDirectory(tmp_path / "nie-ma.yaml")
+
+
+def test_entry_without_jira_user_fails_at_startup(tmp_path: Path) -> None:
+    """Niekompletna mapa = ktoś po cichu nie dostanie nic. Padamy przy starcie, nie przy pytaniu."""
+    with pytest.raises(ValueError, match="jira_user"):
+        YamlIdentityDirectory(_identities(tmp_path, "EMP-1:\n  aad_user_id: a\n"))
+
+
+def test_two_people_sharing_a_jira_account_fail_at_startup(tmp_path: Path) -> None:
+    """Skopiowany blok bez podmiany ``jira_user`` pokazałby czyjeś zadania komuś innemu."""
+    duplikat = (
+        "EMP-1:\n  aad_user_id: aad-1\n  jira_user: mikolaj@example.com\n"
+        "EMP-2:\n  aad_user_id: aad-2\n  jira_user: mikolaj@example.com\n"
+    )
+    with pytest.raises(ValueError, match="jira_user"):
+        YamlIdentityDirectory(_identities(tmp_path, duplikat))
+
+
+def test_two_people_sharing_a_teams_account_fail_at_startup(tmp_path: Path) -> None:
+    """Ten sam ``aad_user_id`` u dwóch osób = ktoś autoryzowałby się jako kolega."""
+    duplikat = (
+        "EMP-1:\n  aad_user_id: aad-mikolaj\n  jira_user: a@example.com\n"
+        "EMP-2:\n  aad_user_id: aad-mikolaj\n  jira_user: b@example.com\n"
+    )
+    with pytest.raises(ValueError, match="aad_user_id"):
+        YamlIdentityDirectory(_identities(tmp_path, duplikat))

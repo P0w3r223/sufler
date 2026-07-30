@@ -15,12 +15,17 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from workmate.core.application.events import EventService
+from workmate.core.application.my_jira_tasks import MyJiraTasksService
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import build_events_since_catalog, build_tool_catalog
+from workmate.core.application.tools import (
+    build_events_since_catalog,
+    build_my_jira_tasks_catalog,
+    build_tool_catalog,
+)
 
 
 def register_tools(
@@ -49,4 +54,17 @@ def register_event_tools(mcp: FastMCP, events: EventService) -> None:
     ``_events_service_if_present``.
     """
     for spec in build_events_since_catalog(events):
+        mcp.add_tool(spec.fn)
+
+
+def register_my_jira_tasks_tool(mcp: FastMCP, service: MyJiraTasksService) -> None:
+    """Zarejestruj "moje zadania" Jira (``get_my_jira_tasks``) na drzwiach MCP (ADR 0054).
+
+    Osobne od ``register_tools`` (4+1 ZAMROŻONE, Bramka 1) — ADDYTYWNE rozszerzenie powierzchni,
+    jak ``register_event_tools``. Read-only ⇒ bez bramki. Wchodzi tylko gdy operator skonfigurował
+    JEDNO stałe konto Jira (``WORKMATE_JIRA_MY_ACCOUNT``) — patrz
+    ``server._my_jira_tasks_service_if_present``. Sesja stdio (Claude Code/CLI) nie ma tożsamości
+    Teams, więc identyfikacja jest tu z konfiguracji, nie z mapy AAD.
+    """
+    for spec in build_my_jira_tasks_catalog(service):
         mcp.add_tool(spec.fn)

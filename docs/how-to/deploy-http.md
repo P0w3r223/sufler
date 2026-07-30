@@ -114,7 +114,9 @@ WORKMATE_TLS_KEYFILE=C:\ProgramData\WorkMate\workmate.key
 ## 5. Klient — `.mcp.json` dla HTTP
 
 Repo-`.mcp.json` zostaje na `stdio` (dev lokalny). Dla dostępu do serwera
-firmowego dev używa konfiguracji HTTP z tokenem ze zmiennej środowiskowej:
+firmowego dev kopiuje szablon
+[`deploy/http/mcp.team.json.sample`](../../deploy/http/mcp.team.json.sample) do własnego,
+niewersjonowanego `.mcp.json` i podmienia placeholdery `<HOST>`/`<TOKEN>`:
 
 ```json
 {
@@ -133,6 +135,15 @@ Dev ustawia `WORKMATE_TOKEN` w swoim środowisku (token nigdy nie trafia do repo
 > Rozwinięcie `${WORKMATE_TOKEN}` po stronie klienta Claude Code potwierdź przy
 > onboardingu pierwszej osoby; alternatywnie dev wkleja token wprost w swojej
 > lokalnej (niewersjonowanej) konfiguracji.
+
+### Onboarding nowej osoby (skrót)
+
+1. Poproś administratora o token (`manage_tokens.py issue --person <ty>`, krok 2) —
+   dostajesz surowy token bezpiecznym kanałem (NIE mailem, NIE na czacie publicznym).
+2. Skopiuj `deploy/http/mcp.team.json.sample` do swojego `.mcp.json` (poza repo albo
+   w prywatnej, niewersjonowanej ścieżce), wstaw prawdziwy host i token.
+3. Uruchom Claude Code — narzędzia WorkMate powinny być widoczne (4 odczytowe + ewentualnie
+   `read_events_since`/`get_my_jira_tasks`, zależnie od konfiguracji serwera).
 
 ## 6. Weryfikacja po wdrożeniu
 

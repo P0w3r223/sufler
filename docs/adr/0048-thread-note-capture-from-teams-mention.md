@@ -1,7 +1,7 @@
 # 0048 — Gated note capture from a Teams-thread @mention ("zapisz to")
 
 Date: 2026-07-29
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0041](0041-production-m3-meeting-note-write-from-teams-door.md) (production `/notatka`),
 [ADR 0042](0042-meeting-note-sender-authorization.md) (sender authorization),
@@ -112,3 +112,10 @@ authorization is a pure core decision over a port (ADR 0042); thread content is 
   refused sender, plus a forced-retry idempotency check on the same source message.
 - Optional, additive: a `/zapisz` command alias; per-project capture policy (ADR 0042 B2-B seam); async
   execution reusing the ADR 0043 scheduler/callback if summary latency stalls the door.
+
+## Update (2026-07-30)
+
+Status flipped to `accepted`; `enable_thread_note_capture` set `true` in `deploy/docker/env` (shares
+the ADR 0042 identities file). Live-smoke of an allowed/refused sender and idempotency on a real
+Teams thread is still pending — no real thread capture run yet, same "config-enabled, not
+operationally proven" caveat as ADR 0041.

@@ -1,7 +1,8 @@
 # 0035. Weekly per-person WorklogPRO sheet generation and Teams 1:1 delivery
 
 Date: 2026-07-20
-Status: accepted
+Status: superseded by docs/adr/0055-withdraw-worklogpro-timesheets.md (2026-07-30 scope decision:
+  WorklogPRO / timesheets module withdrawn from the project)
 Author: P0w3r223
 Related to: docs/adr/0006-write-capability-gate-2.md,
   docs/adr/0018-agent-working-directory.md,

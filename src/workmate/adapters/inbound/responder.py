@@ -1,4 +1,4 @@
-"""Szew między DRZWIAMI (Teams, Telegram, …) a TREŚCIĄ odpowiedzi (Faza 2).
+"""Szew między DRZWIAMI (Teams, CLI, …) a TREŚCIĄ odpowiedzi (Faza 2).
 
 ``Responder`` oddziela transport (konkretne drzwi) od tego, co bot odpowiada —
 wspólny dla wszystkich drzwi wejściowych, dlatego żyje tu, w `adapters/inbound/`,
@@ -122,7 +122,7 @@ class RuntimeResponder:
     ``RuntimeResponder(runtime)``); handler i wiring bez zmian. ``AgentRuntime.run``
     jest synchroniczny (woła Claude API), więc uruchamiamy go w wątku puli, żeby nie
     blokować pętli zdarzeń drzwi async. Katalog runtime'u dla mniej zaufanych drzwi
-    (Teams, Telegram) budujemy BEZ ``write_service`` (ADR 0006) — agent czyta, ale
+    (Teams) budujemy BEZ ``write_service`` (ADR 0006) — agent czyta, ale
     nie zapisuje.
     """
 
@@ -140,7 +140,7 @@ class RuntimeResponder:
 class SaveNoteResponder:
     """STUB (ADR 0008): responder zapisujący wiadomość jako notatkę przez ``save_note``.
 
-    Świadomie NIEWPIĘTY: drzwi asynchroniczne (Teams, Telegram) są mniej zaufane
+    Świadomie NIEWPIĘTY: drzwi asynchroniczne (Teams) są mniej zaufane
     (ADR 0006), więc bezpośredni zapis z nich wymaga osobnej decyzji (bramka zapisu
     per drzwi + parsowanie wiadomości w ``NoteMetadata``). Zostawiony jako punkt
     szwu — realizacja to kolejny krok M3/M4, nie spike.
@@ -160,8 +160,8 @@ class ConversationalResponder:
 
     Utrzymuje historię per (kanał, rozmowa) w ``ConversationService``; przy limicie
     kontekstu automatycznie startuje nową rozmowę (rollover), a runtime dostaje
-    historię BIEŻĄCEJ rozmowy jako kontekst. ``channel`` rozróżnia drzwi (``telegram``/
-    ``teams``) w bazie rozmów. Wywołania synchroniczne (magazyn + runtime) idą w wątku
+    historię BIEŻĄCEJ rozmowy jako kontekst. ``channel`` rozróżnia drzwi (``teams``/
+    ``teams_graph``) w bazie rozmów. Wywołania synchroniczne (magazyn + runtime) idą w wątku
     puli, żeby nie blokować pętli async drzwi.
     """
 
@@ -178,6 +178,7 @@ class ConversationalResponder:
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+        my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
         thread_note: ThreadNoteRouter | None = None,
         project_brief: BriefRouter | None = None,
@@ -198,6 +199,11 @@ class ConversationalResponder:
         # drzwi lub bramka off). Klucz to ``sender_id`` (AAD id nadawcy), NIE external_id wątku:
         # cel dostawy jest PRE-ZWIĄZANY z nadawcy, model nie podaje odbiorcy (anty-eksfiltracja).
         self._user_push_tool_factory = user_push_tool_factory
+        # Fabryka narzędzia "moje zadania" Jira (ADR 0054), PER NADAWCA (jak push-u obrazu);
+        # ``None`` → brak (Jira/tożsamość nie skonfigurowane albo inne drzwi). Ta sama fabryka
+        # zasila komendę ``/moje-zadania`` w ``CommandRouter`` — jedno miejsce rozwiązywania
+        # tożsamości.
+        self._my_jira_tasks_factory = my_jira_tasks_factory
         # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
         # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
         self._commands = commands
@@ -229,7 +235,7 @@ class ConversationalResponder:
         # mogły symulować upływ czasu bez realnego zegara. Domyślnie naive UTC.
         self._clock = clock
         # Czy dołączać podsumowanie rozumowania modelu do odpowiedzi. TYLKO drzwi zaufane
-        # (CLI) — domyślnie False, żeby async drzwi (Telegram/Teams) nie wysyłały rozumowania
+        # (CLI) — domyślnie False, żeby async drzwi (Teams) nie wysyłały rozumowania
         # użytkownikom (treść wewnętrzna, nie część odpowiedzi).
         self._show_thinking = show_thinking
         # Serializuje SZYBKIE operacje na magazynie (wybór wątku, utrwalenie tury),
@@ -262,7 +268,8 @@ class ConversationalResponder:
         if self._commands is not None:
             with self._store_lock:
                 reply = self._commands.dispatch(
-                    message.text, CommandContext(self._channel, external_id)
+                    message.text,
+                    CommandContext(self._channel, external_id, message.sender_id),
                 )
             if reply is not None:
                 return reply
@@ -353,6 +360,17 @@ class ConversationalResponder:
                     "Nie udało się zbudować narzędzia push-u obrazu dla nadawcy %r — pomijam",
                     message.sender_id,
                 )
+        # Narzędzie "moje zadania" Jira (ADR 0054): dokładane, gdy wiadomość niesie ``sender_id``
+        # i tożsamość rozwiązuje się na konto Jira. Jak wyżej — opcjonalne wzbogacenie, błąd budowy
+        # nie może zabić tury.
+        if self._my_jira_tasks_factory is not None and message.sender_id:
+            try:
+                extra_tools.extend(self._my_jira_tasks_factory(message.sender_id))
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzia 'moje zadania' dla nadawcy %r — pomijam",
+                    message.sender_id,
+                )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
         result = self._runtime.run_turn(
             message.text,
@@ -408,7 +426,7 @@ class SafeResponder:
       kładzie usługi). Błąd NIE jest połykany po cichu — ląduje w logu ze szczegółami.
 
     Analogicznie do granicy MCP (która zamienia błąd na ``{"error": ...}``) — ten szew
-    daje tę granicę drzwiom async (Teams, Telegram). Kontekst (nadawca, rozmowa) w logu.
+    daje tę granicę drzwiom async (Teams). Kontekst (nadawca, rozmowa) w logu.
     """
 
     _FALLBACK = "Przepraszam, wystąpił chwilowy błąd po mojej stronie. Spróbuj ponownie za chwilę."

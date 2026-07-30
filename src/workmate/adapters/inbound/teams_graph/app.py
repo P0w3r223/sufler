@@ -1,6 +1,6 @@
 """Entry point drzwi Teams w trybie DELEGOWANYM (ADR 0015) — polling kanału przez Graph.
 
-Bot odpowiada RUNTIME AGENTA rdzenia (jak drzwi bota/Telegram), ale działa jako
+Bot odpowiada RUNTIME AGENTA rdzenia (jak inne drzwi botowe), ale działa jako
 ZALOGOWANY UŻYTKOWNIK: bez publicznego endpointu i bez rejestracji bota. Katalog narzędzi
 jest READ-ONLY (ADR 0006) — agent czyta notatki i status, nie zapisuje. Pamięć rozmów jest
 PER WĄTEK kanału (``channel="teams_graph"``, ``conversation_id="team/channel/root"``).
@@ -30,8 +30,6 @@ from workmate.adapters.inbound.agent_wiring import build_conversational_responde
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
 from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
-    JIRA_DEPLOYMENTS,
-    MAX_JIRA_TRANSITION_HOPS,
     AgentSettings,
     ConversationSettings,
     EventsSettings,
@@ -109,8 +107,9 @@ def main() -> None:
         )
         if removed:
             logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
+    jira_settings = JiraSettings.from_env()
     extra_catalog, thread_factory = _build_bridge_catalog(
-        events_settings, GithubSettings.from_env(), JiraSettings.from_env()
+        events_settings, GithubSettings.from_env()
     )
     # ADR 0026 (A′2): dokładamy fabrykę `reply_with_file`, niezależnie bramkowaną od zapisu GitHub.
     thread_factory = _compose_thread_factories(
@@ -123,6 +122,9 @@ def main() -> None:
         _build_user_push_factory(settings, token_provider),
         _build_user_doc_push_factory(settings, token_provider),
     )
+    # "Moje zadania" Jira (ADR 0054): fabryka PER NADAWCA, niezależna od push-u — zasila zarówno
+    # per-turowy katalog agenta, jak i komendę `/moje-zadania` (przez `_build_responder`).
+    my_jira_tasks_factory = _build_my_jira_tasks_factory(settings, jira_settings)
     # Produkcyjne M3 (ADR 0009 §4 / 0041): komenda ZAPISU /notatka z drzwi Teams, osobno bramkowana.
     meeting_router = _build_meeting_note_router(
         settings, token_provider, core_settings, agent_settings
@@ -150,6 +152,7 @@ def main() -> None:
         extra_catalog,
         thread_factory,
         user_push_factory,
+        my_jira_tasks_factory,
         meeting_router,
         thread_router,
         brief_router,
@@ -162,32 +165,26 @@ def main() -> None:
 def _build_bridge_catalog(
     events_settings: EventsSettings,
     github_settings: GithubSettings,
-    jira_settings: JiraSettings,
 ) -> tuple[list[ToolSpec], Callable[[str], list[ToolSpec]] | None]:
-    """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024/0031): zdarzenia + zapis.
+    """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024): zdarzenia + zapis GitHub.
 
     Zwraca ``(katalog, fabryka_wątkowa)``. ``read_recent_events`` jest ZAWSZE (agent widzi, co
-    zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) i do Jiry (zgłoszenie/
-    komentarz) dokładamy NIEZALEŻNIE, każdy TYLKO przy swojej włączonej bramce i skonfigurowanym
-    celu — profil per drzwi (ADR 0006/0021/0031). Zdarzenia z zapisu idą jako ``source=teams``
-    (strażnik pętli — notifier ich nie odeśle). Gdy zapis GitHub włączony, budujemy też FABRYKĘ
-    ``reply_on_thread`` (ADR 0024, Faza 3b) dla wątku powiązanego z issue/PR.
+    zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) dokładamy TYLKO przy
+    włączonej bramce i skonfigurowanym celu — profil per drzwi (ADR 0006/0021). Zdarzenia z zapisu
+    idą jako ``source=teams`` (strażnik pętli — notifier ich nie odeśle). Gdy zapis GitHub włączony,
+    budujemy też FABRYKĘ ``reply_on_thread`` (ADR 0024, Faza 3b) dla wątku powiązanego z issue/PR.
 
-    Propozycja czasu z commitów (ADR 0034) wchodzi BEZ bramki, gdy tylko GitHub jest
+    Jira nie ma tu żadnej zdolności mutującej ani zdarzeń push (ADR 0054 zredukował ją do jednej,
+    wyłącznie odczytowej funkcji — patrz ``_build_my_jira_tasks_factory``, per nadawca, poza tym
+    katalogiem). Propozycja czasu z commitów (ADR 0034) wchodzi BEZ bramki, gdy tylko GitHub jest
     skonfigurowany — po wycięciu ścieżki zapisu to czysty odczyt, a odczyt jest domyślny.
     """
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.core.application.events import EventService
     from workmate.core.application.tools import build_activity_catalog, build_events_catalog
 
-    # Sufity zdolności mutujących Jiry (limity zapisu, wariant wdrożenia) egzekwował dotąd
-    # WYŁĄCZNIE proces pollera — czyli nie ten, który wykonuje zapis. ``validate_limits``
-    # to część wspólna, bezpieczna dla wdrożeń bez Jiry (nie żąda URL-a ani tokenu).
-    jira_settings.validate_limits()
-
     events = EventService(SqliteEventStore(events_settings.db_path))
     catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
-    catalog += _build_jira_catalog(jira_settings, events)
 
     if not (github_settings.token and github_settings.owner and github_settings.repo):
         return catalog, None
@@ -219,99 +216,6 @@ def _build_bridge_catalog(
         [*catalog, *build_github_write_catalog(write_service)],
         _make_thread_tool_factory(thread_links, write_service),
     )
-
-
-def _build_jira_catalog(jira_settings: JiraSettings, events: EventService) -> list[ToolSpec]:
-    """Bramkowane narzędzia Jiry: zapis (Gate 5 / ADR 0031) i tranzycja (ADR 0032) — bramki OSOBNE.
-
-    Żadna bramka → pusto (agent bez narzędzi mutujących Jira). Co najmniej jedna → budujemy JEDEN
-    klient/serwis Jiry (współdzielą PAT/URL/projekt), potem dokładamy narzędzia zapisu (create/
-    comment) TYLKO przy ``enable_jira_write`` i narzędzie tranzycji TYLKO przy
-    ``enable_jira_transition`` — profil per drzwi (ADR 0006/0021/0031/0032): możliwy jest profil
-    „tylko-tranzycja" bez zapisu. Bramka ON, ale brak celu (token/URL/projekt) → TWARDY błąd
-    (walidacja jest punktem egzekucji): cicha bramka „włączona, ale martwa" byłaby footgunem.
-    ``self_account`` (strażnik pętli self-skip) egzekwuje poller Jira (``JiraSettings.validate``
-    w ``workmate-jira``) — to jego proces go używa. Sync klient Jiry żyje przez proces; echo
-    zapisu/tranzycji idzie jako ``source=teams`` (strażnik pętli).
-    """
-    if not (jira_settings.enable_jira_write or jira_settings.enable_jira_transition):
-        return []
-    # Wariant wdrożenia walidujemy spójnie z pollerem (``JiraSettings.validate``) — literówka w
-    # DEPLOYMENT nie może po cichu zbudować klienta Server/DC (Bearer) na instancji Cloud (→ 401).
-    deployment = jira_settings.deployment.strip().lower()
-    if deployment not in JIRA_DEPLOYMENTS:
-        raise ValueError(
-            "WORKMATE_JIRA_DEPLOYMENT musi być 'server' lub 'cloud', jest: "
-            f"{jira_settings.deployment!r}."
-        )
-    required = [
-        ("WORKMATE_JIRA_TOKEN", jira_settings.token),
-        ("WORKMATE_JIRA_BASE_URL", jira_settings.base_url),
-        ("WORKMATE_JIRA_WRITE_PROJECT", jira_settings.write_project),
-    ]
-    # Cloud (ADR 0033) uwierzytelnia się Basic (email + API token); bez e-maila zapis/tranzycja z
-    # Teams nie zadziała — fail-fast spójnie z resztą celów (jak poller ``JiraSettings.validate``).
-    if deployment == "cloud":
-        required.append(("WORKMATE_JIRA_EMAIL", jira_settings.email))
-    missing = [name for name, value in required if not value]
-    if missing:
-        raise ValueError(
-            "WORKMATE_JIRA_ENABLE_WRITE/ENABLE_TRANSITION=true wymaga: "
-            + ", ".join(missing)
-            + " w środowisku/.env."
-        )
-    # Sufit hopów (ADR 0032) egzekwujemy TU, bo to drzwi wykonujące walk — a ``validate`` (gdzie
-    # też jest ten check) woła tylko poller Jira, nie te drzwi. Bez tego absurdalny cap (np. 999)
-    # ominąłby twardy backstop tam, gdzie walk się dzieje. Fail-fast, nie cichy clamp.
-    if jira_settings.enable_jira_transition and not (
-        1 <= jira_settings.max_transition_hops <= MAX_JIRA_TRANSITION_HOPS
-    ):
-        raise ValueError(
-            "WORKMATE_JIRA_MAX_TRANSITION_HOPS musi być w zakresie "
-            f"1..{MAX_JIRA_TRANSITION_HOPS}, jest: {jira_settings.max_transition_hops}."
-        )
-
-    import atexit
-
-    import httpx
-
-    from workmate.adapters.outbound.jira_api import build_jira_client
-    from workmate.core.application.jira import JiraWriteService
-    from workmate.core.application.tools import (
-        build_jira_transition_catalog,
-        build_jira_write_catalog,
-    )
-
-    # Klient żyje przez cały proces (daemon), ale pulę połączeń domykamy jawnie przy wyjściu.
-    transport = httpx.Client(timeout=30)
-    atexit.register(transport.close)
-    client = build_jira_client(transport, jira_settings)
-    write_service = JiraWriteService(
-        client,
-        project=jira_settings.write_project,
-        issue_type=jira_settings.default_issue_type,
-        events=events,
-        max_transition_hops=jira_settings.max_transition_hops,
-    )
-    catalog: list[ToolSpec] = []
-    if jira_settings.enable_jira_write:
-        logger.info(
-            "Jira write WŁĄCZONY dla projektu %s — agent Teams może tworzyć zgłoszenia/komentarze. "
-            "Strażnik pętli (self-skip) domyka poller Jira: wymaga tego samego WORKMATE_JIRA_TOKEN "
-            "i WORKMATE_JIRA_SELF_ACCOUNT = konto tego PAT (ADR 0031).",
-            jira_settings.write_project,
-        )
-        catalog += build_jira_write_catalog(write_service)
-    if jira_settings.enable_jira_transition:
-        logger.info(
-            "Jira transition WŁĄCZONY dla projektu %s (max hops=%d) — agent Teams może przesuwać "
-            "status zgłoszeń. Wielo-hop (cap>1) to autonomiczna, NIEODWRACALNA mutacja; "
-            "strażnik pętli jak przy zapisie (ADR 0032).",
-            jira_settings.write_project,
-            jira_settings.max_transition_hops,
-        )
-        catalog += build_jira_transition_catalog(write_service)
-    return catalog
 
 
 def _github_client(github_settings: GithubSettings) -> HttpxGithubClient:
@@ -534,6 +438,56 @@ def _build_user_doc_push_factory(
     return factory
 
 
+def _build_my_jira_tasks_factory(
+    settings: TeamsGraphSettings, jira_settings: JiraSettings
+) -> Callable[[str], list[ToolSpec]] | None:
+    """Fabryka "moje zadania" Jira (ADR 0054) PER NADAWCA — ``None`` gdy nieskonfigurowana.
+
+    Wymaga skonfigurowanego odczytu Jiry (URL+token) ORAZ mapy tożsamości — TEGO SAMEGO pliku co
+    autoryzacja M3 (ADR 0042, pole ``jira_user``), niezależnie od bramki zapisu notatek. Sender bez
+    rozwiązanej tożsamości albo bez ``jira_user`` dostaje pustą listę narzędzi (fail-closed, zero
+    domysłów) — router komend i responder degradują to do czytelnej odmowy, nie do błędu. Zawężenie
+    do WŁASNEGO konta dzieje się TU, przy budowie serwisu — narzędzie samo nie przyjmuje parametru
+    "czyje zadania" (``build_my_jira_tasks_catalog``).
+    """
+    if not (jira_settings.base_url and jira_settings.token):
+        return None
+    if not settings.meeting_note_identities.is_file():
+        return None
+    import atexit
+
+    import httpx
+
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from workmate.adapters.outbound.jira_api import build_jira_client
+    from workmate.core.application.my_jira_tasks import MyJiraTasksService
+    from workmate.core.application.tools import build_my_jira_tasks_catalog
+
+    identities = YamlIdentityDirectory(settings.meeting_note_identities)
+    # Klient żyje przez cały proces (daemon), jak inne sync klienty Jiry/GitHuba tutaj.
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    client = build_jira_client(transport, jira_settings)
+    logger.info(
+        "'Moje zadania' Jira WŁĄCZONE (ADR 0054) — agent Teams i komenda /moje-zadania pokazują "
+        "otwarte zadania nadawcy, zawężone do JEGO konta Jira przez mapę tożsamości %s.",
+        settings.meeting_note_identities,
+    )
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        if not sender_id:
+            return []
+        person = identities.resolve_by_aad_user_id(sender_id)
+        if person is None or not person.jira_user:
+            return []
+        service = MyJiraTasksService(
+            client, assignee=person.jira_user, base_url=jira_settings.base_url
+        )
+        return build_my_jira_tasks_catalog(service)
+
+    return factory
+
+
 def _build_meeting_note_router(
     settings: TeamsGraphSettings,
     token_provider: Callable[[], str],
@@ -574,8 +528,8 @@ def _build_meeting_note_router(
         YamlProjectsRepository(core_settings.projects_registry),
     )
     # Autoryzacja nadawcy (B2 / ADR 0042): AAD id → członek pionu przez katalog tożsamości
-    # (fail-closed; config wymusił istnienie pliku). Ten sam port co worklogi; wariant plikowy
-    # bez dodatkowego zakresu Graph (GraphIdentityDirectory to drop-in hardening, patrz ADR 0042).
+    # (fail-closed; config wymusił istnienie pliku). Ta sama mapa zasila "moje zadania" Jira
+    # (ADR 0054, pole jira_user) — patrz _build_my_jira_tasks_factory.
     authorizer = MeetingNoteAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
     # Async (B3 / ADR 0043): przy włączonej bramce async router dostaje scheduler (pula wątków) i
     # callback (sync poster do wątku); inaczej ``(None, None)`` → router liczy inline (0041).
@@ -896,6 +850,7 @@ def _build_responder(
     extra_catalog: list[ToolSpec],
     thread_factory: Callable[[str], list[ToolSpec]] | None = None,
     user_push_factory: Callable[[str], list[ToolSpec]] | None = None,
+    my_jira_tasks_factory: Callable[[str], list[ToolSpec]] | None = None,
     meeting_router: MeetingNoteRouter | None = None,
     thread_router: ThreadNoteRouter | None = None,
     brief_router: BriefRouter | None = None,
@@ -908,7 +863,9 @@ def _build_responder(
     spajającej, ``thread_factory`` (ADR 0024, Faza 3b) — per-turowe ``reply_on_thread``, a
     ``user_push_factory`` (ADR 0027, A′3) — per-turowe ``send_image_to_user`` (obraz inline) oraz
     ``send_document_to_user`` (plik-załącznik) wiązane z nadawcą, niezależnie bramkowane.
-    ``channel="teams_graph"`` trzyma pamięć/workspace tych drzwi osobno od bota."""
+    ``my_jira_tasks_factory`` (ADR 0054) — per-turowe ``get_my_jira_tasks`` wiązane z nadawcą,
+    zasila też komendę ``/moje-zadania``. ``channel="teams_graph"`` trzyma pamięć/workspace tych
+    drzwi osobno od bota."""
     return build_conversational_responder(
         core_settings,
         agent_settings,
@@ -921,6 +878,7 @@ def _build_responder(
         extra_catalog=extra_catalog,
         thread_tool_factory=thread_factory,
         user_push_tool_factory=user_push_factory,
+        my_jira_tasks_factory=my_jira_tasks_factory,
         meeting_notes=meeting_router,
         thread_note=thread_router,
         project_brief=brief_router,

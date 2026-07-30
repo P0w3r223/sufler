@@ -106,3 +106,9 @@ Hard constraints (hexagonal + governance):
   and a refused sender.
 - B2-B (later, additive): per-project/company policy behind the same `Actor` seam, its own ADR.
 - Optional hardening: switch the wired directory to `GraphIdentityDirectory` for team-membership currency.
+
+## Update (2026-07-30)
+
+`WORKMATE_TEAMS_GRAPH_IDENTITIES` populated (reuses the worklogi identities file) and the write gate
+flipped `true` in `deploy/docker/env`. Live-smoke of an allowed/refused sender is still pending —
+blocked on the same parked meeting live-smoke as ADR 0041 (no real transcript to authorize against yet).

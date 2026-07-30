@@ -8,8 +8,6 @@ wątek → narzędzie komentujące właściwy numer; brak powiązania → pusta 
 
 from __future__ import annotations
 
-import pytest
-
 from workmate.adapters.inbound.teams_graph.app import (
     _build_bridge_catalog,
     _build_file_reply_factory,
@@ -19,7 +17,7 @@ from workmate.adapters.inbound.teams_graph.app import (
     _compose_user_push_factories,
     _make_thread_tool_factory,
 )
-from workmate.config import EventsSettings, GithubSettings, JiraSettings, TeamsGraphSettings
+from workmate.config import EventsSettings, GithubSettings, TeamsGraphSettings
 from workmate.core.application.github import GithubWriteService
 
 
@@ -97,62 +95,22 @@ def test_bridge_catalog_gate_off_yields_no_thread_factory():
     """Strukturalna gwarancja: zapis do GitHub OFF → fabryka wątkowa NIE powstaje (None).
 
     Bez włączonej bramki agent nie dostaje ani narzędzi zapisu, ani ``reply_on_thread`` —
-    powierzchnia mutująca w ogóle się nie materializuje (jak Gate 4 / ADR 0021).
+    powierzchnia mutująca w ogóle się nie materializuje (jak Gate 4 / ADR 0021). Jira (ADR 0054)
+    nie ma tu żadnej zdolności — most push/zapis usunięty, "moje zadania" wchodzi osobną fabryką.
     """
     catalog, factory = _build_bridge_catalog(
         EventsSettings(db_path=":memory:"),
         GithubSettings(enable_github_write=False, token="t", owner="o", repo="r"),
-        JiraSettings(enable_jira_write=False),
     )
 
     assert factory is None  # brak fabryki = brak reply_on_thread
     # Odczyt zdarzeń, podsumowanie aktywności projektu (ADR 0029) i propozycja czasu z commitów
-    # (ADR 0034 — czysty odczyt, bez bramki); zapis GitHub/Jira OFF, więc nic mutującego.
+    # (ADR 0034 — czysty odczyt, bez bramki); zapis GitHub OFF, więc nic mutującego.
     assert [spec.name for spec in catalog] == [
         "read_recent_events",
         "get_project_activity",
         "propose_worklog",
     ]
-
-
-def test_bridge_catalog_jira_write_on_adds_jira_tools():
-    """Bramka zapisu Jira ON (+ token/URL/projekt) → agent dostaje narzędzia zapisu (ADR 0031)."""
-    catalog, factory = _build_bridge_catalog(
-        EventsSettings(db_path=":memory:"),
-        GithubSettings(enable_github_write=False),
-        JiraSettings(
-            enable_jira_write=True,
-            token="t",
-            base_url="https://jira.example.com",
-            write_project="WM",
-        ),
-    )
-
-    names = [spec.name for spec in catalog]
-    assert "create_jira_issue" in names and "comment_jira_issue" in names
-    assert factory is None  # zapis Jira nie tworzy fabryki wątkowej (wątki kanału Jiry OFF w B1)
-
-
-def test_bridge_catalog_jira_write_gate_off_adds_no_jira_tools():
-    """Strukturalna gwarancja: zapis Jira OFF → brak narzędzi mutujących Jiry (jak Gate 4/5)."""
-    catalog, _ = _build_bridge_catalog(
-        EventsSettings(db_path=":memory:"),
-        GithubSettings(enable_github_write=False),
-        JiraSettings(enable_jira_write=False, token="t", base_url="x", write_project="WM"),
-    )
-
-    names = [spec.name for spec in catalog]
-    assert "create_jira_issue" not in names and "comment_jira_issue" not in names
-
-
-def test_bridge_catalog_jira_write_on_without_project_fails_fast():
-    """Bramka ON, ale brak projektu docelowego → TWARDY błąd, nie cicha martwa bramka (fix M1)."""
-    with pytest.raises(ValueError, match="WORKMATE_JIRA_WRITE_PROJECT"):
-        _build_bridge_catalog(
-            EventsSettings(db_path=":memory:"),
-            GithubSettings(enable_github_write=False),
-            JiraSettings(enable_jira_write=True, token="t", base_url="https://j"),
-        )
 
 
 # --- fabryka reply_with_file (ADR 0026, A′2) + kompozycja fabryk wątkowych --------

@@ -99,26 +99,21 @@ Create-only; `owner`/`repo` pochodzą z **konfiguracji**, nie z treści prośby.
 | `create_github_issue` | `title: str`, `body: str`, `labels: list[str] \| None = None` | `{ created, number, url }`. |
 | `comment_github_issue` | `issue_number: int`, `body: str` | `{ created, url }`. |
 
-### Zapis Jira (Gate 5, [ADR 0031](../adr/0031-jira-write-capability-gate-5.md), bramka `WORKMATE_JIRA_ENABLE_WRITE`)
+### Moje zadania Jira ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md), bez bramki — czysty odczyt)
 
-Create-only; projekt pochodzi z **konfiguracji** (`WORKMATE_JIRA_WRITE_PROJECT`), nie z treści prośby.
-Komentarz waliduje pełny kształt klucza (`PROJ-123`) i zgodność projektu (blokada cross-project /
-path-traversal `WM-1/../OPS-1`).
-
-| Narzędzie | Parametry | Zwraca |
-|-----------|-----------|--------|
-| `create_jira_issue` | `summary: str`, `description: str`, `labels: list[str] \| None = None` | `{ created, key, url }`. |
-| `comment_jira_issue` | `issue_key: str`, `body: str` | `{ created, url }`. |
-
-### Tranzycja Jira ([ADR 0032](../adr/0032-jira-status-transition-capability.md), bramka `WORKMATE_JIRA_ENABLE_TRANSITION`)
-
-NIEZALEŻNA bramka (profil „tylko-tranzycja" możliwy bez zapisu). Best-effort **walk** po workflow:
-idzie ku celowi przez stany WYMUSZONE, STOP na rozgałęzieniu (bez zgadywania), detekcja cyklu, sufit
-hopów (`WORKMATE_JIRA_MAX_TRANSITION_HOPS`, domyślnie 1 = single-hop). **Brak rollbacku.**
+Jira jest zredukowana do JEDNEJ, wyłącznie odczytowej zdolności: zero parametrów, zero możliwości
+podejrzenia cudzych zadań. Tożsamość pytającego (nie treść prośby) wyznacza, czyje zadania wracają —
+mapowanie AAD→Jira z `WORKMATE_TEAMS_GRAPH_IDENTITIES` (Teams) lub jeden z góry skonfigurowany
+principal `WORKMATE_JIRA_MY_ACCOUNT` (MCP stdio, Claude Code/CLI — nie nadaje się na współdzielony
+serwer HTTP z wieloma osobami).
 
 | Narzędzie | Parametry | Zwraca |
 |-----------|-----------|--------|
-| `transition_jira_issue` | `issue_key: str`, `target_status: str` | `{ transitioned, reached, status, path, hops, stop_reason, available_next }` — zawsze STRUKTURALNY raport (nigdy gołe `{error}`); model relacjonuje ścieżkę i powód zatrzymania. |
+| `get_my_jira_tasks` | — (brak) | `{ count, tasks: [ {key, summary, status, url, ...} ] }` — TYLKO otwarte zadania przypisane pytającemu. |
+
+Całe pisanie do Jiry (tworzenie/komentowanie zgłoszeń, tranzycja statusu) zostało usunięte
+([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md), supersedes 0031/0032) — nie ma już
+narzędzi `create_jira_issue`, `comment_jira_issue`, `transition_jira_issue`.
 
 ### Odpowiedź w wątku ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md))
 

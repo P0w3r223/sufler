@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "workmate": {
+      "type": "http",
+      "url": "https://<HOST>/mcp",
+      "headers": { "Authorization": "Bearer <TOKEN>" }
+    }
+  }
+}

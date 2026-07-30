@@ -135,6 +135,25 @@ code remains a reviewed, tested, OFF-by-default capability; **re-run this gate i
 substantially or diversifies away from exact-entity queries.** (Minor caveat: fastembed 0.8.0 uses mean
 pooling for this model vs CLS in 0.5.1 — irrelevant to the verdict given the >0.12 gap to threshold.)
 
+## Gate re-run (2026-07-30)
+
+Re-ran `eval/retrieval_eval.py` on request, to check whether the corpus had grown enough to revisit
+the park decision. It has not: still **15 notes** (`data/notes/`), same 20-query golden set. Result
+is unchanged from 2026-07-27 (identical figures, same failure mode — hybrid drops recall@3/ndcg@5/mrr
+below lexical-PL, which is already at/near ceiling):
+
+| metric | baseline | lexical-PL | hybrid |
+|---|---|---|---|
+| recall@3 | 0.950 | **0.983** | 0.858 |
+| recall@5 | 1.000 | 1.000 | 1.000 |
+| recall@10 | 1.000 | **1.000** | 1.000 |
+| ndcg@5 | 0.972 | **0.994** | 0.899 |
+| mrr | 0.963 | **1.000** | 0.867 |
+
+**Gate: hybrid − lexical-PL ndcg@5 = −0.095 (needs ≥ +0.03) → still FAILED. `enable_dense` stays
+`False`.** No code change. Re-run again once the corpus actually grows or diversifies — re-running
+against the same 15 notes cannot change the verdict.
+
 ## Notes
 
 Model-size / latency / Polish-quality figures above are estimates against a Jan-2026 knowledge

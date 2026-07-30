@@ -95,66 +95,31 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 
 ---
 
-## Most Jira (seria B) — live-testy do wykonania
+## Jira: moje zadania (odczyt) — live-test
 
-Cały kod mostu Jira jest gotowy i zielony na atrapach; poniższe pozycje potwierdzają realne
-zachowanie na **prawdziwej instancji Jira Server/Data Center**. Wspólne wymagania (NIE-sekret w
-CLAUDE.md, sekrety poza repo): `WORKMATE_JIRA_BASE_URL`, `WORKMATE_JIRA_TOKEN` (PAT Bearer),
-`WORKMATE_JIRA_WATCH_PROJECTS` (np. `WM`), a dla zapisu/tranzycji `WORKMATE_JIRA_WRITE_PROJECT` +
-`WORKMATE_JIRA_SELF_ACCOUNT` (= login konta PAT — inaczej fail-fast). **Inwariant cross-proces
-strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ mieć TEN SAM
-`WORKMATE_JIRA_TOKEN`/`SELF_ACCOUNT` na WSPÓLNYM `~/.workmate/events.db`.
+Jira jest zredukowana do JEDNEJ, wyłącznie odczytowej zdolności ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)) —
+nie ma już pollera, pushu do Teams, mostu Teams↔Jira ani żadnego narzędzia zapisu/tranzycji.
+Procedura pełna: [`jira-my-tasks.md`](jira-my-tasks.md).
 
-## 11. Jira → EventStore (ingest read) — 🟪 (ADR 0030)
+## 11. Jira → „moje zadania" (preflight + realne pytanie) — 🟪 (ADR 0054)
 
-- **Krok:** ustaw `WORKMATE_JIRA_BASE_URL`/`_TOKEN`/`_WATCH_PROJECTS`, uruchom
-  `uv run workmate-jira`. Utwórz ręcznie zgłoszenie w projekcie, zmień jego status i dodaj komentarz.
-  Podejrzyj `~/.workmate/events.db` (np. przez agenta narzędziem `read_recent_events` z filtrem
-  `source="jira"`).
-- **Oczekiwane:** trzy zdarzenia — `jira_issue_created`, `jira_transition`, `jira_comment` — z
-  atrybucją `project` z rejestru (`jira_project_key`). Ponowny poll ich NIE dubluje (dedup po
-  kluczu / id wpisu changelogu / id komentarza), a zmiany autorstwa konta PAT są pomijane (self-skip).
-  Watermark JQL po `updated` (minutowa precyzja) nie gubi zdarzeń po restarcie.
+- **Krok (preflight):** ustaw `WORKMATE_JIRA_BASE_URL`/`_TOKEN` (Cloud: + `_EMAIL`), uruchom
+  `uv run --no-sync python deploy/jira/preflight.py`.
+- **Oczekiwane (preflight):** auth OK (`authenticated_account`), próbne `search_issues` zwraca listę
+  bez błędu, a gdy podano `WORKMATE_TEAMS_GRAPH_IDENTITIES` — `jira_user` z mapy rozwiązuje się do
+  realnego konta. Kod wyjścia `0`.
+- **Krok (realne pytanie, Teams):** ustaw `WORKMATE_TEAMS_GRAPH_IDENTITIES` z wpisem nadawcy
+  (`jira_user`), na kanale/w czacie napisz `/moje-zadania`.
+- **Oczekiwane:** lista TYLKO otwartych zadań PYTAJĄCEGO (nie kolegi); nadawca spoza mapy tożsamości
+  dostaje odmowę, nie pustą listę cudzych zadań. Zero parametrów — nie da się poprosić o `assignee`
+  innej osoby.
+- **Krok (realne pytanie, MCP stdio):** ustaw `WORKMATE_JIRA_MY_ACCOUNT`, w Claude Code/CLI zapytaj
+  o własne zadania Jira.
+- **Oczekiwane:** narzędzie `get_my_jira_tasks` wchodzi na katalog TYLKO gdy zmienna ustawiona;
+  zwraca zadania skonfigurowanego principala. Na drzwiach `streamable-http` (wielu osób) narzędzie
+  NIE jest wystawiane — sprawdź, że nie pojawia się na liście narzędzi floty.
 
-## 12. Jira → Teams (notifier dual-target) — 🔑 👥 🟪 (ADR 0022/0030)
-
-- **Krok:** skonfiguruj `WORKMATE_TEAMS_PUSH_*` (włącz `ENABLE_CHAT` i/lub `ENABLE_CHANNEL`),
-  zaloguj się raz device-code; wywołaj zdarzenie Jira (nowe zgłoszenie / zmiana statusu / komentarz).
-- **Oczekiwane:** powiadomienie ląduje w czacie 1:1 ORAZ na kanale (wg włączonych celów) z etykietą
-  źródła **`[Jira]`** i poprawnym rodzajem (`Nowe zgłoszenie`/`Zmiana statusu`/`Nowy komentarz`).
-  Treść zescapowana (bez żywego HTML). Restart procesu nie gubi ani nie dubluje (kursor at-least-once).
-
-## 13. Wątkowanie kanału Jiry — jedno zgłoszenie, jeden wątek (B2) — 🔑 👥 🟪 (ADR 0024)
-
-- **Krok:** ustaw `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` (wymaga `ENABLE_CHANNEL=true`);
-  dla jednego zgłoszenia (np. `WM-5`) wywołaj po kolei: utworzenie, zmianę statusu i komentarz.
-- **Oczekiwane:** wszystkie trzy powiadomienia trafiają do JEDNEGO wątku (root utworzenia; kolejne
-  jako odpowiedzi), a inne zgłoszenie (`WM-6`) zaczyna NOWY wątek. Klucz `kind="jira"` nie koliduje z
-  wątkami GitHuba na tym samym `events.db`. Usunięcie roota w Teams → notifier tworzy nowy i przełącza
-  link (nie blokuje strumienia).
-
-## 14. Teams → Jira: bramkowany zapis create-only (Gate 5) — 🔑 👥 🟪 (ADR 0031)
-
-- **Krok:** ustaw `WORKMATE_JIRA_ENABLE_WRITE=true` (+ `WRITE_PROJECT` + `SELF_ACCOUNT`); przez
-  agenta na kanale Teams poproś „utwórz zgłoszenie: …" oraz „dodaj komentarz do WM-5: …".
-- **Oczekiwane:** zgłoszenie/komentarz powstają w SKONFIGUROWANYM projekcie (nie w cudzym); agent
-  zwraca klucz i URL. Komentarz do klucza spoza projektu (`OPS-1`) lub o kształcie path-traversal
-  (`WM-1/../OPS-1`) jest ODRZUCONY. **Potwierdź, że zapis NIE wraca jako powiadomienie** (self-skip
-  PAT + echo `source="teams"`, którego notifier `source="jira"` nie odsyła).
-
-## 15. Teams → Jira: tranzycja statusu (walk) — 🔑 👥 🟪 (ADR 0032)
-
-- **Krok:** ustaw `WORKMATE_JIRA_ENABLE_TRANSITION=true` (+ `WRITE_PROJECT` + `SELF_ACCOUNT`).
-  Przy domyślnym `MAX_TRANSITION_HOPS=1` poproś agenta „przenieś WM-5 do In Progress" (status będący
-  bezpośrednim sąsiadem) oraz do statusu odległego/nieosiągalnego. Następnie podnieś
-  `MAX_TRANSITION_HOPS` (np. 3) i powtórz dla celu o kilka kroków dalej po LINIOWYM workflow.
-- **Oczekiwane:** (a) cel-sąsiad → `reached=true`, jeden hop, `[Jira] Zmiana statusu` na kanale;
-  (b) cel nieosiągalny przy cap=1 → `reached=false`, `stop_reason=hop_cap`, **zgłoszenie NIE ruszone**
-  (raport z `available_next`); (c) przy cap≥2 na liniowym workflow → walk przechodzi stany wymuszone
-  do celu, echo per hop; na rozgałęzieniu STOP (`branch_point`, bez zgadywania). Raport zawsze
-  strukturalny (`reached`/`path`/`stop_reason`); tranzycja nie wraca jako zbędne powiadomienie.
-
-## 16. Teams: propozycja czasu z commitów — 👥 🐙 (ADR 0034, część odczytowa)
+## 12. Teams: propozycja czasu z commitów — 👥 🐙 (ADR 0034, część odczytowa)
 
 - **Krok:** wystarczy skonfigurowany GitHub (`TOKEN`/`OWNER`/`REPO`) — narzędzie nie ma bramki, bo
   po wycięciu ścieżki zapisu (2026-07-21) niczego nie mutuje. Poproś agenta o propozycję ewidencji
@@ -171,37 +136,23 @@ strażnika pętli:** poller `workmate-jira` i drzwi zapisu `teams_graph` MUSZĄ 
 - **Oczekiwane:** doba liczona wg `WORKMATE_GITHUB_WORKLOG_TZ` (`ZoneInfo`), więc commit z 23:30
   lokalnego czasu zostaje w swoim dniu po obu stronach przejścia DST.
 
-## 17. Cotygodniowe karty czasu → Teams — 🔑 👥 🟪 (ADR 0035)
+---
 
-- **Krok 0 (BRAMKA):** Apps → WorklogPRO → Import worklogs. Pobierz szablon i porównaj nagłówki
-  z `WORKLOGPRO_HEADERS`. Zaimportuj 2–3 wiersze ręcznie, potem TE SAME drugi raz. Sprawdź, czy
-  import działa z konta BEZ uprawnień admina.
-- **Oczekiwane:** nagłówki zgodne (albo poprawione w stałej + teście); wiadomo, czy powstają
-  duplikaty; wiadomo, czy nie-admin może importować. Dopiero po tym kroku wolno ustawić
-  `WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true` — bez tego przebieg BOJOWY nie wystartuje.
-- **Krok (próbny):** `WORKMATE_WORKLOGI_ENABLED=true`, `DRY_RUN=true`, `ONLY_SOURCE_IDS` = tylko Ty.
-  `uv run workmate-worklogi --once`.
-- **Oczekiwane:** arkusz w `OUTPUT_DIR` z Twoimi godzinami, ŻADNEJ wiadomości na Teams, pusty stan.
-  Otwórz plik i zweryfikuj kolumny oraz znacznik `Start Date & Time` z offsetem. Sprawdź też okno:
-  raport dotyczy tygodnia ZAMKNIĘTEGO, więc piątkowy przebieg pokazuje poprzedni pon.–ndz. razem
-  z weekendem (wcześniej te godziny nie trafiały do żadnego arkusza).
-- **Krok (bramka nagłówków):** spróbuj `DRY_RUN=false` BEZ `HEADERS_CONFIRMED=true`.
-- **Oczekiwane:** proces nie startuje, komunikat odsyła do Kroku 0. To jedyna ochrona przed
-  rozesłaniem kilkunastu plików z niepoprawnymi kolumnami.
-- **Krok (bojowy, pilotaż):** `DRY_RUN=false`, `HEADERS_CONFIRMED=true`, `ONLY_SOURCE_IDS` = Ty
-  + Mikołaj. Uruchom ponownie.
-- **Oczekiwane:** prywatna wiadomość 1:1 z **tabelą** (nie `&lt;table&gt;` — to sprawdza
-  `send_chat_html`), sumą tygodnia, ścieżką pliku i ostrzeżeniem o dublowaniu. Każdy widzi TYLKO
-  swoje godziny. Osoba bez godzin nie dostaje nic.
-- **Krok (idempotencja):** uruchom trzeci raz w tym samym tygodniu.
-- **Oczekiwane:** zero wiadomości, raport `wysłano 0`. Następnie spróbuj uruchomić DRUGĄ instancję
-  równolegle — musi odmówić z komunikatem o blokadzie.
-- **Krok (import):** zaimportuj wygenerowany arkusz do WorklogPRO jako pracownik.
-- **Oczekiwane:** wpisy w Jirze z **właściwym autorem** (to cała różnica wobec ADR 0034) i czasem
-  zgodnym z tabelą z wiadomości.
+> **Karty czasu (WorklogPRO) — wycofane w całości** ([ADR 0055](../adr/0055-withdraw-worklogpro-timesheets.md),
+> supersedes 0035/0036/0037/0038). To decyzja trwała, nie pauza: nie ma już cotygodniowego arkusza,
+> wysyłki DM ani self-service na żądanie — pozycja live-smoke usunięta z tej listy bez zamiennika.
+
+## Opcjonalna weryfikacja powdrożeniowa (nie blokuje niczego)
+
+M3 (komenda `/notatka` — nowa notatka ze spotkania — i przechwytywanie wątku „zapisz to") ma kod i
+testy KOMPLETNE, bramki włączone w `deploy/docker/env`/`.example` (ADR 0041/0042/0043/0047/0048
+zaakceptowane). Live-smoke na **realnym** transkrypcie/wątku spotkania nie jest tu wykonywalny — wymaga
+realnego identyfikatora spotkania Teams, dostępnego dopiero po uruchomieniu floty na serwerze
+docelowym. To NIE jest pozycja otwarta ani blokująca; wykonaj ją dopiero POWDROŻENIOWO, wg
+[`meeting-transcript-live-smoke.md`](meeting-transcript-live-smoke.md). Harness lokalny (pozycja 7
+wyżej) pokrywa jakość podsumowania już teraz, bez czekania na wdrożenie.
 
 ---
 
 > Po wykonaniu pozycji odnotuj wynik w briefie sesji (`.claude/sessions/`) i — gdy dotyczy —
-> zaktualizuj powiązany ADR. Pozycje ☁️ Azure-gated (M3 fetch transkryptu, M4 mapowanie
-> tożsamości) czekają na dostęp do infrastruktury i nie są tu wykonywalne.
+> zaktualizuj powiązany ADR.

@@ -1,4 +1,4 @@
-"""Wspólne wczytywanie ``.env`` dla drzwi inbound (CLI, Telegram, Teams, Teams-Graph).
+"""Wspólne wczytywanie ``.env`` dla drzwi inbound (CLI, Teams, Teams-Graph).
 
 Jedno, odporne na kodowanie źródło zamiast czterech różnych podejść w ``*/app.py``.
 Bez zależności zewnętrznej (nie ``python-dotenv``): realne zmienne środowiskowe zawsze

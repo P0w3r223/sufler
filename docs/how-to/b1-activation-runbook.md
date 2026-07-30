@@ -14,6 +14,14 @@ bramki: (A) **odczyt** transkryptu, (B) **zapis** notatki z komendy Teams. B wym
 > **STATUS 2026-07-28:** Krok 0 (zgoda admina) WYKONANY — zakresy nadane, device-code przeszło, blok
 > `WORKMATE_TEAMS_GRAPH_*` przygotowany w `.env` (flaga OFF). Dokończenie A (live-smoke) ZAPARKOWANE:
 > brak realnego joinWebUrl/id spotkania z transkryptem. Kroki niżej zostają jako procedura na później.
+>
+> **STATUS 2026-07-30 — ODCHYLENIE OD PROCEDURY:** Kroki 4–6 (akceptacja ADR 0041/0042/0043 + WŁĄCZENIE
+> bramek `ENABLE_MEETING_TRANSCRIPT`/`_NOTE_WRITE`/`_NOTE_ASYNC` + `_IDENTITIES`) wykonane w
+> `deploy/docker/env` **na wprost polecenie zespołu**, BEZ przejścia Kroku 3 (live-smoke transkryptu wciąż
+> zaparkowany — patrz wyżej). Runbook wyraźnie zalecał „jeśli krok 3 nie przechodzi — NIE włączaj kroku
+> 4"; ta kolejność została świadomie pominięta decyzją zespołu, nie błędem wykonania. Flaga `true` w
+> configu floty ≠ zweryfikowane end-to-end na żywo — pierwsze prawdziwe użycie `/notatka` na produkcji
+> będzie jednocześnie pierwszym live-smoke.
 
 ---
 
@@ -76,14 +84,14 @@ uv run workmate-meeting --source graph \
 
 ---
 
-## Krok 4 — akceptacja ADR 0041 (decyzja zaufania Gate-2)
+## Krok 4 — akceptacja ADR 0041 (decyzja zaufania Gate-2) [WYKONANE 2026-07-30]
 
 Produkcyjny zapis **wprost z kanału Teams** to decyzja zaufania (zapis z mniej zaufanych
 drzwi, odłożony przez ADR 0009 §4). Przed włączeniem bramki ZAPISU:
 przejrzyj i **zmień status ADR 0041 z `proposed` na `accepted`**
 (`docs/adr/0041-production-m3-meeting-note-write-from-teams-door.md`).
 
-## Krok 5 — włącz bramkę ZAPISU (B) z drzwi Teams + AUTORYZACJĘ nadawcy (B2)
+## Krok 5 — włącz bramkę ZAPISU (B) z drzwi Teams + AUTORYZACJĘ nadawcy (B2) [WYKONANE 2026-07-30]
 
 Bramka zapisu wymaga (fail-fast): źródła transkryptu (Krok 3) **oraz** mapy tożsamości
 (**B2 / ADR 0042** — bez niej „każdy pisze do wszystkiego"). Zaakceptuj też **ADR 0042**.
@@ -94,6 +102,11 @@ WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true
 # Mapa AAD id -> członek pionu (może być TEN SAM plik co worklogi):
 WORKMATE_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
 ```
+
+**Flota Docker:** bazowy `docker-compose.yml` montuje `data/` RO — bez override `save_note` padnie w
+runtime na „Read-only file system". Odpal z narzuconym wąskim montażem RW:
+`docker compose -f docker-compose.yml -f docker-compose.notatka.yml --profile bridge up -d`
+(`deploy/docker/docker-compose.notatka.yml`, ADR 0041). Sam flip flagi w `env` to NIE wystarcza.
 
 Restart drzwi (`workmate-teams-graph`). Użycie na kanale:
 
@@ -108,7 +121,7 @@ Restart drzwi (`workmate-teams-graph`). Użycie na kanale:
   samego spotkania nie tworzy duplikatu (kolizja → „już złożona"). Create-only, ADR 0006.
 - Read-only komendy (`/pomoc`, `/szukaj`) i pętla agenta bez zmian — `/notatka` to osobny router.
 
-## Krok 6 (opcjonalny) — async „wrzuć-i-idź" (B3 / ADR 0043)
+## Krok 6 (opcjonalny) — async „wrzuć-i-idź" (B3 / ADR 0043) [WYKONANE 2026-07-30]
 
 Domyślnie `/notatka` liczy inline (blokuje poller na czas transkrypt+Claude). Async odsyła **ACK
 natychmiast**, liczy w tle i wrzuca wynik do wątku. Zaakceptuj **ADR 0043**, potem:
@@ -130,5 +143,7 @@ addytywne, domyślnie None/OFF).
 
 ## Poza B (kolejny etap)
 
-Grupa **B (B1+B2+B3) domknięta w kodzie, gated OFF**. Zostaje **grupa C — go-live** (HTTP/IIS,
-Jira live-smoke, worklog dry-run→bojowy) — praca operatorska; patrz `docs/roadmap-v1-gap-analysis.md`.
+Grupa **B (B1+B2+B3) domknięta w kodzie, bramki WŁĄCZONE w configu floty (2026-07-30)** — live-smoke
+Kroku 3 nadal zaparkowany (brak realnego spotkania z transkryptem). Zostaje **grupa C — go-live**
+(HTTP/IIS, Jira live-smoke, worklog dry-run→bojowy) — praca operatorska; patrz
+`docs/roadmap-v1-gap-analysis.md`.

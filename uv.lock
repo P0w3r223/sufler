@@ -2945,19 +2945,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-telegram-bot"
-version = "22.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpcore", marker = "python_full_version >= '3.14'" },
-    { name = "httpx" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/77/153517bb1ac1bba670c6fb1dbf09e1fd0730494b1705934e715391413a0d/python_telegram_bot-22.8.tar.gz", hash = "sha256:f9d3847fcb23ee603477e442800b33bb4adf851a73e0619d2050be879decf1ef", size = 1551700, upload-time = "2026-06-12T08:10:29.1Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/7c/ed7d4dd94280bd434173cae9f7a7aedaaab9af128ae4f494423a5687c820/python_telegram_bot-22.8-py3-none-any.whl", hash = "sha256:42373918097f1b837cc4e717d588c19ea79651497ec712bb5b0c76e5e63c50e1", size = 769397, upload-time = "2026-06-12T08:10:27.066Z" },
-]
-
-[[package]]
 name = "pywin32"
 version = "312"
 source = { registry = "https://pypi.org/simple" }
@@ -3678,16 +3665,6 @@ teams-graph = [
     { name = "python-dotenv" },
     { name = "python-pptx" },
 ]
-telegram = [
-    { name = "python-dotenv" },
-    { name = "python-telegram-bot" },
-]
-worklogi = [
-    { name = "httpx" },
-    { name = "msal" },
-    { name = "openpyxl" },
-    { name = "python-dotenv" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -3707,7 +3684,6 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'github'", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'jira'", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'teams-graph'", specifier = ">=0.28.1" },
-    { name = "httpx", marker = "extra == 'worklogi'", specifier = ">=0.28.1" },
     { name = "markdown-it-py", marker = "extra == 'teams-graph'", specifier = ">=3.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
     { name = "microsoft-agents-activity", marker = "extra == 'teams'", specifier = ">=1.1.0" },
@@ -3715,11 +3691,9 @@ requires-dist = [
     { name = "microsoft-agents-hosting-aiohttp", marker = "extra == 'teams'", specifier = ">=1.1.0" },
     { name = "microsoft-agents-hosting-core", marker = "extra == 'teams'", specifier = ">=1.1.0" },
     { name = "msal", marker = "extra == 'teams-graph'", specifier = ">=1.37.0" },
-    { name = "msal", marker = "extra == 'worklogi'", specifier = ">=1.28" },
     { name = "numpy", marker = "extra == 'retrieval-dense'", specifier = ">=1.26" },
     { name = "openpyxl", marker = "extra == 'seed'", specifier = ">=3.1" },
     { name = "openpyxl", marker = "extra == 'teams-graph'", specifier = ">=3.1" },
-    { name = "openpyxl", marker = "extra == 'worklogi'", specifier = ">=3.1" },
     { name = "pillow", marker = "extra == 'teams-graph'", specifier = ">=10" },
     { name = "pillow-heif", marker = "extra == 'teams-graph'", specifier = ">=0.16" },
     { name = "pydantic", specifier = ">=2.6" },
@@ -3729,17 +3703,14 @@ requires-dist = [
     { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'jira'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
-    { name = "python-dotenv", marker = "extra == 'telegram'", specifier = ">=1.0" },
-    { name = "python-dotenv", marker = "extra == 'worklogi'", specifier = ">=1.0" },
     { name = "python-pptx", marker = "extra == 'seed'", specifier = ">=1.0" },
     { name = "python-pptx", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
-    { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=21" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "simplemma", marker = "extra == 'retrieval'", specifier = ">=1.0" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
-provides-extras = ["teams", "agent", "telegram", "teams-graph", "github", "jira", "worklogi", "retrieval", "retrieval-dense", "file-reply", "seed"]
+provides-extras = ["teams", "agent", "teams-graph", "github", "jira", "retrieval", "retrieval-dense", "file-reply", "seed"]
 
 [package.metadata.requires-dev]
 dev = [

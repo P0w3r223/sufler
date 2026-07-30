@@ -1,7 +1,8 @@
 # 0031. Jira (Server/DC) write capability: create issue / comment (Gate 5)
 
 Date: 2026-07-17
-Status: accepted
+Status: superseded by docs/adr/0054-reduce-jira-to-read-only-my-tasks.md (2026-07-30 scope decision:
+  Jira write capability removed)
 Author: P0w3r223
 Related to: docs/adr/0006-write-capability-gate-2.md,
   docs/adr/0021-github-write-capability-gate-4.md, docs/adr/0030-jira-server-read-door.md,

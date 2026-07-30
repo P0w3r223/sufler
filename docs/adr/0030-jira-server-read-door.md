@@ -1,7 +1,9 @@
 # 0030. Jira (Server/Data Center) read door — JQL polling into the shared EventStore
 
 Date: 2026-07-17
-Status: accepted
+Status: accepted (amended by docs/adr/0054-reduce-jira-to-read-only-my-tasks.md, 2026-07-30 — the
+  poller/ingest/notifier half described here is removed; the read client and port survive and are
+  reused by the "my tasks" capability)
 Author: P0w3r223
 Related to: docs/adr/0019-shared-event-store.md, docs/adr/0020-github-delegated-polling-door.md,
   docs/adr/0022-proactive-dual-target-teams-push.md,

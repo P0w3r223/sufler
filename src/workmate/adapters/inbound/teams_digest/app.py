@@ -30,8 +30,8 @@ from workmate.adapters.inbound.single_instance import (
     AlreadyRunningError,
     acquire_single_instance_lock,
 )
+from workmate.adapters.inbound.teams_digest import state as state_store
 from workmate.adapters.inbound.teams_digest.delivery import deliver_weekly_digest
-from workmate.adapters.inbound.worklogi import state as state_store
 from workmate.config import TeamsDigestSettings, TeamsPushSettings, require_writable
 from workmate.core.domain.week import next_run, previous_run, week_label
 

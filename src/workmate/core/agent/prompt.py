@@ -55,7 +55,7 @@ SYSTEM_PROMPT = (
 
 # Klauzula multimodalna (F8) — DOKLEJANA tylko dla drzwi, które materializują załączniki
 # (dziś: teams-graph). Reklamowanie jej globalnie byłoby mylną obietnicą na drzwiach czysto
-# tekstowych (Telegram/CLI czytają tylko tekst), więc zdolność uwidaczniamy PER DRZWI.
+# tekstowych (CLI czyta tylko tekst), więc zdolność uwidaczniamy PER DRZWI.
 MULTIMODAL_CAPABILITY_CLAUSE = (
     "\n\n"
     "Przyjmujesz też pliki: gdy ktoś pyta, co potrafisz, wspomnij, że można Ci wrzucić "

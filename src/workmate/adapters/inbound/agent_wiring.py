@@ -1,8 +1,8 @@
-"""Wspólne okablowanie runtime'u agenta dla drzwi inbound (CLI, Telegram, …).
+"""Wspólne okablowanie runtime'u agenta dla drzwi inbound (CLI, Teams, …).
 
 Buduje ``AgentRuntime`` z tych samych serwisów i jednoźródłowego katalogu co drzwi
 MCP. Profil zaufania per drzwi (ADR 0006) jest jawną flagą ``enable_write``:
-zaufane drzwi (lokalne CLI) budują katalog READ+WRITE, mniej zaufane (Telegram) —
+zaufane drzwi (lokalne CLI) budują katalog READ+WRITE, mniej zaufane (Teams) —
 READ-ONLY (agent czyta, nie zapisuje). Import Claude API jest leniwy (w adapterze
 outbound); brak extra ``agent`` daje ``ImportError``, który entry-point drzwi
 zamienia na czytelny komunikat.
@@ -123,7 +123,7 @@ def build_agent_runtime(
 
     ``enable_write`` steruje profilem zaufania drzwi: ``True`` → katalog z
     ``save_note`` (zaufane, np. lokalne CLI); ``False`` → katalog tylko do odczytu
-    (mniej zaufane drzwi, np. Telegram — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
+    (mniej zaufane drzwi, np. Teams — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
     STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
     bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
     ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
@@ -223,6 +223,7 @@ def build_conversational_responder(
     extra_catalog: Sequence[ToolSpec] = (),
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+    my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     meeting_notes: MeetingNoteRouter | None = None,
     thread_note: ThreadNoteRouter | None = None,
     project_brief: BriefRouter | None = None,
@@ -237,8 +238,10 @@ def build_conversational_responder(
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
-    ``thread_tool_factory``/``user_push_tool_factory`` (ADR 0024/0027) wstrzykują narzędzia PER TURĘ
-    wiązane, odpowiednio, z wątkiem (external_id) i z nadawcą (sender_id) — poza powierzchnią MCP.
+    ``thread_tool_factory``/``user_push_tool_factory``/``my_jira_tasks_factory``
+    (ADR 0024/0027/0054) wstrzykują narzędzia PER TURĘ wiązane, odpowiednio, z wątkiem
+    (external_id) i z nadawcą (sender_id) — poza powierzchnią MCP. ``my_jira_tasks_factory``
+    zasila też komendę ``/moje-zadania`` w routerze (jedno miejsce rozwiązywania tożsamości).
     ``supports_attachments`` (F8) uwidacznia zdolność multimodalną (prompt + ``/pomoc``) tylko na
     drzwiach z materializerem załączników — inaczej byłaby mylną obietnicą na drzwiach tekstowych.
     """
@@ -261,6 +264,7 @@ def build_conversational_responder(
         conversations,
         {spec.name: spec.fn for spec in build_read_catalog(settings)},
         supports_attachments=supports_attachments,
+        my_jira_tasks=my_jira_tasks_factory,
     )
     workspace_factory = (
         _build_workspace_factory(workspace_settings)
@@ -284,6 +288,7 @@ def build_conversational_responder(
         workspace_catalog_factory=workspace_factory,
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
+        my_jira_tasks_factory=my_jira_tasks_factory,
         meeting_notes=meeting_notes,
         thread_note=thread_note,
         project_brief=project_brief,

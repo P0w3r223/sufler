@@ -1,7 +1,7 @@
 # 0047 — Two-pass grounded meeting note: speaker anchoring + verifier critic
 
 Date: 2026-07-29
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0009](0009-meeting-note-flow-and-write-surface.md) (M3 summarizer),
 [ADR 0041](0041-production-m3-meeting-note-write-from-teams-door.md) (production `/notatka`),
@@ -128,3 +128,10 @@ non-frozen `MeetingSummary` DTO, never `NoteMetadata`.
   clean `<v Name>` cues, raw exports may not. Documented, not a regression.
 - **On acceptance:** flip to `accepted`; decide whether `WORKMATE_AGENT_VERIFY_MEETING_NOTE` defaults ON in
   production (operator call, given the ~2× cost).
+
+## Update (2026-07-30)
+
+Status flipped to `accepted`; `WORKMATE_AGENT_VERIFY_MEETING_NOTE=true` set in `deploy/docker/env`
+per team decision — the ~2× Claude call cost per meeting note is accepted in exchange for the
+verifier catching unsupported claims. Live-verified only insofar as unit tests on fakes cover it;
+still riding on the same parked live-smoke as ADR 0041 (no real transcript run yet).

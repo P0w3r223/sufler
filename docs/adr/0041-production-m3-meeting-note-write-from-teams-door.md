@@ -89,3 +89,15 @@ Two hard constraints from the existing design:
   confirm channel-member authorization expectations.
 - M4 (B2/B3): identity mapping (Entra/AD → core permission model) and async "fire-and-forget" with a
   callback into the Teams thread — separate ADR(s), need `@architect`.
+
+## Update (2026-07-30)
+
+`enable_meeting_transcript` and `enable_meeting_note_write` flipped to `true` in `deploy/docker/env`
+(fleet config) per team decision. **The flag flip alone is not sufficient for the Docker fleet**: the
+base `docker-compose.yml` mounts `data/` read-only, so `save_note` will fail at runtime with
+"Read-only file system" unless the fleet is started with the narrow RW override —
+`docker compose -f docker-compose.yml -f docker-compose.notatka.yml --profile bridge up -d`
+(`deploy/docker/docker-compose.notatka.yml`, pre-existing, not newly added here). **Live-smoke is still parked** — no real meeting joinWebUrl/id with
+a processed transcript to test against (unchanged from 2026-07-28). A flag being `true` in the fleet
+config is not the same as a verified live run; treat this feature as config-enabled but operationally
+unproven until the live-smoke in `docs/how-to/meeting-transcript-live-smoke.md` actually runs.

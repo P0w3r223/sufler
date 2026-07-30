@@ -1,7 +1,8 @@
 # 0028. Project ↔ repo ↔ Jira mapping and a project/repo dimension on events
 
 Date: 2026-07-17
-Status: accepted
+Status: accepted (amended by docs/adr/0054-reduce-jira-to-read-only-my-tasks.md, 2026-07-30 — Jira no
+  longer produces events through this mapping; the registry fields and event columns are retained)
 Author: P0w3r223
 Related to: docs/adr/0005-company-project-note-layout.md, docs/adr/0019-shared-event-store.md,
   docs/adr/0020-github-delegated-polling-door.md, docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md

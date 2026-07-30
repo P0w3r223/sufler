@@ -3,7 +3,7 @@
 OSOBNY plik i tabela od ``EventStore``/``conversations`` — metryki to dane operacyjne poza bazą
 wiedzy (``data/``), nadpisywalne, o niskiej wadze. Ten sam wzorzec współbieżności co pozostałe
 magazyny SQLite (połączenie ``check_same_thread=False`` + ``Lock``, ``WAL`` + ``busy_timeout``) —
-drzwi agentowe (teams/telegram/cli) to OSOBNE procesy dzielące ten sam plik.
+drzwi agentowe (teams/cli) to OSOBNE procesy dzielące ten sam plik.
 
 Ziarno = ``(door, user_key, week)`` z UPSERT-em inkrementującym ``call_count``. Dzięki temu:
 - „wywołania/drzwi" = ``SUM(call_count)``,

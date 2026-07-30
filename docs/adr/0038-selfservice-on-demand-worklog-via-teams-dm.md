@@ -1,8 +1,10 @@
 # 0038. Self-service on-demand worklog: authenticated Teams DM submission → WorklogPRO sheet reply
 
 Date: 2026-07-24
-Status: proposed (built: submission parse + single-person compose + operator-pilot door;
-  file-attachment reply delivered A′4 2026-07-28; live 1:1 intake pending — M5)
+Status: superseded by docs/adr/0055-withdraw-worklogpro-timesheets.md (2026-07-30 scope decision:
+  WorklogPRO / timesheets module withdrawn from the project). Formerly: proposed (built: submission
+  parse + single-person compose + operator-pilot door; file-attachment reply delivered A′4 2026-07-28;
+  live 1:1 intake pending — M5)
 Author: P0w3r223
 Related to: [[0035-weekly-per-person-worklogpro-sheets-and-teams-dm]],
   [[0036-shift-worklog-integration-identity-and-week-contract]],

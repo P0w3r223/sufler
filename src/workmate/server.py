@@ -13,10 +13,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 
-from workmate.adapters.inbound.mcp.tools import register_event_tools, register_tools
+if TYPE_CHECKING:
+    from workmate.core.application.my_jira_tasks import MyJiraTasksService
+
+from workmate.adapters.inbound.mcp.tools import (
+    register_event_tools,
+    register_my_jira_tasks_tool,
+    register_tools,
+)
 from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
@@ -71,6 +79,15 @@ def build_server(settings: Settings | None = None) -> FastMCP:
     events = _events_service_if_present()
     if events is not None:
         register_event_tools(mcp, events)
+
+    # "Moje zadania" (ADR 0054) TYLKO na stdio — KONSTRUKCYJNIE, nie tylko przez konwencję
+    # operatorską (secure-by-default, jak `enable_write` w `_build_http_server`). Principal
+    # (`WORKMATE_JIRA_MY_ACCOUNT`) jest JEDEN na proces; na `streamable-http` z wieloma osobami
+    # na wspólnym tokenie zwracałby zadania jednej, zaszytej osoby wszystkim pytającym.
+    if settings.transport != "streamable-http":
+        my_jira_tasks = _my_jira_tasks_service_if_present()
+        if my_jira_tasks is not None:
+            register_my_jira_tasks_tool(mcp, my_jira_tasks)
     return mcp
 
 
@@ -93,6 +110,36 @@ def _events_service_if_present() -> EventService | None:
     return EventService(SqliteEventStore(path))
 
 
+def _my_jira_tasks_service_if_present() -> MyJiraTasksService | None:
+    """"Moje zadania" (ADR 0054) na drzwiach MCP — TYLKO gdy operator skonfigurował JEDNO stałe
+    konto Jira (``WORKMATE_JIRA_MY_ACCOUNT``) obok URL-a i tokenu odczytu.
+
+    Sesja stdio (Claude Code/CLI) nie ma tożsamości Teams AAD, więc — inaczej niż na drzwiach
+    Teams (``teams_graph.app._build_my_jira_tasks_factory``, mapa AAD→Jira) — identyfikacja
+    pytającego jest tu z konfiguracji: JEDEN principal per proces serwera. Import Jiry leniwy, jak
+    reszta zdolności addytywnych, żeby ścieżka bez Jiry nie płaciła za ``httpx``.
+    """
+    from workmate.config import JiraSettings
+
+    jira_settings = JiraSettings.from_env()
+    if not (jira_settings.base_url and jira_settings.token and jira_settings.my_account):
+        return None
+
+    import atexit
+
+    import httpx
+
+    from workmate.adapters.outbound.jira_api import build_jira_client
+    from workmate.core.application.my_jira_tasks import MyJiraTasksService
+
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    client = build_jira_client(transport, jira_settings)
+    return MyJiraTasksService(
+        client, assignee=jira_settings.my_account, base_url=jira_settings.base_url
+    )
+
+
 # Obiekt na poziomie modułu — wykrywany przez CLI FastMCP oraz przez
 # `.mcp.json` (skrypt konsolowy `workmate`) i `python -m workmate`.
 mcp = build_server()
@@ -104,8 +151,14 @@ def _build_http_server(settings: Settings) -> FastMCP:
     Wymuszamy ``enable_write=False`` niezależnie od środowiska (secure-by-default,
     ADR 0007) — mutujące ``save_note`` nie jest wtedy w ogóle rejestrowane na
     drzwiach HTTP. Zapis zostaje wyłącznie na zaufanych lokalnych drzwiach stdio.
+    Wymuszamy też ``transport="streamable-http"`` (niezależnie od tego, co niesie
+    wołający) — to on blokuje w ``build_server`` rejestrację "moich zadań" Jiry
+    (ADR 0054): jeden principal na proces nie może obsłużyć wielu osób na
+    współdzielonym transporcie HTTP. Bez tego wymuszenia gwarancja zależałaby od
+    tego, że każdy wołający już ustawił transport poprawnie — dokładnie to, czego
+    unikamy przy ``enable_write``.
     """
-    return build_server(replace(settings, enable_write=False))
+    return build_server(replace(settings, enable_write=False, transport="streamable-http"))
 
 
 def _run_http(settings: Settings) -> None:

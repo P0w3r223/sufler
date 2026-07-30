@@ -14,13 +14,14 @@ from workmate.adapters.inbound.commands import (
     COMMAND_SPECS,
     CommandContext,
     CommandRouter,
-    telegram_command_names,
 )
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.conversations import ConversationService
+from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.pricing import TokenUsage
 
 _CTX = CommandContext("telegram", "chat1")
+_CTX_WITH_SENDER = CommandContext("teams_graph", "chat1", "aad-123")
 
 
 class _SpyTools:
@@ -62,10 +63,14 @@ def _router(
     service: ConversationService | None = None,
     *,
     supports_attachments: bool = False,
+    my_jira_tasks=None,
 ) -> tuple[CommandRouter, _SpyTools]:
     tools = _SpyTools(canned or {})
     router = CommandRouter(
-        service or _service(), tools.as_map(), supports_attachments=supports_attachments
+        service or _service(),
+        tools.as_map(),
+        supports_attachments=supports_attachments,
+        my_jira_tasks=my_jira_tasks,
     )
     return router, tools
 
@@ -91,7 +96,7 @@ def test_dispatch_empty_and_whitespace_return_none():
 
 
 def test_dispatch_strips_bot_suffix_from_first_token():
-    """``/nowa@WorkMateBot`` (grupy Telegrama) rozpoznaje się jako ``/nowa``."""
+    """``/nowa@WorkMateBot`` (konwencja komend grupowych) rozpoznaje się jako ``/nowa``."""
     router, _ = _router()
     # Świeży wątek → komenda /nowa odpowiada „już pusta rozmowa" (dowód, że trafił handler).
     assert router.dispatch("/nowa@WorkMateBot", _CTX) == _NEW_THREAD_ALREADY_FRESH
@@ -325,6 +330,80 @@ def test_history_lists_recent_conversations():
     assert "12 tok" in out  # realne usage rozmowy (10 + 2)
 
 
+# --- /moje-zadania (ADR 0054) ----------------------------------------------------
+
+
+def test_my_tasks_without_factory_reports_not_configured():
+    router, _ = _router()
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out == "Ta komenda nie jest skonfigurowana na tych drzwiach."
+
+
+def test_my_tasks_alias_works():
+    router, _ = _router()
+    assert router.dispatch("/zadania", _CTX_WITH_SENDER) == router.dispatch(
+        "/moje-zadania", _CTX_WITH_SENDER
+    )
+
+
+def test_my_tasks_unresolved_identity_reports_fail_closed_denial():
+    """Fabryka zwraca pustą listę (brak mapowania sender_id → konto Jira) — fail-closed."""
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        assert sender_id == "aad-123"
+        return []
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "nie udało się ustalić" in out.lower()
+
+
+def test_my_tasks_formats_open_tasks():
+    def get_my_jira_tasks() -> dict[str, object]:
+        return {
+            "tasks": [
+                {
+                    "key": "WM-5",
+                    "summary": "Zrobić X",
+                    "status": "In Progress",
+                    "priority": "High",
+                    "due_date": "2026-08-01",
+                    "url": "https://jira.example.org/browse/WM-5",
+                }
+            ]
+        }
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        return [ToolSpec("get_my_jira_tasks", "", get_my_jira_tasks)]
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "WM-5" in out
+    assert "Zrobić X" in out
+    assert "In Progress" in out
+    assert "https://jira.example.org/browse/WM-5" in out
+
+
+def test_my_tasks_empty_list_reports_no_open_tasks():
+    def factory(sender_id: str) -> list[ToolSpec]:
+        return [ToolSpec("get_my_jira_tasks", "", lambda: {"tasks": []})]
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out == "Nie masz otwartych zadań w Jirze."
+
+
+def test_my_tasks_surfaces_tool_error():
+    def factory(sender_id: str) -> list[ToolSpec]:
+        return [ToolSpec("get_my_jira_tasks", "", lambda: {"error": "brak dostępu do Jiry"})]
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out == "Błąd: brak dostępu do Jiry"
+
+
 # --- Read-only: router nie widzi save_note (bramka ADR 0006) --------------------
 
 
@@ -340,21 +419,3 @@ def test_router_works_with_readonly_map_lacking_save_note():
 
     assert router.dispatch("/szukaj cokolwiek", _CTX) == "Brak notatek pasujących do zapytania."
     assert router.dispatch("/projekty", _CTX) == "Brak projektów w rejestrze."
-
-
-# --- telegram_command_names: guard driftu tokenów -------------------------------
-
-
-def test_telegram_command_names_lists_all_tokens_without_slash():
-    """Guard: nazwy dla PTB = wszystkie tokeny bez ukośnika (rejestr i handler zgodne)."""
-    assert telegram_command_names() == [
-        "pomoc",
-        "help",
-        "nowa",
-        "nowy",
-        "new",
-        "szukaj",
-        "projekty",
-        "status",
-        "historia",
-    ]
