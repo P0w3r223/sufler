@@ -37,6 +37,10 @@ def test_mcp_tool_surface_matches_frozen_baseline(monkeypatch, tmp_path):
     db = tmp_path / "events.db"
     SqliteEventStore(str(db))  # utwórz plik, by narzędzie zdarzeń się zarejestrowało
     monkeypatch.setenv("WORKMATE_EVENTS_DB", str(db))
+    # Baseline zamraża powierzchnię PRZY WŁĄCZONYM zapisie (save_note obecne); od amendmentu
+    # ADR 0006 (2026-07-31) enable_write jest domyślnie OFF wszędzie, więc test musi go włączyć
+    # jawnie — inaczej porównuje z baseline dziurę zamiast kontrakt.
+    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", "true")
 
     baseline = json.loads(_BASELINE.read_text(encoding="utf-8"))
     assert _surface(build_server()) == baseline
@@ -45,6 +49,7 @@ def test_mcp_tool_surface_matches_frozen_baseline(monkeypatch, tmp_path):
 def test_event_tool_absent_without_bridge(monkeypatch, tmp_path):
     # Bez mostu → drzwi wracają DOKŁADNIE do zamrożonych 4+1 (bajt-w-bajt podzbiór baseline).
     monkeypatch.setenv("WORKMATE_EVENTS_DB", str(tmp_path / "absent.db"))
+    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", "true")  # patrz komentarz wyżej
 
     surface = _surface(build_server())
     assert _EVENT_TOOL not in surface
