@@ -5,6 +5,7 @@ jednego procesu — dwa procesy czytające ten sam pending obeszłyby ją i podw
 Blokada jest advisory na dedykowanym pliku ``<state>.lock``; system zwalnia ją przy zakończeniu
 procesu (także po awarii), więc nie zostają zawieszone blokady po martwym procesie.
 """
+
 from __future__ import annotations
 
 import logging

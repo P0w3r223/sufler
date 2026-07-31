@@ -8,8 +8,14 @@ UTC = timezone.utc
 WAW = ZoneInfo("Europe/Warsaw")
 
 
-def _shift(user_id: str, day: int, h1: int, h2: int, group: str | None = "TAG_x",
-           theme: str | None = "blue") -> Shift:
+def _shift(
+    user_id: str,
+    day: int,
+    h1: int,
+    h2: int,
+    group: str | None = "TAG_x",
+    theme: str | None = "blue",
+) -> Shift:
     return Shift(
         user_id,
         datetime(2026, 7, day, h1, tzinfo=UTC),

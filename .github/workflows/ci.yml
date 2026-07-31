@@ -8,8 +8,27 @@ on:
 
 jobs:
   quality-gate:
-    name: Bramka jakości (pytest · ruff · mypy)
+    name: Bramka jakości (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: workmate
+            dir: "."
+            sync_args: "--extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply"
+            lint_paths: "src tests eval"
+          - name: powiadomienia-teams
+            dir: "Powiadomienia_teams"
+            sync_args: ""
+            lint_paths: "."
+          - name: claude-summary
+            dir: "claude_summary"
+            sync_args: ""
+            lint_paths: "."
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,20 +38,33 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Synchronizacja zależności (z extras)
-        run: uv sync --extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply
+      - name: Synchronizacja zależności
+        run: uv sync ${{ matrix.sync_args }}
 
       - name: Testy
         run: uv run pytest
 
       - name: Lint (ruff)
-        run: uv run ruff check src tests eval
+        run: uv run ruff check ${{ matrix.lint_paths }}
 
       - name: Format (ruff)
-        run: uv run ruff format --check src tests eval
+        run: uv run ruff format --check ${{ matrix.lint_paths }}
 
       - name: Typy (mypy)
         run: uv run mypy
 
+      # import-linter (pyproject.toml [tool.importlinter]) egzekwuje granice tylko rdzenia
+      # workmate (core ↛ adapters, outbound ↛ inbound) — pod-projekty go nie mają.
       - name: Granice architektoniczne (import-linter)
+        if: matrix.name == 'workmate'
         run: uv run lint-imports
+
+  docker-build:
+    name: Budowa obrazu floty
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zbuduj obraz (etap test wewnątrz Dockerfile pokrywa gałąź POSIX)
+        run: docker build -f deploy/docker/Dockerfile .

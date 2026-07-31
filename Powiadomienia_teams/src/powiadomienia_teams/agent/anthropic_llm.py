@@ -3,6 +3,7 @@
 Wymaga extra ``agent`` (``anthropic``). Klucz API to sekret — czytany z konfiguracji
 (``Settings.anthropic_api_key``), nigdy nie logowany.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -51,6 +52,7 @@ class AnthropicLlm:
             messages=[{"role": "user", "content": user}],
         )
         return "".join(
-            getattr(block, "text", "") for block in message.content
+            getattr(block, "text", "")
+            for block in message.content
             if getattr(block, "type", "") == "text"
         )

@@ -1,4 +1,5 @@
 """Wykrywanie osób bez zmian na wskazany tydzień (czysta logika)."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable

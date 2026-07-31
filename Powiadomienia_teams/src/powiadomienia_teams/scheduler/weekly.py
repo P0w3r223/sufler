@@ -3,6 +3,7 @@
 `next_run` jest czysta (wstrzykiwany `now`) i odporna na zmianę czasu (DST): wall-clock
 budowany jest przez `datetime.combine(..., tzinfo=tz)`, więc 16:00 zawsze oznacza lokalne 16:00.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, tzinfo

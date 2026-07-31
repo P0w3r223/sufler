@@ -5,6 +5,7 @@ Bezpieczniki:
   tylko loguje. Realne działanie wymaga ``POWIADOMIENIA_DRY_RUN=false``.
 - Zapis zmian następuje dopiero po jawnym „tak” pracownika (spirit ADR 0006).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -276,9 +277,7 @@ def poll_replies(
 
     now = now or datetime.now(_UTC)
     state = st.load_state(settings.state_path)
-    open_items = [
-        p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
-    ]
+    open_items = [p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)]
     if not open_items:
         return PollOutcome(0, None)
 
@@ -311,9 +310,7 @@ def poll_replies(
     #    przez pętlę wyżej): bezpieczna wartość domyślna nie może zależeć od tego, czy ktoś kiedyś
     #    doda tam wcześniejsze wyjście z pętli. Milczenie usługi nie jest milczeniem pracownika.
     #    Commit EXPIRED PRZED wysyłką domknięcia — semantyka „co najwyżej raz" (jak przy zapisie).
-    still_open = [
-        p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
-    ]
+    still_open = [p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)]
     newly_expired = [
         p
         for p in still_open
@@ -653,7 +650,9 @@ def _run_once_with_retry(
             wait = backoff_s * attempt
             logger.warning(
                 "Przebieg powiadomień nieudany (próba %d/%d) — ponawiam za %ds",
-                attempt, attempts, wait,
+                attempt,
+                attempts,
+                wait,
             )
             sleep(wait)
 
@@ -824,12 +823,15 @@ def _handle_auth_loss(settings: Settings, blad: Exception, sleep: Callable[[floa
     podniósłby proces natychmiast — martwy token zamieniłby się w restart co sekundę zamiast
     w spokojne czekanie na `--login`, po którym usługa wraca sama.
     """
-    logger.critical("Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)",
-                    blad)
+    logger.critical(
+        "Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)", blad
+    )
     _alert(settings, "Utracono uwierzytelnienie", str(blad), waga=alerts.KRYTYCZNY)
     if settings.auth_failure_exit_delay_s > 0:
-        logger.info("Czekam %ds przed wyjściem (ogranicza pętlę restartów).",
-                    settings.auth_failure_exit_delay_s)
+        logger.info(
+            "Czekam %ds przed wyjściem (ogranicza pętlę restartów).",
+            settings.auth_failure_exit_delay_s,
+        )
         sleep(float(settings.auth_failure_exit_delay_s))
 
 
@@ -855,8 +857,11 @@ def _safe_run_once(
         raise
     except Exception as blad:
         logger.exception("Przebieg powiadomień nie powiódł się mimo ponowień")
-        _alert(settings, "Przebieg powiadomień nie powiódł się",
-               f"Mimo ponowień: {blad}. Nikt nie dostał prośby w tym tygodniu.")
+        _alert(
+            settings,
+            "Przebieg powiadomień nie powiódł się",
+            f"Mimo ponowień: {blad}. Nikt nie dostał prośby w tym tygodniu.",
+        )
         return False
 
 
@@ -921,8 +926,12 @@ def run_forever(
         logger.info("Następny przebieg powiadomień: %s", termin.isoformat())
         if not powitanie_wyslane:
             # Potwierdzenie powrotu po reboocie hosta — bez tego restart usługi jest niewidoczny.
-            _alert(settings, "Usługa wystartowała",
-                   f"Nasłuch aktywny. Najbliższy przebieg: {termin.isoformat()}", waga=alerts.INFO)
+            _alert(
+                settings,
+                "Usługa wystartowała",
+                f"Nasłuch aktywny. Najbliższy przebieg: {termin.isoformat()}",
+                waga=alerts.INFO,
+            )
             powitanie_wyslane = True
         while datetime.now(_UTC) < pobudka:
             _touch_heartbeat(settings)
@@ -948,8 +957,9 @@ def run_forever(
             now_dt = datetime.now(_UTC)
             remaining = (pobudka - now_dt).total_seconds()
             if remaining > 0:
-                _spij_z_pulsem(settings, min(remaining, _poll_delay(settings, outcome, now_dt)),
-                               sleep)
+                _spij_z_pulsem(
+                    settings, min(remaining, _poll_delay(settings, outcome, now_dt)), sleep
+                )
         _touch_heartbeat(settings)
         # Przebieg wykonujemy TYLKO po dojściu do terminu. Wcześniejsza pobudka oznacza ponowienie
         # zaległego przebiegu — obsłuży je `_catchup_due` na górze pętli.
@@ -1000,13 +1010,16 @@ def _ensure_authenticated(
                 logger.critical(
                     "Nie udało się przygotować uwierzytelnienia po %d próbach: %s. Sprawdź "
                     "łączność z login.microsoftonline.com oraz poprawność CLIENT_ID i TENANT_ID.",
-                    attempts, blad,
+                    attempts,
+                    blad,
                 )
                 raise SystemExit(1) from None
             wait = _AUTH_CHECK_BACKOFF_S * attempt
             logger.warning(
                 "Nie udało się sprawdzić uwierzytelnienia (próba %d/%d) — ponawiam za %ds",
-                attempt, attempts, wait,
+                attempt,
+                attempts,
+                wait,
             )
             sleep(wait)
 
@@ -1063,7 +1076,8 @@ def main() -> None:
         "--poll-once", action="store_true", help="jedno sprawdzenie odpowiedzi i wyjście"
     )
     parser.add_argument(
-        "--login", action="store_true",
+        "--login",
+        action="store_true",
         help="jednorazowe interaktywne logowanie (device-code) i wyjście",
     )
     args = parser.parse_args()

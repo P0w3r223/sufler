@@ -14,6 +14,7 @@
 Import ``msal`` jest LENIWY (w fabryce aplikacji), więc sam import modułu i testy wyższych warstw
 go nie wymagają; ``app_factory`` jest wstrzykiwalny, więc testy podają atrapę bez ``msal``.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -80,8 +81,7 @@ def _load_cache(cache_path: Path) -> Any:
             # identycznie — usługa byłaby nie do odzyskania bez ręcznego kasowania pliku
             # w wolumenie. Pusty cache oznacza tylko ponowne logowanie, czyli stan naprawialny.
             logger.warning(
-                "Uszkodzony cache tokenu %s — zaloguj się ponownie: "
-                "`powiadomienia-teams --login`.",
+                "Uszkodzony cache tokenu %s — zaloguj się ponownie: `powiadomienia-teams --login`.",
                 cache_path,
             )
     return cache

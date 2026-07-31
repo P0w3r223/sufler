@@ -3,6 +3,7 @@
 Czyste, niemutowalne struktury bez I/O. Logika przypomnień operuje na tych typach,
 a warstwa Graph tłumaczy JSON ↔ te modele. Wszystkie czasy są tz-aware (UTC).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

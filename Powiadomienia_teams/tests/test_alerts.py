@@ -1,4 +1,5 @@
 """Alerty muszą być best-effort: alert, który kładzie usługę, jest gorszy niż brak alertu."""
+
 import httpx
 
 from powiadomienia_teams import alerts
@@ -29,8 +30,16 @@ def test_brak_url_nie_generuje_ruchu():
 
 def test_wysylka_zawiera_tytul_i_tresc():
     transport = _Transport()
-    assert alerts.send_alert("https://przyklad/hook", "Utracono sesję", "AADSTS50173",
-                             waga=alerts.KRYTYCZNY, client=transport) is True
+    assert (
+        alerts.send_alert(
+            "https://przyklad/hook",
+            "Utracono sesję",
+            "AADSTS50173",
+            waga=alerts.KRYTYCZNY,
+            client=transport,
+        )
+        is True
+    )
     url, payload = transport.calls[0]
     assert url == "https://przyklad/hook"
     assert payload["tytul"] == "Utracono sesję"

@@ -86,10 +86,16 @@ class _FakeClient:
 
     def list_time_off_reasons(self, team_id: str) -> TeamReasons:
         return TeamReasons(
-            by_name={"urlop": "TOR_URLOP", "nieobecność": "TOR_NIEOB",
-                     "zwolnienie lekarskie": "TOR_L4"},
-            names={"TOR_URLOP": "Urlop", "TOR_NIEOB": "Nieobecność",
-                   "TOR_L4": "Zwolnienie lekarskie"},
+            by_name={
+                "urlop": "TOR_URLOP",
+                "nieobecność": "TOR_NIEOB",
+                "zwolnienie lekarskie": "TOR_L4",
+            },
+            names={
+                "TOR_URLOP": "Urlop",
+                "TOR_NIEOB": "Nieobecność",
+                "TOR_L4": "Zwolnienie lekarskie",
+            },
         )
 
     def create_time_off(self, team_id: str, time_off: Any) -> str:
@@ -175,8 +181,11 @@ def test_affirmative_with_hours_reinterprets_not_applies(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status=AWAITING_CONFIRM,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
                 resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
@@ -198,16 +207,18 @@ def test_confirm_with_absence_correction_reinterprets_not_applies(tmp_path: Path
     # cyfr, więc kiedyś przechodziło jako czyste „tak" i zapisywało czwartek jako pracę. Teraz
     # musi trafić do reinterpretacji: czwartek → nieobecność, brak natychmiastowego zapisu.
     state_path = tmp_path / "state.json"
-    full_week = [
-        {"weekday": d, "start": "09:00", "end": "17:00"} for d in range(5)
-    ]
+    full_week = [{"weekday": d, "start": "09:00", "end": "17:00"} for d in range(5)]
     save_state(
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Mikołaj", chat_id="chat1",
-                week_start="2026-08-03", status=AWAITING_CONFIRM,
-                proposal=full_week, resolved=full_week,
+                member_id="u1",
+                member_name="Mikołaj",
+                chat_id="chat1",
+                week_start="2026-08-03",
+                status=AWAITING_CONFIRM,
+                proposal=full_week,
+                resolved=full_week,
             )
         },
     )
@@ -247,8 +258,11 @@ def test_write_failure_is_at_most_once(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status=AWAITING_CONFIRM,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
                 resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -320,8 +334,11 @@ def test_run_once_does_not_renudge_declined_member_same_week(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Mikołaj", chat_id="chat1",
-                week_start="2026-07-20", status=DECLINED,
+                member_id="u1",
+                member_name="Mikołaj",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=DECLINED,
                 watermark="2026-07-17T15:00:00Z",  # świeża odmowa — GC jej nie usunie
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
@@ -353,8 +370,12 @@ def test_run_once_with_retry_succeeds_after_transient_failures(tmp_path: Path):
 
     client = _Flaky({}, members=(Member("u1", "Mikołaj"),), shifts=())
     _run_once_with_retry(
-        _settings(tmp_path / "s.json"), client,  # type: ignore[arg-type]
-        now=_FRI_16, attempts=3, backoff_s=0, sleep=lambda s: None,
+        _settings(tmp_path / "s.json"),
+        client,  # type: ignore[arg-type]
+        now=_FRI_16,
+        attempts=3,
+        backoff_s=0,
+        sleep=lambda s: None,
     )
     assert calls["n"] == 3 and len(client.sent) == 1  # dwie porażki + sukces, jedna wysyłka
 
@@ -366,8 +387,12 @@ def test_run_once_with_retry_reraises_after_exhausting(tmp_path: Path):
 
     with pytest.raises(RuntimeError):
         _run_once_with_retry(
-            _settings(tmp_path / "s.json"), _AlwaysFail({}),  # type: ignore[arg-type]
-            now=_FRI_16, attempts=2, backoff_s=0, sleep=lambda s: None,
+            _settings(tmp_path / "s.json"),
+            _AlwaysFail({}),  # type: ignore[arg-type]
+            now=_FRI_16,
+            attempts=2,
+            backoff_s=0,
+            sleep=lambda s: None,
         )
 
 
@@ -381,8 +406,12 @@ def test_run_once_with_retry_does_not_retry_auth_error(tmp_path: Path):
 
     with pytest.raises(AuthExpiredError):
         _run_once_with_retry(
-            _settings(tmp_path / "s.json"), _AuthFail({}),  # type: ignore[arg-type]
-            now=_FRI_16, attempts=3, backoff_s=0, sleep=lambda s: None,
+            _settings(tmp_path / "s.json"),
+            _AuthFail({}),  # type: ignore[arg-type]
+            now=_FRI_16,
+            attempts=3,
+            backoff_s=0,
+            sleep=lambda s: None,
         )
     assert calls["n"] == 1  # AuthExpiredError nie jest ponawiany
 
@@ -401,8 +430,13 @@ def test_catchup_none_when_term_too_old(tmp_path: Path):
 
 def test_catchup_none_when_grace_zero(tmp_path: Path):
     settings = Settings(
-        client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
-        state_path=tmp_path / "s.json", dry_run=False, catchup_grace_hours=0,
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=tmp_path / "s.json",
+        dry_run=False,
+        catchup_grace_hours=0,
     )
     now = datetime(2026, 7, 17, 17, 0, tzinfo=timezone.utc)
     assert _catchup_due(settings, now) is None
@@ -412,8 +446,14 @@ def test_catchup_term_gives_correct_week_across_midnight(tmp_path: Path):
     # Finding B: termin NIEDZIELNY, nadrobienie po północy pon — tydzień docelowy liczony od TERMINU
     # (niedziela), nie od „teraz" (pon), więc week_windows(term) celuje we WŁAŚCIWY tydzień.
     settings = Settings(
-        client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
-        state_path=tmp_path / "s.json", dry_run=False, run_weekday=6, catchup_grace_hours=12,
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=tmp_path / "s.json",
+        dry_run=False,
+        run_weekday=6,
+        catchup_grace_hours=12,
     )
     now = datetime(2026, 7, 20, 0, 30, tzinfo=timezone.utc)  # poniedziałek 00:30 (po nd terminie)
     term = _catchup_due(settings, now)
@@ -449,8 +489,11 @@ def test_llm_free_text_never_relayed_to_employee(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status="awaiting_reply",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00", "theme": "green"}],
             )
         },
@@ -508,8 +551,11 @@ def test_vacation_reply_resolves_reason_at_confirm(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status="awaiting_reply",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -540,8 +586,11 @@ def test_whole_week_vacation_without_team_reasons_is_unclear(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status="awaiting_reply",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -572,8 +621,11 @@ def test_time_off_written_for_addressee_on_confirm(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status=AWAITING_CONFIRM,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
                 resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
                 resolved_time_off=[
                     {"weekday": 4, "reason_id": "TOR_URLOP", "reason_name": "Urlop"}
@@ -603,8 +655,11 @@ def test_reply_referencing_another_person_writes_only_for_addressee(tmp_path: Pa
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status="awaiting_reply",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -631,7 +686,10 @@ def test_decline_ends_listening_without_changes(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
                 status="awaiting_reply",
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
@@ -666,8 +724,13 @@ def test_expired_pending_closed_and_notified_once(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=old, nudged_at=old,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
             )
         },
     )
@@ -691,8 +754,13 @@ def test_pending_within_window_is_processed_not_expired(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=recent, nudged_at=recent,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=recent,
+                nudged_at=recent,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -715,8 +783,13 @@ def test_late_reply_within_window_is_processed_not_expired(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=old, nudged_at=old,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -739,8 +812,13 @@ def _po_przestoju(state_path: Path) -> None:
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=nudge, nudged_at=nudge,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -812,8 +890,13 @@ def test_no_confirm_gets_its_own_message_not_no_reply(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status=AWAITING_CONFIRM, watermark=odpowiedz, nudged_at="2026-07-17T09:00:00Z",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                watermark=odpowiedz,
+                nudged_at="2026-07-17T09:00:00Z",
                 resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -836,8 +919,13 @@ def _potwierdzenie_na(state_path: Path, resolved: list[dict[str, Any]]) -> None:
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status=AWAITING_CONFIRM, watermark=odpowiedz, nudged_at="2026-07-17T09:00:00Z",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                watermark=odpowiedz,
+                nudged_at="2026-07-17T09:00:00Z",
                 resolved=resolved,
             )
         },
@@ -854,10 +942,13 @@ def test_confirmation_writes_only_the_days_still_ahead(tmp_path: Path):
     # (poniedziałek już był — w grafiku byłby fałszywym stanem faktycznym) i nie nic (piątek
     # pracownik właśnie zaklepał i ma prawo go dostać).
     state_path = tmp_path / "state.json"
-    _potwierdzenie_na(state_path, [
-        {"weekday": 0, "start": "08:00", "end": "16:00"},  # poniedziałek — minął
-        {"weekday": 4, "start": "08:00", "end": "16:00"},  # piątek — przed nami
-    ])
+    _potwierdzenie_na(
+        state_path,
+        [
+            {"weekday": 0, "start": "08:00", "end": "16:00"},  # poniedziałek — minął
+            {"weekday": 4, "start": "08:00", "end": "16:00"},  # piątek — przed nami
+        ],
+    )
     client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T11:00:00Z", "tak")]})
 
     poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_WTOREK)  # type: ignore[arg-type]
@@ -909,14 +1000,24 @@ def test_expiry_message_suppressed_when_disabled(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=old, nudged_at=old,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
             )
         },
     )
     settings = Settings(
-        client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
-        state_path=state_path, dry_run=False, send_expiry_message=False,
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=state_path,
+        dry_run=False,
+        send_expiry_message=False,
     )
     client = _FakeClient({"chat1": []})
     now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
@@ -933,8 +1034,13 @@ def test_poll_replies_outcome_reports_open_and_activity(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=wm, nudged_at=wm,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=wm,
+                nudged_at=wm,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -961,8 +1067,13 @@ def test_handled_reply_reports_detection_time_not_message_time(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=nudge, nudged_at=nudge,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -980,7 +1091,9 @@ def test_handled_reply_reports_detection_time_not_message_time(tmp_path: Path):
 def test_poll_replies_outcome_zero_when_nothing_open(tmp_path: Path):
     settings = _settings(tmp_path / "state.json")  # brak pliku stanu
     outcome = poll_replies(
-        settings, _FakeClient({}), _FakeLlm("{}"),  # type: ignore[arg-type]
+        settings,
+        _FakeClient({}),
+        _FakeLlm("{}"),  # type: ignore[arg-type]
         now=datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
     )
     assert outcome.open_count == 0 and outcome.last_activity is None
@@ -992,8 +1105,11 @@ def test_dry_run_skips_listener(tmp_path: Path):
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1",
-                week_start="2026-07-20", status="awaiting_reply",
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
             )
         },
     )
@@ -1040,18 +1156,24 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
 
     def _pending(uid: str) -> PendingReminder:
         return PendingReminder(
-            member_id=uid, member_name=uid.upper(), chat_id=f"chat-{uid}",
-            week_start="2026-07-20", status="awaiting_reply",
-            watermark="2026-07-17T16:00:00Z", nudged_at="2026-07-17T16:00:00Z",
+            member_id=uid,
+            member_name=uid.upper(),
+            chat_id=f"chat-{uid}",
+            week_start="2026-07-20",
+            status="awaiting_reply",
+            watermark="2026-07-17T16:00:00Z",
+            nudged_at="2026-07-17T16:00:00Z",
             proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
         )
 
     save_state(state_path, {"u1": _pending("u1"), "u2": _pending("u2")})
     settings = _settings(state_path)
-    client = _FakeClient({
-        "chat-u1": [_msg("u1", "2026-07-17T18:00:00Z", "ok")],
-        "chat-u2": [_msg("u2", "2026-07-17T18:01:00Z", "ok")],
-    })
+    client = _FakeClient(
+        {
+            "chat-u1": [_msg("u1", "2026-07-17T18:00:00Z", "ok")],
+            "chat-u2": [_msg("u2", "2026-07-17T18:01:00Z", "ok")],
+        }
+    )
 
     class _FailsOnFirst:
         def __init__(self) -> None:
@@ -1063,8 +1185,14 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
                 raise RuntimeError("timeout Claude")
             return '{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}'
 
-    poll_replies(settings, client, _FailsOnFirst(), now=datetime(  # type: ignore[arg-type]
-        2026, 7, 17, 18, 5, tzinfo=timezone.utc))
+    poll_replies(
+        settings,
+        client,
+        _FailsOnFirst(),
+        now=datetime(  # type: ignore[arg-type]
+            2026, 7, 17, 18, 5, tzinfo=timezone.utc
+        ),
+    )
 
     saved = load_state(state_path)
     # u2 przetworzony — watermark przesunięty, status zmieniony.
@@ -1094,8 +1222,13 @@ def _pending_with_reply(state_path: Path) -> None:
         state_path,
         {
             "u1": PendingReminder(
-                member_id="u1", member_name="Ala", chat_id="chat1", week_start="2026-07-20",
-                status="awaiting_reply", watermark=nudge, nudged_at=nudge,
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
                 proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
             )
         },
@@ -1149,15 +1282,14 @@ def test_transient_startup_error_is_retried_not_fatal(tmp_path: Path):
             raise OSError("Temporary failure in name resolution")
         return lambda: "tok"
 
-    provider = _ensure_authenticated(
-        _settings(tmp_path / "s.json"), fabryka, sleep=lambda _s: None
-    )
+    provider = _ensure_authenticated(_settings(tmp_path / "s.json"), fabryka, sleep=lambda _s: None)
     assert proby["n"] == 3  # dwie próby padły, trzecia przeszła — proces żyje
     assert provider() == "tok"  # zwrócony dostawca jest tym z UDANEJ próby
 
 
 def test_persistent_startup_error_exits_cleanly(tmp_path: Path):
     """Ponawianie ma granicę — trwała awaria kończy proces czytelnym komunikatem, nie stosem."""
+
     def fabryka(_settings_arg):
         raise OSError("sieć nie wróciła")
 
@@ -1173,6 +1305,7 @@ def test_expired_token_is_not_retried(tmp_path: Path, monkeypatch):
         def provider() -> str:
             proby["n"] += 1
             raise AuthExpiredError("brak refresh-tokenu")
+
         return provider
 
     monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
@@ -1192,6 +1325,7 @@ def test_wiele_kont_nie_uruchamia_logowania_device_code(tmp_path: Path, monkeypa
     def fabryka(_settings_arg):
         def provider() -> str:
             raise AmbiguousAccountError("dwa konta w cache — usuń plik i zaloguj się ponownie")
+
         return provider
 
     monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: True)})())
@@ -1223,8 +1357,13 @@ class _CountingClient(_FakeClient):
 
 def _settings_bezobslugowe(state_path: Path, **kwargs: Any) -> Settings:
     return Settings(
-        client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
-        state_path=state_path, dry_run=False, **kwargs,
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=state_path,
+        dry_run=False,
+        **kwargs,
     )
 
 
@@ -1346,6 +1485,7 @@ def test_startowa_utrata_sesji_alarmuje_i_odczekuje(tmp_path: Path, monkeypatch)
     def fabryka(_s):
         def provider() -> str:
             raise AuthExpiredError("AADSTS50173: grant cofnięty")
+
         return provider
 
     with pytest.raises(SystemExit):
@@ -1368,12 +1508,27 @@ def test_podsumowanie_liczy_statusy_i_idzie_do_administratora(tmp_path: Path):
     save_state(
         state_path,
         {
-            "u1": PendingReminder(member_id="u1", member_name="Ala", chat_id="c1",
-                                  week_start="2026-07-20", status="awaiting_reply"),
-            "u2": PendingReminder(member_id="u2", member_name="Bo", chat_id="c2",
-                                  week_start="2026-07-20", status=APPLIED),
-            "u3": PendingReminder(member_id="u3", member_name="Cel", chat_id="c3",
-                                  week_start="2026-07-20", status="expired"),
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="c1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+            ),
+            "u2": PendingReminder(
+                member_id="u2",
+                member_name="Bo",
+                chat_id="c2",
+                week_start="2026-07-20",
+                status=APPLIED,
+            ),
+            "u3": PendingReminder(
+                member_id="u3",
+                member_name="Cel",
+                chat_id="c3",
+                week_start="2026-07-20",
+                status="expired",
+            ),
         },
     )
     settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
@@ -1401,6 +1556,7 @@ def test_podsumowanie_pomijane_bez_administratora(tmp_path: Path):
 
 def test_awaria_podsumowania_nie_przewraca_uslugi(tmp_path: Path):
     """Podsumowanie to raport, nie praca — jego błąd nie może zatrzymać powiadomień."""
+
     class _Zepsuty(_FakeClient):
         def get_me(self) -> str:
             raise RuntimeError("Graph niedostępny")
@@ -1418,12 +1574,23 @@ def test_podsumowanie_w_dry_run_tylko_loguje(tmp_path: Path, caplog):
     state_path = tmp_path / "state.json"
     save_state(
         state_path,
-        {"u1": PendingReminder(member_id="u1", member_name="Ala", chat_id="c1",
-                               week_start="2026-07-20", status="awaiting_reply")},
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="c1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+            )
+        },
     )
     settings = Settings(
-        client_id="c", tenant_id="t", team_id="T", state_path=state_path,
-        dry_run=True, admin_user_id="admin-1",
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        state_path=state_path,
+        dry_run=True,
+        admin_user_id="admin-1",
     )
     client = _FakeClient({})
     with caplog.at_level("INFO"):
@@ -1436,15 +1603,20 @@ def test_podsumowanie_w_dry_run_tylko_loguje(tmp_path: Path, caplog):
 
 def test_nieudany_przebieg_nie_jest_odhaczany(tmp_path: Path):
     """`_safe_run_once` musi RAPORTOWAĆ wynik — inaczej okno łaski nie da drugiej szansy."""
+
     class _Zepsuty(_FakeClient):
         def list_members(self, team_id: str):
             raise RuntimeError("Graph dławi")
 
     settings = _settings_bezobslugowe(tmp_path / "s.json")
-    assert _safe_run_once(settings, _Zepsuty({}), datetime.now(timezone.utc),
-                          sleep=lambda _s: None) is False
-    assert _safe_run_once(settings, _FakeClient({}), datetime.now(timezone.utc),
-                          sleep=lambda _s: None) is True
+    assert (
+        _safe_run_once(settings, _Zepsuty({}), datetime.now(timezone.utc), sleep=lambda _s: None)
+        is False
+    )
+    assert (
+        _safe_run_once(settings, _FakeClient({}), datetime.now(timezone.utc), sleep=lambda _s: None)
+        is True
+    )
 
 
 def test_podsumowanie_idzie_takze_po_przebiegu_nadrobionym(tmp_path: Path):
@@ -1455,9 +1627,18 @@ def test_podsumowanie_idzie_takze_po_przebiegu_nadrobionym(tmp_path: Path):
     jak awaria usługi.
     """
     state_path = tmp_path / "state.json"
-    save_state(state_path, {"u1": PendingReminder(
-        member_id="u1", member_name="Ala", chat_id="c1",
-        week_start="2026-07-20", status="awaiting_reply")})
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="c1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+            )
+        },
+    )
     settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
     client = _FakeClient({})
 
@@ -1469,6 +1650,7 @@ def test_podsumowanie_idzie_takze_po_przebiegu_nadrobionym(tmp_path: Path):
 
 def test_podsumowanie_idzie_takze_po_NIEUDANYM_przebiegu(tmp_path: Path):
     """Cisza ma oznaczać martwą usługę — nieudany przebieg musi się zgłosić, nie zamilknąć."""
+
     class _Zepsuty(_FakeClient):
         def list_members(self, team_id: str):
             raise RuntimeError("Graph dławi")
@@ -1489,9 +1671,11 @@ def test_puls_bije_czesciej_niz_odstep_odpytywania(tmp_path: Path):
     prawdziwy = _touch_heartbeat
 
     import powiadomienia_teams.app as modul
+
     def liczacy(s):
         dotkniecia["n"] += 1
         prawdziwy(s)
+
     modul._touch_heartbeat = liczacy
     try:
         _spij_z_pulsem(settings, 600.0, lambda _s: None)  # 10 minut czekania
@@ -1508,10 +1692,16 @@ def test_bot_nie_zagaduje_sam_siebie(tmp_path: Path):
     w KODZIE, nie tylko w `ONLY_USER_IDS` — pusta lista odbiorców oznacza „wszyscy", więc
     konfiguracja niczego wtedy nie chroni.
     """
-    bot = Member("me", "Virtual WorkMate")          # `_FakeClient.get_me()` zwraca "me"
+    bot = Member("me", "Virtual WorkMate")  # `_FakeClient.get_me()` zwraca "me"
     czlowiek = Member("u1", "Ala")
-    settings = Settings(client_id="c", tenant_id="t", team_id="T", scheduling_group_id="TAG",
-                        state_path=tmp_path / "state.json", dry_run=True)
+    settings = Settings(
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=tmp_path / "state.json",
+        dry_run=True,
+    )
     client = _FakeClient({}, members=(bot, czlowiek))
 
     brakujacy = run_once(settings, client, now=datetime(2026, 7, 21, tzinfo=timezone.utc))
@@ -1631,7 +1821,7 @@ def test_utrata_sesji_w_trybie_uslugi_konczy_proces_czysto(tmp_path: Path, monke
     monkeypatch.setenv("POWIADOMIENIA_STATE_PATH", str(tmp_path / "state.json"))
     monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "true")
     monkeypatch.setattr(sys, "argv", ["powiadomienia-teams"])  # tryb usługi (bez --once/--login)
-    monkeypatch.setattr(modul, "_ensure_authenticated", lambda settings: (lambda: "tok"))
+    monkeypatch.setattr(modul, "_ensure_authenticated", lambda settings: lambda: "tok")
 
     def _padnij(settings, client, llm):
         raise AuthExpiredError("AADSTS50173: token unieważniony")
