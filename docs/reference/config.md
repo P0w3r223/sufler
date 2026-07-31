@@ -8,7 +8,7 @@ Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonyc
 
 - **Serwer MCP w trybie `stdio`** (Faza 1) — **nie wymaga żadnych sekretów**; odczyt i zapis
   notatek działają na plikach z `data/`.
-- **Runtime agenta** (drzwi Teams/Telegram/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
+- **Runtime agenta** (drzwi Teams/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
   jego brak to twardy błąd startu, nie tryb degradacji.
 - **Most GitHub / push do Teams** — wymagają PAT GitHub i/lub cache tokenu Microsoft Graph.
 - **Jira** — wyłącznie odczyt „moje zadania" (`get_my_jira_tasks` / `/moje-zadania`); wymaga PAT/API
@@ -48,7 +48,7 @@ Znaczące **tylko** przy `WORKMATE_TRANSPORT=streamable-http`. Procedura: [`how-
 
 ## Runtime agenta (`AgentSettings`, extra `agent`)
 
-Napędza drzwi Teams/Telegram/CLI. `validate()` twardo wymaga klucza.
+Napędza drzwi Teams/CLI. `validate()` twardo wymaga klucza.
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
@@ -181,12 +181,6 @@ v3/ADF, `search/jql`) wg `WORKMATE_JIRA_DEPLOYMENT`. Procedura: [`how-to/jira-my
 Wątkowanie i tranzycja statusu, poller, push do Teams i zapis (create/comment) — **usunięte w
 całości**. Watch-listy projektów, self-skip, interwał pollingu, projekt zapisu itd. nie mają już
 zastosowania (nie ma czego pollingować ani co zapisywać).
-
-## Drzwi Telegram (`TelegramSettings`, extra `telegram`)
-
-| Zmienna | Opis |
-|---------|------|
-| `WORKMATE_TELEGRAM_BOT_TOKEN` | **Sekret.** Token bota (long polling). |
 
 ## Drzwi Teams — Bot Framework (`TeamsSettings`, extra `teams`)
 

@@ -1,7 +1,7 @@
 # 0046 — WorkMate ↔ Powiadomienia_teams coexistence on a shared server
 
 Date: 2026-07-29
-Status: proposed
+Status: accepted (implemented — `single_instance.py`, izolowane cache/stan per proces)
 Author: P0w3r223
 Related to: ADR 0015 (Teams delegated Graph polling), ADR 0019 (shared EventStore), ADR 0022 (proactive dual-target Teams push), ADR 0044 (Linux container deployment), ADR 0045 (state durability and graceful shutdown)
 

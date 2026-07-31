@@ -1,7 +1,7 @@
 # 0018 — Agent working directory: create_file on the delegated Teams door (Gate for a second mutating tool)
 
 Date: 2026-07-13
-Status: proposed
+Status: accepted (implemented — `WorkspaceSettings`/`WORKMATE_ENABLE_WORKSPACE`, `config.py`)
 Author: P0w3r223
 Amends: [ADR 0002](0002-read-only-first.md) (read-only default), [ADR 0006](0006-write-capability-gate-2.md)
   (adopts the arbitrary-file Option 2 it rejected; opens write on Teams it pinned `false`),

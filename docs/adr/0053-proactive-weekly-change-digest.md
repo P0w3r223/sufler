@@ -1,7 +1,7 @@
 # 0053 — Proactive weekly change digest (Monday DM)
 
 Date: 2026-07-29
-Status: proposed
+Status: accepted (implemented — `adapters/inbound/teams_digest/`)
 Author: P0w3r223
 Related to: [ADR 0052](0052-change-digest-from-teams-mention.md) (F5 pull digest — reused composition),
 [ADR 0035](0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md) (weekly scheduler door pattern — `worklogi`),
