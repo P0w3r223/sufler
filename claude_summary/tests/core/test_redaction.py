@@ -20,6 +20,35 @@ def test_redacts_secret_assignment() -> None:
     assert "sk-ant" not in redact_text("token=sk-ant-abc123def456ghi789")
 
 
+def test_redacts_prefixed_secret_assignment() -> None:
+    # Nazwy zmiennych env skopiowane z .env mają prefiks — granica \b za nim nie wypada.
+    assert "Zaq12wsx" not in redact_text("DB_PASSWORD=Zaq12wsx")
+    assert "[SEKRET]" in redact_text("DB_PASSWORD=Zaq12wsx")
+    assert "Qr7~8vLpXk2Zt5Mn" not in redact_text("ustaw client_secret=Qr7~8vLpXk2Zt5Mn")
+    assert "ATATT3xFfGF0abcdefgh" not in redact_text("WORKMATE_JIRA_TOKEN=ATATT3xFfGF0abcdefgh")
+
+
+def test_redacts_quoted_secret_value_without_tail_leak() -> None:
+    redacted = redact_text('password="moje tajne haslo"')
+    assert "[SEKRET]" in redacted
+    assert "tajne haslo" not in redacted
+    assert '"' not in redacted
+
+    redacted_single = redact_text("password='moje tajne haslo'")
+    assert "[SEKRET]" in redacted_single
+    assert "tajne haslo" not in redacted_single
+
+    redacted_pl = redact_text('haslo="moje tajne haslo"')
+    assert "[SEKRET]" in redacted_pl
+    assert "tajne haslo" not in redacted_pl
+
+
+def test_token_in_prose_without_assignment_is_not_redacted() -> None:
+    # "token" bez [:=] to zwykłe słowo prozy, nie przypisanie sekretu.
+    text = "wygenerowałem token dostępu ręcznie w panelu"
+    assert redact_text(text) == text
+
+
 def test_redacts_uuid() -> None:
     out = redact_text("konto 3534249a-6d2c-480a-8f8b-a0c746180c71 usera")
     assert "[ID]" in out
