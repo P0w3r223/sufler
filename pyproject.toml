@@ -12,10 +12,10 @@ dependencies = [
     # server.py importuje uvicorn wprost w gałęzi HTTP (streamable-http, ADR 0007);
     # deklarujemy go jawnie, nie polegając na tranzytywności przez mcp[cli].
     "uvicorn>=0.30",
-    # ``core/domain/week.py`` liczy granice tygodnia przez ``ZoneInfo`` (ADR 0035). Windows nie ma
-    # systemowej bazy stref, więc bez tego pakietu ZoneInfo("Europe/Warsaw") rzuca — na Linuksie
-    # (serwer docelowy) baza jest systemowa, stąd marker. Zależność RDZENIA, nie extra: to czysta
-    # domena, a jej testy biegają bez extras.
+    # ``core/domain/week.py`` liczy granice tygodnia przez ``ZoneInfo`` (używane przez cotygodniowy
+    # digest zmian, ADR 0053). Windows nie ma systemowej bazy stref, więc bez tego pakietu
+    # ZoneInfo("Europe/Warsaw") rzuca — na Linuksie (serwer docelowy) baza jest systemowa, stąd
+    # marker. Zależność RDZENIA, nie extra: to czysta domena, a jej testy biegają bez extras.
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 

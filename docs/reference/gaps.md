@@ -1,4 +1,4 @@
-# GAPS.md — audyt gotowości wdrożeniowej WorkMate (flota Docker/Ubuntu)
+# Audyt gotowości wdrożeniowej WorkMate (flota Docker/Ubuntu)
 
 ## 1. Potwierdzone i nierozstrzygalne
 

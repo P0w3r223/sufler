@@ -7,7 +7,7 @@ Narzędzie: uruchom i pokaż wynik — nie opisuj kroków. Po zmianach: jedna li
 ## Budżet kontekstu
 - Kod lokalizuj przez **crg** (MCP `code-review-graph`; CLI zawsze: `uvx code-review-graph search|query|impact|architecture|dead-code`). Nie grep/find/Read po repo. Pierwszeństwo przed globalną regułą CodeGraph.
 - Czytaj fragmenty, nie całe pliki. ADR-y i `docs/` tylko gdy zadanie ich dotyczy — nie „na wszelki wypadek".
-- Pełny kontekst systemu jest w `docs/spec-systemowa.md` i najnowszym briefie `.claude/sessions/`. Nie odtwarzaj go z kodu.
+- Pełny kontekst systemu jest w `.claude/SYSTEM-SPEC.md` i najnowszym briefie `.claude/sessions/`. Nie odtwarzaj go z kodu.
 - Testy w iteracji: `--testmon`. Pełny pakiet = wyłącznie bramka przed commitem.
 - Po zmianach w kodzie: `uvx code-review-graph update`.
 
@@ -20,7 +20,7 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 Jira dual-provider: `WORKMATE_JIRA_DEPLOYMENT=server|cloud`.
 
 ## Komendy
-- `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval)
+- `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval, retrieval-dense, file-reply, seed)
 - `uv run --no-sync pytest --testmon` · bramka: `uv run --no-sync pytest` (`--no-sync` omija blokadę `workmate.exe`)
 - `uv run ruff check .` · `uv run mypy` (limit linii 100)
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`

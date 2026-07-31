@@ -14,6 +14,16 @@ dist/
 .pytest_cache/
 .testmondata
 
+# Sekrety i stan lokalny — nie commitować, nawet jako artefakt roboczy.
+tokens.json
+*.bin
+*.db
+*_state.json
+
+# Duże archiwa robocze/instalatory — nie są częścią kodu.
+*.tar
+*.msi
+
 # IDE / system
 .idea/
 .vscode/
@@ -39,11 +49,11 @@ RAPORT-*.md
 # Budowane z kodu na żądanie — w repo trzymamy przepis, nie wynik.
 powiadomienia-teams-*.tar.gz
 
-# Arkusze kart czasu (ADR 0035) — imienne godziny konkretnych ludzi. Konfiguracja MUSI je
-# kierować poza repo (walidacja OUTPUT_DIR to wymusza); ta reguła jest drugą linią obrony,
-# gdyby ktoś wygenerował je ręcznie w drzewie roboczym. Raz zacommitowane zostają w historii.
-# UWAGA: reguła nie jest zakotwiczona, więc obejmuje CAŁE repo. Gdy zajdzie potrzeba wciągnięcia
-# szablonu WorklogPRO jako fixture'u testowego, dołóż tu wyjątek (!tests/fixtures/*.xlsx).
+# Arkusze eksportu (mogą zawierać imienne dane) — konfiguracja MUSI je kierować poza repo;
+# ta reguła jest drugą linią obrony, gdyby ktoś wygenerował je ręcznie w drzewie roboczym.
+# Raz zacommitowane zostają w historii. UWAGA: reguła nie jest zakotwiczona, więc obejmuje
+# CAŁE repo. Gdy zajdzie potrzeba wciągnięcia arkusza jako fixture'u testowego, dołóż tu
+# wyjątek (!tests/fixtures/*.xlsx).
 *.xlsx
 
 # Prywatne materiały rozmów imiennych (nie część kodu; zostają lokalnie) — decyzja operatora.

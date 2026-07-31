@@ -3,9 +3,11 @@
 Jak używać odczytowej części [ADR 0034](../adr/0034-jira-worklog-from-github-commits.md): agent czyta
 commity z GitHuba i proponuje godziny w rozbiciu na dni i zgłoszenia Jira.
 
-> **Nic tu nie zapisuje.** Ścieżka zapisu worklogu do Jiry została **usunięta** (2026-07-21).
-> Godziny wchodzą do Jiry arkuszem WorklogPRO, który importuje sam pracownik — dzięki temu wpis ma
-> prawdziwego autora. Patrz [`worklogi-weekly.md`](worklogi-weekly.md) i ADR 0035.
+> **Nic tu nie zapisuje.** Ścieżka zapisu worklogu do Jiry została **usunięta** (2026-07-21), a moduł
+> kart czasu WorklogPRO, który wcześniej z tej propozycji korzystał, został **wycofany z projektu
+> w całości** ([ADR 0055](../adr/0055-withdraw-worklogpro-timesheets.md)). `propose_worklog` pozostaje
+> czystym, jednorazowym odczytem estymacji — dalsze wprowadzenie godzin do Jiry, jeśli potrzebne,
+> odbywa się poza WorkMate.
 
 ---
 

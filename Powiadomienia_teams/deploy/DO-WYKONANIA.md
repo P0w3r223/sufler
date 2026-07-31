@@ -31,10 +31,10 @@ a nie tożsamość nadawcy wiadomości — tę ustala wyłącznie to, kto wykona
 
 ```
 BIAP - Pion Inteligentnych Technologii
-  team id:  c0ffee00-0000-4000-8000-000000000007
+  team id:  wartość w .env (POWIADOMIENIA_TEAM_ID)
   grafik:   enabled=True   Europe/Warsaw   tydzień od poniedziałku   1990 zmian
-  grupa:    TAG_bb093836-…  „Pion Inteligentnych Technologii"  (AKTYWNA)
-  druga:    TAG_bc1bef85-…  „… - Staż"                          (isActive=false — NIE używać)
+  grupa:    „Pion Inteligentnych Technologii"  (AKTYWNA — id w .env, POWIADOMIENIA_SCHEDULING_GROUP_ID)
+  druga:    „… - Staż"                          (isActive=false — NIE używać)
   skład:    9 osób, konto bota jest WŁAŚCICIELEM
 ```
 
@@ -57,7 +57,7 @@ Grafik istnieje, jest włączony, ma poprawną strefę i tydzień od poniedział
 
 ### 2. ~~Uzupełnić `POWIADOMIENIA_SCHEDULING_GROUP_ID`~~ — ZROBIONE
 
-`TAG_c0ffee00-0000-4000-8000-000000000021`. Wpisane w `deploy/env.example` i w lokalnym `.env`.
+Id grupy harmonogramowania — wartość w `deploy/env.example` i w lokalnym `.env`.
 Wybrana grupa **aktywna** — druga w tym grafiku ma `isActive=false` i zapisy trafiałyby donikąd.
 
 ### 3. Zalogować się jako Virtual WorkMate  ▸ człowiek z dostępem do tego konta
