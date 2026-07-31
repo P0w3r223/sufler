@@ -1,4 +1,5 @@
 """Treść powiadomienia 1:1 (czysta logika) + minimalny render do HTML dla Graph."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -115,10 +116,7 @@ def build_confirm_text(
         segments.append(f"grafik: {describe_schedule(schedule, tz)}")
     if time_off:
         segments.append(f"czas wolny: {describe_time_off(time_off)}")
-    return (
-        f"Zapiszę {'; '.join(segments)}. "
-        "Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
-    )
+    return f"Zapiszę {'; '.join(segments)}. Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
 
 
 def build_summary_text(

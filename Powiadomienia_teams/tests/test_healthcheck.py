@@ -1,4 +1,5 @@
 """Healthcheck ma odróżnić proces żywy od stojącego — 'Up' samo w sobie niczego nie dowodzi."""
+
 from pathlib import Path
 
 from powiadomienia_teams.healthcheck import zdrowy

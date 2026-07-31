@@ -17,6 +17,7 @@ Bezpieczeństwo (obrona wielowarstwowa):
    numer deterministycznie — model bywa zawodny w liczeniu 0–6, ale nazwę dnia podaje niezawodnie.
 5. Zapis do Shifts tylko po jawnym „tak" (patrz ``app.poll_replies``).
 """
+
 from __future__ import annotations
 
 import json
@@ -83,14 +84,14 @@ _SYSTEM = (
     "samego dnia. Gdy pracownik poda godziny sprzeczne lub bezsensowne (koniec nie po początku, "
     "np. „16-8”, „8-8”, albo wartości spoza 0–23:59) — NIE zgaduj ani NIE poprawiaj ich sam; pomiń "
     "taki dzień. Jeśli przez to nie zostaje żaden sensowny dzień pracy ani wolne — zwróć "
-    "action=\"unclear\" (nie wymyślaj godzin, których pracownik nie podał). "
+    'action="unclear" (nie wymyślaj godzin, których pracownik nie podał). '
     # --- Pusty gotowiec: grafik OD ZERA (pracownik nie miał zmian w zeszłym tygodniu) ---
     "PROPONOWANY GRAFIK MOŻE BYĆ PUSTY ([]) — to NORMALNE, gdy pracownik nie miał zmian w "
     "zeszłym tygodniu. Wtedy pracownik podaje grafik OD ZERA: potraktuj podane przez niego "
-    "godziny jako docelowy grafik i zwróć action=\"modify\". NIE zwracaj \"unclear\" tylko "
+    'godziny jako docelowy grafik i zwróć action="modify". NIE zwracaj "unclear" tylko '
     "dlatego, że proponowany grafik jest pusty ani że pracownik nie wymienił wszystkich dni. "
     "NIE wymagaj kompletu 5 dni — zapisz DOKŁADNIE te dni i godziny, które podał (choćby jeden "
-    "dzień, np. „wtorek 12–21” → shifts=[{dzien:\"wtorek\",start:\"12:00\",end:\"21:00\"}]); dni "
+    'dzień, np. „wtorek 12–21” → shifts=[{dzien:"wtorek",start:"12:00",end:"21:00"}]); dni '
     "niewymienione po prostu nie są pracujące. "
     # --- Kontrakt akcji ---
     'Dla "confirm" (pracownik TWIERDZĄCO akceptuje NIEPUSTY proponowany grafik bez zmian — „tak”, '
@@ -110,35 +111,59 @@ _SYSTEM = (
     "jest odmową — np. pytanie, dygresja) zwróć shifts=[], time_off=[]. "
     # --- Czas wolny: urlop / nieobecność / chorobowe (jak »dodaj czas wolny« w Shifts) ---
     "Gdy pracownik jest wolny/nieobecny — NIE usuwaj dnia po cichu, tylko dodaj go do time_off z "
-    "właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod=\"urlop\"; „nie będzie mnie”/"
-    "„nieobecny”/„wolne” → powod=\"nieobecność\"; „chorobowe”/„L4”/„zwolnienie” → "
-    "powod=\"chorobowe\"; „urlop bezpłatny” → powod=\"urlop bezpłatny\"; „rodzicielski”/"
-    "„macierzyński” → powod=\"urlop rodzicielski\". Urlop na CAŁY tydzień → time_off dla dni "
+    'właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod="urlop"; „nie będzie mnie”/'
+    '„nieobecny”/„wolne” → powod="nieobecność"; „chorobowe”/„L4”/„zwolnienie” → '
+    'powod="chorobowe"; „urlop bezpłatny” → powod="urlop bezpłatny"; „rodzicielski”/'
+    '„macierzyński” → powod="urlop rodzicielski". Urlop na CAŁY tydzień → time_off dla dni '
     "roboczych (pon–pt), shifts=[]. Nieobecność w KONKRETNE dni (np. „w piątek urlop”, „we wtorek "
     "mnie nie będzie”) → ten dzień do time_off, pozostałe dni pracujące zostaw w shifts. Jeśli NIE "
     "WIADOMO, które dni są wolne (np. „nie będzie mnie kilka dni” bez podania których) — zwróć "
-    "\"unclear\" (nie zgaduj dni). "
+    '"unclear" (nie zgaduj dni). '
     'Pole "tryb" ustaw tylko gdy pracownik wskazał zdalnie/stacjonarnie dla danego dnia; inaczej '
     "je pomiń (kolor zostanie z zeszłego tygodnia)."
 )
 
 _TRYB_TO_THEME = {
-    "zdalnie": "blue", "zdalna": "blue", "zdalny": "blue", "remote": "blue", "dom": "blue",
-    "stacjonarnie": "green", "stacjonarna": "green", "stacjonarny": "green",
-    "biuro": "green", "onsite": "green",
+    "zdalnie": "blue",
+    "zdalna": "blue",
+    "zdalny": "blue",
+    "remote": "blue",
+    "dom": "blue",
+    "stacjonarnie": "green",
+    "stacjonarna": "green",
+    "stacjonarny": "green",
+    "biuro": "green",
+    "onsite": "green",
 }
 
 # Nazwa dnia → numer 0–6. Mapowanie robimy w KODZIE (deterministycznie), bo model bywa zawodny
 # w liczeniu weekday (potrafi zwrócić 4=piątek dla „czwartek”), a nazwę dnia podaje niezawodnie.
 # Warianty bez ogonków i skróty = odporność, gdyby model odbiegł od proszonej pełnej nazwy.
 _WEEKDAY_NAMES: dict[str, int] = {
-    "poniedziałek": 0, "poniedzialek": 0, "pon": 0, "pn": 0,
-    "wtorek": 1, "wt": 1,
-    "środa": 2, "sroda": 2, "śr": 2, "sr": 2,
-    "czwartek": 3, "czw": 3, "cz": 3,
-    "piątek": 4, "piatek": 4, "pt": 4, "pi": 4,
-    "sobota": 5, "sob": 5, "sb": 5,
-    "niedziela": 6, "niedz": 6, "ndz": 6, "nd": 6,
+    "poniedziałek": 0,
+    "poniedzialek": 0,
+    "pon": 0,
+    "pn": 0,
+    "wtorek": 1,
+    "wt": 1,
+    "środa": 2,
+    "sroda": 2,
+    "śr": 2,
+    "sr": 2,
+    "czwartek": 3,
+    "czw": 3,
+    "cz": 3,
+    "piątek": 4,
+    "piatek": 4,
+    "pt": 4,
+    "pi": 4,
+    "sobota": 5,
+    "sob": 5,
+    "sb": 5,
+    "niedziela": 6,
+    "niedz": 6,
+    "ndz": 6,
+    "nd": 6,
 }
 
 
@@ -170,12 +195,14 @@ def schedule_to_intervals(proposal: WeekSchedule, tz: ZoneInfo) -> list[dict[str
     for sh in proposal.shifts:
         start = sh.start.astimezone(tz)
         end = sh.end.astimezone(tz)
-        intervals.append({
-            "weekday": start.weekday(),
-            "start": f"{start:%H:%M}",
-            "end": f"{end:%H:%M}",
-            "theme": sh.theme,  # kolor = tryb pracy (blue/green)
-        })
+        intervals.append(
+            {
+                "weekday": start.weekday(),
+                "start": f"{start:%H:%M}",
+                "end": f"{end:%H:%M}",
+                "theme": sh.theme,  # kolor = tryb pracy (blue/green)
+            }
+        )
     return intervals
 
 

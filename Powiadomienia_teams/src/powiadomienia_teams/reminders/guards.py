@@ -3,6 +3,7 @@
 Wydzielone z orkiestracji, bo cross-user tripwire to pierwszorzędna granica bezpieczeństwa —
 powinna być jawnym, testowalnym modułem, a nie ukrytą funkcją w pliku obiegu.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -29,6 +30,4 @@ def ensure_single_owner(
         | {t.user_id for t in time_offs if t.user_id != member_id}
     )
     if foreign:
-        raise CrossUserWriteError(
-            f"Zapis odrzucony: wpisy dla {foreign} ≠ adresat {member_id!r}"
-        )
+        raise CrossUserWriteError(f"Zapis odrzucony: wpisy dla {foreign} ≠ adresat {member_id!r}")

@@ -1,4 +1,5 @@
 """Budowa propozycji »jak w zeszłym tygodniu« (czysta logika)."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable

@@ -4,6 +4,7 @@ Czysta logika (wstrzykiwany ``now``), operuje na ``PendingReminder`` w pamięci 
 testowalna. Wygaśnięcie mierzymy od OSTATNIEJ AKTYWNOŚCI (watermark), a nie od sztywnego nudge'a,
 żeby nie zamykać okna komuś w środku rozmowy.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable

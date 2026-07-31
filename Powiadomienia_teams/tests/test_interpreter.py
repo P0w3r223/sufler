@@ -116,7 +116,9 @@ def test_confirm_copies_theme_per_weekday_from_proposal():
 
 def test_reply_sets_mode_zdalnie_to_blue():
     shift = Shift(
-        "u1", datetime(2026, 7, 20, 6, tzinfo=UTC), datetime(2026, 7, 20, 14, tzinfo=UTC),
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
         theme="green",
     )
     proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
@@ -130,7 +132,9 @@ def test_reply_sets_mode_zdalnie_to_blue():
 
 def test_reply_sets_mode_stacjonarnie_to_green():
     shift = Shift(
-        "u1", datetime(2026, 7, 20, 6, tzinfo=UTC), datetime(2026, 7, 20, 14, tzinfo=UTC),
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
         theme="blue",
     )
     proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
@@ -271,7 +275,9 @@ def test_theme_copied_from_proposal_when_model_returns_day_name():
     # Kopiowanie koloru z gotowca (_theme_for) przechodzi teraz przez _coerce_weekday — gdy model
     # zwraca dzień po NAZWIE (bez liczbowego weekday), kolor musi się i tak dobrać po dniu.
     shift = Shift(
-        "u1", datetime(2026, 7, 20, 6, tzinfo=UTC), datetime(2026, 7, 20, 14, tzinfo=UTC),
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
         theme="green",
     )
     proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))

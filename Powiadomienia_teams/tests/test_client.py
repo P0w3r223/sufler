@@ -179,6 +179,7 @@ def test_create_shift_includes_theme_when_set():
 
 def test_get_raises_auth_expired_on_401():
     """401 mimo udanego cichego odświeżenia = token odrzucony przez Graph — usługa ma stanąć."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"code": "InvalidAuthenticationToken"}})
 
@@ -196,6 +197,7 @@ def test_post_raises_auth_expired_on_401():
 
 def test_403_raises_permission_error_with_body():
     """Ciało 403 to jedyne miejsce z przyczyną — musi trafić i do wyjątku, i do logu."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             403,
@@ -222,6 +224,7 @@ def test_error_body_is_logged(caplog):
 
 def test_5xx_still_raises_http_status_error():
     """Transientne 5xx zostaje zwykłym błędem HTTP — ponawianie wyżej ma sens."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, text="try later")
 
@@ -314,11 +317,14 @@ def test_przekroczony_limit_stron_konczy_sie_bledem_zamiast_niepelnej_listy():
 
     def handler(request: httpx.Request) -> httpx.Response:
         zadania["n"] += 1
-        return httpx.Response(200, json={
-            "value": [{"userId": f"u{zadania['n']}", "displayName": "Ala"}],
-            # Graph deklaruje kolejną stronę BEZ KOŃCA — tak wygląda kolekcja większa niż limit.
-            "@odata.nextLink": f"https://graph.microsoft.com/v1.0/teams/T/members?p={zadania['n']}",
-        })
+        return httpx.Response(
+            200,
+            json={
+                "value": [{"userId": f"u{zadania['n']}", "displayName": "Ala"}],
+                # Graph deklaruje kolejną stronę BEZ KOŃCA — tak wygląda kolekcja większa niż limit.
+                "@odata.nextLink": f"https://graph.microsoft.com/v1.0/teams/T/members?p={zadania['n']}",
+            },
+        )
 
     with pytest.raises(GraphTruncatedReadError, match="NIEPEŁNY"):
         _graph(handler).list_members("T")
