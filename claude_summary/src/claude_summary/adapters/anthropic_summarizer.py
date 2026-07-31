@@ -12,7 +12,7 @@ a z odpowiedzi bierzemy sam opis — bot nie wykonuje niczego, co „każe" mu t
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from claude_summary.core.models import DaySummary
 from claude_summary.core.ports import LlmClient
@@ -52,7 +52,7 @@ def summarize_day(day: DaySummary, *, person: str, llm: LlmClient) -> str:
 class AnthropicClient:
     """Klient Claude API spełniający port ``LlmClient`` (import ``anthropic`` leniwy)."""
 
-    api_key: str
+    api_key: str = field(repr=False)  # wzorzec Powiadomienia_teams/config.py — klucz poza repr()
     model: str
     max_tokens: int = 1024
 

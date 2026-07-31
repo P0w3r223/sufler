@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from claude_summary.adapters.anthropic_summarizer import summarize_day
+from claude_summary.adapters.anthropic_summarizer import AnthropicClient, summarize_day
 from claude_summary.core.models import Commit, DaySummary, Prompt
 
 
@@ -52,3 +52,9 @@ def test_summarize_empty_day_skips_llm() -> None:
     result = summarize_day(empty, person="me", llm=llm)
     assert result == "Brak zarejestrowanej aktywności."
     assert llm.calls == []
+
+
+def test_anthropic_client_repr_does_not_leak_api_key() -> None:
+    """SEDNO: dataclass repr domyślnie pokazuje pola — traceback nie może ujawnić klucza."""
+    client = AnthropicClient(api_key="sk-ant-sekretny-klucz-123", model="claude-sonnet-5")
+    assert "sk-ant-sekretny-klucz-123" not in repr(client)
