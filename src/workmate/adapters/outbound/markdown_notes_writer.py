@@ -35,10 +35,10 @@ class MarkdownNotesWriter:
         self._notes_dir = notes_dir
 
     def exists(self, note_id: str) -> bool:
-        return (self._notes_dir / f"{note_id}.md").is_file()
+        return _resolve_within(self._notes_dir, f"{note_id}.md").is_file()
 
     def write(self, note: Note) -> None:
-        path = self._notes_dir / f"{note.id}.md"
+        path = _resolve_within(self._notes_dir, f"{note.id}.md")
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_create(path, _render(note.metadata, note.body))
 
@@ -52,6 +52,22 @@ def _render(metadata: NoteMetadata, body: str) -> str:
         default_flow_style=False,
     )
     return f"{_FRONTMATTER_FENCE}\n{front}{_FRONTMATTER_FENCE}\n\n{body.strip()}\n"
+
+
+def _resolve_within(notes_dir: Path, relpath: str) -> Path:
+    """Rozwiąż ścieżkę notatki WEWNĄTRZ ``notes_dir``; ``WriteError`` przy ucieczce poza katalog.
+
+    Obrona w głąb (wzorem ``filesystem_workspace.py``/``MarkdownNotesRepository.get``): dziś
+    ``note.id`` przechodzi przez slugifikację serwisu (ADR 0006), więc to nie jest dziura — ale
+    ta gwarancja stała dotąd wyłącznie na dyscyplinie wołających, a to JEDYNE miejsce w systemie,
+    które PISZE do bazy wiedzy czytanej przez agenta.
+    """
+    candidate = (notes_dir / relpath).resolve()
+    try:
+        candidate.relative_to(notes_dir.resolve())
+    except ValueError as exc:
+        raise WriteError(f"ścieżka notatki poza katalogiem bazy wiedzy: {relpath!r}") from exc
+    return candidate
 
 
 def _atomic_create(path: Path, content: str) -> None:

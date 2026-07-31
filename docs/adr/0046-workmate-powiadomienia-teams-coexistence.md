@@ -43,9 +43,9 @@ Both codebases default the MSAL cache to the **identical path** `~/.workmate/tea
 (WorkMate `config.py:505`; Powiadomienia `config.py:29`). Neither codebase takes **any cross-process
 file lock** around the cache. The two writers behave differently, which makes a shared file unsafe:
 
-- WorkMate writes the cache **non-atomically** — `cache_path.write_text(cache.serialize())`
-  (`adapters/inbound/teams_graph/auth.py:72`), truncate-in-place, so a concurrent reader can observe a
-  half-written cache during refresh-token rotation.
+- WorkMate now writes the cache **atomically** — `tmp.write_text(...)` + `os.replace(tmp, cache_path)`
+  (`adapters/inbound/teams_graph/auth.py`, fixed 2026-07-31, follow-up (a) below closed) — matching
+  Powiadomienia's pattern. Still no ambiguous-account guard (WorkMate silently picks `accounts[0]`).
 - Powiadomienia writes it **atomically** — `tmp.write_text(...)` + `os.replace(tmp, cache_path)`
   (`graph/auth.py:98-104`) — and **hard-fails** with `AmbiguousAccountError` if the cache accumulates
   more than one account (`graph/auth.py:58-64`), whereas WorkMate silently picks `accounts[0]`.
@@ -94,9 +94,9 @@ push targets narrowly and expect the overlap.
   in both) remains a latent foot-gun on any host where both run unconfigured (e.g. a dev box) — mitigated
   only operationally. A shared app registration means a consent/registration change for one system can
   affect the other. The 1:1 DM thread overlap (Decision 3) is deferred, not resolved.
-- **Follow-ups (not in this ADR):** (a) consider making WorkMate's MSAL cache write atomic
-  (`tmp`+`os.replace`) and adding an ambiguous-account guard, to match Powiadomienia and close the
-  torn-write window if a shared cache ever happens by accident; (b) if integration proceeds, an ADR for
+- **Follow-ups (not in this ADR):** (a) **done 2026-07-31** — WorkMate's MSAL cache write is now
+  atomic (`tmp`+`os.replace`), closing the torn-write window; an ambiguous-account guard (matching
+  Powiadomienia's `AmbiguousAccountError`) remains open; (b) if integration proceeds, an ADR for
   the DM-thread model and for any EventStore coupling; (c) optionally a distinct dev-default cache path
   per project to remove the latent collision.
 
