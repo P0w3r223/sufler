@@ -60,6 +60,7 @@ def _settings(tmp_path: Path) -> Settings:
         allowed_origins=(),
         tls_certfile=None,
         tls_keyfile=None,
+        metrics_db=None,
     )
 
 
@@ -137,7 +138,8 @@ def test_built_responder_dispatches_command_without_calling_runtime(tmp_path: Pa
     responder = _build_responder(tmp_path, monkeypatch, safe=True)
 
     reply = asyncio.run(responder.respond(InboundMessage(text="/pomoc", conversation_id="chat1")))
-    assert reply.startswith("Dostępne komendy:")
+    # ``_help`` (commands.py) poprzedza listę komend krótkim wprowadzeniem "Jestem WorkMate…".
+    assert "Dostępne komendy:" in reply
 
 
 # --- build_agent_runtime_or_exit: brak extra agent → SystemExit -----------------
