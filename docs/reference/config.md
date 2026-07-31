@@ -8,7 +8,7 @@ Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonyc
 
 - **Serwer MCP w trybie `stdio`** (Faza 1) — **nie wymaga żadnych sekretów**; odczyt i zapis
   notatek działają na plikach z `data/`.
-- **Runtime agenta** (drzwi Teams/Telegram/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
+- **Runtime agenta** (drzwi Teams/CLI) — **wymaga klucza Claude** (`ANTHROPIC_API_KEY`);
   jego brak to twardy błąd startu, nie tryb degradacji.
 - **Most GitHub / push do Teams** — wymagają PAT GitHub i/lub cache tokenu Microsoft Graph.
 - **Jira** — wyłącznie odczyt „moje zadania" (`get_my_jira_tasks` / `/moje-zadania`); wymaga PAT/API
@@ -29,7 +29,7 @@ są **domyślnie wyłączone** i włączane świadomie per drzwi.
 | `WORKMATE_PROJECTS_REGISTRY` | `<data_dir>/projects/registry.yaml` | Plik rejestru projektów. |
 | `WORKMATE_TRANSPORT` | `stdio` | Transport MCP: `stdio` lub `streamable-http`. |
 | `WORKMATE_LOG_LEVEL` | `INFO` | Poziom logowania. |
-| `WORKMATE_ENABLE_WRITE` | `true` | Czy wystawić narzędzie zapisu `save_note` ([ADR 0006](../adr/0006-write-capability-gate-2.md)). Drzwi HTTP wymuszają `false`. |
+| `WORKMATE_ENABLE_WRITE` | `false` | Czy wystawić narzędzie zapisu `save_note` ([ADR 0006](../adr/0006-write-capability-gate-2.md), amendment 2026-07-31 — domyślnie OFF wszędzie, bez wyjątku dla lokalnego stdio). Drzwi HTTP dodatkowo wymuszają `false` niezależnie od env. |
 
 ### Tryb HTTP (`streamable-http`, Bramka 3 / [ADR 0007](../adr/0007-gate-3-http-auth-deployment.md))
 
@@ -48,7 +48,7 @@ Znaczące **tylko** przy `WORKMATE_TRANSPORT=streamable-http`. Procedura: [`how-
 
 ## Runtime agenta (`AgentSettings`, extra `agent`)
 
-Napędza drzwi Teams/Telegram/CLI. `validate()` twardo wymaga klucza.
+Napędza drzwi Teams/CLI. `validate()` twardo wymaga klucza.
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
@@ -181,12 +181,6 @@ v3/ADF, `search/jql`) wg `WORKMATE_JIRA_DEPLOYMENT`. Procedura: [`how-to/jira-my
 Wątkowanie i tranzycja statusu, poller, push do Teams i zapis (create/comment) — **usunięte w
 całości**. Watch-listy projektów, self-skip, interwał pollingu, projekt zapisu itd. nie mają już
 zastosowania (nie ma czego pollingować ani co zapisywać).
-
-## Drzwi Telegram (`TelegramSettings`, extra `telegram`)
-
-| Zmienna | Opis |
-|---------|------|
-| `WORKMATE_TELEGRAM_BOT_TOKEN` | **Sekret.** Token bota (long polling). |
 
 ## Drzwi Teams — Bot Framework (`TeamsSettings`, extra `teams`)
 

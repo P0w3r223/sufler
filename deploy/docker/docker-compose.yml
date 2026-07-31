@@ -8,6 +8,10 @@
 #   bridge    → drzwi github + teams-graph (most). Jira nie ma tu żadnych drzwi (ADR 0054 —
 #               zredukowana do odczytu "moje zadania", wołanego wprost z teams-graph/MCP).
 #               Karty czasu (WorklogPRO, ADR 0035) wycofane z projektu (ADR 0055) — brak profilu.
+#   digest    → proaktywny digest tygodniowy Teams (ADR 0053). WYMAGA jawnego
+#               WORKMATE_TEAMS_DIGEST_ENABLED=true (inaczej proces kończy się SystemExit przy
+#               starcie i restart: unless-stopped wejdzie w pętlę restartów) oraz
+#               WORKMATE_TEAMS_DIGEST_DRY_RUN=false dla realnej wysyłki (domyślnie DRY-RUN).
 #
 #   docker compose --profile mcp --profile bridge up -d     # most + serwer wiedzy
 #   docker compose logs -f
@@ -118,6 +122,18 @@ services:
       # Puls raz na rundę WSZYSTKICH kanałów; przy bardzo wielu kanałach runda trwa dłużej —
       # podnieś --max-age (wartość operatorska, jak stop_grace_period).
       test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/teams_graph_state.heartbeat", "--max-age", "180"]
+
+  # --- Digest tygodniowy Teams (proaktywny DM w poniedziałek) — ADR 0053 -------------------------
+  # OFF domyślnie (WORKMATE_TEAMS_DIGEST_ENABLED=false w env.example): włączenie bez tej flagi
+  # kończy proces SystemExit-em przy starcie. Puls raz na cykl (pętla śpi do _MAX_SLEEP_S=900s
+  # między sprawdzeniami harmonogramu) ⇒ --max-age z dużym zapasem.
+  teams-digest:
+    <<: *workmate-common
+    profiles: [digest]
+    command: ["workmate-teams-digest"]
+    healthcheck:
+      <<: *poller-health
+      test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/teams_digest_state.heartbeat", "--max-age", "2000"]
 
 volumes:
   state:

@@ -109,7 +109,7 @@ serwer HTTP z wieloma osobami).
 
 | Narzędzie | Parametry | Zwraca |
 |-----------|-----------|--------|
-| `get_my_jira_tasks` | — (brak) | `{ count, tasks: [ {key, summary, status, url, ...} ] }` — TYLKO otwarte zadania przypisane pytającemu. |
+| `get_my_jira_tasks` | — (brak) | `{ tasks: [ {key, summary, status, priority, due_date, url} ] }` — TYLKO otwarte zadania przypisane pytającemu. |
 
 Całe pisanie do Jiry (tworzenie/komentowanie zgłoszeń, tranzycja statusu) zostało usunięte
 ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md), supersedes 0031/0032) — nie ma już

@@ -69,10 +69,15 @@ def build_token_provider(settings: TokenProviderSettings) -> Callable[[], str]:
         if not cache.has_state_changed:
             return
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(cache.serialize())
-        # Ogranicz dostęp do pliku (Linux/macOS; na Windows ignorowane).
+        # Atomowy zapis (temp + os.replace, wzorem github/state.py — R1): docker stop w trakcie
+        # write_text zostawiał ucięty cache, który MSAL nie potrafi deserializować. Uprawnienia
+        # ograniczone NA TYMCZASOWYM pliku, PRZED podmianą — plik nigdy nie leży pod docelową
+        # nazwą z szerszymi uprawnieniami niż docelowe, nawet przez chwilę.
+        tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        tmp.write_text(cache.serialize())
         with contextlib.suppress(OSError):
-            os.chmod(cache_path, 0o600)
+            os.chmod(tmp, 0o600)  # Linux/macOS; na Windows ignorowane.
+        os.replace(tmp, cache_path)
 
     def get_token() -> str:
         cache = _load_cache()

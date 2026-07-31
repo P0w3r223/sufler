@@ -129,7 +129,9 @@ uv run mcp dev src/workmate/server.py
 ```
 
 **Podłączenie do Claude Code** — repozytorium zawiera [`.mcp.json`](.mcp.json) (scope `project`),
-więc po otwarciu Claude Code w tym katalogu serwer `workmate` pojawi się automatycznie.
+więc po otwarciu Claude Code w tym katalogu serwer `workmate` pojawi się automatycznie. Narzędzie
+zapisu `save_note` jest domyślnie WYŁĄCZONE (Gate 2, [ADR 0006](docs/adr/0006-write-capability-gate-2.md))
+— skopiuj [`.env.example`](.env.example) do `.env`, żeby je włączyć lokalnie.
 
 Pozostałe drzwi i zdolności wymagają dodatkowych extras `uv sync --extra <nazwa>`:
 

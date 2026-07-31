@@ -79,8 +79,17 @@ docker compose run --rm -T -e WORKMATE_GITHUB_TOKEN= github; echo "exit=$?"
 ```bash
 docker compose run --rm -T -e WORKMATE_EVENTS_DB=/nonexistent/events.db mcp python -c "import asyncio;from workmate.server import build_server;print(sorted(t.name for t in asyncio.run(build_server().list_tools())))"
 ```
-**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'save_note', 'search_notes']` (5 = zamrożone 4+1, ADR 0040; `save_note` obecne, bo stdio ma `WORKMATE_ENABLE_WRITE=true` domyślnie, `config.py:162`).
-**Porażka oznacza:** brak `save_note` → stdio straciło jedyne drzwi zapisu; nadmiar narzędzi → naruszenie zamrożonego kontraktu (golden-test `test_mcp_tool_surface`).
+**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'search_notes']` (4 = zamrożone odczyty, ADR 0040; `save_note` NIEOBECNE — `WORKMATE_ENABLE_WRITE` jest domyślnie OFF nawet na stdio od amendmentu ADR 0006, 2026-07-31, `config.py:202`).
+**Porażka oznacza:** nadmiar/brak narzędzi → naruszenie zamrożonego kontraktu (golden-test `test_mcp_tool_surface`); `save_note` obecne bez jawnego `WORKMATE_ENABLE_WRITE=true` → bramka Gate 2 otwarta domyślnie (regres #8).
+
+### T05b · F2 · ~1 min
+**Warunek wstępny:** j.w.
+**Komenda:**
+```bash
+docker compose run --rm -T -e WORKMATE_EVENTS_DB=/nonexistent/events.db -e WORKMATE_ENABLE_WRITE=true mcp python -c "import asyncio;from workmate.server import build_server;print(sorted(t.name for t in asyncio.run(build_server().list_tools())))"
+```
+**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'save_note', 'search_notes']` (5 = zamrożone 4+1, ADR 0040) — z jawnym opt-in `save_note` wraca.
+**Porażka oznacza:** brak `save_note` mimo jawnego `WORKMATE_ENABLE_WRITE=true` → stdio straciło jedyne drzwi zapisu.
 
 ### T06 · F2 · ~1 min
 **Warunek wstępny:** j.w., baza wiedzy zamontowana (`../../data:ro`).
@@ -174,11 +183,11 @@ docker compose run --rm -T mcp python -c "import sqlite3;print(sqlite3.connect('
 > Na FLOCIE zapis bazy wiedzy jest KONSTRUKCYJNIE wyłączony na drzwiach HTTP (`server.py:108`), a `../../data` montowane RO. `save_note` żyje tylko na zaufanych drzwiach stdio z RW-dostępem do notatek — T11 wykonuje to jawnym override'em montażu.
 
 ### T11 · F5 · [DESTRUKCYJNY — dodaje notatkę] · ~2 min — save_note DOKŁADA, nie nadpisuje
-**Warunek wstępny:** projekt `workmate` istnieje w rejestrze (3 notatki w `data/notes/biap/workmate/`). Montaż RW tylko na czas testu.
+**Warunek wstępny:** projekt `workmate` istnieje w rejestrze (3 notatki w `data/notes/biap/workmate/`). Montaż RW tylko na czas testu. `WORKMATE_ENABLE_WRITE=true` jawnie w komendzie — domyślnie OFF nawet na stdio (amendment ADR 0006, 2026-07-31).
 **Komenda:**
 ```bash
 before=$(ls -1 ../../data/notes/biap/workmate/*.md | wc -l)
-docker compose run --rm -T -v ${WM}/data:/app/data mcp python -c "import asyncio;from workmate.server import build_server;print(asyncio.run(build_server().call_tool('save_note',{'title':'smoke F5','project':'workmate','date':'2026-07-28','body':'nota testowa'})))"
+docker compose run --rm -T -e WORKMATE_ENABLE_WRITE=true -v ${WM}/data:/app/data mcp python -c "import asyncio;from workmate.server import build_server;print(asyncio.run(build_server().call_tool('save_note',{'title':'smoke F5','project':'workmate','date':'2026-07-28','body':'nota testowa'})))"
 after=$(ls -1 ../../data/notes/biap/workmate/*.md | wc -l)
 echo "before=$before after=$after"
 ```
@@ -190,9 +199,9 @@ echo "before=$before after=$after"
 **Warunek wstępny:** obraz zbudowany. Odwzorowuje wiring drzwi sieciowych (`_build_http_server` wymusza `enable_write=False`, `server.py:101-108`).
 **Komenda:**
 ```bash
-docker compose run --rm -T mcp python -c "import asyncio;from dataclasses import replace;from workmate.config import Settings;from workmate.server import build_server;print('save_note' in [t.name for t in asyncio.run(build_server(replace(Settings.from_env(),enable_write=False)).list_tools())])"
+docker compose run --rm -T mcp python -c "import asyncio;from dataclasses import replace;from workmate.config import Settings;from workmate.server import build_server;print('save_note' in [t.name for t in asyncio.run(build_server(replace(Settings.from_env(),enable_write=True)).list_tools())])"
 ```
-**Oczekiwane:** `False` — `save_note` NIE jest w ogóle zarejestrowane na drzwiach HTTP (nie „obecne ale zablokowane" — nieobecne).
+**Oczekiwane:** `False` — mimo jawnego `enable_write=True` w konstrukcji `Settings`, `_build_http_server` wymusza `False` niezależnie od tego, co przekazano; `save_note` NIE jest w ogóle zarejestrowane na drzwiach HTTP (nie „obecne ale zablokowane" — nieobecne).
 **Porażka oznacza:** `True` → zapis wystawiony po sieci (Gate 3, ADR 0007) — krytyczna regresja bezpieczeństwa.
 
 ---

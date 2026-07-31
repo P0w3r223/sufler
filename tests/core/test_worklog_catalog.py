@@ -48,7 +48,7 @@ def test_description_comes_from_the_docstring() -> None:
 def test_description_tells_the_model_that_nothing_can_be_written() -> None:
     """Model musi wiedzieć, że nie ma dokąd zapisać godzin — inaczej będzie szukał narzędzia."""
     _, specs = _catalog()
-    assert "człowiek" in specs["propose_worklog"].description
+    assert "nic nie zapisuje" in specs["propose_worklog"].description
 
 
 def test_proposal_is_serialized_to_plain_json() -> None:

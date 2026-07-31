@@ -1,7 +1,7 @@
 # 0023. Hybrid local retrieval for `search_notes` (Polish lexical foundation, gated dense)
 
 Date: 2026-07-16
-Status: proposed
+Status: accepted (implemented — `core/domain/ranking.py`, BM25 nad lematami, mikro-eval `eval/`)
 Author: P0w3r223
 Related to: docs/roadmap.md (Phase 3 — "embeddings and ranking over notes"),
   docs/adr/0002-read-only-first.md, docs/adr/0003-note-schema.md

@@ -42,9 +42,8 @@ posture; write is an explicit, gated exception.
   use case (`NotesWriteService`) depends only on ports, preserving the
   `core ↛ adapters` dependency rule.
 - **Per-door gating.** `save_note` is registered only when a write service is
-  injected. `Settings.enable_write` (env `WORKMATE_ENABLE_WRITE`, default `true`
-  for the trusted local dev door) controls this; less-trusted future doors
-  (Teams, GitHub) set it `false`.
+  injected. `Settings.enable_write` (env `WORKMATE_ENABLE_WRITE`) controls this;
+  see **Amendment (2026-07-31)** below for the current default.
 - **Untrusted content / path-traversal safety.** The caller-supplied `title`
   reaches a file path, so it is slugified to a `[a-z0-9-]` whitelist; `/`, `..`
   and absolute paths cannot survive. `company`/`project` come from the registry
@@ -64,3 +63,18 @@ posture; write is an explicit, gated exception.
   global guarantee — a foundation Gate 3 (auth per person) builds on.
 - Layout ADR 0005 is no longer inert: `save_note` is what fills the
   `company/project` tree it defines.
+
+## Amendment (2026-07-31)
+
+`Settings.enable_write` originally defaulted to `true` for the trusted local stdio door — the one
+documented exception to "every mutating capability defaults OFF". A code review flagged the
+resulting drift: `README.md`/`docs/how-to/gate-matrix.md` already claimed every gate (Gate 2
+included) was off by default, and `tests/test_gates_closed_by_default.py` covered every *other*
+gate but pinned this one as the sole exception rather than closing it.
+
+**Decision: drop the exception.** `WORKMATE_ENABLE_WRITE` now defaults to `false` everywhere,
+including the local stdio door. `save_note` requires an explicit opt-in
+(`WORKMATE_ENABLE_WRITE=true` in `.env`, or `enable_write=True` passed by a door's own wiring) —
+same as every other mutating/outward capability. This is a one-line local dev-flow change (add the
+env var once) in exchange for a config surface with no silent exceptions; `tests/test_gates_closed_by_default.py`
+now asserts it reflectively alongside the rest.

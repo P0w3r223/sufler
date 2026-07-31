@@ -20,6 +20,21 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
   (atrapy ich nie generują), a koszt USD z `core/domain/pricing.py::cost_usd` zgadza się z
   cennikiem użytego modelu.
 
+## 1b. Prompt caching — 🔑 (#10, przegląd kodu 2026-07-31)
+
+- **Krok:** prowadź DWIE tury w tej samej rozmowie przez harness CLI (`uv run workmate-agent
+  --history`, albo drzwi Teams) — pierwsza tura buduje cache (breakpoint na system+tools),
+  druga powinna go trafić.
+- **Oczekiwane:** w `conversations.db` (tabela `messages`, `sqlite_conversations.py`, kolumny
+  już zapisywane) `cache_read_input_tokens > 0` dla DRUGIEJ tury asystenta: `sqlite3
+  ~/.workmate/conversations.db "select role, cache_read_input_tokens,
+  cache_creation_input_tokens from messages where role='assistant' order by id desc limit 2;"`.
+  Pierwsza tura ma `cache_creation_input_tokens > 0` (zapis do cache), zero odczytu.
+- **Uwaga:** skład `extra_tools` może się zmienić między turami (kanał, różni nadawcy —
+  fabryki per-turowe w `responder.py`), co unieważnia breakpoint historii i daje cache-miss na
+  DRUGIM breakpoincie — to oczekiwana, łagodna degradacja kosztowa, nie błąd. Breakpoint
+  system+tools (pierwszy) powinien trafiać niezależnie od tego.
+
 ## 2. Kompaktowanie rozmowy — 🔑 (ADR 0014)
 
 - **Krok:** prowadź wieloturową rozmowę (CLI `--history` lub drzwi Teams) aż przekroczy próg

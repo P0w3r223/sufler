@@ -53,6 +53,12 @@ jobs:
       - name: Typy (mypy)
         run: uv run mypy
 
+      # import-linter (pyproject.toml [tool.importlinter]) egzekwuje granice tylko rdzenia
+      # workmate (core ↛ adapters, outbound ↛ inbound) — pod-projekty go nie mają.
+      - name: Granice architektoniczne (import-linter)
+        if: matrix.name == 'workmate'
+        run: uv run lint-imports
+
   docker-build:
     name: Budowa obrazu floty
     runs-on: ubuntu-latest

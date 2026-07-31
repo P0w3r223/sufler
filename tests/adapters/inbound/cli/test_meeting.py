@@ -162,8 +162,17 @@ def test_parse_date_invalid_raises():
 
 
 def test_format_result_reports_id_title_and_counts(tmp_path: Path):
+    # Uczestnicy w raporcie pochodzą z rostera mówców (ADR 0047), nie z MeetingSummary.participants
+    # — transkrypt musi nieść realne etykiety, żeby diaryzacja wyszła kompletna
+    # (>=2 mówców, gęste tury).
+    transcript = (
+        "Anna Kowalska: Zaczynamy przeglad API.\n"
+        "Jan Nowak: Ustalilismy zakres.\n"
+        "Anna Kowalska: Domykamy checkliste.\n"
+        "Jan Nowak: Zgoda, zamrazamy kontrakt."
+    )
     outcome = run_harness(
-        "tresc",
+        transcript,
         project="scada-integration",
         meeting_date=date(2026, 7, 20),
         summarizer=_FakeSummarizer(_summary()),

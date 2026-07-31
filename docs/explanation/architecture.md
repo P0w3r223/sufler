@@ -6,20 +6,19 @@ WorkMate ma jeden „mózg" i wiele „drzwi". **Rdzeń** (`core/`) zawiera cał
 trudność: modele danych, logikę wyszukiwania i rankingu, syntezę statusu, runtime agenta,
 warstwę zdarzeń i notyfikacji. **Drzwi** (`adapters/`) to cienkie adaptery — kanały, którymi
 wchodzi zapytanie i wychodzi odpowiedź. Ponieważ kontrakt rdzenia jest stabilny, dołożenie
-kolejnych drzwi (Teams, Telegram, GitHub, Jira) przestało być decyzją architektoniczną — jest
-dorobieniem adaptera nad **tym samym** katalogiem narzędzi.
+kolejnych drzwi (Teams, GitHub, Jira) przestało być decyzją architektoniczną — jest dorobieniem
+adaptera nad **tym samym** katalogiem narzędzi.
 
 ```mermaid
 flowchart TB
     subgraph IN["adapters/inbound — DRZWI"]
         MCP["mcp<br/>(Claude Code)"]
         TG["teams · teams_graph<br/>(+ /moje-zadania Jira)"]
-        TEL["telegram"]
         CLI["cli · workmate-agent"]
         GHD["github · workmate-github"]
+        SEAM["Responder (wspólny szew)"]
     end
     subgraph CORE["core — RDZEŃ (bez I/O, bez SDK)"]
-        SEAM["Responder (wspólny szew)"]
         AGENT["agent/ — runtime + prompt"]
         APP["application/ — przypadki użycia<br/>services · tools · events · github · my_jira_tasks<br/>notifier · ci_autocomment · conversations · workspace"]
         DOM["domain/ — modele + reguły<br/>notes · projects · events · ci · threads<br/>ranking · pricing · sanitize"]
@@ -35,7 +34,10 @@ flowchart TB
         GRAPH["graph_teams_notifier<br/>(Microsoft Graph)"]
         LEM["simplemma_lemmatizer"]
     end
-    IN --> SEAM --> AGENT --> APP
+    TG --> SEAM
+    CLI --> SEAM
+    GHD --> SEAM
+    SEAM --> AGENT --> APP
     MCP --> APP
     APP --> PORTS
     DOM -.-> APP
@@ -59,10 +61,11 @@ flowchart TB
 - **`core/agent/`** — runtime agenta (`runtime.py`) i budowa promptu (`prompt.py`): model Claude
   w pętli, który czyta zapytanie, woła narzędzia i składa odpowiedź.
 - **`adapters/inbound/`** — drzwi: `mcp` (serwer MCP), `teams` i `teams_graph` (delegowany
-  polling Graph; obsługuje też komendę `/moje-zadania`), `telegram`, `cli`, `github` (polling PAT
-  + notifier). Nie ma już osobnych drzwi `jira` — most Teams↔Jira, poller i push zniknęły
-  ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)). Wspólny szew `responder.py`
-  oddziela transport od treści odpowiedzi.
+  polling Graph; obsługuje też komendę `/moje-zadania`), `teams_digest` (proaktywny digest
+  tygodniowy), `cli`, `github` (polling PAT + notifier). Nie ma już osobnych drzwi `jira` — most
+  Teams↔Jira, poller i push zniknęły ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)).
+  Wspólny szew `responder.py` (tu, nie w rdzeniu — oddziela transport od treści odpowiedzi, ale
+  sam jest drzwiami, nie logiką bez I/O).
 - **`adapters/outbound/`** — implementacje portów: repozytoria Markdown/YAML, `anthropic_llm`
   i `anthropic_summarizer` (Claude API), `github_api`, `jira_api` (`HttpxJiraClient`/
   `HttpxJiraCloudClient`, metody zapisu/tranzycji usunięte), `sqlite_events` /
@@ -83,7 +86,7 @@ znają rdzeń, rdzeń nie zna adapterów. Dlatego:
 ## Runtime agenta: te same narzędzia, dwie głębokości wejścia
 
 Claude Code **sam jest agentem** — potrzebuje tylko narzędzi, i do tego służy MCP (drzwi `mcp`
-wystawiają katalog wprost). Teams, Telegram i CLI własnego agenta nie mają, więc dla nich rdzeń
+wystawiają katalog wprost). Teams i CLI własnego agenta nie mają, więc dla nich rdzeń
 dostarcza **runtime agenta**: model, który prowadzi rozmowę (z pamięcią i kompaktowaniem historii),
 woła te same narzędzia i składa odpowiedź. Kluczowe: **katalog narzędzi jest jednoźródłowy**
 (`application/tools.py`) — drzwi MCP i runtime agenta dostają je z tego samego miejsca
