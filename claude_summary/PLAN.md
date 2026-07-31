@@ -26,6 +26,6 @@ Zrobione:
 
 ## Następne kroki (poza v0.1.0)
 
-- Integracja wyniku z drzwiami `workmate-worklogi` / propozycją czasu (`propose_worklog`).
+- Integracja wyniku z propozycją czasu WorkMate (`propose_worklog`, ADR 0034).
 - Wsparcie wielu osób i mapa tożsamości (git author ↔ konto Jira) — dziś jedna osoba.
 - Ewentualne źródło `~/.claude/history.jsonl` jako uzupełnienie (dziś: transkrypty projektowe).

@@ -20,8 +20,13 @@ def _iso(dt: datetime) -> str:
 
 def _pending(status=AWAITING_REPLY, watermark="", nudged_at=""):
     return PendingReminder(
-        member_id="u1", member_name="Ala", chat_id="c", week_start="2026-07-20",
-        status=status, watermark=watermark, nudged_at=nudged_at,
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c",
+        week_start="2026-07-20",
+        status=status,
+        watermark=watermark,
+        nudged_at=nudged_at,
     )
 
 

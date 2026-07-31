@@ -54,7 +54,7 @@ class AnthropicLLMClient:
     ) -> LLMResponse:
         import anthropic
 
-        messages = _to_messages(transcript)
+        messages = _mark_cache(_to_messages(transcript))
         tool_defs = [_to_tool_def(spec) for spec in tools]
 
         try:
@@ -66,7 +66,11 @@ class AnthropicLLMClient:
             with self._client.messages.stream(
                 model=self._settings.model,
                 max_tokens=self._settings.max_tokens,
-                system=system,
+                # Prompt caching (#10): breakpoint na ostatnim (jedynym) bloku system. Kolejność
+                # renderowania żądania Anthropic to tools → system → messages, więc JEDEN
+                # breakpoint tu obejmuje prefiks tools+system w cache — a to jest największa,
+                # najbardziej stabilna część promptu (schemat narzędzi + instrukcje agenta).
+                system=_system_blocks(system),
                 # Adaptive thinking (ADR 0011): w Sonnet 5 to jedyny tryb „on" — model
                 # sam decyduje, ile myśleć. Bloki ``thinking`` (z ``signature``) są
                 # przechwytywane w ``_from_message`` i odsyłane VERBATIM w ``_to_messages``,
@@ -83,6 +87,38 @@ class AnthropicLLMClient:
         except anthropic.APIError as exc:
             raise LLMError(f"Błąd Claude API: {exc}") from exc
         return _from_message(message)
+
+
+def _system_blocks(system: str) -> list[dict[str, Any]]:
+    """System jako lista bloków z ``cache_control`` na jedynym bloku (breakpoint prefiksu)."""
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+
+def _mark_cache(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dołóż ``cache_control`` na OSTATNIM bloku OSTATNIEJ wiadomości (breakpoint historii).
+
+    Kopiuje, nie mutuje — ``cache_control`` nie może wyciec do ``ConversationStore`` (persist
+    idzie z surowej odpowiedzi API / ``_to_messages``, PRZED tym wywołaniem, więc round-trip
+    pamięci zostaje nietknięty). Gołe ``content: str`` (``_user_message`` bez załączników)
+    zamieniamy na listę jednego bloku tekstowego — cache_control wymaga bloku, nie stringa.
+
+    Skład narzędzi per tura może się zmienić między turami tej samej rozmowy (kanał, różni
+    nadawcy — ``responder.py`` fabryki per-turowe) → cache-miss na tym breakpoincie jest
+    oczekiwaną, łagodną degradacją kosztową, nie błędem: prefiks tools+system (breakpoint
+    wyżej) i tak zostaje trafiony w większości przypadków.
+    """
+    if not messages:
+        return messages
+    marked = list(messages)
+    last = dict(marked[-1])
+    content = last["content"]
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    if not blocks:
+        return marked
+    blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+    last["content"] = blocks
+    marked[-1] = last
+    return marked
 
 
 def _thinking_config(thinking_type: str) -> dict[str, str]:

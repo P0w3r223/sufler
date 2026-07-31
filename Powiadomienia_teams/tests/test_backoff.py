@@ -8,8 +8,11 @@ NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
 
 def _delay(idle_s, base=10.0, max_s=300.0, factor=2.0):
     return next_poll_delay(
-        now=NOW, last_activity=NOW - timedelta(seconds=idle_s),
-        base_s=base, max_s=max_s, factor=factor,
+        now=NOW,
+        last_activity=NOW - timedelta(seconds=idle_s),
+        base_s=base,
+        max_s=max_s,
+        factor=factor,
     )
 
 
@@ -18,8 +21,8 @@ def test_base_delay_right_after_activity():
 
 
 def test_doubles_across_idle_thresholds():
-    assert _delay(15) == 20.0   # 10 < 15 → 20
-    assert _delay(25) == 40.0   # 10 → 20 → 40
+    assert _delay(15) == 20.0  # 10 < 15 → 20
+    assert _delay(25) == 40.0  # 10 → 20 → 40
     assert _delay(100) == 160.0  # 10 → 20 → 40 → 80 → 160
 
 

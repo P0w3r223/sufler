@@ -134,8 +134,8 @@ Konto logujące = **kierownik/właściciel zespołu**.
 
 ## Status weryfikacji na żywo — Smoke #1 (2026-07-14)
 
-Sprawdzono na żywym tenancie (`99b17207-…`), konto `piotr.czastkiewicz@contoso.onmicrosoft.com`,
-`client_id=c0ffee00-0000-4000-8000-000000000015` — reużyto cache tokenu MSAL z drzwi `teams_graph`
+Sprawdzono na żywym tenancie BIAP (id: wartość w `.env`), konto `piotr.czastkiewicz@contoso.onmicrosoft.com`,
+`client_id` aplikacji Azure AD (wartość w `.env`) — reużyto cache tokenu MSAL z drzwi `teams_graph`
 (silent refresh dobrał nowe uprawnienia bez ponownego logowania).
 
 **Uprawnienia — stan faktyczny:**
@@ -165,20 +165,19 @@ tylko po aktualnym rosterze).
 
 **Dane grafiku (odczyt działa):**
 - Shifts **prowizjonowane tylko w jednym zespole**: „BIAP - Pion Inteligentnych Technologii —
-  Stażyści" (`c0ffee00-0000-4000-8000-000000000019`, `provisionStatus=Completed`).
-  Pozostałe: `BIAP-PI` (8ea8af09…) i `Workmate-Teams` (27fefc2f…) = `NotStarted`.
+  Stażyści" (id zespołu: wartość w `.env`, `provisionStatus=Completed`).
+  Pozostałe zespoły w tenancie = `NotStarted`.
 - 63 zmiany (1 strona, bez paginacji), tylko **2 identyfikatory osób**: `9d8beddf…` (58, głównie
   2025) i `1b3fa85a…` (5, 13–17.07.2026). **Na przyszły tydzień 20–26.07: 0 osób** ma zmiany.
-- Grupa grafiku do zapisu: `TAG_c0ffee00-0000-4000-8000-000000000009` (aktywna); część zmian ma
+- Grupa grafiku do zapisu: id grupy harmonogramowania (wartość w `.env`, aktywna); część zmian ma
   `schedulingGroupId=None` (dozwolone). Godziny w **UTC** → przeliczać na `Europe/Warsaw`.
 
 **Do potwierdzenia z użytkownikiem:** (1) czy docelowy zespół to „Stażyści"; (2) czy
 `piotr.czastkiewicz@…` to zamierzony „głos" bota i czy jest właścicielem/kierownikiem grafiku
 tego zespołu (warunek zapisu zmian innym — do sprawdzenia Smoke'iem zapisu).
 
-**Zweryfikowane wartości do konfiguracji:** `POWIADOMIENIA_CLIENT_ID=c0ffee00-0000-4000-8000-000000000015`,
-`POWIADOMIENIA_TENANT_ID=c0ffee00-0000-4000-8000-000000000017`,
-`POWIADOMIENIA_TEAM_ID=c0ffee00-0000-4000-8000-000000000019`.
+**Zweryfikowane wartości do konfiguracji:** `POWIADOMIENIA_CLIENT_ID`, `POWIADOMIENIA_TENANT_ID`,
+`POWIADOMIENIA_TEAM_ID` — patrz `.env` (wzorzec: [`deploy/env.example`](deploy/env.example)).
 
 ---
 

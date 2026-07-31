@@ -32,8 +32,8 @@ _SECRET_TOKEN = re.compile(
 )
 _BEARER = re.compile(r"(?i)\bBearer\s+[\w.\-]{8,}")
 _SECRET_ASSIGN = re.compile(
-    r"(?i)\b(password|passwd|hasło|haslo|secret|api[_-]?key|apikey|access[_-]?key|token)\b"
-    r"(\s*[:=]\s*)(\"?[^\s\"']+\"?)"
+    r"(?i)\b([\w.\-]*(?:password|passwd|hasło|haslo|secret|api[_-]?key|apikey"
+    r"|access[_-]?key|token))(\s*[:=]\s*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s]+)"
 )
 
 # --- Dane prywatne / identyfikatory ---

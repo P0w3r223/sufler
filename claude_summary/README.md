@@ -6,14 +6,17 @@ Narzędzie CLI, które zestawia **co dana osoba robiła każdego dnia**, łącz�
    prompty z transkryptów sesji (`~/.claude/projects`).
 2. **Historia commitów** wskazanego repozytorium (opcjonalnie — filtrowana po autorze).
 
-Wynik to uporządkowane dane per dzień: **JSON** (stabilny kontrakt dla większego agenta,
-który zapisuje harmonogram/worklog w Jirze) oraz czytelny **Markdown**. Opcjonalnie dokłada
-krótki opis prozą generowany przez Claude API.
+Wynik to uporządkowane dane per dzień: **JSON** (stabilny kontrakt do dalszego przetwarzania)
+oraz czytelny **Markdown**. Opcjonalnie dokłada krótki opis prozą generowany przez Claude API.
 
-> ⚠️ **Prywatność.** Narzędzie czyta Twoją prywatną historię promptów. Odczyt jest twardo
+> **Prywatność.** Narzędzie czyta Twoją prywatną historię promptów. Odczyt jest twardo
 > bramkowany zgodą (`--consent` / `CLAUDE_SUMMARY_CONSENT=1`). Treść jest **redagowana** przed
 > zapisem (patrz niżej), ale wynik i tak trafia domyślnie **poza repo** (`~/.claude-summary`) i
 > **nie należy go commitować**.
+>
+> **Status kopii.** Samodzielny pod-projekt (własny `pyproject.toml`, środowisko `uv`) — wdrażany
+> i utrzymywany osobno; ten katalog jest kopią referencyjną kontraktu/kodu, nie źródłem prawdy
+> o wersji uruchomionej u konkretnego użytkownika.
 
 ## Redakcja treści wrażliwej (zawsze włączona)
 

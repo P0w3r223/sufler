@@ -14,6 +14,8 @@ from typing import Any
 from workmate.adapters.outbound.anthropic_llm import (
     _attachment_block,
     _from_message,
+    _mark_cache,
+    _system_blocks,
     _thinking_config,
     _to_messages,
     _user_message,
@@ -333,3 +335,73 @@ def test_from_message_defaults_missing_stop_reason_to_empty_string():
     assert response.stop_reason == ""
     assert response.text == "ok"
     assert response.wants_tools is False
+
+
+# --- prompt caching (#10): breakpointy na system i na ostatnim bloku historii ------------
+
+
+def test_system_blocks_carries_ephemeral_cache_control():
+    blocks = _system_blocks("jesteś WorkMate")
+    assert blocks == [
+        {"type": "text", "text": "jesteś WorkMate", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_mark_cache_on_bare_string_content_wraps_and_marks():
+    messages = [{"role": "user", "content": "pytanie bez załączników"}]
+
+    marked = _mark_cache(messages)
+
+    assert marked == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "pytanie bez załączników",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    ]
+    # Oryginał NIETKNIĘTY — cache_control nie może wyciekać do ConversationStore.
+    assert messages == [{"role": "user", "content": "pytanie bez załączników"}]
+
+
+def test_mark_cache_marks_last_block_of_list_content_leaves_others_untouched():
+    messages = [
+        {"role": "assistant", "content": [{"type": "text", "text": "pierwsza tura"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "wynik"},
+                {"type": "text", "text": "ostatni blok"},
+            ],
+        },
+    ]
+
+    marked = _mark_cache(messages)
+
+    assert marked[0] == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "pierwsza tura"}],
+    }
+    assert marked[1]["content"][0] == {
+        "type": "tool_result",
+        "tool_use_id": "t1",
+        "content": "wynik",
+    }
+    assert marked[1]["content"][1] == {
+        "type": "text",
+        "text": "ostatni blok",
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def test_mark_cache_on_empty_messages_returns_empty():
+    assert _mark_cache([]) == []
+
+
+def test_mark_cache_on_message_with_empty_content_list_is_noop():
+    messages = [{"role": "user", "content": []}]
+    assert _mark_cache(messages) == [{"role": "user", "content": []}]

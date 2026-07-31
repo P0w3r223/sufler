@@ -38,6 +38,11 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   współdzielony serwer HTTP z wieloma osobami.
 
 ### Zmienione
+- **BREAKING: `WORKMATE_ENABLE_WRITE` domyślnie `false` wszędzie** (amendment ADR 0006,
+  2026-07-31) — dotąd lokalne drzwi stdio (Claude Code/`workmate-agent`) miały to domyślnie
+  `true`, jedyny udokumentowany wyjątek od „każda zdolność mutująca domyślnie OFF". Po pullu
+  `save_note` znika z lokalnego MCP, dopóki nie ustawisz jawnie `WORKMATE_ENABLE_WRITE=true`
+  w `.env` (patrz `.env.example`).
 - **Tożsamość skonsolidowana**: `Person` i mapa AAD→Jira przeniesione z `core/domain/timesheet.py`
   do nowego `core/domain/identity.py` (bez pola `git_email`, specyficznego dla worklogu); port
   `AadIdentityLookup` przeniesiony z `core/ports/timesheets.py` do nowego `core/ports/identity.py`.
@@ -291,6 +296,7 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
+[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.0...HEAD
 [1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0
 [1.2.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.2.0
 [1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0

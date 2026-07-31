@@ -5,6 +5,7 @@ event-loopowe jak poller kanałów — sync upraszcza pętlę i listener odpowie
 429/Retry-After i stronicowanie ``@odata.nextLink``. Token wstrzykiwany przez dostawcę
 (``graph/auth.py``); ``refresh_auth`` woła się raz na przebieg.
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,7 +71,8 @@ def _retry_after(response: httpx.Response, pozostaly_budzet: int) -> int:
     if czekaj > pozostaly_budzet:
         logger.warning(
             "Graph prosi o %ds przerwy, a budżet oczekiwania to jeszcze %ds — skracam",
-            czekaj, pozostaly_budzet,
+            czekaj,
+            pozostaly_budzet,
         )
     return max(0, min(czekaj, pozostaly_budzet))
 
@@ -85,8 +87,13 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code < 400:
         return
     body = response.text[:_MAX_ERROR_BODY]
-    logger.error("Graph %s %s → %s: %s", response.request.method, response.request.url,
-                 response.status_code, body)
+    logger.error(
+        "Graph %s %s → %s: %s",
+        response.request.method,
+        response.request.url,
+        response.status_code,
+        body,
+    )
     if response.status_code == 401:
         # Token odrzucony mimo udanego cichego odświeżenia (cofnięta zgoda, zmiana hasła konta
         # „głosu", nowa polityka Conditional Access). To NIE jest błąd transientny — usługa ma się

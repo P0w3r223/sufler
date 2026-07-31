@@ -5,37 +5,64 @@
 [![Wersja](https://img.shields.io/badge/wersja-1.3.0-green.svg)](CHANGELOG.md)
 [![Licencja](https://img.shields.io/badge/licencja-Proprietary-red.svg)](LICENSE)
 
-**Wspólna baza wiedzy pionu Inteligentnych Technologii — jedno źródło prawdy o projektach,
-dostępne tam, gdzie zespół już pracuje.** Notatki ze spotkań i status projektów są wystawione
-jako wąskie, typowane narzędzia, z których korzysta Claude Code, asystent na Teams
-oraz automatyczny most do GitHuba — zamiast rozproszonych plików, do których nikt nie zagląda.
+**Wewnętrzny serwer MCP i runtime agenta pionu Inteligentnych Technologii BIAP** — wspólna baza
+wiedzy o projektach, dostępna tam, gdzie zespół już pracuje: w Claude Code, na Teams i w GitHubie.
 
-> **Status: 🟢 Produkcyjny — kod Fazy 1–4 domknięty.** Serwer MCP, runtime agenta w rdzeniu,
-> drzwi Teams/CLI/GitHub, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt
-> Jira "moje zadania" oraz lokalny retrieval leksykalny notatek. Karty czasu (WorklogPRO)
-> wycofane z projektu (2026-07-30). 55 decyzji architektonicznych (`docs/adr/`), zestaw
-> testów w pełni zielony. Meta Fazy 1 (wdrożenie HTTP na serwerze firmowym) wciąż otwarta.
+> **Status: produkcyjny — kod Fazy 1–4 domknięty.** Serwer MCP, runtime agenta w rdzeniu, drzwi
+> Teams/CLI/GitHub, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira „moje
+> zadania" oraz lokalny retrieval leksykalny notatek. Karty czasu (WorklogPRO) wycofane z projektu
+> (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). 55 decyzji
+> architektonicznych (`docs/adr/`), pełny zestaw testów zielony. Meta Fazy 1 (wdrożenie HTTP na
+> serwerze firmowym) wciąż otwarta — patrz [`docs/roadmap-v1-gap-analysis.md`](docs/roadmap-v1-gap-analysis.md).
 
----
+## O projekcie
 
-## Co to daje zespołowi
+WorkMate realizuje zasadę **„jeden rdzeń, wiele drzwi"**: cała logika i cała wartość mieszkają
+w jednym, niezależnym od interfejsu rdzeniu (`core/`), a każdy kanał dostępu — Claude Code przez
+MCP, Teams, CLI, GitHub — jest cienkim adapterem nad tym samym katalogiem narzędzi. Dzięki temu
+nowa zdolność (narzędzie, drzwi, integracja) powstaje raz i jest dostępna wszędzie, zamiast być
+duplikowana per kanał.
 
-- **Koniec z „gdzie to ustaliliśmy?"** — pytasz w naturalnym języku (Claude Code, Teams),
-  a WorkMate odpowiada na podstawie realnych notatek i statusów, z odnośnikiem do źródła.
-- **Notatki ze spotkań trafiają od razu do wspólnej bazy** — jedno narzędzie zapisu (`save_note`),
-  ustrukturyzowane, bez ryzyka nadpisania cudzej pracy.
-- **GitHub i Teams rozmawiają ze sobą** — nowe issue, PR, wynik CI czy recenzja pojawiają się na
-  kanale zespołu; z Teams można założyć issue albo odpowiedzieć w wątku wprost na GitHubie.
-  Jira: pytasz o SWOJE otwarte zadania (Teams albo Claude Code) i dostajesz listę — bez mostu,
-  bez zapisu.
-- **Bezpieczeństwo wpisane w architekturę** — domyślnie tylko odczyt, każda zdolność zapisu za
-  osobną bramką, treść notatek traktowana jak dane (odporność na wstrzyknięcia), sekrety poza repo.
+Wartość dla zespołu: notatki ze spotkań i status projektów trafiają do jednej, przeszukiwalnej
+bazy zamiast rozproszonych plików; GitHub i Teams rozmawiają ze sobą (nowe issue, PR, wynik CI czy
+recenzja pojawiają się na kanale zespołu, a z Teams można odpowiedzieć wprost na GitHubie); Jira
+odpowiada na pytanie „jakie mam otwarte zadania" bez opuszczania rozmowy.
 
-## Architektura: „jeden rdzeń, wiele drzwi"
+Bezpieczeństwo jest wpisane w architekturę, nie dołożone później: domyślnie tylko odczyt, każda
+zdolność zapisu za osobną, domyślnie wyłączoną bramką, a treść notatek i zdarzeń jest zawsze
+traktowana jak dane, nigdy jak polecenia.
 
-Cała wartość i cała logika mieszka w **rdzeniu** (`core/`) — niezależnym od interfejsu. Kanały
-dostępu („**drzwi**", `adapters/`) to cienkie adaptery nad **tym samym** katalogiem narzędzi.
-Reguła, która to spina: `core/` nigdy nie importuje z `adapters/`.
+## Kluczowe funkcje
+
+| Obszar | Co potrafi |
+|--------|-----------|
+| **Baza wiedzy (MCP)** | 4 narzędzia odczytu (wyszukiwanie, odczyt notatki, lista projektów, status projektu) + jedno bramkowane narzędzie zapisu (`save_note`, tylko dokłada, nigdy nie nadpisuje). |
+| **Agent na drzwiach Teams/CLI/GitHub** | Ten sam katalog narzędzi napędza runtime agenta (model Claude w pętli) z pamięcią rozmów i kompaktowaniem historii. |
+| **Most GitHub ↔ EventStore ↔ Teams** | Ingest zdarzeń issue/PR/komentarzy/recenzji/CI; push na kanał i czat 1:1; dwukierunkowe wątki; z Teams zakładanie issue i odpowiedź w wątku na GitHubie. |
+| **Jira — moje zadania** | Jedna, wyłącznie odczytowa zdolność: lista otwartych zadań pytającego, zawężona server-side do jego konta — zero mostu, zero zapisu ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md)). |
+| **Notatki ze spotkań z transkryptu** | Agent czyta transkrypt spotkania Teams i zapisuje ustrukturyzowaną notatkę — uczestnicy liczeni deterministycznie z transkryptu, nie z modelu. |
+| **Retrieval leksykalny (BM25)** | Wyszukiwanie notatek nad lematami (polski `simplemma`), z fallbackiem podłańcuchowym; jakość pilnowana mikro-evalem w `eval/`. |
+
+Pełna specyfikacja parametrów i wyników narzędzi: [`docs/reference/tools.md`](docs/reference/tools.md).
+
+## Architektura
+
+**Żelazna reguła zależności:** `core/` nigdy nie importuje z `adapters/` — tylko adaptery znają
+rdzeń, nigdy odwrotnie.
+
+```
+src/workmate/
+├── core/                  # RDZEŃ — bez I/O, bez SDK
+│   ├── domain/             # modele + czysta logika
+│   ├── ports/               # interfejsy (repozytoria, LLM, GitHub, Jira, notyfikacje…)
+│   ├── application/    # przypadki użycia + jednoźródłowy katalog narzędzi
+│   └── agent/              # runtime agenta
+├── adapters/
+│   ├── inbound/    # DRZWI: mcp, teams, teams_graph, cli, github…
+│   └── outbound/  # KLIENCI zewnętrznych API
+├── server.py               # wiring serwera MCP
+└── config.py               # ustawienia WORKMATE_*
+```
 
 ```mermaid
 flowchart TB
@@ -74,8 +101,9 @@ flowchart TB
 
 **Most** (Fazy 3–4) spina GitHub ze wspólnym magazynem zdarzeń i Teams — nikt nie woła nikogo
 bezpośrednio, komunikacja idzie przez append-only `EventStore` z deduplikacją. Jira nie jest
-częścią tego mostu (ADR 0054) — "moje zadania" to bezpośrednie zapytanie agenta/MCP do Jiry,
-zawężone do konta pytającego, bez zdarzeń i bez zapisu:
+częścią tego mostu ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md)) — "moje
+zadania" to bezpośrednie zapytanie agenta/MCP do Jiry, zawężone do konta pytającego, bez zdarzeń
+i bez zapisu:
 
 ```mermaid
 flowchart LR
@@ -87,39 +115,7 @@ flowchart LR
 
 Szczegóły i pełne diagramy warstw: [`docs/explanation/architecture.md`](docs/explanation/architecture.md).
 
-## Możliwości
-
-| Obszar | Co potrafi |
-|--------|-----------|
-| **Baza wiedzy (MCP)** | Wyszukiwanie, odczyt i status projektów jako typowane narzędzia dla Claude Code; jedno bramkowane narzędzie zapisu notatek. |
-| **Runtime agenta** | Ten sam katalog narzędzi napędza agenta (model Claude w pętli) na drzwiach Teams/CLI — z pamięcią rozmów i kompaktowaniem historii. |
-| **Most GitHub ↔ Teams** | Ingest zdarzeń issue / PR / komentarzy / recenzji / CI; push na kanał i czat 1:1; dwukierunkowe wątki; z Teams zakładanie issue i odpowiedź w wątku na GitHubie; deterministyczny auto-komentarz przy porażce CI. |
-| **Jira — moje zadania** | Jedna, wyłącznie odczytowa zdolność: lista otwartych zadań pytającego (Teams albo Claude Code/CLI), zawężona server-side do jego konta — zero parametrów, zero mostu, zero zapisu. |
-| **Załączniki multimodalne** | Agent czyta wrzucone na Teams obrazy (PNG/JPEG/GIF/WEBP/HEIC), PDF oraz dokumenty Office (DOCX/XLSX/PPTX) — z łagodną degradacją. |
-| **Retrieval leksykalny** | Wyszukiwanie notatek oparte na BM25 nad lematami (polski `simplemma`), z fallbackiem podłańcuchowym; jakość pilnowana mikro-evalem. |
-| **Wdrożenie sieciowe** | Tryb `streamable-http` z uwierzytelnianiem per osoba (token bearer) i drzwiami tylko do odczytu. |
-
-## Narzędzia
-
-Powierzchnia **MCP** to zamrożone 4 + 1 narzędzi (pilnowane golden-testem). Runtime agenta widzi
-dodatkowo narzędzia warstwy roboczej i mostu, wstrzykiwane per drzwi:
-
-| Narzędzie | Powierzchnia | Do czego |
-|-----------|--------------|----------|
-| `search_notes` | MCP | Szuka notatek po słowach kluczowych i metadanych (filtry: projekt, uczestnik). |
-| `get_note` | MCP | Zwraca pełną treść notatki po identyfikatorze. |
-| `list_projects` | MCP | Wypisuje projekty pionu z rejestru. |
-| `get_project_status` | MCP | Status projektu: część zadeklarowana z rejestru + synteza z notatek. |
-| `save_note` | MCP (zapis, Bramka 2) | Dodaje notatkę do katalogu `firma/projekt` — nigdy nie nadpisuje. |
-| `read_recent_events` | agent (most) | Podgląd ostatnich zdarzeń z `EventStore` (GitHub/Teams). |
-| `create_github_issue` / `comment_github_issue` | agent (Bramka 4) | Tworzy issue / komentarz na skonfigurowanym repo (create-only). |
-| `get_my_jira_tasks` | agent / MCP (ADR 0054) | Otwarte zadania PYTAJĄCEGO z Jiry — zero parametrów, bez bramki (czysty odczyt). |
-| `reply_on_thread` | agent (wątek) | Odpowiada komentarzem na issue/PR powiązanym z wątkiem Teams. |
-| `create_file` / `read_file` / `list_files` | agent (katalog roboczy) | Robocze pliki tekstowe agenta per rozmowa. |
-
-Pełna specyfikacja parametrów i wyników: [`docs/reference/tools.md`](docs/reference/tools.md).
-
-## Szybki start
+## Wymagania i instalacja
 
 Wymagania: **Python 3.10+** oraz [`uv`](https://docs.astral.sh/uv/).
 
@@ -127,68 +123,99 @@ Wymagania: **Python 3.10+** oraz [`uv`](https://docs.astral.sh/uv/).
 # Instalacja rdzenia (serwer MCP działa bez sekretów, na lokalnych plikach)
 uv sync
 
-# Testy i bramka jakości
-uv run pytest
-uv run ruff check . && uv run mypy
-
 # Serwer MCP lokalnie (transport stdio) + podgląd narzędzi
 uv run workmate
 uv run mcp dev src/workmate/server.py
 ```
 
 **Podłączenie do Claude Code** — repozytorium zawiera [`.mcp.json`](.mcp.json) (scope `project`),
-więc po otwarciu Claude Code w tym katalogu serwer `workmate` pojawi się automatycznie. Następnie
-zapytaj np. *„co ustaliliśmy z mpwik w sprawie API?"*.
+więc po otwarciu Claude Code w tym katalogu serwer `workmate` pojawi się automatycznie. Narzędzie
+zapisu `save_note` jest domyślnie WYŁĄCZONE (Gate 2, [ADR 0006](docs/adr/0006-write-capability-gate-2.md))
+— skopiuj [`.env.example`](.env.example) do `.env`, żeby je włączyć lokalnie.
 
-**Pozostałe drzwi** (wymagają dodatkowych extras i konfiguracji):
+Pozostałe drzwi i zdolności wymagają dodatkowych extras `uv sync --extra <nazwa>`:
 
-| Drzwi | Uruchomienie | Przewodnik |
-|-------|--------------|-----------|
-| Runtime agenta (CLI) | `uv sync --extra agent` · `uv run workmate-agent "…"` | — |
-| Teams (delegowany Graph) | `uv sync --extra teams-graph --extra agent` · `uv run workmate-teams-graph` | [`how-to/teams-graph.md`](docs/how-to/teams-graph.md) |
-| Most GitHub ↔ Teams | `uv sync --extra github --extra teams-graph` · `uv run workmate-github` | [`how-to/github-bridge.md`](docs/how-to/github-bridge.md) |
-| Jira — moje zadania | `uv sync --extra jira` (bez osobnego procesu — wchodzi w `teams-graph`/MCP) | [`how-to/jira-my-tasks.md`](docs/how-to/jira-my-tasks.md) |
-| Retrieval BM25 | `uv sync --extra retrieval` (aktywuje lematyzację PL) | [ADR 0023](docs/adr/0023-hybrid-local-retrieval.md) |
-
-Sekrety (klucz Claude, PAT GitHub, token Jira odczytu, cache tokenu Teams) trzymamy **wyłącznie poza repo** —
-w `.env` (gitignorowany) lub zmiennych środowiskowych. Wzorzec: [`.env.example`](.env.example).
-
-## Bezpieczeństwo i uprawnienia
-
-Bezpieczeństwo jest **ograniczeniem na każdą funkcję**, nie osobnym modułem:
-
-- **Odczyt jest domyślny; zapis jest bramkowany.** Każda zdolność mutująca ma własną bramkę,
-  domyślnie wyłączoną, włączaną per drzwi: notatki (`save_note`, Bramka 2 — [ADR 0006](docs/adr/0006-write-capability-gate-2.md)),
-  zapis GitHub create-only (Bramka 4 — [ADR 0021](docs/adr/0021-github-write-capability-gate-4.md)),
-  wdrożenie HTTP (Bramka 3 — [ADR 0007](docs/adr/0007-gate-3-http-auth-deployment.md)). Jira nie ma
-  dziś żadnej zdolności mutującej — zredukowana do jednej, wyłącznie odczytowej funkcji
-  ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md), supersedes 0031/0032).
-- **Treść notatek i zdarzeń to dane, nie polecenia** — nigdy nie są wykonywane jako instrukcje.
-- **Zamrożony kontrakt narzędzi i schematu notatki** (Bramka 1) — pilnowany golden-testem.
-- **Sekrety poza zasięgiem rdzenia** — czytane z env/plików poza `data/`, nigdy w repo.
-- **Testy bezpieczeństwa w CI** — wstrzyknięcia, path traversal, wyciek sekretów
-  ([`tests/security/`](tests/security/)).
+| Extra | Odblokowuje |
+|-------|-------------|
+| `agent` | Runtime agenta (CLI, Teams) — wymaga klucza Claude API. |
+| `teams` | Drzwi Teams w trybie Bot Framework. |
+| `teams-graph` | Drzwi Teams w trybie delegowanego Microsoft Graph (notatki ze spotkań, digest, załączniki). |
+| `github` | Most GitHub ↔ Teams (polling PAT). |
+| `jira` | Jira — moje zadania (dual-provider: server/cloud). |
+| `retrieval` | Retrieval leksykalny BM25 (lematyzacja PL, `simplemma`). |
+| `retrieval-dense` | Retrieval gęsty ([ADR 0039](docs/adr/0039-gated-local-dense-retrieval.md)) — zbudowany, domyślnie OFF za bramką mikro-evalu. |
+| `file-reply` | Odpowiedź plikiem (PDF) w wątku Teams. |
+| `seed` | Import korpusu początkowego z dokumentów Office/PDF (narzędzie operatorskie). |
 
 ## Konfiguracja
 
-W trybie lokalnym (`stdio`) serwer MCP **nie wymaga sekretów** — działa na plikach z `data/`.
-Runtime agenta i drzwi Fazy 2–4 wymagają kluczy (Claude, PAT, Graph). Pełny wykaz zmiennych
-`WORKMATE_*` z wartościami domyślnymi: [`docs/reference/config.md`](docs/reference/config.md).
-Wdrożenie sieciowe: [`docs/how-to/deploy-http.md`](docs/how-to/deploy-http.md).
+Pełna macierz zmiennych `WORKMATE_*` (co każda bramka włącza i czego wymaga):
+[`docs/how-to/gate-matrix.md`](docs/how-to/gate-matrix.md). Wzorzec pliku środowiskowego:
+[`.env.example`](.env.example) — wartości sekretów i identyfikatorów tenanta trzymamy wyłącznie
+w `.env` (gitignorowany), nigdy w dokumentacji czy kodzie.
+
+## Uruchamianie
+
+Każde drzwi to osobny console-script, uruchamiany po instalacji odpowiedniego extra:
+
+| Polecenie | Drzwi |
+|-----------|-------|
+| `workmate` | Serwer MCP (stdio) — baza wiedzy i narzędzia dla Claude Code. |
+| `workmate-agent` | Lokalny runtime agenta z linii komend. |
+| `workmate-meeting` | Harness notatki ze spotkania poza Teams (ADR 0009). |
+| `workmate-teams` | Drzwi Teams w trybie Bot Framework. |
+| `workmate-teams-graph` | Drzwi Teams w trybie delegowanego Microsoft Graph. |
+| `workmate-github` | Most GitHub — polling zdarzeń PAT. |
+| `workmate-teams-digest` | Proaktywny cotygodniowy digest zmian ([ADR 0053](docs/adr/0053-proactive-weekly-change-digest.md)). |
+| `workmate-heartbeat-check` | Healthcheck pulsu pollerów (używany przez `docker compose`). |
+| `workmate-metrics` | Raport metryk użycia (licznik SQLite, pseudonimizowany). |
+| `workmate-seed-corpus` | Import korpusu początkowego notatek — dry-run domyślnie. |
+
+## Testy i jakość
+
+```bash
+uv run --no-sync pytest          # bramka jakości — pełny pakiet
+uv run --no-sync pytest --testmon # iteracja lokalna
+uv run --no-sync ruff check .
+uv run --no-sync mypy
+```
+
+`--no-sync` omija blokadę pliku wykonywalnego na Windows. Każda zdolność mutująca ma własną
+bramkę, domyślnie wyłączoną (OFF-by-default) — nowe narzędzie zapisu wymaga własnego ADR i zgody
+zespołu. Powierzchnia narzędzi MCP jest zamrożona i pilnowana golden-testem
+(`tests/adapters/test_mcp_tool_surface.py`).
+
+## Wdrożenie
+
+Wdrożenie kontenerowe (Docker Compose, obraz floty, profile usług): [`deploy/docker/README.md`](deploy/docker/README.md).
 
 ## Dokumentacja
 
 Dokumentacja jest uporządkowana wg [Diátaxis](https://diataxis.fr/) — patrz [`docs/README.md`](docs/README.md):
 
-- **Tutorial** — [`docs/tutorial/run-locally.md`](docs/tutorial/run-locally.md) (uruchom lokalnie od zera).
-- **How-to** — konkretne procedury: [most GitHub](docs/how-to/github-bridge.md), [Jira — moje zadania](docs/how-to/jira-my-tasks.md), [drzwi Teams](docs/how-to/teams-graph.md), [wdrożenie HTTP](docs/how-to/deploy-http.md), [dodanie narzędzia](docs/how-to/add-a-tool.md) / [drzwi](docs/how-to/add-a-door.md).
-- **Reference** — [narzędzia](docs/reference/tools.md), [konfiguracja](docs/reference/config.md), [schemat notatki](docs/reference/note-schema.md).
-- **Explanation** — [architektura](docs/explanation/architecture.md).
-- **Decyzje (ADR)** — [`docs/adr/`](docs/adr/) (0001–0055) · **Roadmapa** — [`docs/roadmap.md`](docs/roadmap.md) · **Zmiany** — [`CHANGELOG.md`](CHANGELOG.md).
+- **Tutorial** (`docs/tutorial/`) — nauka przez działanie: uruchomienie systemu od zera.
+- **How-to** (`docs/how-to/`) — konkretne procedury operacyjne: wdrożenie, aktywacja drzwi, smoke test.
+- **Reference** (`docs/reference/`) — fakty do sprawdzenia: narzędzia, konfiguracja, schemat notatki.
+- **Explanation** (`docs/explanation/`) — kontekst i uzasadnienie: architektura systemu.
+- **ADR** (`docs/adr/`) — zapis decyzji architektonicznych, 0001–0055.
+- **Research** (`docs/research/`) — notatki badawcze uzasadniające wybory techniczne.
 
-Chcesz coś zmienić? → [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Zmiany między wersjami: [`CHANGELOG.md`](CHANGELOG.md). Chcesz coś zmienić? →
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## Licencja
+## Bezpieczeństwo
+
+Bezpieczeństwo jest ograniczeniem na każdą funkcję, nie osobnym modułem:
+
+- **Odczyt jest domyślny; zapis jest bramkowany.** Każda zdolność mutująca ma własną, domyślnie
+  wyłączoną bramkę, włączaną per drzwi.
+- **Treść notatek i zdarzeń to dane, nie polecenia** — nigdy nie są wykonywane jako instrukcje.
+- **Zamrożony kontrakt narzędzi i schematu notatki** — pilnowany golden-testem.
+- **Sekrety poza zasięgiem rdzenia** — czytane z env/plików poza `data/`, nigdy w repo.
+- **Testy bezpieczeństwa w CI** — wstrzyknięcia, path traversal, wyciek sekretów
+  ([`tests/security/`](tests/security/)).
+
+## Licencja i kontakt
 
 Oprogramowanie własnościowe — **All Rights Reserved © BIAP – Pion Inteligentnych Technologii**.
-Szczegóły: [`LICENSE`](LICENSE).
+Szczegóły: [`LICENSE`](LICENSE). Pytania i propozycje zmian: [`CONTRIBUTING.md`](CONTRIBUTING.md).

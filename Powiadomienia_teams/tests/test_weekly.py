@@ -84,7 +84,7 @@ def test_week_windows_from_friday_targets_next_working_week():
     # niedzieli (zmiana terminu na piątek nie rusza logiki week_windows).
     now = datetime(2026, 7, 17, 16, 0, tzinfo=WAW)  # piątek 17.07
     prior, target, target_end = week_windows(now, WAW)
-    assert prior.date().isoformat() == "2026-07-13"     # bieżący tydzień = gotowiec
-    assert target.date().isoformat() == "2026-07-20"    # następny tydzień = cel
+    assert prior.date().isoformat() == "2026-07-13"  # bieżący tydzień = gotowiec
+    assert target.date().isoformat() == "2026-07-20"  # następny tydzień = cel
     assert target_end.date().isoformat() == "2026-07-27"
     assert target.weekday() == 0  # poniedziałek

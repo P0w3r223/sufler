@@ -18,9 +18,11 @@ Czat 1:1 NIE ma dysku SharePoint (jak kanał), więc plik ląduje na OneDrive �
 3. ``POST /chats`` — idempotentne znalezienie/utworzenie czatu 1:1 z odbiorcą.
 4. ``POST /chats/{id}/messages`` — wiadomość z załącznikiem ``reference`` (``<attachment id>``).
 
-Polityka ponawiania jak w ``graph_file_sender``: 429 ZAWSZE; 5xx/timeout tylko dla bezpiecznych —
-upload (po ścieżce), ``invite`` (ponowne nadanie nieszkodliwe) i utworzenie czatu TAK, ale WYSŁANIE
-WIADOMOŚCI z plikiem NIE (powtórka po niejednoznacznym timeoucie = druga karta pliku).
+Retry (429 ZAWSZE; 5xx/timeout tylko dla bezpiecznych — upload po ścieżce, ``invite`` ponowne
+nadanie nieszkodliwe i utworzenie czatu TAK, ale WYSŁANIE WIADOMOŚCI z plikiem NIE, powtórka po
+niejednoznacznym timeoucie = druga karta pliku) idzie przez wspólny
+``graph_http.request_with_retry`` — ta sama polityka co ``graph_file_sender``/
+``graph_teams_notifier``/``graph_user_push``, jedno miejsce zamiast czterech kopii.
 """
 
 from __future__ import annotations
@@ -34,12 +36,9 @@ from urllib.parse import quote
 
 import httpx
 
+from workmate.adapters.outbound import graph_http
+
 GRAPH = "https://graph.microsoft.com/v1.0"
-_MAX_429_RETRIES = 5
-_DEFAULT_RETRY_AFTER_S = 5
-_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
-_MAX_TRANSIENT_RETRIES = 3
-_TRANSIENT_BACKOFF_S = 2
 # GUID z ``eTag`` driveItem (np. ``"{2318B4D5-…},1"``) — Teams wiąże nim ``<attachment id>``
 # w treści z pozycją w tablicy ``attachments`` (jak ``graph_file_sender``).
 _GUID_RE = re.compile(
@@ -213,39 +212,17 @@ class HttpxGraphUserDocPush:
         headers: dict[str, str] | None = None,
         retry_transient: bool = False,
     ) -> httpx.Response:
-        """Wykonaj żądanie; ponów 429 ZAWSZE, a 5xx/timeout tylko gdy powtórzenie jest bezpieczne.
-
-        Wzorzec i uzasadnienie jak w ``graph_file_sender._request``: timeout wysyłki znaczy „nie
-        wiadomo, czy Graph przyjął" — dla wiadomości z plikiem powtórka = duplikat, dlatego
-        ``retry_transient`` włączają tylko GET, upload, ``invite`` i utworzenie czatu.
-        """
-        throttled = 0
-        transient = 0
-        while True:
-            try:
-                response = self._client.request(
-                    method, url, json=json, content=content, headers=headers
-                )
-            except httpx.TransportError:
-                if not retry_transient or transient >= _MAX_TRANSIENT_RETRIES:
-                    raise
-                transient += 1
-                self._sleep(_TRANSIENT_BACKOFF_S * transient)
-                continue
-            if response.status_code == 429 and throttled < _MAX_429_RETRIES:
-                throttled += 1
-                self._sleep(_retry_after(response))
-                continue
-            if (
-                retry_transient
-                and response.status_code in _RETRYABLE_STATUS
-                and transient < _MAX_TRANSIENT_RETRIES
-            ):
-                transient += 1
-                self._sleep(_TRANSIENT_BACKOFF_S * transient)
-                continue
-            response.raise_for_status()
-            return response
+        """Wykonaj żądanie ze wspólną polityką ponawiania — patrz ``graph_http``."""
+        return graph_http.request_with_retry(
+            self._client,
+            method,
+            url,
+            json=json,
+            content=content,
+            headers=headers,
+            retry_transient=retry_transient,
+            sleep=self._sleep,
+        )
 
 
 def _member(user_id: str) -> dict[str, Any]:
@@ -297,11 +274,3 @@ def _require(value: Any, name: str) -> str:
     if not value:
         raise RuntimeError(f"Odpowiedź Graph nie zawiera '{name}' — upload niekompletny?")
     return str(value)
-
-
-def _retry_after(response: httpx.Response) -> int:
-    """Sekundy odczekania z nagłówka Retry-After (fallback, gdy brak/niepoprawny)."""
-    try:
-        return int(response.headers.get("Retry-After", _DEFAULT_RETRY_AFTER_S))
-    except ValueError:
-        return _DEFAULT_RETRY_AFTER_S

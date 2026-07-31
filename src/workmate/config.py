@@ -158,8 +158,9 @@ class Settings:
     transport: str
     log_level: str
     # Profil uprawnień per drzwi (Bramka 2, ADR 0006): czy narzędzie zapisu
-    # (save_note) jest wystawione. Lokalne drzwi dev domyślnie ufane (True);
-    # mniej zaufane drzwi (przyszły Teams/GitHub) ustawiają False.
+    # (save_note) jest wystawione. Domyślnie WYŁĄCZONE na wszystkich drzwiach — bez wyjątku dla
+    # lokalnego dev (amendment ADR 0006, 2026-07-31); operator włącza świadomie
+    # (WORKMATE_ENABLE_WRITE=true) albo per drzwi przekazuje ``enable_write=True`` w wiringu.
     enable_write: bool
     # Ustawienia trybu HTTP (streamable-http, Bramka 3 / ADR 0007). W trybie stdio
     # nieużywane — mają bezpieczne wartości domyślne i nie wymagają niczego od
@@ -199,7 +200,7 @@ class Settings:
             projects_registry=projects_registry,
             transport=transport,
             log_level=os.environ.get("WORKMATE_LOG_LEVEL", "INFO"),
-            enable_write=_bool_from_env("WORKMATE_ENABLE_WRITE", default=True),
+            enable_write=_bool_from_env("WORKMATE_ENABLE_WRITE", default=False),
             tokens_file=_path_from_env("WORKMATE_TOKENS_FILE", _DEFAULT_TOKENS_FILE),
             bind_host=os.environ.get("WORKMATE_BIND_HOST", "127.0.0.1"),
             bind_port=_int_from_env("WORKMATE_BIND_PORT", 8000),

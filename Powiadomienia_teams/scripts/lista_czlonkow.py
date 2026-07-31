@@ -15,6 +15,7 @@ Na serwerze:
     sudo -u powiadomienia /opt/teams-shifts-reminder/.venv/bin/python \
         /opt/teams-shifts-reminder/scripts/lista_czlonkow.py
 """
+
 from __future__ import annotations
 
 import sys

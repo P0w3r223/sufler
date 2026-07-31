@@ -10,6 +10,10 @@ a po oknie `reply_window_hours` bez reakcji uprzejmie zamyka temat. Pełny zamys
 
 > Samodzielny pod-projekt (własny `pyproject.toml`, środowisko `uv`). Reużywa wzorców
 > uwierzytelniania z drzwi `teams_graph` głównego repo WorkMate.
+>
+> **Status kopii.** Ten katalog jest kopią referencyjną — pod-projekt jest wdrażany i utrzymywany
+> osobno (Docker + systemd na serwerze docelowym). Źródłem prawdy o wersji produkcyjnej jest to
+> środowisko, nie ten katalog; treść tutaj może od niego odbiegać.
 
 ## Stan prac
 

@@ -12,10 +12,10 @@ dependencies = [
     # server.py importuje uvicorn wprost w gałęzi HTTP (streamable-http, ADR 0007);
     # deklarujemy go jawnie, nie polegając na tranzytywności przez mcp[cli].
     "uvicorn>=0.30",
-    # ``core/domain/week.py`` liczy granice tygodnia przez ``ZoneInfo`` (ADR 0035). Windows nie ma
-    # systemowej bazy stref, więc bez tego pakietu ZoneInfo("Europe/Warsaw") rzuca — na Linuksie
-    # (serwer docelowy) baza jest systemowa, stąd marker. Zależność RDZENIA, nie extra: to czysta
-    # domena, a jej testy biegają bez extras.
+    # ``core/domain/week.py`` liczy granice tygodnia przez ``ZoneInfo`` (używane przez cotygodniowy
+    # digest zmian, ADR 0053). Windows nie ma systemowej bazy stref, więc bez tego pakietu
+    # ZoneInfo("Europe/Warsaw") rzuca — na Linuksie (serwer docelowy) baza jest systemowa, stąd
+    # marker. Zależność RDZENIA, nie extra: to czysta domena, a jej testy biegają bez extras.
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
@@ -134,6 +134,7 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
+    "import-linter>=2.0",    # egzekwuje granice adapters/core i outbound/inbound (`lint-imports`)
 ]
 
 [build-system]
@@ -210,3 +211,20 @@ ignore_missing_imports = true
 pythonpath = ["src", "eval"]
 testpaths = ["tests"]
 addopts = "-q"
+
+# Granice architektoniczne egzekwowane maszynowo (#9.4, przegląd kodu 2026-07-31). ADR 0001:44-46
+# przewidywał ten krok ("An import-linter rule could enforce it later"). Uruchom: `uv run lint-imports`.
+[tool.importlinter]
+root_package = "workmate"
+
+[[tool.importlinter.contracts]]
+name = "core nie importuje adapterów"
+type = "forbidden"
+source_modules = ["workmate.core"]
+forbidden_modules = ["workmate.adapters"]
+
+[[tool.importlinter.contracts]]
+name = "outbound nie importuje inbound"
+type = "forbidden"
+source_modules = ["workmate.adapters.outbound"]
+forbidden_modules = ["workmate.adapters.inbound"]

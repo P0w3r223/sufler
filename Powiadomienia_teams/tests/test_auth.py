@@ -80,10 +80,14 @@ def test_aadsts_code_reaches_the_exception_message(tmp_path: Path):
     Bez niej „utracono sesję" nie odróżnia zmiany hasła od polityki Conditional Access, a te
     wymagają zupełnie różnych działań administratora.
     """
-    app = _FakeApp(silent_result={
-        "error": "invalid_grant",
-        "error_description": "AADSTS50173: The provided grant has expired due to it being revoked",
-    })
+    app = _FakeApp(
+        silent_result={
+            "error": "invalid_grant",
+            "error_description": (
+                "AADSTS50173: The provided grant has expired due to it being revoked"
+            ),
+        }
+    )
     provider = build_token_provider(_settings(tmp_path / "c.bin"), app_factory=_factory(app))
     with pytest.raises(AuthExpiredError, match="AADSTS50173"):
         provider()

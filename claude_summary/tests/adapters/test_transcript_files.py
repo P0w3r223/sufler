@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from claude_summary.adapters.transcript_files import iter_prompts, repo_folder_name
+from claude_summary.adapters.transcript_files import (
+    _folder_name_of,
+    iter_prompts,
+    repo_folder_name,
+)
 
 
 def _write_jsonl(path: Path, entries: list[dict[str, Any]]) -> None:
@@ -51,8 +55,18 @@ def test_iter_prompts_keeps_only_human(tmp_path: Path) -> None:
     assert prompts[0].text == "prawdziwy prompt ąćź"  # UTF-8 zachowane
 
 
-def test_repo_folder_name_windows() -> None:
-    assert repo_folder_name(Path("C:\\Users\\Test\\repo")) == "C--Users-Test-repo"
+def test_folder_name_of_replaces_windows_separators() -> None:
+    # Czysta transformacja stringa (bez .resolve()) — platformowo niezależna, w odróżnieniu od
+    # repo_folder_name z surową ścieżką windowsową (patrz test niżej: pęka na POSIX, bo
+    # .resolve() dokleja cwd do backslashy potraktowanych jako literalna nazwa pliku).
+    assert _folder_name_of("C:\\Users\\Test\\repo") == "C--Users-Test-repo"
+
+
+def test_repo_folder_name_resolves_real_path(tmp_path: Path) -> None:
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+
+    assert repo_folder_name(repo) == _folder_name_of(str(repo.resolve()))
 
 
 def test_repo_filter_by_cwd_and_folder(tmp_path: Path) -> None:

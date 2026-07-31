@@ -441,8 +441,9 @@ def build_worklog_catalog(service: WorklogService) -> list[ToolSpec]:
     bramki — po wycięciu ścieżki zapisu nic tu nie mutuje, a odczyt jest domyślny (ADR 0006).
 
     JEDNO narzędzie: towarzyszący mu ``log_jira_worklog`` został USUNIĘTY razem z całą ścieżką
-    zapisu — godziny trafiają dziś do Jiry arkuszem WorklogPRO, importowanym przez człowieka
-    (ADR 0035), więc worklog ma prawdziwego autora.
+    zapisu. Karty czasu (WorklogPRO) zostały wycofane z projektu w całości — bez żadnej ścieżki
+    zapisu, ręcznej czy automatycznej (ADR 0055); to narzędzie zostaje jako czysty ODCZYT,
+    niezależny od tamtej decyzji (ADR 0034).
     """
 
     def propose_worklog(since: date, until: date, author: str = "") -> dict[str, Any]:
@@ -453,8 +454,8 @@ def build_worklog_catalog(service: WorklogService) -> list[ToolSpec]:
         ``YYYY-MM-DD``; ``author`` (login GitHub albo e-mail) zawęża do jednej osoby. Zwraca
         sesje, sumy dzienne, sumy per zgłoszenie, godziny bez przypisania oraz ``confidence``
         i ``notes``. To ESTYMACJA z punktów w czasie, nie zmierzony czas pracy — PRZEDSTAW ją
-        użytkownikowi razem z zastrzeżeniami z pola ``notes`` i ``disclaimer``. Godzin nie da
-        się stąd nigdzie zapisać: do Jiry wprowadza je człowiek, importując arkusz.
+        użytkownikowi razem z zastrzeżeniami z pola ``notes`` i ``disclaimer``. Narzędzie niczego
+        nie zapisuje ani nie wysyła do Jiry — to wyłącznie podgląd dla pytającego.
         """
 
         def build() -> dict[str, Any]:

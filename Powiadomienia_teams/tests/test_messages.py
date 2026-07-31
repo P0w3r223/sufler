@@ -54,7 +54,9 @@ def test_describe_time_off_uses_actual_reason_name():
 def test_describe_schedule_uses_color_emoji_not_words():
     green = Shift("u1", datetime(2026, 7, 20, 6, tzinfo=UTC), datetime(2026, 7, 20, 14, tzinfo=UTC))
     blue = Shift(
-        "u1", datetime(2026, 7, 21, 6, tzinfo=UTC), datetime(2026, 7, 21, 14, tzinfo=UTC),
+        "u1",
+        datetime(2026, 7, 21, 6, tzinfo=UTC),
+        datetime(2026, 7, 21, 14, tzinfo=UTC),
         theme="blue",
     )
     text = describe_schedule(WeekSchedule("u1", date(2026, 7, 20), (green, blue)), WAW)

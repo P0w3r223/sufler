@@ -20,12 +20,16 @@ from claude_summary.core.models import Prompt
 from claude_summary.core.transcripts import is_human_prompt, parse_prompt
 
 
-def repo_folder_name(repo: Path) -> str:
-    """Nazwa folderu ``~/.claude/projects`` odpowiadająca katalogowi startu sesji w tym repo."""
-    text = str(repo.resolve())
+def _folder_name_of(text: str) -> str:
+    """Zamień separatory ścieżki na ``-`` (czysta transformacja stringa, bez dotyku dysku)."""
     for separator in (":", "\\", "/"):
         text = text.replace(separator, "-")
     return text
+
+
+def repo_folder_name(repo: Path) -> str:
+    """Nazwa folderu ``~/.claude/projects`` odpowiadająca katalogowi startu sesji w tym repo."""
+    return _folder_name_of(str(repo.resolve()))
 
 
 def _is_under(cwd: str, repo: Path) -> bool:

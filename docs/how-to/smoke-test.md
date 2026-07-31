@@ -1,4 +1,4 @@
-# SMOKE_TEST.md — weryfikacja po pierwszym wdrożeniu WorkMate (Ubuntu/Docker)
+# Smoke test — weryfikacja po pierwszym wdrożeniu WorkMate (Ubuntu/Docker)
 
 ## Podstawienia (dane operatora)
 
@@ -56,7 +56,7 @@ stat -c '%a' ./env && ls -1 ./certs/ && grep -c '^[A-Z_]\+=..*' ./env
 docker compose build 2>&1 | tail -3 && docker compose --profile mcp --profile bridge up -d mcp nginx github && sleep 45 && docker compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
 ```
 **Oczekiwane:** ostatnia linia builda zawiera `writing image` / `naming to ...workmate:1.3.0` (etap `test` w obrazie przeszedł — obraz nie powstałby z czerwonych testów, `Dockerfile:46-57`); `docker compose ps` pokazuje `mcp`, `nginx`, `github` w `State=running`; kolumna `Status` NIE zawiera `Restarting` ani rosnącego licznika restartów. Po pierwszym udanym cyklu (≤ `start_period` 90 s — jeśli widać jeszcze `health: starting`, powtórz `ps`) `Status` dla `mcp`, `github` zawiera `(healthy)` (healthcheck pulsu R5, `docker-compose.yml`); `nginx` bez healthchecku zostaje samym `running`. Definitywnie potwierdza to T21.
-**Porażka oznacza:** build pada na etapie `test` → regresja testów na docelowym Pythonie/architekturze (sekcja „Do sprawdzenia ręcznie" GAPS.md). Poller w `Restarting` → zła zmienna wymagana (patrz T04).
+**Porażka oznacza:** build pada na etapie `test` → regresja testów na docelowym Pythonie/architekturze (sekcja „Do sprawdzenia ręcznie" `docs/reference/gaps.md`). Poller w `Restarting` → zła zmienna wymagana (patrz T04).
 
 ### T04 · F1 · ~10 s
 **Warunek wstępny:** obraz zbudowany (T03).
@@ -79,8 +79,17 @@ docker compose run --rm -T -e WORKMATE_GITHUB_TOKEN= github; echo "exit=$?"
 ```bash
 docker compose run --rm -T -e WORKMATE_EVENTS_DB=/nonexistent/events.db mcp python -c "import asyncio;from workmate.server import build_server;print(sorted(t.name for t in asyncio.run(build_server().list_tools())))"
 ```
-**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'save_note', 'search_notes']` (5 = zamrożone 4+1, ADR 0040; `save_note` obecne, bo stdio ma `WORKMATE_ENABLE_WRITE=true` domyślnie, `config.py:162`).
-**Porażka oznacza:** brak `save_note` → stdio straciło jedyne drzwi zapisu; nadmiar narzędzi → naruszenie zamrożonego kontraktu (golden-test `test_mcp_tool_surface`).
+**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'search_notes']` (4 = zamrożone odczyty, ADR 0040; `save_note` NIEOBECNE — `WORKMATE_ENABLE_WRITE` jest domyślnie OFF nawet na stdio od amendmentu ADR 0006, 2026-07-31, `config.py:202`).
+**Porażka oznacza:** nadmiar/brak narzędzi → naruszenie zamrożonego kontraktu (golden-test `test_mcp_tool_surface`); `save_note` obecne bez jawnego `WORKMATE_ENABLE_WRITE=true` → bramka Gate 2 otwarta domyślnie (regres #8).
+
+### T05b · F2 · ~1 min
+**Warunek wstępny:** j.w.
+**Komenda:**
+```bash
+docker compose run --rm -T -e WORKMATE_EVENTS_DB=/nonexistent/events.db -e WORKMATE_ENABLE_WRITE=true mcp python -c "import asyncio;from workmate.server import build_server;print(sorted(t.name for t in asyncio.run(build_server().list_tools())))"
+```
+**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'save_note', 'search_notes']` (5 = zamrożone 4+1, ADR 0040) — z jawnym opt-in `save_note` wraca.
+**Porażka oznacza:** brak `save_note` mimo jawnego `WORKMATE_ENABLE_WRITE=true` → stdio straciło jedyne drzwi zapisu.
 
 ### T06 · F2 · ~1 min
 **Warunek wstępny:** j.w., baza wiedzy zamontowana (`../../data:ro`).
@@ -134,10 +143,10 @@ docker compose run --rm -T teams-graph python -c "import os,httpx;r=httpx.get(os
 **Porażka oznacza:** `401`/`403` → token nieważny lub zły `WORKMATE_JIRA_EMAIL` (Cloud).
 
 > **Pełniejszy preflight** (auth + próbne `search_issues` + opcjonalna weryfikacja tożsamości AAD,
-> [ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md)) — `deploy/jira/preflight.py` nie
+> [ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)) — `deploy/jira/preflight.py` nie
 > jest wpieczony w obraz (kopiowany tylko `deploy/http/`, `Dockerfile`), więc uruchom go Z HOSTA, z
 > checkoutu repo: `uv run --no-sync python deploy/jira/preflight.py`. Szczegóły:
-> [`deploy/jira/README.md`](deploy/jira/README.md), [`jira-my-tasks.md`](docs/how-to/jira-my-tasks.md).
+> [`jira-my-tasks.md`](jira-my-tasks.md).
 
 ### T09b · F3 · ~2 min — „moje zadania" realne pytanie (Teams)
 **Warunek wstępny:** T07 (teams-graph) i T09 zielone; `WORKMATE_TEAMS_GRAPH_IDENTITIES` wskazuje na
@@ -174,11 +183,11 @@ docker compose run --rm -T mcp python -c "import sqlite3;print(sqlite3.connect('
 > Na FLOCIE zapis bazy wiedzy jest KONSTRUKCYJNIE wyłączony na drzwiach HTTP (`server.py:108`), a `../../data` montowane RO. `save_note` żyje tylko na zaufanych drzwiach stdio z RW-dostępem do notatek — T11 wykonuje to jawnym override'em montażu.
 
 ### T11 · F5 · [DESTRUKCYJNY — dodaje notatkę] · ~2 min — save_note DOKŁADA, nie nadpisuje
-**Warunek wstępny:** projekt `workmate` istnieje w rejestrze (3 notatki w `data/notes/biap/workmate/`). Montaż RW tylko na czas testu.
+**Warunek wstępny:** projekt `workmate` istnieje w rejestrze (3 notatki w `data/notes/biap/workmate/`). Montaż RW tylko na czas testu. `WORKMATE_ENABLE_WRITE=true` jawnie w komendzie — domyślnie OFF nawet na stdio (amendment ADR 0006, 2026-07-31).
 **Komenda:**
 ```bash
 before=$(ls -1 ../../data/notes/biap/workmate/*.md | wc -l)
-docker compose run --rm -T -v ${WM}/data:/app/data mcp python -c "import asyncio;from workmate.server import build_server;print(asyncio.run(build_server().call_tool('save_note',{'title':'smoke F5','project':'workmate','date':'2026-07-28','body':'nota testowa'})))"
+docker compose run --rm -T -e WORKMATE_ENABLE_WRITE=true -v ${WM}/data:/app/data mcp python -c "import asyncio;from workmate.server import build_server;print(asyncio.run(build_server().call_tool('save_note',{'title':'smoke F5','project':'workmate','date':'2026-07-28','body':'nota testowa'})))"
 after=$(ls -1 ../../data/notes/biap/workmate/*.md | wc -l)
 echo "before=$before after=$after"
 ```
@@ -190,9 +199,9 @@ echo "before=$before after=$after"
 **Warunek wstępny:** obraz zbudowany. Odwzorowuje wiring drzwi sieciowych (`_build_http_server` wymusza `enable_write=False`, `server.py:101-108`).
 **Komenda:**
 ```bash
-docker compose run --rm -T mcp python -c "import asyncio;from dataclasses import replace;from workmate.config import Settings;from workmate.server import build_server;print('save_note' in [t.name for t in asyncio.run(build_server(replace(Settings.from_env(),enable_write=False)).list_tools())])"
+docker compose run --rm -T mcp python -c "import asyncio;from dataclasses import replace;from workmate.config import Settings;from workmate.server import build_server;print('save_note' in [t.name for t in asyncio.run(build_server(replace(Settings.from_env(),enable_write=True)).list_tools())])"
 ```
-**Oczekiwane:** `False` — `save_note` NIE jest w ogóle zarejestrowane na drzwiach HTTP (nie „obecne ale zablokowane" — nieobecne).
+**Oczekiwane:** `False` — mimo jawnego `enable_write=True` w konstrukcji `Settings`, `_build_http_server` wymusza `False` niezależnie od tego, co przekazano; `save_note` NIE jest w ogóle zarejestrowane na drzwiach HTTP (nie „obecne ale zablokowane" — nieobecne).
 **Porażka oznacza:** `True` → zapis wystawiony po sieci (Gate 3, ADR 0007) — krytyczna regresja bezpieczeństwa.
 
 ---
@@ -256,7 +265,7 @@ cd ${WM}/deploy/docker && docker compose ps --format 'table {{.Service}}\t{{.Sta
 ---
 
 > **F8 (Zadania cykliczne — karty czasu WorklogPRO) usunięta.** WorklogPRO wycofane z projektu w
-> całości ([ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md), supersedes 0035/0036/0037/0038)
+> całości ([ADR 0055](../adr/0055-withdraw-worklogpro-timesheets.md), supersedes 0035/0036/0037/0038)
 > — decyzja trwała, nie pauza. Nie ma już serwisów `worklogi`/`worklog-selfservice`, wolumenu
 > `worklogi-out` ani zmiennych `WORKMATE_WORKLOGI_*`. `core/domain/week.py` zostaje (używane przez
 > cotygodniowy digest zmian, ADR 0053) — to nie jest ta sama funkcjonalność.
@@ -272,7 +281,7 @@ docker compose run --rm -T -v ${WM}/data:/app/data mcp python -c "import asyncio
 **Oczekiwane (a):** dokładnie JEDEN nowy plik (treść zapisana jako tekst); żaden dodatkowy zapis „firmy obcej" nie powstał — treść notatki to dane, nie polecenia.
 
 > **Test (b) usunięty** — walidował path-traversal w kluczu Jira dla `comment_jira_issue`/
-> `transition_jira_issue`. Oba narzędzia zapisu zniknęły z Jiry ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md)) —
+> `transition_jira_issue`. Oba narzędzia zapisu zniknęły z Jiry ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)) —
 > `get_my_jira_tasks` ma zero parametrów, więc nie ma klucza od modelu do zwalidowania.
 
 **Komenda (c) — brak sekretów w logach:**
@@ -321,7 +330,7 @@ docker compose run --rm -T github sh -c ': > /tmp/hb; workmate-heartbeat-check -
 
 ## NIE DA SIĘ SPRAWDZIĆ TYM SCENARIUSZEM
 
-- **`create_github_issue` / `reply_on_thread` (zapisy agenta).** Osiągalne wyłącznie przez pętlę agenta wyzwoloną wiadomością PRZYCHODZĄCĄ (kanał `Workmate-teams` lub Telegram) — wymaga DRUGIEJ osoby piszącej do bota ORAZ włączenia bramek zapisu w sandboxie. Operator SSH nie wyzwoli ich deterministycznie sam. Reprezentatywna odmowa zapisu jest pokryta (T12: HTTP nie wystawia zapisu; T13: strażnik pętli). Jira nie ma już ŻADNEGO narzędzia zapisu ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md)) — nie ma czego tu wymieniać.
+- **`create_github_issue` / `reply_on_thread` (zapisy agenta).** Osiągalne wyłącznie przez pętlę agenta wyzwoloną wiadomością PRZYCHODZĄCĄ (kanał `Workmate-teams` lub Telegram) — wymaga DRUGIEJ osoby piszącej do bota ORAZ włączenia bramek zapisu w sandboxie. Operator SSH nie wyzwoli ich deterministycznie sam. Reprezentatywna odmowa zapisu jest pokryta (T12: HTTP nie wystawia zapisu; T13: strażnik pętli). Jira nie ma już ŻADNEGO narzędzia zapisu ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)) — nie ma czego tu wymieniać.
 - **Nudge Shifts, okno per-user, watermark z czasu serwera (C1).** Należą do POD-PROJEKTU `Powiadomienia_teams/` — osobny obraz i `docker-compose.yml` (`.dockerignore:37`), poza tą flotą. Wymaga własnego scenariusza.
 - **Ważność refresh-tokenu MSAL po dłuższym przestoju.** Rolling expiry — dowód wymaga UPŁYWU CZASU (dni/tygodnie bez aktywności), nie pojedynczego przebiegu. T07 dowodzi tylko „ważny teraz".
 - **Realne zachowanie przy `429`/`Retry-After` z Jiry przy odczycie „moje zadania".** Wymaga RUCHU PRODUKCYJNEGO (throttling) — nie da się wywołać deterministycznie z jednego konta sandbox.
@@ -329,4 +338,4 @@ docker compose run --rm -T github sh -c ': > /tmp/hb; workmate-heartbeat-check -
 - **Autostart Dockera po reboocie (T16).** Zależy od `systemctl enable docker` na hoście — konfiguracja systemu, poza obrazem/kodem.
 - **Zgody admina Entra na zakresy Graph** — wymagają uprawnień administracyjnych.
 - **Żywe przejście pollera w `unhealthy` pod realnym zawisem (R5).** T21(a) dowodzi `healthy` przy pracy, T21(b) — że checker odrzuca stary puls; ale wymuszenie PRAWDZIWEGO zawieszenia żywego pollera (bez ubijania kontenera), tak by Docker sam przełączył go w `unhealthy`, wymaga wstrzyknięcia błędu w pętlę — pokryte testem jednostkowym (`test_run_skips_heartbeat_when_round_fails`), nie scenariuszem operatorskim.
-- **M3 na realnym transkrypcie/wątku spotkania Teams (`/notatka`, „zapisz to").** Kod i testy KOMPLETNE, bramki włączone w `deploy/docker/env`/`.example` (ADR 0041/0042/0043/0047/0048 zaakceptowane) — to NIE jest pozycja otwarta ani blokująca. Wymaga realnego identyfikatora spotkania, dostępnego dopiero po uruchomieniu tej floty na serwerze docelowym — opcjonalna weryfikacja POWDROŻENIOWA, procedura: [`docs/how-to/meeting-transcript-live-smoke.md`](docs/how-to/meeting-transcript-live-smoke.md).
+- **M3 na realnym transkrypcie/wątku spotkania Teams (`/notatka`, „zapisz to").** Kod i testy KOMPLETNE, bramki włączone w `deploy/docker/env`/`.example` (ADR 0041/0042/0043/0047/0048 zaakceptowane) — to NIE jest pozycja otwarta ani blokująca. Wymaga realnego identyfikatora spotkania, dostępnego dopiero po uruchomieniu tej floty na serwerze docelowym — opcjonalna weryfikacja POWDROŻENIOWA, procedura: [`meeting-transcript-live-smoke.md`](meeting-transcript-live-smoke.md).

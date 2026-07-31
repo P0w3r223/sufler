@@ -9,10 +9,11 @@ Wysłanie obrazu to: (1) ``GET /me`` po id „głosu" bota (cache), (2) ``POST /
 utworzenie/znalezienie czatu 1:1 z odbiorcą, wzorzec ``Powiadomienia_teams``), (3) ``POST
 …/messages`` z obrazem INLINE w ``hostedContents`` (bez dysku SharePoint → bez zakresu ``Files.*``).
 
-Polityka ponawiania jak w ``graph_teams_notifier``/``graph_file_sender``: 429 ZAWSZE (żądanie
-odrzucone przed przetworzeniem), 5xx/timeout tylko dla bezpiecznych — ``GET`` oraz idempotentne
-utworzenie czatu TAK, ale WYSŁANIE WIADOMOŚCI z obrazem NIE (powtórka po niejednoznacznym timeoucie
-dołożyłaby drugi obraz).
+Retry (429 ZAWSZE; 5xx/timeout tylko dla bezpiecznych — ``GET`` oraz idempotentne utworzenie
+czatu TAK, ale WYSŁANIE WIADOMOŚCI z obrazem NIE, powtórka po niejednoznacznym timeoucie
+dołożyłaby drugi obraz) idzie przez wspólny ``graph_http.request_with_retry`` — ta sama polityka
+co ``graph_teams_notifier``/``graph_file_sender``/``graph_user_doc_push``, jedno miejsce zamiast
+czterech kopii.
 """
 
 from __future__ import annotations
@@ -24,12 +25,9 @@ from typing import Any
 
 import httpx
 
+from workmate.adapters.outbound import graph_http
+
 GRAPH = "https://graph.microsoft.com/v1.0"
-_MAX_429_RETRIES = 5
-_DEFAULT_RETRY_AFTER_S = 5
-_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
-_MAX_TRANSIENT_RETRIES = 3
-_TRANSIENT_BACKOFF_S = 2
 # Stały identyfikator hostedContents w obrębie JEDNEJ wiadomości — treść odwołuje się do niego
 # przez ``src="../hostedContents/1/$value"``. Jeden obraz na wiadomość, więc "1" wystarcza.
 _HOSTED_ID = "1"
@@ -106,37 +104,15 @@ class HttpxGraphUserImagePush:
         json: dict[str, Any] | None = None,
         retry_transient: bool = False,
     ) -> httpx.Response:
-        """Wykonaj żądanie; ponów 429 ZAWSZE, a 5xx/timeout tylko gdy powtórzenie jest bezpieczne.
-
-        Wzorzec i uzasadnienie jak w ``graph_file_sender._request``: timeout wysyłki znaczy „nie
-        wiadomo, czy Graph przyjął" — dla wiadomości z obrazem powtórka = duplikat, dlatego
-        ``retry_transient`` włączają tylko ``GET`` i idempotentne utworzenie czatu.
-        """
-        throttled = 0
-        transient = 0
-        while True:
-            try:
-                response = self._client.request(method, url, json=json)
-            except httpx.TransportError:
-                if not retry_transient or transient >= _MAX_TRANSIENT_RETRIES:
-                    raise
-                transient += 1
-                self._sleep(_TRANSIENT_BACKOFF_S * transient)
-                continue
-            if response.status_code == 429 and throttled < _MAX_429_RETRIES:
-                throttled += 1
-                self._sleep(_retry_after(response))
-                continue
-            if (
-                retry_transient
-                and response.status_code in _RETRYABLE_STATUS
-                and transient < _MAX_TRANSIENT_RETRIES
-            ):
-                transient += 1
-                self._sleep(_TRANSIENT_BACKOFF_S * transient)
-                continue
-            response.raise_for_status()
-            return response
+        """Wykonaj żądanie ze wspólną polityką ponawiania — patrz ``graph_http``."""
+        return graph_http.request_with_retry(
+            self._client,
+            method,
+            url,
+            json=json,
+            retry_transient=retry_transient,
+            sleep=self._sleep,
+        )
 
 
 def _member(user_id: str) -> dict[str, Any]:
@@ -169,11 +145,3 @@ def _image_message(content: bytes, content_type: str) -> dict[str, Any]:
             }
         ],
     }
-
-
-def _retry_after(response: httpx.Response) -> int:
-    """Sekundy odczekania z nagłówka Retry-After (fallback, gdy brak/niepoprawny)."""
-    try:
-        return int(response.headers.get("Retry-After", _DEFAULT_RETRY_AFTER_S))
-    except ValueError:
-        return _DEFAULT_RETRY_AFTER_S
