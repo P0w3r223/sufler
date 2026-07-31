@@ -3,7 +3,7 @@
 Date: 2026-07-15
 Status: accepted
 Author: P0w3r223
-Related to: docs/adr/0010-conversation-store.md, docs/adr/0020-github-delegated-polling-door.md,
+Related to: docs/adr/0010-conversation-threading-and-context-limit.md, docs/adr/0020-github-delegated-polling-door.md,
   docs/adr/0022-proactive-dual-target-teams-push.md
 
 ---

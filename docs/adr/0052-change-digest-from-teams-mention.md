@@ -1,7 +1,7 @@
 # 0052 — Change digest on demand from a Teams @mention ("co się zmieniło od <data>")
 
 Date: 2026-07-29
-Status: proposed
+Status: accepted (implemented — `change_command.py`, `core/domain/change_digest.py`)
 Author: P0w3r223
 Related to: [ADR 0051](0051-project-brief-one-pager-from-teams-mention.md) (F4 one-pager — same seam, render skeleton, PDF channel),
 [ADR 0048](0048-thread-note-capture-from-teams-mention.md) (mention seam + gated router pattern),

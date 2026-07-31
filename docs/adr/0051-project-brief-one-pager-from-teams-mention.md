@@ -1,7 +1,7 @@
 # 0051 — Project one-pager on demand from a Teams @mention ("ogarnij mnie na <projekt>")
 
 Date: 2026-07-29
-Status: proposed
+Status: accepted (implemented — `brief_command.py`, `core/domain/project_brief.py`)
 Author: P0w3r223
 Related to: [ADR 0048](0048-thread-note-capture-from-teams-mention.md) (mention seam + gated router pattern),
 [ADR 0029](0029-branch-pr-state-transitions-and-project-activity.md) (activity facts folded into project status),
