@@ -29,7 +29,7 @@ są **domyślnie wyłączone** i włączane świadomie per drzwi.
 | `WORKMATE_PROJECTS_REGISTRY` | `<data_dir>/projects/registry.yaml` | Plik rejestru projektów. |
 | `WORKMATE_TRANSPORT` | `stdio` | Transport MCP: `stdio` lub `streamable-http`. |
 | `WORKMATE_LOG_LEVEL` | `INFO` | Poziom logowania. |
-| `WORKMATE_ENABLE_WRITE` | `true` | Czy wystawić narzędzie zapisu `save_note` ([ADR 0006](../adr/0006-write-capability-gate-2.md)). Drzwi HTTP wymuszają `false`. |
+| `WORKMATE_ENABLE_WRITE` | `false` | Czy wystawić narzędzie zapisu `save_note` ([ADR 0006](../adr/0006-write-capability-gate-2.md), amendment 2026-07-31 — domyślnie OFF wszędzie, bez wyjątku dla lokalnego stdio). Drzwi HTTP dodatkowo wymuszają `false` niezależnie od env. |
 
 ### Tryb HTTP (`streamable-http`, Bramka 3 / [ADR 0007](../adr/0007-gate-3-http-auth-deployment.md))
 

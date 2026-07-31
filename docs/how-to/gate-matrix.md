@@ -32,6 +32,7 @@ zakresu, drzwi nie wstaną i powiedzą czego brakuje.
 | **Digest "co się zmieniło od \<data\>" na @wzmiankę** (F5) | `WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST=true` | `TeamsGraphSettings.validate` |
 | **Proaktywny cotygodniowy DM z digestem** (F6) | `WORKMATE_TEAMS_DIGEST_ENABLED=true` (+ lista odbiorców + mechanizm opt-out — WARUNEK KONIECZNY, patrz uwaga niżej); zacznij od `_DRY_RUN=true` | `TeamsDigestSettings.validate` |
 | **Katalog roboczy agenta (workspace)** | `WORKMATE_ENABLE_WORKSPACE=true` + `WORKMATE_WORKSPACE_DIR` na wolumenie | `WorkspaceSettings.validate` |
+| **Zapis notatki lokalnie (`save_note`, stdio — Claude Code/`workmate-agent`)** | `WORKMATE_ENABLE_WRITE=true` (amendment ADR 0006, 2026-07-31 — domyślnie OFF bez wyjątku, także na stdio) | `Settings` / `server.py` |
 
 ---
 
@@ -43,7 +44,7 @@ zakresu, drzwi nie wstaną i powiedzą czego brakuje.
   jest tam w ogóle rejestrowane. Realna powierzchnia HTTP na flocie to **4 odczyty + kursorowy
   odczyt zdarzeń** (`read_events_since`, [ADR 0040](../adr/0040-eventstore-to-mcp-session-cursor-read.md)) —
   bez `save_note`. Zapis notatek żyje wyłącznie na zaufanych drzwiach `stdio` (`workmate-agent`,
-  lokalny MCP z `WORKMATE_ENABLE_WRITE`).
+  lokalny MCP), i tam też wymaga jawnego `WORKMATE_ENABLE_WRITE=true` — patrz wiersz wyżej.
 - **Dense retrieval (osadzenia)** — flaga `WORKMATE_RETRIEVAL_ENABLE_DENSE=true` istnieje, ale extra
   `retrieval-dense` **nie jest w obrazie floty** (`Dockerfile`), więc wiring łagodnie degraduje do
   samego BM25. Wchodzi dopiero za bramką mikro-evalu (ADR 0039) — poza tą flotą. **Stan na

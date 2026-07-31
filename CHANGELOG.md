@@ -38,6 +38,11 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   współdzielony serwer HTTP z wieloma osobami.
 
 ### Zmienione
+- **BREAKING: `WORKMATE_ENABLE_WRITE` domyślnie `false` wszędzie** (amendment ADR 0006,
+  2026-07-31) — dotąd lokalne drzwi stdio (Claude Code/`workmate-agent`) miały to domyślnie
+  `true`, jedyny udokumentowany wyjątek od „każda zdolność mutująca domyślnie OFF". Po pullu
+  `save_note` znika z lokalnego MCP, dopóki nie ustawisz jawnie `WORKMATE_ENABLE_WRITE=true`
+  w `.env` (patrz `.env.example`).
 - **Tożsamość skonsolidowana**: `Person` i mapa AAD→Jira przeniesione z `core/domain/timesheet.py`
   do nowego `core/domain/identity.py` (bez pola `git_email`, specyficznego dla worklogu); port
   `AadIdentityLookup` przeniesiony z `core/ports/timesheets.py` do nowego `core/ports/identity.py`.
