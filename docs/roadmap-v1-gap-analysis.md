@@ -248,8 +248,8 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
 |---|---|---|---|
 | **1** | RAG semantyczny (A1) | MEDIUM/LARGE | `@architect` → ADR embeddings → zgoda → implementacja |
 | **2** | Harness M3 lokalnie (A2) — ✅ zrobione 2026-07-27. Push do sesji MCP (A3) wydzielony do osobnej sesji (Research → ADR → build). | MEDIUM | A2: klocki gotowe → harness `workmate-meeting` |
-| **3** | Zapis plików na Teams: `TeamsFileSender` + ADR 0026/0027 + worklog załącznikiem (A′) | MEDIUM/LARGE | odblokowane; build + live-smoke |
-| **4** | Go-live operacyjne (C1 + C2 + C3) | operacyjna | konfiguracja + weryfikacja na żywo |
+| **3** | Zapis plików na Teams: `TeamsFileSender` + ADR 0026/0027 (A′). ~~Worklog załącznikiem~~ SUPERSEDED (D2, ADR 0055, 2026-07-30) | MEDIUM/LARGE | odblokowane; build + live-smoke |
+| **4** | Go-live operacyjne (C1 + C2). ~~C3~~ SUPERSEDED (D2, ADR 0055, 2026-07-30) | operacyjna | konfiguracja + weryfikacja na żywo |
 | **5** | Przygotowanie M4: `@architect` (tożsamość Entra/AD + async) + potwierdzenie scope `OnlineMeetingTranscript.Read.All` dla M3 | LARGE | ADR-y + lista scope'ów admina |
 | **6** | M3/M4 produkcyjnie (B1 + B2 + B3) | LARGE | po odblokowaniu pozostałych scope'ów Azure |
 

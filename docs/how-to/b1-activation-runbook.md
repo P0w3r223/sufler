@@ -99,7 +99,7 @@ Bramka zapisu wymaga (fail-fast): źródła transkryptu (Krok 3) **oraz** mapy t
 ```dotenv
 WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
 WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true
-# Mapa AAD id -> członek pionu (może być TEN SAM plik co worklogi):
+# Mapa AAD id -> członek pionu:
 WORKMATE_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
 ```
 
@@ -145,5 +145,4 @@ addytywne, domyślnie None/OFF).
 
 Grupa **B (B1+B2+B3) domknięta w kodzie, bramki WŁĄCZONE w configu floty (2026-07-30)** — live-smoke
 Kroku 3 nadal zaparkowany (brak realnego spotkania z transkryptem). Zostaje **grupa C — go-live**
-(HTTP/IIS, Jira live-smoke, worklog dry-run→bojowy) — praca operatorska; patrz
-`docs/roadmap-v1-gap-analysis.md`.
+(HTTP/IIS, Jira live-smoke) — praca operatorska; patrz `docs/roadmap-v1-gap-analysis.md`.

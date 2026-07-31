@@ -4,7 +4,8 @@ Date: 2026-07-27
 Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0027-agent-outbound-file-push-to-user.md (file variant, A′3),
-  docs/adr/0026-agent-file-reply-in-thread.md, docs/adr/0038-selfservice-on-demand-worklog-via-teams-dm.md
+  docs/adr/0026-agent-file-reply-in-thread.md,
+  docs/adr/0038-selfservice-on-demand-worklog-via-teams-dm.md (superseded by ADR 0055 — withdrawn)
 
 ---
 
