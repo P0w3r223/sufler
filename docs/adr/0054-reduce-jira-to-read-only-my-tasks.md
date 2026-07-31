@@ -1,7 +1,7 @@
 # 0054. Reduce Jira integration to a single read-only capability: "my tasks"
 
 Date: 2026-07-30
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0028-project-repo-jira-mapping-and-event-dimension.md,
   docs/adr/0030-jira-server-read-door.md, docs/adr/0031-jira-write-capability-gate-5.md,

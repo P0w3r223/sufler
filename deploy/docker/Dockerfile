@@ -2,16 +2,16 @@
 #
 # Obraz floty WorkMate (serwer MCP + drzwi-pollery). JEDEN obraz, wiele entrypointów:
 # ENTRYPOINT to `tini --`, a każda usługa docker-compose podaje własną komendę
-# (`workmate`, `workmate-github`, `workmate-jira`, …). ADR 0044.
+# (`workmate`, `workmate-github`, `workmate-teams-graph`, …). ADR 0044.
 #
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
 # Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.3.0 .
 # Testy biegną W TRAKCIE budowania (etap `test`) — obraz nie powstanie z czerwonego drzewa.
 
 # Extras całej floty — jedno źródło prawdy dla wszystkich etapów.
-# agent (runtime Claude), github/jira/teams-graph (drzwi mostu), worklogi (+file-reply dla
-# self-service), retrieval (lematyzacja PL). Dense retrieval (ADR 0039) celowo POMINIĘTY
-# — wchodzi dopiero za bramką mikro-evalu.
+# agent (runtime Claude), github/jira/teams-graph (drzwi mostu; jira = WYŁĄCZNIE odczyt "moje
+# zadania", ADR 0054), file-reply (odpowiedź plikiem w wątku Teams), retrieval (lematyzacja PL).
+# Dense retrieval (ADR 0039) celowo POMINIĘTY — wchodzi dopiero za bramką mikro-evalu.
 
 # ---------------------------------------------------------------------------
 # 1. Zależności — z uv.lock, bez pakietów deweloperskich
@@ -35,23 +35,26 @@ COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev \
         --extra agent --extra github --extra jira --extra teams-graph \
-        --extra worklogi --extra file-reply --extra retrieval
+        --extra file-reply --extra retrieval
 
 COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev \
         --extra agent --extra github --extra jira --extra teams-graph \
-        --extra worklogi --extra file-reply --extra retrieval
+        --extra file-reply --extra retrieval
 
 # ---------------------------------------------------------------------------
 # 2. Testy — bramka jakości wpięta w budowanie
 # ---------------------------------------------------------------------------
 FROM deps AS test
 
+# `seed` (pypdf/openpyxl/python-pptx) dokładany WYŁĄCZNIE tu: testy ekstrakcji Office/PDF (ADR 0016/0050)
+# importują te biblioteki, ale runtime celowo ich nie niesie (pyproject: importer korpusu to narzędzie
+# operatorskie, poza środowiskiem serwera/drzwi). Runtime kopiuje venv z etapu `deps`, więc zostaje szczupły.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked \
         --extra agent --extra github --extra jira --extra teams-graph \
-        --extra worklogi --extra file-reply --extra retrieval
+        --extra file-reply --extra retrieval --extra seed
 COPY tests/ ./tests/
 COPY eval/ ./eval/
 COPY data/ ./data/
@@ -86,8 +89,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 workmate \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin workmate \
-    && mkdir -p /var/lib/workmate /var/lib/workmate-out /app/data \
-    && chown 10001:10001 /var/lib/workmate /var/lib/workmate-out
+    && mkdir -p /var/lib/workmate /app/data \
+    && chown 10001:10001 /var/lib/workmate
 
 WORKDIR /app
 

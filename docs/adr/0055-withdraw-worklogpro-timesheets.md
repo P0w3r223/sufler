@@ -1,7 +1,7 @@
 # 0055. Withdraw WorklogPRO / weekly timesheets from the project
 
 Date: 2026-07-30
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0034-jira-worklog-from-github-commits.md,
   docs/adr/0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md,
