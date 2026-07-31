@@ -5,6 +5,13 @@ i notifier działają w jednej pętli. Token MSAL (delegowany, jak ``teams_graph
 więc wołamy go w puli wątków. Dwa cele: czat 1:1 (``create_or_get_chat`` + wiadomość, wzorzec z
 ``Powiadomienia_teams``) i nowy post root na kanale. Markdown renderujemy przez ``to_teams_html``
 (``html=False`` — surowy HTML z treści zdarzenia jest ESCAPOWANY, obrona przed wstrzyknięciem).
+
+Retry (429 ma własny licznik i odczekanie z ``Retry-After``; 5xx i błąd transportu dostają krótki,
+rosnący backoff — WYŁĄCZNIE dla żądań, które wolno powtórzyć, patrz ``_request``) idzie przez
+wspólny ``graph_http.async_request_with_retry`` — ta sama polityka co ``graph_file_sender``/
+``graph_user_push``/``graph_user_doc_push``, jedno miejsce zamiast czterech kopii. Bez tego jedno
+503 z Graph kosztowało człowieka cały tydzień: przebieg jest COTYGODNIOWY, więc „następna próba"
+oznaczała następny piątek, a nie następną minutę.
 """
 
 from __future__ import annotations
@@ -15,20 +22,11 @@ from typing import Any
 
 import httpx
 
-from workmate.adapters.inbound.teams_graph.formatting import to_teams_html
+from workmate.adapters.outbound import graph_http
+from workmate.adapters.teams_html import to_teams_html
 from workmate.core.errors import ThreadRootGone
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-_MAX_429_RETRIES = 5
-_DEFAULT_RETRY_AFTER_S = 5
-# Ponawiane statusy przejściowe. 429 ma własny licznik i odczekanie z ``Retry-After``; 5xx i błąd
-# transportu (timeout, zerwane połączenie) dostają krótki, rosnący backoff — ale WYŁĄCZNIE dla
-# żądań, które wolno powtórzyć (patrz ``_request``). Bez tego jedno 503 z Graph kosztowało
-# człowieka cały tydzień: przebieg jest COTYGODNIOWY, więc „następna próba" oznaczała następny
-# piątek, a nie następną minutę.
-_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
-_MAX_TRANSIENT_RETRIES = 3
-_TRANSIENT_BACKOFF_S = 2
 
 
 class HttpxTeamsNotifier:
@@ -132,49 +130,24 @@ class HttpxTeamsNotifier:
         json: dict[str, Any] | None = None,
         retry_transient: bool = False,
     ) -> httpx.Response:
-        """Wykonaj żądanie; ponów 429 ZAWSZE, a 5xx/timeout tylko gdy powtórzenie jest bezpieczne.
+        """Wykonaj żądanie ze wspólną polityką ponawiania (patrz ``graph_http``).
 
         **429 jest bezpieczny bez wyjątku**: limit żądań znaczy, że Graph ODRZUCIŁ żądanie przed
         przetworzeniem, i mówi wprost, ile czekać (``Retry-After``). Stąd hojne pięć prób.
 
         **5xx i timeout są bezpieczne tylko dla żądań idempotentnych** — i to jest cała różnica.
         Timeout odczytu znaczy „nie wiadomo, czy usługa przyjęła"; jeśli przyjęła, a odpowiedź
-        zginęła, powtórzenie wysyła DRUGĄ wiadomość. Dla kart czasu (ADR 0035) to dokładnie ten
-        skutek, przed którym broni reszta modułu: człowiek dostaje dwa arkusze i importuje tydzień
-        dwa razy, a wpisy w Jirze są nieusuwalne narzędziem. Ta sama pułapka dotyczy postu na
-        kanale — ponowiony ``post_channel`` tworzy drugi root wątku, a mapa zapamięta tylko ten
-        nowszy, zostawiając sierotę. Dlatego domyślnie NIE ponawiamy; ``retry_transient=True``
-        włączają wyłącznie: GET oraz utworzenie czatu 1:1 (Graph oddaje istniejący).
+        zginęła, powtórzenie wysyła DRUGĄ wiadomość. Ta sama pułapka dotyczy postu na kanale —
+        ponowiony ``post_channel`` tworzy drugi root wątku, a mapa zapamięta tylko ten nowszy,
+        zostawiając sierotę. Dlatego domyślnie NIE ponawiamy; ``retry_transient=True`` włączają
+        wyłącznie: GET oraz utworzenie czatu 1:1 (Graph oddaje istniejący).
 
         Nieudana wysyłka nie ginie: przebieg zapisuje osobę jako ``FAIL_SEND`` i NIE oznacza jej
         jako obsłużonej, więc kolejny przebieg ponowi — z człowiekiem w pętli, nie automatycznie.
         """
-        throttled = 0
-        transient = 0
-        while True:
-            try:
-                response = await self._client.request(method, url, json=json)
-            except httpx.TransportError:
-                # Brak odpowiedzi — nie wiemy, czy żądanie zostało przetworzone.
-                if not retry_transient or transient >= _MAX_TRANSIENT_RETRIES:
-                    raise
-                transient += 1
-                await asyncio.sleep(_TRANSIENT_BACKOFF_S * transient)
-                continue
-            if response.status_code == 429 and throttled < _MAX_429_RETRIES:
-                throttled += 1
-                await asyncio.sleep(_retry_after(response))
-                continue
-            if (
-                retry_transient
-                and response.status_code in _RETRYABLE_STATUS
-                and transient < _MAX_TRANSIENT_RETRIES
-            ):
-                transient += 1
-                await asyncio.sleep(_TRANSIENT_BACKOFF_S * transient)
-                continue
-            response.raise_for_status()
-            return response
+        return await graph_http.async_request_with_retry(
+            self._client, method, url, json=json, retry_transient=retry_transient
+        )
 
 
 def _member(user_id: str) -> dict[str, Any]:
@@ -193,11 +166,3 @@ def _html_body(text: str) -> dict[str, Any]:
     linki nie mogą stać się klikalne (anty-phishing) — prawdziwy URL i tak jest w treści osobno.
     """
     return {"body": {"contentType": "html", "content": to_teams_html(text, allow_links=False)}}
-
-
-def _retry_after(response: httpx.Response) -> int:
-    """Sekundy odczekania z nagłówka Retry-After (fallback, gdy brak/niepoprawny)."""
-    try:
-        return int(response.headers.get("Retry-After", _DEFAULT_RETRY_AFTER_S))
-    except ValueError:
-        return _DEFAULT_RETRY_AFTER_S

@@ -33,3 +33,6 @@ jobs:
 
       - name: Typy (mypy)
         run: uv run mypy
+
+      - name: Granice architektoniczne (import-linter)
+        run: uv run lint-imports
