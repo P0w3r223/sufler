@@ -91,6 +91,23 @@ def test_failed_link_raises_write_error_and_leaves_no_partial_note(tmp_path: Pat
     assert list(tmp_path.rglob("*.tmp")) == []
 
 
+def test_write_rejects_note_id_escaping_notes_dir(tmp_path: Path):
+    # Obrona w głąb (#9.4): nawet gdyby note.id ominął slugifikację serwisu wyżej, writer sam
+    # odrzuca ucieczkę poza notes_dir zamiast pisać poza bazą wiedzy.
+    outside_target = tmp_path.parent / "evil.md"
+    note = _note("../evil")
+
+    with pytest.raises(WriteError):
+        MarkdownNotesWriter(tmp_path).write(note)
+
+    assert not outside_target.exists()
+
+
+def test_exists_rejects_note_id_escaping_notes_dir(tmp_path: Path):
+    with pytest.raises(WriteError):
+        MarkdownNotesWriter(tmp_path).exists("../../etc/passwd")
+
+
 def test_write_never_overwrites_existing_note(tmp_path: Path):
     writer = MarkdownNotesWriter(tmp_path)
     note_id = "mpwik/scada-integration/2025-06-12-przeglad"

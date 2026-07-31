@@ -5,9 +5,10 @@ tydzień: powtórny przebieg w tym samym tygodniu nikogo nie zaczepi drugi raz, 
 zaczyna z czystym kontem. Wspólny moduł dla drzwi wysyłających cotygodniowe wiadomości (dawniej
 kart czasu, ADR 0035 — wycofane 0055; dziś digestu, ADR 0053).
 
-Zapis jest ATOMOWY (temp + ``os.replace``) — wzorzec z ``Powiadomienia_teams/state.py``, świadomie
-NIE z ``github/state.py``, gdzie ``write_text`` zostawia okno na ucięty plik. Tutaj ucięty plik
-znaczy „nikt nie dostał", czyli w najgorszym razie duplikat wiadomości u wszystkich.
+Zapis jest ATOMOWY (temp + ``os.replace``) — ten sam wzorzec co ``github/state.py`` i
+``Powiadomienia_teams/state.py`` (R1: ``docker stop`` w trakcie zapisu nie może zostawić uciętego
+pliku). Tutaj ucięty plik znaczyłby „nikt nie dostał", czyli w najgorszym razie duplikat
+wiadomości u wszystkich.
 
 Odczyt jest TOLERANCYJNY: uszkodzony plik daje pusty stan i ostrzeżenie, nie wywrócenie procesu.
 Ryzyko jest asymetryczne w drugą stronę niż przy zapisie — martwy proces nie wyśle nic nikomu
