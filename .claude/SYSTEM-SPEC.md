@@ -3,32 +3,32 @@
 Date: 2026-07-29 (zaktualizowane 2026-07-30 — D1-D3, patrz §0)
 Status: accepted
 Author: P0w3r223
-Related to: CLAUDE.md, README.md, roadmap_workmate.pdf, docs/roadmap-v1-gap-analysis.md, docs/adr/, docs/explanation/architecture.md
+Related to: CLAUDE.md, README.md, docs/roadmap.md, docs/roadmap-v1-gap-analysis.md, docs/adr/, docs/explanation/architecture.md
 
 ---
 
 Dokument-przekazanie dla agenta Claude. Zwięzła, ale kompletna specyfikacja struktury systemu:
 wystarcza, aby zrozumieć projekt, odpowiadać na pytania i planować kolejne kroki **bez czytania
-całego repo**. Napisany pod dzisiejszy cel: **domknięcie przygotowań i weryfikacja funkcjonalności
-względem Roadmapy V1** (`roadmap_workmate.pdf`). Sekcja 11 mówi o pod-projekcie
-`Powiadomienia_teams`, z którym WorkMate **docelowo współpracuje**.
+całego repo**. Napisany pod cel: **domknięcie przygotowań i weryfikacja funkcjonalności
+względem Roadmapy V1** (`docs/roadmap-v1-gap-analysis.md`, autorytatywny tracking). Sekcja 11 mówi
+o pod-projekcie `Powiadomienia_teams`, z którym WorkMate **docelowo współpracuje**.
 
 ## 0. Dzisiejszy cel (przeczytaj najpierw)
 
 **2026-07-30 — zmiana zakresu (D1-D3), wiążąca:**
 - **D1 — Jira zredukowana do JEDNEJ, wyłącznie odczytowej zdolności** — "moje zadania" (lista
   otwartych zadań pytającego, zawężona server-side). Most push/ingest do EventStore i cały zapis
-  (create/comment/tranzycja) USUNIĘTE z kodu ([ADR 0054](adr/0054-reduce-jira-to-read-only-my-tasks.md),
+  (create/comment/tranzycja) USUNIĘTE z kodu ([ADR 0054](../docs/adr/0054-reduce-jira-to-read-only-my-tasks.md),
   supersedes 0031/0032).
 - **D2 — WorklogPRO / karty czasu WYCOFANE z projektu w całości** (nie pauza) —
-  ([ADR 0055](adr/0055-withdraw-worklogpro-timesheets.md), supersedes 0035-0038). `propose_worklog`
+  ([ADR 0055](../docs/adr/0055-withdraw-worklogpro-timesheets.md), supersedes 0035-0038). `propose_worklog`
   (ADR 0034, czysty odczyt estymacji z commitów) NIE jest tym dotknięty — zostaje.
 - **D3 — M3 (notatka ze spotkania) uznane za zamknięte** — kod/bramki kompletne od 2026-07-30;
   live-smoke `/notatka`/"zapisz to" zszedł z listy otwartych pozycji do opcjonalnej weryfikacji
   powdrożeniowej.
 - Reszta tego dokumentu (poza tą sekcją i §8) opisuje stan **SPRZED** D1-D3 tam, gdzie mowa o moście
   Jira lub kartach czasu — potraktuj takie fragmenty jako HISTORYCZNE; aktualny stan jest w ADR
-  0054/0055, `docs/roadmap.md`, `GAPS.md` i `docs/how-to/gate-matrix.md`.
+  0054/0055, `docs/roadmap.md`, `docs/reference/gaps.md` i `docs/how-to/gate-matrix.md`.
 
 **Zadanie sprzed zmiany zakresu:** zakończyć przygotowania i zweryfikować funkcjonalność względem
 Roadmapy V1.
@@ -141,7 +141,7 @@ z modułem kart czasu (ADR 0055) — żadna usługa ich dziś nie referencjonuje
 - **Porty na zewnątrz:** 443/80 tylko `nginx` (terminacja TLS + `proxy_buffering off` dla SSE); `mcp` tylko `expose:8000` (sieć wewnętrzna). Drzwi bridge — polling wychodzący, bez portów.
 - **Wolumeny:** `workmate-state` (`/var/lib/workmate`: `events.db`, `conversations.db`, `*_state.json`, cache MSAL, `tokens.json`), bind `../../data:ro` (baza wiedzy, RW tylko dla `/notatka` przez wąski override `docker-compose.notatka.yml`). Wolumen `workmate-worklogi-out` USUNIĘTY (ADR 0055).
 - **Trwałość stanu (ADR 0045):** atomowy zapis `*_state.json` (github), tolerancyjny odczyt, graceful SIGTERM (dokończ rundę→zapisz→wróć), `stop_grace_period: 45s`, puls żywotności + healthcheck pollerów. `teams_graph` świadomie WYŁĄCZONY z tolerancyjnego odczytu (pusty `replied` = ryzyko powtórnych odpowiedzi).
-- **Kontrakt wdrożenia (bramki, env, procesy) w pełni wyprowadzony z kodu:** `GAPS.md` §3 i `docs/how-to/gate-matrix.md` („chcę funkcję X → włącz Y"). NIEzbudowane na żywo: brak serwera docelowego/certów/primingu MSAL — kroki operatorskie w `deploy/docker/README.md` (ma teraz sekcję "Lista kontrolna dnia wdrożenia").
+- **Kontrakt wdrożenia (bramki, env, procesy) w pełni wyprowadzony z kodu:** `docs/reference/gaps.md` §3 i `docs/how-to/gate-matrix.md` („chcę funkcję X → włącz Y"). NIEzbudowane na żywo: brak serwera docelowego/certów/primingu MSAL — kroki operatorskie w `deploy/docker/README.md` (ma teraz sekcję "Lista kontrolna dnia wdrożenia").
 
 ## 8. Karty czasu — WYCOFANE (ADR 0055, 2026-07-30)
 
@@ -150,7 +150,7 @@ całości** — decyzja trwała, nie pauza: żadne logowanie pracy w imieniu inn
 serwis, drzwi `workmate-worklogi`/`workmate-worklog-selfservice`, extra `worklogi`, profile compose,
 how-to) skasowany z repo. `propose_worklog` (ADR 0034 — czysty odczyt: estymacja godzin z historii
 commitów GitHub, agent/MCP, bez zapisu) **zostaje bez zmian** — to inna, niewycofana zdolność.
-Szczegóły decyzji: [ADR 0055](adr/0055-withdraw-worklogpro-timesheets.md).
+Szczegóły decyzji: [ADR 0055](../docs/adr/0055-withdraw-worklogpro-timesheets.md).
 
 ## 9. Konwencje
 - Opisy narzędzi zwięzłe, słowa kluczowe na początku (Claude Code skraca do ~2 KB).

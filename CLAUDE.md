@@ -7,7 +7,7 @@ Narzędzie: uruchom i pokaż wynik — nie opisuj kroków. Po zmianach: jedna li
 ## Budżet kontekstu
 - Kod lokalizuj przez **crg** (MCP `code-review-graph`; CLI zawsze: `uvx code-review-graph search|query|impact|architecture|dead-code`). Nie grep/find/Read po repo. Pierwszeństwo przed globalną regułą CodeGraph.
 - Czytaj fragmenty, nie całe pliki. ADR-y i `docs/` tylko gdy zadanie ich dotyczy — nie „na wszelki wypadek".
-- Pełny kontekst systemu jest w `docs/spec-systemowa.md` i najnowszym briefie `.claude/sessions/`. Nie odtwarzaj go z kodu.
+- Pełny kontekst systemu jest w `.claude/SYSTEM-SPEC.md` i najnowszym briefie `.claude/sessions/`. Nie odtwarzaj go z kodu.
 - Testy w iteracji: `--testmon`. Pełny pakiet = wyłącznie bramka przed commitem.
 - Po zmianach w kodzie: `uvx code-review-graph update`.
 
