@@ -20,7 +20,7 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 Jira dual-provider: `WORKMATE_JIRA_DEPLOYMENT=server|cloud`.
 
 ## Komendy
-- `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval)
+- `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval, retrieval-dense, file-reply, seed)
 - `uv run --no-sync pytest --testmon` · bramka: `uv run --no-sync pytest` (`--no-sync` omija blokadę `workmate.exe`)
 - `uv run ruff check .` · `uv run mypy` (limit linii 100)
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`

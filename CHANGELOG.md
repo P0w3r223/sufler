@@ -291,6 +291,7 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
+[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.0...HEAD
 [1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0
 [1.2.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.2.0
 [1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0
