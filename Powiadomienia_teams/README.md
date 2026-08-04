@@ -28,6 +28,10 @@ a po oknie `reply_window_hours` bez reakcji uprzejmie zamyka temat. Pełny zamys
   i nie kończą się nieprawdziwym „nie dostałem odpowiedzi". Potwierdzenie w trakcie tygodnia
   docelowego zapisuje tę część tygodnia, która jeszcze przed nami; dni zakończone są odsiewane,
   żeby nie wpisywać do grafiku przeszłości.
+- **Self-fill, pamięć rozmowy, dni urlopowe (ADR 0004, 0.2.6):** wykrywanie, że pracownik sam
+  uzupełnił Shifts (bot dziękuje zamiast dalej nagabywać); interpreter Claude pamięta do 10
+  ostatnich wiadomości z ostatniej godziny (odpowiedzi wieloturowe); częściowy urlop w tygodniu
+  nie wycisza już całej prośby — pomija tylko dni już objęte urlopem.
 
 ## Uruchomienie na żywo
 
