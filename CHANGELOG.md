@@ -6,6 +6,51 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Dodane
+- **Opcjonalna polityka odpowiadania na kanale — `reply_policy`** (ADR 0057, SZKIELET pod
+  wielokanałowe wdrożenie WorkMate). Nowa bramka „czy w ogóle odpowiadać", niezależna od
+  dotychczasowej logiki wyboru wiadomości: `WORKMATE_TEAMS_GRAPH_REPLY_POLICY` = `all` (domyślnie —
+  zachowanie identyczne jak przed tą zmianą, odpowiedź na każdą wiadomość od innego człowieka) albo
+  `mention` (odpowiedź tylko po @wzmiance bota ALBO gdy bot już wcześniej odezwał się w danym
+  wątku — „wątek przyklejony"). `WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY` (format jak `WATCH`) dokłada
+  kanały, które ZAWSZE zachowują się jak `all`, niezależnie od globalnej polityki. Nowa klasa
+  `selection.ReplyPolicy` (`mode`, `always_reply`, `from_settings`, `should_engage`) i
+  `_thread_engaged` (sygnał przyklejenia liczony z historii odpowiedzi Graph, przeżywa restart);
+  `plan_channel`/`ChannelPoller` dostają opcjonalne `policy`/`channel`, domyślnie `None` — bez
+  podania bramki zachowanie jest BITOWO identyczne jak przed ADR 0057 (zero zmiany dla obecnej
+  produkcji, opt-in per wdrożenie). **Uwaga**: ta funkcja i rozszerzony odczyt Jiry/grafik Shifts
+  (ADR 0056, patrz sekcja `[1.3.2]` poniżej) nie współistnieją jeszcze w żadnym pojedynczym
+  zbudowanym obrazie Dockera na produkcji — działały dotąd na dwóch różnych, równolegle
+  uruchomionych kontenerach; to repo jest pierwszym miejscem, gdzie obie zdolności współistnieją w
+  jednym drzewie kodu (świadome scalenie do przyszłego wydania, patrz ADR 0057 §Consequences).
+
+## [1.3.2] — 2026-08-04
+
+### Dodane
+- **Rozszerzony ODCZYT Jiry** (ADR 0056, kontynuacja ADR 0054): oprócz „moich zadań" dochodzą
+  `get_my_jira_history` (moja historia zakończonych zadań, opcjonalne okno dat), `get_jira_task`
+  (szczegóły JEDNEGO zgłoszenia po kluczu + do 5 ostatnich komentarzy), `search_jira_tasks`
+  (wyszukiwanie po tekście/projekcie/kategorii statusu) oraz `get_member_jira_tasks`/
+  `get_member_jira_history` (otwarte/zakończone zadania INNEGO członka pionu — konto Jira
+  rozwiązywane WYŁĄCZNIE przez zaufaną mapę tożsamości, `resolve_by_display_name`; nieznana albo
+  niejednoznaczna osoba dostaje czytelną odmowę, nie zgadywanie). Zero nowej mutacji — wszystko
+  nadal czysty odczyt (gwarancja fail-closed z ADR 0054 zachowana: tożsamość wołającego nigdy nie
+  jest parametrem narzędzia). Nowe `core/application/jira_read.py` (`JiraReadService`),
+  `core/domain/names.py` (`normalize_name`/`match_name` — dopasowanie WYŁĄCZNIE na zaufanym
+  zbiorze kandydatów), rozszerzenia `core/domain/jira_tasks.py` (`JiraComment`, `JiraTaskDetails`,
+  `escape_jql_string`, `build_search_jql`, `build_history_jql`, `split_by_assignment`).
+- **Grafik Teams Shifts — odczyt zmian i nieobecności zespołu** (ADR 0056). Nowe narzędzie
+  `get_team_schedule` (tydzień bieżący/poprzedni/następny albo jawny zakres dat, opcjonalnie
+  zawężone do jednej osoby po nazwisku; forma pracy stacjonarnie/zdalnie wywnioskowana z koloru
+  zmiany). Autoryzacja jest cichym tokenem MSAL POŻYCZONYM z cudzego, tylko-do-odczytu cache
+  tokenu bota powiadomienia-teams (`adapters/outbound/msal_silent_token.py`) — workmate nie loguje
+  się osobno i nigdy nie zapisuje tego cache. Nowe `core/domain/schedule.py`,
+  `core/application/team_schedule.py`, `core/ports/schedule.py`,
+  `adapters/outbound/graph_schedule_api.py`, `config.ScheduleSettings` (`enabled="auto"` — cichy
+  no-op tam, gdzie cudzy cache tokenu nie jest zamontowany).
+
+## [1.3.1] — 2026-08-03
+
 ### Usunięte
 - **Jira zredukowana do jednej, wyłącznie odczytowej zdolności „moje zadania"** (ADR 0054,
   supersedes ADR 0031 [zapis], ADR 0032 [tranzycja]; amends ADR 0028, ADR 0030). Usunięte w
@@ -296,7 +341,9 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
-[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.2
+[1.3.1]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.1
 [1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0
 [1.2.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.2.0
 [1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0
