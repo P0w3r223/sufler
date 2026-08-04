@@ -359,10 +359,10 @@ def test_my_tasks_unresolved_identity_reports_fail_closed_denial():
     assert "nie udało się ustalić" in out.lower()
 
 
-def test_my_tasks_formats_open_tasks():
+def test_my_tasks_formats_assigned_tasks():
     def get_my_jira_tasks() -> dict[str, object]:
         return {
-            "tasks": [
+            "assigned_to_me": [
                 {
                     "key": "WM-5",
                     "summary": "Zrobić X",
@@ -371,7 +371,8 @@ def test_my_tasks_formats_open_tasks():
                     "due_date": "2026-08-01",
                     "url": "https://jira.example.org/browse/WM-5",
                 }
-            ]
+            ],
+            "reported_by_me_unassigned": [],
         }
 
     def factory(sender_id: str) -> list[ToolSpec]:
@@ -384,15 +385,75 @@ def test_my_tasks_formats_open_tasks():
     assert "Zrobić X" in out
     assert "In Progress" in out
     assert "https://jira.example.org/browse/WM-5" in out
+    assert "Twoje otwarte zadania (1):" in out
 
 
-def test_my_tasks_empty_list_reports_no_open_tasks():
+def test_my_tasks_formats_both_sections():
+    def get_my_jira_tasks() -> dict[str, object]:
+        return {
+            "assigned_to_me": [
+                {"key": "WM-5", "summary": "Zrobić X", "status": "In Progress"}
+            ],
+            "reported_by_me_unassigned": [
+                {"key": "WM-9", "summary": "Zgłoszone", "status": "To Do"}
+            ],
+        }
+
     def factory(sender_id: str) -> list[ToolSpec]:
-        return [ToolSpec("get_my_jira_tasks", "", lambda: {"tasks": []})]
+        return [ToolSpec("get_my_jira_tasks", "", get_my_jira_tasks)]
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "Twoje otwarte zadania (1):" in out
+    assert "Zgłoszone przez Ciebie, nieprzypisane do nikogo (1):" in out
+    assert "WM-9" in out
+
+
+def test_my_tasks_selects_tool_by_name_when_factory_returns_several():
+    """Fabryka zwraca WIĘCEJ niż jedno narzędzie (ADR 0056) — router bierze po nazwie, nie pozycji."""
+
+    def get_jira_task(key: str) -> dict[str, object]:
+        raise AssertionError("nie powinno być wołane przez /moje-zadania")
+
+    def get_my_jira_tasks() -> dict[str, object]:
+        return {"assigned_to_me": [], "reported_by_me_unassigned": []}
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        return [
+            ToolSpec("get_jira_task", "", get_jira_task),
+            ToolSpec("get_my_jira_tasks", "", get_my_jira_tasks),
+        ]
 
     router, _ = _router(my_jira_tasks=factory)
     out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
     assert out == "Nie masz otwartych zadań w Jirze."
+
+
+def test_my_tasks_empty_lists_report_no_open_tasks():
+    def factory(sender_id: str) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                "get_my_jira_tasks",
+                "",
+                lambda: {"assigned_to_me": [], "reported_by_me_unassigned": []},
+            )
+        ]
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out == "Nie masz otwartych zadań w Jirze."
+
+
+def test_my_tasks_missing_get_my_jira_tasks_tool_reports_not_configured():
+    """Fabryka nie zawiera ``get_my_jira_tasks`` po nazwie — degradacja do czytelnej odmowy."""
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        return [ToolSpec("get_jira_task", "", lambda key: {})]
+
+    router, _ = _router(my_jira_tasks=factory)
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out == "Ta komenda nie jest skonfigurowana na tych drzwiach."
 
 
 def test_my_tasks_surfaces_tool_error():

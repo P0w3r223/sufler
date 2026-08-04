@@ -74,3 +74,31 @@ def test_two_people_sharing_a_teams_account_fail_at_startup(tmp_path: Path) -> N
     )
     with pytest.raises(ValueError, match="aad_user_id"):
         YamlIdentityDirectory(_identities(tmp_path, duplikat))
+
+
+# --- resolve_by_display_name (ADR 0056, "zadania członka" pionu) -----------------
+
+
+def test_resolve_by_display_name_matches_known_person(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_display_name("Mikołaj Anonimowicz")
+    assert person is not None
+    assert person.jira_user == "mikolaj@example.org"
+
+
+def test_resolve_by_display_name_is_case_and_diacritics_insensitive(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_display_name("mikolaj ANONIMOWICZ")
+    assert person is not None
+    assert person.source_id == "EMP-042"
+
+
+def test_resolve_by_display_name_unknown_name_returns_none(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    assert directory.resolve_by_display_name("Ktoś Inny") is None
+
+
+def test_resolve_by_display_name_skips_people_without_display_name(tmp_path: Path) -> None:
+    """EMP-017 (piotr) w fixture nie ma ``display_name`` — nie wolno go dopasować po pustym polu."""
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    assert directory.resolve_by_display_name("") is None
