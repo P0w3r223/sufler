@@ -968,6 +968,7 @@ async def _run(
         AttachmentMaterializer,
     )
     from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
+    from workmate.adapters.inbound.teams_graph.selection import ReplyPolicy
 
     initial_state = state_store.load(settings.state_path)
     # Puls żywotności (R5): siostra pliku stanu na wolumenie, odświeżana po każdej udanej rundzie.
@@ -1006,6 +1007,7 @@ async def _run(
             materializer=materializer,
             stop=stop,
             heartbeat=lambda: write_heartbeat(hb_path),
+            policy=ReplyPolicy.from_settings(settings),
         )
         await poller.run()
 

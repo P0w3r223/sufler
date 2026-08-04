@@ -638,6 +638,16 @@ class TeamsGraphSettings:
     # z warstwy spajającej), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez
     # wymogu tożsamości/RW-montażu. Dostawa PDF ``| pdf`` reużywa kanał file-reply (jak brief).
     enable_change_digest: bool = False
+    # Polityka „czy w ogóle odpowiadać" (SZKIELET pod wielokanałowe wdrożenie WorkMate).
+    # ``all`` (domyślnie) = zachowanie sprzed tej zmiany: odpowiedź na każdą wiadomość od
+    # innego człowieka w kanałach z ``watch``. ``mention`` odpowiada tylko po @wzmiance bota
+    # (lub gdy bot już jest aktywny w danym wątku — patrz ``selection.ReplyPolicy``), z
+    # wyjątkiem kanałów z ``always_reply``, które zawsze zachowują się jak ``all``. Domyślne
+    # ``all`` gwarantuje, że sam deploy tej zmiany NIC nie zmienia w produkcji.
+    reply_policy: str = "all"
+    # Kanały, które ZAWSZE odpowiadają (jak ``mode=all``), niezależnie od ``reply_policy`` —
+    # ten sam format co ``watch`` (``team:channel,team:channel``); patrz ``_parse_watch_pairs``.
+    always_reply: tuple[tuple[str, str], ...] = ()
 
     @property
     def authority(self) -> str:
@@ -699,6 +709,10 @@ class TeamsGraphSettings:
             ),
             enable_change_digest=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", default=False
+            ),
+            reply_policy=os.environ.get("WORKMATE_TEAMS_GRAPH_REPLY_POLICY", "all"),
+            always_reply=_parse_watch_pairs(
+                os.environ.get("WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY", "")
             ),
         )
 
@@ -867,6 +881,20 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE=true wymaga "
                 "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
                 f"autoryzuje zapis, ADR 0042/0048); brak pliku: {self.meeting_note_identities}."
+            )
+        if self.reply_policy not in ("all", "mention"):
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_REPLY_POLICY musi być 'all' albo 'mention', jest: "
+                f"{self.reply_policy!r}."
+            )
+        # ``always_reply`` ma sens tylko dla kanałów faktycznie nasłuchiwanych — para spoza
+        # ``watch`` to najczęściej literówka (fail-fast zamiast cichej, martwej konfiguracji).
+        stray = [pair for pair in self.always_reply if pair not in self.watch]
+        if stray:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY zawiera pary spoza WORKMATE_TEAMS_GRAPH_WATCH: "
+                + ", ".join(f"{team}:{channel}" for team, channel in stray)
+                + "."
             )
 
 
