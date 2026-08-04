@@ -97,6 +97,9 @@ class Settings:
     send_expiry_message: bool = True  # przy wygaśnięciu wyślij uprzejme domknięcie do pracownika
     poll_interval_s: int = 10  # bazowy (minimalny) odstęp odpytywania; backoff go wydłuża
     poll_max_interval_s: int = 3600  # górny limit odstępu przy długiej ciszy (1 h)
+    # Po ilu sekundach CISZY pracownika (ta sama kotwica co wygaśnięcie) wolno zajrzeć do Shifts,
+    # by wykryć samodzielne uzupełnienie grafiku. -1 wyłącza funkcję; 0 = sprawdzaj co cichy cykl.
+    self_fill_check_min_idle_s: int = 3600
     catchup_grace_hours: int = 6  # jak długo po minionym terminie wolno nadrobić przebieg (0=off)
     dry_run: bool = True
     only_user_ids: tuple[str, ...] = ()  # pusty = wszyscy; ustawiony = tryb pilotażowy
@@ -155,6 +158,11 @@ class Settings:
             )
         if self.reply_window_hours <= 0:
             raise ConfigError(f"reply_window_hours musi być > 0: {self.reply_window_hours}")
+        if self.self_fill_check_min_idle_s < -1:
+            raise ConfigError(
+                f"self_fill_check_min_idle_s musi być ≥ -1 (-1 wyłącza): "
+                f"{self.self_fill_check_min_idle_s}"
+            )
         if self.catchup_grace_hours < 0:
             raise ConfigError(f"catchup_grace_hours < 0 niedozwolone: {self.catchup_grace_hours}")
         if self.heartbeat_interval_h <= 0:
@@ -198,6 +206,7 @@ class Settings:
             send_expiry_message=_bool("SEND_EXPIRY_MESSAGE", True),
             poll_interval_s=_int("POLL_INTERVAL_S", 10),
             poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 3600),
+            self_fill_check_min_idle_s=_int("SELF_FILL_CHECK_MIN_IDLE_S", 3600),
             catchup_grace_hours=_int("CATCHUP_GRACE_HOURS", 6),
             dry_run=_bool("DRY_RUN", True),
             only_user_ids=_list("ONLY_USER_IDS"),

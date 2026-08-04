@@ -32,7 +32,7 @@ from powiadomienia_teams.agent.interpreter import (
     schedule_to_intervals,
 )
 from powiadomienia_teams.config import ConfigError, Settings, TeamContext
-from powiadomienia_teams.domain.models import Member, TimeOff, WeekSchedule
+from powiadomienia_teams.domain.models import Member, Shift, TimeOff, WeekSchedule
 from powiadomienia_teams.graph.auth import (
     AmbiguousAccountError,
     AuthExpiredError,
@@ -52,19 +52,27 @@ from powiadomienia_teams.messages import (
     WRITE_FAILED_TEXT,
     build_confirm_text,
     build_nudge_text,
+    build_self_filled_text,
     build_summary_text,
     to_html,
 )
-from powiadomienia_teams.reminders.detect import members_without_shifts
+from powiadomienia_teams.reminders.detect import (
+    member_filled_week,
+    members_without_shifts,
+    off_weekdays_by_member,
+)
 from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     prune_terminal,
+    ready_for_self_fill_check,
     should_expire,
     still_writable,
 )
 from powiadomienia_teams.reminders.propose import proposal_from_last_week
 from powiadomienia_teams.reminders.replies import (
+    advance_memory,
+    history_for_llm,
     is_pure_affirmation,
     message_text,
     newest_incoming,
@@ -129,11 +137,15 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     next_shifts = client.read_shifts(
         ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
     )
-    # Urlop w docelowym tygodniu = grafik uzupełniony (patrz `members_without_shifts`).
     next_time_off = client.read_time_off(
         ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
     )
-    missing = list(members_without_shifts(members, next_shifts, next_time_off))
+    # Dni urlopu per osoba w docelowym tygodniu (liczone w strefie zespołu, target_monday lokalne).
+    # Jedno źródło prawdy dla: detekcji (pełny tydzień wolny → pomiń), propozycji (nie proponuj
+    # pracy w dniu wolnym) i treści (wspomnij o dniach wolnych). Urlop CZĘŚCIOWY nie wycisza już
+    # prośby — piszemy o pozostałe dni.
+    off_by_member = off_weekdays_by_member(next_time_off, target_monday, tz)
+    missing = list(members_without_shifts(members, next_shifts, off_by_member))
     if settings.only_user_ids:  # tryb pilotażowy — ogranicz do wskazanych osób
         missing = [m for m in missing if m.user_id in settings.only_user_ids]
     prior_shifts = client.read_shifts(
@@ -156,10 +168,11 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
         # udanym zapisem ma już zmianę w grafiku i nie występuje w `missing`.
         if existing is not None and existing.week_start == week_start_iso:
             continue
+        member_off = off_by_member.get(member.user_id, frozenset())
         proposal = proposal_from_last_week(
-            member.user_id, prior_shifts, target_monday.date(), tz=tz
+            member.user_id, prior_shifts, target_monday.date(), tz=tz, skip_weekdays=member_off
         )
-        text = build_nudge_text(member, proposal, week_label, tz)
+        text = build_nudge_text(member, proposal, week_label, tz, off_weekdays=member_off)
         if settings.dry_run:
             logger.info(
                 "[dry-run] powiadomienie do %s <%s>:\n%s", member.display_name, member.email, text
@@ -194,6 +207,10 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
             watermark=sent_iso,
             nudged_at=sent_iso,  # niezmienny czas nudge'a — baza okna odpowiedzi
             proposal=schedule_to_intervals(proposal, tz),
+            # Dni już objęte urlopem w Graphie: przy zapisie NIE tworzymy dla nich drugiego
+            # timeOff, gdyby pracownik powtórzył je w odpowiedzi (`create_time_off` nie
+            # deduplikuje).
+            known_time_off_weekdays=sorted(member_off),
         )
         # Zapis PO KAŻDEJ wysyłce: awaria w połowie nie gubi już-wysłanych pendingów (ich odpowiedzi
         # będą czytane), a ponowienie pominie ich dzięki sprawdzeniu wyżej („co najmniej raz").
@@ -229,8 +246,14 @@ def _build_writable(
     week_start = date.fromisoformat(pending.week_start)
     pelny = build_schedule(pending.member_id, week_start, pending.resolved, tz, group_id)
     # Powody czasu wolnego rozstrzygnięte już przy potwierdzeniu — tu tylko budujemy wpisy
-    # (bez odczytu z Graph w sekcji krytycznej po APPLIED).
-    pelne_time_offs = build_time_offs(pending.member_id, week_start, pending.resolved_time_off, tz)
+    # (bez odczytu z Graph w sekcji krytycznej po APPLIED). Dni już objęte urlopem w Graphie
+    # (`known_time_off_weekdays`) odsiewamy PRZED budową: nie tworzymy dla nich drugiego timeOff
+    # i nie liczymy ich jako „pominięte" (to nie dziura w grafiku, tylko istniejący już urlop).
+    juz_wolne = set(pending.known_time_off_weekdays)
+    nowe_time_off = [
+        wpis for wpis in pending.resolved_time_off if int(wpis.get("weekday", -1)) not in juz_wolne
+    ]
+    pelne_time_offs = build_time_offs(pending.member_id, week_start, nowe_time_off, tz)
     zmiany = still_writable(pelny.shifts, now)
     time_offs = still_writable(pelne_time_offs, now)
     pominiete = (len(pelny.shifts) - len(zmiany)) + (len(pelne_time_offs) - len(time_offs))
@@ -303,6 +326,30 @@ def poll_replies(
             # Izolacja per-osoba — błąd jednej odpowiedzi nie blokuje pozostałych.
             outcomes[pending.member_id] = ReadOutcome.UNKNOWN
             logger.exception("Nie udało się obsłużyć odpowiedzi dla %s", pending.member_name)
+
+    # 1.5. Kto MILCZY na czacie od dłuższej chwili, mógł uzupełnić grafik SAM w Shifts. Zaglądamy
+    #    tam dopiero po odczycie czatu (odpowiedź ma pierwszeństwo: sprawdzamy tylko NOTHING_NEW)
+    #    i tylko gdy bot już czeka (``ready_for_self_fill_check``). Krok PRZED wygaszaniem, więc
+    #    niezmiennik brzmi: odpowiedź > sprawdzenie grafiku > wygaszenie — samouzupełniony dostaje
+    #    podziękowanie, nie „nie dostałem odpowiedzi", i wypada z kandydatów do EXPIRED niżej.
+    #    Jeden odczyt Shifts na TYDZIEŃ na cały przebieg (zwraca grafik całego zespołu).
+    kandydaci = [
+        p
+        for p in open_items
+        if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
+        and outcomes.get(p.member_id) is ReadOutcome.NOTHING_NEW
+        and ready_for_self_fill_check(p, now, settings.self_fill_check_min_idle_s)
+    ]
+    if kandydaci:
+        snapshot = _filled_weeks_snapshot(client, ctx, {p.week_start for p in kandydaci}, tz)
+        samodzielni = [
+            p
+            for p in kandydaci
+            if (dane := snapshot.get(p.week_start)) is not None
+            and member_filled_week(p.member_id, dane[0], dane[1].get(p.member_id, frozenset()))
+        ]
+        if samodzielni:
+            _close_self_filled(settings, client, state, samodzielni, tz)
 
     # 2. Wygaś te, które PO odczycie wciąż są otwarte, minął im termin I MAMY NA TO DOWÓD: udany
     #    odczyt, który nic nie przyniósł. Domyślne UNKNOWN dla braku wpisu w `outcomes` to
@@ -378,11 +425,76 @@ def _notify_closed(
             logger.exception("Nie udało się wysłać domknięcia do %s", pending.member_name)
 
 
+def _filled_weeks_snapshot(
+    client: GraphClient,
+    ctx: TeamContext,
+    week_starts: set[str],
+    tz: ZoneInfo,
+) -> dict[str, tuple[tuple[Shift, ...], dict[str, frozenset[int]]] | None]:
+    """Odczytaj grafik (zmiany + urlopy) każdego UNIKALNEGO tygodnia RAZ na przebieg.
+
+    Klucz = ``week_start`` (ISO poniedziałek). Wartość = (zmiany zespołu w tym tygodniu, mapa
+    dni urlopu per osoba z ``off_weekdays_by_member``) albo ``None``, gdy odczyt padł — brak
+    dowodu, więc krok wyżej NIE zamknie nikogo w tym cyklu (ta sama filozofia „brak dowodu ≠
+    dowód braku" co ``should_expire``). Utrata sesji propaguje się dalej — dotyczy całej usługi,
+    nie jednego tygodnia.
+    """
+    snapshot: dict[str, tuple[tuple[Shift, ...], dict[str, frozenset[int]]] | None] = {}
+    for ws in week_starts:
+        try:
+            monday = datetime.fromisoformat(ws).replace(tzinfo=tz)  # lokalna północ poniedziałku
+            end = monday + timedelta(days=7)
+            shifts = client.read_shifts(ctx.team_id, monday.astimezone(_UTC), end.astimezone(_UTC))
+            time_off = client.read_time_off(
+                ctx.team_id, monday.astimezone(_UTC), end.astimezone(_UTC)
+            )
+            snapshot[ws] = (shifts, off_weekdays_by_member(time_off, monday, tz))
+        except AuthExpiredError:
+            raise
+        except Exception:
+            logger.exception("Nie udało się odczytać grafiku tygodnia %s (Shifts)", ws)
+            snapshot[ws] = None
+    return snapshot
+
+
+def _close_self_filled(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    closed: list[st.PendingReminder],
+    tz: ZoneInfo,
+) -> None:
+    """Zamknij tematy osób, które SAME uzupełniły grafik: status SELF_FILLED utrwalony PRZED
+    wysyłką.
+
+    Wzorzec „co najwyżej raz" jak w ``_close``: najpierw commit terminalnego statusu (jeden
+    zapis dla wszystkich), potem podziękowania. Podziękowanie leci BEZWARUNKOWO (nie zależy od
+    ``send_expiry_message``, inaczej niż wygaśnięcie) — reaguje na działanie pracownika, więc
+    milczenie byłoby gorsze niż uprzejme domknięcie (jak przy ``STALE_WEEK_TEXT``).
+    """
+    for pending in closed:
+        pending.status = st.SELF_FILLED
+    st.save_state(settings.state_path, state)
+    for pending in closed:
+        try:
+            monday = datetime.fromisoformat(pending.week_start).replace(tzinfo=tz)
+            week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
+            client.send_chat_message(pending.chat_id, to_html(build_self_filled_text(week_label)))
+            logger.info(
+                "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)", pending.member_name
+            )
+        except AuthExpiredError:
+            raise  # utrata sesji dotyczy całej usługi, nie tej wiadomości (jak _notify_closed)
+        except Exception:
+            logger.exception("Nie udało się wysłać podziękowania do %s", pending.member_name)
+
+
 def _commit(
     settings: Settings,
     state: dict[str, st.PendingReminder],
     pending: st.PendingReminder,
     watermark: str,
+    reply_text: str | None = None,
 ) -> None:
     """Utrwal stan RAZEM z przesunięciem watermarku — jedyne miejsce, gdzie watermark rośnie.
 
@@ -393,9 +505,18 @@ def _commit(
     watermarku), a po 48 h dostałaby nieprawdziwe „nie dostałem odpowiedzi". Wiązanie obu zapisów
     w jednym kroku sprawia, że nieudane przetworzenie zostawia watermark nietknięty i kolejny tick
     zobaczy tę odpowiedź ponownie.
+
+    ``reply_text`` (gdy podany) to treść WŁAŚNIE obsłużonej wiadomości pracownika — dopisujemy ją
+    do pamięci rozmowy DOKŁADNIE tu, razem z watermarkiem: pamięć rośnie tylko po sukcesie i tym
+    samym „co najwyżej raz" co watermark. ``advance_memory`` wylicza nowy stan z niezmienionej
+    pamięci (nie akumuluje na miejscu), więc ponowienie tej samej wiadomości nie dubluje wpisu.
     """
     pending.watermark = watermark
     pending.fail_count = 0  # ta wiadomość obsłużona — licznik prób startuje od zera
+    if reply_text is not None:
+        pending.employee_memory, pending.memory_started_at = advance_memory(
+            pending.employee_memory, pending.memory_started_at, watermark, reply_text
+        )
     st.save_state(settings.state_path, state)
 
 
@@ -422,19 +543,25 @@ def _process_pending(
         return ReadOutcome.NOTHING_NEW
     watermark = str(incoming.get("createdDateTime", ""))
     text = message_text(incoming)
+    # Kontekst wieloturowy: WCZEŚNIEJSZE wiadomości pracownika (bez bieżącej), z uwzględnieniem
+    # stałego okna 1 h. Liczone z NIEzmienionej pamięci — bieżąca wiadomość dojdzie dopiero w
+    # ``_commit``, więc nie trafi do własnej historii, a nieudana obsługa nie zostawi duplikatu.
+    history = history_for_llm(pending.employee_memory, pending.memory_started_at, watermark)
 
     # Czyste „tak" w stanie oczekiwania na potwierdzenie → zapis. „Ok, ale nie będzie mnie w
     # czwartek" / „tak, ale w piątek 10-20" (potwierdzenie + poprawka) trafia do reinterpretacji,
     # żeby nie zapisać starej propozycji mimo prośby o zmianę.
     try:
         if pending.status == st.AWAITING_CONFIRM and is_pure_affirmation(text):
-            _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark, now)
+            _apply_confirmed_yes(settings, client, ctx, pending, tz, state, watermark, now, text)
         else:
-            _interpret_and_confirm(settings, client, llm, ctx, pending, text, tz, state, watermark)
+            _interpret_and_confirm(
+                settings, client, llm, ctx, pending, text, tz, state, watermark, history
+            )
     except AuthExpiredError:
         raise  # utrata tokenu dotyczy całej usługi, nie tej jednej wiadomości
     except Exception:
-        _record_failure(settings, client, state, pending, watermark)
+        _record_failure(settings, client, state, pending, watermark, text)
         raise  # wyżej loguje ślad — tu tylko decydujemy, czy próbować jeszcze raz
     return ReadOutcome.HANDLED
 
@@ -448,6 +575,7 @@ def _record_failure(
     state: dict[str, st.PendingReminder],
     pending: st.PendingReminder,
     watermark: str,
+    text: str,
 ) -> None:
     """Policz nieudaną obsługę tej wiadomości; po ``_MAX_PENDING_FAILURES`` odpuść ją świadomie.
 
@@ -471,7 +599,10 @@ def _record_failure(
         pending.member_name,
         pending.fail_count,
     )
-    _commit(settings, state, pending, watermark)  # przesuwa watermark i zeruje licznik
+    # Odpuszczamy tę wiadomość — watermark rusza, więc rejestrujemy ją też w pamięci (raz),
+    # spójnie z „co najwyżej raz". Wcześniejsze próby (1./2.) NIE ruszały watermarku ani pamięci.
+    # Przesuwa watermark i zeruje licznik.
+    _commit(settings, state, pending, watermark, reply_text=text)
     # Commit PRZED wysyłką (jak wszędzie): nieudana wysyłka nie może cofnąć decyzji o odpuszczeniu,
     # bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy.
     try:
@@ -489,14 +620,19 @@ def _apply_confirmed_yes(
     state: dict[str, st.PendingReminder],
     watermark: str,
     now: datetime,
+    text: str,
 ) -> None:
-    """Czyste »tak« na etapie potwierdzenia → nieodwracalny zapis (commit stanu PRZED zapisem)."""
+    """Czyste »tak« na etapie potwierdzenia → nieodwracalny zapis (commit stanu PRZED zapisem).
+
+    ``text`` to treść tego »tak« — trafia do pamięci rozmowy przez ``_commit`` mimo braku
+    wywołania modelu (fast-path), żeby historia była kompletna, gdyby rozmowa toczyła się dalej.
+    """
     # Co zostało do zapisania, liczymy PRZED commitem: to czysta operacja, a jej pusty wynik
     # znaczy zupełnie co innego niż udany zapis i musi dać inny status oraz inny komunikat.
     schedule, time_offs, pominiete = _build_writable(pending, tz, ctx.scheduling_group_id, now)
     if not schedule.shifts and not time_offs:
         pending.status = st.EXPIRED
-        _commit(settings, state, pending, watermark)
+        _commit(settings, state, pending, watermark, reply_text=text)
         # Ta wysyłka NIE podlega `send_expiry_message`: to odpowiedź na jawne „tak" pracownika,
         # a milczenie po potwierdzeniu jest gorsze niż samo domknięcie. Własny `try` — awaria
         # wysyłki nie może lecieć wyżej jako „nie udało się obsłużyć odpowiedzi": stan jest już
@@ -512,7 +648,8 @@ def _apply_confirmed_yes(
         return
 
     pending.status = st.APPLIED
-    _commit(settings, state, pending, watermark)  # commit PRZED zapisem — brak dubli przy awarii
+    # commit PRZED zapisem — brak dubli przy awarii; text → pamięć (fast-path bez modelu)
+    _commit(settings, state, pending, watermark, reply_text=text)
     try:
         _apply_schedule(client, ctx, pending, schedule, time_offs)
     except CrossUserWriteError:
@@ -557,8 +694,14 @@ def _interpret_and_confirm(
     tz: ZoneInfo,
     state: dict[str, st.PendingReminder],
     watermark: str,
+    history: list[str],
 ) -> None:
-    """Interpretuj odpowiedź: confirm/modify → poproś o »tak«; decline/unclear → zamknij."""
+    """Interpretuj odpowiedź: confirm/modify → poproś o »tak«; decline/unclear → zamknij.
+
+    ``history`` to wcześniejsze wiadomości pracownika (kontekst wieloturowy) — przekazywana do
+    modelu; bieżąca ``text`` dojdzie do pamięci dopiero w ``_commit`` (nie trafia do własnej
+    historii).
+    """
     proposal = build_schedule(
         pending.member_id,
         date.fromisoformat(pending.week_start),
@@ -566,7 +709,9 @@ def _interpret_and_confirm(
         tz,
         ctx.scheduling_group_id,
     )
-    decision = interpret_reply(proposal, text, tz=tz, group_id=ctx.scheduling_group_id, llm=llm)
+    decision = interpret_reply(
+        proposal, text, tz=tz, group_id=ctx.scheduling_group_id, llm=llm, history=history
+    )
     if decision.action in ("confirm", "modify") and decision.schedule is not None:
         # Rozstrzygnij powody czasu wolnego TERAZ (przed potwierdzeniem), żeby wiadomość obiecała
         # dokładnie to, co zostanie zapisane, i nie zgubić dnia po cichu przy zapisie.
@@ -582,21 +727,21 @@ def _interpret_and_confirm(
         if decision.schedule.is_empty and not resolved_time_off:
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
-            _commit(settings, state, pending, watermark)
+            _commit(settings, state, pending, watermark, reply_text=text)
             client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
             return
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
         pending.resolved_time_off = resolved_time_off
         pending.status = st.AWAITING_CONFIRM
-        _commit(settings, state, pending, watermark)
+        _commit(settings, state, pending, watermark, reply_text=text)
         confirm = build_confirm_text(decision.schedule, resolved_time_off, tz)
         client.send_chat_message(pending.chat_id, to_html(confirm))
     elif decision.action == "decline":
         pending.status = st.DECLINED
-        _commit(settings, state, pending, watermark)
+        _commit(settings, state, pending, watermark, reply_text=text)
         client.send_chat_message(pending.chat_id, to_html(DECLINED_TEXT))
     else:
-        _commit(settings, state, pending, watermark)
+        _commit(settings, state, pending, watermark, reply_text=text)
         client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
 
 
@@ -803,6 +948,7 @@ def _send_summary(settings: Settings, client: GraphClient, nastepny_przebieg: da
             zapisane=statusy[st.APPLIED],
             odmowy=statusy[st.DECLINED],
             wygasle=statusy[st.EXPIRED],
+            samodzielne=statusy[st.SELF_FILLED],
             nastepny_przebieg=nastepny_przebieg.astimezone(settings.tz).strftime("%Y-%m-%d %H:%M"),
         )
         if settings.dry_run:

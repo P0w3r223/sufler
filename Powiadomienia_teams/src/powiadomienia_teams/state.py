@@ -27,6 +27,7 @@ AWAITING_CONFIRM = "awaiting_confirm"
 APPLIED = "applied"
 DECLINED = "declined"
 EXPIRED = "expired"  # minęło okno odpowiedzi bez reakcji pracownika (koniec odpytywania)
+SELF_FILLED = "self_filled"  # pracownik sam uzupełnił grafik w Shifts (koniec odpytywania)
 
 
 @dataclass
@@ -42,10 +43,22 @@ class PendingReminder:
     resolved: list[dict[str, Any]] = field(default_factory=list)  # grafik ustalony po odpowiedzi
     # Czas wolny ustalony po odpowiedzi: [{weekday, reason_id, reason_name}] (powód rozstrzygnięty).
     resolved_time_off: list[dict[str, Any]] = field(default_factory=list)
+    # Dni (0=pon…6=nd) już objęte urlopem w Graphie w chwili nudge'a. Przy zapisie pomijamy je,
+    # by nie utworzyć DRUGIEGO timeOff, gdyby pracownik zgłosił je ponownie (create_time_off nie
+    # deduplikuje). Pole opcjonalne — stare pliki stanu bez niego dostają pustą listę.
+    known_time_off_weekdays: list[int] = field(default_factory=list)
     # Nieudane próby obsługi od ostatniego UDANEGO commitu (licznik zeruje wyłącznie `_commit`,
     # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
     # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``app._record_failure``).
     fail_count: int = 0
+    # Pamięć rozmowy: WYŁĄCZNIE wiadomości pracownika (nie bota), od najstarszej do najnowszej,
+    # przycięta do ostatnich 10 (``replies.MEMORY_CAP``). Kontekst wieloturowy dla interpretera.
+    # Pole opcjonalne — stare pliki stanu bez niego dostają pustą listę.
+    employee_memory: list[str] = field(default_factory=list)
+    # Kotwica STAŁEGO okna pamięci (``replies.MEMORY_WINDOW``): createdDateTime PIERWSZEJ wiadomości
+    # w pamięci. Osobne pole (a nie ``employee_memory[0]``), by przycięcie do 10 NIE przesuwało okna
+    # — inaczej okno stałoby się kroczące zamiast liczonym od pierwszej interakcji.
+    memory_started_at: str = ""
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}
@@ -65,10 +78,20 @@ def _wczytaj(path: Path) -> dict[str, PendingReminder] | None:
         return None
     # Ignoruj nieznane pola (dryf schematu) i POMIJAJ pojedyncze nieczytelne wpisy zamiast kłaść
     # cały nasłuch — zgodnie z deklarowaną tolerancyjnością odczytu.
+    #
+    # Pomijamy też pola z wartością ``null``: przekazane do konstruktora nadpisałyby domyślną
+    # wartość (``field(default_factory=list)`` / ``""``) jawnym ``None``, a warstwa wyżej zakłada,
+    # że ``employee_memory`` jest listą, a znaczniki czasu napisem. ``employee_memory=null`` (ręczna
+    # edycja, dryf schematu) daje wtedy ``None`` zamiast ``[]``, na którym ``advance_memory`` rzuca
+    # ``TypeError`` — i to w miejscu, gdzie ``_record_failure`` miał już tylko „odpuścić" tę
+    # wiadomość, więc pending grzązłby w pętli ponowień. Odsianie ``None`` przywraca default,
+    # spójnie z tolerancją wobec starych plików bez tych pól.
     result: dict[str, PendingReminder] = {}
     for key, value in raw.items():
         try:
-            result[key] = PendingReminder(**{k: v for k, v in value.items() if k in _FIELDS})
+            result[key] = PendingReminder(
+                **{k: v for k, v in value.items() if k in _FIELDS and v is not None}
+            )
         except (TypeError, AttributeError):
             logger.warning("Pomijam nieczytelny wpis stanu %r w %s", key, path)
     return result

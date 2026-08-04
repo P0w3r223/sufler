@@ -51,19 +51,49 @@ NO_CONFIRM_TEXT = (
 )
 
 
-def build_nudge_text(member: Member, proposal: WeekSchedule, week_label: str, tz: ZoneInfo) -> str:
-    """Zbuduj tekst przypomnienia (czysto). Godziny propozycji renderowane w strefie `tz`."""
+def build_self_filled_text(week_label: str) -> str:
+    """Podziękowanie, gdy pracownik SAM uzupełnił grafik w Shifts, zanim odpisał na czacie.
+
+    Forma neutralna („jest już uzupełniony", nie „uzupełniłeś"), bo grafik mógł wypełnić także
+    przełożony. Wysyłane bezwarunkowo — reaguje na działanie pracownika, więc milczenie byłoby
+    gorsze.
+    """
+    return (
+        f"Widzę, że Twój grafik na tydzień {week_label} jest już uzupełniony ✅ "
+        "Dziękuję! W takim razie kończę przypominanie."
+    )
+
+
+def build_nudge_text(
+    member: Member,
+    proposal: WeekSchedule,
+    week_label: str,
+    tz: ZoneInfo,
+    off_weekdays: Iterable[int] = (),
+) -> str:
+    """Zbuduj tekst przypomnienia (czysto). Godziny propozycji renderowane w strefie `tz`.
+
+    `off_weekdays` to znane dni urlopu w docelowym tygodniu (0=pon…6=nd). Wspominamy o nich
+    („o te dni nie pytam”), żeby prośba dotyczyła wyłącznie pozostałych dni i żeby pracownik nie
+    zgłaszał ponownie urlopu, który już jest w grafiku.
+    """
     parts = member.display_name.split()
     first_name = parts[0] if parts else member.display_name
     lines = [
         f"Cześć {first_name}! 👋",
         f"Nie masz jeszcze uzupełnionych zmian na przyszły tydzień ({week_label}).",
     ]
+    off = sorted(off_weekdays)
+    if off:
+        dni = ", ".join(_DNI[d] for d in off)
+        lines.append(f"Widzę, że masz wtedy wolne: {dni} — o te dni nie pytam.")
     if proposal.is_empty:
-        lines.append(
-            "Nie znalazłem Twojego grafiku z zeszłego tygodnia — napisz proszę, kiedy pracujesz "
-            "(np. „pon–pt 8–16”)."
+        prosba = (
+            "napisz proszę, kiedy pracujesz w pozostałe dni (np. „pon–czw 8–16”)."
+            if off
+            else "napisz proszę, kiedy pracujesz (np. „pon–pt 8–16”)."
         )
+        lines.append(f"Nie znalazłem Twojego grafiku z zeszłego tygodnia — {prosba}")
     else:
         lines.append("W zeszłym tygodniu Twój grafik wyglądał tak:")
         for sh in proposal.shifts:
@@ -127,6 +157,7 @@ def build_summary_text(
     odmowy: int,
     wygasle: int,
     nastepny_przebieg: str,
+    samodzielne: int = 0,
 ) -> str:
     """Podsumowanie przebiegu dla administratora — jednocześnie sygnał życia usługi.
 
@@ -144,6 +175,7 @@ def build_summary_text(
         # potwierdzenia po odpowiedzi i domknięcie „tydzień już trwa". Administrator decyduje na
         # tej podstawie, do kogo napisać ręcznie, więc etykieta musi być prawdziwa dla wszystkich.
         f"• zamknięte bez zapisu: {wygasle}",
+        f"• uzupełnione samodzielnie: {samodzielne}",
         f"Następny przebieg: {nastepny_przebieg}",
     ]
     return "\n".join(lines)
