@@ -86,8 +86,8 @@ _SYSTEM = (
     'W proponowanym grafiku pole "theme" to tryb pracy: "green"=stacjonarnie, "blue"=zdalnie. '
     # Pracownik OTRZYMUJE grafik z emotkami 🟢/🔵, więc odpowiada tym samym językiem — rozumiej je.
     "Tryb pracy pracownik może wskazać SŁOWEM, KOLOREM lub EMOTKĄ i wszystkie znaczą to samo: "
-    '„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; '
-    '„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. '
+    "„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; "
+    "„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. "
     "Zwróć WYŁĄCZNIE JSON (bez żadnego innego tekstu, bez komentarzy): "
     '{"action":"confirm|modify|decline|unclear",'
     '"shifts":[{"dzien":"poniedziałek","start":"HH:MM","end":"HH:MM","tryb":"zdalnie|stacjonarnie"}],'
@@ -147,7 +147,7 @@ _SYSTEM = (
     "Gdy pracownik wskaże tryb bez konkretnego dnia i użyje słowa »zawsze«/»wszędzie«/»wszystko«/"
     "»cały tydzień«/»wszystkie dni« (albo poda sam tryb, np. „🟢”, „zdalnie”) — ustaw ten tryb dla "
     "KAŻDEGO dnia gotowca (np. gotowiec 5 dni + „zawsze na 🟢” → te same 5 dni i godziny, każdy "
-    'tryb=stacjonarnie). Gdy wskaże tryb dla KONKRETNego dnia (np. „poniedziałek na niebiesko”, '
+    "tryb=stacjonarnie). Gdy wskaże tryb dla KONKRETNego dnia (np. „poniedziałek na niebiesko”, "
     "„w piątek zdalnie”) — zmień tryb tylko tego dnia, resztę zostaw jak w gotowcu. Gdy bieżąca "
     "NIE podaje własnego dnia/godzin (np. „jak zwykle”, „reszta jak [dzień]”, „i tyle”), zastosuj "
     "tę samą logikę do dni/godzin z »historia_pracownika« zamiast z gotowca — nie zwróć z tego "

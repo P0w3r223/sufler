@@ -79,9 +79,7 @@ def should_expire(
     return is_expired(pending, now, window_hours)
 
 
-def ready_for_self_fill_check(
-    pending: PendingReminder, now: datetime, min_idle_s: int
-) -> bool:
+def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_s: int) -> bool:
     """Czy wolno zajrzeć do Shifts, bo pracownik MILCZY od dłuższej chwili (nie odpisuje na czacie).
 
     Ciszę mierzymy tą samą kotwicą co wygaśnięcie (``_anchor``: ostatnia aktywność, potem czas

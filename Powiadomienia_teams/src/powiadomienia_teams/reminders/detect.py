@@ -39,9 +39,7 @@ def off_weekdays_by_member(
     return {uid: frozenset(days) for uid, days in result.items()}
 
 
-def member_filled_week(
-    member_id: str, shifts: Iterable[Shift], off_days: frozenset[int]
-) -> bool:
+def member_filled_week(member_id: str, shifts: Iterable[Shift], off_days: frozenset[int]) -> bool:
     """Czy dana osoba MA już grafik na docelowy tydzień: jakakolwiek zmiana albo pełny pn–pt urlop.
 
     Odwrotność kryterium z ``members_without_shifts`` (patrz tam), zawężona do JEDNEJ osoby — dzięki
@@ -49,7 +47,7 @@ def member_filled_week(
     ``shifts`` są zawężone wcześniej do docelowego tygodnia; ``off_days`` to dni tej osoby pokryte
     urlopem (z ``off_weekdays_by_member``).
     """
-    return any(s.user_id == member_id for s in shifts) or _WORKING_WEEK <= off_days
+    return any(s.user_id == member_id for s in shifts) or off_days >= _WORKING_WEEK
 
 
 def members_without_shifts(
@@ -71,6 +69,6 @@ def members_without_shifts(
     """
     off_by_member = off_by_member or {}
     covered_by_shift = {s.user_id for s in shifts}
-    covered_by_full_off = {uid for uid, days in off_by_member.items() if _WORKING_WEEK <= days}
+    covered_by_full_off = {uid for uid, days in off_by_member.items() if days >= _WORKING_WEEK}
     covered = covered_by_shift | covered_by_full_off
     return [m for m in members if m.user_id not in covered]

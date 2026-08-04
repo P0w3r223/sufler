@@ -122,4 +122,4 @@ def test_history_for_llm_empty_when_no_anchor():
 def test_memory_window_is_one_hour():
     from datetime import timedelta
 
-    assert MEMORY_WINDOW == timedelta(hours=1)
+    assert timedelta(hours=1) == MEMORY_WINDOW
