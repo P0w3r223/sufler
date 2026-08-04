@@ -75,6 +75,16 @@ class JiraReadError(WorkMateError):
     """
 
 
+class ScheduleReadError(WorkMateError):
+    """Odczyt grafiku Shifts (ADR 0056) się nie udał: brak/wygaśnięcie cichego tokenu, brak zgody
+    (Schedule.Read.All), throttling, timeout albo sieć.
+
+    Adapter tłumaczy tu błąd cichego uwierzytelnienia (cudzy cache MSAL powiadomienia-teams) i
+    transportu Graph, żeby narzędzie zwróciło czytelny komunikat zamiast surowego wyjątku. Osobny od
+    ``JiraReadError`` (inne źródło i inna podpowiedź naprawcza) — degraduje łagodnie na granicy.
+    """
+
+
 class ThreadRootGone(WorkMateError):
     """Root wątku na kanale Teams już nie istnieje (odpowiedź na usunięty post, ADR 0024).
 

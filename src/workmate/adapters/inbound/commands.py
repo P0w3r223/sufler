@@ -181,7 +181,12 @@ class CommandRouter:
                 "Nie udało się ustalić Twojego konta Jira — zgłoś się do administratora "
                 "(fail-closed, ADR 0054)."
             )
-        return _format_my_tasks(tools[0].fn())
+        # Fabryka zwraca teraz WIĘCEJ niż jedno narzędzie (rozszerzony odczyt Jiry) — wybieramy po
+        # nazwie, nie po pozycji, żeby /moje-zadania nie wywołało przypadkowego narzędzia.
+        tool = next((t for t in tools if t.name == "get_my_jira_tasks"), None)
+        if tool is None:
+            return "Ta komenda nie jest skonfigurowana na tych drzwiach."
+        return _format_my_tasks(tool.fn())
 
     def _thread_status(self, conv: Conversation | None) -> str:
         if conv is None or conv.message_count == 0:
@@ -222,19 +227,33 @@ def _format_projects(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_my_tasks(data: dict[str, Any]) -> str:
-    if "error" in data:
-        return f"Błąd: {data['error']}"
-    tasks = data.get("tasks", [])
-    if not tasks:
-        return "Nie masz otwartych zadań w Jirze."
-    lines = [f"Twoje otwarte zadania ({len(tasks)}):"]
+def _task_lines(tasks: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
     for t in tasks:
         priority = f" [{t['priority']}]" if t.get("priority") else ""
         due = f" · termin {t['due_date']}" if t.get("due_date") else ""
         lines.append(f"• {t['key']}{priority} — {t['summary']} ({t['status']}){due}")
         if t.get("url"):
             lines.append(f"  {t['url']}")
+    return lines
+
+
+def _format_my_tasks(data: dict[str, Any]) -> str:
+    if "error" in data:
+        return f"Błąd: {data['error']}"
+    assigned = data.get("assigned_to_me", [])
+    unassigned = data.get("reported_by_me_unassigned", [])
+    if not assigned and not unassigned:
+        return "Nie masz otwartych zadań w Jirze."
+    lines: list[str] = []
+    if assigned:
+        lines.append(f"Twoje otwarte zadania ({len(assigned)}):")
+        lines.extend(_task_lines(assigned))
+    if unassigned:
+        if lines:
+            lines.append("")
+        lines.append(f"Zgłoszone przez Ciebie, nieprzypisane do nikogo ({len(unassigned)}):")
+        lines.extend(_task_lines(unassigned))
     return "\n".join(lines)
 
 

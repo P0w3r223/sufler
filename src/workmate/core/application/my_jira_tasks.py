@@ -12,13 +12,22 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from workmate.core.domain.jira_tasks import JiraTask, build_my_tasks_jql, map_my_tasks
+from workmate.core.domain.jira_tasks import (
+    JiraTask,
+    build_history_jql,
+    build_my_tasks_jql,
+    map_my_tasks,
+)
 from workmate.core.errors import InvalidRequestError, JiraReadError
 
 if TYPE_CHECKING:
     from workmate.core.ports.jira import JiraReadPort
 
 _MAX_RESULTS = 50
+# Sufit historii — rok pracy może zwrócić więcej niż jedna strona; przycinamy i sygnalizujemy
+# ``truncated``, żeby narzędzie kazało modelowi powiedzieć "pokazuję najnowsze 50" zamiast cicho
+# gubić starsze wpisy.
+_MAX_HISTORY_RESULTS = 50
 
 
 class MyJiraTasksService:
@@ -48,6 +57,22 @@ class MyJiraTasksService:
         except httpx.HTTPError as exc:
             raise JiraReadError(f"nie udało się połączyć z Jirą: {exc}.") from exc
         return map_my_tasks(raw, base_url=self._base_url)
+
+    def my_history(self, since: str = "", until: str = "") -> tuple[list[JiraTask], bool]:
+        """Zakończone zadania konta w opcjonalnym oknie dat; (lista, czy_ucięto), najnowsze pierwsze."""
+        jql = build_history_jql(self._assignee, since, until)
+        try:
+            raw = self._client.search_issues(jql, max_results=_MAX_HISTORY_RESULTS, expand="")
+        except httpx.HTTPStatusError as exc:
+            raise JiraReadError(_status_message(exc.response.status_code)) from exc
+        except httpx.TimeoutException as exc:
+            raise JiraReadError(
+                "Jira nie odpowiedziała w wyznaczonym czasie (timeout) — spróbuj ponownie."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise JiraReadError(f"nie udało się połączyć z Jirą: {exc}.") from exc
+        tasks = map_my_tasks(raw, base_url=self._base_url)
+        return tasks[:_MAX_HISTORY_RESULTS], len(tasks) > _MAX_HISTORY_RESULTS
 
 
 def _status_message(status_code: int) -> str:

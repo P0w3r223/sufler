@@ -11,11 +11,13 @@ ADR 0054 zredukował Jirę do jednej, wyłącznie odczytowej zdolności ("moje z
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from workmate.adapters.outbound.jira_http import request_with_retry
+from workmate.core.errors import InvalidRequestError
 
 if TYPE_CHECKING:
     from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
@@ -23,6 +25,10 @@ if TYPE_CHECKING:
 
 # Cap stron na jedno pobranie — chroni przed nieograniczoną paginacją dużych projektów.
 _MAX_PAGES = 10
+# Kanoniczny klucz issue Jira (PROJEKT-NUMER) — walidacja przed wstawieniem do ścieżki URL.
+_ISSUE_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-\d+$")
+# Pola dobierane dla szczegółów pojedynczego issue (parzystość z klientem Cloud).
+_DETAIL_FIELDS = "summary,description,status,priority,duedate,created,updated,reporter,assignee"
 
 
 class HttpxJiraClient:
@@ -66,10 +72,39 @@ class HttpxJiraClient:
                 break
         return issues
 
+    def get_issue(self, key: str) -> dict[str, Any]:
+        """Jedno issue po kluczu (REST v2, Server/DC). Treść opisu jest zwykłym tekstem (nie ADF)."""
+        safe = _validate_key(key)
+        data = self._get_json(
+            f"{self._base_url}/rest/api/2/issue/{safe}", {"fields": _DETAIL_FIELDS}
+        )
+        return data if isinstance(data, dict) else {}
+
+    def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
+        """Najnowsze komentarze issue (REST v2). Server/DC zwraca komentarze rosnąco — bierzemy ogon."""
+        safe = _validate_key(key)
+        data = self._get_json(
+            f"{self._base_url}/rest/api/2/issue/{safe}/comment",
+            {"maxResults": str(max_results), "orderBy": "-created"},
+        )
+        raw = data.get("comments") if isinstance(data, dict) else None
+        comments = [c for c in raw if isinstance(c, dict)] if isinstance(raw, list) else []
+        return comments[-max_results:] if len(comments) > max_results else comments
+
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
         return request_with_retry(self._client, "GET", url, params=params).json()
+
+
+def _validate_key(key: str) -> str:
+    """Zwaliduj klucz issue przed wstawieniem do ścieżki URL (ochrona przed traversalem)."""
+    safe = key.strip()
+    if not _ISSUE_KEY_RE.match(safe):
+        raise InvalidRequestError(
+            f"Niepoprawny klucz zgłoszenia {key!r} — oczekuję postaci 'WT-5'."
+        )
+    return safe
 
 
 def build_jira_client(

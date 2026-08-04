@@ -25,3 +25,11 @@ class JiraReadPort(Protocol):
     ) -> list[dict[str, Any]]:
         """Surowe issue Jira wg JQL, z paginacją. "Moje zadania" (0054) mapuje je na JiraTask."""
         ...
+
+    def get_issue(self, key: str) -> dict[str, Any]:
+        """Surowe JEDNO issue Jira po kluczu (np. 'WT-5'); ADF opisu spłaszczony do tekstu."""
+        ...
+
+    def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
+        """Surowe komentarze issue (najnowsze), przycięte do ``max_results``; ADF spłaszczony."""
+        ...

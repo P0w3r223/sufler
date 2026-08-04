@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -28,20 +29,29 @@ import httpx
 
 from workmate.adapters.outbound.jira_http import request_with_retry
 from workmate.core.domain.adf import adf_to_text
+from workmate.core.errors import InvalidRequestError
 
 logger = logging.getLogger(__name__)
+
+# Kanoniczny klucz issue Jira (PROJEKT-NUMER) — walidacja PRZED wstawieniem do ścieżki URL, żeby
+# wartość od modelu nie zrobiła traversalu ani nie trafiła w inny zasób REST.
+_ISSUE_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-\d+$")
 
 # Cap stron na jedno pobranie — chroni przed nieograniczoną paginacją ORAZ przed znanym bugiem
 # ``/search/jql`` (raporty o ``isLast`` nigdy=true i nieskończonym chainingu tokenów).
 _MAX_PAGES = 10
 # Pola dobierane w bulk-search — pokrywają "moje zadania" (ADR 0054): status/priorytet/termin do
 # listy, ``project``/``created``/``updated``/``creator``/``reporter`` jako kontekst diagnostyczny.
+# ``assignee`` pozwala rozróżnić przypisane od zgłoszonych-nieprzypisanych (dopracowanie "moich
+# zadań"); ``resolutiondate`` zasila historię zakończonych zgłoszeń (``get_my_jira_history``).
 _SEARCH_FIELDS = [
     "summary",
     "description",
     "status",
     "priority",
+    "assignee",
     "duedate",
+    "resolutiondate",
     "created",
     "updated",
     "creator",
@@ -103,6 +113,32 @@ class HttpxJiraCloudClient:
             seen_tokens.add(next_token)
         return issues
 
+    def get_issue(self, key: str) -> dict[str, Any]:
+        """Jedno issue po kluczu (REST v3); ADF opisu spłaszczony do tekstu na granicy adaptera."""
+        safe = _validate_key(key)
+        fields = ",".join(_SEARCH_FIELDS)
+        data = self._get_json(
+            f"{self._base_url}/rest/api/3/issue/{safe}", {"fields": fields}
+        )
+        issue = data if isinstance(data, dict) else {}
+        _normalize_adf(issue)
+        return issue
+
+    def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
+        """Najnowsze komentarze issue (REST v3); ADF każdej treści spłaszczony do tekstu."""
+        safe = _validate_key(key)
+        data = self._get_json(
+            f"{self._base_url}/rest/api/3/issue/{safe}/comment",
+            {"maxResults": str(max_results), "orderBy": "-created"},
+        )
+        raw = data.get("comments") if isinstance(data, dict) else None
+        comments = [c for c in raw if isinstance(c, dict)] if isinstance(raw, list) else []
+        for comment in comments:
+            body = comment.get("body")
+            if body is not None:
+                comment["body"] = adf_to_text(body)
+        return comments[:max_results]
+
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
@@ -111,6 +147,16 @@ class HttpxJiraCloudClient:
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = request_with_retry(self._client, "POST", url, json=payload).json()
         return data if isinstance(data, dict) else {}
+
+
+def _validate_key(key: str) -> str:
+    """Zwaliduj klucz issue przed wstawieniem do ścieżki URL (ochrona przed traversalem)."""
+    safe = key.strip()
+    if not _ISSUE_KEY_RE.match(safe):
+        raise InvalidRequestError(
+            f"Niepoprawny klucz zgłoszenia {key!r} — oczekuję postaci 'WT-5'."
+        )
+    return safe
 
 
 def _warn_on_timezone_skew(account_tz: Any) -> None:
