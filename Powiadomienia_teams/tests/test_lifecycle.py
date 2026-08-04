@@ -5,10 +5,17 @@ from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     is_expired,
     prune_terminal,
+    ready_for_self_fill_check,
     should_expire,
     still_writable,
 )
-from powiadomienia_teams.state import APPLIED, AWAITING_REPLY, EXPIRED, PendingReminder
+from powiadomienia_teams.state import (
+    APPLIED,
+    AWAITING_REPLY,
+    EXPIRED,
+    SELF_FILLED,
+    PendingReminder,
+)
 
 UTC = timezone.utc
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -149,3 +156,56 @@ def test_partially_past_week_keeps_only_the_rest():
 def test_empty_input_gives_empty_result():
     # Pusty wynik jest sygnałem „nie ma czego zapisać" dla wołającego — nie może rzucać.
     assert still_writable([], NOW) == ()
+
+
+# --- SELF_FILLED: nowy status terminalny --------------------------------------------------
+
+
+def test_self_filled_is_terminal_and_pruned_like_others():
+    state = {
+        "old": _pending(status=SELF_FILLED, watermark=_iso(NOW - timedelta(hours=200))),
+        "open": _pending(status=AWAITING_REPLY, watermark=_iso(NOW - timedelta(hours=500))),
+    }
+    kept = prune_terminal(state, NOW, retain_hours=48)
+    assert set(kept) == {"open"}
+
+
+def test_self_filled_kept_when_fresh():
+    state = {"fresh": _pending(status=SELF_FILLED, watermark=_iso(NOW - timedelta(hours=10)))}
+    assert prune_terminal(state, NOW, retain_hours=48) == state
+
+
+# --- ready_for_self_fill_check --------------------------------------------------------------
+
+
+def test_ready_for_self_fill_check_true_after_idle_threshold():
+    p = _pending(nudged_at=_iso(NOW - timedelta(seconds=3601)))
+    assert ready_for_self_fill_check(p, NOW, 3600) is True
+
+
+def test_ready_for_self_fill_check_false_before_idle_threshold():
+    p = _pending(nudged_at=_iso(NOW - timedelta(seconds=1000)))
+    assert ready_for_self_fill_check(p, NOW, 3600) is False
+
+
+def test_ready_for_self_fill_check_negative_min_idle_disables():
+    p = _pending(nudged_at=_iso(NOW - timedelta(hours=1000)))
+    assert ready_for_self_fill_check(p, NOW, -1) is False
+
+
+def test_ready_for_self_fill_check_zero_checks_every_silent_cycle():
+    p = _pending(nudged_at=_iso(NOW - timedelta(seconds=1)))
+    assert ready_for_self_fill_check(p, NOW, 0) is True
+
+
+def test_ready_for_self_fill_check_false_without_anchor():
+    assert ready_for_self_fill_check(_pending(), NOW, 3600) is False
+
+
+def test_ready_for_self_fill_check_watermark_extends_like_expiry():
+    # Rozmowa w toku: nudge dawno, ostatnia aktywność świeża → liczone od aktywności (jak _anchor).
+    p = _pending(
+        watermark=_iso(NOW - timedelta(seconds=100)),
+        nudged_at=_iso(NOW - timedelta(hours=100)),
+    )
+    assert ready_for_self_fill_check(p, NOW, 3600) is False

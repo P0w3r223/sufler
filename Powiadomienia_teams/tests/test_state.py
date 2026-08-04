@@ -5,6 +5,7 @@ import pytest
 
 from powiadomienia_teams.state import (
     AWAITING_REPLY,
+    SELF_FILLED,
     PendingReminder,
     load_state,
     save_state,
@@ -182,3 +183,73 @@ def test_odtworzenie_stanu_z_kopii(tmp_path):
 
 def test_brak_stanu_i_kopii_daje_pusty(tmp_path):
     assert load_state(tmp_path / "nie-ma.json") == {}
+
+
+def test_self_filled_status_round_trips(tmp_path: Path):
+    """SELF_FILLED to nowy status terminalny — musi przetrwać zapis/odczyt jak każdy inny."""
+    path = tmp_path / "state.json"
+    state = {
+        "u1": PendingReminder(
+            member_id="u1",
+            member_name="Ala",
+            chat_id="c1",
+            week_start="2026-07-20",
+            status=SELF_FILLED,
+        )
+    }
+    save_state(path, state)
+    loaded = load_state(path)
+    assert loaded["u1"].status == SELF_FILLED
+
+
+def test_new_fields_default_to_empty(tmp_path: Path):
+    """Pola wprowadzone dla self-fill/pamięci mają bezpieczne domyślne (stare pliki ich nie
+    mają)."""
+    pending = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-20",
+        status=AWAITING_REPLY,
+    )
+    assert pending.known_time_off_weekdays == []
+    assert pending.employee_memory == []
+    assert pending.memory_started_at == ""
+
+
+def test_load_tolerates_null_values_for_new_fields(tmp_path: Path):
+    """Plik stanu zapisany ręcznie/przez starszą wersję z `null` zamiast listy/napisu nie wywraca
+    odczytu — `None` jest odsiewane, więc pole wraca do swojego defaultu zamiast zostać `None`
+    (na którym `advance_memory`/`history_for_llm` rzuciłyby `TypeError`)."""
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"u1": {"member_id":"u1","member_name":"Ala","chat_id":"c",'
+        '"week_start":"2026-07-20","status":"awaiting_reply",'
+        '"known_time_off_weekdays":null,"employee_memory":null,"memory_started_at":null}}',
+        encoding="utf-8",
+    )
+    loaded = load_state(path)
+    assert loaded["u1"].known_time_off_weekdays == []
+    assert loaded["u1"].employee_memory == []
+    assert loaded["u1"].memory_started_at == ""
+
+
+def test_known_time_off_weekdays_and_memory_round_trip(tmp_path: Path):
+    path = tmp_path / "state.json"
+    state = {
+        "u1": PendingReminder(
+            member_id="u1",
+            member_name="Ala",
+            chat_id="c1",
+            week_start="2026-07-20",
+            status=AWAITING_REPLY,
+            known_time_off_weekdays=[4, 5],
+            employee_memory=["pon-pt 8-16", "a piątek zdalnie"],
+            memory_started_at="2026-07-19T18:00:00Z",
+        )
+    }
+    save_state(path, state)
+    loaded = load_state(path)
+    assert loaded["u1"].known_time_off_weekdays == [4, 5]
+    assert loaded["u1"].employee_memory == ["pon-pt 8-16", "a piątek zdalnie"]
+    assert loaded["u1"].memory_started_at == "2026-07-19T18:00:00Z"

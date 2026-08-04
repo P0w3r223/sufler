@@ -135,3 +135,30 @@ def test_only_user_ids_empty_by_default(monkeypatch):
     _set_required(monkeypatch)
     monkeypatch.delenv("POWIADOMIENIA_ONLY_USER_IDS", raising=False)
     assert Settings.from_env().only_user_ids == ()
+
+
+def test_self_fill_check_min_idle_s_defaults_to_one_hour(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.delenv("POWIADOMIENIA_SELF_FILL_CHECK_MIN_IDLE_S", raising=False)
+    s = Settings.from_env()
+    s.validate()
+    assert s.self_fill_check_min_idle_s == 3600
+
+
+def test_self_fill_check_min_idle_s_read_from_env(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_SELF_FILL_CHECK_MIN_IDLE_S", "60")
+    assert Settings.from_env().self_fill_check_min_idle_s == 60
+
+
+def test_self_fill_check_min_idle_s_minus_one_disables_and_is_valid(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_SELF_FILL_CHECK_MIN_IDLE_S", "-1")
+    Settings.from_env().validate()  # nie rzuca — -1 wyłącza sprawdzanie
+
+
+def test_self_fill_check_min_idle_s_below_minus_one_fails_validation(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_SELF_FILL_CHECK_MIN_IDLE_S", "-2")
+    with pytest.raises(ConfigError, match="self_fill_check_min_idle_s"):
+        Settings.from_env().validate()
