@@ -61,9 +61,7 @@ def test_schedule_maps_shifts_in_window() -> None:
             },
         }
     ]
-    result = _service(shifts=shifts).schedule(
-        date_from="2026-08-01", date_to="2026-08-10"
-    )
+    result = _service(shifts=shifts).schedule(date_from="2026-08-01", date_to="2026-08-10")
     assert len(result["shifts"]) == 1
     assert result["shifts"][0]["person"] == "Jerzy Zastepski"
 

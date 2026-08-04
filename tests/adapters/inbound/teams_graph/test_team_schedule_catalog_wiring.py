@@ -39,7 +39,8 @@ def test_enabled_auto_when_app_and_cache_present(tmp_path: Path) -> None:
 
 
 def test_forced_enabled_true_without_app_configured_still_builds() -> None:
-    """``enabled=true`` force — nie sprawdzamy client_id/tenant_id tutaj (fail przy realnym wywołaniu)."""
+    """``enabled=true`` force — nie sprawdzamy client_id/tenant_id tutaj (fail przy realnym
+    wywołaniu)."""
     settings = ScheduleSettings(enabled="true")
     tools = _build_team_schedule_catalog(settings)
     assert {t.name for t in tools} == {"get_team_schedule"}

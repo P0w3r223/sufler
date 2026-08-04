@@ -73,7 +73,7 @@ class HttpxJiraClient:
         return issues
 
     def get_issue(self, key: str) -> dict[str, Any]:
-        """Jedno issue po kluczu (REST v2, Server/DC). Treść opisu jest zwykłym tekstem (nie ADF)."""
+        """Jedno issue po kluczu (REST v2, Server/DC). Treść opisu to zwykły tekst (nie ADF)."""
         safe = _validate_key(key)
         data = self._get_json(
             f"{self._base_url}/rest/api/2/issue/{safe}", {"fields": _DETAIL_FIELDS}
@@ -81,7 +81,7 @@ class HttpxJiraClient:
         return data if isinstance(data, dict) else {}
 
     def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
-        """Najnowsze komentarze issue (REST v2). Server/DC zwraca komentarze rosnąco — bierzemy ogon."""
+        """Najnowsze komentarze issue (REST v2). Server/DC zwraca je rosnąco — bierzemy ogon."""
         safe = _validate_key(key)
         data = self._get_json(
             f"{self._base_url}/rest/api/2/issue/{safe}/comment",

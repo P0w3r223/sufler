@@ -654,9 +654,13 @@ def build_jira_read_catalog(
     return [
         ToolSpec("get_jira_task", get_jira_task.__doc__ or "", get_jira_task),
         ToolSpec("search_jira_tasks", search_jira_tasks.__doc__ or "", search_jira_tasks),
-        ToolSpec("get_member_jira_tasks", get_member_jira_tasks.__doc__ or "", get_member_jira_tasks),
         ToolSpec(
-            "get_member_jira_history", get_member_jira_history.__doc__ or "", get_member_jira_history
+            "get_member_jira_tasks", get_member_jira_tasks.__doc__ or "", get_member_jira_tasks
+        ),
+        ToolSpec(
+            "get_member_jira_history",
+            get_member_jira_history.__doc__ or "",
+            get_member_jira_history,
         ),
     ]
 
@@ -688,9 +692,7 @@ def build_team_schedule_catalog(service: TeamScheduleService) -> list[ToolSpec]:
         """
 
         def build() -> dict[str, Any]:
-            return service.schedule(
-                week=week, date_from=date_from, date_to=date_to, person=person
-            )
+            return service.schedule(week=week, date_from=date_from, date_to=date_to, person=person)
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 

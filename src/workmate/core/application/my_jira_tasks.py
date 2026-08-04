@@ -59,7 +59,8 @@ class MyJiraTasksService:
         return map_my_tasks(raw, base_url=self._base_url)
 
     def my_history(self, since: str = "", until: str = "") -> tuple[list[JiraTask], bool]:
-        """Zakończone zadania konta w opcjonalnym oknie dat; (lista, czy_ucięto), najnowsze pierwsze."""
+        """Zakończone zadania konta w opcjonalnym oknie dat; (lista, czy_ucięto), najnowsze
+        pierwsze."""
         jql = build_history_jql(self._assignee, since, until)
         try:
             raw = self._client.search_issues(jql, max_results=_MAX_HISTORY_RESULTS, expand="")

@@ -117,9 +117,7 @@ class HttpxJiraCloudClient:
         """Jedno issue po kluczu (REST v3); ADF opisu spłaszczony do tekstu na granicy adaptera."""
         safe = _validate_key(key)
         fields = ",".join(_SEARCH_FIELDS)
-        data = self._get_json(
-            f"{self._base_url}/rest/api/3/issue/{safe}", {"fields": fields}
-        )
+        data = self._get_json(f"{self._base_url}/rest/api/3/issue/{safe}", {"fields": fields})
         issue = data if isinstance(data, dict) else {}
         _normalize_adf(issue)
         return issue

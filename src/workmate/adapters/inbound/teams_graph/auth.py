@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Protocol
 
-    import msal  # type: ignore[import-untyped]  # msal nie dostarcza py.typed/stubów
+    import msal  # msal nie dostarcza py.typed/stubów (patrz [[tool.mypy.overrides]] w pyproject)
 
     class TokenProviderSettings(Protocol):
         """Strukturalny kontrakt konfiguracji dostawcy tokenu MSAL (delegowany, single-tenant).

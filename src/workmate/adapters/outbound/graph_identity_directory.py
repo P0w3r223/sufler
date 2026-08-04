@@ -46,9 +46,7 @@ class YamlIdentityDirectory:
         """
         from workmate.core.domain.names import match_name
 
-        candidates = [
-            (p.display_name, p) for p in self._people.values() if p.display_name
-        ]
+        candidates = [(p.display_name, p) for p in self._people.values() if p.display_name]
         person, _ambiguous = match_name(candidates, name)
         return person
 

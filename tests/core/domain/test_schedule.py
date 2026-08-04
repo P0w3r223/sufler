@@ -39,7 +39,9 @@ def test_range_next_week_goes_forward_seven_days() -> None:
 
 
 def test_range_explicit_dates_are_inclusive_of_end_day() -> None:
-    _, end = resolve_schedule_range(date_from="2026-08-01", date_to="2026-08-05", today=_MONDAY, tz=_TZ)
+    _, end = resolve_schedule_range(
+        date_from="2026-08-01", date_to="2026-08-05", today=_MONDAY, tz=_TZ
+    )
     assert end.date().isoformat() == "2026-08-06"  # półotwarty: end = dzień_do + 1
 
 

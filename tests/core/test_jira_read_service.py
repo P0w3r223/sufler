@@ -110,7 +110,9 @@ def test_member_open_tasks_scopes_jql_to_given_account() -> None:
 def test_member_history_scopes_jql_and_reports_truncation() -> None:
     from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
 
-    issues = [{"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(_MAX_HISTORY_RESULTS + 3)]
+    issues = [
+        {"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(_MAX_HISTORY_RESULTS + 3)
+    ]
     client = _FakeJiraRead(issues=issues)
     service = JiraReadService(client)
     tasks, truncated = service.member_history("kolega@example.org")

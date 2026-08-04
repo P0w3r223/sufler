@@ -9,6 +9,7 @@ konta w obcym systemie. Normalizacja składa polskie znaki do ASCII i ujednolica
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Sequence
 from typing import TypeVar
 
 _T = TypeVar("_T")
@@ -26,9 +27,7 @@ def normalize_name(value: str) -> str:
     return " ".join(without_marks.casefold().split())
 
 
-def match_name(
-    candidates: list[tuple[str, _T]], query: str
-) -> tuple[_T | None, list[str]]:
+def match_name(candidates: Sequence[tuple[str, _T]], query: str) -> tuple[_T | None, list[str]]:
     """Dopasuj ``query`` do listy ``(display_name, wartość)``; zwróć ``(wartość | None, niejasne)``.
 
     Najpierw dokładne dopasowanie znormalizowanego nazwiska; przy braku — dopasowanie po wszystkich

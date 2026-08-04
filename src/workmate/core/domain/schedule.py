@@ -36,15 +36,16 @@ _THEME_WORK_MODE = {
 
 
 class ShiftEntry(BaseModel):
-    """Jedna zmiana w grafiku — osoba, początek/koniec (Europe/Warsaw), nazwa, notatka i forma pracy."""
+    """Jedna zmiana w grafiku — osoba, początek/koniec (Europe/Warsaw), nazwa, notatka i forma
+    pracy."""
 
     person: str
     start: str
     end: str
     label: str = ""
     notes: str = ""
-    theme: str = ""                # surowy kolor zmiany z Graph (sharedShift.theme), np. "green"
-    work_mode: str | None = None   # "stacjonarnie" | "zdalnie" | None (kolor bez ustalonego znaczenia)
+    theme: str = ""  # surowy kolor zmiany z Graph (sharedShift.theme), np. "green"
+    work_mode: str | None = None  # "stacjonarnie" | "zdalnie" | None (kolor bez znaczenia)
 
 
 class TimeOffEntry(BaseModel):
@@ -144,7 +145,8 @@ def map_times_off(
     window: tuple[datetime, datetime],
     tz: ZoneInfo,
 ) -> list[TimeOffEntry]:
-    """Zmapuj surowe nieobecności Graph na ``TimeOffEntry``, przefiltrowane po nakładaniu na okno."""
+    """Zmapuj surowe nieobecności Graph na ``TimeOffEntry``, przefiltrowane po nakładaniu na
+    okno."""
     entries: list[TimeOffEntry] = []
     for item in raw:
         shared = item.get("sharedTimeOff") if isinstance(item, dict) else None

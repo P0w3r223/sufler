@@ -391,9 +391,7 @@ def test_my_tasks_formats_assigned_tasks():
 def test_my_tasks_formats_both_sections():
     def get_my_jira_tasks() -> dict[str, object]:
         return {
-            "assigned_to_me": [
-                {"key": "WM-5", "summary": "Zrobić X", "status": "In Progress"}
-            ],
+            "assigned_to_me": [{"key": "WM-5", "summary": "Zrobić X", "status": "In Progress"}],
             "reported_by_me_unassigned": [
                 {"key": "WM-9", "summary": "Zgłoszone", "status": "To Do"}
             ],
@@ -411,7 +409,8 @@ def test_my_tasks_formats_both_sections():
 
 
 def test_my_tasks_selects_tool_by_name_when_factory_returns_several():
-    """Fabryka zwraca WIĘCEJ niż jedno narzędzie (ADR 0056) — router bierze po nazwie, nie pozycji."""
+    """Fabryka zwraca WIĘCEJ niż jedno narzędzie (ADR 0056) — router bierze po nazwie, nie
+    pozycji."""
 
     def get_jira_task(key: str) -> dict[str, object]:
         raise AssertionError("nie powinno być wołane przez /moje-zadania")

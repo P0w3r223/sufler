@@ -12,7 +12,7 @@ zwróciło czytelny komunikat zamiast surowego ``httpx.HTTPError`` (jak w ``MyJi
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 
@@ -21,8 +21,8 @@ from workmate.core.domain.jira_tasks import (
     JiraTask,
     JiraTaskDetails,
     build_history_jql,
-    build_search_jql,
     build_my_tasks_jql,
+    build_search_jql,
     map_my_tasks,
     map_task_details,
 )
@@ -58,7 +58,8 @@ class JiraReadService:
         status_category: str = "",
         limit: int = _MAX_SEARCH_RESULTS,
     ) -> list[JiraTask]:
-        """Wyszukaj zgłoszenia po tekście/projekcie/kategorii statusu (nierozwiązane, chyba że 'done')."""
+        """Wyszukaj zgłoszenia po tekście/projekcie/kategorii statusu (nierozwiązane, chyba że
+        'done')."""
         jql = build_search_jql(text=text, project=project, status_category=status_category)
         capped = max(1, min(limit, _MAX_SEARCH_RESULTS))
         with _translated_errors():
@@ -78,7 +79,8 @@ class JiraReadService:
     def member_history(
         self, jira_user: str, since: str = "", until: str = ""
     ) -> tuple[list[JiraTask], bool]:
-        """Zakończone zadania JEDNEGO członka w oknie dat — ``jira_user`` z zaufanej mapy tożsamości.
+        """Zakończone zadania JEDNEGO członka w oknie dat — ``jira_user`` z zaufanej mapy
+        tożsamości.
 
         (lista, czy_ucięto), najnowsze pierwsze — jak ``MyJiraTasksService.my_history``.
         """
@@ -95,7 +97,7 @@ class _translated_errors:
     def __enter__(self) -> _translated_errors:
         return self
 
-    def __exit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+    def __exit__(self, exc_type: object, exc: BaseException | None, tb: object) -> Literal[False]:
         if exc is None:
             return False
         if isinstance(exc, httpx.HTTPStatusError):

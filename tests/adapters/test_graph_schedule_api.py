@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import urllib.parse
 from datetime import datetime, timezone
 
 import httpx
@@ -32,7 +33,7 @@ def test_list_members_sends_bearer_token_from_provider():
     members = _client(handler, token="secret-token").list_members("team-1")
     assert members == [{"userId": "U1", "displayName": "Adam"}]
     assert seen["auth"] == "Bearer secret-token"
-    assert seen["path"] == "/teams/team-1/members"
+    assert seen["path"] == "/v1.0/teams/team-1/members"
 
 
 def test_list_members_paginates_via_odata_next_link():
@@ -59,7 +60,7 @@ def test_list_shifts_sends_ge_le_filter_on_shared_shift():
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen["query"] = str(request.url)
+        seen["query"] = urllib.parse.unquote(str(request.url))
         return httpx.Response(200, json={"value": []})
 
     _client(handler).list_shifts("team-1", _START, _END)

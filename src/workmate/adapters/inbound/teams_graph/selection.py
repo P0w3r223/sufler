@@ -203,7 +203,7 @@ class ReplyPolicy:
     always_reply: frozenset[tuple[str, str]] = frozenset()
 
     @classmethod
-    def from_settings(cls, settings: Any) -> "ReplyPolicy":
+    def from_settings(cls, settings: Any) -> ReplyPolicy:
         return cls(
             mode=settings.reply_policy,
             always_reply=frozenset(settings.always_reply),
@@ -321,7 +321,13 @@ def plan_channel(
             if iso_gt(created, last_seen):
                 last_seen = created
             _append_actionable(
-                messages, raw, me_id, replied, policy=policy, channel=channel, thread_engaged=engaged
+                messages,
+                raw,
+                me_id,
+                replied,
+                policy=policy,
+                channel=channel,
+                thread_engaged=engaged,
             )
         threads[root_id] = {"watermark": watermark, "last_seen": last_seen}
 

@@ -163,7 +163,9 @@ def test_map_task_details_strips_control_chars_from_description() -> None:
 
 def test_map_task_details_sanitizes_comment_body() -> None:
     issue = {"key": "WT-5", "fields": {"summary": "x"}}
-    comments = [{"author": {"displayName": "Adam"}, "created": "2026-08-01", "body": "ping\x1b[31m"}]
+    comments = [
+        {"author": {"displayName": "Adam"}, "created": "2026-08-01", "body": "ping\x1b[31m"}
+    ]
     details = map_task_details(issue, comments)
     assert isinstance(details.comments[0], JiraComment)
     assert "\x1b" not in details.comments[0].body

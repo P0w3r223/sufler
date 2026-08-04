@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # Cap stron paginacji (@odata.nextLink) — ochrona przed nieograniczonym chainingiem.
 _MAX_PAGES = 20
-# Bufor okna zapytania zmian: schedule/shifts pozwala TYLKO ``startDateTime ge`` i ``endDateTime le``
-# (potwierdzone empirycznie — inne operatory/powtórzenia dają 400). Filtrujemy więc na oknie
-# poszerzonym o dobę z każdej strony (zmiany są krótkie, dobowe), a dokładny overlap robi domena.
+# Bufor okna zapytania zmian: schedule/shifts pozwala TYLKO ``startDateTime ge`` i
+# ``endDateTime le`` (potwierdzone empirycznie — inne operatory/powtórzenia dają 400). Filtrujemy
+# okno poszerzonym o dobę z każdej strony (zmiany są krótkie, dobowe), overlap robi domena.
 _SHIFT_BUFFER_DAYS = 1
 
 
@@ -59,21 +59,18 @@ class HttpxGraphScheduleClient:
                 break
         return members
 
-    def list_shifts(
-        self, team_id: str, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
+    def list_shifts(self, team_id: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
         from datetime import timedelta
 
         buffer = timedelta(days=_SHIFT_BUFFER_DAYS)
         filt = _window_filter("sharedShift", start - buffer, end + buffer)
         return self._get_paged(f"{self._base_url}/teams/{team_id}/schedule/shifts", filt)
 
-    def list_times_off(
-        self, team_id: str, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
-        # BEZ filtra serwerowego: ``endDateTime le`` wykluczyłoby długą nieobecność KOŃCZĄCĄ SIĘ po
-        # oknie (urlop trwający dalej), a to najczęstsze pytanie („kto ma teraz wolne"). Nieobecności
-        # jest mało (dziesiątki na cały zespół), więc pobieramy wszystkie i overlap robi domena.
+    def list_times_off(self, team_id: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
+        # BEZ filtra serwerowego: ``endDateTime le`` wykluczyłoby długą nieobecność KOŃCZĄCĄ SIĘ
+        # po oknie (urlop trwający dalej), a to najczęstsze pytanie („kto ma teraz wolne").
+        # Nieobecności jest mało (dziesiątki na cały zespół), więc pobieramy wszystkie i overlap
+        # robi domena.
         return self._get_paged(f"{self._base_url}/teams/{team_id}/schedule/timesOff", None)
 
     def list_time_off_reasons(self, team_id: str) -> dict[str, str]:

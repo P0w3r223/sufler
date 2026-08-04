@@ -45,7 +45,8 @@ def build_silent_token_provider(settings: ScheduleSettings) -> Callable[[], str]
             if accounts
             else None
         )
-        # ŚWIADOMIE bez ``cache.serialize()`` — plik jest cudzy i RO; nasz odczyt niczego nie zmienia.
+        # ŚWIADOMIE bez ``cache.serialize()`` — plik jest cudzy i RO; nasz odczyt niczego nie
+        # zmienia.
         if not result or "access_token" not in result:
             raise ScheduleReadError(
                 "Grafik jest chwilowo niedostępny: ciche logowanie się nie powiodło — najpewniej "

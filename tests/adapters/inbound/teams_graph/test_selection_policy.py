@@ -80,12 +80,12 @@ def test_mode_mention_sticks_to_thread_after_bot_already_replied():
     bot_reply = _raw(
         "r1-bot", root_id="r1", sender_id=ME_ID, text="jasne", created="2026-08-04T09:05:00Z"
     )
-    follow_up = _raw(
-        "r1-f2", root_id="r1", text="a jeszcze to", created="2026-08-04T09:10:00Z"
-    )
+    follow_up = _raw("r1-f2", root_id="r1", text="a jeszcze to", created="2026-08-04T09:10:00Z")
     state = {
         "since_roots": "2026-08-04T08:00:00Z",
-        "threads": {"r1": {"watermark": "2026-08-04T09:05:00Z", "last_seen": "2026-08-04T09:05:00Z"}},
+        "threads": {
+            "r1": {"watermark": "2026-08-04T09:05:00Z", "last_seen": "2026-08-04T09:05:00Z"}
+        },
     }
     messages, _ = _plan(
         [], {"r1": [bot_reply, follow_up]}, policy=ReplyPolicy(mode="mention"), state=state

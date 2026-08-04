@@ -1,4 +1,5 @@
-"""Port grafiku Teams Shifts (ADR 0056) — kontrakt drzwi na Microsoft Graph ``/teams/{id}/schedule``.
+"""Port grafiku Teams Shifts (ADR 0056) — kontrakt drzwi na Microsoft Graph
+``/teams/{id}/schedule``.
 
 Analogiczny do portu Jiry: SYNCHRONICZNY (``httpx.Client``), narzędzia wołają go w puli wątków.
 Surowe JSON (``list[dict]``/``dict``) mapuje czysta domena (``schedule``); treść grafiku (nazwy
@@ -18,15 +19,11 @@ class ScheduleReadPort(Protocol):
         """Członkowie zespołu (userId + displayName) — do translacji grafiku na nazwiska."""
         ...
 
-    def list_shifts(
-        self, team_id: str, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
+    def list_shifts(self, team_id: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Surowe opublikowane zmiany zespołu w oknie [start, end) (Graph filtruje ge/le)."""
         ...
 
-    def list_times_off(
-        self, team_id: str, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
+    def list_times_off(self, team_id: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Surowe nieobecności/urlopy zespołu w oknie [start, end)."""
         ...
 

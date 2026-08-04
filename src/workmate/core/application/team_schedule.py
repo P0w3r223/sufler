@@ -98,7 +98,8 @@ class TeamScheduleService:
 def _index_members(
     members: list[dict[str, Any]],
 ) -> tuple[dict[str, str], list[tuple[str, str]]]:
-    """Zbuduj mapę ``userId → displayName`` i listę ``(displayName, userId)`` do dopasowania osoby."""
+    """Zbuduj mapę ``userId → displayName`` i listę ``(displayName, userId)`` do dopasowania
+    osoby."""
     by_id: dict[str, str] = {}
     candidates: list[tuple[str, str]] = []
     for member in members:
