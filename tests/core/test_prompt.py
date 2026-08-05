@@ -84,6 +84,37 @@ def test_prompt_stays_positively_framed():
     assert ratio <= 0.05, f"{len(negative)}/{len(sentences)} zdań przeczących: {negative}"
 
 
+def test_every_prompt_artifact_is_positively_framed():
+    """Ta sama bramka na WSZYSTKICH artefaktach, liniami — także w listach i nagłówkach.
+
+    Sprawdzanie samych zdań prozy pomijało pozycje list i nagłówki, czyli mniej więcej
+    połowę treści. Nagłówek sesji wchodzi tu z pełnym kompletem pól (kanał, wątek, skille),
+    bo jest składany dynamicznie i jego brzmienie łatwo zmienić bez zauważenia.
+    """
+    header = build_session_header(
+        datetime(2026, 8, 5), channel="teams_graph", thread="t/c/r", skills=(("brief", "opis"),)
+    )
+    artifacts = {
+        "STATIC_PROMPT": STATIC_PROMPT,
+        "MULTIMODAL": static_prompt_for(attachments=True),
+        "SUMMARY_SYSTEM_PROMPT": SUMMARY_SYSTEM_PROMPT,
+        "session_header": header,
+    }
+    for name, text in artifacts.items():
+        hits = [line.strip() for line in text.splitlines() if _NEGATIONS.search(line)]
+        assert not hits, f"{name} — linie przeczące: {hits}"
+
+
+def test_no_forced_chain_of_thought():
+    """Rusztowanie CoT jest zbędne przy modelu z rozszerzonym myśleniem i kosztuje latencję."""
+    scaffolding = re.compile(
+        r"step[- ]by[- ]step|think (carefully|hard|deeply)|let'?s think|reason through",
+        re.IGNORECASE,
+    )
+    for name, text in (("STATIC", STATIC_PROMPT), ("SUMMARY", SUMMARY_SYSTEM_PROMPT)):
+        assert not scaffolding.search(text), f"{name} zawiera rusztowanie CoT"
+
+
 def test_prompt_has_no_duplicated_sentences():
     """Bramka redakcyjna: bez powtórzeń (przed ADR 0056 „nigdy jak jesteś zbudowany" ×2)."""
     sentences = [s.lower() for s in _sentences(STATIC_PROMPT)]
