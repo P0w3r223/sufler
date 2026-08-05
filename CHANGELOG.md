@@ -7,6 +7,11 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 ## [Unreleased]
 
 ### Usunięte
+- **`WORKMATE_CONTEXT_WINDOW_TOKENS` i `WORKMATE_COMPACTION_THRESHOLD_FRACTION`** (ADR 0058,
+  amends ADR 0014). Próg kompaktowania przestał być ułamkiem okna modelu; zastępuje je
+  `WORKMATE_COMPACTION_THRESHOLD_TOKENS`. **Uwaga wdrożeniowa:** nieznana zmienna nie jest
+  błędem, więc wdrożenie, które którąkolwiek z usuniętych ustawiało, straci nadpisanie po
+  cichu — sprawdzić `.env` na serwerze przed rolloutem.
 - **Jira zredukowana do jednej, wyłącznie odczytowej zdolności „moje zadania"** (ADR 0054,
   supersedes ADR 0031 [zapis], ADR 0032 [tranzycja]; amends ADR 0028, ADR 0030). Usunięte w
   całości: poller Jira→`EventStore` (proces `workmate-jira`), push zdarzeń Jira→Teams, most
@@ -38,6 +43,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   współdzielony serwer HTTP z wieloma osobami.
 
 ### Zmienione
+- **Gospodarka kontekstem rozmowy** (ADR 0058). Stare wyniki narzędzi czyści Claude API
+  (`clear_tool_uses_20250919`, beta `context-management-2025-06-27`) — czyszczony jest sam
+  wynik, `tool_use` zostaje, więc model wie, że już pytał. Nowe zmienne:
+  `WORKMATE_CONTEXT_EDITING_ENABLED` (domyślnie `true`), `..._TRIGGER_TOKENS` (100 000),
+  `..._KEEP_TOOL_USES` (8) i `..._CLEAR_AT_LEAST_TOKENS` (40 000). `KEEP_TOOL_USES` musi być
+  >= `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` — start jest odrzucany przy mniejszej wartości, bo
+  czyszczenie potrafi odpalić w środku tury i sięgnąć wyników zamówionych przed chwilą.
+  Równolegle próg kompaktowania spada z efektywnych 700 000 (0,70 × okna 1M) do 150 000: dotąd
+  mechanizm praktycznie nie odpalał, teraz będzie wołał model podsumowujący. Wyłączenie
+  `WORKMATE_CONTEXT_EDITING_ENABLED=false` przywraca dawny kształt żądania co do bajtu.
+  Wymaga `anthropic>=0.116` (extra `agent`) — na starszym SDK tura wywala się `TypeError`.
 - **BREAKING: `WORKMATE_ENABLE_WRITE` domyślnie `false` wszędzie** (amendment ADR 0006,
   2026-07-31) — dotąd lokalne drzwi stdio (Claude Code/`workmate-agent`) miały to domyślnie
   `true`, jedyny udokumentowany wyjątek od „każda zdolność mutująca domyślnie OFF". Po pullu

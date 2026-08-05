@@ -32,7 +32,12 @@ teams = [
 # Runtime agenta (Faza 2, M1 / ADR 0008) — oficjalny SDK Anthropic. Serwer MCP
 # zostaje lekki; runtime doinstalowuje się przez `uv sync --extra agent`.
 agent = [
-    "anthropic>=0.40",
+    # >=0.116: czyszczenie kontekstu (ADR 0058) woła ``beta.messages.stream`` z ``betas``
+    # i ``context_management``. Na starszym SDK to nie jest ``anthropic.APIError``, tylko
+    # ``TypeError`` na nieznanym argumencie — wyjątek POZA kopertą ``LLMError``, więc tura
+    # wywraca się surowym tracebackiem zamiast wrócić jako błąd. Dolna granica to wersja,
+    # na której kształt żądania sprawdzono wobec typów SDK.
+    "anthropic>=0.116",
 ]
 # Drzwi Teams w trybie DELEGOWANYM (ADR 0015) — polling kanału przez Microsoft Graph
 # jako zalogowany użytkownik (device-code MSAL). Bez ciężkiego Agents SDK; serwer MCP

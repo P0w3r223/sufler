@@ -9,6 +9,7 @@ wyłącznie ten adapter; rdzeń i runtime go nie widzą.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.domain.pricing import TokenUsage
@@ -28,6 +29,11 @@ if TYPE_CHECKING:
     from workmate.config import AgentSettings
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.llm import Attachment, TranscriptEntry
+
+logger = logging.getLogger(__name__)
+
+# Czyszczenie kontekstu jest w Claude API funkcją BETA, więc nagłówek jedzie z żądaniem.
+_CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 
 
 class AnthropicLLMClient:
@@ -56,6 +62,14 @@ class AnthropicLLMClient:
 
         messages = _mark_cache(_to_messages(transcript))
         tool_defs = [_to_tool_def(spec) for spec in tools]
+        edits = _context_management(self._settings)
+        # Czyszczenie wyników narzędzi żyje na ścieżce beta SDK, więc wywołanie wybieramy
+        # PARAMETREM, nie osobną gałęzią kodu: przy wyłączonym czyszczeniu jedzie dokładnie
+        # dawne żądanie (bez nagłówka bety), a kształt odpowiedzi jest w obu wypadkach ten sam.
+        stream = self._client.beta.messages.stream if edits else self._client.messages.stream
+        extra: dict[str, Any] = (
+            {"betas": [_CONTEXT_MANAGEMENT_BETA], "context_management": edits} if edits else {}
+        )
 
         try:
             # STREAMING (ADR 0011, rewizja): przy dużym ``max_tokens`` (domyślnie 128k —
@@ -63,7 +77,7 @@ class AnthropicLLMClient:
             # przez SDK (szacowany czas > limitu, zrywane bezczynne połączenie). Streaming
             # tego nie ma; ``get_final_message`` zwraca tę samą ``Message`` co ``create``
             # (pełna lista bloków + ``stop_reason``), więc ``_from_message`` działa bez zmian.
-            with self._client.messages.stream(
+            with stream(
                 model=self._settings.model,
                 max_tokens=self._settings.max_tokens,
                 # Prompt caching (#10): breakpoint na ostatnim (jedynym) bloku system. Kolejność
@@ -82,10 +96,12 @@ class AnthropicLLMClient:
                 thinking=_thinking_config(self._settings.thinking_type),
                 messages=messages,
                 tools=tool_defs,
-            ) as stream:
-                message = stream.get_final_message()
+                **extra,
+            ) as opened:
+                message = opened.get_final_message()
         except anthropic.APIError as exc:
             raise LLMError(f"Błąd Claude API: {exc}") from exc
+        _log_applied_edits(message)
         return _from_message(message)
 
 
@@ -146,6 +162,58 @@ def _thinking_config(thinking_type: str) -> dict[str, str]:
     if thinking_type == "adaptive":
         return {"type": "adaptive", "display": "summarized"}
     return {"type": thinking_type}
+
+
+def _context_management(settings: AgentSettings) -> dict[str, Any] | None:
+    """Konfiguracja czyszczenia starych wyników narzędzi (ADR 0058) albo ``None``, gdy wyłączone.
+
+    Wynik narzędzia wraca do kontekstu i jedzie ponownie w KAŻDEJ kolejnej turze, więc bez
+    czyszczenia rozmowa rośnie o treść, której model już nie czyta. Czyścimy sam wynik,
+    zostawiając ``tool_use`` (``clear_tool_inputs`` pomijamy, bo domyślnie ``false``): ślad
+    „pytałem o X" zostaje, znika tylko odpowiedź — dzięki temu model nie powtarza zapytania,
+    a gdy treść znów będzie potrzebna, woła narzędzie świadomie.
+
+    ``keep`` chroni ostatnie pary wywołanie–wynik, w tym tę z bieżącej pętli tool-use;
+    ``clear_at_least`` pilnuje, żeby czyszczenie zdjęło dość dużo, by opłacić unieważnienie
+    cache'u prefiksu (każde czyszczenie = zapis cache'u od nowa).
+    """
+    if not settings.context_editing_enabled:
+        return None
+    return {
+        "edits": [
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": {
+                    "type": "input_tokens",
+                    "value": settings.context_editing_trigger_tokens,
+                },
+                "keep": {
+                    "type": "tool_uses",
+                    "value": settings.context_editing_keep_tool_uses,
+                },
+                "clear_at_least": {
+                    "type": "input_tokens",
+                    "value": settings.context_editing_clear_at_least_tokens,
+                },
+            }
+        ]
+    }
+
+
+def _log_applied_edits(message: Any) -> None:
+    """Zaloguj, ile kontekstu zdjęło czyszczenie — jedyny ślad, że w ogóle zadziałało.
+
+    Czyszczenie dzieje się po stronie API i jest niewidoczne w naszym transkrypcie: bez
+    tego logu różnica między „próg za wysoki, nic się nie czyści" a „czyści się co turę
+    i płacimy zapis cache'u" jest nie do odróżnienia z zewnątrz.
+    """
+    applied = getattr(getattr(message, "context_management", None), "applied_edits", None)
+    for edit in applied or ():
+        logger.info(
+            "Wyczyszczono kontekst: %s wywołań, %s tokenów wejścia",
+            getattr(edit, "cleared_tool_uses", "?"),
+            getattr(edit, "cleared_input_tokens", "?"),
+        )
 
 
 def _to_tool_def(spec: ToolSpec) -> dict[str, Any]:

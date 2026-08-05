@@ -310,16 +310,22 @@ def build_compaction_service(
     kluczem/ustawieniami co agent, tylko z podmienionym modelem. Klient dzieli MAGAZYN z
     ``ConversationService`` (ten sam plik SQLite), więc archiwizacja i podsumowania idą do
     tej samej bazy. Import Claude API jest tu już bezpieczny — runtime zbudowano wcześniej.
+
+    Czyszczenie wyników narzędzi (ADR 0058) jest tu WYŁĄCZONE: streszczacz dostaje jedną
+    wiadomość ze spłaszczonym transkryptem, więc nie ma czego czyścić, a nagłówek bety
+    zostawałby na wywołaniu, które z niej nie korzysta.
     """
     if not conversation_settings.compaction_enabled:
         return None
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
     model = conversation_settings.compaction_model or agent_settings.model
-    summarizer = AnthropicLLMClient(replace(agent_settings, model=model))
+    summarizer = AnthropicLLMClient(
+        replace(agent_settings, model=model, context_editing_enabled=False)
+    )
     return CompactionService(
         store,
         summarizer,
-        threshold_tokens=conversation_settings.compaction_threshold_tokens(),
+        threshold_tokens=conversation_settings.compaction_threshold_tokens,
         keep_turns=conversation_settings.compaction_keep_turns,
     )
