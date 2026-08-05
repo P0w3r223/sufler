@@ -72,6 +72,7 @@ class _FakeRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
+        session_header: str = ""
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -90,6 +91,7 @@ class _FailingRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
+        session_header: str = ""
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -117,6 +119,7 @@ class _ThinkingRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
+        session_header: str = ""
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",

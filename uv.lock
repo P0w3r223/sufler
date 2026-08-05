@@ -3797,7 +3797,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.40" },
+    { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.116" },
     { name = "fastembed", marker = "extra == 'retrieval-dense'", specifier = ">=0.4" },
     { name = "fpdf2", marker = "extra == 'file-reply'", specifier = ">=2.8" },
     { name = "httpx", marker = "extra == 'github'", specifier = ">=0.28.1" },

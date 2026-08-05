@@ -6,6 +6,8 @@ ma poprawnie wybierać źródło klucza. Oba czyste — testujemy bez SDK i bez 
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from workmate.config import AgentSettings
@@ -17,6 +19,10 @@ _AGENT_VARS = (
     "WORKMATE_AGENT_MAX_TOKENS",
     "WORKMATE_AGENT_MAX_TOOL_ITERATIONS",
     "WORKMATE_AGENT_THINKING",
+    "WORKMATE_CONTEXT_EDITING_ENABLED",
+    "WORKMATE_CONTEXT_EDITING_TRIGGER_TOKENS",
+    "WORKMATE_CONTEXT_EDITING_KEEP_TOOL_USES",
+    "WORKMATE_CONTEXT_EDITING_CLEAR_AT_LEAST_TOKENS",
 )
 
 
@@ -76,6 +82,36 @@ def test_from_env_defaults_to_sonnet_model(monkeypatch):
     assert settings.model == "claude-sonnet-5"
     assert (settings.max_tokens, settings.max_tool_iterations) == (128000, 8)
     assert settings.thinking_type == "adaptive"
+
+
+def test_from_env_defaults_match_field_defaults(monkeypatch):
+    """Domyślne z ``from_env`` i z pól dataclass MUSZĄ być te same (ADR 0058).
+
+    Wartości są zapisane w dwóch miejscach, więc rozjeżdżają się po cichu — a przy
+    ``context_editing_keep_tool_uses`` rozjazd w dół oznacza czyszczenie wyników z bieżącej
+    tury. Porównujemy wszystkie pola poza kluczem (ten pochodzi ze środowiska z definicji).
+    """
+    for var in _AGENT_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+    from_env = AgentSettings.from_env()
+    defaults = AgentSettings()
+
+    assert dataclasses.replace(from_env, api_key="") == defaults
+
+
+def test_validate_rejects_keep_tool_uses_below_iteration_limit():
+    """Bramka spójności: czyszczenie nie może sięgnąć wyników z bieżącej pętli narzędzi."""
+    with pytest.raises(ValueError, match="KEEP_TOOL_USES"):
+        AgentSettings(
+            api_key="k", max_tool_iterations=8, context_editing_keep_tool_uses=3
+        ).validate()
+
+
+def test_validate_accepts_keep_tool_uses_equal_to_iteration_limit():
+    AgentSettings(
+        api_key="k", max_tool_iterations=4, context_editing_keep_tool_uses=4
+    ).validate()  # nie rzuca
 
 
 def test_api_key_absent_from_repr():
