@@ -113,6 +113,9 @@ workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 workmate-github = "workmate.adapters.inbound.github.app:main"
 # Proces proaktywnego digestu zmian (ADR 0053, F6), cotygodniowy: `uv run workmate-teams-digest`.
 workmate-teams-digest = "workmate.adapters.inbound.teams_digest.app:main"
+# Kontener-wykonawca poleceń powłoki (ADR 0057): `uv run workmate-exec`. Osobny proces bez
+# sieci — uruchamia kod ułożony przez model, mając wyłącznie montaże workspace'u.
+workmate-exec = "workmate.adapters.inbound.exec_server:main"
 # Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez
 # compose (`docker compose ps` → healthy/unhealthy), nie ręcznie: `workmate-heartbeat-check --file … --max-age …`.
 workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"

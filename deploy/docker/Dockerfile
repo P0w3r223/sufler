@@ -90,16 +90,16 @@ ENV LANG=C.UTF-8 \
 #   git      — odwracalność zapisu notatek: `workmate-note` commituje każdą zmianę
 #   ripgrep  — przeszukiwanie plików; dla POLSKIEGO korpusu i tak pierwszy wybór to
 #              `workmate-search` (BM25 nad lematami), bo grep gubi fleksję
-#   curl     — pobieranie zasobów wskazanych przez użytkownika
 #
-# ``curl`` (oraz sieć w ogóle) domyka trzecią nogę trójki śmierci: agent przetwarza niezaufane
-# wejście [A], sięga do danych całego pionu [B] i może komunikować się na zewnątrz [C]. Kontrolą
-# kompensującą jest POLITYKA SIECI KONTENERA, nie brak narzędzia — patrz `docker-compose.yml`
-# paczki wdrożeniowej i decyzja o egressie.
+# ``curl`` świadomie POMINIĘTY (ADR 0057). Kod od modelu biegnie w kontenerze-wykonawcy, który
+# ma ``network_mode: none``, więc klient HTTP nie miałby tam dokąd pójść; w kontenerze aplikacji
+# model nie ma powłoki. Narzędzie, które istnieje wyłącznie dlatego, że inna kontrola je
+# unieważnia, staje się zdolnością w dniu, w którym tamta kontrola się zmieni. Gdy pobieranie
+# zasobów będzie potrzebne, wraca jako typowane narzędzie z allowlistą, nie jako surowy klient.
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-        ca-certificates tini bash git ripgrep curl \
+        ca-certificates tini bash git ripgrep \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 workmate \
@@ -112,6 +112,11 @@ RUN apt-get update \
     # ścieżki, a prompt opisujący te ścieżki pozostawał prawdziwy w obu wariantach.
     && mkdir -p /home/scratchpad /mnt/system /mnt/user/inputs /mnt/user/outputs /mnt/skills \
     && chown 10001:10001 /home/scratchpad /mnt/user/inputs /mnt/user/outputs \
+    # Katalog gniazda wykonawcy (ADR 0057) — dzielony wolumenem między aplikacją a wykonawcą.
+    # Uprawnienia pliku gniazda są JEDYNĄ kontrolą dostępu do powłoki, więc katalog należy do
+    # uid procesu, a wolumen montują wyłącznie te dwie usługi.
+    && mkdir -p /var/run/workmate \
+    && chown 10001:10001 /var/run/workmate \
     # Notatki przyjeżdżają wolumenem, więc ich właściciel bywa inny niż uid procesu; bez tego
     # git odmawia operacji w „cudzym" drzewie (`detected dubious ownership`) i `workmate-note`
     # traci ścieżkę commitu. Zawężone do katalogu notatek — nie globalne `*`.
