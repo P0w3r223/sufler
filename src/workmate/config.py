@@ -638,6 +638,16 @@ class TeamsGraphSettings:
     # z warstwy spajającej), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez
     # wymogu tożsamości/RW-montażu. Dostawa PDF ``| pdf`` reużywa kanał file-reply (jak brief).
     enable_change_digest: bool = False
+    # Polityka „czy w ogóle odpowiadać" (SZKIELET pod wielokanałowe wdrożenie WorkMate).
+    # ``all`` (domyślnie) = zachowanie sprzed tej zmiany: odpowiedź na każdą wiadomość od
+    # innego człowieka w kanałach z ``watch``. ``mention`` odpowiada tylko po @wzmiance bota
+    # (lub gdy bot już jest aktywny w danym wątku — patrz ``selection.ReplyPolicy``), z
+    # wyjątkiem kanałów z ``always_reply``, które zawsze zachowują się jak ``all``. Domyślne
+    # ``all`` gwarantuje, że sam deploy tej zmiany NIC nie zmienia w produkcji.
+    reply_policy: str = "all"
+    # Kanały, które ZAWSZE odpowiadają (jak ``mode=all``), niezależnie od ``reply_policy`` —
+    # ten sam format co ``watch`` (``team:channel,team:channel``); patrz ``_parse_watch_pairs``.
+    always_reply: tuple[tuple[str, str], ...] = ()
 
     @property
     def authority(self) -> str:
@@ -699,6 +709,10 @@ class TeamsGraphSettings:
             ),
             enable_change_digest=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", default=False
+            ),
+            reply_policy=os.environ.get("WORKMATE_TEAMS_GRAPH_REPLY_POLICY", "all"),
+            always_reply=_parse_watch_pairs(
+                os.environ.get("WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY", "")
             ),
         )
 
@@ -867,6 +881,20 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE=true wymaga "
                 "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
                 f"autoryzuje zapis, ADR 0042/0048); brak pliku: {self.meeting_note_identities}."
+            )
+        if self.reply_policy not in ("all", "mention"):
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_REPLY_POLICY musi być 'all' albo 'mention', jest: "
+                f"{self.reply_policy!r}."
+            )
+        # ``always_reply`` ma sens tylko dla kanałów faktycznie nasłuchiwanych — para spoza
+        # ``watch`` to najczęściej literówka (fail-fast zamiast cichej, martwej konfiguracji).
+        stray = [pair for pair in self.always_reply if pair not in self.watch]
+        if stray:
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY zawiera pary spoza WORKMATE_TEAMS_GRAPH_WATCH: "
+                + ", ".join(f"{team}:{channel}" for team, channel in stray)
+                + "."
             )
 
 
@@ -1340,6 +1368,80 @@ class TeamsPushSettings:
                 "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING wymaga "
                 "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL=true (wątki są tylko na kanale)."
             )
+
+
+# --- grafik zmian z Teams Shifts (ADR 0056) -----------------------------------
+# Zespół „BIAP – Pion Inteligentnych Technologii" — jedyny w tenancie z działającym grafikiem.
+_DEFAULT_SCHEDULE_TEAM_ID = "c0ffee00-0000-4000-8000-000000000007"
+# Cudzy cache MSAL bota powiadomienia-teams — montowany RO, czytany po cichu, NIGDY pisany.
+_DEFAULT_SCHEDULE_CACHE = Path("/var/lib/powiadomienia-teams/teams_token_cache.bin")
+_DEFAULT_SCHEDULE_TZ = "Europe/Warsaw"
+# Zakresy delegowane grafiku: odczyt grafiku + lista członków zespołu (translacja userId→nazwisko).
+# Ta sama rejestracja aplikacji co push/powiadomienia-teams (TeamMember.Read.All skonsentowany).
+_DEFAULT_SCHEDULE_SCOPES = ("Schedule.Read.All", "TeamMember.Read.All")
+
+
+@dataclass(frozen=True)
+class ScheduleSettings:
+    """Konfiguracja grafiku Teams Shifts (ADR 0056) — WYŁĄCZNIE odczyt, cichy token z cudzego cache.
+
+    Tożsamość pożyczamy z cache MSAL bota powiadomienia-teams (ta sama rejestracja aplikacji co
+    ``TeamsPushSettings``): ``client_id``/``tenant_id`` domyślnie SPADAJĄ na
+    ``WORKMATE_TEAMS_PUSH_*``, żeby nie duplikować konfiguracji. Cache jest montowany RO i NIGDY nie
+    zapisywany. ``enabled`` = ``auto`` (domyślnie): włącz, gdy jest client_id + tenant_id + istnieje
+    plik cache — zero konfiguracji tam, gdzie mont jest, ciche wyłączenie tam, gdzie go nie ma.
+    ``true``/``false`` wymuszają stan.
+    """
+
+    client_id: str = ""
+    tenant_id: str = ""
+    team_id: str = _DEFAULT_SCHEDULE_TEAM_ID
+    token_cache_path: Path = _DEFAULT_SCHEDULE_CACHE
+    timezone: str = _DEFAULT_SCHEDULE_TZ
+    scopes: tuple[str, ...] = _DEFAULT_SCHEDULE_SCOPES
+    enabled: str = "auto"  # "auto" | "true" | "false"
+
+    @property
+    def authority(self) -> str:
+        """URL authority MSAL dla aplikacji single-tenant (z ``tenant_id``)."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}"
+
+    def is_enabled(self) -> bool:
+        """Czy narzędzie grafiku ma w ogóle powstać (patrz semantyka ``enabled``)."""
+        mode = self.enabled.strip().lower()
+        if mode == "false":
+            return False
+        if mode == "true":
+            return True
+        # auto: aplikacja skonfigurowana ORAZ cudzy cache tokenu jest zamontowany.
+        return bool(self.client_id and self.tenant_id and self.token_cache_path.is_file())
+
+    @classmethod
+    def from_env(cls) -> ScheduleSettings:
+        return cls(
+            # Fallback na push app: ta sama rejestracja i ten sam cache MSAL (jedno logowanie).
+            client_id=os.environ.get("WORKMATE_SCHEDULE_CLIENT_ID")
+            or os.environ.get("WORKMATE_TEAMS_PUSH_CLIENT_ID", ""),
+            tenant_id=os.environ.get("WORKMATE_SCHEDULE_TENANT_ID")
+            or os.environ.get("WORKMATE_TEAMS_PUSH_TENANT_ID", ""),
+            team_id=os.environ.get("WORKMATE_SCHEDULE_TEAM_ID", _DEFAULT_SCHEDULE_TEAM_ID).strip(),
+            token_cache_path=_path_from_env(
+                "WORKMATE_SCHEDULE_TOKEN_CACHE", _DEFAULT_SCHEDULE_CACHE
+            ),
+            timezone=os.environ.get("WORKMATE_SCHEDULE_TZ", _DEFAULT_SCHEDULE_TZ).strip(),
+            scopes=_list_from_env("WORKMATE_SCHEDULE_SCOPES", _DEFAULT_SCHEDULE_SCOPES),
+            enabled=os.environ.get("WORKMATE_SCHEDULE_ENABLED", "auto").strip().lower(),
+        )
+
+    def validate(self) -> None:
+        """Kontrola strefy czasowej — ZAWSZE (jak digest). Reszta jest miękka (auto-wyłączenie)."""
+        try:
+            ZoneInfo(self.timezone)
+        except Exception as exc:
+            raise ValueError(
+                f"WORKMATE_SCHEDULE_TZ={self.timezone!r} nie jest znaną strefą czasową "
+                "(na Windows wymaga pakietu 'tzdata')."
+            ) from exc
 
 
 # --- proaktywny cotygodniowy digest zmian (ADR 0053, F6) ----------------------

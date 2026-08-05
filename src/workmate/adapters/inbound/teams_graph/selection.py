@@ -187,6 +187,52 @@ def _from_other_human(msg: ChannelMessage, me_id: str) -> bool:
     return bool(msg.sender_id) and msg.sender_id != me_id
 
 
+@dataclass(frozen=True)
+class ReplyPolicy:
+    """Polityka „czy w ogóle odpowiadać" — SZKIELET pod wielokanałowe wdrożenie WorkMate.
+
+    ``mode="all"`` (domyślny) = zachowanie sprzed tej bramki: odpowiedź na każdą wiadomość
+    od innego człowieka. ``mode="mention"``: odpowiedź tylko po @wzmiance bota ALBO gdy bot
+    już wcześniej odezwał się w danym wątku („przyklejony wątek" — patrz ``_thread_engaged``),
+    z wyjątkiem kanałów z ``always_reply``, które zawsze zachowują się jak ``all``. Budowana
+    z ``TeamsGraphSettings`` przez ``from_settings``; ``plan_channel`` z ``policy=None``
+    (domyślnie) zachowuje się dokładnie jak przed wprowadzeniem tej bramki.
+    """
+
+    mode: Literal["all", "mention"] = "all"
+    always_reply: frozenset[tuple[str, str]] = frozenset()
+
+    @classmethod
+    def from_settings(cls, settings: Any) -> ReplyPolicy:
+        return cls(
+            mode=settings.reply_policy,
+            always_reply=frozenset(settings.always_reply),
+        )
+
+    def should_engage(
+        self,
+        msg: ChannelMessage,
+        channel: tuple[str, str],
+        *,
+        thread_engaged: bool,
+    ) -> bool:
+        """Czy TA wiadomość kwalifikuje się do odpowiedzi (poza filtrem self-skip/dedup)."""
+        if self.mode == "all" or channel in self.always_reply:
+            return True
+        return msg.mentions_bot or thread_engaged
+
+
+def _thread_engaged(replies: list[dict[str, Any]], me_id: str) -> bool:
+    """Czy bot już wcześniej odezwał się w tym wątku — sygnał „przyklejenia" wątku.
+
+    Liczone z surowej historii odpowiedzi (Graph), NIE z osobnego stanu: przeżywa restart
+    procesu, dopóki wątek mieści się w oknie ``top_replies`` pobieranym co rundę przez poller.
+    """
+    return bool(me_id) and any(
+        ((raw.get("from") or {}).get("user") or {}).get("id") == me_id for raw in replies
+    )
+
+
 def roots_to_poll(roots: list[dict[str, Any]], channel_state: dict[str, Any]) -> list[str]:
     """Które wątki odpytać o odpowiedzi: aktywne (śledzone) + świeżo utworzone.
 
@@ -229,6 +275,8 @@ def plan_channel(
     replied: set[str],
     now: datetime,
     active_idle: timedelta,
+    policy: ReplyPolicy | None = None,
+    channel: tuple[str, str] = ("", ""),
 ) -> tuple[list[ChannelMessage], dict[str, Any]]:
     """Wybierz wiadomości do obsługi i policz nowy stan kanału (watermark + aktywne wątki).
 
@@ -237,6 +285,12 @@ def plan_channel(
     aktywności dłużej niż ``active_idle`` eksmitujemy, żeby nie odpytywać ich w
     nieskończoność. ``replied`` filtruje już odpisane (dedup), ale watermark i tak
     przesuwamy nad nimi. Wiadomości wracają posortowane chronologicznie.
+
+    ``policy``/``channel`` to bramka „czy w ogóle odpowiadać" (SZKIELET wielokanałowy):
+    ``policy=None`` (domyślnie) pomija bramkę całkowicie — zachowanie identyczne jak przed
+    jej wprowadzeniem. Odfiltrowane wiadomości NIE trafiają do ``messages``, ale watermark
+    i tak przesuwa się nad nimi (``_collect_new`` liczy po surowych danych), więc nie
+    wracają w kolejnych rundach — nie trzeba ich osobno oznaczać jako „odpisane".
     """
     since_roots = channel_state.get("since_roots") or _EPOCH_ISO
     threads: dict[str, dict[str, str]] = {
@@ -251,18 +305,30 @@ def plan_channel(
         created = raw.get("createdDateTime") or ""
         if root_id and root_id not in threads:
             threads[root_id] = {"watermark": created, "last_seen": created}
-        _append_actionable(messages, raw, me_id, replied)
+        engaged = _thread_engaged(replies_by_root.get(root_id, []), me_id)
+        _append_actionable(
+            messages, raw, me_id, replied, policy=policy, channel=channel, thread_engaged=engaged
+        )
 
     # 2) Nowe odpowiedzi w śledzonych wątkach (watermark per wątek — sedno wielotury).
     for root_id, replies in replies_by_root.items():
         info = threads.get(root_id, {"watermark": _EPOCH_ISO, "last_seen": _EPOCH_ISO})
         fresh, watermark = _collect_new(replies, info["watermark"])
         last_seen = info["last_seen"]
+        engaged = _thread_engaged(replies, me_id)
         for raw in fresh:
             created = raw.get("createdDateTime") or ""
             if iso_gt(created, last_seen):
                 last_seen = created
-            _append_actionable(messages, raw, me_id, replied)
+            _append_actionable(
+                messages,
+                raw,
+                me_id,
+                replied,
+                policy=policy,
+                channel=channel,
+                thread_engaged=engaged,
+            )
         threads[root_id] = {"watermark": watermark, "last_seen": last_seen}
 
     # 3) Eksmisja martwych wątków — bez aktywności dłużej niż active_idle.
@@ -279,11 +345,19 @@ def _append_actionable(
     raw: dict[str, Any],
     me_id: str,
     replied: set[str],
+    *,
+    policy: ReplyPolicy | None = None,
+    channel: tuple[str, str] = ("", ""),
+    thread_engaged: bool = False,
 ) -> None:
-    """Dołóż wiadomość do obsługi, jeśli to treść od innego człowieka i jeszcze nie odpisana."""
+    """Dołóż wiadomość do obsługi, jeśli to treść od innego człowieka, jeszcze nie odpisana
+    i (gdy ``policy`` podana) kwalifikuje się wg polityki odpowiedzi (wzmianka/przyklejenie)."""
     msg = normalize(raw, me_id)  # me_id → wyliczenie mentions_bot (wyzwalacz „zapisz to", ADR 0048)
-    if msg and _from_other_human(msg, me_id) and msg.id not in replied:
-        messages.append(msg)
+    if not msg or not _from_other_human(msg, me_id) or msg.id in replied:
+        return
+    if policy is not None and not policy.should_engage(msg, channel, thread_engaged=thread_engaged):
+        return
+    messages.append(msg)
 
 
 def _dedup_by_id(messages: list[ChannelMessage]) -> list[ChannelMessage]:

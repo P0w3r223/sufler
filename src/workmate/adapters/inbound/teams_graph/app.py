@@ -35,6 +35,7 @@ from workmate.config import (
     EventsSettings,
     GithubSettings,
     JiraSettings,
+    ScheduleSettings,
     Settings,
     TeamsGraphSettings,
     WorkspaceSettings,
@@ -111,6 +112,12 @@ def main() -> None:
     extra_catalog, thread_factory = _build_bridge_catalog(
         events_settings, GithubSettings.from_env()
     )
+    # Grafik Teams Shifts (ADR 0056): read-only, cichy token z cudzego cache MSAL. Katalog statyczny
+    # — dokładany do extra_catalog tylko gdy włączony (istnieje mont cache); błędy tokenu/consentu
+    # materializują się dopiero przy wywołaniu narzędzia (koperta), więc nie wywracają startu.
+    schedule_settings = ScheduleSettings.from_env()
+    schedule_settings.validate()
+    extra_catalog.extend(_build_team_schedule_catalog(schedule_settings))
     # ADR 0026 (A′2): dokładamy fabrykę `reply_with_file`, niezależnie bramkowaną od zapisu GitHub.
     thread_factory = _compose_thread_factories(
         thread_factory, _build_file_reply_factory(settings, token_provider)
@@ -438,6 +445,46 @@ def _build_user_doc_push_factory(
     return factory
 
 
+def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[ToolSpec]:
+    """Zbuduj katalog grafiku Shifts (ADR 0056) — pusty, gdy grafik wyłączony/nieskonfigurowany.
+
+    ``is_enabled()`` (tryb auto) sam sprawdza obecność cudzego cache MSAL, więc na hoście bez montu
+    powiadomienia-teams po prostu nie dokładamy narzędzia (ciche wyłączenie). Klient żyje przez cały
+    proces (daemon), jak inne sync klienty tutaj.
+    """
+    if not schedule_settings.is_enabled():
+        logger.info(
+            "Grafik Shifts WYŁĄCZONY (ADR 0056) — brak cache tokenu %s albo "
+            "WORKMATE_SCHEDULE_ENABLED=false. Narzędzie get_team_schedule nie zostanie wystawione.",
+            schedule_settings.token_cache_path,
+        )
+        return []
+    import atexit
+
+    import httpx
+
+    from workmate.adapters.outbound.graph_schedule_api import HttpxGraphScheduleClient
+    from workmate.adapters.outbound.msal_silent_token import build_silent_token_provider
+    from workmate.core.application.team_schedule import TeamScheduleService
+    from workmate.core.application.tools import build_team_schedule_catalog
+
+    token_provider = build_silent_token_provider(schedule_settings)
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    client = HttpxGraphScheduleClient(transport, token_provider)
+    service = TeamScheduleService(
+        client, team_id=schedule_settings.team_id, tz=schedule_settings.timezone
+    )
+    logger.info(
+        "Grafik Shifts WŁĄCZONY (ADR 0056) — agent Teams pokazuje zmiany i nieobecności zespołu "
+        "%s (strefa %s), token cichy z cache %s (RO, nigdy nie zapisywany).",
+        schedule_settings.team_id,
+        schedule_settings.timezone,
+        schedule_settings.token_cache_path,
+    )
+    return build_team_schedule_catalog(service)
+
+
 def _build_my_jira_tasks_factory(
     settings: TeamsGraphSettings, jira_settings: JiraSettings
 ) -> Callable[[str], list[ToolSpec]] | None:
@@ -460,17 +507,30 @@ def _build_my_jira_tasks_factory(
 
     from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
     from workmate.adapters.outbound.jira_api import build_jira_client
+    from workmate.core.application.jira_read import JiraReadService
     from workmate.core.application.my_jira_tasks import MyJiraTasksService
-    from workmate.core.application.tools import build_my_jira_tasks_catalog
+    from workmate.core.application.tools import (
+        build_jira_read_catalog,
+        build_my_jira_tasks_catalog,
+    )
 
     identities = YamlIdentityDirectory(settings.meeting_note_identities)
     # Klient żyje przez cały proces (daemon), jak inne sync klienty Jiry/GitHuba tutaj.
     transport = httpx.Client(timeout=30)
     atexit.register(transport.close)
     client = build_jira_client(transport, jira_settings)
+    # Serwis rozszerzonego odczytu (szczegóły/wyszukiwanie/członek) współdzieli klienta i bazę URL —
+    # NIE jest związany z nadawcą (bierze parametry), więc budujemy go raz.
+    read_service = JiraReadService(client, base_url=jira_settings.base_url)
+
+    def resolve_member(name: str) -> str | None:
+        person = identities.resolve_by_display_name(name)
+        return person.jira_user if person and person.jira_user else None
+
     logger.info(
         "'Moje zadania' Jira WŁĄCZONE (ADR 0054) — agent Teams i komenda /moje-zadania pokazują "
-        "otwarte zadania nadawcy, zawężone do JEGO konta Jira przez mapę tożsamości %s.",
+        "otwarte zadania nadawcy, zawężone do JEGO konta Jira przez mapę tożsamości %s. "
+        "Dodatkowo rozszerzony ODCZYT (szczegóły zgłoszenia, wyszukiwanie, zadania członka).",
         settings.meeting_note_identities,
     )
 
@@ -483,7 +543,10 @@ def _build_my_jira_tasks_factory(
         service = MyJiraTasksService(
             client, assignee=person.jira_user, base_url=jira_settings.base_url
         )
-        return build_my_jira_tasks_catalog(service)
+        return [
+            *build_my_jira_tasks_catalog(service),
+            *build_jira_read_catalog(read_service, resolve_member),
+        ]
 
     return factory
 
@@ -905,6 +968,7 @@ async def _run(
         AttachmentMaterializer,
     )
     from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
+    from workmate.adapters.inbound.teams_graph.selection import ReplyPolicy
 
     initial_state = state_store.load(settings.state_path)
     # Puls żywotności (R5): siostra pliku stanu na wolumenie, odświeżana po każdej udanej rundzie.
@@ -943,6 +1007,7 @@ async def _run(
             materializer=materializer,
             stop=stop,
             heartbeat=lambda: write_heartbeat(hb_path),
+            policy=ReplyPolicy.from_settings(settings),
         )
         await poller.run()
 

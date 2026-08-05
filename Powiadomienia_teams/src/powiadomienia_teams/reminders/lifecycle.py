@@ -13,9 +13,9 @@ from enum import Enum
 from typing import Protocol, TypeVar
 
 from powiadomienia_teams.graph.mapping import parse_graph_datetime
-from powiadomienia_teams.state import APPLIED, DECLINED, EXPIRED, PendingReminder
+from powiadomienia_teams.state import APPLIED, DECLINED, EXPIRED, SELF_FILLED, PendingReminder
 
-_TERMINAL = frozenset({APPLIED, DECLINED, EXPIRED})
+_TERMINAL = frozenset({APPLIED, DECLINED, EXPIRED, SELF_FILLED})
 
 
 class ReadOutcome(Enum):
@@ -79,6 +79,20 @@ def should_expire(
     return is_expired(pending, now, window_hours)
 
 
+def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_s: int) -> bool:
+    """Czy wolno zajrzeć do Shifts, bo pracownik MILCZY od dłuższej chwili (nie odpisuje na czacie).
+
+    Ciszę mierzymy tą samą kotwicą co wygaśnięcie (``_anchor``: ostatnia aktywność, potem czas
+    nudge'a) — sprawdzamy grafik dopiero, gdy bot NAPRAWDĘ już czeka, a nie zaraz po nudge'u.
+    ``min_idle_s < 0`` wyłącza funkcję; ``0`` sprawdza przy każdym cichym cyklu. Bez kotwicy →
+    False.
+    """
+    if min_idle_s < 0:
+        return False
+    anchor = _anchor(pending)
+    return anchor is not None and now >= anchor + timedelta(seconds=min_idle_s)
+
+
 class _MaZakonczenie(Protocol):
     """Cokolwiek, co ma koniec w czasie — ``Shift`` i ``TimeOff`` spełniają to strukturalnie."""
 
@@ -108,7 +122,7 @@ def still_writable(items: Iterable[_T], now: datetime) -> tuple[_T, ...]:
 def prune_terminal(
     state: dict[str, PendingReminder], now: datetime, retain_hours: int
 ) -> dict[str, PendingReminder]:
-    """Usuń wpisy TERMINALNE (applied/declined/expired) starsze niż ``retain_hours`` od kotwicy.
+    """Usuń wpisy TERMINALNE (applied/declined/expired/self_filled) starsze niż ``retain_hours``.
 
     Wpisy otwarte oraz świeże terminalne zostają. ``retain_hours`` powinno być ≥ oknu odpowiedzi,
     żeby nie ruszać idempotencji zapisu w aktywnym oknie. Wpis terminalny bez kotwicy zostawiamy

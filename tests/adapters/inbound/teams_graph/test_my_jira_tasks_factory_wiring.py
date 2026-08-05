@@ -52,14 +52,22 @@ def test_empty_sender_gets_no_tool(tmp_path) -> None:
     assert factory("") == []
 
 
-def test_known_sender_gets_the_tool(tmp_path) -> None:
+def test_known_sender_gets_the_tools(tmp_path) -> None:
+    """ADR 0056: fabryka zwraca teraz "moje zadania"/historia + rozszerzony odczyt Jiry (razem)."""
     settings = TeamsGraphSettings(
         meeting_note_identities=_identities_file(tmp_path, aad_user_id="aad-123")
     )
     factory = _build_my_jira_tasks_factory(settings, _JIRA)
     assert factory is not None
     tools = factory("aad-123")
-    assert [t.name for t in tools] == ["get_my_jira_tasks"]
+    assert {t.name for t in tools} == {
+        "get_my_jira_tasks",
+        "get_my_jira_history",
+        "get_jira_task",
+        "search_jira_tasks",
+        "get_member_jira_tasks",
+        "get_member_jira_history",
+    }
 
 
 def test_sender_mapped_to_a_different_person_gets_no_tool(tmp_path) -> None:

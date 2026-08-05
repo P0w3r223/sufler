@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from workmate.adapters.inbound.teams_graph import selection
-from workmate.adapters.inbound.teams_graph.selection import ChannelMessage
+from workmate.adapters.inbound.teams_graph.selection import ChannelMessage, ReplyPolicy
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.teams_graph.attachments import AttachmentMaterializer
@@ -103,6 +103,7 @@ class ChannelPoller:
         materializer: AttachmentMaterializer | None = None,
         stop: asyncio.Event | None = None,
         heartbeat: Callable[[], None] | None = None,
+        policy: ReplyPolicy | None = None,
     ) -> None:
         self._client = client
         self._handle = handle
@@ -114,6 +115,9 @@ class ChannelPoller:
         self._poll_interval = poll_interval
         self._active_idle = active_idle
         self._clock = clock
+        # Bramka „czy w ogóle odpowiadać" (SZKIELET wielokanałowy) — ``None`` (domyślnie)
+        # = bez bramki, zachowanie identyczne jak przed jej wprowadzeniem.
+        self._policy = policy
         # Materializacja załączników (I/O) — ``None`` wyłącza obsługę plików/obrazów
         # (drzwi tekstowe, testy bez sieci); wpięta w ``app.py`` na kliencie Graph.
         self._materializer = materializer
@@ -198,6 +202,8 @@ class ChannelPoller:
             replied=set(self._state["replied"]),
             now=self._clock(),
             active_idle=self._active_idle,
+            policy=self._policy,
+            channel=(team_id, channel_id),
         )
 
         for msg in messages:

@@ -1,6 +1,6 @@
 [project]
 name = "workmate"
-version = "1.3.0"
+version = "1.3.2"
 description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/CLI, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira 'moje zadania' oraz lokalny retrieval leksykalny notatek."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -205,6 +205,12 @@ ignore_missing_imports = true
 # mypy rdzenia nie może się o niego wywrócić (moduł importowy nazywa się `fpdf`).
 [[tool.mypy.overrides]]
 module = ["fpdf.*"]
+ignore_missing_imports = true
+
+# msal (extra `teams-graph`, ADR 0056) — brak stubów/py.typed; cichy odczyt tokenu z cudzego
+# cache MSAL (adapter outbound), więc mypy rdzenia nie może się o to wywrócić.
+[[tool.mypy.overrides]]
+module = ["msal.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

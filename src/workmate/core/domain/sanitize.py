@@ -34,3 +34,19 @@ def reject_dangerous_content(*fields: str) -> None:
                 raise WriteError(
                     f"treść zawiera niedozwolony znak sterujący (U+{code:04X}) — zapis odrzucony"
                 )
+
+
+def strip_control_chars(text: str) -> str:
+    """Usuń (nie odrzuć) znaki sterujące z tekstu z zewnętrznego API przed pokazaniem go modelowi.
+
+    Lustro klas znaków z ``reject_dangerous_content``, ale dla ścieżki ODCZYTU: treść Jiry
+    (opis/komentarz) czy grafiku to DANE, których nie kontrolujemy — nie możemy jej odrzucić jak
+    zapisu, więc po prostu wycinamy NUL/C0/DEL/C1 (zostają nowa linia, tab, powrót karetki), żeby
+    do promptu/terminala/logu nie trafił klasyczny wektor wstrzyknięć.
+    """
+    return "".join(
+        ch
+        for ch in text
+        if ch in _ALLOWED_CONTROL
+        or not (ord(ch) < 0x20 or ord(ch) == 0x7F or 0x80 <= ord(ch) <= 0x9F)
+    )

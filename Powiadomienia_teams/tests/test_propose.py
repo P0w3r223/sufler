@@ -61,6 +61,30 @@ def test_result_sorted_by_start():
     assert ws.shifts[0].start < ws.shifts[1].start
 
 
+def test_skip_weekdays_filters_out_matching_source_shifts():
+    """`skip_weekdays` (0=pon…6=nd) odsiewa zmiany, których WEEKDAY jest znanym dniem urlopu."""
+    last = [_shift("u1", 13, 8, 16), _shift("u1", 15, 10, 20)]  # pon, śr
+    ws = proposal_from_last_week(
+        "u1", last, date(2026, 7, 20), tz=WAW, skip_weekdays=frozenset({0})
+    )
+    assert len(ws.shifts) == 1
+    assert ws.shifts[0].start.astimezone(WAW).weekday() == 2
+
+
+def test_skip_weekdays_empty_by_default_keeps_all_shifts():
+    last = [_shift("u1", 13, 8, 16), _shift("u1", 15, 10, 20)]
+    ws = proposal_from_last_week("u1", last, date(2026, 7, 20), tz=WAW)
+    assert len(ws.shifts) == 2
+
+
+def test_skip_weekdays_can_empty_the_whole_proposal():
+    last = [_shift("u1", 13, 8, 16)]
+    ws = proposal_from_last_week(
+        "u1", last, date(2026, 7, 20), tz=WAW, skip_weekdays=frozenset({0})
+    )
+    assert ws.is_empty
+
+
 def test_preserves_local_hour_across_dst_fallback():
     # zeszły tydzień w CEST (UTC+2); cel po zmianie czasu 2026-10-25 → CET (UTC+1).
     # Sztywne +7 dni w UTC dałoby lokalnie 07:00; poprawnie ma zostać 08:00.

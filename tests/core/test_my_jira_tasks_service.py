@@ -41,7 +41,8 @@ def test_scopes_jql_to_configured_assignee() -> None:
     service = MyJiraTasksService(client, assignee="mikolaj@example.org")
     service.my_open_tasks()
     assert client.jql_calls == [
-        'assignee = "mikolaj@example.org" AND resolution = EMPTY ORDER BY priority DESC, duedate ASC'
+        '(assignee = "mikolaj@example.org" OR (reporter = "mikolaj@example.org" AND assignee IS EMPTY)) '
+        "AND resolution = EMPTY ORDER BY priority DESC, duedate ASC"
     ]
 
 
@@ -90,3 +91,44 @@ def test_generic_transport_error_raises_readable_jira_read_error() -> None:
     service = MyJiraTasksService(_FakeJiraRead(error=error), assignee="mikolaj@example.org")
     with pytest.raises(JiraReadError, match="nie udało się połączyć"):
         service.my_open_tasks()
+
+
+# --- my_history (ADR 0056) ---------------------------------------------------
+
+
+def test_my_history_scopes_jql_to_done_status() -> None:
+    client = _FakeJiraRead(issues=[])
+    service = MyJiraTasksService(client, assignee="mikolaj@example.org")
+    service.my_history(since="2026-01-01")
+    assert "statusCategory" in client.jql_calls[0]
+    assert "resolved >=" in client.jql_calls[0]
+
+
+def test_my_history_returns_tasks_and_not_truncated_under_the_cap() -> None:
+    client = _FakeJiraRead(
+        issues=[{"key": "WM-1", "fields": {"summary": "Zrobione", "status": {"name": "Done"}}}]
+    )
+    service = MyJiraTasksService(client, assignee="mikolaj@example.org")
+    tasks, truncated = service.my_history()
+    assert len(tasks) == 1
+    assert truncated is False
+
+
+def test_my_history_flags_truncation_beyond_the_cap() -> None:
+    from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
+
+    issues = [
+        {"key": f"WM-{i}", "fields": {"summary": "x", "status": {"name": "Done"}}}
+        for i in range(_MAX_HISTORY_RESULTS + 5)
+    ]
+    client = _FakeJiraRead(issues=issues)
+    service = MyJiraTasksService(client, assignee="mikolaj@example.org")
+    tasks, truncated = service.my_history()
+    assert len(tasks) == _MAX_HISTORY_RESULTS
+    assert truncated is True
+
+
+def test_my_history_invalid_date_raises_invalid_request_error() -> None:
+    service = MyJiraTasksService(_FakeJiraRead(issues=[]), assignee="mikolaj@example.org")
+    with pytest.raises(InvalidRequestError):
+        service.my_history(since="zła-data")

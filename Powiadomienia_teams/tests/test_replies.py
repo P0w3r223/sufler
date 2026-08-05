@@ -1,4 +1,8 @@
 from powiadomienia_teams.reminders.replies import (
+    MEMORY_CAP,
+    MEMORY_WINDOW,
+    advance_memory,
+    history_for_llm,
     is_pure_affirmation,
     message_text,
     newest_incoming,
@@ -59,3 +63,63 @@ def test_is_pure_affirmation_rejects_correction_even_without_digits():
     assert not is_pure_affirmation("tak ale w piątek 10-20")
     assert not is_pure_affirmation("ok tylko środa wolne")
     assert not is_pure_affirmation("w piątek mnie nie będzie")
+
+
+def test_advance_memory_starts_fresh_and_anchors_on_first_message():
+    memory, started_at = advance_memory([], "", "2026-07-19T18:00:00Z", "pon-pt 8-16")
+    assert memory == ["pon-pt 8-16"]
+    assert started_at == "2026-07-19T18:00:00Z"
+
+
+def test_advance_memory_appends_without_moving_anchor():
+    memory, started_at = advance_memory(
+        ["pon-pt 8-16"], "2026-07-19T18:00:00Z", "2026-07-19T18:05:00Z", "a w piątek zdalnie"
+    )
+    assert memory == ["pon-pt 8-16", "a w piątek zdalnie"]
+    assert started_at == "2026-07-19T18:00:00Z"  # kotwica NIE przesuwa się przy każdej wiadomości
+
+
+def test_advance_memory_caps_at_ten_dropping_oldest():
+    memory = [f"msg{i}" for i in range(MEMORY_CAP)]
+    new_memory, started_at = advance_memory(
+        memory, "2026-07-19T18:00:00Z", "2026-07-19T18:05:00Z", "nowa"
+    )
+    assert len(new_memory) == MEMORY_CAP
+    assert new_memory[0] == "msg1"  # najstarsza (msg0) odpadła
+    assert new_memory[-1] == "nowa"
+    assert started_at == "2026-07-19T18:00:00Z"  # kotwica przycięciem się nie rusza
+
+
+def test_advance_memory_resets_after_window_expires():
+    started = "2026-07-19T18:00:00Z"
+    after_window = "2026-07-19T19:01:00Z"  # > 1h po kotwicy
+    memory, started_at = advance_memory(["stare"], started, after_window, "nowe od zera")
+    assert memory == ["nowe od zera"]
+    assert started_at == after_window
+
+
+def test_advance_memory_is_idempotent_for_same_inputs():
+    args = (["a"], "2026-07-19T18:00:00Z", "2026-07-19T18:05:00Z", "b")
+    assert advance_memory(*args) == advance_memory(*args)
+
+
+def test_history_for_llm_returns_copy_of_memory_within_window():
+    memory = ["a", "b"]
+    history = history_for_llm(memory, "2026-07-19T18:00:00Z", "2026-07-19T18:30:00Z")
+    assert history == ["a", "b"]
+    assert history is not memory
+
+
+def test_history_for_llm_empty_when_window_expired():
+    history = history_for_llm(["a", "b"], "2026-07-19T18:00:00Z", "2026-07-19T19:01:00Z")
+    assert history == []
+
+
+def test_history_for_llm_empty_when_no_anchor():
+    assert history_for_llm([], "", "2026-07-19T18:00:00Z") == []
+
+
+def test_memory_window_is_one_hour():
+    from datetime import timedelta
+
+    assert timedelta(hours=1) == MEMORY_WINDOW

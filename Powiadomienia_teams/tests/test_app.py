@@ -33,6 +33,7 @@ from powiadomienia_teams.state import (
     APPLIED,
     AWAITING_CONFIRM,
     DECLINED,
+    SELF_FILLED,
     PendingReminder,
     load_state,
     save_state,
@@ -1833,3 +1834,302 @@ def test_utrata_sesji_w_trybie_uslugi_konczy_proces_czysto(tmp_path: Path, monke
 
     assert wyjscie.value.code == 1  # 1 = „padło w trakcie pracy" (2 zarezerwowane dla konfiguracji)
     assert wyjscie.value.__cause__ is None  # bez łańcucha wyjątków = bez traceback w logu usługi
+
+
+# --- Self-fill detection (krok 1.5 w poll_replies) -------------------------------------------
+
+
+def _settings_self_fill(state_path: Path, *, min_idle_s: int = 3600) -> Settings:
+    return Settings(
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=state_path,
+        dry_run=False,
+        self_fill_check_min_idle_s=min_idle_s,
+    )
+
+
+def test_self_fill_detected_closes_reminder_and_thanks(tmp_path: Path):
+    """Pracownik uzupełnił Shifts SAM, bez odpowiedzi na czacie — bot dziękuje i kończy temat."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient({"chat1": []}, shifts=(shift,))
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)  # 3h ciszy > 3600s próg
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == SELF_FILLED
+    assert len(client.sent) == 1
+    assert "uzupełniony" in client.sent[0][1]
+
+
+def test_self_fill_not_checked_before_idle_threshold(tmp_path: Path):
+    """Zbyt świeża cisza (poniżej progu) NIE zagląda jeszcze do Shifts — pending zostaje otwarty."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T11:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient({"chat1": []}, shifts=(shift,))
+    now = datetime(2026, 7, 16, 11, 30, 0, tzinfo=timezone.utc)  # 30 min ciszy < 3600s próg
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "awaiting_reply"  # wciąż otwarty, mimo że grafik już jest w Shifts
+    assert client.sent == []
+
+
+def test_self_fill_check_disabled_by_negative_min_idle(tmp_path: Path):
+    """`self_fill_check_min_idle_s=-1` wyłącza sprawdzanie — nawet po bardzo długiej ciszy."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-14T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path, min_idle_s=-1)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient({"chat1": []}, shifts=(shift,))
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)  # ~51h — długo, ale wyłączone
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "expired"  # zwykłe wygaśnięcie, nie self-fill
+    assert not client.sent or "uzupełniony" not in client.sent[0][1]
+
+
+def test_self_fill_not_triggered_without_matching_shift(tmp_path: Path):
+    """Cisza + próg przekroczony, ale grafiku w Shifts NADAL nie ma → zwykłe wygaśnięcie."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-14T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    client = _FakeClient({"chat1": []})  # brak zmian w Shifts
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)  # ~51h — po oknie 48h
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "expired"
+
+
+def test_self_fill_check_skipped_when_reply_arrived_first(tmp_path: Path):
+    """Odpowiedź na czacie ma pierwszeństwo: nawet jeśli grafik też jest w Shifts, obsługujemy
+    czat, nie zamykamy jako self-fill (kolejność: odpowiedź > self-fill > wygaśnięcie)."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient(
+        {"chat1": [_msg("u1", "2026-07-16T12:00:00Z", "nie chcę nic zmieniać")]}, shifts=(shift,)
+    )
+    llm = _FakeLlm('{"action":"decline"}')
+    now = datetime(2026, 7, 16, 12, 5, tzinfo=timezone.utc)
+
+    poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == DECLINED  # odpowiedź wygrywa, nie self-fill
+
+
+# --- Znane dni urlopowe: nudge/propozycja pomijają dni z częściowego urlopu ------------------
+
+
+def test_run_once_partial_time_off_still_nudges_and_excludes_that_day(tmp_path: Path):
+    """Urlop CZĘŚCIOWY (tylko piątek) NIE wycisza prośby — bot pyta o pozostałe dni i wspomina
+    o dniu wolnym, a propozycja z zeszłego tygodnia pomija piątek."""
+    from zoneinfo import ZoneInfo
+
+    waw = ZoneInfo("Europe/Warsaw")  # zgodne z domyślną strefą Settings — granice dni LOKALNE
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)  # dry_run=False
+    member = Member("u1", "Ala")
+    friday_off = TimeOff(
+        "u1",
+        datetime(2026, 7, 24, tzinfo=waw).astimezone(timezone.utc),  # piątek docelowego tygodnia
+        datetime(2026, 7, 25, tzinfo=waw).astimezone(timezone.utc),
+        reason_id="TOR_URLOP",
+    )
+    last_week_shifts = (
+        Shift(
+            "u1",
+            datetime(2026, 7, 13, 8, tzinfo=timezone.utc),
+            datetime(2026, 7, 13, 16, tzinfo=timezone.utc),
+        ),
+        Shift(
+            "u1",
+            datetime(2026, 7, 17, 8, tzinfo=timezone.utc),
+            datetime(2026, 7, 17, 16, tzinfo=timezone.utc),
+        ),
+    )
+    client = _FakeClient({}, members=(member,), shifts=last_week_shifts, time_offs=(friday_off,))
+    now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+
+    missing = run_once(settings, client, now=now)  # type: ignore[arg-type]
+
+    assert [m.user_id for m in missing] == ["u1"]  # nadal na liście — urlop tylko częściowy
+    pending = load_state(state_path)["u1"]
+    assert pending.known_time_off_weekdays == [4]  # piątek
+    assert len(client.sent) == 1
+    text = client.sent[0][1]
+    assert "piątek" in text  # wspomniany jako dzień wolny
+    assert "wolne" in text.lower()
+
+
+# --- Pamięć rozmowy: wpięcie advance_memory/history_for_llm w app.py -------------------------
+
+
+def test_employee_memory_recorded_after_reply(tmp_path: Path):
+    """Treść obsłużonej wiadomości trafia do `employee_memory` z kotwicą czasu pierwszej."""
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tylko piątek 10-20")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":4,"start":"10:00","end":"20:00"}]}')
+
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.employee_memory == ["tylko piątek 10-20"]
+    assert after.memory_started_at == "2026-07-19T18:00:00Z"
+
+
+def test_second_turn_receives_history_of_first_reply(tmp_path: Path):
+    """W drugiej turze rozmowy interpreter dostaje treść PIERWSZEJ wiadomości jako historię."""
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "pon 8-16")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    class _RecordingLlm:
+        def __init__(self, response: str) -> None:
+            self._response = response
+            self.last_user: str | None = None
+
+        def complete(self, system: str, user: str) -> str:
+            self.last_user = user
+            return self._response
+
+    recorder = _RecordingLlm(
+        '{"action":"modify","shifts":[{"weekday":1,"start":"08:00","end":"16:00"}]}'
+    )
+    client.messages["chat1"].append(_msg("u1", "2026-07-19T18:05:00Z", "i wtorek też"))
+    poll_replies(settings, client, recorder, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert recorder.last_user is not None
+    assert "historia_pracownika" in recorder.last_user
+    assert "pon 8-16" in recorder.last_user
