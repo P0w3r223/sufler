@@ -5,7 +5,7 @@
 # (`workmate`, `workmate-github`, `workmate-teams-graph`, …). ADR 0044.
 #
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
-# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.3.0 .
+# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.4.0 .
 # Testy biegną W TRAKCIE budowania (etap `test`) — obraz nie powstanie z czerwonego drzewa.
 
 # Extras całej floty — jedno źródło prawdy dla wszystkich etapów.
@@ -82,15 +82,41 @@ ENV LANG=C.UTF-8 \
 # `upgrade` dociąga łatki wydane PO obrazie bazowym — usługa chodzi miesiącami bez przebudowy.
 # ca-certificates: TLS do api.anthropic.com / graph.microsoft.com / api.github.com / Jira.
 # tini: poprawny PID 1 (przekazuje SIGTERM do Pythona, `docker stop` kończy pętlę czysto).
+#
+# Narzędzia workspace'u agenta (ADR 0006 paczki wdrożeniowej) — obraz przestaje być minimalny
+# i jest to koszt świadomy, zapisany w tamtej decyzji:
+#   bash     — powłoka narzędzia `Bash`; `python:3.11-slim` niesie tylko dash, a ten nie zna
+#              konstrukcji, których model używa odruchowo (tablice, `[[ ]]`, podstawianie procesu)
+#   git      — odwracalność zapisu notatek: `workmate-note` commituje każdą zmianę
+#   ripgrep  — przeszukiwanie plików; dla POLSKIEGO korpusu i tak pierwszy wybór to
+#              `workmate-search` (BM25 nad lematami), bo grep gubi fleksję
+#   curl     — pobieranie zasobów wskazanych przez użytkownika
+#
+# ``curl`` (oraz sieć w ogóle) domyka trzecią nogę trójki śmierci: agent przetwarza niezaufane
+# wejście [A], sięga do danych całego pionu [B] i może komunikować się na zewnątrz [C]. Kontrolą
+# kompensującą jest POLITYKA SIECI KONTENERA, nie brak narzędzia — patrz `docker-compose.yml`
+# paczki wdrożeniowej i decyzja o egressie.
 RUN apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends ca-certificates tini \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates tini bash git ripgrep curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 workmate \
-    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin workmate \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /bin/bash workmate \
     && mkdir -p /var/lib/workmate /app/data \
-    && chown 10001:10001 /var/lib/workmate
+    && chown 10001:10001 /var/lib/workmate \
+    # Punkty montażu workspace'u (ADR 0005/0006). Powstają PUSTE i należą do roota poza
+    # scratchpadem — compose montuje w nie realne wolumeny. Katalogi istnieją w obrazie, żeby
+    # uruchomienie BEZ montaży dawało puste katalogi (czytelne „brak danych") zamiast błędu
+    # ścieżki, a prompt opisujący te ścieżki pozostawał prawdziwy w obu wariantach.
+    && mkdir -p /home/scratchpad /mnt/system /mnt/user/inputs /mnt/user/outputs /mnt/skills \
+    && chown 10001:10001 /home/scratchpad /mnt/user/inputs /mnt/user/outputs \
+    # Notatki przyjeżdżają wolumenem, więc ich właściciel bywa inny niż uid procesu; bez tego
+    # git odmawia operacji w „cudzym" drzewie (`detected dubious ownership`) i `workmate-note`
+    # traci ścieżkę commitu. Zawężone do katalogu notatek — nie globalne `*`.
+    && git config --system --add safe.directory /var/lib/workmate/notes \
+    && git config --system --add safe.directory /app/data/notes
 
 WORKDIR /app
 
@@ -113,7 +139,7 @@ USER 10001:10001
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["workmate"]
 
-ARG WERSJA=1.3.0
+ARG WERSJA=1.4.0
 LABEL org.opencontainers.image.title="workmate" \
       org.opencontainers.image.description="Serwer MCP pionu + drzwi mostu GitHub/Jira/Teams (flota)" \
       org.opencontainers.image.version="${WERSJA}" \
