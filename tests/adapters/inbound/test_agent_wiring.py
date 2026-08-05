@@ -156,3 +156,49 @@ def test_missing_agent_extra_raises_systemexit_with_hint(tmp_path: Path, monkeyp
     with pytest.raises(SystemExit) as exc:
         build_agent_runtime_or_exit(_settings(tmp_path), AgentSettings(), enable_write=False)
     assert "extra" in str(exc.value)
+
+
+def test_scoped_runner_creates_the_conversation_directory(tmp_path):
+    """REGRESJA: bez założenia katalogu wykonawca degraduje do korzenia i rozmowy tracą izolację.
+
+    Zmierzone w kontenerze przed poprawką: ``pwd`` w świeżej rozmowie zwracało
+    ``/home/scratchpad`` zamiast ``/home/scratchpad/<kanał>/<hash>``, więc pliki jednej rozmowy
+    były widoczne dla wszystkich pozostałych.
+    """
+    from workmate.adapters.inbound.agent_wiring import _ScopedRunner
+    from workmate.core.ports.command import CommandResult
+
+    class Spy:
+        def __init__(self):
+            self.cwd = None
+
+        def run(self, command, *, cwd="", timeout_s=0):
+            self.cwd = cwd
+            return CommandResult(exit_code=0, stdout="", stderr="")
+
+    spy = Spy()
+    target = tmp_path / "teams_graph" / "abc123"
+
+    _ScopedRunner(spy).run("pwd", cwd=str(target))
+
+    assert target.is_dir()
+    assert spy.cwd == str(target)
+
+
+def test_scoped_runner_reports_a_failed_mkdir_as_a_command_result(tmp_path):
+    """Nieudane przygotowanie katalogu wraca WYNIKIEM, nie wyjątkiem — tura ma przeżyć."""
+    from workmate.adapters.inbound.agent_wiring import _ScopedRunner
+    from workmate.core.ports.command import CommandResult
+
+    class Unused:
+        def run(self, command, *, cwd="", timeout_s=0):  # pragma: no cover — nie powinno paść
+            raise AssertionError("polecenie nie powinno wyjść przy nieudanym mkdir")
+
+    kolizja = tmp_path / "plik"
+    kolizja.write_text("nie katalog", encoding="utf-8")
+
+    result = _ScopedRunner(Unused()).run("ls", cwd=str(kolizja / "pod"))
+
+    assert isinstance(result, CommandResult)
+    assert result.exit_code == -1
+    assert "katalog" in result.stderr.lower()

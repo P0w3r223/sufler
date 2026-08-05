@@ -1015,6 +1015,50 @@ class WorkspaceSettings:
             )
 
 
+# Gniazdo kontenera-wykonawcy (ADR 0057). Ta sama wartość domyślna co po stronie serwera
+# (``exec_server``) i klienta — wolumen gniazda montują WYŁĄCZNIE aplikacja i wykonawca,
+# bo uprawnienia pliku gniazda są jedyną kontrolą dostępu do powłoki.
+_DEFAULT_EXEC_SOCKET = Path("/var/run/workmate/exec.sock")
+# Sufit czasu polecenia po stronie wykonawcy (``exec_server._MAX_TIMEOUT_S``) — tu wyłącznie
+# po to, by walidacja odrzuciła konfigurację, którą wykonawca i tak by przyciął.
+_MAX_SHELL_TIMEOUT_S = 300
+
+
+@dataclass(frozen=True)
+class ShellSettings:
+    """Konfiguracja narzędzia ``Bash`` (ADR 0057) — powłoka w kontenerze-wykonawcy.
+
+    Bramka ``enabled`` jest OSOBNA od ``WORKMATE_ENABLE_WORKSPACE`` (pliki robocze, ADR 0018).
+    Profile zaufania są różne: tam model tworzy pliki narzędziem typowanym, o nazwie z białej
+    listy rozszerzeń; tu uruchamia dowolny kod. Wspólna bramka włączałaby powłokę po cichu,
+    przy okazji włączania plików.
+
+    Powłoka biegnie w OSOBNYM kontenerze bez sieci, więc kod od modelu nie ma dokąd wynieść
+    danych — bezpieczeństwo bierze się z tego, czego w tamtym kontenerze nie ma, a nie
+    z oceniania treści polecenia.
+    """
+
+    enabled: bool = False
+    socket_path: Path = _DEFAULT_EXEC_SOCKET
+    default_timeout_s: int = 60
+
+    @classmethod
+    def from_env(cls) -> ShellSettings:
+        return cls(
+            enabled=_bool_from_env("WORKMATE_ENABLE_SHELL", default=False),
+            socket_path=_path_from_env("WORKMATE_EXEC_SOCKET", _DEFAULT_EXEC_SOCKET),
+            default_timeout_s=_int_from_env("WORKMATE_SHELL_TIMEOUT_S", 60),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu przy limicie czasu, którego wykonawca i tak by nie uszanował."""
+        if not 1 <= self.default_timeout_s <= _MAX_SHELL_TIMEOUT_S:
+            raise ValueError(
+                f"WORKMATE_SHELL_TIMEOUT_S musi być w zakresie 1..{_MAX_SHELL_TIMEOUT_S}, "
+                f"jest: {self.default_timeout_s}."
+            )
+
+
 # Domyślny stan pollera GitHub (watermark ``since``): POZA repo i data/ — dane operacyjne.
 _DEFAULT_GITHUB_STATE = Path.home() / ".workmate" / "github_state.json"
 # Dolny sufit interwału pollingu GitHub (świadomość limitu 5000 żądań/h uwierzytelnionych).

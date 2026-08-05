@@ -10,7 +10,9 @@ zamienia na czytelny komunikat.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.commands import CommandRouter
@@ -41,12 +43,17 @@ from workmate.core.application.services import (
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import build_tool_catalog, build_workspace_catalog
+from workmate.core.application.tools import (
+    build_shell_catalog,
+    build_tool_catalog,
+    build_workspace_catalog,
+)
 from workmate.core.application.workspace import (
     WorkspaceLimits,
     WorkspaceService,
     WorkspaceWriteService,
 )
+from workmate.core.ports.command import CommandResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -59,12 +66,16 @@ if TYPE_CHECKING:
         AgentSettings,
         ConversationSettings,
         Settings,
+        ShellSettings,
         WorkspaceSettings,
     )
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.conversations import ConversationStore
     from workmate.core.ports.repositories import NotesRepository
+
+logger = logging.getLogger(__name__)
 
 # Jedno źródło komunikatu o brakującym extra ``agent`` (dawniej powielone w 4 ``app.py``).
 _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
@@ -227,6 +238,76 @@ def _build_workspace_factory(
     return factory
 
 
+class _ScopedRunner:
+    """``CommandRunner`` zapewniający istnienie katalogu rozmowy przed wysłaniem polecenia.
+
+    Wykonawca, gdy podany ``cwd`` nie istnieje, degraduje do swojego katalogu domyślnego —
+    rozsądnie, bo ``Popen`` z nieistniejącym ``cwd`` rzuca błędem mówiącym o katalogu zamiast
+    o poleceniu. Skutkiem ubocznym byłaby jednak UTRATA IZOLACJI: katalog rozmowy powstaje
+    leniwie, przy pierwszym ``create_file``, więc do tego czasu wszystkie rozmowy dzieliłyby
+    wspólny korzeń brudnopisu i widziały nawzajem swoje pliki. Zmierzone: ``pwd`` w świeżej
+    rozmowie zwracało ``/home/scratchpad``, nie ``/home/scratchpad/<kanał>/<hash>``.
+
+    Katalog zakłada APLIKACJA, nie wykonawca: „rozmowa" to pojęcie aplikacji, a wykonawca ma
+    zostać procesem bez wiedzy o tym, co znaczą ścieżki, które dostaje. Nieudany zapis wraca
+    jako wynik z niezerowym kodem — jak każda inna porażka polecenia (ADR 0057).
+    """
+
+    def __init__(self, inner: CommandRunner) -> None:
+        self._inner = inner
+
+    def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
+        if cwd:
+            try:
+                Path(cwd).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                return CommandResult(
+                    exit_code=-1,
+                    stdout="",
+                    stderr=f"Nie udało się przygotować katalogu roboczego {cwd}: {exc}",
+                )
+        return self._inner.run(command, cwd=cwd, timeout_s=timeout_s)
+
+
+def _build_shell_factory(
+    shell_settings: ShellSettings, workspace_settings: WorkspaceSettings
+) -> Callable[[WorkspaceScope], list[ToolSpec]] | None:
+    """Fabryka narzędzia ``Bash`` (ADR 0057) wiążącego polecenia z katalogiem rozmowy.
+
+    Zwraca ``None``, gdy powłoka jest wyłączona ALBO gdy klienta wykonawcy nie da się
+    zaimportować — jest POSIX-only (gniazda unix), więc na maszynie deweloperskiej z Windows
+    degradujemy do „brak narzędzia" zamiast wywracać start drzwi. Import jest leniwy z tego
+    samego powodu co Claude API.
+
+    ``workspace_settings.workspace_dir`` jest korzeniem ścieżek dla OBU stron: aplikacja pisze
+    tam pliki narzędziem ``create_file``, a wykonawca dostaje ten sam katalog jako ``cwd``.
+    Rozjazd tych dwóch wartości oznaczałby, że model tworzy plik narzędziem i nie widzi go
+    powłoką — dlatego korzeń bierzemy z jednej konfiguracji, a nie z dwóch.
+    """
+    if not shell_settings.enabled:
+        return None
+    try:
+        from workmate.adapters.outbound.exec_client import SocketCommandRunner
+    except ImportError:
+        logger.info(
+            "Klient wykonawcy jest POSIX-only — narzędzie powłoki pomijam na tej platformie."
+        )
+        return None
+
+    runner = _ScopedRunner(SocketCommandRunner(shell_settings.socket_path))
+    workspace_root = workspace_settings.workspace_dir.as_posix()
+
+    def factory(scope: WorkspaceScope) -> list[ToolSpec]:
+        return build_shell_catalog(
+            scope,
+            runner,
+            workspace_root=workspace_root,
+            default_timeout_s=shell_settings.default_timeout_s,
+        )
+
+    return factory
+
+
 def build_conversational_responder(
     settings: Settings,
     agent_settings: AgentSettings,
@@ -238,6 +319,7 @@ def build_conversational_responder(
     show_thinking: bool = False,
     enable_workspace: bool = False,
     workspace_settings: WorkspaceSettings | None = None,
+    shell_settings: ShellSettings | None = None,
     extra_catalog: Sequence[ToolSpec] = (),
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
@@ -253,7 +335,9 @@ def build_conversational_responder(
     Jedno źródło recepty ``SafeResponder(ConversationalResponder(...))`` (dawniej skopiowanej
     w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``show_thinking`` tylko
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
-    ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
+    ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego,
+    a ``shell_settings.enabled`` (znów osobna, ADR 0057) — narzędzie ``Bash`` biegnące
+    w kontenerze-wykonawcy bez sieci.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
     ``thread_tool_factory``/``user_push_tool_factory``/``my_jira_tasks_factory``
@@ -289,6 +373,15 @@ def build_conversational_responder(
         if enable_workspace and workspace_settings is not None
         else None
     )
+    # Powłoka (ADR 0057) ma WŁASNĄ bramkę i własny profil zaufania, ale dzieli korzeń ścieżek
+    # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
+    # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
+    # narzędzia plikowe zapisują.
+    shell_factory = (
+        _build_shell_factory(shell_settings, workspace_settings)
+        if shell_settings is not None and workspace_settings is not None
+        else None
+    )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
     # responder nie zapisuje nic. Jeden punkt wpięcia obejmuje wszystkie drzwi agentowe.
     metrics = (
@@ -304,6 +397,7 @@ def build_conversational_responder(
         compaction=compaction,
         commands=router,
         workspace_catalog_factory=workspace_factory,
+        shell_catalog_factory=shell_factory,
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
         my_jira_tasks_factory=my_jira_tasks_factory,

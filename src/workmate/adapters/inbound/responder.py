@@ -185,6 +185,7 @@ class ConversationalResponder:
         compaction: CompactionService | None = None,
         commands: CommandRouter | None = None,
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
+        shell_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
@@ -200,6 +201,10 @@ class ConversationalResponder:
         # Fabryka narzędzi KATALOGU ROBOCZEGO per rozmowa (ADR 0018); ``None`` → brak zapisu plików.
         # Scope budujemy z ZAUFANEGO (kanał, external_id), nie od modelu — rozmowy są izolowane.
         self._workspace_catalog_factory = workspace_catalog_factory
+        # Fabryka narzędzia POWŁOKI per rozmowa (ADR 0057); ``None`` → brak (bramka wyłączona
+        # albo platforma bez gniazd unix). Ten sam kształt co wyżej i ten sam scope: polecenia
+        # startują w katalogu roboczym tej rozmowy, którego model nie widzi w schemacie.
+        self._shell_catalog_factory = shell_catalog_factory
         # Fabryka narzędzia ODPOWIEDZI W WĄTKU (ADR 0024, Faza 3b); ``None`` → brak (inne drzwi).
         # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
         # ``reply_on_thread`` z PRE-ZWIĄZANYM numerem — model nie przekieruje na inne issue.
@@ -342,11 +347,16 @@ class ConversationalResponder:
         transcript = self._build_transcript(conversation_id, history, rolled_over)
         # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
         # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
+        scope = WorkspaceScope(self._channel, external_id)
         extra_tools: list[ToolSpec] = list(
-            self._workspace_catalog_factory(WorkspaceScope(self._channel, external_id))
+            self._workspace_catalog_factory(scope)
             if self._workspace_catalog_factory is not None
             else ()
         )
+        # Powłoka (ADR 0057) dokładana tym samym scope: polecenia startują w katalogu roboczym
+        # tej rozmowy, więc pliki tworzone narzędziem i widziane powłoką to te same pliki.
+        if self._shell_catalog_factory is not None:
+            extra_tools.extend(self._shell_catalog_factory(scope))
         # Narzędzie odpowiedzi w wątku (ADR 0024, Faza 3b): dokładane, gdy wątek kanału jest
         # powiązany z issue/PR (fabryka odczytuje cel z external_id) — inaczej pusta lista.
         # To OPCJONALNE wzbogacenie: błąd odczytu mapowania (np. blokada SQLite) NIE może zabić

@@ -36,6 +36,7 @@ from workmate.config import (
     GithubSettings,
     JiraSettings,
     Settings,
+    ShellSettings,
     TeamsGraphSettings,
     WorkspaceSettings,
     require_writable,
@@ -94,6 +95,8 @@ def main() -> None:
     conv_settings.validate()
     workspace_settings = WorkspaceSettings.from_env()
     workspace_settings.validate(data_dir=core_settings.data_dir)
+    shell_settings = ShellSettings.from_env()
+    shell_settings.validate()
     # R/L1: pamięć rozmów agenta i wspólny events.db MUSZĄ być zapisywalne (tryb watch pisze oba).
     events_settings = EventsSettings.from_env()
     require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
@@ -149,6 +152,7 @@ def main() -> None:
         agent_settings,
         conv_settings,
         workspace_settings,
+        shell_settings,
         extra_catalog,
         thread_factory,
         user_push_factory,
@@ -847,6 +851,7 @@ def _build_responder(
     agent_settings: AgentSettings,
     conv_settings: ConversationSettings,
     workspace_settings: WorkspaceSettings,
+    shell_settings: ShellSettings,
     extra_catalog: list[ToolSpec],
     thread_factory: Callable[[str], list[ToolSpec]] | None = None,
     user_push_factory: Callable[[str], list[ToolSpec]] | None = None,
@@ -859,7 +864,9 @@ def _build_responder(
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
     (ADR 0018) włącza OSOBNA bramka ``enable_workspace`` (env ``WORKMATE_ENABLE_WORKSPACE``),
-    niezależna od zapisu notatek. ``extra_catalog`` (ADR 0019/0021) dokłada narzędzia warstwy
+    niezależna od zapisu notatek; powłokę (ADR 0057) — jeszcze inna, ``WORKMATE_ENABLE_SHELL``,
+    bo tam model uruchamia dowolny kod, a nie tworzy plik narzędziem typowanym.
+    ``extra_catalog`` (ADR 0019/0021) dokłada narzędzia warstwy
     spajającej, ``thread_factory`` (ADR 0024, Faza 3b) — per-turowe ``reply_on_thread``, a
     ``user_push_factory`` (ADR 0027, A′3) — per-turowe ``send_image_to_user`` (obraz inline) oraz
     ``send_document_to_user`` (plik-załącznik) wiązane z nadawcą, niezależnie bramkowane.
@@ -875,6 +882,7 @@ def _build_responder(
         safe=True,
         enable_workspace=workspace_settings.enabled,
         workspace_settings=workspace_settings,
+        shell_settings=shell_settings,
         extra_catalog=extra_catalog,
         thread_tool_factory=thread_factory,
         user_push_tool_factory=user_push_factory,
