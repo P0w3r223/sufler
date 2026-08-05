@@ -67,6 +67,33 @@ def test_kazdy_numer_nalezy_do_jednej_decyzji() -> None:
     assert not kolizje, f"numer ADR użyty więcej niż raz: {kolizje}"
 
 
+def test_wejsciowe_dokumenty_nie_maja_martwych_odsylaczy_do_adr() -> None:
+    """Renumeracja bez poprawienia cytowań daje odsyłacz do pliku, którego nie ma.
+
+    Ta klasa błędu przeżyła renumerację `0056/0057` → `0059/0060`: w `README.md` poprawiony
+    został wiersz o grafiku Shifts, a sąsiedni o odczycie Jiry — cytujący ten sam ADR —
+    został pominięty. Pozostałe bramki tego modułu patrzą na nazwy plików i nagłówki,
+    więc żadna nie mogła tego zobaczyć.
+
+    Zakres to dokumenty WEJŚCIOWE. Wzajemne odsyłacze między samymi ADR-ami niosą dług
+    historyczny (nagłówki `Related to:` wskazują decyzje wycofane albo nigdy niezapisane),
+    którego porządkowanie jest osobną pracą — bramka zapalona na nim od pierwszego dnia
+    uczyłaby ignorowania bramki.
+    """
+    korzen = _ADR_DIR.parents[1]
+    odsylacz = re.compile(r"docs/adr/(\d{4}[-_][a-z0-9_-]+\.md)")
+    martwe: list[str] = []
+    for nazwa in ("README.md", "CHANGELOG.md"):
+        dokument = korzen / nazwa
+        if not dokument.is_file():
+            continue
+        for numer, linia in enumerate(dokument.read_text(encoding="utf-8").splitlines(), 1):
+            for cel in odsylacz.findall(linia):
+                if not (_ADR_DIR / cel).is_file():
+                    martwe.append(f"{nazwa}:{numer} → docs/adr/{cel}")
+    assert not martwe, f"odsyłacze do nieistniejących ADR: {martwe}"
+
+
 def test_numer_w_naglowku_zgadza_sie_z_nazwa_pliku() -> None:
     rozjazdy: list[str] = []
     for plik in _pliki_adr():

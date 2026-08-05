@@ -219,7 +219,7 @@ ignore_missing_imports = true
 module = ["fpdf.*"]
 ignore_missing_imports = true
 
-# msal (extra `teams-graph`, ADR 0056) — brak stubów/py.typed; cichy odczyt tokenu z cudzego
+# msal (extra `teams-graph`, ADR 0059) — brak stubów/py.typed; cichy odczyt tokenu z cudzego
 # cache MSAL (adapter outbound), więc mypy rdzenia nie może się o to wywrócić.
 [[tool.mypy.overrides]]
 module = ["msal.*"]
