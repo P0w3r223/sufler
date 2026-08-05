@@ -277,7 +277,7 @@ class TeamsSettings:
 
 @dataclass(frozen=True)
 class AgentSettings:
-    """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008; ADR 0011).
+    """Konfiguracja runtime'u agenta (Faza 2, M1 / ADR 0008; ADR 0011, 0058).
 
     Klucz Claude API to sekret — czytany z env, nigdy z repo ani z folderu
     indeksowanego przez rdzeń (``data/``). Domyślny model to ``claude-sonnet-5``
@@ -287,6 +287,12 @@ class AgentSettings:
     ``max_tokens`` (128000 — pełny sufit wyjścia modelu) dzieli budżet między myślenie
     i odpowiedź; adapter woła Claude API STREAMINGIEM (``messages.stream``), więc duży
     sufit nie odpala limitu czasu SDK, który odrzuca duże żądania non-streaming.
+
+    Pola ``context_editing_*`` (ADR 0058) sterują czyszczeniem starych wyników narzędzi
+    przez API. Progi tworzą kaskadę z kompaktowaniem (``ConversationSettings``): najpierw
+    tanie czyszczenie wyników (100k), dopiero potem streszczanie rozmowy osobnym
+    wywołaniem modelu (150k). Odwrotna kolejność płaciłaby za streszczanie bajtów,
+    które i tak miały wypaść.
     """
 
     # Sekret: repr=False, żeby przypadkowe zalogowanie obiektu/traceback go nie ujawniło.
@@ -298,6 +304,24 @@ class AgentSettings:
     # Druga przelotka-krytyk notatki M3 (ADR 0047): domyślnie OFF (zachowuje jednoprzelotowe 0041),
     # ~2× koszt gdy ON. To toggle jakości, NIE bramka zapisu — flip nie wymaga zgody zespołu.
     verify_meeting_note: bool = False
+    # Czyszczenie starych wyników narzędzi po stronie API (ADR 0058). Wynik narzędzia wraca
+    # do kontekstu i jest odsyłany w KAŻDEJ kolejnej turze, więc bez czyszczenia jedna
+    # rozmowa z intensywnym użyciem narzędzi rośnie liniowo w bajtach, których model już
+    # nie potrzebuje. Ślad wywołania zostaje — znika tylko treść wyniku, więc model wie,
+    # że pytał, i nie powtarza pytania.
+    context_editing_enabled: bool = True
+    context_editing_trigger_tokens: int = 100_000
+    # MUSI być >= ``max_tool_iterations`` (bramka w ``validate``). Próg czyszczenia mierzy
+    # rozmiar promptu, a ten rośnie TAKŻE w środku tury — pętla dokłada wynik za wynikiem.
+    # Gdyby chronionych par było mniej niż iteracji, czyszczenie sięgnęłoby wyników, o które
+    # model poprosił przed chwilą w TEJ SAMEJ turze: dostałby pustkę zamiast danych do
+    # syntezy, powtórzył wywołania i wyczerpał limit iteracji (tura bez zapisu, ADR 0011).
+    context_editing_keep_tool_uses: int = 8
+    # Czyszczenie UNIEWAŻNIA cache prefiksu — i to nie fragmentu, tylko wszystkiego od
+    # miejsca cięcia w dół, bo usuwane wyniki leżą na POCZĄTKU historii. Jedno czyszczenie
+    # kosztuje więc zapis cache'u całej rozmowy, a oszczędza tyle, ile zdjęło — próg
+    # minimalnej porcji zamienia częste drobne cięcia w rzadkie, które się zwracają.
+    context_editing_clear_at_least_tokens: int = 40_000
 
     @classmethod
     def from_env(cls) -> AgentSettings:
@@ -312,6 +336,18 @@ class AgentSettings:
             max_tool_iterations=_int_from_env("WORKMATE_AGENT_MAX_TOOL_ITERATIONS", 8),
             thinking_type=os.environ.get("WORKMATE_AGENT_THINKING", "adaptive"),
             verify_meeting_note=_bool_from_env("WORKMATE_AGENT_VERIFY_MEETING_NOTE", False),
+            context_editing_enabled=_bool_from_env(
+                "WORKMATE_CONTEXT_EDITING_ENABLED", default=True
+            ),
+            context_editing_trigger_tokens=_int_from_env(
+                "WORKMATE_CONTEXT_EDITING_TRIGGER_TOKENS", 100_000
+            ),
+            context_editing_keep_tool_uses=_int_from_env(
+                "WORKMATE_CONTEXT_EDITING_KEEP_TOOL_USES", 8
+            ),
+            context_editing_clear_at_least_tokens=_int_from_env(
+                "WORKMATE_CONTEXT_EDITING_CLEAR_AT_LEAST_TOKENS", 40_000
+            ),
         )
 
     def validate(self) -> None:
@@ -337,8 +373,28 @@ class AgentSettings:
                 "WORKMATE_AGENT_THINKING musi być 'adaptive' albo 'disabled', jest: "
                 f"{self.thinking_type!r}."
             )
-
-
+        if self.context_editing_trigger_tokens < 1:
+            raise ValueError(
+                "WORKMATE_CONTEXT_EDITING_TRIGGER_TOKENS musi być >= 1, jest: "
+                f"{self.context_editing_trigger_tokens}."
+            )
+        # Czyszczenie potrafi odpalić W ŚRODKU tury (próg mierzy rozmiar promptu, a ten
+        # rośnie z każdą iteracją pętli), więc liczba chronionych par musi pokryć całą
+        # pętlę — inaczej model traci wyniki, o które sam przed chwilą poprosił. Bramka
+        # jest twarda, bo cicha utrata danych z bieżącej tury objawia się dopiero jako
+        # „agent w kółko woła to samo", czyli daleko od przyczyny.
+        if self.context_editing_keep_tool_uses < self.max_tool_iterations:
+            raise ValueError(
+                "WORKMATE_CONTEXT_EDITING_KEEP_TOOL_USES musi być >= "
+                f"WORKMATE_AGENT_MAX_TOOL_ITERATIONS ({self.max_tool_iterations}), "
+                f"jest: {self.context_editing_keep_tool_uses}. Mniejsza wartość pozwala "
+                "wyczyścić wyniki narzędzi z bieżącej tury."
+            )
+        if self.context_editing_clear_at_least_tokens < 1:
+            raise ValueError(
+                "WORKMATE_CONTEXT_EDITING_CLEAR_AT_LEAST_TOKENS musi być >= 1, jest: "
+                f"{self.context_editing_clear_at_least_tokens}."
+            )
 
 
 @dataclass(frozen=True)
@@ -358,17 +414,23 @@ class ConversationSettings:
     ``WORKMATE_CONV_IDLE_MINUTES``.
 
     Kompaktowanie (ADR 0014) ZASTĘPUJE rollover-na-rozmiarze, gdy włączone: przy
-    ``last_input_tokens`` > ``compaction_threshold_tokens()`` (domyślnie 70% okna modelu)
-    stare tury zastępujemy podsumowaniem (osobne wywołanie modelu ``compaction_model``,
-    domyślnie = model agenta), zachowując ostatnie ``compaction_keep_turns`` verbatim.
+    ``last_input_tokens`` > ``compaction_threshold_tokens`` stare tury zastępujemy
+    podsumowaniem (osobne wywołanie modelu ``compaction_model``, domyślnie = model
+    agenta), zachowując ostatnie ``compaction_keep_turns`` verbatim.
+
+    Próg jest BEZWZGLĘDNY, nie ułamkiem okna (ADR 0058). Wcześniej liczyliśmy go jako
+    70% okna modelu, co przy oknie 1M dawało 700k — próg mieszczący się w oknie, ale
+    daleko poza zakresem, w którym model wiarygodnie sięga po fakty ze środka kontekstu.
+    Rozmiar okna mówi, ile tokenów WOLNO wysłać; próg kompaktowania ma mówić, po ilu
+    warto streścić. To dwie różne wielkości i wiązanie ich ułamkiem sprawiało, że
+    podbicie okna po cichu pogarszało jakość odpowiedzi.
     """
 
     db_path: Path
     max_context_tokens: int = 128000
     idle_timeout_minutes: int = 30
     compaction_enabled: bool = True
-    context_window_tokens: int = 1_000_000  # okno Sonnet 5
-    compaction_threshold_fraction: float = 0.70
+    compaction_threshold_tokens: int = 150_000
     compaction_keep_turns: int = 4
     compaction_model: str = ""  # "" → użyj modelu agenta (Sonnet 5)
 
@@ -379,9 +441,8 @@ class ConversationSettings:
             max_context_tokens=_int_from_env("WORKMATE_CONV_MAX_TOKENS", 128000),
             idle_timeout_minutes=_int_from_env("WORKMATE_CONV_IDLE_MINUTES", 30),
             compaction_enabled=_bool_from_env("WORKMATE_COMPACTION_ENABLED", default=True),
-            context_window_tokens=_int_from_env("WORKMATE_CONTEXT_WINDOW_TOKENS", 1_000_000),
-            compaction_threshold_fraction=_float_from_env(
-                "WORKMATE_COMPACTION_THRESHOLD_FRACTION", 0.70
+            compaction_threshold_tokens=_int_from_env(
+                "WORKMATE_COMPACTION_THRESHOLD_TOKENS", 150_000
             ),
             compaction_keep_turns=_int_from_env("WORKMATE_COMPACTION_KEEP_TURNS", 4),
             compaction_model=os.environ.get("WORKMATE_COMPACTION_MODEL", ""),
@@ -399,14 +460,10 @@ class ConversationSettings:
                 "WORKMATE_CONV_IDLE_MINUTES musi być >= 0 (0 wyłącza), jest: "
                 f"{self.idle_timeout_minutes}."
             )
-        if self.context_window_tokens < 1:
+        if self.compaction_threshold_tokens < 1:
             raise ValueError(
-                f"WORKMATE_CONTEXT_WINDOW_TOKENS musi być >= 1, jest: {self.context_window_tokens}."
-            )
-        if not 0.0 < self.compaction_threshold_fraction <= 1.0:
-            raise ValueError(
-                "WORKMATE_COMPACTION_THRESHOLD_FRACTION musi być w (0, 1], jest: "
-                f"{self.compaction_threshold_fraction}."
+                "WORKMATE_COMPACTION_THRESHOLD_TOKENS musi być >= 1, jest: "
+                f"{self.compaction_threshold_tokens}."
             )
         if self.compaction_keep_turns < 1:
             raise ValueError(
@@ -420,10 +477,6 @@ class ConversationSettings:
         drzwi, żeby wiring nie powtarzał warunku ``> 0``.
         """
         return timedelta(minutes=self.idle_timeout_minutes) if self.idle_timeout_minutes else None
-
-    def compaction_threshold_tokens(self) -> int:
-        """Próg triggera kompaktowania w tokenach = ułamek okna kontekstu modelu (ADR 0014)."""
-        return int(self.context_window_tokens * self.compaction_threshold_fraction)
 
 
 @dataclass(frozen=True)
@@ -959,6 +1012,50 @@ class WorkspaceSettings:
         if self.retention_days < 1:
             raise ValueError(
                 f"WORKMATE_WORKSPACE_RETENTION_DAYS musi być >= 1, jest: {self.retention_days}."
+            )
+
+
+# Gniazdo kontenera-wykonawcy (ADR 0057). Ta sama wartość domyślna co po stronie serwera
+# (``exec_server``) i klienta — wolumen gniazda montują WYŁĄCZNIE aplikacja i wykonawca,
+# bo uprawnienia pliku gniazda są jedyną kontrolą dostępu do powłoki.
+_DEFAULT_EXEC_SOCKET = Path("/var/run/workmate/exec.sock")
+# Sufit czasu polecenia po stronie wykonawcy (``exec_server._MAX_TIMEOUT_S``) — tu wyłącznie
+# po to, by walidacja odrzuciła konfigurację, którą wykonawca i tak by przyciął.
+_MAX_SHELL_TIMEOUT_S = 300
+
+
+@dataclass(frozen=True)
+class ShellSettings:
+    """Konfiguracja narzędzia ``Bash`` (ADR 0057) — powłoka w kontenerze-wykonawcy.
+
+    Bramka ``enabled`` jest OSOBNA od ``WORKMATE_ENABLE_WORKSPACE`` (pliki robocze, ADR 0018).
+    Profile zaufania są różne: tam model tworzy pliki narzędziem typowanym, o nazwie z białej
+    listy rozszerzeń; tu uruchamia dowolny kod. Wspólna bramka włączałaby powłokę po cichu,
+    przy okazji włączania plików.
+
+    Powłoka biegnie w OSOBNYM kontenerze bez sieci, więc kod od modelu nie ma dokąd wynieść
+    danych — bezpieczeństwo bierze się z tego, czego w tamtym kontenerze nie ma, a nie
+    z oceniania treści polecenia.
+    """
+
+    enabled: bool = False
+    socket_path: Path = _DEFAULT_EXEC_SOCKET
+    default_timeout_s: int = 60
+
+    @classmethod
+    def from_env(cls) -> ShellSettings:
+        return cls(
+            enabled=_bool_from_env("WORKMATE_ENABLE_SHELL", default=False),
+            socket_path=_path_from_env("WORKMATE_EXEC_SOCKET", _DEFAULT_EXEC_SOCKET),
+            default_timeout_s=_int_from_env("WORKMATE_SHELL_TIMEOUT_S", 60),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu przy limicie czasu, którego wykonawca i tak by nie uszanował."""
+        if not 1 <= self.default_timeout_s <= _MAX_SHELL_TIMEOUT_S:
+            raise ValueError(
+                f"WORKMATE_SHELL_TIMEOUT_S musi być w zakresie 1..{_MAX_SHELL_TIMEOUT_S}, "
+                f"jest: {self.default_timeout_s}."
             )
 
 

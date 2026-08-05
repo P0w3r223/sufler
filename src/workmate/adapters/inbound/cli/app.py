@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound import env
@@ -29,6 +30,7 @@ from workmate.adapters.inbound.agent_wiring import (
 from workmate.adapters.inbound.responder import InboundMessage
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.config import AgentSettings, ConversationSettings, Settings
+from workmate.core.agent.prompt import build_session_header
 from workmate.core.application.conversations import ConversationService
 from workmate.core.domain.pricing import cost_usd
 from workmate.core.errors import LLMError, WorkMateError
@@ -87,7 +89,9 @@ def main() -> None:
 def _run_once(runtime: AgentRuntime, query: str) -> None:
     """Jednorazowe zapytanie: wypisz odpowiedź (bez pamięci między uruchomieniami)."""
     try:
-        print(runtime.run(query))
+        # Nagłówek sesji (ADR 0056) także tutaj: zapytanie jednorazowe równie dobrze może
+        # dotyczyć „ostatniego tygodnia", a bez daty model odtwarza ją z cutoffu treningowego.
+        print(runtime.run(query, session_header=build_session_header(datetime.now())))
     except LLMError as exc:
         # Błąd sieci/limitu/auth Claude API → czytelny komunikat, nie surowy traceback.
         raise SystemExit(f"Błąd komunikacji z Claude API: {exc}") from exc

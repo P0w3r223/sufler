@@ -10,7 +10,9 @@ zamienia na czytelny komunikat.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.commands import CommandRouter
@@ -30,7 +32,7 @@ from workmate.adapters.outbound.sqlite_conversations import SqliteConversationSt
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
 from workmate.config import RetrievalSettings
-from workmate.core.agent.prompt import SYSTEM_PROMPT, system_prompt_for
+from workmate.core.agent.prompt import STATIC_PROMPT, static_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
@@ -41,12 +43,17 @@ from workmate.core.application.services import (
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import build_tool_catalog, build_workspace_catalog
+from workmate.core.application.tools import (
+    build_shell_catalog,
+    build_tool_catalog,
+    build_workspace_catalog,
+)
 from workmate.core.application.workspace import (
     WorkspaceLimits,
     WorkspaceService,
     WorkspaceWriteService,
 )
+from workmate.core.ports.command import CommandResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -59,37 +66,59 @@ if TYPE_CHECKING:
         AgentSettings,
         ConversationSettings,
         Settings,
+        ShellSettings,
         WorkspaceSettings,
     )
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.conversations import ConversationStore
+    from workmate.core.ports.repositories import NotesRepository
+
+logger = logging.getLogger(__name__)
 
 # Jedno źródło komunikatu o brakującym extra ``agent`` (dawniej powielone w 4 ``app.py``).
 _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 
 
+def build_notes_service(
+    settings: Settings, *, notes_repo: NotesRepository | None = None
+) -> NotesService:
+    """Zbuduj serwis wyszukiwania notatek z pełnym rankerem (BM25 nad lematami + opcjonalny dense).
+
+    JEDNO źródło budowy rankera dla wszystkich konsumentów: narzędzi agenta, komendy ``/szukaj``
+    i CLI ``workmate-search``. Gdyby CLI składało własny wariant, eval retrievalu mierzyłby coś
+    innego, niż wykonuje produkcja, a rozjazd byłby niewidoczny do pierwszego złego wyniku.
+
+    ``notes_repo`` podaje wołający, gdy ma już repozytorium do WSPÓŁDZIELENIA (``_read_services``
+    daje to samo ``ProjectsService``) — repozytorium cache'uje wczytane notatki, więc druga
+    instancja czytałaby ten sam katalog po raz drugi.
+
+    Lematyzator PL (ADR 0023) degraduje łagodnie do rankingu podłańcuchowego przy braku extra
+    ``retrieval``. Dense (ADR 0039) powstaje TYLKO obok lematyzatora — fuzja RRF żyje w gałęzi
+    BM25, więc sam byłby cichym no-opem.
+    """
+    retrieval = RetrievalSettings.from_env()
+    lemmatizer = build_lemmatizer(retrieval)
+    semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
+    return NotesService(
+        notes_repo if notes_repo is not None else MarkdownNotesRepository(settings.notes_dir),
+        lemmatizer=lemmatizer,
+        semantic=semantic,
+        rrf_k=retrieval.rrf_k,
+        dense_top_n=retrieval.dense_top_n,
+    )
+
+
 def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
     """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie).
 
-    ``NotesService`` dostaje lematyzator PL (ADR 0023) z fallbackiem na brak extra — lepszy
-    ranking wyszukiwania (BM25 nad lematami) na wszystkich drzwiach agenta.
+    Drzwi agenta są długożyjące, więc model osadzeń rankera dense ładuje się tu raz.
     """
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
-    retrieval = RetrievalSettings.from_env()
-    lemmatizer = build_lemmatizer(retrieval)
-    # Dense (ADR 0039, Faza B) żyje w gałęzi BM25 — budujemy go TYLKO obok lematyzatora (bez niego
-    # byłby cichym no-opem). Drzwi agenta są długożyjące, więc model osadzeń ładuje się raz.
-    semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
     return (
-        NotesService(
-            notes_repo,
-            lemmatizer=lemmatizer,
-            semantic=semantic,
-            rrf_k=retrieval.rrf_k,
-            dense_top_n=retrieval.dense_top_n,
-        ),
+        build_notes_service(settings, notes_repo=notes_repo),
         ProjectsService(projects_repo, notes_repo, events=_events_if_present()),
     )
 
@@ -117,7 +146,7 @@ def build_agent_runtime(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = SYSTEM_PROMPT,
+    system_prompt: str = STATIC_PROMPT,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
@@ -127,7 +156,7 @@ def build_agent_runtime(
     STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
     bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
     ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
-    materializujemy załączniki); domyślnie bazowy ``SYSTEM_PROMPT``.
+    materializujemy załączniki); domyślnie bazowy ``STATIC_PROMPT`` (ADR 0056).
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -155,7 +184,7 @@ def build_agent_runtime_or_exit(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = SYSTEM_PROMPT,
+    system_prompt: str = STATIC_PROMPT,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
@@ -209,6 +238,76 @@ def _build_workspace_factory(
     return factory
 
 
+class _ScopedRunner:
+    """``CommandRunner`` zapewniający istnienie katalogu rozmowy przed wysłaniem polecenia.
+
+    Wykonawca, gdy podany ``cwd`` nie istnieje, degraduje do swojego katalogu domyślnego —
+    rozsądnie, bo ``Popen`` z nieistniejącym ``cwd`` rzuca błędem mówiącym o katalogu zamiast
+    o poleceniu. Skutkiem ubocznym byłaby jednak UTRATA IZOLACJI: katalog rozmowy powstaje
+    leniwie, przy pierwszym ``create_file``, więc do tego czasu wszystkie rozmowy dzieliłyby
+    wspólny korzeń brudnopisu i widziały nawzajem swoje pliki. Zmierzone: ``pwd`` w świeżej
+    rozmowie zwracało ``/home/scratchpad``, nie ``/home/scratchpad/<kanał>/<hash>``.
+
+    Katalog zakłada APLIKACJA, nie wykonawca: „rozmowa" to pojęcie aplikacji, a wykonawca ma
+    zostać procesem bez wiedzy o tym, co znaczą ścieżki, które dostaje. Nieudany zapis wraca
+    jako wynik z niezerowym kodem — jak każda inna porażka polecenia (ADR 0057).
+    """
+
+    def __init__(self, inner: CommandRunner) -> None:
+        self._inner = inner
+
+    def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
+        if cwd:
+            try:
+                Path(cwd).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                return CommandResult(
+                    exit_code=-1,
+                    stdout="",
+                    stderr=f"Nie udało się przygotować katalogu roboczego {cwd}: {exc}",
+                )
+        return self._inner.run(command, cwd=cwd, timeout_s=timeout_s)
+
+
+def _build_shell_factory(
+    shell_settings: ShellSettings, workspace_settings: WorkspaceSettings
+) -> Callable[[WorkspaceScope], list[ToolSpec]] | None:
+    """Fabryka narzędzia ``Bash`` (ADR 0057) wiążącego polecenia z katalogiem rozmowy.
+
+    Zwraca ``None``, gdy powłoka jest wyłączona ALBO gdy klienta wykonawcy nie da się
+    zaimportować — jest POSIX-only (gniazda unix), więc na maszynie deweloperskiej z Windows
+    degradujemy do „brak narzędzia" zamiast wywracać start drzwi. Import jest leniwy z tego
+    samego powodu co Claude API.
+
+    ``workspace_settings.workspace_dir`` jest korzeniem ścieżek dla OBU stron: aplikacja pisze
+    tam pliki narzędziem ``create_file``, a wykonawca dostaje ten sam katalog jako ``cwd``.
+    Rozjazd tych dwóch wartości oznaczałby, że model tworzy plik narzędziem i nie widzi go
+    powłoką — dlatego korzeń bierzemy z jednej konfiguracji, a nie z dwóch.
+    """
+    if not shell_settings.enabled:
+        return None
+    try:
+        from workmate.adapters.outbound.exec_client import SocketCommandRunner
+    except ImportError:
+        logger.info(
+            "Klient wykonawcy jest POSIX-only — narzędzie powłoki pomijam na tej platformie."
+        )
+        return None
+
+    runner = _ScopedRunner(SocketCommandRunner(shell_settings.socket_path))
+    workspace_root = workspace_settings.workspace_dir.as_posix()
+
+    def factory(scope: WorkspaceScope) -> list[ToolSpec]:
+        return build_shell_catalog(
+            scope,
+            runner,
+            workspace_root=workspace_root,
+            default_timeout_s=shell_settings.default_timeout_s,
+        )
+
+    return factory
+
+
 def build_conversational_responder(
     settings: Settings,
     agent_settings: AgentSettings,
@@ -220,6 +319,7 @@ def build_conversational_responder(
     show_thinking: bool = False,
     enable_workspace: bool = False,
     workspace_settings: WorkspaceSettings | None = None,
+    shell_settings: ShellSettings | None = None,
     extra_catalog: Sequence[ToolSpec] = (),
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
@@ -235,7 +335,9 @@ def build_conversational_responder(
     Jedno źródło recepty ``SafeResponder(ConversationalResponder(...))`` (dawniej skopiowanej
     w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``show_thinking`` tylko
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
-    ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego.
+    ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego,
+    a ``shell_settings.enabled`` (znów osobna, ADR 0057) — narzędzie ``Bash`` biegnące
+    w kontenerze-wykonawcy bez sieci.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
     ``thread_tool_factory``/``user_push_tool_factory``/``my_jira_tasks_factory``
@@ -250,7 +352,7 @@ def build_conversational_responder(
         agent_settings,
         enable_write=enable_write,
         extra_catalog=extra_catalog,
-        system_prompt=system_prompt_for(attachments=supports_attachments),
+        system_prompt=static_prompt_for(attachments=supports_attachments),
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -271,6 +373,15 @@ def build_conversational_responder(
         if enable_workspace and workspace_settings is not None
         else None
     )
+    # Powłoka (ADR 0057) ma WŁASNĄ bramkę i własny profil zaufania, ale dzieli korzeń ścieżek
+    # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
+    # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
+    # narzędzia plikowe zapisują.
+    shell_factory = (
+        _build_shell_factory(shell_settings, workspace_settings)
+        if shell_settings is not None and workspace_settings is not None
+        else None
+    )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
     # responder nie zapisuje nic. Jeden punkt wpięcia obejmuje wszystkie drzwi agentowe.
     metrics = (
@@ -286,6 +397,7 @@ def build_conversational_responder(
         compaction=compaction,
         commands=router,
         workspace_catalog_factory=workspace_factory,
+        shell_catalog_factory=shell_factory,
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
         my_jira_tasks_factory=my_jira_tasks_factory,
@@ -310,16 +422,22 @@ def build_compaction_service(
     kluczem/ustawieniami co agent, tylko z podmienionym modelem. Klient dzieli MAGAZYN z
     ``ConversationService`` (ten sam plik SQLite), więc archiwizacja i podsumowania idą do
     tej samej bazy. Import Claude API jest tu już bezpieczny — runtime zbudowano wcześniej.
+
+    Czyszczenie wyników narzędzi (ADR 0058) jest tu WYŁĄCZONE: streszczacz dostaje jedną
+    wiadomość ze spłaszczonym transkryptem, więc nie ma czego czyścić, a nagłówek bety
+    zostawałby na wywołaniu, które z niej nie korzysta.
     """
     if not conversation_settings.compaction_enabled:
         return None
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
     model = conversation_settings.compaction_model or agent_settings.model
-    summarizer = AnthropicLLMClient(replace(agent_settings, model=model))
+    summarizer = AnthropicLLMClient(
+        replace(agent_settings, model=model, context_editing_enabled=False)
+    )
     return CompactionService(
         store,
         summarizer,
-        threshold_tokens=conversation_settings.compaction_threshold_tokens(),
+        threshold_tokens=conversation_settings.compaction_threshold_tokens,
         keep_turns=conversation_settings.compaction_keep_turns,
     )

@@ -8,18 +8,22 @@ Sprawdzamy tu tylko, że bloki przechodzą VERBATIM i w oryginalnej kolejności.
 
 from __future__ import annotations
 
+import logging
 import types
 from typing import Any
 
 from workmate.adapters.outbound.anthropic_llm import (
     _attachment_block,
+    _context_management,
     _from_message,
+    _log_applied_edits,
     _mark_cache,
     _system_blocks,
     _thinking_config,
     _to_messages,
     _user_message,
 )
+from workmate.config import AgentSettings
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
@@ -405,3 +409,134 @@ def test_mark_cache_on_empty_messages_returns_empty():
 def test_mark_cache_on_message_with_empty_content_list_is_noop():
     messages = [{"role": "user", "content": []}]
     assert _mark_cache(messages) == [{"role": "user", "content": []}]
+
+
+def test_context_management_carries_all_three_thresholds():
+    """Kształt konfiguracji czyszczenia wyników narzędzi (ADR 0058)."""
+    edits = _context_management(
+        AgentSettings(
+            context_editing_trigger_tokens=30_000,
+            context_editing_keep_tool_uses=5,
+            context_editing_clear_at_least_tokens=7_000,
+        )
+    )
+
+    assert edits == {
+        "edits": [
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": {"type": "input_tokens", "value": 30_000},
+                "keep": {"type": "tool_uses", "value": 5},
+                "clear_at_least": {"type": "input_tokens", "value": 7_000},
+            }
+        ]
+    }
+
+
+def test_context_management_leaves_tool_inputs_alone():
+    """Czyścimy WYNIK, nie wywołanie: ślad „pytałem o X" ma zostać w kontekście.
+
+    Bez śladu wywołania model traci informację, że już o coś pytał, i powtarza to samo
+    zapytanie — czyszczenie kontekstu zaczęłoby generować ruch zamiast go zdejmować.
+    """
+    edits = _context_management(AgentSettings())
+
+    assert edits is not None
+    assert "clear_tool_inputs" not in edits["edits"][0]
+
+
+def test_context_management_is_none_when_disabled():
+    """Wyłączone czyszczenie = żądanie bez nagłówka bety, dokładnie jak przed ADR 0058."""
+    assert _context_management(AgentSettings(context_editing_enabled=False)) is None
+
+
+def test_log_applied_edits_reports_what_was_cleared(caplog):
+    """Czyszczenie dzieje się po stronie API — log jest jedynym śladem, że zadziałało."""
+    message = types.SimpleNamespace(
+        context_management=types.SimpleNamespace(
+            applied_edits=[types.SimpleNamespace(cleared_tool_uses=8, cleared_input_tokens=50_000)]
+        )
+    )
+
+    with caplog.at_level(logging.INFO):
+        _log_applied_edits(message)
+
+    assert "8" in caplog.text
+    assert "50000" in caplog.text
+
+
+def test_log_applied_edits_survives_response_without_context_management():
+    """Odpowiedź bez pola ``context_management`` (ścieżka bez bety) nie może wywrócić tury."""
+    _log_applied_edits(types.SimpleNamespace(content=[]))  # nie rzuca
+
+
+# --- wybór ścieżki wywołania: beta vs zwykła -----------------------------------
+
+
+class _FakeStream:
+    """Atrapa kontekstu strumienia: oddaje przygotowaną wiadomość z ``get_final_message``."""
+
+    def __init__(self, message: _FakeMessage) -> None:
+        self._message = message
+
+    def __enter__(self) -> _FakeStream:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def get_final_message(self) -> _FakeMessage:
+        return self._message
+
+
+class _RecordingMessages:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def stream(self, **kwargs: Any) -> _FakeStream:
+        self.calls.append(kwargs)
+        block = _FakeBlock({"type": "text", "text": "ok"}, type="text", text="ok")
+        return _FakeStream(_FakeMessage([block], "end_turn"))
+
+
+def _client_with_recorders(settings: AgentSettings) -> tuple[Any, Any, Any]:
+    """Zbuduj adapter z podmienionym klientem; zwróć (adapter, rejestrator beta, zwykły)."""
+    from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
+
+    client = AnthropicLLMClient(settings)
+    beta, plain = _RecordingMessages(), _RecordingMessages()
+    client._client = types.SimpleNamespace(
+        beta=types.SimpleNamespace(messages=beta), messages=plain
+    )
+    return client, beta, plain
+
+
+def test_complete_uses_beta_path_and_sends_context_management_when_enabled():
+    """Kontrakt wychodzącego żądania — ta ścieżka nie jest pokryta testami czystych funkcji.
+
+    Bez tego testu literówka w nazwie argumentu albo zmiana sygnatury SDK przechodzi przez
+    CI i wywala się dopiero na produkcji, i to ``TypeError`` poza kopertą ``LLMError``.
+    """
+    client, beta, plain = _client_with_recorders(AgentSettings(api_key="x"))
+
+    client.complete(system="S", transcript=[UserText("cześć", ())], tools=[])
+
+    assert plain.calls == []  # zwykła ścieżka nietknięta
+    assert len(beta.calls) == 1
+    sent = beta.calls[0]
+    assert sent["betas"] == ["context-management-2025-06-27"]
+    assert sent["context_management"]["edits"][0]["type"] == "clear_tool_uses_20250919"
+
+
+def test_complete_falls_back_to_plain_path_without_beta_keys_when_disabled():
+    """Wyłączenie czyszczenia ma przywracać DAWNE żądanie — bez nagłówka bety i bez edits."""
+    client, beta, plain = _client_with_recorders(
+        AgentSettings(api_key="x", context_editing_enabled=False)
+    )
+
+    client.complete(system="S", transcript=[UserText("cześć", ())], tools=[])
+
+    assert beta.calls == []
+    assert len(plain.calls) == 1
+    assert "betas" not in plain.calls[0]
+    assert "context_management" not in plain.calls[0]

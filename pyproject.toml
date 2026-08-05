@@ -32,7 +32,12 @@ teams = [
 # Runtime agenta (Faza 2, M1 / ADR 0008) — oficjalny SDK Anthropic. Serwer MCP
 # zostaje lekki; runtime doinstalowuje się przez `uv sync --extra agent`.
 agent = [
-    "anthropic>=0.40",
+    # >=0.116: czyszczenie kontekstu (ADR 0058) woła ``beta.messages.stream`` z ``betas``
+    # i ``context_management``. Na starszym SDK to nie jest ``anthropic.APIError``, tylko
+    # ``TypeError`` na nieznanym argumencie — wyjątek POZA kopertą ``LLMError``, więc tura
+    # wywraca się surowym tracebackiem zamiast wrócić jako błąd. Dolna granica to wersja,
+    # na której kształt żądania sprawdzono wobec typów SDK.
+    "anthropic>=0.116",
 ]
 # Drzwi Teams w trybie DELEGOWANYM (ADR 0015) — polling kanału przez Microsoft Graph
 # jako zalogowany użytkownik (device-code MSAL). Bez ciężkiego Agents SDK; serwer MCP
@@ -107,12 +112,19 @@ workmate-teams = "workmate.adapters.inbound.teams.app:main"
 workmate-agent = "workmate.adapters.inbound.cli.app:main"
 # Lokalny harness przepływu „notatka ze spotkania" (Faza 2, M3 / ADR 0009): `uv run workmate-meeting`.
 workmate-meeting = "workmate.adapters.inbound.cli.meeting:main"
+# Wyszukiwarka notatek dla POWŁOKI agenta (ADR 0056/0057): `workmate-search "integracja scada"`.
+# Ten sam ranker co narzędzie agenta — dopasowanie wzorca po polskim korpusie fleksyjnym gubi
+# trafienia („migracja" nie trafia „migracji"), więc powłoka dostaje ranker, nie grep.
+workmate-search = "workmate.adapters.inbound.cli.search:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 # Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.
 workmate-github = "workmate.adapters.inbound.github.app:main"
 # Proces proaktywnego digestu zmian (ADR 0053, F6), cotygodniowy: `uv run workmate-teams-digest`.
 workmate-teams-digest = "workmate.adapters.inbound.teams_digest.app:main"
+# Kontener-wykonawca poleceń powłoki (ADR 0057): `uv run workmate-exec`. Osobny proces bez
+# sieci — uruchamia kod ułożony przez model, mając wyłącznie montaże workspace'u.
+workmate-exec = "workmate.adapters.inbound.exec_server:main"
 # Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez
 # compose (`docker compose ps` → healthy/unhealthy), nie ręcznie: `workmate-heartbeat-check --file … --max-age …`.
 workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"

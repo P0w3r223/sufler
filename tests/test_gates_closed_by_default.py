@@ -26,6 +26,7 @@ from workmate.config import (
     GithubSettings,
     RetrievalSettings,
     Settings,
+    ShellSettings,
     TeamsDigestSettings,
     TeamsGraphSettings,
     TeamsPushSettings,
@@ -38,6 +39,7 @@ _SETTINGS_CLASSES = (
     RetrievalSettings,
     TeamsGraphSettings,
     WorkspaceSettings,
+    ShellSettings,
     GithubSettings,
     TeamsPushSettings,
     TeamsDigestSettings,
@@ -98,6 +100,9 @@ def test_every_known_gate_is_covered(clean_env) -> None:
         "TeamsGraphSettings.enable_project_brief",
         "TeamsGraphSettings.enable_change_digest",
         "WorkspaceSettings.enabled",
+        # Powłoka (ADR 0057) — bramka OSOBNA od workspace: tam model tworzy plik narzędziem
+        # typowanym, tu uruchamia dowolny kod. Wspólna otwierałaby powłokę po cichu.
+        "ShellSettings.enabled",
         "GithubSettings.enable_github_write",
         "GithubSettings.enable_ci_auto_comment",
         "TeamsPushSettings.enable_chat",

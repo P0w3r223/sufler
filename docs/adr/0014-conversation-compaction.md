@@ -44,8 +44,9 @@ next user message).
 1. **Trigger on real input, not total context.** `Conversation.last_input_tokens` (input +
    cache of the last assistant turn, **without** output — output does not re-enter the
    prompt) is the compaction signal. When it exceeds
-   `ConversationSettings.compaction_threshold_tokens()` (= `context_window_tokens ×
-   compaction_threshold_fraction`), the door compacts before the next API call. This is
+   `ConversationSettings.compaction_threshold_tokens`, the door compacts before the next
+   API call. *(Superseded by ADR 0058: the threshold was a fraction of the model window;
+   it is now an absolute token count.)* This is
    distinct from ADR 0013's `last_context_tokens` (input + cache + output), which remains
    the *rollover* signal.
 
@@ -79,8 +80,9 @@ next user message).
    prepending a separate one — avoiding two consecutive `user` turns.
 
 7. **Configuration.** `WORKMATE_COMPACTION_ENABLED` (default true),
-   `WORKMATE_CONTEXT_WINDOW_TOKENS` (default 1,000,000), `WORKMATE_COMPACTION_THRESHOLD_FRACTION`
-   (default 0.70), `WORKMATE_COMPACTION_KEEP_TURNS` (default 4), `WORKMATE_COMPACTION_MODEL`
+   `WORKMATE_COMPACTION_THRESHOLD_TOKENS` (default 150,000 — *ADR 0058; replaced
+   `WORKMATE_CONTEXT_WINDOW_TOKENS` × `WORKMATE_COMPACTION_THRESHOLD_FRACTION`, neither of
+   which is read any more*), `WORKMATE_COMPACTION_KEEP_TURNS` (default 4), `WORKMATE_COMPACTION_MODEL`
    (empty → agent model). The summarizer reuses the agent's `AgentSettings` with the model
    swapped, sharing the same SQLite store.
 

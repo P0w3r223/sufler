@@ -65,7 +65,8 @@ Napędza drzwi Teams/CLI. `validate()` twardo wymaga klucza.
 | `WORKMATE_CONVERSATIONS_DB` | Ścieżka SQLite pamięci rozmów (poza `data/`). |
 | `WORKMATE_CONV_MAX_TOKENS` / `WORKMATE_CONV_IDLE_MINUTES` | Budżet kontekstu wątku i granica bezczynności. |
 | `WORKMATE_COMPACTION_ENABLED` | Czy kompaktować historię przy zbliżaniu do limitu ([ADR 0014](../adr/0014-conversation-compaction.md)). |
-| `WORKMATE_CONTEXT_WINDOW_TOKENS`, `WORKMATE_COMPACTION_THRESHOLD_FRACTION`, `WORKMATE_COMPACTION_KEEP_TURNS`, `WORKMATE_COMPACTION_MODEL` | Parametry progu i strategii kompaktowania. |
+| `WORKMATE_COMPACTION_THRESHOLD_TOKENS`, `WORKMATE_COMPACTION_KEEP_TURNS`, `WORKMATE_COMPACTION_MODEL` | Parametry progu i strategii kompaktowania. Próg jest BEZWZGLĘDNY (domyślnie 150 000 tokenów wejścia); dawne `WORKMATE_CONTEXT_WINDOW_TOKENS` i `WORKMATE_COMPACTION_THRESHOLD_FRACTION` nie są już czytane ([ADR 0058](../adr/0058-context-editing-and-absolute-compaction-threshold.md)). |
+| `WORKMATE_CONTEXT_EDITING_ENABLED`, `WORKMATE_CONTEXT_EDITING_TRIGGER_TOKENS`, `WORKMATE_CONTEXT_EDITING_KEEP_TOOL_USES`, `WORKMATE_CONTEXT_EDITING_CLEAR_AT_LEAST_TOKENS` | Czyszczenie starych wyników narzędzi po stronie Claude API ([ADR 0058](../adr/0058-context-editing-and-absolute-compaction-threshold.md)). `KEEP_TOOL_USES` musi być >= `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` — inaczej start jest odrzucany. |
 
 ## Wspólny magazyn zdarzeń (`EventsSettings`)
 

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from workmate.core.application.github import GithubWriteService
     from workmate.core.application.my_jira_tasks import MyJiraTasksService
     from workmate.core.application.worklog import WorklogService
+    from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.document import DocumentRenderer
     from workmate.core.ports.file_output import TeamsFileSender
     from workmate.core.ports.user_doc_push import UserDocSender
@@ -259,6 +260,59 @@ def build_workspace_catalog(
         ToolSpec("read_file", read_file.__doc__ or "", read_file),
         ToolSpec("list_files", list_files.__doc__ or "", list_files),
     ]
+
+
+def build_shell_catalog(
+    scope: WorkspaceScope,
+    runner: CommandRunner,
+    *,
+    workspace_root: str,
+    default_timeout_s: int = 60,
+) -> list[ToolSpec]:
+    """Zbuduj narzędzie POWŁOKI dla danej rozmowy (ADR 0057).
+
+    Polecenie biegnie w OSOBNYM kontenerze bez sieci — ``runner`` to klient gniazda, nie
+    lokalny ``subprocess``. Katalog roboczy jest DOMKNIĘTY w closurze (jak ``scope``
+    w ``build_workspace_catalog``): model nie widzi go w schemacie, więc nie wskaże cudzej
+    rozmowy, a polecenia startują tam, gdzie leżą jego własne pliki robocze.
+
+    Opis narzędzia niesie mapę montaży, bo prompt systemowy opisuje jeszcze świat narzędzi
+    (ADR 0056 §Konsekwencje — sekcja ``ENVIRONMENT`` idzie ZA architekturą). Do czasu tamtej
+    zmiany to jedyne miejsce, z którego model dowiaduje się, gdzie co leży.
+    """
+    workdir = f"{workspace_root.rstrip('/')}/{scope.dirpath()}"
+
+    def run_command(command: str, timeout_s: int = 0) -> dict[str, Any]:
+        """Uruchom polecenie powłoki (bash) w izolowanym kontenerze bez dostępu do sieci.
+
+        Startujesz we własnym katalogu roboczym tej rozmowy — pliki tworzone tutaj przeżywają
+        do kolejnych tur. Układ ścieżek:
+          /home/scratchpad/… — twój katalog roboczy, zapis dozwolony
+          /mnt/system/notes/ — baza wiedzy pionu (notatki), TYLKO ODCZYT
+          /mnt/system/projects/ — rejestr projektów, TYLKO ODCZYT
+          /mnt/user/inputs/ — pliki od rozmówcy, TYLKO ODCZYT
+          /mnt/user/outputs/ — co tu zapiszesz, trafia do rozmówcy
+        Do przeszukiwania notatek użyj `workmate-search "fraza"` — korpus jest polski
+        i odmieniony, więc dopasowanie wzorca (grep) gubi trafienia.
+        Wyjście jest przycinane do 64 KB (flaga `truncated`), a polecenie przerywane po
+        `timeout_s` sekund (domyślnie 60, maksymalnie 300; flaga `timed_out`).
+        """
+
+        def build() -> dict[str, Any]:
+            result = runner.run(
+                command, cwd=workdir, timeout_s=float(timeout_s or default_timeout_s)
+            )
+            return {
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "truncated": result.truncated,
+                "timed_out": result.timed_out,
+            }
+
+        return _envelope(build, errors=(WorkMateError,))
+
+    return [ToolSpec("Bash", run_command.__doc__ or "", run_command)]
 
 
 def build_events_catalog(events: EventService) -> list[ToolSpec]:
