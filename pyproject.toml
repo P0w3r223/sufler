@@ -112,6 +112,10 @@ workmate-teams = "workmate.adapters.inbound.teams.app:main"
 workmate-agent = "workmate.adapters.inbound.cli.app:main"
 # Lokalny harness przepływu „notatka ze spotkania" (Faza 2, M3 / ADR 0009): `uv run workmate-meeting`.
 workmate-meeting = "workmate.adapters.inbound.cli.meeting:main"
+# Wyszukiwarka notatek dla POWŁOKI agenta (ADR 0056/0057): `workmate-search "integracja scada"`.
+# Ten sam ranker co narzędzie agenta — dopasowanie wzorca po polskim korpusie fleksyjnym gubi
+# trafienia („migracja" nie trafia „migracji"), więc powłoka dostaje ranker, nie grep.
+workmate-search = "workmate.adapters.inbound.cli.search:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 # Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.

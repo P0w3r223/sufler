@@ -64,32 +64,50 @@ if TYPE_CHECKING:
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.conversations import ConversationStore
+    from workmate.core.ports.repositories import NotesRepository
 
 # Jedno źródło komunikatu o brakującym extra ``agent`` (dawniej powielone w 4 ``app.py``).
 _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
 
 
+def build_notes_service(
+    settings: Settings, *, notes_repo: NotesRepository | None = None
+) -> NotesService:
+    """Zbuduj serwis wyszukiwania notatek z pełnym rankerem (BM25 nad lematami + opcjonalny dense).
+
+    JEDNO źródło budowy rankera dla wszystkich konsumentów: narzędzi agenta, komendy ``/szukaj``
+    i CLI ``workmate-search``. Gdyby CLI składało własny wariant, eval retrievalu mierzyłby coś
+    innego, niż wykonuje produkcja, a rozjazd byłby niewidoczny do pierwszego złego wyniku.
+
+    ``notes_repo`` podaje wołający, gdy ma już repozytorium do WSPÓŁDZIELENIA (``_read_services``
+    daje to samo ``ProjectsService``) — repozytorium cache'uje wczytane notatki, więc druga
+    instancja czytałaby ten sam katalog po raz drugi.
+
+    Lematyzator PL (ADR 0023) degraduje łagodnie do rankingu podłańcuchowego przy braku extra
+    ``retrieval``. Dense (ADR 0039) powstaje TYLKO obok lematyzatora — fuzja RRF żyje w gałęzi
+    BM25, więc sam byłby cichym no-opem.
+    """
+    retrieval = RetrievalSettings.from_env()
+    lemmatizer = build_lemmatizer(retrieval)
+    semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
+    return NotesService(
+        notes_repo if notes_repo is not None else MarkdownNotesRepository(settings.notes_dir),
+        lemmatizer=lemmatizer,
+        semantic=semantic,
+        rrf_k=retrieval.rrf_k,
+        dense_top_n=retrieval.dense_top_n,
+    )
+
+
 def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
     """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie).
 
-    ``NotesService`` dostaje lematyzator PL (ADR 0023) z fallbackiem na brak extra — lepszy
-    ranking wyszukiwania (BM25 nad lematami) na wszystkich drzwiach agenta.
+    Drzwi agenta są długożyjące, więc model osadzeń rankera dense ładuje się tu raz.
     """
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
-    retrieval = RetrievalSettings.from_env()
-    lemmatizer = build_lemmatizer(retrieval)
-    # Dense (ADR 0039, Faza B) żyje w gałęzi BM25 — budujemy go TYLKO obok lematyzatora (bez niego
-    # byłby cichym no-opem). Drzwi agenta są długożyjące, więc model osadzeń ładuje się raz.
-    semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
     return (
-        NotesService(
-            notes_repo,
-            lemmatizer=lemmatizer,
-            semantic=semantic,
-            rrf_k=retrieval.rrf_k,
-            dense_top_n=retrieval.dense_top_n,
-        ),
+        build_notes_service(settings, notes_repo=notes_repo),
         ProjectsService(projects_repo, notes_repo, events=_events_if_present()),
     )
 
