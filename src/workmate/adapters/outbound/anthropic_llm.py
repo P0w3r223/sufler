@@ -48,7 +48,7 @@ class AnthropicLLMClient:
     def complete(
         self,
         *,
-        system: str,
+        system: str | Sequence[str],
         transcript: Sequence[TranscriptEntry],
         tools: Sequence[ToolSpec],
     ) -> LLMResponse:
@@ -89,9 +89,24 @@ class AnthropicLLMClient:
         return _from_message(message)
 
 
-def _system_blocks(system: str) -> list[dict[str, Any]]:
-    """System jako lista bloków z ``cache_control`` na jedynym bloku (breakpoint prefiksu)."""
-    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+def _system_blocks(system: str | Sequence[str]) -> list[dict[str, Any]]:
+    """System jako lista bloków tekstowych z ``cache_control`` na PIERWSZYM z nich.
+
+    Napis normalizujemy do jednoelementowej sekwencji — wołający bez podziału (kompaktowanie)
+    dostaje dokładnie dawne zachowanie. Przy dwóch blokach (ADR 0056) breakpoint zostaje na
+    bloku STATYCZNYM: żądanie renderuje się jako tools → system → messages, więc cache obejmuje
+    prefiks ``tools + static``, a nagłówek sesji (data, rozmowa) jedzie za nim poza cache'em.
+    Breakpoint na ostatnim bloku unieważniałby ten prefiks przy każdej zmianie doby.
+
+    Puste bloki odrzucamy — pusty ``text`` jest przez API odrzucany, a ``system_blocks``
+    zwraca krotkę jednoelementową właśnie po to, żeby taki blok nie powstał.
+    """
+    blocks = [system] if isinstance(system, str) else [b for b in system if b]
+    cached = {"cache_control": {"type": "ephemeral"}}
+    return [
+        {"type": "text", "text": text, **(cached if i == 0 else {})}
+        for i, text in enumerate(blocks)
+    ]
 
 
 def _mark_cache(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -30,7 +30,7 @@ from workmate.adapters.outbound.sqlite_conversations import SqliteConversationSt
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
 from workmate.config import RetrievalSettings
-from workmate.core.agent.prompt import SYSTEM_PROMPT, system_prompt_for
+from workmate.core.agent.prompt import STATIC_PROMPT, static_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
@@ -117,7 +117,7 @@ def build_agent_runtime(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = SYSTEM_PROMPT,
+    system_prompt: str = STATIC_PROMPT,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
@@ -127,7 +127,7 @@ def build_agent_runtime(
     STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
     bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
     ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
-    materializujemy załączniki); domyślnie bazowy ``SYSTEM_PROMPT``.
+    materializujemy załączniki); domyślnie bazowy ``STATIC_PROMPT`` (ADR 0056).
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -155,7 +155,7 @@ def build_agent_runtime_or_exit(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = SYSTEM_PROMPT,
+    system_prompt: str = STATIC_PROMPT,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
@@ -250,7 +250,7 @@ def build_conversational_responder(
         agent_settings,
         enable_write=enable_write,
         extra_catalog=extra_catalog,
-        system_prompt=system_prompt_for(attachments=supports_attachments),
+        system_prompt=static_prompt_for(attachments=supports_attachments),
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(

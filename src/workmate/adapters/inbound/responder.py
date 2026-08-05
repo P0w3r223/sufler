@@ -27,6 +27,7 @@ from workmate.adapters.inbound.brief_command import BriefContext
 from workmate.adapters.inbound.change_command import ChangeDigestContext
 from workmate.adapters.inbound.commands import CommandContext
 from workmate.adapters.inbound.thread_note_command import ThreadNoteContext
+from workmate.core.agent.prompt import build_session_header
 from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
@@ -126,14 +127,22 @@ class RuntimeResponder:
     nie zapisuje.
     """
 
-    def __init__(self, runtime: AgentRuntime) -> None:
+    def __init__(
+        self, runtime: AgentRuntime, *, clock: Callable[[], datetime] = _utcnow
+    ) -> None:
         self._runtime = runtime
+        # Zegar wstrzykiwany jak w ``ConversationalResponder`` — nagłówek sesji (ADR 0056)
+        # niesie datę, a rdzeń zegara nie woła.
+        self._clock = clock
 
     async def respond(self, message: InboundMessage) -> str:
         loop = asyncio.get_running_loop()
+        header = build_session_header(self._clock(), thread=message.conversation_id)
         return await loop.run_in_executor(
             None,
-            lambda: self._runtime.run(message.text, attachments=message.attachments),
+            lambda: self._runtime.run(
+                message.text, attachments=message.attachments, session_header=header
+            ),
         )
 
 
@@ -372,11 +381,16 @@ class ConversationalResponder:
                     message.sender_id,
                 )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.
+        # Nagłówek sesji (ADR 0056) składamy PER TURĘ, nie raz na starcie procesu: kontener
+        # jest długożyjący (poller chodzi dobami), więc data zamrożona przy starcie rozjechałaby
+        # się z rzeczywistością następnego dnia. ``now`` policzono wyżej — tura ma jedną chwilę,
+        # wspólną z kryterium bezczynności.
         result = self._runtime.run_turn(
             message.text,
             attachments=message.attachments,
             history=transcript,
             extra_tools=extra_tools,
+            session_header=build_session_header(now, channel=self._channel, thread=external_id),
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.

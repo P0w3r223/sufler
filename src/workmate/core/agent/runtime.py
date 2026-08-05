@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, get_type_hints
 
 from pydantic import TypeAdapter, ValidationError
 
-from workmate.core.agent.prompt import SYSTEM_PROMPT
+from workmate.core.agent.prompt import STATIC_PROMPT, system_blocks
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AgentResult,
@@ -55,7 +55,7 @@ class AgentRuntime:
         llm: LLMClient,
         catalog: list[ToolSpec],
         *,
-        system_prompt: str = SYSTEM_PROMPT,
+        system_prompt: str = STATIC_PROMPT,
         max_tool_iterations: int = _DEFAULT_MAX_TOOL_ITERATIONS,
     ) -> None:
         self._llm = llm
@@ -71,10 +71,15 @@ class AgentRuntime:
         attachments: Sequence[Attachment] = (),
         history: Sequence[TranscriptEntry] = (),
         extra_tools: Sequence[ToolSpec] = (),
+        session_header: str = "",
     ) -> str:
         """Zwróć sam tekst odpowiedzi — cienka nakładka na ``run_turn`` (drzwi bezstanowe)."""
         return self.run_turn(
-            query, attachments=attachments, history=history, extra_tools=extra_tools
+            query,
+            attachments=attachments,
+            history=history,
+            extra_tools=extra_tools,
+            session_header=session_header,
         ).reply
 
     def run_turn(
@@ -84,11 +89,14 @@ class AgentRuntime:
         attachments: Sequence[Attachment] = (),
         history: Sequence[TranscriptEntry] = (),
         extra_tools: Sequence[ToolSpec] = (),
+        session_header: str = "",
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
 
         ``history`` to wcześniejsze tury bieżącej rozmowy (pamięć, ADR 0010) —
         poprzedzają nową wiadomość jako kontekst. Puste dla drzwi bezstanowych.
+        ``session_header`` (ADR 0056) to DRUGI blok systemowy tej tury — data i rozmowa.
+        Podają go drzwi, bo niosą zegar; puste zachowuje dawny, jednoblokowy kształt.
         INWARIANT ZAPISU (ADR 0011): zapisujemy TYLKO turę domkniętą końcową odpowiedzią
         asystenta. Tura, która nie dobiła do czystej odpowiedzi — ucięta na ``max_tokens``
         albo z wyczerpanym limitem iteracji — zwraca ``entries=()`` (nic do zapisu). Dzięki
@@ -103,6 +111,9 @@ class AgentRuntime:
         # — runtime pozostaje współdzielony i bezstanowy, a izolacja scope jest per tura.
         catalog = (*self._catalog, *extra_tools)
         by_name = {**self._by_name, **{spec.name: spec for spec in extra_tools}}
+        # Bloki systemowe składamy RAZ na turę, nie w pętli: w obrębie jednej tury data i
+        # rozmowa są stałe, a powtórne składanie tylko rozmnażałoby okazje do rozjazdu.
+        system = system_blocks(self._system_prompt, session_header)
         user_turn = UserText(query, tuple(attachments))
         transcript: list[TranscriptEntry] = [*history, user_turn]
         new_entries: list[TranscriptEntry] = [user_turn]
@@ -113,7 +124,7 @@ class AgentRuntime:
         run_usage = TokenUsage()
         for _ in range(self._max_tool_iterations):
             response = self._llm.complete(
-                system=self._system_prompt, transcript=transcript, tools=catalog
+                system=system, transcript=transcript, tools=catalog
             )
             run_usage = run_usage + response.usage
             last_text = response.text or last_text

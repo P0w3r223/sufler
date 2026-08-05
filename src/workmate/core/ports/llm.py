@@ -194,12 +194,18 @@ class AgentResult:
 
 
 class LLMClient(Protocol):
-    """Kontrakt: z (prompt systemowy, transkrypt, katalog narzędzi) → tura modelu."""
+    """Kontrakt: z (prompt systemowy, transkrypt, katalog narzędzi) → tura modelu.
+
+    ``system`` przyjmuje POJEDYNCZY tekst albo SEKWENCJĘ bloków (ADR 0056). Sekwencja
+    pozwala rozdzielić część stałą od zmiennej — pierwszy blok niesie breakpoint cache'u,
+    kolejne (np. nagłówek sesji z datą) zostają poza nim. Wołający, który podziału nie
+    potrzebuje (kompaktowanie), podaje sam napis; adapter normalizuje oba kształty.
+    """
 
     def complete(
         self,
         *,
-        system: str,
+        system: str | Sequence[str],
         transcript: Sequence[TranscriptEntry],
         tools: Sequence[ToolSpec],
     ) -> LLMResponse: ...

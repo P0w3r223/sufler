@@ -19,7 +19,7 @@ from workmate.core.domain.pricing import TokenUsage
 
 
 def _fake_build(reply: str):
-    runtime = types.SimpleNamespace(run=lambda query: f"{reply}:{query}")
+    runtime = types.SimpleNamespace(run=lambda query, session_header="": f"{reply}:{query}")
     return lambda *args, **kwargs: runtime
 
 
