@@ -409,7 +409,7 @@ def test_my_tasks_formats_both_sections():
 
 
 def test_my_tasks_selects_tool_by_name_when_factory_returns_several():
-    """Fabryka zwraca WIĘCEJ niż jedno narzędzie (ADR 0056) — router bierze po nazwie, nie
+    """Fabryka zwraca WIĘCEJ niż jedno narzędzie (ADR 0059) — router bierze po nazwie, nie
     pozycji."""
 
     def get_jira_task(key: str) -> dict[str, object]:

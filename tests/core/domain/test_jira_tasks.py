@@ -1,4 +1,4 @@
-"""Testy czystej domeny "moje zadania" Jira (ADR 0054/0056) — JQL i mapowanie, bez I/O."""
+"""Testy czystej domeny "moje zadania" Jira (ADR 0054/0059) — JQL i mapowanie, bez I/O."""
 
 from __future__ import annotations
 

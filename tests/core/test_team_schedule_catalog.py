@@ -1,4 +1,4 @@
-"""Testy katalogu narzędzia grafiku Teams Shifts (ADR 0056: get_team_schedule)."""
+"""Testy katalogu narzędzia grafiku Teams Shifts (ADR 0059: get_team_schedule)."""
 
 from __future__ import annotations
 

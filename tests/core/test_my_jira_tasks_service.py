@@ -93,7 +93,7 @@ def test_generic_transport_error_raises_readable_jira_read_error() -> None:
         service.my_open_tasks()
 
 
-# --- my_history (ADR 0056) ---------------------------------------------------
+# --- my_history (ADR 0059) ---------------------------------------------------
 
 
 def test_my_history_scopes_jql_to_done_status() -> None:

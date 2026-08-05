@@ -76,7 +76,7 @@ class JiraReadError(WorkMateError):
 
 
 class ScheduleReadError(WorkMateError):
-    """Odczyt grafiku Shifts (ADR 0056) się nie udał: brak/wygaśnięcie cichego tokenu, brak zgody
+    """Odczyt grafiku Shifts (ADR 0059) się nie udał: brak/wygaśnięcie cichego tokenu, brak zgody
     (Schedule.Read.All), throttling, timeout albo sieć.
 
     Adapter tłumaczy tu błąd cichego uwierzytelnienia (cudzy cache MSAL powiadomienia-teams) i

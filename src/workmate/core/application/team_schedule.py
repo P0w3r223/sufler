@@ -1,4 +1,4 @@
-"""Grafik zespołu z Teams Shifts (ADR 0056) — jedna odczytowa zdolność, zero mutacji.
+"""Grafik zespołu z Teams Shifts (ADR 0059) — jedna odczytowa zdolność, zero mutacji.
 
 Składa surowe dane z portu grafiku (członkowie + zmiany + nieobecności + powody) w gotową odpowiedź
 dla agenta: zmiany i nieobecności w zadanym oknie, w strefie pionu, opcjonalnie zawężone do jednej

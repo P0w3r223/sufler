@@ -1,4 +1,4 @@
-"""Port grafiku Teams Shifts (ADR 0056) — kontrakt drzwi na Microsoft Graph
+"""Port grafiku Teams Shifts (ADR 0059) — kontrakt drzwi na Microsoft Graph
 ``/teams/{id}/schedule``.
 
 Analogiczny do portu Jiry: SYNCHRONICZNY (``httpx.Client``), narzędzia wołają go w puli wątków.

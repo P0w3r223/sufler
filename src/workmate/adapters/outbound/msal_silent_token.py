@@ -1,4 +1,4 @@
-"""Cichy token dostępu z CUDZEGO cache MSAL (grafik Shifts, ADR 0056) — WYŁĄCZNIE odczyt.
+"""Cichy token dostępu z CUDZEGO cache MSAL (grafik Shifts, ADR 0059) — WYŁĄCZNIE odczyt.
 
 Cache tokenu należy do bota powiadomienia-teams i jest montowany RO. Pożyczamy z niego refresh-token
 i wymieniamy go po cichu (``acquire_token_silent``) na token do Microsoft Graph z zakresem

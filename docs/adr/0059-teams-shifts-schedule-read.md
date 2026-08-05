@@ -1,4 +1,4 @@
-# 0056. Extended Jira read + read-only Teams Shifts schedule
+# 0059. Extended Jira read + read-only Teams Shifts schedule
 
 Date: 2026-08-04
 Status: accepted

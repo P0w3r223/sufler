@@ -1,4 +1,4 @@
-"""Testy wiringu ``_build_team_schedule_catalog`` (ADR 0056) — bramka ``auto`` na cudzym cache MSAL.
+"""Testy wiringu ``_build_team_schedule_catalog`` (ADR 0059) — bramka ``auto`` na cudzym cache MSAL.
 
 Sedno: narzędzie grafiku wchodzi TYLKO gdy ``ScheduleSettings.is_enabled()`` jest prawdziwe (tryb
 ``auto`` sam sprawdza obecność zamontowanego cache tokenu bota powiadomienia-teams) — na hoście

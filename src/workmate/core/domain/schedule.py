@@ -1,4 +1,4 @@
-"""Domena grafiku Teams Shifts (ADR 0056) — CZYSTA logika: zakres dat, mapowanie, dopasowanie osoby.
+"""Domena grafiku Teams Shifts (ADR 0059) — CZYSTA logika: zakres dat, mapowanie, dopasowanie osoby.
 
 Bez I/O i bez zegara (``today`` wstrzykiwany). Renderujemy czasy w strefie pionu (Europe/Warsaw),
 bo grafik czyta człowiek — „8:00" ma znaczyć lokalne 8:00 po obu stronach przejścia DST. Treść pól

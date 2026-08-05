@@ -1467,7 +1467,7 @@ class TeamsPushSettings:
             )
 
 
-# --- grafik zmian z Teams Shifts (ADR 0056) -----------------------------------
+# --- grafik zmian z Teams Shifts (ADR 0059) -----------------------------------
 # Zespół „BIAP – Pion Inteligentnych Technologii" — jedyny w tenancie z działającym grafikiem.
 _DEFAULT_SCHEDULE_TEAM_ID = "c0ffee00-0000-4000-8000-000000000007"
 # Cudzy cache MSAL bota powiadomienia-teams — montowany RO, czytany po cichu, NIGDY pisany.
@@ -1480,7 +1480,7 @@ _DEFAULT_SCHEDULE_SCOPES = ("Schedule.Read.All", "TeamMember.Read.All")
 
 @dataclass(frozen=True)
 class ScheduleSettings:
-    """Konfiguracja grafiku Teams Shifts (ADR 0056) — WYŁĄCZNIE odczyt, cichy token z cudzego cache.
+    """Konfiguracja grafiku Teams Shifts (ADR 0059) — WYŁĄCZNIE odczyt, cichy token z cudzego cache.
 
     Tożsamość pożyczamy z cache MSAL bota powiadomienia-teams (ta sama rejestracja aplikacji co
     ``TeamsPushSettings``): ``client_id``/``tenant_id`` domyślnie SPADAJĄ na

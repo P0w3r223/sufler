@@ -1,4 +1,4 @@
-"""Testy katalogu narzędzi "moje zadania"/"moja historia" Jira (ADR 0054/0056).
+"""Testy katalogu narzędzi "moje zadania"/"moja historia" Jira (ADR 0054/0059).
 
 Katalog jest cienki, ale niesie inwarianty warte przypięcia: brak parametru tożsamości (nie da
 się nim podejrzeć cudzych zadań), koperta zamienia błędy na ``{"error": ...}``, "moje zadania"
