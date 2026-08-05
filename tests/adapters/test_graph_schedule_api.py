@@ -1,4 +1,4 @@
-"""Testy klienta grafiku Teams Shifts (HttpxGraphScheduleClient, ADR 0056) na
+"""Testy klienta grafiku Teams Shifts (HttpxGraphScheduleClient, ADR 0059) na
 ``httpx.MockTransport`` — bez sieci i bez MSAL (token_provider jest wstrzykiwaną funkcją).
 """
 

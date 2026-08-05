@@ -1,4 +1,4 @@
-"""Testy ``TeamScheduleService`` (ADR 0056) — atrapa portu grafiku, żadnej sieci."""
+"""Testy ``TeamScheduleService`` (ADR 0059) — atrapa portu grafiku, żadnej sieci."""
 
 from __future__ import annotations
 

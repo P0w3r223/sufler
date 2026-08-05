@@ -1,4 +1,4 @@
-"""Testy normalizacji i dopasowania nazwisk (ADR 0056) — czyste funkcje, bez I/O.
+"""Testy normalizacji i dopasowania nazwisk (ADR 0059) — czyste funkcje, bez I/O.
 
 Współdzielone przez "zadania członka" Jira (mapa tożsamości) i grafik Shifts (roster Graph) —
 dopasowanie jest dozwolone WYŁĄCZNIE na zaufanym zbiorze kandydatów (nigdy zgadywanie konta).

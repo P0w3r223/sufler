@@ -1,4 +1,4 @@
-"""Testy ``JiraReadService`` (ADR 0056, rozszerzony odczyt Jiry) — atrapa portu, żadnej sieci."""
+"""Testy ``JiraReadService`` (ADR 0059, rozszerzony odczyt Jiry) — atrapa portu, żadnej sieci."""
 
 from __future__ import annotations
 

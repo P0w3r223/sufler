@@ -6,8 +6,41 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-08-05
+
+Wydanie harnessu agenta: model dostaje powłokę w kontenerze bez sieci, wyszukiwarkę notatek
+jako komendę tej powłoki, prompt systemowy rozdzielony na część cache'owaną i część per turę
+oraz gospodarkę kontekstem, która zdejmuje stare wyniki narzędzi, zanim rozmowa urośnie do
+kompaktowania. Wersja pakietu i wersja obrazu, rozjechane od 1.3.x, są tu z powrotem tą samą
+liczbą.
+
 ### Dodane
-- **Opcjonalna polityka odpowiadania na kanale — `reply_policy`** (ADR 0057, SZKIELET pod
+- **Prompt systemowy jako DWA bloki** (ADR 0056). Statyczny korpus (niezmienny między turami,
+  na nim siada breakpoint cache'u prefiksu `tools+system`) i nagłówek sesji składany PER TURĘ —
+  data i tożsamość rozmowy. Dotąd agent nie znał bieżącej daty, więc „w zeszłym tygodniu"
+  nie miało punktu odniesienia. Korpus przepisany po angielsku, bez negacji i nacisku
+  wersalikami; reguły redakcyjne są bramką w `tests/core/test_prompt.py`, sprawdzaną na
+  wszystkich czterech artefaktach promptu (korpus, wariant multimodalny, prompt kompaktowania,
+  nagłówek sesji).
+- **Kontener-wykonawca bez sieci i narzędzie `Bash`** (ADR 0057). Kod napisany przez model biegnie
+  w OSOBNYM kontenerze (`network_mode: none`, `read_only`, nie-root), rozmawiającym z aplikacją
+  przez gniazdo unix — uprawnienia pliku gniazda są jedyną kontrolą dostępu do powłoki.
+  Bezpieczeństwo bierze się z tego, czego w tamtym kontenerze NIE MA, a nie z oceniania treści
+  polecenia: baza wiedzy zamontowana `ro`, brak trasy do sieci, `curl` poza obrazem. Każde
+  polecenie startuje w katalogu TEJ rozmowy pod `/home/scratchpad`, zakładanym przez aplikację
+  (leniwe zakładanie dawało wszystkim rozmowom wspólny katalog). Limity: `WORKMATE_SHELL_TIMEOUT_S`
+  (domyślnie 60 s, sufit 300 s po stronie wykonawcy), wyjście przycinane do 64 KiB ze
+  znacznikiem `truncated`. Bramka `WORKMATE_ENABLE_SHELL` (domyślnie `false`) jest OSOBNA od
+  `WORKMATE_ENABLE_WORKSPACE` — tam model tworzy pliki narzędziem typowanym, tu uruchamia
+  dowolny kod, więc wspólna bramka włączałaby powłokę po cichu.
+- **`workmate-search` — wyszukiwarka notatek dla powłoki agenta.** Ten sam ranker BM25 nad
+  lematami polskimi, co narzędzie agenta i komenda `/szukaj` (jedno źródło budowy w
+  `build_notes_service`). Dopasowanie wzorca po polskim korpusie fleksyjnym gubi trafienia —
+  `grep -rl "migracji"` nie znajduje notatki o „migracja" — więc powłoka dostaje ranker, nie grep.
+  Flagi: `--project`, `--participant`, `--limit`, `--paths` (same ścieżki, do `xargs cat`),
+  `--json`. Wymaga `WORKMATE_NOTES_DIR`; przy braku katalogu kończy kodem 1 i komunikatem,
+  zamiast udawać brak wyników.
+- **Opcjonalna polityka odpowiadania na kanale — `reply_policy`** (ADR 0060, SZKIELET pod
   wielokanałowe wdrożenie WorkMate). Nowa bramka „czy w ogóle odpowiadać", niezależna od
   dotychczasowej logiki wyboru wiadomości: `WORKMATE_TEAMS_GRAPH_REPLY_POLICY` = `all` (domyślnie —
   zachowanie identyczne jak przed tą zmianą, odpowiedź na każdą wiadomość od innego człowieka) albo
@@ -17,17 +50,43 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   `selection.ReplyPolicy` (`mode`, `always_reply`, `from_settings`, `should_engage`) i
   `_thread_engaged` (sygnał przyklejenia liczony z historii odpowiedzi Graph, przeżywa restart);
   `plan_channel`/`ChannelPoller` dostają opcjonalne `policy`/`channel`, domyślnie `None` — bez
-  podania bramki zachowanie jest BITOWO identyczne jak przed ADR 0057 (zero zmiany dla obecnej
-  produkcji, opt-in per wdrożenie). **Uwaga**: ta funkcja i rozszerzony odczyt Jiry/grafik Shifts
-  (ADR 0056, patrz sekcja `[1.3.2]` poniżej) nie współistnieją jeszcze w żadnym pojedynczym
-  zbudowanym obrazie Dockera na produkcji — działały dotąd na dwóch różnych, równolegle
-  uruchomionych kontenerach; to repo jest pierwszym miejscem, gdzie obie zdolności współistnieją w
-  jednym drzewie kodu (świadome scalenie do przyszłego wydania, patrz ADR 0057 §Consequences).
+  podania bramki zachowanie jest BITOWO identyczne jak przed ADR 0060 (zero zmiany dla obecnej
+  produkcji, opt-in per wdrożenie). **Uwaga wdrożeniowa**: ta funkcja i rozszerzony odczyt
+  Jiry/grafik Shifts (ADR 0059, patrz sekcja `[1.3.2]` poniżej) powstawały na dwóch różnych,
+  równolegle uruchomionych kontenerach i do tej pory nie jechały razem w żadnym pojedynczym
+  obrazie. **To wydanie jest pierwszym, które wysyła obie zdolności naraz** — a że obie ruszały
+  `adapters/inbound/teams_graph/app.py` i `config.py`, zachowanie złożenia jest tu weryfikowane
+  po raz pierwszy (patrz ADR 0060 §Consequences).
+
+### Zmienione
+- **Gospodarka kontekstem rozmowy** (ADR 0058). Stare wyniki narzędzi czyści Claude API
+  (`clear_tool_uses_20250919`, beta `context-management-2025-06-27`) — czyszczony jest sam
+  wynik, `tool_use` zostaje, więc model wie, że już pytał. Nowe zmienne:
+  `WORKMATE_CONTEXT_EDITING_ENABLED` (domyślnie `true`), `..._TRIGGER_TOKENS` (100 000),
+  `..._KEEP_TOOL_USES` (8) i `..._CLEAR_AT_LEAST_TOKENS` (40 000). `KEEP_TOOL_USES` musi być
+  >= `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` — start jest odrzucany przy mniejszej wartości, bo
+  czyszczenie potrafi odpalić w środku tury i sięgnąć wyników zamówionych przed chwilą.
+  Równolegle próg kompaktowania spada z efektywnych 700 000 (0,70 × okna 1M) do 150 000: dotąd
+  mechanizm praktycznie nie odpalał, teraz będzie wołał model podsumowujący. Wyłączenie
+  `WORKMATE_CONTEXT_EDITING_ENABLED=false` przywraca dawny kształt żądania co do bajtu.
+  Wymaga `anthropic>=0.116` (extra `agent`) — na starszym SDK tura wywala się `TypeError`.
+  Progi 100 000/150 000 pochodzą z literatury, nie z pomiaru na naszym ruchu — pierwsze
+  strojenie po tym wydaniu, na podstawie logu `_log_applied_edits`.
+- **Wersja pakietu i wersja obrazu z powrotem tą samą liczbą.** Rozjazd narósł do trzech
+  wartości w sześciu miejscach (pakiet 1.3.2, obraz 1.4.0, compose deweloperski 1.3.0),
+  bo podbicia były osobnymi czynnościami bez wspólnej bramki.
+
+### Usunięte
+- **`WORKMATE_CONTEXT_WINDOW_TOKENS` i `WORKMATE_COMPACTION_THRESHOLD_FRACTION`** (ADR 0058,
+  amends ADR 0014). Próg kompaktowania przestał być ułamkiem okna modelu; zastępuje je
+  `WORKMATE_COMPACTION_THRESHOLD_TOKENS`. **Uwaga wdrożeniowa:** nieznana zmienna nie jest
+  błędem, więc wdrożenie, które którąkolwiek z usuniętych ustawiało, straci nadpisanie po
+  cichu — sprawdzić `.env` na serwerze przed rolloutem.
 
 ## [1.3.2] — 2026-08-04
 
 ### Dodane
-- **Rozszerzony ODCZYT Jiry** (ADR 0056, kontynuacja ADR 0054): oprócz „moich zadań" dochodzą
+- **Rozszerzony ODCZYT Jiry** (ADR 0059, kontynuacja ADR 0054): oprócz „moich zadań" dochodzą
   `get_my_jira_history` (moja historia zakończonych zadań, opcjonalne okno dat), `get_jira_task`
   (szczegóły JEDNEGO zgłoszenia po kluczu + do 5 ostatnich komentarzy), `search_jira_tasks`
   (wyszukiwanie po tekście/projekcie/kategorii statusu) oraz `get_member_jira_tasks`/
@@ -39,7 +98,7 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   `core/domain/names.py` (`normalize_name`/`match_name` — dopasowanie WYŁĄCZNIE na zaufanym
   zbiorze kandydatów), rozszerzenia `core/domain/jira_tasks.py` (`JiraComment`, `JiraTaskDetails`,
   `escape_jql_string`, `build_search_jql`, `build_history_jql`, `split_by_assignment`).
-- **Grafik Teams Shifts — odczyt zmian i nieobecności zespołu** (ADR 0056). Nowe narzędzie
+- **Grafik Teams Shifts — odczyt zmian i nieobecności zespołu** (ADR 0059). Nowe narzędzie
   `get_team_schedule` (tydzień bieżący/poprzedni/następny albo jawny zakres dat, opcjonalnie
   zawężone do jednej osoby po nazwisku; forma pracy stacjonarnie/zdalnie wywnioskowana z koloru
   zmiany). Autoryzacja jest cichym tokenem MSAL POŻYCZONYM z cudzego, tylko-do-odczytu cache
@@ -52,11 +111,6 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 ## [1.3.1] — 2026-08-03
 
 ### Usunięte
-- **`WORKMATE_CONTEXT_WINDOW_TOKENS` i `WORKMATE_COMPACTION_THRESHOLD_FRACTION`** (ADR 0058,
-  amends ADR 0014). Próg kompaktowania przestał być ułamkiem okna modelu; zastępuje je
-  `WORKMATE_COMPACTION_THRESHOLD_TOKENS`. **Uwaga wdrożeniowa:** nieznana zmienna nie jest
-  błędem, więc wdrożenie, które którąkolwiek z usuniętych ustawiało, straci nadpisanie po
-  cichu — sprawdzić `.env` na serwerze przed rolloutem.
 - **Jira zredukowana do jednej, wyłącznie odczytowej zdolności „moje zadania"** (ADR 0054,
   supersedes ADR 0031 [zapis], ADR 0032 [tranzycja]; amends ADR 0028, ADR 0030). Usunięte w
   całości: poller Jira→`EventStore` (proces `workmate-jira`), push zdarzeń Jira→Teams, most
@@ -88,17 +142,6 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   współdzielony serwer HTTP z wieloma osobami.
 
 ### Zmienione
-- **Gospodarka kontekstem rozmowy** (ADR 0058). Stare wyniki narzędzi czyści Claude API
-  (`clear_tool_uses_20250919`, beta `context-management-2025-06-27`) — czyszczony jest sam
-  wynik, `tool_use` zostaje, więc model wie, że już pytał. Nowe zmienne:
-  `WORKMATE_CONTEXT_EDITING_ENABLED` (domyślnie `true`), `..._TRIGGER_TOKENS` (100 000),
-  `..._KEEP_TOOL_USES` (8) i `..._CLEAR_AT_LEAST_TOKENS` (40 000). `KEEP_TOOL_USES` musi być
-  >= `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` — start jest odrzucany przy mniejszej wartości, bo
-  czyszczenie potrafi odpalić w środku tury i sięgnąć wyników zamówionych przed chwilą.
-  Równolegle próg kompaktowania spada z efektywnych 700 000 (0,70 × okna 1M) do 150 000: dotąd
-  mechanizm praktycznie nie odpalał, teraz będzie wołał model podsumowujący. Wyłączenie
-  `WORKMATE_CONTEXT_EDITING_ENABLED=false` przywraca dawny kształt żądania co do bajtu.
-  Wymaga `anthropic>=0.116` (extra `agent`) — na starszym SDK tura wywala się `TypeError`.
 - **BREAKING: `WORKMATE_ENABLE_WRITE` domyślnie `false` wszędzie** (amendment ADR 0006,
   2026-07-31) — dotąd lokalne drzwi stdio (Claude Code/`workmate-agent`) miały to domyślnie
   `true`, jedyny udokumentowany wyjątek od „każda zdolność mutująca domyślnie OFF". Po pullu

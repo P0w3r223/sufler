@@ -1,7 +1,7 @@
 """Klient grafiku Teams Shifts (Microsoft Graph v1.0, ``httpx.Client``) — port odczytu grafiku.
 
 Sync (jak klienci Jiry) — narzędzia wołają go w puli wątków. Token bierzemy z ``token_provider``
-przy KAŻDYM żądaniu (cichy token z cudzego cache MSAL, ADR 0056), więc rotacja po stronie tamtego
+przy KAŻDYM żądaniu (cichy token z cudzego cache MSAL, ADR 0059), więc rotacja po stronie tamtego
 bota jest przezroczysta. Transport przez wspólne ``graph_http.request_with_retry`` (retry na
 429/5xx dla GET-ów — wszystko tu jest GET-em i idempotentne).
 

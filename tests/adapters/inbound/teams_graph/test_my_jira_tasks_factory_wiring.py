@@ -53,7 +53,7 @@ def test_empty_sender_gets_no_tool(tmp_path) -> None:
 
 
 def test_known_sender_gets_the_tools(tmp_path) -> None:
-    """ADR 0056: fabryka zwraca teraz "moje zadania"/historia + rozszerzony odczyt Jiry (razem)."""
+    """ADR 0059: fabryka zwraca teraz "moje zadania"/historia + rozszerzony odczyt Jiry (razem)."""
     settings = TeamsGraphSettings(
         meeting_note_identities=_identities_file(tmp_path, aad_user_id="aad-123")
     )

@@ -720,7 +720,7 @@ def build_jira_read_catalog(
 
 
 def build_team_schedule_catalog(service: TeamScheduleService) -> list[ToolSpec]:
-    """Zbuduj narzędzie grafiku Teams Shifts (ADR 0056) — czysty ODCZYT, bez mutacji, bez bramki.
+    """Zbuduj narzędzie grafiku Teams Shifts (ADR 0059) — czysty ODCZYT, bez mutacji, bez bramki.
 
     Wstrzykiwane jako ``extra_catalog`` tylko gdy grafik jest włączony (istnieje cudzy cache MSAL).
     Błędy cichego tokenu/consentu materializują się DOPIERO przy wywołaniu (jako ``{"error": ...}``

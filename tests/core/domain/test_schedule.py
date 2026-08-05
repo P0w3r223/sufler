@@ -1,4 +1,4 @@
-"""Testy czystej domeny grafiku Teams Shifts (ADR 0056) — zakres dat, mapowanie, strefa, bez I/O."""
+"""Testy czystej domeny grafiku Teams Shifts (ADR 0059) — zakres dat, mapowanie, strefa, bez I/O."""
 
 from __future__ import annotations
 

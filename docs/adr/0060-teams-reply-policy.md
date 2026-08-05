@@ -1,11 +1,11 @@
-# 0057. Optional "whether to reply at all" gate for Teams channels (reply_policy)
+# 0060. Optional "whether to reply at all" gate for Teams channels (reply_policy)
 
 Date: 2026-08-04
 Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0015-teams-graph-delegated-door.md,
   docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md,
-  docs/adr/0048-thread-note-capture-from-teams-mention.md, docs/adr/0056-teams-shifts-schedule-read.md
+  docs/adr/0048-thread-note-capture-from-teams-mention.md, docs/adr/0059-teams-shifts-schedule-read.md
 
 ---
 
@@ -68,12 +68,12 @@ in, because the existing single-channel deployment must not observe any differen
   no-op escape hatch (channel behaves like `all` regardless of `mode`) — useful for a fleet-wide
   `WORKMATE_TEAMS_GRAPH_REPLY_POLICY=mention` default with per-channel exceptions, without needing
   a third policy value.
-- **This ADR and ADR 0056 (extended Jira read + Teams Shifts schedule) do not yet coexist in any
+- **This ADR and ADR 0059 (extended Jira read + Teams Shifts schedule) do not yet coexist in any
   single built Docker image running in production, as of this writing.** They were developed and
   shipped independently on two different, concurrently-running containers: the
   `workmate-teams-graph` container currently in production has `reply_policy` (this ADR) but does
-  NOT have the extended Jira read/Shifts schedule tools (ADR 0056); other containers in the fleet
-  have ADR 0056's capabilities but not `reply_policy`. This repository is the **first place** both
+  NOT have the extended Jira read/Shifts schedule tools (ADR 0059); other containers in the fleet
+  have ADR 0059's capabilities but not `reply_policy`. This repository is the **first place** both
   features exist in the same source tree — merging them here (both touching
   `adapters/inbound/teams_graph/app.py` and `config.py`) is a deliberate reconciliation for a
   future release that ships both together, not a reflection of what any single running container

@@ -1,4 +1,4 @@
-"""Testy katalogu narzędzi rozszerzonego odczytu Jiry (ADR 0056: get_jira_task, search_jira_tasks,
+"""Testy katalogu narzędzi rozszerzonego odczytu Jiry (ADR 0059: get_jira_task, search_jira_tasks,
 get_member_jira_tasks, get_member_jira_history).
 
 Sedno: cztery narzędzia, koperta błędów, i — dla narzędzi "member" — fail-closed odmowa gdy

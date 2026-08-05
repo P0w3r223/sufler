@@ -76,7 +76,7 @@ def test_two_people_sharing_a_teams_account_fail_at_startup(tmp_path: Path) -> N
         YamlIdentityDirectory(_identities(tmp_path, duplikat))
 
 
-# --- resolve_by_display_name (ADR 0056, "zadania członka" pionu) -----------------
+# --- resolve_by_display_name (ADR 0059, "zadania członka" pionu) -----------------
 
 
 def test_resolve_by_display_name_matches_known_person(tmp_path: Path) -> None:

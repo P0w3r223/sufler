@@ -115,7 +115,7 @@ def main() -> None:
     extra_catalog, thread_factory = _build_bridge_catalog(
         events_settings, GithubSettings.from_env()
     )
-    # Grafik Teams Shifts (ADR 0056): read-only, cichy token z cudzego cache MSAL. Katalog statyczny
+    # Grafik Teams Shifts (ADR 0059): read-only, cichy token z cudzego cache MSAL. Katalog statyczny
     # — dokładany do extra_catalog tylko gdy włączony (istnieje mont cache); błędy tokenu/consentu
     # materializują się dopiero przy wywołaniu narzędzia (koperta), więc nie wywracają startu.
     schedule_settings = ScheduleSettings.from_env()
@@ -450,7 +450,7 @@ def _build_user_doc_push_factory(
 
 
 def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[ToolSpec]:
-    """Zbuduj katalog grafiku Shifts (ADR 0056) — pusty, gdy grafik wyłączony/nieskonfigurowany.
+    """Zbuduj katalog grafiku Shifts (ADR 0059) — pusty, gdy grafik wyłączony/nieskonfigurowany.
 
     ``is_enabled()`` (tryb auto) sam sprawdza obecność cudzego cache MSAL, więc na hoście bez montu
     powiadomienia-teams po prostu nie dokładamy narzędzia (ciche wyłączenie). Klient żyje przez cały
@@ -458,7 +458,7 @@ def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[To
     """
     if not schedule_settings.is_enabled():
         logger.info(
-            "Grafik Shifts WYŁĄCZONY (ADR 0056) — brak cache tokenu %s albo "
+            "Grafik Shifts WYŁĄCZONY (ADR 0059) — brak cache tokenu %s albo "
             "WORKMATE_SCHEDULE_ENABLED=false. Narzędzie get_team_schedule nie zostanie wystawione.",
             schedule_settings.token_cache_path,
         )
@@ -480,7 +480,7 @@ def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[To
         client, team_id=schedule_settings.team_id, tz=schedule_settings.timezone
     )
     logger.info(
-        "Grafik Shifts WŁĄCZONY (ADR 0056) — agent Teams pokazuje zmiany i nieobecności zespołu "
+        "Grafik Shifts WŁĄCZONY (ADR 0059) — agent Teams pokazuje zmiany i nieobecności zespołu "
         "%s (strefa %s), token cichy z cache %s (RO, nigdy nie zapisywany).",
         schedule_settings.team_id,
         schedule_settings.timezone,
