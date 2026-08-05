@@ -16,7 +16,18 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 _ADR_DIR = Path(__file__).resolve().parents[1] / "docs" / "adr"
+
+# To bramka REPOZYTORIUM, nie runtime'u. Obraz kopiuje `src/` i `tests/`, ale nie `docs/`,
+# więc w kontenerze katalog decyzji po prostu nie istnieje — złapane budowaniem etapu `test`,
+# które wywaliło się na pustej liście plików. Pomijamy zamiast osłabiać asercję: w drzewie
+# roboczym pusty `docs/adr/` nadal ma być błędem.
+pytestmark = pytest.mark.skipif(
+    not _ADR_DIR.is_dir(),
+    reason="katalog docs/adr/ nieobecny — bramka dotyczy drzewa repozytorium, nie obrazu",
+)
 
 # `0059-teams-shifts-schedule-read.md` → numer i reszta nazwy. Podkreślenie obok
 # myślnika, bo `0050_seed_corpus_document_extraction.md` jest starszy niż konwencja.
