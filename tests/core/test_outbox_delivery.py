@@ -1,4 +1,6 @@
-"""Sondy dostawy ze skrzynki nadawczej rozmowy (``OutboxDelivery``, ADR 0009 paczki).
+"""Sondy dostawy ze skrzynki nadawczej rozmowy (``OutboxDelivery``).
+
+Decyzja: ADR 0009 paczki wdrożeniowej `infra-docker-workmate`.
 
 Ciężar leży na sondach NEGATYWNYCH i na regule sprzątania. Kolektor, który wysyła wszystko,
 co znajdzie, i kolektor, który poprawnie odrzuca, dają na szczęśliwej ścieżce identyczny wynik —
@@ -10,28 +12,33 @@ from __future__ import annotations
 import pytest
 
 from workmate.core.application.outbox import DeliveryReport, OutboxDelivery, OutboxLimits
-from workmate.core.ports.outbox import Deliverable
+from workmate.core.ports.outbox import Deliverable, OutboxEntry, PermanentDeliveryError
 
 _DIR = "teams-graph/abc123"
 
 
 class FakeRepo:
-    """Atrapa skrzynki: trzyma pliki w pamięci i notuje, co zostało sprzątnięte."""
+    """Atrapa skrzynki: metadane i treść osobno, jak w porcie; notuje odczyty i sprzątanie."""
 
-    def __init__(self, items: list[Deliverable]) -> None:
-        self.items = list(items)
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = dict(files)
         self.discarded: list[str] = []
+        self.read_names: list[str] = []
 
-    def collect(self, dirpath: str) -> list[Deliverable]:
+    def list_entries(self, dirpath: str) -> list[OutboxEntry]:
         assert dirpath == _DIR
-        return list(self.items)
+        return [OutboxEntry(name=n, size=len(c)) for n, c in self.files.items()]
+
+    def read(self, dirpath: str, name: str) -> Deliverable | None:
+        self.read_names.append(name)
+        content = self.files.get(name)
+        if content is None:
+            return None
+        return Deliverable(name=name, content=content, content_type="text/markdown; charset=utf-8")
 
     def discard(self, dirpath: str, name: str) -> None:
         self.discarded.append(name)
-
-
-def _doc(name: str, content: bytes = b"tresc") -> Deliverable:
-    return Deliverable(name=name, content=content, content_type="text/markdown; charset=utf-8")
+        self.files.pop(name, None)
 
 
 def _delivery(repo: FakeRepo, *, max_bytes: int = 1024, max_files: int = 5) -> OutboxDelivery:
@@ -41,7 +48,7 @@ def _delivery(repo: FakeRepo, *, max_bytes: int = 1024, max_files: int = 5) -> O
 
 
 def test_pusta_skrzynka_nie_produkuje_zadnego_komunikatu():
-    repo = FakeRepo([])
+    repo = FakeRepo({})
     report = _delivery(repo).deliver(_DIR, lambda item: None)
     assert report.is_empty()
     assert report.notice() == ""
@@ -49,7 +56,7 @@ def test_pusta_skrzynka_nie_produkuje_zadnego_komunikatu():
 
 
 def test_plik_wyslany_znika_ze_skrzynki():
-    repo = FakeRepo([_doc("raport.md")])
+    repo = FakeRepo({"raport.md": b"tresc"})
     sent: list[str] = []
 
     report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
@@ -60,9 +67,22 @@ def test_plik_wyslany_znika_ze_skrzynki():
     assert "W załączniku: raport.md." in report.notice()
 
 
-def test_awaria_wysylki_ZOSTAWIA_plik_do_ponowienia():
-    """Ubytek jest tu realny — treść powstała, a odbiorca jej nie zobaczył. Plik musi zostać."""
-    repo = FakeRepo([_doc("raport.md")])
+def test_ODRZUCONY_plik_nie_jest_w_ogole_czytany_z_dysku():
+    """Treść skrzynki dyktuje model z powłoką, a proces drzwi obsługuje WSZYSTKIE kanały.
+
+    Wczytanie pliku ponad limit do pamięci tylko po to, żeby zaraz go odrzucić, dawałoby
+    modelowi sposób na wywrócenie drzwi (`dd if=/dev/zero of=outputs/a.md bs=1M count=8000`).
+    """
+    repo = FakeRepo({"duzy.md": b"x" * 5000, "maly.md": b"ok"})
+
+    _delivery(repo, max_bytes=2048).deliver(_DIR, lambda item: None)
+
+    assert repo.read_names == ["maly.md"], "plik ponad limit nie może trafić do pamięci"
+
+
+def test_awaria_PRZEJSCIOWA_zostawia_plik_do_ponowienia():
+    """Ubytek jest tu realny — treść powstała, a odbiorca jej nie zobaczył."""
+    repo = FakeRepo({"raport.md": b"tresc"})
 
     def send(item: Deliverable) -> None:
         raise RuntimeError("Graph 503")
@@ -71,58 +91,91 @@ def test_awaria_wysylki_ZOSTAWIA_plik_do_ponowienia():
 
     assert report.delivered == ()
     assert report.failed == (("raport.md", "RuntimeError"),)
-    assert repo.discarded == [], "plik po nieudanej wysyłce musi zostać w skrzynce"
+    assert repo.discarded == [], "plik po przejściowej awarii musi zostać w skrzynce"
     assert "spróbuję ponownie" in report.notice()
+
+
+def test_awaria_TRWALA_sprzata_plik_zamiast_zapetlac_ponowienia():
+    """Bez tego 4xx z Graph doklejałoby „spróbuję ponownie" do KAŻDEJ kolejnej odpowiedzi
+    w rozmowie, płacąc dwa żądania za turę, aż ktoś ręcznie wejdzie na wolumen."""
+    repo = FakeRepo({"raport.md": b"tresc"})
+
+    def send(item: Deliverable) -> None:
+        raise PermanentDeliveryError("Graph odrzucił plik (HTTP 400)")
+
+    report = _delivery(repo).deliver(_DIR, send)
+
+    assert report.failed == ()
+    assert report.rejected == (("raport.md", "Graph odrzucił plik (HTTP 400)"),)
+    assert repo.discarded == ["raport.md"]
+    assert "spróbuję ponownie" not in report.notice()
 
 
 def test_awaria_wysylki_nie_wypuszcza_wyjatku():
     """Dostawa jest dodatkiem do tury, która już się udała — nie może jej zabrać."""
-    repo = FakeRepo([_doc("a.md")])
+    repo = FakeRepo({"a.md": b"x"})
     _delivery(repo).deliver(_DIR, lambda item: (_ for _ in ()).throw(OSError("gniazdo")))
 
 
+def test_nazwa_jest_normalizowana_przed_wyslaniem():
+    """Nazwę nadał MODEL, tworząc plik powłoką; konsument ma dostać slug z białej listy."""
+    repo = FakeRepo({"Raport MPWiK.md": b"tresc"})
+    sent: list[str] = []
+
+    _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert sent == ["raport-mpwik.md"]
+    assert repo.discarded == ["Raport MPWiK.md"], "sprzątamy po nazwie Z DYSKU, nie po slugu"
+
+
 def test_rozszerzenie_spoza_bialej_listy_jest_odrzucane_I_sprzatane():
-    """Zostawienie takiego pliku dokleiłoby ten sam komunikat do KAŻDEJ kolejnej odpowiedzi."""
-    repo = FakeRepo([_doc("skrypt.sh")])
+    repo = FakeRepo({"skrypt.sh": b"x"})
     sent: list[str] = []
 
     report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == [], "plik spoza listy nie może pójść do rozmówcy"
-    assert report.delivered == ()
+    assert sent == []
     assert [name for name, _ in report.rejected] == ["skrypt.sh"]
     assert repo.discarded == ["skrypt.sh"], "odrzucenie trwałe sprząta — inaczej zatruta wiadomość"
 
 
 @pytest.mark.parametrize("nazwa", ["raport.exe", "bezrozszerzenia", "archiwum.tar.gz", "..md"])
 def test_niebezpieczne_i_nieobslugiwane_nazwy_nie_ida_do_rozmowcy(nazwa: str):
-    repo = FakeRepo([_doc(nazwa)])
+    repo = FakeRepo({nazwa: b"x"})
     sent: list[str] = []
     _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
     assert sent == []
 
 
 def test_plik_ponad_limit_jest_odrzucany_z_podaniem_limitu():
-    repo = FakeRepo([_doc("duzy.pdf", content=b"x" * 5000)])
+    repo = FakeRepo({"duzy.pdf": b"x" * 5000})
 
     report = _delivery(repo, max_bytes=2048).deliver(_DIR, lambda item: None)
 
     assert report.delivered == ()
-    assert report.rejected[0][0] == "duzy.pdf"
     assert "2 KB" in report.rejected[0][1]
     assert repo.discarded == ["duzy.pdf"]
 
 
 def test_pusty_plik_nie_jest_wysylany():
-    repo = FakeRepo([_doc("pusty.md", content=b"")])
+    repo = FakeRepo({"pusty.md": b""})
     sent: list[str] = []
     report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
     assert sent == []
     assert report.rejected[0][1] == "jest pusty"
 
 
+def test_plik_zniknietv_miedzy_wypisem_a_odczytem_jest_pomijany():
+    repo = FakeRepo({"znika.md": b"x"})
+    repo.files.clear()  # wypis już się odbył, treści już nie ma
+
+    report = _delivery(repo).deliver(_DIR, lambda item: None)
+
+    assert report.is_empty()
+
+
 def test_nadmiar_ponad_limit_liczby_jest_odrzucany_a_reszta_idzie():
-    repo = FakeRepo([_doc(f"{i}.md") for i in range(5)])
+    repo = FakeRepo({f"{i}.md": b"x" for i in range(5)})
     sent: list[str] = []
 
     report = _delivery(repo, max_files=2).deliver(_DIR, lambda item: sent.append(item.name))
@@ -133,13 +186,24 @@ def test_nadmiar_ponad_limit_liczby_jest_odrzucany_a_reszta_idzie():
 
 
 def test_jedna_zla_pozycja_nie_blokuje_pozostalych():
-    repo = FakeRepo([_doc("a.md"), _doc("b.sh"), _doc("c.txt")])
+    repo = FakeRepo({"a.md": b"x", "b.sh": b"x", "c.txt": b"x"})
     sent: list[str] = []
 
     report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
     assert sent == ["a.md", "c.txt"]
     assert [name for name, _ in report.rejected] == ["b.sh"]
+
+
+def test_KOMUNIKAT_zwija_sie_przy_wielu_odrzuceniach():
+    """Wiadomość Teams ma sufit rozmiaru. Trzysta zdań o odrzuconych plikach mogłoby sprawić,
+    że rozmówca nie dostanie NICZEGO — a pliki są już sprzątnięte, więc strata jest trwała."""
+    report = DeliveryReport(rejected=tuple((f"{i}.sh", "złe rozszerzenie") for i in range(300)))
+
+    notice = report.notice()
+
+    assert notice.count("Nie wysłałem pliku") == 3
+    assert "Pominąłem też 297 innych." in notice
 
 
 def test_komunikat_laczy_dostarczone_i_odrzucone():

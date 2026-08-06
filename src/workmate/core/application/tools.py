@@ -267,12 +267,39 @@ def build_workspace_catalog(
     ]
 
 
+_SHELL_HEAD = """\
+Uruchom polecenie powłoki (bash) w izolowanym kontenerze bez dostępu do sieci.
+
+Startujesz we własnym katalogu roboczym tej rozmowy — pliki tworzone tutaj przeżywają
+do kolejnych tur. Układ ścieżek:
+  /home/scratchpad/… — twój katalog roboczy, zapis dozwolony"""
+
+# Akapit o skrzynce doklejany WYŁĄCZNIE, gdy dostawa faktycznie działa (bramka ``enable_file_reply``
+# na drzwiach). Bezwarunkowa obietnica dostawy przy wyłączonej bramce byłaby dokładnie tym
+# defektem, który ta zdolność likwiduje: model dostaje kod 0 i ciszę, a pliki rosną na wolumenie.
+_SHELL_OUTBOX = """
+  outputs/ — skrzynka nadawcza w katalogu roboczym. Plik zapisany tutaj wysyłam
+    rozmówcy po zakończeniu tury i usuwam ze skrzynki, więc trzymaj tu wyłącznie
+    gotowe wyniki, a materiał roboczy piętro wyżej. Dozwolone rozszerzenia: {formats}.
+    Plik w budowie nazywaj `*.tmp` i zmieniaj nazwę, gdy jest gotowy — pozycje `.tmp`
+    pomijam przy wysyłce."""
+
+_SHELL_TAIL = """
+  /mnt/system/notes/ — baza wiedzy pionu (notatki), TYLKO ODCZYT
+  /mnt/system/projects/ — rejestr projektów, TYLKO ODCZYT
+Do przeszukiwania notatek użyj `workmate-search "fraza"` — korpus jest polski
+i odmieniony, więc dopasowanie wzorca (grep) gubi trafienia.
+Wyjście jest przycinane do 64 KB (flaga `truncated`), a polecenie przerywane po
+`timeout_s` sekund (domyślnie 60, maksymalnie 300; flaga `timed_out`)."""
+
+
 def build_shell_catalog(
     scope: WorkspaceScope,
     runner: CommandRunner,
     *,
     workspace_root: str,
     default_timeout_s: int = 60,
+    outbox_enabled: bool = False,
 ) -> list[ToolSpec]:
     """Zbuduj narzędzie POWŁOKI dla danej rozmowy (ADR 0057).
 
@@ -284,26 +311,17 @@ def build_shell_catalog(
     Opis narzędzia niesie mapę montaży, bo prompt systemowy opisuje jeszcze świat narzędzi
     (ADR 0056 §Konsekwencje — sekcja ``ENVIRONMENT`` idzie ZA architekturą). Do czasu tamtej
     zmiany to jedyne miejsce, z którego model dowiaduje się, gdzie co leży.
+
+    ``outbox_enabled`` steruje akapitem o ``outputs/``: dostawa ma WŁASNĄ bramkę po stronie
+    drzwi, a opis obiecujący ją bezwarunkowo kłamałby przy konfiguracji „powłoka tak, załączniki
+    nie". Warianty są dwa i stałe per proces, więc cache prefiksu ``tools+system`` dzieli się
+    najwyżej na dwa — nie na jeden per rozmowa.
     """
     workdir = f"{workspace_root.rstrip('/')}/{scope.dirpath()}"
+    outbox = _SHELL_OUTBOX.format(formats="/".join(FILE_REPLY_FORMATS)) if outbox_enabled else ""
+    description = f"{_SHELL_HEAD}{outbox}{_SHELL_TAIL}"
 
     def run_command(command: str, timeout_s: int = 0) -> dict[str, Any]:
-        """Uruchom polecenie powłoki (bash) w izolowanym kontenerze bez dostępu do sieci.
-
-        Startujesz we własnym katalogu roboczym tej rozmowy — pliki tworzone tutaj przeżywają
-        do kolejnych tur. Układ ścieżek:
-          /home/scratchpad/… — twój katalog roboczy, zapis dozwolony
-          outputs/ — skrzynka nadawcza w katalogu roboczym. Plik zapisany tutaj wysyłam
-            rozmówcy po zakończeniu tury i usuwam ze skrzynki, więc trzymaj tu wyłącznie
-            gotowe wyniki, a materiał roboczy piętro wyżej. Dozwolone md/txt/pdf/docx.
-          /mnt/system/notes/ — baza wiedzy pionu (notatki), TYLKO ODCZYT
-          /mnt/system/projects/ — rejestr projektów, TYLKO ODCZYT
-        Do przeszukiwania notatek użyj `workmate-search "fraza"` — korpus jest polski
-        i odmieniony, więc dopasowanie wzorca (grep) gubi trafienia.
-        Wyjście jest przycinane do 64 KB (flaga `truncated`), a polecenie przerywane po
-        `timeout_s` sekund (domyślnie 60, maksymalnie 300; flaga `timed_out`).
-        """
-
         def build() -> dict[str, Any]:
             result = runner.run(
                 command, cwd=workdir, timeout_s=float(timeout_s or default_timeout_s)
@@ -318,7 +336,7 @@ def build_shell_catalog(
 
         return _envelope(build, errors=(WorkMateError,))
 
-    return [ToolSpec("Bash", run_command.__doc__ or "", run_command)]
+    return [ToolSpec("Bash", description, run_command)]
 
 
 def build_events_catalog(events: EventService) -> list[ToolSpec]:

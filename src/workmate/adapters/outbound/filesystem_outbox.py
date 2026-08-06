@@ -1,24 +1,33 @@
 """Skrzynka nadawcza rozmowy na dysku (port ``OutboxRepository``).
 
+Decyzja: ADR 0009 paczki wdrożeniowej `infra-docker-workmate`.
+
 Leży pod ``workspace_root/<kanał>/<hash rozmowy>/outputs`` — czyli WEWNĄTRZ katalogu roboczego
 rozmowy, tego samego, który wykonawca dostaje jako ``cwd``. Dzięki temu model wskazuje ją ścieżką
 WZGLĘDNĄ (``outputs/raport.pdf``), a izolacja rozmów bierze się z tego samego mechanizmu, co
-izolacja brudnopisu — nie z drugiego, równoległego.
+izolacja brudnopisu.
 
-Zbieramy WYŁĄCZNIE zwykłe pliki leżące bezpośrednio w skrzynce. Dowiązanie symboliczne jest
-pomijane świadomie i jest to granica bezpieczeństwa, nie porządek: model ma bazę wiedzy
-zamontowaną do odczytu, więc ``ln -s /mnt/system/notes/…/tajne.md outputs/`` byłby drogą wyniesienia
-treści, której nie wolno mu wysłać. ``resolve()`` + ``relative_to`` domykają to samo od drugiej
-strony — dokładnie jak w ``filesystem_workspace``.
+**Granicą jest katalog rozmowy, nie korzeń workspace'u** — i to jest różnica, którą widać dopiero
+przy uruchomieniu. Ograniczenie do korzenia przepuszcza `ln -s ../<hash innej rozmowy> outputs`:
+dowiązanie rozwiązuje się w obrębie korzenia, więc wypis oddawałby pliki CUDZEJ rozmowy do
+wysłania, a sprzątanie po udanej wysyłce by je skasowało. Stąd rozwiązanie dwuetapowe (katalog
+rozmowy, potem skrzynka w nim) plus odrzucenie skrzynki będącej dowiązaniem.
+
+Zbieramy wyłącznie zwykłe pliki leżące bezpośrednio w skrzynce; dowiązanie wpisu jest pomijane
+z tego samego powodu co wyżej — model ma bazę wiedzy zamontowaną do odczytu, więc
+``ln -s /mnt/system/notes/…/tajne.md outputs/`` byłby drogą wyniesienia treści.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from workmate.core.errors import WriteError
 from workmate.core.ports.document import FILE_REPLY_FORMATS
-from workmate.core.ports.outbox import Deliverable
+from workmate.core.ports.outbox import Deliverable, OutboxEntry
+
+logger = logging.getLogger(__name__)
 
 # Nazwa podkatalogu skrzynki wewnątrz katalogu roboczego rozmowy. Jedno źródło dla adaptera
 # (gdzie szukać) i dla opisu narzędzia ``Bash`` (gdzie kazać zapisywać).
@@ -26,43 +35,79 @@ OUTBOX_DIRNAME = "outputs"
 
 _FALLBACK_CONTENT_TYPE = "application/octet-stream"
 
+# Ile pozycji oglądamy w jednej turze. Zawartość skrzynki dyktuje model z powłoką, więc pętla
+# tworząca dziesiątki tysięcy plików nie może zamienić jednej tury w wielominutowe sprzątanie.
+# Nadmiar zostaje i obsłuży go tura następna — praca per tura jest ograniczona, a skrzynka
+# i tak się opróżnia.
+_SCAN_CEILING = 200
+
 
 class FilesystemOutboxRepository:
-    """Odczyt i sprzątanie skrzynki ``<korzeń>/<katalog rozmowy>/outputs``."""
+    """Wypis, odczyt i sprzątanie skrzynki ``<korzeń>/<katalog rozmowy>/outputs``."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
 
-    def collect(self, dirpath: str) -> list[Deliverable]:
-        directory = _resolve_within(self._root, f"{dirpath}/{OUTBOX_DIRNAME}")
-        if not directory.is_dir():
+    def list_entries(self, dirpath: str) -> list[OutboxEntry]:
+        directory = self._outbox(dirpath)
+        if directory is None:
             return []
-        items: list[Deliverable] = []
+        entries: list[OutboxEntry] = []
         for entry in sorted(directory.iterdir()):
             if entry.is_symlink() or not entry.is_file() or entry.name.endswith(".tmp"):
                 continue
-            items.append(
-                Deliverable(
-                    name=entry.name,
-                    content=entry.read_bytes(),
-                    content_type=_content_type(entry.name),
+            entries.append(OutboxEntry(name=entry.name, size=entry.stat().st_size))
+            if len(entries) == _SCAN_CEILING:
+                logger.warning(
+                    "Skrzynka %s ma ponad %d pozycji — resztę obsłuży kolejna tura.",
+                    dirpath,
+                    _SCAN_CEILING,
                 )
-            )
-        return items
+                break
+        return entries
+
+    def read(self, dirpath: str, name: str) -> Deliverable | None:
+        path = self._entry_path(dirpath, name)
+        if path is None or not path.is_file():
+            return None
+        return Deliverable(name=name, content=path.read_bytes(), content_type=_content_type(name))
 
     def discard(self, dirpath: str, name: str) -> None:
-        # Granicą jest SKRZYNKA, nie korzeń workspace'u. Samo ``resolve()`` względem korzenia
-        # przepuściłoby ``../plik`` (katalog roboczy tej rozmowy — materiał źródłowy modelu)
-        # i ``../../inna-rozmowa/outputs/plik`` (CUDZA skrzynka), bo obie ścieżki leżą wewnątrz
-        # korzenia. Dziś nazwy pochodzą z ``collect``, więc separatora tam nie ma — guard jest
-        # obroną w głąb, bo ``discard`` jest metodą portu i wołający może się zmienić.
-        if "/" in name or "\\" in name or name in {".", ".."}:
-            raise WriteError(f"niedozwolona nazwa pliku w skrzynce: {name!r}")
-        outbox = _resolve_within(self._root, f"{dirpath}/{OUTBOX_DIRNAME}")
-        path = _resolve_within(outbox, name)
+        path = self._entry_path(dirpath, name)
+        if path is None:
+            return
         # ``missing_ok`` czyni operację idempotentną: ponowiona dostawa nie wywraca się na pliku,
         # który zdążył już zniknąć (sprzątanie TTL, ręczna interwencja na wolumenie).
         path.unlink(missing_ok=True)
+
+    def _outbox(self, dirpath: str) -> Path | None:
+        """Katalog skrzynki albo ``None``, gdy go nie ma lub nie należy do TEJ rozmowy."""
+        conversation = _resolve_within(self._root, dirpath)
+        outbox = conversation / OUTBOX_DIRNAME
+        # ``is_symlink`` sprawdzamy PRZED ``resolve``, bo ``resolve`` podąża za dowiązaniem
+        # i zwróciłby cel, który wobec korzenia wygląda niewinnie.
+        if outbox.is_symlink() or not outbox.is_dir():
+            return None
+        resolved = outbox.resolve()
+        if resolved.parent != conversation.resolve():
+            logger.warning("Skrzynka %s wskazuje poza katalog rozmowy — pomijam.", dirpath)
+            return None
+        return resolved
+
+    def _entry_path(self, dirpath: str, name: str) -> Path | None:
+        """Ścieżka pozycji; ``WriteError`` przy nazwie ze ścieżką, ``None`` przy braku skrzynki."""
+        if "/" in name or "\\" in name or name in {".", ".."}:
+            raise WriteError(f"niedozwolona nazwa pliku w skrzynce: {name!r}")
+        outbox = self._outbox(dirpath)
+        if outbox is None:
+            return None
+        # Dowiązanie WPISU rozpoznajemy przed ``resolve``, bo tamto podąża za celem: ścieżka do
+        # notatki wyszłaby wtedy poza skrzynkę i dostalibyśmy twardy ``WriteError`` zamiast
+        # łagodnej odmowy. Wypis takich pozycji nie zwraca, więc to obrona w głąb — ale ma
+        # odmawiać, a nie wywracać dostawy całej tury.
+        if (outbox / name).is_symlink():
+            return None
+        return _resolve_within(outbox, name)
 
 
 def _content_type(name: str) -> str:

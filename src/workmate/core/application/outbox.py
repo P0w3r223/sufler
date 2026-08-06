@@ -1,35 +1,52 @@
-"""Dostawa plików ze skrzynki nadawczej rozmowy (ADR 0009 paczki wdrożeniowej).
+"""Dostawa plików ze skrzynki nadawczej rozmowy.
+
+Decyzja: ADR 0009 paczki wdrożeniowej `infra-docker-workmate`
+(`docs/decyzje/0009-konsolidacja-powierzchni-narzedziowej.md`).
 
 Po zakończeniu tury drzwi zaglądają do ``outputs/`` w katalogu roboczym rozmowy i wysyłają to,
 co model tam zostawił. Serwis zależy wyłącznie od portów (``OutboxRepository`` + wstrzyknięty
-``send``), więc reguła ``core ↛ adapters`` zostaje, a to, CZYM plik jedzie do rozmówcy —
-załącznikiem Graph, czymkolwiek innym — nie jest tu wiedzą.
+``send``), więc reguła ``core ↛ adapters`` zostaje, a to, CZYM plik jedzie do rozmówcy, nie jest
+tu wiedzą.
 
 Reguła sprzątania rozróżnia dwa rodzaje niepowodzenia, bo mają przeciwne właściwe zachowania:
 
-- **odrzucenie trwałe** (rozszerzenie spoza białej listy, plik ponad limit) — plik ZNIKA ze
-  skrzynki wraz z podaniem powodu. Zostawienie go zrobiłoby zatrutą wiadomość: ten sam komunikat
-  doklejałby się do każdej kolejnej odpowiedzi w tej rozmowie, aż ktoś ręcznie wejdzie na wolumen.
-  Nic się przy tym nie traci — skrzynka jest katalogiem PRZESYŁKOWYM, a materiał źródłowy leży
-  w katalogu roboczym piętro wyżej;
-- **awaria wysyłki** (Graph nie przyjął) — plik ZOSTAJE, więc następna tura ponowi. Tu ubytek
-  byłby realny: treść powstała, a odbiorca jej nie zobaczył.
+- **odrzucenie trwałe** — rozszerzenie spoza białej listy, plik ponad limit, ponad limit liczby,
+  a także wysyłka odrzucona trwale (``PermanentDeliveryError``: 4xx z Graph, zniknięty root
+  wątku). Plik ZNIKA ze skrzynki wraz z podaniem powodu. Zostawienie go zrobiłoby zatrutą
+  wiadomość: ten sam komunikat doklejałby się do każdej kolejnej odpowiedzi w tej rozmowie, aż
+  ktoś ręcznie wejdzie na wolumen. Nic się przy tym nie traci — skrzynka jest katalogiem
+  PRZESYŁKOWYM, a materiał źródłowy leży w katalogu roboczym piętro wyżej;
+- **awaria przejściowa** — sieć, 5xx, limit żądań. Plik ZOSTAJE, więc następna tura ponowi.
+  Tu ubytek byłby realny: treść powstała, a odbiorca jej nie zobaczył.
+
+Odczyt z dysku dotyka WYŁĄCZNIE pozycji, które przeszły kontrolę metadanych — zawartość skrzynki
+dyktuje model z powłoką, a proces drzwi obsługuje wszystkie kanały naraz.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from workmate.core.domain.workspace import safe_filename
 from workmate.core.errors import WriteError
 from workmate.core.ports.document import FILE_REPLY_FORMATS
-from workmate.core.ports.outbox import Deliverable, OutboxRepository
+from workmate.core.ports.outbox import (
+    Deliverable,
+    OutboxEntry,
+    OutboxRepository,
+    PermanentDeliveryError,
+)
 
 # Biała lista rozszerzeń skrzynki = ta sama, co narzędzia ``reply_with_file`` (ADR 0026).
 # Jedno źródło: obie drogi kończą się załącznikiem w tym samym wątku, więc rozjazd oznaczałby,
 # że format wolno wysłać jedną drogą, a drugą nie — bez powodu, który dałoby się wytłumaczyć.
 _ALLOWED_EXT = frozenset(FILE_REPLY_FORMATS)
+
+# Ile odrzuceń wymieniamy z nazwy w komunikacie. Reszta idzie zbiorczo: komunikat dokleja się do
+# odpowiedzi, a wiadomość Teams ma sufit rozmiaru — trzysta zdań o odrzuconych plikach mogłoby
+# sprawić, że rozmówca nie dostanie NICZEGO, choć pliki zostały już sprzątnięte.
+_MAX_NAMED_REJECTIONS = 3
 
 
 @dataclass(frozen=True)
@@ -60,8 +77,10 @@ class DeliveryReport:
         parts: list[str] = []
         if self.delivered:
             parts.append("W załączniku: " + ", ".join(self.delivered) + ".")
-        for name, reason in self.rejected:
+        for name, reason in self.rejected[:_MAX_NAMED_REJECTIONS]:
             parts.append(f"Nie wysłałem pliku {name} — {reason}.")
+        if len(self.rejected) > _MAX_NAMED_REJECTIONS:
+            parts.append(f"Pominąłem też {len(self.rejected) - _MAX_NAMED_REJECTIONS} innych.")
         for name, reason in self.failed:
             parts.append(f"Nie udało się wysłać pliku {name} ({reason}) — spróbuję ponownie.")
         return " ".join(parts)
@@ -77,51 +96,72 @@ class OutboxDelivery:
     def deliver(self, dirpath: str, send: Callable[[Deliverable], None]) -> DeliveryReport:
         """Wyślij zawartość skrzynki ``dirpath``; zwróć raport, nigdy nie podnoś wyjątku wysyłki.
 
-        Wyjątek z ``send`` jest ŁAPANY i zamieniany w pozycję ``failed``: dostawa jest dodatkiem
+        Wyjątek z ``send`` jest ŁAPANY i zamieniany w pozycję raportu: dostawa jest dodatkiem
         do tury, która już się udała, więc jej awaria nie może zabrać rozmówcy odpowiedzi
         tekstowej. Błąd odczytu samej skrzynki propaguje — to defekt montażu, nie treści.
         """
-        candidates = sorted(self._repo.collect(dirpath), key=lambda d: d.name)
-        if not candidates:
+        entries = sorted(self._repo.list_entries(dirpath), key=lambda e: e.name)
+        if not entries:
             return DeliveryReport()
 
         delivered: list[str] = []
         rejected: list[tuple[str, str]] = []
         failed: list[tuple[str, str]] = []
 
-        over_cap = candidates[self._limits.max_files_per_turn :]
-        for item in over_cap:
+        for entry in entries[self._limits.max_files_per_turn :]:
             rejected.append(
-                (item.name, f"na turę wysyłam najwyżej {self._limits.max_files_per_turn} plików")
+                (entry.name, f"na turę wysyłam najwyżej {self._limits.max_files_per_turn} plików")
             )
-            self._repo.discard(dirpath, item.name)
+            self._repo.discard(dirpath, entry.name)
 
-        for item in candidates[: self._limits.max_files_per_turn]:
-            reason = self._rejection(item)
+        for entry in entries[: self._limits.max_files_per_turn]:
+            reason = self._rejection(entry)
             if reason is not None:
-                rejected.append((item.name, reason))
-                self._repo.discard(dirpath, item.name)
+                rejected.append((entry.name, reason))
+                self._repo.discard(dirpath, entry.name)
                 continue
-            try:
-                send(item)
-            except Exception as exc:  # noqa: BLE001 — patrz docstring: raport zamiast wyjątku
-                failed.append((item.name, type(exc).__name__))
+            item = self._repo.read(dirpath, entry.name)
+            if item is None:
+                # Plik zniknął między wypisem a odczytem — nie ma czego wysyłać ani sprzątać.
                 continue
-            delivered.append(item.name)
-            self._repo.discard(dirpath, item.name)
+            outcome = self._send_one(item, send)
+            if outcome is None:
+                delivered.append(item.name)
+                self._repo.discard(dirpath, entry.name)
+            elif outcome[0]:
+                rejected.append((entry.name, outcome[1]))
+                self._repo.discard(dirpath, entry.name)
+            else:
+                failed.append((entry.name, outcome[1]))
 
         return DeliveryReport(tuple(delivered), tuple(rejected), tuple(failed))
 
-    def _rejection(self, item: Deliverable) -> str | None:
-        """Powód odrzucenia trwałego albo ``None``, gdy plik nadaje się do wysłania."""
-        if not item.content:
+    def _send_one(
+        self, item: Deliverable, send: Callable[[Deliverable], None]
+    ) -> tuple[bool, str] | None:
+        """Wyślij pozycję; ``None`` przy sukcesie, inaczej (czy trwałe, powód)."""
+        try:
+            send(replace(item, name=safe_filename(item.name, allowed_ext=_ALLOWED_EXT)))
+        except PermanentDeliveryError as exc:
+            return (True, str(exc) or "odbiorca odrzucił plik")
+        except Exception as exc:  # noqa: BLE001 — patrz docstring: raport zamiast wyjątku
+            return (False, type(exc).__name__)
+        return None
+
+    def _rejection(self, entry: OutboxEntry) -> str | None:
+        """Powód odrzucenia trwałego albo ``None``, gdy pozycja nadaje się do wysłania.
+
+        Rozstrzygamy na METADANYCH, przed dotknięciem treści — plik ponad limit ma nie trafić
+        do pamięci procesu tylko po to, żeby zaraz zostać odrzuconym.
+        """
+        if entry.size == 0:
             return "jest pusty"
-        if len(item.content) > self._limits.max_file_bytes:
+        if entry.size > self._limits.max_file_bytes:
             limit_kb = self._limits.max_file_bytes // 1024
             return f"przekracza limit {limit_kb} KB"
         try:
-            safe_filename(item.name, allowed_ext=_ALLOWED_EXT)
+            safe_filename(entry.name, allowed_ext=_ALLOWED_EXT)
         except WriteError:
             allowed = ", ".join(sorted(_ALLOWED_EXT))
-            return f"ma rozszerzenie spoza listy (dozwolone: {allowed})"
+            return f"ma nazwę spoza dozwolonych (rozszerzenia: {allowed})"
         return None

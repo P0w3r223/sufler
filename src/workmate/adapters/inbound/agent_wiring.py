@@ -261,8 +261,11 @@ class _ScopedRunner:
     jako wynik z niezerowym kodem — jak każda inna porażka polecenia (ADR 0057).
     """
 
-    def __init__(self, inner: CommandRunner) -> None:
+    def __init__(self, inner: CommandRunner, *, with_outbox: bool = False) -> None:
         self._inner = inner
+        # Skrzynkę zakładamy TYLKO, gdy jest kto ją opróżnia. Katalog tworzony przy wyłączonej
+        # dostawie byłby zaproszeniem do zapisu, którego nikt nie odbiera — i rósłby bez końca.
+        self._with_outbox = with_outbox
 
     def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
         if cwd:
@@ -271,7 +274,8 @@ class _ScopedRunner:
                 # narzędzia każe modelowi pisać do ``outputs/`` ścieżką WZGLĘDNĄ — a
                 # przekierowanie powłoki do nieistniejącego katalogu kończy się błędem,
                 # nie utworzeniem go.
-                Path(cwd, OUTBOX_DIRNAME).mkdir(parents=True, exist_ok=True)
+                target = Path(cwd, OUTBOX_DIRNAME) if self._with_outbox else Path(cwd)
+                target.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 return CommandResult(
                     exit_code=-1,
@@ -282,7 +286,10 @@ class _ScopedRunner:
 
 
 def _build_shell_factory(
-    shell_settings: ShellSettings, workspace_settings: WorkspaceSettings
+    shell_settings: ShellSettings,
+    workspace_settings: WorkspaceSettings,
+    *,
+    outbox_enabled: bool = False,
 ) -> Callable[[WorkspaceScope], list[ToolSpec]] | None:
     """Fabryka narzędzia ``Bash`` (ADR 0057) wiążącego polecenia z katalogiem rozmowy.
 
@@ -306,7 +313,9 @@ def _build_shell_factory(
         )
         return None
 
-    runner = _ScopedRunner(SocketCommandRunner(shell_settings.socket_path))
+    runner = _ScopedRunner(
+        SocketCommandRunner(shell_settings.socket_path), with_outbox=outbox_enabled
+    )
     workspace_root = workspace_settings.workspace_dir.as_posix()
 
     def factory(scope: WorkspaceScope) -> list[ToolSpec]:
@@ -315,15 +324,10 @@ def _build_shell_factory(
             runner,
             workspace_root=workspace_root,
             default_timeout_s=shell_settings.default_timeout_s,
+            outbox_enabled=outbox_enabled,
         )
 
     return factory
-
-
-# Ile plików ze skrzynki wysyłamy w jednej turze. Granica jest anty-zalewowa, nie pojemnościowa:
-# jedno „napisz skrypt, który wygeneruje raport na każdy projekt" mogłoby wyprodukować kilkadziesiąt
-# załączników w jednej odpowiedzi na kanale zespołu. Nadmiar jest odrzucany z podaniem powodu.
-_OUTBOX_MAX_FILES_PER_TURN = 5
 
 
 def _build_outbox_delivery(
@@ -331,6 +335,7 @@ def _build_outbox_delivery(
     send_factory: Callable[[str], Callable[[Deliverable], None] | None],
     *,
     max_file_bytes: int,
+    max_files_per_turn: int,
 ) -> Callable[[WorkspaceScope], str]:
     """Zbuduj dostawę ze skrzynki nadawczej rozmowy — wołaną PO turze, zwracającą zdanie raportu.
 
@@ -340,7 +345,7 @@ def _build_outbox_delivery(
     """
     delivery = OutboxDelivery(
         FilesystemOutboxRepository(workspace_settings.workspace_dir),
-        OutboxLimits(max_file_bytes=max_file_bytes, max_files_per_turn=_OUTBOX_MAX_FILES_PER_TURN),
+        OutboxLimits(max_file_bytes=max_file_bytes, max_files_per_turn=max_files_per_turn),
     )
 
     def deliver(scope: WorkspaceScope) -> str:
@@ -377,6 +382,7 @@ def build_conversational_responder(
     supports_attachments: bool = False,
     outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
     outbox_max_file_bytes: int = 0,
+    outbox_max_files_per_turn: int = 5,
     skills_settings: SkillsSettings | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
@@ -430,8 +436,17 @@ def build_conversational_responder(
     # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
     # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
     # narzędzia plikowe zapisują.
+    # Skrzynka nadawcza ma własną bramkę po stronie drzwi (``enable_file_reply``), niezależną od
+    # powłoki. Rozstrzygamy ją PRZED zbudowaniem powłoki, bo opis narzędzia ``Bash`` obiecuje
+    # dostawę przez ``outputs/`` — a obietnica przy wyłączonej dostawie byłaby tym samym
+    # defektem, który ta zdolność likwiduje: zapis kończy się kodem 0 i ciszą.
+    outbox_enabled = (
+        outbox_send_factory is not None
+        and workspace_settings is not None
+        and outbox_max_file_bytes > 0
+    )
     shell_factory = (
-        _build_shell_factory(shell_settings, workspace_settings)
+        _build_shell_factory(shell_settings, workspace_settings, outbox_enabled=outbox_enabled)
         if shell_settings is not None and workspace_settings is not None
         else None
     )
@@ -442,8 +457,6 @@ def build_conversational_responder(
         if settings.metrics_db is not None
         else None
     )
-    # Skrzynka nadawcza (ADR 0009 paczki) dzieli korzeń z powłoką i katalogiem roboczym — bez
-    # ``workspace_settings`` nie ma czego czytać, więc dostawa nie powstaje mimo podanej fabryki.
     # Procedury z `/mnt/skills` (ADR 0005) — odczyt RAZ przy składaniu drzwi. Brak katalogu daje
     # pustą listę i zachowanie dokładnie dawne; nagłówek sesji nie dostaje wtedy sekcji skilli.
     skills = (
@@ -451,13 +464,16 @@ def build_conversational_responder(
         if skills_settings is not None
         else ()
     )
+    # Dostawa ze skrzynki dzieli korzeń z powłoką i katalogiem roboczym; ``outbox_enabled``
+    # rozstrzygnięto wyżej, razem z opisem narzędzia, żeby obietnica i zdolność miały jedno źródło.
     outbox_delivery = (
         _build_outbox_delivery(
-            workspace_settings, outbox_send_factory, max_file_bytes=outbox_max_file_bytes
+            workspace_settings,  # type: ignore[arg-type]  # zawężone przez ``outbox_enabled``
+            outbox_send_factory,  # type: ignore[arg-type]
+            max_file_bytes=outbox_max_file_bytes,
+            max_files_per_turn=outbox_max_files_per_turn,
         )
-        if outbox_send_factory is not None
-        and workspace_settings is not None
-        and outbox_max_file_bytes > 0
+        if outbox_enabled
         else None
     )
     inner = ConversationalResponder(

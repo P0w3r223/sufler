@@ -400,6 +400,8 @@ def _build_outbox_send_factory(
         from workmate.adapters.outbound.graph_file_sender import HttpxGraphFileSender
     except ImportError as exc:
         raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+    from workmate.core.errors import ThreadRootGone
+    from workmate.core.ports.outbox import PermanentDeliveryError
 
     transport = httpx.Client(timeout=30)
     atexit.register(transport.close)
@@ -412,12 +414,24 @@ def _build_outbox_send_factory(
         team_id, channel_id, root_id = parts
 
         def send(item: Deliverable) -> None:
-            uploaded = sender.upload_channel_file(
-                team_id, channel_id, item.name, item.content, item.content_type
-            )
-            sender.post_reply_with_attachment(
-                team_id, channel_id, root_id, _outbox_html(uploaded.name), uploaded
-            )
+            try:
+                uploaded = sender.upload_channel_file(
+                    team_id, channel_id, item.name, item.content, item.content_type
+                )
+                sender.post_reply_with_attachment(
+                    team_id, channel_id, root_id, _outbox_html(uploaded.name), uploaded
+                )
+            except ThreadRootGone as exc:
+                raise PermanentDeliveryError("wątek tej rozmowy już nie istnieje") from exc
+            except httpx.HTTPStatusError as exc:
+                # 4xx (poza 429) znaczy „Graph tego pliku nie przyjmie" — nazwa odrzucona przez
+                # SharePoint, kanał bez folderu plików, brak zakresu. Ponowienie da to samo,
+                # a plik zostawiony w skrzynce doklejałby „spróbuję ponownie" do KAŻDEJ kolejnej
+                # odpowiedzi w tej rozmowie, płacąc przy tym dwa żądania Graph za turę.
+                status = exc.response.status_code
+                if 400 <= status < 500 and status != 429:
+                    raise PermanentDeliveryError(f"Graph odrzucił plik (HTTP {status})") from exc
+                raise
 
         return send
 

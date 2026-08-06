@@ -424,7 +424,9 @@ class ConversationalResponder:
                 notice = self._outbox_delivery(scope)
             except Exception:
                 logger.warning(
-                    "Nie udało się dostarczyć plików ze skrzynki rozmowy %r — pomijam", external_id
+                    "Nie udało się dostarczyć plików ze skrzynki rozmowy %r — pomijam",
+                    external_id,
+                    exc_info=True,
                 )
             else:
                 if notice:
