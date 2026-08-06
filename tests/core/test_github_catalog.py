@@ -181,5 +181,5 @@ def test_akcja_spoza_bramki_wraca_koperta_a_nie_assertem() -> None:
     spec = build_github_catalog(events=_FakeEvents())[0]
     wynik = spec.fn(action="create_issue", title="t", body="b")
     assert wynik["status"] == "invalid_request"
-    assert wynik["missing"] == ["action"]
-    assert "events" in wynik["hint"]
+    assert wynik["allowed"] == ["events", "activity"]
+    assert "wymaga pól" not in wynik["error"], "komunikat każe dosłać `action`, którą podano"

@@ -260,6 +260,26 @@ def _brakuje_pol(tool: str, action: str, missing: list[str], hint: str) -> dict[
     }
 
 
+def _zla_akcja(tool: str, action: Any, dozwolone: tuple[str, ...]) -> dict[str, Any]:
+    """Odpowiedź na akcję spoza zestawu — to INNY błąd niż brak pola i musi tak brzmieć.
+
+    Przez ``_brakuje_pol`` wychodziło zdanie „Akcja 'save' wymaga pól, których nie podano:
+    action" — a ``action`` została podana, tylko jest zła. Model dostawał instrukcję dołożenia
+    pola, które właśnie wysłał; to zaproszenie do powtórzenia tego samego wywołania.
+
+    ``allowed`` jest listą, nie prozą w ``hint``, bo cały sens tego kształtu polega na tym, że
+    da się go odczytać bez parsowania zdania.
+    """
+    return {
+        "status": "invalid_request",
+        "error": f"Narzędzie '{tool}' nie ma akcji '{action}'.",
+        "tool": tool,
+        "action": action,
+        "allowed": list(dozwolone),
+        "hint": "dozwolone: " + ", ".join(dozwolone),
+    }
+
+
 def _puste(**pola: Any) -> list[str]:
     """Nazwy pól o wartości pustej — w kolejności deklaracji, bo taka wchodzi do komunikatu."""
     return [nazwa for nazwa, wartosc in pola.items() if wartosc in (None, "", [], ())]
@@ -405,9 +425,7 @@ def build_notes_catalog(
             # wariant tej samej funkcji z bramką, a drugi bez, czyta się jak reguła opcjonalna,
             # i następna osoba powiela wariant bez niej.
             if action != "project_status":
-                return _brakuje_pol(
-                    "Notes", str(action), ["action"], "dozwolone: " + ", ".join(_NOTES_AKCJE)
-                )
+                return _zla_akcja("Notes", action, _NOTES_AKCJE)
             return _status(project)
 
         return [ToolSpec("Notes", f"{_NOTES_HEAD}{ogon}", notes)]
@@ -460,9 +478,7 @@ def build_notes_catalog(
             )
         if action != "project_status":
             # Jak w ``Jira``/``GitHub``: bez tego nieznana akcja po cichu oddaje stan projektu.
-            return _brakuje_pol(
-                "Notes", str(action), ["action"], "dozwolone: " + ", ".join(_NOTES_AKCJE_RW)
-            )
+            return _zla_akcja("Notes", action, _NOTES_AKCJE_RW)
         return _status(project)
 
     return [ToolSpec("Notes", f"{_NOTES_HEAD}{_NOTES_SAVE}{ogon}", notes_rw)]
@@ -856,7 +872,7 @@ def build_github_catalog(
         # runtime nie jest jedynym wołającym: router komend woła ``spec.fn`` wprost. Pod ``-O``
         # asercja znika i zostaje ``AttributeError`` na ``None`` zamiast koperty.
         if action not in akcje:
-            return _brakuje_pol("GitHub", str(action), ["action"], f"dozwolone: {', '.join(akcje)}")
+            return _zla_akcja("GitHub", action, tuple(akcje))
         if action == "events":
             return _events(source, project, limit or _GITHUB_EVENTS_DOMYSLNY)
         if action == "activity":
@@ -869,9 +885,9 @@ def build_github_catalog(
             return _worklog(since, until, author)
         if action == "create_issue":
             return _create_issue(title, body, labels)
-        if action == "comment":
-            return _comment(number, body)
-        return _brakuje_pol("GitHub", str(action), ["action"], f"dozwolone: {', '.join(akcje)}")
+        # Bez wariantu domyślnego: bramka wyżej domknęła zestaw, więc gałąź „nic nie pasuje"
+        # byłaby nieosiągalna, a nieosiągalny kod obronny czyta się jak czynna obrona.
+        return _comment(number, body)
 
     # Adnotacja podmieniana PO definicji, bo ``Literal`` zna zestaw akcji dopiero tutaj.
     # Przy ``from __future__ import annotations`` reszta adnotacji jest napisami; ``get_type_hints``
@@ -1181,9 +1197,7 @@ def build_jira_catalog(
             # oddawałby wynik innej zdolności, niż poproszono, bez śladu w odpowiedzi. Model tego
             # nie wywoła (``Literal``), ale ``spec.fn`` woła też kod aplikacji, z pominięciem
             # koercji argumentów.
-            return _brakuje_pol(
-                "Jira", str(action), ["action"], "dozwolone: " + ", ".join(_JIRA_AKCJE)
-            )
+            return _zla_akcja("Jira", action, _JIRA_AKCJE)
 
         # ``search``: braku filtrów NIE sprawdzamy tutaj. Reguła „co najmniej jeden" żyje
         # w ``JiraReadService.search_tasks`` (razem z walidacją kategorii statusu i escapowaniem

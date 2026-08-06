@@ -189,7 +189,7 @@ def test_nieznana_akcja_nie_zwraca_po_cichu_stanu_projektu() -> None:
     """Jak w ``Jira``/``GitHub`` — nieznana akcja ma dawać odmowę, nie wynik innej zdolności."""
     wynik = _spec(write=True).fn(action="wymyslona", project="workmate")
     assert wynik["status"] == "invalid_request"
-    assert wynik["missing"] == ["action"]
+    assert wynik["allowed"] == ["project_status", "save"]
 
 
 def test_wariant_odczytu_tez_odmawia_nieznanej_akcji() -> None:
@@ -202,6 +202,5 @@ def test_wariant_odczytu_tez_odmawia_nieznanej_akcji() -> None:
     """
     wynik = _spec(write=False).fn(action="save", project="workmate")
     assert wynik["status"] == "invalid_request"
-    assert wynik["missing"] == ["action"]
-    assert "project_status" in wynik["hint"]
+    assert wynik["allowed"] == ["project_status"]
     assert "save" not in wynik["hint"], "podpowiedź wymienia akcję, której schemat nie ma"

@@ -336,5 +336,5 @@ def test_nieznana_akcja_nie_wykonuje_po_cichu_wyszukiwania() -> None:
     """
     wynik = _fn(action="wymyslona")
     assert wynik["status"] == "invalid_request"
-    assert wynik["missing"] == ["action"]
-    assert "my_tasks" in wynik["hint"]
+    assert "my_tasks" in wynik["allowed"] and "search" in wynik["allowed"]
+    assert "wymaga pól" not in wynik["error"]
