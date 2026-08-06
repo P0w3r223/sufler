@@ -202,3 +202,77 @@ def test_scoped_runner_reports_a_failed_mkdir_as_a_command_result(tmp_path):
     assert isinstance(result, CommandResult)
     assert result.exit_code == -1
     assert "katalog" in result.stderr.lower()
+
+
+# --- Powłoka wyklucza narzędzia plikowe (ADR 0009 paczki, krok 5.5) --------------
+
+
+def _responder_z_katalogiem(tmp_path: Path, monkeypatch, *, powloka: bool):
+    """Złóż responder z włączonym katalogiem roboczym i sterowaną obecnością powłoki.
+
+    Fabrykę powłoki podmieniamy, bo prawdziwa zwraca ``None`` na Windows (klient wykonawcy
+    jest POSIX-only) — bez podmiany ten test mierzyłby platformę, a nie regułę.
+    """
+    from workmate.config import ShellSettings, WorkspaceSettings
+
+    monkeypatch.setattr(
+        agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
+    )
+    monkeypatch.setattr(
+        agent_wiring,
+        "_build_shell_factory",
+        lambda *a, **k: (lambda scope: []) if powloka else None,
+    )
+    return build_conversational_responder(
+        _settings(tmp_path),
+        AgentSettings(),
+        _conv_settings(tmp_path),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        enable_workspace=True,
+        workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
+        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+    )
+
+
+def test_z_powloka_narzedzia_plikowe_nie_wchodza(tmp_path: Path, monkeypatch):
+    """`Bash` startuje w TYM SAMYM katalogu, więc `create_file`/`read_file`/`list_files`
+    byłyby opakowaniem prymitywu za trzy pozycje w budżecie wyboru."""
+    responder = _responder_z_katalogiem(tmp_path, monkeypatch, powloka=True)
+    assert responder._workspace_catalog_factory is None
+    assert responder._shell_catalog_factory is not None
+
+
+def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
+    """Cięcie jest WARUNKOWE, nie bezwarunkowe.
+
+    ``WORKMATE_ENABLE_SHELL`` jest domyślnie wyłączona (ADR 0010 dopuszcza powłokę tylko na
+    kanałach z wzajemnie zaufanymi uczestnikami), a bez niej narzędzia plikowe są jedyną drogą,
+    którą model odzyskuje własny szkic po kompaktowaniu kontekstu.
+    """
+    responder = _responder_z_katalogiem(tmp_path, monkeypatch, powloka=False)
+    assert responder._workspace_catalog_factory is not None
+    assert responder._shell_catalog_factory is None
+
+
+def test_bez_bramki_katalogu_roboczego_nie_ma_go_nawet_bez_powloki(tmp_path: Path, monkeypatch):
+    """Krok 5.5 nie ma prawa WŁĄCZYĆ zdolności tam, gdzie operator jej nie chciał."""
+    from workmate.config import ShellSettings, WorkspaceSettings
+
+    monkeypatch.setattr(
+        agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
+    )
+    monkeypatch.setattr(agent_wiring, "_build_shell_factory", lambda *a, **k: None)
+    responder = build_conversational_responder(
+        _settings(tmp_path),
+        AgentSettings(),
+        _conv_settings(tmp_path),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        enable_workspace=False,
+        workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
+        shell_settings=ShellSettings(enabled=False, socket_path=tmp_path / "exec.sock"),
+    )
+    assert responder._workspace_catalog_factory is None

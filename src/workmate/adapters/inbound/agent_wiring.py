@@ -437,7 +437,9 @@ def build_conversational_responder(
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego,
     a ``shell_settings.enabled`` (znów osobna, ADR 0057) — narzędzie ``Bash`` biegnące
-    w kontenerze-wykonawcy bez sieci.
+    w kontenerze-wykonawcy bez sieci. Te dwie bramki są od kroku 5.5 (ADR 0009 paczki)
+    ROZŁĄCZNE w skutku: z powłoką narzędzia plikowe nie wchodzą, bo `Bash` startuje w tym samym
+    katalogu i robi to samo — patrz komentarz przy ``workspace_factory``.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
     ``thread_tool_factory``/``user_push_tool_factory``/``my_jira_tasks_factory``
@@ -496,9 +498,24 @@ def build_conversational_responder(
         supports_attachments=supports_attachments,
         my_jira_tasks=my_jira_tasks_factory,
     )
+    # Narzędzia plikowe katalogu roboczego wchodzą TYLKO tam, gdzie nie ma powłoki (ADR 0009
+    # paczki, krok 5.5). Z powłoką są czystym opakowaniem prymitywu: `Bash` startuje w TYM SAMYM
+    # katalogu, więc `cat`/`ls`/heredoc robią dokładnie to samo, za trzy pozycje w budżecie wyboru.
+    #
+    # Warunek, a nie bezwarunkowe cięcie — z tego samego powodu co przy narzędziach odczytu notatek
+    # (`build_notes_read_catalog`): `WORKMATE_ENABLE_SHELL` jest domyślnie WYŁĄCZONA, a [ADR 0010]
+    # dopuszcza powłokę wyłącznie na kanałach z wzajemnie zaufanymi uczestnikami. Bez powłoki
+    # bariera istnieje i jest węższa, niż wygląda: to NIE jest droga do dostawy pliku
+    # (`reply_with_file` bierze treść wprost, a skrzynka nadawcza czyta `outputs/`, dokąd
+    # `create_file` nie umie zapisać), tylko jedyny sposób, w jaki model odzyskuje własny szkic
+    # po kompaktowaniu kontekstu (ADR 0014) — wtedy tura, w której go pisał, już nie wraca.
+    #
+    # Warunek liczymy z `shell_factory`, nie z `shell_settings.enabled` — z tego samego powodu co
+    # `shell_available` niżej: ustawienie mówi, czego chciał operator, fabryka mówi, co agent
+    # faktycznie dostanie. Rozjazd zostawiłby agenta bez powłoki I bez narzędzi plikowych.
     workspace_factory = (
         _build_workspace_factory(workspace_settings)
-        if enable_workspace and workspace_settings is not None
+        if enable_workspace and workspace_settings is not None and shell_factory is None
         else None
     )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
