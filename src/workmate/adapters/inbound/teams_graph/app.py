@@ -557,7 +557,7 @@ def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[To
     if not schedule_settings.is_enabled():
         logger.info(
             "Grafik Shifts WYŁĄCZONY (ADR 0059) — brak cache tokenu %s albo "
-            "WORKMATE_SCHEDULE_ENABLED=false. Narzędzie get_team_schedule nie zostanie wystawione.",
+            "WORKMATE_SCHEDULE_ENABLED=false. Narzędzie `Schedule` nie zostanie wystawione.",
             schedule_settings.token_cache_path,
         )
         return []
@@ -568,7 +568,7 @@ def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[To
     from workmate.adapters.outbound.graph_schedule_api import HttpxGraphScheduleClient
     from workmate.adapters.outbound.msal_silent_token import build_silent_token_provider
     from workmate.core.application.team_schedule import TeamScheduleService
-    from workmate.core.application.tools import build_team_schedule_catalog
+    from workmate.core.application.tools import build_schedule_catalog
 
     token_provider = build_silent_token_provider(schedule_settings)
     transport = httpx.Client(timeout=30)
@@ -584,7 +584,7 @@ def _build_team_schedule_catalog(schedule_settings: ScheduleSettings) -> list[To
         schedule_settings.timezone,
         schedule_settings.token_cache_path,
     )
-    return build_team_schedule_catalog(service)
+    return build_schedule_catalog(service)
 
 
 def _build_my_jira_tasks_factory(
