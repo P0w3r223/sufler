@@ -595,9 +595,14 @@ def _build_my_jira_tasks_factory(
     Wymaga skonfigurowanego odczytu Jiry (URL+token) ORAZ mapy tożsamości — TEGO SAMEGO pliku co
     autoryzacja M3 (ADR 0042, pole ``jira_user``), niezależnie od bramki zapisu notatek. Sender bez
     rozwiązanej tożsamości albo bez ``jira_user`` dostaje pustą listę narzędzi (fail-closed, zero
-    domysłów) — router komend i responder degradują to do czytelnej odmowy, nie do błędu. Zawężenie
-    do WŁASNEGO konta dzieje się TU, przy budowie serwisu — narzędzie samo nie przyjmuje parametru
-    "czyje zadania" (``build_my_jira_tasks_catalog``).
+    domysłów) — router komend i responder degradują to do czytelnej odmowy, nie do błędu.
+
+    Zawężenie do WŁASNEGO konta dzieje się TU, przy budowie ``MyJiraTasksService``, i to jest
+    jedyne miejsce, gdzie ono żyje (ADR 0054). Od kroku 5.3 (ADR 0009 paczki wdrożeniowej) sześć
+    dawnych narzędzi jest jednym ``Jira(action=…)``, więc pole ``member`` STOI w tym samym
+    schemacie co akcje ``my_*`` — ale gałęzie ``my_*`` go nie czytają, bo biorą serwis domknięty
+    tutaj. Sonda pilnująca tego jest w ``tests/core/test_jira_catalog.py``; dawniej niemożliwość
+    przekierowania wynikała z pustej sygnatury, teraz wynika z dispatchera i musi być sprawdzana.
     """
     if not (jira_settings.base_url and jira_settings.token):
         return None
@@ -611,10 +616,7 @@ def _build_my_jira_tasks_factory(
     from workmate.adapters.outbound.jira_api import build_jira_client
     from workmate.core.application.jira_read import JiraReadService
     from workmate.core.application.my_jira_tasks import MyJiraTasksService
-    from workmate.core.application.tools import (
-        build_jira_read_catalog,
-        build_my_jira_tasks_catalog,
-    )
+    from workmate.core.application.tools import build_jira_catalog
 
     identities = YamlIdentityDirectory(settings.meeting_note_identities)
     # Klient żyje przez cały proces (daemon), jak inne sync klienty Jiry/GitHuba tutaj.
@@ -645,10 +647,7 @@ def _build_my_jira_tasks_factory(
         service = MyJiraTasksService(
             client, assignee=person.jira_user, base_url=jira_settings.base_url
         )
-        return [
-            *build_my_jira_tasks_catalog(service),
-            *build_jira_read_catalog(read_service, resolve_member),
-        ]
+        return build_jira_catalog(service, read_service, resolve_member)
 
     return factory
 
