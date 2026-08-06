@@ -169,3 +169,17 @@ def test_worklog_wymaga_obu_dat() -> None:
 
     spec = build_github_catalog(events=_FakeEvents(), worklog=_FakeWorklog())[0]
     assert spec.fn(action="worklog", since=date(2026, 1, 1))["missing"] == ["until"]
+
+
+def test_akcja_spoza_bramki_wraca_koperta_a_nie_assertem() -> None:
+    """Bramka nie może stać na ``assert`` w ciele — to gwarancja dyscypliny wołającego.
+
+    Runtime agenta odsiewa akcję spoza ``Literal`` przy koercji argumentów, ale nie jest jedynym
+    wołającym ``spec.fn``: router komend woła narzędzie wprost. Pod ``python -O`` asercja znika
+    i zamiast koperty przychodzi ``AttributeError`` na ``None``.
+    """
+    spec = build_github_catalog(events=_FakeEvents())[0]
+    wynik = spec.fn(action="create_issue", title="t", body="b")
+    assert wynik["status"] == "invalid_request"
+    assert wynik["missing"] == ["action"]
+    assert "events" in wynik["hint"]

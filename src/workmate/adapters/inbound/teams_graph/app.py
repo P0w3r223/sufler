@@ -198,8 +198,8 @@ def _build_bridge_catalog(
 ) -> tuple[list[ToolSpec], Callable[[str], list[ToolSpec]] | None]:
     """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024): zdarzenia + zapis GitHub.
 
-    Zwraca ``(katalog, fabryka_wątkowa)``. ``read_recent_events`` jest ZAWSZE (agent widzi, co
-    zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) dokładamy TYLKO przy
+    Zwraca ``(katalog, fabryka_wątkowa)``. ``GitHub(action='events')`` jest ZAWSZE (agent widzi,
+    co zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) dokładamy TYLKO przy
     włączonej bramce i skonfigurowanym celu — profil per drzwi (ADR 0006/0021). Zdarzenia z zapisu
     idą jako ``source=teams`` (strażnik pętli — notifier ich nie odeśle). Gdy zapis GitHub włączony,
     budujemy też FABRYKĘ ``reply_on_thread`` (ADR 0024, Faza 3b) dla wątku powiązanego z issue/PR.
@@ -1035,7 +1035,7 @@ def _build_responder(
     spajającej, ``thread_factory`` (ADR 0024, Faza 3b) — per-turowe ``reply_on_thread``, a
     ``user_push_factory`` (ADR 0027, A′3) — per-turowe ``send_image_to_user`` (obraz inline) oraz
     ``send_document_to_user`` (plik-załącznik) wiązane z nadawcą, niezależnie bramkowane.
-    ``my_jira_tasks_factory`` (ADR 0054) — per-turowe ``get_my_jira_tasks`` wiązane z nadawcą,
+    ``my_jira_tasks_factory`` (ADR 0054) — per-turowe ``Jira(action=…)`` wiązane z nadawcą,
     zasila też komendę ``/moje-zadania``. ``channel="teams_graph"`` trzyma pamięć/workspace tych
     drzwi osobno od bota."""
     return build_conversational_responder(

@@ -183,3 +183,10 @@ def test_save_dopisuje_notatke() -> None:
     )
     assert wynik["saved"] is True
     assert wynik["id"].startswith("biap/workmate/2026-08-06")
+
+
+def test_nieznana_akcja_nie_zwraca_po_cichu_stanu_projektu() -> None:
+    """Jak w ``Jira``/``GitHub`` — nieznana akcja ma dawać odmowę, nie wynik innej zdolności."""
+    wynik = _spec(write=True).fn(action="wymyslona", project="workmate")
+    assert wynik["status"] == "invalid_request"
+    assert wynik["missing"] == ["action"]

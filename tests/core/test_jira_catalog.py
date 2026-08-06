@@ -326,3 +326,15 @@ def test_search_bez_filtrow_wraca_koperta_z_serwisu() -> None:
     """Reguła „co najmniej jeden filtr" żyje w serwisie — narzędzie ma ją tylko przepuścić."""
     _, _, spec = _zbuduj(read=_FakeJiraRead(error=InvalidRequestError("brak filtrów")))
     assert "error" in spec.fn(action="search")
+
+
+def test_nieznana_akcja_nie_wykonuje_po_cichu_wyszukiwania() -> None:
+    """Terminalny ``else`` oddawałby wynik INNEJ zdolności, niż poproszono, bez śladu.
+
+    Model tego nie wywoła (``Literal`` domyka zestaw), ale ``spec.fn`` woła też kod aplikacji —
+    z pominięciem koercji argumentów runtime'u. Tak właśnie przeszła regresja `/moje-zadania`.
+    """
+    wynik = _fn(action="wymyslona")
+    assert wynik["status"] == "invalid_request"
+    assert wynik["missing"] == ["action"]
+    assert "my_tasks" in wynik["hint"]
