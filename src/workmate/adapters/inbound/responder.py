@@ -113,8 +113,8 @@ class OutboxDeliverer(Protocol):
     """Dwufazowa dostawa ze skrzynki nadawczej rozmowy (ADR 0009 paczki wdrożeniowej).
 
     ``snapshot`` musi paść PRZED turą, ``deliver`` po niej. Migawka jest granicą pochodzenia
-    plików: wolumen brudnopisu jest wspólny dla rozmów, więc bez niej nie da się odróżnić
-    wyniku tej tury od pliku podłożonego wcześniej przez inną rozmowę.
+    plików: rozmowy dzielą jeden wolumen brudnopisu (ADR 0010 paczki), więc bez niej nie da się
+    odróżnić wyniku tej tury od pliku podłożonego wcześniej przez inną rozmowę.
     """
 
     def snapshot(self, scope: WorkspaceScope) -> None: ...

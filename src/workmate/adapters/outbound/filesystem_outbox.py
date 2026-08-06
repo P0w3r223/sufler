@@ -20,8 +20,9 @@ dokładnie tyle: kolektor nie wychodzi poza skrzynkę i nie kasuje plików spoza
 model NIE wyniesie, decyduje warstwa wyżej (pre-wiązany cel dostawy, ADR 0026) i to, czego
 w kontenerze wykonawcy nie ma (ADR 0007).
 
-Izolacja rozmów w powłoce jest KONWENCJĄ, nie zamknięciem: wolumen brudnopisu jest wspólny,
-`cwd` tylko ustawiany. Pochodzenia plików pilnuje migawka w ``OutboxDelivery.snapshot``.
+Izolacja rozmów w powłoce jest KONWENCJĄ, nie zamknięciem — stan faktyczny, ryzyko szczątkowe
+i model zaufania opisuje ADR 0010 paczki (`izolacja-rozmow-w-powloce`), jedno źródło dla całego
+kodu. Pochodzenia plików pilnuje tutaj migawka w ``OutboxDelivery.snapshot``.
 """
 
 from __future__ import annotations

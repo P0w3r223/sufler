@@ -145,16 +145,17 @@ class OutboxDelivery:
     def snapshot(self, dirpath: str) -> None:
         """Zapamiętaj zawartość skrzynki PRZED turą — granica pochodzenia plików.
 
-        Wolumen brudnopisu jest WSPÓLNY dla wszystkich rozmów, a wykonawca montuje go w całości
-        i uruchamia polecenia bez chroota — `cwd` jest konwencją, nie zamknięciem. Powłoka
-        rozmowy A może więc policzyć katalog rozmowy B (`sha256(team/channel/root)`, a trójka
-        jest jawna dla każdego w kanale), założyć w nim ``outputs/`` zwykłym ``mkdir`` i podłożyć
-        plik. Bez tej migawki kolektor opublikowałby go w CUDZYM wątku, firmując treść botem —
-        i żaden guard na dowiązania by tego nie dotknął, bo dowiązania tam nie ma.
+        Rozmowy dzielą JEDEN wolumen brudnopisu, a `cwd` jest konwencją, nie zamknięciem
+        (pełny opis: ADR 0010 paczki). Powłoka rozmowy A może więc policzyć katalog rozmowy B,
+        założyć w nim ``outputs/`` zwykłym ``mkdir`` i podłożyć plik — bez żadnego dowiązania,
+        więc żaden guard na dowiązania tego nie dotyka. Bez migawki kolektor opublikowałby taki
+        plik w CUDZYM wątku, firmując treść botem.
 
         Migawka zamyka to, bo **tury są szeregowane**: poller robi ``await self._handle`` w pętli
         sekwencyjnej, więc powłoka rozmowy A nie biegnie w trakcie tury rozmowy B. Plik podłożony
         wcześniej jest w migawce i nie zostanie wysłany; plik powstały w trakcie tury — zostanie.
+        Argument stoi też na tym, że wykonawca zabija grupę procesów po KAŻDYM poleceniu:
+        bez tego proces w tle obchodziłby migawkę, pisząc już po niej.
         """
         self._at_start[dirpath] = frozenset(e.name for e in self._repo.list_entries(dirpath))
 
