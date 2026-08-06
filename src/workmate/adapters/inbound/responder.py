@@ -192,6 +192,7 @@ class ConversationalResponder:
         project_brief: BriefRouter | None = None,
         change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
+        outbox_delivery: Callable[[WorkspaceScope], str] | None = None,
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
@@ -239,6 +240,11 @@ class ConversationalResponder:
         # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
         # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
         self._metrics = metrics
+        # Dostawa plików ze skrzynki nadawczej rozmowy PO turze (ADR 0009 paczki); ``None`` → brak
+        # (bramka off / inne drzwi). Zwraca zdanie do doklejenia do odpowiedzi albo pusty napis.
+        # Ten sam ``scope`` co narzędzia katalogu roboczego — skrzynka leży w katalogu TEJ rozmowy,
+        # więc model nie ma jak nadać pliku „z cudzej".
+        self._outbox_delivery = outbox_delivery
         # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
         # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
         # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
@@ -403,6 +409,19 @@ class ConversationalResponder:
                 conversation_id, result.entries, stop_reason=result.stop_reason
             )
         reply = _with_notices(result.reply, rolled_over=rolled_over, stop_reason=result.stop_reason)
+        # Dostawa ze skrzynki nadawczej — PO utrwaleniu tury, żeby awaria wysyłki nie zabrała
+        # rozmówcy odpowiedzi tekstowej ani nie osierociła zapisu. Jak pozostałe opcjonalne
+        # wzbogacenia: błąd degraduje do „bez załączników" i idzie do logu, nie do użytkownika.
+        if self._outbox_delivery is not None:
+            try:
+                notice = self._outbox_delivery(scope)
+            except Exception:
+                logger.warning(
+                    "Nie udało się dostarczyć plików ze skrzynki rozmowy %r — pomijam", external_id
+                )
+            else:
+                if notice:
+                    reply = f"{reply}\n\n{notice}"
         if self._show_thinking:
             reply = _with_thinking(reply, result.thinking)
         return reply

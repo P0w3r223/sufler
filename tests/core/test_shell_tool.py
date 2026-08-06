@@ -151,12 +151,24 @@ def test_description_carries_the_mount_map_and_the_search_command():
         "/home/scratchpad",
         "/mnt/system/notes/",
         "/mnt/system/projects/",
-        "/mnt/user/inputs/",
-        "/mnt/user/outputs/",
+        "outputs/",
     ):
         assert path in description
     assert "workmate-search" in description
     assert "64 KB" in description
+
+
+def test_description_does_not_promise_unimplemented_mounts():
+    """Regresja: opis obiecywał `/mnt/user/{inputs,outputs}`, których ŻADEN kod nie obsługiwał.
+
+    Wolumen był zamontowany w compose, więc `ls` działał, a zapis kończył się zerem i ciszą —
+    model dostawał potwierdzenie dostawy, która nigdy nie następowała. Dostawa idzie dziś przez
+    `outputs/` w katalogu roboczym (ADR 0009 paczki); ta asercja pilnuje, żeby martwa ścieżka
+    nie wróciła do opisu razem z jakimś przyszłym montażem.
+    """
+    description = _tool(FakeRunner()).description
+
+    assert "/mnt/user" not in description
 
 
 def test_workspace_root_without_trailing_slash_does_not_double_it():

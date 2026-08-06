@@ -293,10 +293,11 @@ def build_shell_catalog(
         Startujesz we własnym katalogu roboczym tej rozmowy — pliki tworzone tutaj przeżywają
         do kolejnych tur. Układ ścieżek:
           /home/scratchpad/… — twój katalog roboczy, zapis dozwolony
+          outputs/ — skrzynka nadawcza w katalogu roboczym. Plik zapisany tutaj wysyłam
+            rozmówcy po zakończeniu tury i usuwam ze skrzynki, więc trzymaj tu wyłącznie
+            gotowe wyniki, a materiał roboczy piętro wyżej. Dozwolone md/txt/pdf/docx.
           /mnt/system/notes/ — baza wiedzy pionu (notatki), TYLKO ODCZYT
           /mnt/system/projects/ — rejestr projektów, TYLKO ODCZYT
-          /mnt/user/inputs/ — pliki od rozmówcy, TYLKO ODCZYT
-          /mnt/user/outputs/ — co tu zapiszesz, trafia do rozmówcy
         Do przeszukiwania notatek użyj `workmate-search "fraza"` — korpus jest polski
         i odmieniony, więc dopasowanie wzorca (grep) gubi trafienia.
         Wyjście jest przycinane do 64 KB (flaga `truncated`), a polecenie przerywane po

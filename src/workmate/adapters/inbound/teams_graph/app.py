@@ -22,6 +22,7 @@ import logging
 import signal
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from html import escape
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from workmate.core.application.github import GithubWriteService
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.github import GithubReadPort
+    from workmate.core.ports.outbox import Deliverable
     from workmate.core.ports.thread_links import ThreadLinkStore
 
 logger = logging.getLogger(__name__)
@@ -176,6 +178,9 @@ def main() -> None:
         thread_router,
         brief_router,
         change_router,
+        # Skrzynka nadawcza rozmowy (ADR 0009 paczki) — dzieli bramkę i limit z `reply_with_file`.
+        _build_outbox_send_factory(settings, token_provider),
+        settings.max_file_reply_kb * 1024,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -366,6 +371,59 @@ def _build_file_reply_factory(
         )
 
     return factory
+
+
+def _build_outbox_send_factory(
+    settings: TeamsGraphSettings, token_provider: Callable[[], str]
+) -> Callable[[str], Callable[[Deliverable], None] | None] | None:
+    """Fabryka WYSYŁACZA skrzynki nadawczej rozmowy (ADR 0009 paczki) — plik z ``outputs/`` w wątek.
+
+    ``None``, gdy bramka ``enable_file_reply`` wyłączona: to ta sama zdolność co ``reply_with_file``
+    (ADR 0026) — załącznik w wątku Teams — więc dzieli z nią bramkę i limit rozmiaru. Osobna byłaby
+    obietnicą, że operator włączył jedno, a dostał dwa.
+
+    Cel dostawy (``team/channel/root``) wyłuskujemy z ``external_id`` wątku, NIE od modelu — plik
+    trafia wyłącznie do wątku bieżącej rozmowy (kontrola kompensująca, ADR 0026 §Threat model).
+    Wątek o innym kształcie ``external_id`` daje ``None``: nie ma dokąd wysłać, więc skrzynka
+    zostaje nietknięta zamiast zostać opróżniona w próżnię.
+    """
+    if not settings.enable_file_reply:
+        return None
+    try:
+        import atexit
+
+        import httpx
+
+        from workmate.adapters.outbound.graph_file_sender import HttpxGraphFileSender
+    except ImportError as exc:
+        raise SystemExit(_MISSING_TEAMS_GRAPH) from exc
+
+    transport = httpx.Client(timeout=30)
+    atexit.register(transport.close)
+    sender = HttpxGraphFileSender(transport, token_provider)
+
+    def factory(external_id: str) -> Callable[[Deliverable], None] | None:
+        parts = external_id.split("/")
+        if len(parts) != 3:
+            return None
+        team_id, channel_id, root_id = parts
+
+        def send(item: Deliverable) -> None:
+            uploaded = sender.upload_channel_file(
+                team_id, channel_id, item.name, item.content, item.content_type
+            )
+            sender.post_reply_with_attachment(
+                team_id, channel_id, root_id, _outbox_html(uploaded.name), uploaded
+            )
+
+        return send
+
+    return factory
+
+
+def _outbox_html(filename: str) -> str:
+    """Zaufany, ESCAPOWANY HTML wiadomości niosącej załącznik ze skrzynki (składany u nas)."""
+    return f"<p>{escape(filename)}</p>"
 
 
 def _build_user_push_factory(
@@ -931,6 +989,8 @@ def _build_responder(
     thread_router: ThreadNoteRouter | None = None,
     brief_router: BriefRouter | None = None,
     change_router: ChangeDigestRouter | None = None,
+    outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
+    outbox_max_file_bytes: int = 0,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -963,6 +1023,8 @@ def _build_responder(
         project_brief=brief_router,
         change_digest=change_router,
         supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
+        outbox_send_factory=outbox_send_factory,
+        outbox_max_file_bytes=outbox_max_file_bytes,
     )
 
 

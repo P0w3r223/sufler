@@ -22,6 +22,10 @@ from workmate.adapters.inbound.responder import (
     SafeResponder,
 )
 from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer, build_semantic_ranker
+from workmate.adapters.outbound.filesystem_outbox import (
+    OUTBOX_DIRNAME,
+    FilesystemOutboxRepository,
+)
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
@@ -38,6 +42,7 @@ from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
 from workmate.core.application.events import EventService
 from workmate.core.application.metrics import MetricsService
+from workmate.core.application.outbox import OutboxDelivery, OutboxLimits
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
@@ -54,6 +59,7 @@ from workmate.core.application.workspace import (
     WorkspaceWriteService,
 )
 from workmate.core.ports.command import CommandResult
+from workmate.core.ports.outbox import Deliverable
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -259,7 +265,11 @@ class _ScopedRunner:
     def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
         if cwd:
             try:
-                Path(cwd).mkdir(parents=True, exist_ok=True)
+                # Skrzynkę nadawczą zakłada aplikacja razem z katalogiem roboczym, bo opis
+                # narzędzia każe modelowi pisać do ``outputs/`` ścieżką WZGLĘDNĄ — a
+                # przekierowanie powłoki do nieistniejącego katalogu kończy się błędem,
+                # nie utworzeniem go.
+                Path(cwd, OUTBOX_DIRNAME).mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 return CommandResult(
                     exit_code=-1,
@@ -308,6 +318,40 @@ def _build_shell_factory(
     return factory
 
 
+# Ile plików ze skrzynki wysyłamy w jednej turze. Granica jest anty-zalewowa, nie pojemnościowa:
+# jedno „napisz skrypt, który wygeneruje raport na każdy projekt" mogłoby wyprodukować kilkadziesiąt
+# załączników w jednej odpowiedzi na kanale zespołu. Nadmiar jest odrzucany z podaniem powodu.
+_OUTBOX_MAX_FILES_PER_TURN = 5
+
+
+def _build_outbox_delivery(
+    workspace_settings: WorkspaceSettings,
+    send_factory: Callable[[str], Callable[[Deliverable], None] | None],
+    *,
+    max_file_bytes: int,
+) -> Callable[[WorkspaceScope], str]:
+    """Zbuduj dostawę ze skrzynki nadawczej rozmowy — wołaną PO turze, zwracającą zdanie raportu.
+
+    Korzeń bierzemy z ``workspace_settings``, tego samego, z którego liczy się ``cwd`` poleceń
+    (``_build_shell_factory``) — rozjazd tych dwóch wartości oznaczałby, że model zapisuje plik
+    w skrzynce, której drzwi nie czytają, i to bez żadnego objawu poza brakiem załącznika.
+    """
+    delivery = OutboxDelivery(
+        FilesystemOutboxRepository(workspace_settings.workspace_dir),
+        OutboxLimits(max_file_bytes=max_file_bytes, max_files_per_turn=_OUTBOX_MAX_FILES_PER_TURN),
+    )
+
+    def deliver(scope: WorkspaceScope) -> str:
+        send = send_factory(scope.conversation)
+        if send is None:
+            # Wątek bez celu dostawy (np. rozmowa spoza kanału): zostawiamy skrzynkę nietkniętą,
+            # bo plik nie jest odrzucony — po prostu nie ma dokąd pójść z TYCH drzwi.
+            return ""
+        return delivery.deliver(str(scope.dirpath()), send).notice()
+
+    return deliver
+
+
 def build_conversational_responder(
     settings: Settings,
     agent_settings: AgentSettings,
@@ -329,6 +373,8 @@ def build_conversational_responder(
     project_brief: BriefRouter | None = None,
     change_digest: ChangeDigestRouter | None = None,
     supports_attachments: bool = False,
+    outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
+    outbox_max_file_bytes: int = 0,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -346,6 +392,10 @@ def build_conversational_responder(
     zasila też komendę ``/moje-zadania`` w routerze (jedno miejsce rozwiązywania tożsamości).
     ``supports_attachments`` (F8) uwidacznia zdolność multimodalną (prompt + ``/pomoc``) tylko na
     drzwiach z materializerem załączników — inaczej byłaby mylną obietnicą na drzwiach tekstowych.
+    ``outbox_send_factory`` (ADR 0009 paczki) wiąże skrzynkę nadawczą rozmowy z drogą dostawy per
+    drzwi: z ``external_id`` daje wysyłacz albo ``None`` (wątek bez celu dostawy). Wymaga
+    ``workspace_settings`` — skrzynka leży w katalogu roboczym rozmowy, więc bez wspólnego korzenia
+    drzwi szukałyby plików gdzie indziej, niż zapisuje je wykonawca.
     """
     runtime = build_agent_runtime_or_exit(
         settings,
@@ -389,6 +439,17 @@ def build_conversational_responder(
         if settings.metrics_db is not None
         else None
     )
+    # Skrzynka nadawcza (ADR 0009 paczki) dzieli korzeń z powłoką i katalogiem roboczym — bez
+    # ``workspace_settings`` nie ma czego czytać, więc dostawa nie powstaje mimo podanej fabryki.
+    outbox_delivery = (
+        _build_outbox_delivery(
+            workspace_settings, outbox_send_factory, max_file_bytes=outbox_max_file_bytes
+        )
+        if outbox_send_factory is not None
+        and workspace_settings is not None
+        and outbox_max_file_bytes > 0
+        else None
+    )
     inner = ConversationalResponder(
         runtime,
         conversations,
@@ -406,6 +467,7 @@ def build_conversational_responder(
         project_brief=project_brief,
         change_digest=change_digest,
         metrics=metrics,
+        outbox_delivery=outbox_delivery,
     )
     return SafeResponder(inner) if safe else inner
 
