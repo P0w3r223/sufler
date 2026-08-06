@@ -50,6 +50,8 @@ from workmate.core.application.services import (
     ProjectsService,
 )
 from workmate.core.application.tools import (
+    build_notes_catalog,
+    build_notes_read_catalog,
     build_shell_catalog,
     build_tool_catalog,
     build_workspace_catalog,
@@ -155,16 +157,23 @@ def build_agent_runtime(
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
     system_prompt: str = STATIC_PROMPT,
+    shell_available: bool = False,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
-    ``enable_write`` steruje profilem zaufania drzwi: ``True`` → katalog z
-    ``save_note`` (zaufane, np. lokalne CLI); ``False`` → katalog tylko do odczytu
-    (mniej zaufane drzwi, np. Teams — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
-    STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
-    bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
+    ``enable_write`` steruje profilem zaufania drzwi: ``True`` → ``Notes`` z akcją ``save``
+    (zaufane, np. lokalne CLI); ``False`` → wariant tylko do odczytu (mniej zaufane drzwi,
+    np. Teams — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to STATYCZNE narzędzia per drzwi
+    (np. odczyt zdarzeń, narzędzia GitHub) doklejane do bazowego katalogu — z definicji poza
+    powierzchnią MCP (golden-test nietknięty).
     ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
     materializujemy załączniki); domyślnie bazowy ``STATIC_PROMPT`` (ADR 0056).
+
+    ``shell_available`` mówi, czy te drzwi dają agentowi ``Bash`` (ADR 0057). Steruje trzema
+    narzędziami ODCZYTU bazy wiedzy: z powłoką są zbędne (``workmate-search`` plus ``cat``
+    na montażu ``ro``), bez niej są JEDYNĄ drogą do notatek. Domyślne ``False`` jest celowo
+    zachowawcze — drzwi, które zapomną o tym parametrze, dostają katalog pełniejszy, a nie
+    agenta odciętego od bazy wiedzy.
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -177,7 +186,13 @@ def build_agent_runtime(
         if enable_write
         else None
     )
-    catalog = build_tool_catalog(notes_service, projects_service, write_service=write_service)
+    # Powierzchnia agenta jest OSOBNA od powierzchni MCP (ADR 0009, krok 5.4): skonsolidowane
+    # ``Notes`` zamiast ``get_project_status`` i ``save_note``, a trzy narzędzia odczytu bazy
+    # wiedzy warunkowo — zastępuje je powłoka, której przy wyłączonej bramce po prostu nie ma.
+    catalog = [
+        *build_notes_catalog(projects_service, write_service=write_service),
+        *([] if shell_available else build_notes_read_catalog(notes_service, projects_service)),
+    ]
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
         [*catalog, *extra_catalog],
@@ -193,6 +208,7 @@ def build_agent_runtime_or_exit(
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
     system_prompt: str = STATIC_PROMPT,
+    shell_available: bool = False,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
@@ -205,6 +221,7 @@ def build_agent_runtime_or_exit(
             enable_write=enable_write,
             extra_catalog=extra_catalog,
             system_prompt=system_prompt,
+            shell_available=shell_available,
         )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
@@ -438,6 +455,9 @@ def build_conversational_responder(
         enable_write=enable_write,
         extra_catalog=extra_catalog,
         system_prompt=static_prompt_for(attachments=supports_attachments),
+        # ``shell_settings`` bywa ``None`` (drzwi bez powłoki) — a wtedy narzędzia odczytu
+        # bazy wiedzy są tym bardziej potrzebne, bo nie ma czym ich zastąpić.
+        shell_available=bool(shell_settings and shell_settings.enabled),
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
