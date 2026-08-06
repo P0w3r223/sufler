@@ -190,3 +190,18 @@ def test_nieznana_akcja_nie_zwraca_po_cichu_stanu_projektu() -> None:
     wynik = _spec(write=True).fn(action="wymyslona", project="workmate")
     assert wynik["status"] == "invalid_request"
     assert wynik["missing"] == ["action"]
+
+
+def test_wariant_odczytu_tez_odmawia_nieznanej_akcji() -> None:
+    """Bramka musi być SYMETRYCZNA w obu wariantach buildera.
+
+    Przy `write_service=None` `action='save'` nie istnieje w schemacie, ale wariant bez bramki
+    wykonywał dla niej po cichu `project_status`. Zapis się nie wydarzy (nie ma czym), więc
+    bramka uprawnień trzymała — psuje się co innego: reguła zaczyna wyglądać na opcjonalną,
+    a następna osoba powiela wariant bez niej.
+    """
+    wynik = _spec(write=False).fn(action="save", project="workmate")
+    assert wynik["status"] == "invalid_request"
+    assert wynik["missing"] == ["action"]
+    assert "project_status" in wynik["hint"]
+    assert "save" not in wynik["hint"], "podpowiedź wymienia akcję, której schemat nie ma"

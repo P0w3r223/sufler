@@ -380,6 +380,9 @@ def _jira_spec(tasks=None, history=None, error=None):
             return (history or [], False)
 
     class _Read:
+        # Uwaga przy rozszerzaniu: to zwraca `[]` na KAŻDĄ metodę, a `member_history` ma
+        # w kontrakcie krotkę `(zadania, truncated)`. Dla `/moje-zadania` nieosiągalne (router
+        # woła wyłącznie `my_tasks`), ale sondy na akcje członka wymagają prawdziwej atrapy.
         def __getattr__(self, n):
             return lambda *a, **k: []
 

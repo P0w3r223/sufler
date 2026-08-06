@@ -265,6 +265,14 @@ def _puste(**pola: Any) -> list[str]:
     return [nazwa for nazwa, wartosc in pola.items() if wartosc in (None, "", [], ())]
 
 
+# Jedno źródło zestawu akcji `Notes` — dwa warianty, bo zapis jest bramkowany w ``Literal``
+# (ADR 0006). Aliasy idą do sygnatur, ``get_args`` do komunikatów odmownych; ręczna kopia listy
+# w komunikacie rozjechałaby się przy pierwszej nowej akcji, tak jak groziło to Jirze.
+_NotesAkcja = Literal["project_status"]
+_NotesAkcjaRW = Literal["project_status", "save"]
+_NOTES_AKCJE: tuple[str, ...] = get_args(_NotesAkcja)
+_NOTES_AKCJE_RW: tuple[str, ...] = get_args(_NotesAkcjaRW)
+
 _NOTES_HEAD = """\
 Baza wiedzy pionu: stan projektu.
 
@@ -384,20 +392,29 @@ def build_notes_catalog(
 
         def notes(
             action: Annotated[
-                Literal["project_status"],
+                _NotesAkcja,
                 Field(description="Co zrobić: `project_status` — stan projektu."),
             ],
             project: Annotated[
                 str | None, Field(description="Klucz projektu z rejestru (wymagany).")
             ] = None,
         ) -> dict[str, Any]:
+            # Bramka jest tu z tego samego powodu co w wariancie z zapisem niżej, i musi być
+            # SYMETRYCZNA. Zapis i tak by się nie wydarzył (nie ma czym — ``write_service`` jest
+            # ``None``), więc bramka uprawnień trzymała bez niej. Psuje się co innego: jeden
+            # wariant tej samej funkcji z bramką, a drugi bez, czyta się jak reguła opcjonalna,
+            # i następna osoba powiela wariant bez niej.
+            if action != "project_status":
+                return _brakuje_pol(
+                    "Notes", str(action), ["action"], "dozwolone: " + ", ".join(_NOTES_AKCJE)
+                )
             return _status(project)
 
         return [ToolSpec("Notes", f"{_NOTES_HEAD}{ogon}", notes)]
 
     def notes_rw(
         action: Annotated[
-            Literal["project_status", "save"],
+            _NotesAkcjaRW,
             Field(
                 description=(
                     "Co zrobić: `project_status` — stan projektu; `save` — dopisanie NOWEJ notatki."
@@ -443,7 +460,9 @@ def build_notes_catalog(
             )
         if action != "project_status":
             # Jak w ``Jira``/``GitHub``: bez tego nieznana akcja po cichu oddaje stan projektu.
-            return _brakuje_pol("Notes", str(action), ["action"], "dozwolone: project_status, save")
+            return _brakuje_pol(
+                "Notes", str(action), ["action"], "dozwolone: " + ", ".join(_NOTES_AKCJE_RW)
+            )
         return _status(project)
 
     return [ToolSpec("Notes", f"{_NOTES_HEAD}{_NOTES_SAVE}{ogon}", notes_rw)]
