@@ -72,7 +72,7 @@ class _FakeRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
-        session_header: str = ""
+        session_header: str = "",
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -91,7 +91,7 @@ class _FailingRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
-        session_header: str = ""
+        session_header: str = "",
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -119,7 +119,7 @@ class _ThinkingRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
-        session_header: str = ""
+        session_header: str = "",
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",
@@ -502,7 +502,10 @@ def test_metrics_failure_does_not_break_turn():
 
     convs = ConversationService(SqliteConversationStore(":memory:"), max_context_tokens=1000)
     responder = ConversationalResponder(
-        _FakeRuntime("ok"), convs, channel="teams", metrics=_BoomMetrics()  # type: ignore[arg-type]
+        _FakeRuntime("ok"),
+        convs,
+        channel="teams",
+        metrics=_BoomMetrics(),  # type: ignore[arg-type]
     )
 
     reply = asyncio.run(responder.respond(InboundMessage(text="czesc", conversation_id="c")))

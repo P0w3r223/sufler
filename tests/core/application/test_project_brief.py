@@ -83,9 +83,7 @@ def test_brief_respects_notes_limit(sample_notes):
 
 def test_brief_project_without_notes_has_empty_list(sample_notes):
     # 'workmate' w sample_notes ma jedną notatkę; usuńmy notatki, zostawiając rejestr/status.
-    service = ProjectBriefService(
-        NotesService(FakeNotesRepository([])), _projects_service([])
-    )
+    service = ProjectBriefService(NotesService(FakeNotesRepository([])), _projects_service([]))
 
     brief = service.brief("workmate")
 

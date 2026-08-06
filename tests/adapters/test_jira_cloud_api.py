@@ -65,7 +65,7 @@ def test_search_uses_post_search_jql_with_body():
 
 
 def test_search_omits_expand_when_empty():
-    """"Moje zadania" (ADR 0054) nie potrzebuje changelogu — puste ``expand`` nic nie wysyła."""
+    """ "Moje zadania" (ADR 0054) nie potrzebuje changelogu — puste ``expand`` nic nie wysyła."""
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -164,9 +164,7 @@ def test_search_flattens_adf_description():
             200,
             json={
                 "isLast": True,
-                "issues": [
-                    {"key": "WM-1", "fields": {"description": text_to_adf("Opis w ADF")}}
-                ],
+                "issues": [{"key": "WM-1", "fields": {"description": text_to_adf("Opis w ADF")}}],
             },
         )
 

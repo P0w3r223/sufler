@@ -127,9 +127,7 @@ class RuntimeResponder:
     nie zapisuje.
     """
 
-    def __init__(
-        self, runtime: AgentRuntime, *, clock: Callable[[], datetime] = _utcnow
-    ) -> None:
+    def __init__(self, runtime: AgentRuntime, *, clock: Callable[[], datetime] = _utcnow) -> None:
         self._runtime = runtime
         # Zegar wstrzykiwany jak w ``ConversationalResponder`` — nagłówek sesji (ADR 0056)
         # niesie datę, a rdzeń zegara nie woła.
@@ -322,9 +320,7 @@ class ConversationalResponder:
         if self._project_brief is not None:
             reply = self._project_brief.dispatch(
                 message.text,
-                BriefContext(
-                    external_id=external_id, mentions_bot=message.mentions_bot
-                ),
+                BriefContext(external_id=external_id, mentions_bot=message.mentions_bot),
             )
             if reply is not None:
                 return reply
@@ -333,9 +329,7 @@ class ConversationalResponder:
         if self._change_digest is not None:
             reply = self._change_digest.dispatch(
                 message.text,
-                ChangeDigestContext(
-                    external_id=external_id, mentions_bot=message.mentions_bot
-                ),
+                ChangeDigestContext(external_id=external_id, mentions_bot=message.mentions_bot),
             )
             if reply is not None:
                 return reply

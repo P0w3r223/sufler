@@ -123,9 +123,7 @@ class AgentRuntime:
         # swojego wywołania (Design 2 — do rozliczenia i do bramki rolloveru na ostatniej turze).
         run_usage = TokenUsage()
         for _ in range(self._max_tool_iterations):
-            response = self._llm.complete(
-                system=system, transcript=transcript, tools=catalog
-            )
+            response = self._llm.complete(system=system, transcript=transcript, tools=catalog)
             run_usage = run_usage + response.usage
             last_text = response.text or last_text
 

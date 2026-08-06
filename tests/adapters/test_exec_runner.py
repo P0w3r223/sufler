@@ -68,9 +68,7 @@ def test_timeout_kills_process_group_and_flags_result(runner: SocketCommandRunne
     """Timeout zabija CAŁĄ grupę: potomek w tle nie przeżywa zabicia powłoki."""
     marker = tmp_path / "przezyl.txt"
     started = time.monotonic()
-    result = runner.run(
-        f"(sleep 3; echo x > {marker}) & sleep 30", cwd=str(tmp_path), timeout_s=1
-    )
+    result = runner.run(f"(sleep 3; echo x > {marker}) & sleep 30", cwd=str(tmp_path), timeout_s=1)
     elapsed = time.monotonic() - started
 
     assert result.timed_out is True

@@ -111,7 +111,7 @@ def _events_service_if_present() -> EventService | None:
 
 
 def _my_jira_tasks_service_if_present() -> MyJiraTasksService | None:
-    """"Moje zadania" (ADR 0054) na drzwiach MCP — TYLKO gdy operator skonfigurował JEDNO stałe
+    """ "Moje zadania" (ADR 0054) na drzwiach MCP — TYLKO gdy operator skonfigurował JEDNO stałe
     konto Jira (``WORKMATE_JIRA_MY_ACCOUNT``) obok URL-a i tokenu odczytu.
 
     Sesja stdio (Claude Code/CLI) nie ma tożsamości Teams AAD, więc — inaczej niż na drzwiach

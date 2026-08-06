@@ -123,9 +123,7 @@ def apply_seed(
     seen: set[str] = set()
     for source, text in documents:
         try:
-            metadata, body = derive_note(
-                source, text, project=project, fallback_date=fallback_date
-            )
+            metadata, body = derive_note(source, text, project=project, fallback_date=fallback_date)
             target_id = build_note_id(company, project, metadata.date, metadata.title)
         except (ValueError, WriteError) as exc:
             results.append(SeedResult(source, "", ACTION_ERROR, str(exc)))
@@ -166,10 +164,7 @@ def format_report(results: Sequence[SeedResult], *, write: bool) -> str:
         "kolizje": sum(r.action == ACTION_COLLISION for r in results),
         "błędy": sum(r.action == ACTION_ERROR for r in results),
     }
-    lines.append(
-        "Podsumowanie: "
-        + " · ".join(f"{name} {value}" for name, value in counts.items())
-    )
+    lines.append("Podsumowanie: " + " · ".join(f"{name} {value}" for name, value in counts.items()))
     return "\n".join(lines)
 
 
@@ -218,9 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         default="*",
         help="wzorzec plików (domyślnie * — filtrowane po obsługiwanych rozszerzeniach)",
     )
-    parser.add_argument(
-        "--recursive", action="store_true", help="przeszukaj też podkatalogi"
-    )
+    parser.add_argument("--recursive", action="store_true", help="przeszukaj też podkatalogi")
     parser.add_argument(
         "--write",
         action="store_true",
