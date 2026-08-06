@@ -1,8 +1,14 @@
-"""Testy narzędzi warstwy spajającej (ADR 0019/0021): read_recent_events + bramka zapisu GitHub.
+"""Warstwa spajająca przez narzędzie ``GitHub`` (ADR 0019/0021; krok 5.2 ADR 0009 paczki).
 
-Bramkowanie jak ``save_note``: narzędzia zapisu powstają WYŁĄCZNIE z fabryki
-``build_github_write_catalog`` (przy włączonej bramce). Sprawdzamy też kopertę błędów
-(``WriteError`` → ``{"error": ...}``).
+Te sondy biegły dawniej na ``build_events_catalog`` i ``build_github_write_catalog`` — dwóch
+builderach, które krok 5.2 osierocił. Zostały PRZENIESIONE, nie skasowane, bo sprawdzają rzecz,
+której ``test_github_catalog.py`` nie sprawdza: całą ścieżkę na **prawdziwym**
+``GithubWriteService``, nie na atrapie zapisu. Atrapa potwierdza, że dispatcher woła to, co
+trzeba; te sondy — że serwis pod nim faktycznie składa odpowiedź i tłumaczy ``WriteError``
+na kopertę.
+
+Bramka zapisu jest ta sama co przy ``save_note``: bez ``write_service`` akcje ``create_issue``
+i ``comment`` nie istnieją w schemacie (sonda negatywna stoi w ``test_github_catalog.py``).
 """
 
 from __future__ import annotations
@@ -10,10 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from workmate.core.application.github import GithubWriteService
-from workmate.core.application.tools import (
-    build_events_catalog,
-    build_github_write_catalog,
-)
+from workmate.core.application.tools import build_github_catalog
 from workmate.core.domain.events import Event, NewEvent
 from workmate.core.errors import WriteError
 
@@ -40,7 +43,7 @@ class _FakeStore:
 
 
 class _EventsService:
-    """Minimalna atrapa EventService dla narzędzia read_recent_events."""
+    """Minimalna atrapa ``EventService`` dla akcji ``events``."""
 
     def __init__(self, store):
         self._store = store
@@ -65,35 +68,31 @@ class _FailingWriter:
         raise WriteError("nie udało się dodać komentarza (HTTP 403).")
 
 
-def _tool(catalog, name):
-    return next(spec.fn for spec in catalog if spec.name == name)
-
-
-def test_events_catalog_exposes_read_recent_events():
+def _github(*, write=None):
     store = _FakeStore()
     store.append(NewEvent(source="github", kind="issue_opened", external_id="1", occurred_at=_WHEN))
-    catalog = build_events_catalog(_EventsService(store))
-    assert [s.name for s in catalog] == ["read_recent_events"]
-    result = _tool(catalog, "read_recent_events")()
-    assert result["count"] == 1
-    assert result["events"][0]["external_id"] == "1"
+    events = _EventsService(store)
+    service = GithubWriteService(write, owner="o", repo="r") if write is not None else None
+    return build_github_catalog(events=events, write_service=service)[0]  # type: ignore[arg-type]
 
 
-def test_write_catalog_exposes_gated_tools():
-    service = GithubWriteService(_OkWriter(), owner="o", repo="r")
-    catalog = build_github_write_catalog(service)
-    assert {s.name for s in catalog} == {"create_github_issue", "comment_github_issue"}
+def test_akcja_events_czyta_zdarzenia_ze_sklepu():
+    wynik = _github().fn(action="events")
+    assert wynik["count"] == 1
+    assert wynik["events"][0]["external_id"] == "1"
 
 
-def test_create_github_issue_tool_returns_created():
-    service = GithubWriteService(_OkWriter(), owner="o", repo="r")
-    catalog = build_github_write_catalog(service)
-    result = _tool(catalog, "create_github_issue")(title="Awaria", body="opis")
-    assert result == {"created": True, "number": 7, "url": "http://gh/7"}
+def test_create_issue_idzie_przez_prawdziwy_serwis_zapisu():
+    wynik = _github(write=_OkWriter()).fn(action="create_issue", title="Awaria", body="opis")
+    assert wynik == {"created": True, "number": 7, "url": "http://gh/7"}
 
 
-def test_write_tool_envelopes_write_error():
-    service = GithubWriteService(_FailingWriter(), owner="o", repo="r")
-    catalog = build_github_write_catalog(service)
-    result = _tool(catalog, "create_github_issue")(title="x", body="y")
-    assert "error" in result and "422" in result["error"]  # WriteError → {"error": ...}
+def test_comment_idzie_przez_prawdziwy_serwis_zapisu():
+    wynik = _github(write=_OkWriter()).fn(action="comment", number=7, body="ok")
+    assert wynik["created"] is True
+
+
+def test_write_error_serwisu_wraca_koperta_a_nie_wyjatkiem():
+    """``WriteError`` z HTTP 422 ma dojść do modelu jako czytelny błąd, nie wywrócić tury."""
+    wynik = _github(write=_FailingWriter()).fn(action="create_issue", title="x", body="y")
+    assert "error" in wynik and "422" in wynik["error"]
