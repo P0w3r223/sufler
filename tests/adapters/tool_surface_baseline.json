@@ -1,4 +1,31 @@
 {
+  "get_my_jira_history": {
+    "description": "Zwróć TWOJE ZAKOŃCZONE zadania z Jiry — historię pracy (ODCZYT — nic nie zmienia).\n\n        ``since``/``until`` to opcjonalne daty ``YYYY-MM-DD`` zawężające po dacie ROZWIĄZANIA\n        zgłoszenia (np. pytanie \"moja historia zadań w tym roku\" → ``since='RRRR-01-01'``; puste\n        pole = bez ograniczenia z tej strony). Zwraca ``tasks`` — każde z ``key``, ``summary``,\n        ``status``, ``resolved`` (data zakończenia), ``url`` — najnowsze pierwsze, maks. 50.\n        ``truncated=true`` znaczy, że wyników było więcej — POWIEDZ wtedy, że pokazujesz 50\n        najnowszych i zaproponuj węższy zakres dat. Użyj, gdy użytkownik pyta o zadania\n        ZAKOŃCZONE/zamknięte/historię pracy; do OTWARTYCH służy get_my_jira_tasks.\n        ",
+    "parameters": {
+      "properties": {
+        "since": {
+          "default": "",
+          "title": "Since",
+          "type": "string"
+        },
+        "until": {
+          "default": "",
+          "title": "Until",
+          "type": "string"
+        }
+      },
+      "title": "get_my_jira_historyArguments",
+      "type": "object"
+    }
+  },
+  "get_my_jira_tasks": {
+    "description": "Zwróć TWOJE otwarte zadania z Jiry, ROZDZIELONE na dwie grupy (ODCZYT — nic nie zmienia).\n\n        Bez parametrów: wynik jest zawsze zawężony do konta powiązanego z pytającym. Zwraca DWIE\n        osobne listy: ``assigned_to_me`` — zadania PRZYPISANE do Ciebie, oraz\n        ``reported_by_me_unassigned`` — zadania ZGŁOSZONE przez Ciebie, ale NIEPRZYPISANE do\n        nikogo (czekają na podjęcie). Każde zadanie ma ``key``, ``summary``, ``status``,\n        ``priority``, ``assignee``, ``due_date``, ``url``. PRZEDSTAW te grupy OSOBNO (np. \"oto\n        twoje zadania\" i \"oto zadania zgłoszone przez ciebie, nieprzypisane do nikogo\") — NIE\n        mieszaj ich w jedną listę. Obie puste = brak otwartych zadań. Użyj, gdy użytkownik pyta o\n        SWOJE otwarte/bieżące zadania; do zadań ZAKOŃCZONYCH (historia) użyj get_my_jira_history.\n        ",
+    "parameters": {
+      "properties": {},
+      "title": "get_my_jira_tasksArguments",
+      "type": "object"
+    }
+  },
   "get_note": {
     "description": "Pobierz pełną treść jednej notatki po jej identyfikatorze.\n\n        Identyfikator ma postać ``<firma>/<projekt>/<plik-bez-rozszerzenia>``,\n        np. 'mpwik/scada-integration/2025-06-12-przeglad-api-scada' (z wyników search_notes).\n        ",
     "parameters": {
