@@ -133,7 +133,16 @@ def build_session_header(
         lines.append(f"Conversation: {channel or '-'} / {thread or '-'}.")
     if skills:
         lines.append("")
-        lines.append("Skills available:")
+        # Druga część zdania jest FAKTEM o świecie, nie zachętą: czyszczenie kontekstu
+        # (ADR 0058) zdejmuje najstarsze wyniki poleceń, a procedura wczytana `cat`-em na
+        # początku długiego zadania jest pierwszą w kolejce. Model, który przepisze jej kroki
+        # do brudnopisu, zachowa je na całą turę; ten, który tego nie zrobi, straci je
+        # dokładnie wtedy, gdy zadanie jest długie.
+        lines.append(
+            "Skills available in /mnt/skills/ — read the one that fits before starting, "
+            "and keep its steps in your scratchpad, since older command output drops out "
+            "of context as a conversation grows:"
+        )
         lines.extend(f"- {name} — {description}" for name, description in skills)
     return "\n".join(lines)
 

@@ -193,6 +193,7 @@ class ConversationalResponder:
         change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
         outbox_delivery: Callable[[WorkspaceScope], str] | None = None,
+        skills: Sequence[tuple[str, str]] = (),
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
@@ -245,6 +246,10 @@ class ConversationalResponder:
         # Ten sam ``scope`` co narzędzia katalogu roboczego — skrzynka leży w katalogu TEJ rozmowy,
         # więc model nie ma jak nadać pliku „z cudzej".
         self._outbox_delivery = outbox_delivery
+        # Lista procedur z `/mnt/skills` (ADR 0005) — czytana RAZ przy składaniu drzwi, bo jest
+        # stała w obrębie procesu. Idzie do nagłówka sesji, nie do korpusu: korpus niesie
+        # breakpoint cache'u, a lista bywa zmieniana między wydaniami obrazu.
+        self._skills = tuple(skills)
         # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
         # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
         # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
@@ -400,7 +405,9 @@ class ConversationalResponder:
             attachments=message.attachments,
             history=transcript,
             extra_tools=extra_tools,
-            session_header=build_session_header(now, channel=self._channel, thread=external_id),
+            session_header=build_session_header(
+                now, channel=self._channel, thread=external_id, skills=self._skills
+            ),
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.

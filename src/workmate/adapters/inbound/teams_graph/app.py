@@ -39,6 +39,7 @@ from workmate.config import (
     ScheduleSettings,
     Settings,
     ShellSettings,
+    SkillsSettings,
     TeamsGraphSettings,
     WorkspaceSettings,
     require_writable,
@@ -181,6 +182,8 @@ def main() -> None:
         # Skrzynka nadawcza rozmowy (ADR 0009 paczki) — dzieli bramkę i limit z `reply_with_file`.
         _build_outbox_send_factory(settings, token_provider),
         settings.max_file_reply_kb * 1024,
+        # Procedury z `/mnt/skills` (ADR 0005) — bez ścieżki lista zostaje pusta.
+        SkillsSettings.from_env(),
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -991,6 +994,7 @@ def _build_responder(
     change_router: ChangeDigestRouter | None = None,
     outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
     outbox_max_file_bytes: int = 0,
+    skills_settings: SkillsSettings | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -1025,6 +1029,7 @@ def _build_responder(
         supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
         outbox_send_factory=outbox_send_factory,
         outbox_max_file_bytes=outbox_max_file_bytes,
+        skills_settings=skills_settings,
     )
 
 

@@ -26,6 +26,7 @@ from workmate.adapters.outbound.filesystem_outbox import (
     OUTBOX_DIRNAME,
     FilesystemOutboxRepository,
 )
+from workmate.adapters.outbound.filesystem_skills import read_skill_catalog
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
@@ -73,6 +74,7 @@ if TYPE_CHECKING:
         ConversationSettings,
         Settings,
         ShellSettings,
+        SkillsSettings,
         WorkspaceSettings,
     )
     from workmate.core.application.tools import ToolSpec
@@ -375,6 +377,7 @@ def build_conversational_responder(
     supports_attachments: bool = False,
     outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
     outbox_max_file_bytes: int = 0,
+    skills_settings: SkillsSettings | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -441,6 +444,13 @@ def build_conversational_responder(
     )
     # Skrzynka nadawcza (ADR 0009 paczki) dzieli korzeń z powłoką i katalogiem roboczym — bez
     # ``workspace_settings`` nie ma czego czytać, więc dostawa nie powstaje mimo podanej fabryki.
+    # Procedury z `/mnt/skills` (ADR 0005) — odczyt RAZ przy składaniu drzwi. Brak katalogu daje
+    # pustą listę i zachowanie dokładnie dawne; nagłówek sesji nie dostaje wtedy sekcji skilli.
+    skills = (
+        read_skill_catalog(skills_settings.skills_dir, limit=skills_settings.max_in_header)
+        if skills_settings is not None
+        else ()
+    )
     outbox_delivery = (
         _build_outbox_delivery(
             workspace_settings, outbox_send_factory, max_file_bytes=outbox_max_file_bytes
@@ -468,6 +478,7 @@ def build_conversational_responder(
         change_digest=change_digest,
         metrics=metrics,
         outbox_delivery=outbox_delivery,
+        skills=skills,
     )
     return SafeResponder(inner) if safe else inner
 
