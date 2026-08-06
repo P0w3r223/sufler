@@ -115,8 +115,9 @@ def build_session_header(
     channel: str = "",
     thread: str = "",
     skills: Sequence[tuple[str, str]] = (),
+    github_thread: tuple[str, int] | None = None,
 ) -> str:
-    """Złóż nagłówek sesji: data, identyfikator rozmowy i (gdy są) dostępne skille.
+    """Złóż nagłówek sesji: data, identyfikator rozmowy, powiązanie z GitHubem i skille.
 
     Data jest tu, a nie w korpusie, z dwóch powodów. Funkcjonalnie: bez niej model odtwarza
     „dziś" z cutoffu treningowego, a narzędzia przyjmują daty jako argumenty i użytkownicy
@@ -127,10 +128,30 @@ def build_session_header(
     Kontener bywa DŁUGOŻYJĄCY (poller chodzi dobami), więc nagłówek składamy PER TURĘ,
     nie raz na starcie procesu — inaczej data zamarzłaby na dniu wdrożenia.
     ``skills`` to pary (nazwa, opis w jednej linii); puste, dopóki katalog skilli nie istnieje.
+
+    ``github_thread`` to ``(rodzaj, numer)`` issue/PR powiązanego z TYM wątkiem Teams, wzięty
+    z zaufanego ``ThreadLinkStore`` — nigdy od modelu. Do kroku 5.5 (ADR 0009 paczki) niósł to
+    OSOBNY ``ToolSpec`` (``reply_on_thread``) z numerem domkniętym w closurze. Narzędzie zostało
+    zniesione, bo wołało tę samą metodę serwisu co ``GitHub(action='comment')``, za tą samą
+    bramką zapisu i obok niej — czyli nie zawężało niczego, tylko wypełniało jeden argument.
+    Wypełnienie argumentu to zastosowanie istniejącej zdolności, a nie nowa zdolność, więc
+    należy do treści promptu, nie do katalogu narzędzi.
+
+    Nagłówek jest właściwym miejscem także kosztowo: składa się per turę i z definicji leży
+    POZA cache'owanym prefiksem ``tools+system``, więc zdanie o powiązaniu nic nie unieważnia —
+    a schemat narzędzia siedziałby w tablicy ``tools``, czyli dokładnie w tym prefiksie.
     """
     lines = [f"Today is {now:%Y-%m-%d}, {_WEEKDAYS[now.weekday()]}."]
     if channel or thread:
         lines.append(f"Conversation: {channel or '-'} / {thread or '-'}.")
+    if github_thread is not None:
+        kind, number = github_thread
+        noun = "pull request" if kind == "pr" else "issue"
+        lines.append(
+            f"This Teams thread is linked to GitHub {noun} #{number}. When the user explicitly "
+            f"asks you to reply or comment there, call GitHub(action='comment', number={number}) "
+            "— never on your own initiative, and never on a different number for this thread."
+        )
     if skills:
         lines.append("")
         # Druga część zdania jest FAKTEM o świecie, nie zachętą: czyszczenie kontekstu

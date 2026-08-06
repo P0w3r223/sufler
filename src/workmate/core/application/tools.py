@@ -1305,35 +1305,6 @@ def build_schedule_catalog(service: TeamScheduleService) -> list[ToolSpec]:
     return [ToolSpec("Schedule", _SCHEDULE_DESC, schedule)]
 
 
-def build_thread_reply_catalog(
-    write_service: GithubWriteService, target_kind: str, target_number: str
-) -> list[ToolSpec]:
-    """SCOPED narzędzie odpowiedzi na issue/PR, którego dotyczy wątek Teams (ADR 0024, Faza 3b).
-
-    Numer celu jest PRE-ZWIĄZANY z zaufanego ``ThreadLinkStore`` (mapowanie wątek↔issue), NIE od
-    modelu — agent nie może przekierować komentarza na inne issue. Wstrzykiwane PER TURĘ tylko dla
-    wątków powiązanych z issue/PR i tylko przy włączonej bramce zapisu. Model widzi w opisie numer
-    celu i regułę „tylko na jawną prośbę" (miękkie potwierdzenie, wariant c).
-    """
-    number = int(target_number)
-    noun = "PR" if target_kind == "pr" else "issue"
-
-    def reply_on_thread(body: str) -> dict[str, Any]:
-        def build() -> dict[str, Any]:
-            result = write_service.create_comment(number, body)
-            return {"created": True, **result}
-
-        return _envelope(build, errors=(WorkMateError, ValidationError))
-
-    description = (
-        f"Odpowiedz komentarzem na {noun} #{number} w GitHub — issue/PR, którego dotyczy TEN "
-        "wątek Teams (ZAPIS — tworzy komentarz). Użyj TYLKO gdy użytkownik WPROST prosi o "
-        "odpowiedź/komentarz na GitHub — nigdy z własnej inicjatywy. Numer jest ustalony z wątku "
-        "(NIE podajesz go); podajesz jedynie ``body`` (Markdown). Tworzy wyłącznie nowy komentarz."
-    )
-    return [ToolSpec("reply_on_thread", description, reply_on_thread)]
-
-
 def build_file_reply_catalog(
     sender: TeamsFileSender,
     renderer: DocumentRenderer,

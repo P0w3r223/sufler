@@ -150,3 +150,41 @@ def test_system_blocks_put_static_first_and_drop_empty_header():
     assert system_blocks("STATIC", "HEADER") == ("STATIC", "HEADER")
     assert system_blocks("STATIC") == ("STATIC",)
     assert system_blocks("STATIC", "") == ("STATIC",)
+
+
+# --- Powiązanie wątku z issue/PR w nagłówku sesji (ADR 0024; krok 5.5 ADR 0009 paczki) ---
+
+
+def test_naglowek_bez_powiazania_nie_wspomina_o_githubie() -> None:
+    """Zdanie o powiązaniu wchodzi WYŁĄCZNIE dla wątku, który je ma — inaczej byłoby obietnicą
+    bez pokrycia, tak jak akapit zapisu przy nieczynnej akcji."""
+    naglowek = build_session_header(datetime(2026, 8, 6, 10, 0))
+    assert "GitHub" not in naglowek
+
+
+def test_naglowek_niesie_numer_rodzaj_i_regule_jawnej_prosby() -> None:
+    """Trzy rzeczy, które niósł dawny opis ``reply_on_thread``, muszą przeżyć jego zniesienie:
+    numer celu, rodzaj (issue/PR) i regułę „tylko na wprost wyrażoną prośbę"."""
+    naglowek = build_session_header(datetime(2026, 8, 6, 10, 0), github_thread=("pr", 12))
+    assert "#12" in naglowek
+    assert "pull request" in naglowek
+    assert "explicitly" in naglowek
+    # Nazwa i argument akcji, którą model ma wywołać — inaczej podpowiedź nie ma adresata.
+    assert "GitHub(action='comment', number=12)" in naglowek
+
+
+def test_naglowek_uzywa_rzeczownika_issue_dla_issue() -> None:
+    naglowek = build_session_header(datetime(2026, 8, 6, 10, 0), github_thread=("issue", 7))
+    assert "issue #7" in naglowek
+    assert "pull request" not in naglowek
+
+
+def test_naglowek_zabrania_komentowania_na_inny_numer_w_tym_watku() -> None:
+    """Pre-wiązanie numeru zniknęło ze schematu, więc reguła musi stać w treści.
+
+    Ochrona nie jest przez to słabsza, niż była: ``GitHub(action='comment')`` przyjmował numer
+    wprost już wtedy, gdy ``reply_on_thread`` istniało, i stał w tym samym katalogu za tą samą
+    bramką. Dawne narzędzie nie zawężało niczego — wypełniało argument.
+    """
+    naglowek = build_session_header(datetime(2026, 8, 6, 10, 0), github_thread=("issue", 7))
+    assert "never on a different number" in naglowek

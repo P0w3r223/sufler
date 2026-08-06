@@ -200,6 +200,7 @@ class ConversationalResponder:
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+        github_thread_link: Callable[[str], tuple[str, int] | None] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
         thread_note: ThreadNoteRouter | None = None,
         project_brief: BriefRouter | None = None,
@@ -231,6 +232,11 @@ class ConversationalResponder:
         # zasila komendę ``/moje-zadania`` w ``CommandRouter`` — jedno miejsce rozwiązywania
         # tożsamości.
         self._my_jira_tasks_factory = my_jira_tasks_factory
+        # Powiązanie wątku Teams z issue/PR (ADR 0024) — do NAGŁÓWKA SESJI, nie do katalogu.
+        # Do kroku 5.5 (ADR 0009 paczki) jechało jako narzędzie `reply_on_thread` z numerem
+        # domkniętym w closurze; wołało tę samą metodę serwisu co `GitHub(action='comment')`,
+        # za tą samą bramką i obok niej, więc niczego nie zawężało — wypełniało argument.
+        self._github_thread_link = github_thread_link
         # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
         # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
         self._commands = commands
@@ -430,7 +436,11 @@ class ConversationalResponder:
             history=transcript,
             extra_tools=extra_tools,
             session_header=build_session_header(
-                now, channel=self._channel, thread=external_id, skills=self._skills
+                now,
+                channel=self._channel,
+                thread=external_id,
+                skills=self._skills,
+                github_thread=self._thread_link(external_id),
             ),
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
@@ -481,6 +491,21 @@ class ConversationalResponder:
             replay = self._conversations.replay_messages(conversation_id)
             summary = self._conversations.active_summary(conversation_id)
         return _to_transcript_with_summary(summary, replay)
+
+    def _thread_link(self, external_id: str) -> tuple[str, int] | None:
+        """Powiązanie wątku z issue/PR albo ``None`` — opcjonalne wzbogacenie nagłówka.
+
+        Jak przy narzędziach per turę: awaria odczytu mapowania (np. blokada SQLite) NIE ma
+        prawa zabić tury odczytowej. Degradujemy do „wątek z niczym niepowiązany" i logujemy —
+        agent traci wtedy tylko podpowiedź numeru, a nie zdolność komentowania.
+        """
+        if self._github_thread_link is None:
+            return None
+        try:
+            return self._github_thread_link(external_id)
+        except Exception:
+            logger.warning("Nie udało się odczytać powiązania wątku %r — pomijam", external_id)
+            return None
 
 
 class SafeResponder:
