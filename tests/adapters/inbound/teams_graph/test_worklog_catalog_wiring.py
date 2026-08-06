@@ -1,12 +1,14 @@
-"""Testy wiringu ``_build_worklog_catalog`` (ADR 0034 po cięciu) — odczyt, bez bramki.
+"""Testy wiringu propozycji czasu z commitów (ADR 0034 po cięciu) — odczyt, bez bramki.
 
 Sedno zmiany: zdolność stała dawniej na DWÓCH nogach (Jira = zapis wpisu, GitHub = źródło
 commitów) i miała własną bramkę. Po wycięciu ścieżki zapisu została sama noga GitHuba, a wraz
 z mutacją zniknął powód do bramkowania — odczyt jest w tym repo domyślny (ADR 0006).
 
-To, co zostaje warte przypięcia: powierzchnia jest JEDNONARZĘDZIOWA, konfiguracja przenosi się
-do polityki sesji, a sufity estymacji egzekwują TE drzwi (``GithubSettings.validate`` woła tylko
-poller GitHuba). Golden-test powierzchni MCP zostaje nietknięty — wchodzimy przez ``extra_catalog``.
+Od kroku 5.2 (ADR 0009) zdolność nie jest własnym narzędziem, tylko akcją
+``GitHub(action='worklog')``, a wiring zwraca SERWIS zamiast katalogu. Warte przypięcia zostaje
+to samo co przedtem: konfiguracja przenosi się do polityki sesji, a sufity estymacji egzekwują
+TE drzwi (``GithubSettings.validate`` woła tylko poller GitHuba). Golden-test powierzchni MCP
+zostaje nietknięty — wchodzimy przez ``extra_catalog``.
 """
 
 from __future__ import annotations
@@ -16,8 +18,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph.app import _build_worklog_catalog
+from workmate.adapters.inbound.teams_graph.app import _worklog_service
 from workmate.config import GithubSettings
+from workmate.core.application.tools import build_github_catalog
 
 
 class _FakeGithubClient:
@@ -42,16 +45,24 @@ def _github(**kw) -> GithubSettings:
 
 
 def _build(settings: GithubSettings, client: _FakeGithubClient | None = None):
-    return _build_worklog_catalog(client or _FakeGithubClient(), settings)  # type: ignore[arg-type]
+    return _worklog_service(client or _FakeGithubClient(), settings)  # type: ignore[arg-type]
 
 
-def test_catalog_has_exactly_the_read_tool() -> None:
-    assert {spec.name for spec in _build(_github())} == {"propose_worklog"}
+def _katalog(settings: GithubSettings, client: _FakeGithubClient | None = None):
+    return build_github_catalog(worklog=_build(settings, client))
+
+
+def test_zdolnosc_jest_akcja_narzedzia_github() -> None:
+    """Po kroku 5.2 propozycja czasu nie ma własnej pozycji w powierzchni narzędziowej."""
+    katalog = _katalog(_github())
+    assert {spec.name for spec in katalog} == {"GitHub"}
+    schema = katalog[0].fn.__annotations__["action"]
+    assert "worklog" in str(schema)
 
 
 def test_no_gate_is_required() -> None:
     """Zdolność wchodzi z samą konfiguracją GitHuba — bramka zniknęła razem z mutacją."""
-    assert _build(_github(enable_github_write=False)) != []
+    assert _katalog(_github(enable_github_write=False)) != []
 
 
 @pytest.mark.parametrize(
@@ -80,6 +91,6 @@ def test_ramp_up_longer_than_idle_gap_is_rejected() -> None:
 def test_timezone_from_settings_reaches_the_query_window() -> None:
     """Strefa z ustawień musi dojechać do granic okna — inaczej doba liczyłaby się gdzie indziej."""
     client = _FakeGithubClient()
-    spec = _build(_github(worklog_tz="Europe/London"), client)[0]
-    spec.fn(date(2026, 1, 5), date(2026, 1, 9))
+    spec = _katalog(_github(worklog_tz="Europe/London"), client)[0]
+    spec.fn(action="worklog", since=date(2026, 1, 5), until=date(2026, 1, 9))
     assert client.calls[0]["since"].tzinfo == ZoneInfo("Europe/London")

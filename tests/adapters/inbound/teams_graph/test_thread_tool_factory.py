@@ -104,13 +104,13 @@ def test_bridge_catalog_gate_off_yields_no_thread_factory():
     )
 
     assert factory is None  # brak fabryki = brak reply_on_thread
-    # Odczyt zdarzeń, podsumowanie aktywności projektu (ADR 0029) i propozycja czasu z commitów
-    # (ADR 0034 — czysty odczyt, bez bramki); zapis GitHub OFF, więc nic mutującego.
-    assert [spec.name for spec in catalog] == [
-        "read_recent_events",
-        "get_project_activity",
-        "propose_worklog",
-    ]
+    # Od kroku 5.2 (ADR 0009) to JEDNO narzędzie: odczyt zdarzeń, podsumowanie aktywności projektu
+    # (ADR 0029) i propozycja czasu z commitów (ADR 0034) są jego akcjami. Zapis GitHub OFF, więc
+    # akcje mutujące nie istnieją w schemacie — bramka siedzi w `Literal`, nie w ciele funkcji.
+    assert [spec.name for spec in catalog] == ["GitHub"]
+    akcje = str(catalog[0].fn.__annotations__["action"])
+    assert "events" in akcje and "activity" in akcje and "worklog" in akcje
+    assert "create_issue" not in akcje and "comment" not in akcje
 
 
 # --- fabryka reply_with_file (ADR 0026, A′2) + kompozycja fabryk wątkowych --------

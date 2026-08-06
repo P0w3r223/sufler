@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from workmate.core.application.events import EventService
     from workmate.core.application.github import GithubWriteService
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.application.worklog import WorklogService
     from workmate.core.ports.github import GithubReadPort
     from workmate.core.ports.outbox import Deliverable
     from workmate.core.ports.thread_links import ThreadLinkStore
@@ -210,24 +211,22 @@ def _build_bridge_catalog(
     """
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_activity_catalog, build_events_catalog
+    from workmate.core.application.tools import build_github_catalog
 
     events = EventService(SqliteEventStore(events_settings.db_path))
-    catalog = [*build_events_catalog(events), *build_activity_catalog(events)]
 
     if not (github_settings.token and github_settings.owner and github_settings.repo):
-        return catalog, None
+        return build_github_catalog(events=events), None
 
     from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
     from workmate.core.application.github import GithubWriteService
-    from workmate.core.application.tools import build_github_write_catalog
 
     # JEDEN klient GitHub na proces, współdzielony przez odczyt commitów i zapis — dwa klienty
     # do tego samego hosta trzymałyby dwie pule połączeń bez żadnego zysku.
     client = _github_client(github_settings)
-    catalog += _build_worklog_catalog(client, github_settings)
+    worklog = _worklog_service(client, github_settings)
     if not github_settings.enable_github_write:
-        return catalog, None
+        return build_github_catalog(events=events, worklog=worklog), None
 
     write_service = GithubWriteService(
         client, owner=github_settings.owner, repo=github_settings.repo, events=events
@@ -242,7 +241,7 @@ def _build_bridge_catalog(
         github_settings.repo,
     )
     return (
-        [*catalog, *build_github_write_catalog(write_service)],
+        build_github_catalog(events=events, worklog=worklog, write_service=write_service),
         _make_thread_tool_factory(thread_links, write_service),
     )
 
@@ -264,19 +263,19 @@ def _github_client(github_settings: GithubSettings) -> HttpxGithubClient:
     return HttpxGithubClient(transport, github_settings.token, api_base=github_settings.api_base)
 
 
-def _build_worklog_catalog(
-    client: GithubReadPort, github_settings: GithubSettings
-) -> list[ToolSpec]:
-    """Narzędzie propozycji czasu z commitów (ADR 0034) — czysty ODCZYT, bez bramki.
+def _worklog_service(client: GithubReadPort, github_settings: GithubSettings) -> WorklogService:
+    """Serwis propozycji czasu z commitów (ADR 0034) — czysty ODCZYT, bez bramki.
 
-    Bramki nie ma celowo: po wycięciu ścieżki zapisu narzędzie niczego nie mutuje, a repo trzyma
-    zasadę „odczyt domyślny, bramkujemy zapis" (ADR 0006). Zdolność stoi wyłącznie na GitHubie —
-    klucze Jira wyłuskujemy regexem z treści commitów, więc konfiguracja Jiry jest tu zbędna.
+    Bramki nie ma celowo: po wycięciu ścieżki zapisu nic tu nie mutuje, a repo trzyma zasadę
+    „odczyt domyślny, bramkujemy zapis" (ADR 0006). Zdolność stoi wyłącznie na GitHubie — klucze
+    Jira wyłuskujemy regexem z treści commitów, więc konfiguracja Jiry jest tu zbędna.
 
     Sufity estymacji egzekwujemy TU, bo ``GithubSettings.validate`` woła tylko poller GitHuba
     (``workmate-github``), a to te drzwi liczą propozycję (ta sama asymetria co przy Jirze).
+
+    Zwraca SERWIS, nie katalog: od kroku 5.2 (ADR 0009) propozycja czasu jest akcją
+    ``GitHub(action='worklog')``, a nie własnym narzędziem.
     """
-    from workmate.core.application.tools import build_worklog_catalog
     from workmate.core.application.worklog import WorklogService
     from workmate.core.domain.worklog import SessionPolicy
 
@@ -301,7 +300,7 @@ def _build_worklog_catalog(
         github_settings.repo,
         github_settings.worklog_tz,
     )
-    return build_worklog_catalog(service)
+    return service
 
 
 def _make_thread_tool_factory(
