@@ -190,7 +190,9 @@ def build_agent_runtime(
     # ``Notes`` zamiast ``get_project_status`` i ``save_note``, a trzy narzędzia odczytu bazy
     # wiedzy warunkowo — zastępuje je powłoka, której przy wyłączonej bramce po prostu nie ma.
     catalog = [
-        *build_notes_catalog(projects_service, write_service=write_service),
+        *build_notes_catalog(
+            projects_service, write_service=write_service, shell_available=shell_available
+        ),
         *([] if shell_available else build_notes_read_catalog(notes_service, projects_service)),
     ]
     return AgentRuntime(
@@ -449,15 +451,36 @@ def build_conversational_responder(
     ``workspace_settings`` — skrzynka leży w katalogu roboczym rozmowy, więc bez wspólnego korzenia
     drzwi szukałyby plików gdzie indziej, niż zapisuje je wykonawca.
     """
+    # Skrzynka nadawcza ma własną bramkę po stronie drzwi (``enable_file_reply``), niezależną od
+    # powłoki. Rozstrzygamy ją PRZED zbudowaniem powłoki, bo opis narzędzia ``Bash`` obiecuje
+    # dostawę przez ``outputs/`` — a obietnica przy wyłączonej dostawie byłaby tym samym
+    # defektem, który ta zdolność likwiduje: zapis kończy się kodem 0 i ciszą.
+    outbox_enabled = (
+        outbox_send_factory is not None
+        and workspace_settings is not None
+        and outbox_max_file_bytes > 0
+    )
+    # Powłoka (ADR 0057) ma WŁASNĄ bramkę i własny profil zaufania, ale dzieli korzeń ścieżek
+    # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
+    # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
+    # narzędzia plikowe zapisują.
+    shell_factory = (
+        _build_shell_factory(shell_settings, workspace_settings, outbox_enabled=outbox_enabled)
+        if shell_settings is not None and workspace_settings is not None
+        else None
+    )
     runtime = build_agent_runtime_or_exit(
         settings,
         agent_settings,
         enable_write=enable_write,
         extra_catalog=extra_catalog,
         system_prompt=static_prompt_for(attachments=supports_attachments),
-        # ``shell_settings`` bywa ``None`` (drzwi bez powłoki) — a wtedy narzędzia odczytu
-        # bazy wiedzy są tym bardziej potrzebne, bo nie ma czym ich zastąpić.
-        shell_available=bool(shell_settings and shell_settings.enabled),
+        # Z FABRYKI, nie z ustawień. `shell_settings.enabled` mówi, czego chciał operator;
+        # `shell_factory` — co agent faktycznie dostanie. Rozjeżdżają się przy braku
+        # `workspace_settings` i na platformie, gdzie klient wykonawcy nie importuje się
+        # (POSIX-only). Rozjazd oznaczałby agenta bez powłoki I bez narzędzi odczytu, czyli
+        # bez jakiejkolwiek drogi do bazy wiedzy — po cichu.
+        shell_available=shell_factory is not None,
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -476,24 +499,6 @@ def build_conversational_responder(
     workspace_factory = (
         _build_workspace_factory(workspace_settings)
         if enable_workspace and workspace_settings is not None
-        else None
-    )
-    # Powłoka (ADR 0057) ma WŁASNĄ bramkę i własny profil zaufania, ale dzieli korzeń ścieżek
-    # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
-    # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
-    # narzędzia plikowe zapisują.
-    # Skrzynka nadawcza ma własną bramkę po stronie drzwi (``enable_file_reply``), niezależną od
-    # powłoki. Rozstrzygamy ją PRZED zbudowaniem powłoki, bo opis narzędzia ``Bash`` obiecuje
-    # dostawę przez ``outputs/`` — a obietnica przy wyłączonej dostawie byłaby tym samym
-    # defektem, który ta zdolność likwiduje: zapis kończy się kodem 0 i ciszą.
-    outbox_enabled = (
-        outbox_send_factory is not None
-        and workspace_settings is not None
-        and outbox_max_file_bytes > 0
-    )
-    shell_factory = (
-        _build_shell_factory(shell_settings, workspace_settings, outbox_enabled=outbox_enabled)
-        if shell_settings is not None and workspace_settings is not None
         else None
     )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,

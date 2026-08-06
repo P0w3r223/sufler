@@ -49,9 +49,11 @@ def _write_service() -> NotesWriteService:
     return NotesWriteService(FakeNotesWriter(), FakeProjectsRepository(projects, {}))
 
 
-def _spec(*, write: bool) -> ToolSpec:
+def _spec(*, write: bool, shell: bool = False) -> ToolSpec:
     return build_notes_catalog(
-        _projects_service(), write_service=_write_service() if write else None
+        _projects_service(),
+        write_service=_write_service() if write else None,
+        shell_available=shell,
     )[0]
 
 
@@ -98,10 +100,31 @@ def test_bez_write_service_akcja_save_nie_istnieje_w_schemacie() -> None:
 
 
 def test_bez_write_service_opis_nie_obiecuje_zapisu() -> None:
-    """Bramka w schemacie i opis muszą mówić to samo — inaczej model dostaje sprzeczność."""
+    """Bramka w schemacie i opis muszą mówić to samo — inaczej model dostaje sprzeczność.
+
+    Asercja jest na małe litery świadomie: pierwsza wersja sprawdzała wersalikowe „ZAPIS"
+    i przepuszczała nagłówek „stan projektu i zapis notatki", który jechał w obu wariantach.
+    """
     opis = _spec(write=False).description
     assert "`save`" not in opis
-    assert "ZAPIS" not in opis
+    assert "zapis" not in opis.lower()
+
+
+# ── Opis odsyła tam, gdzie zdolność faktycznie jest ─────────────────────────────────────
+
+
+def test_bez_powloki_opis_odsyla_do_narzedzi_odczytu() -> None:
+    """Odesłanie do `workmate-search` bez `Bash` byłoby obietnicą bez pokrycia — i to w stanie
+    DOMYŚLNYM produkcji, gdzie `WORKMATE_ENABLE_SHELL` jest wyłączona (ADR 0010)."""
+    opis = _spec(write=False, shell=False).description
+    assert "search_notes" in opis and "get_note" in opis
+    assert "workmate-search" not in opis
+
+
+def test_z_powloka_opis_odsyla_do_rankera_w_powloce() -> None:
+    opis = _spec(write=False, shell=True).description
+    assert "workmate-search" in opis
+    assert "search_notes" not in opis
 
 
 def test_bez_write_service_pola_zapisu_znikaja_ze_schematu() -> None:
