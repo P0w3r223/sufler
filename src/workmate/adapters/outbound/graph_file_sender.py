@@ -48,10 +48,17 @@ class HttpxGraphFileSender:
         token_provider: Callable[[], str],
         *,
         sleep: Callable[[float], None] = time.sleep,
+        retry_transient: bool = True,
     ) -> None:
         self._client = client
         self._token = token_provider
         self._sleep = sleep  # wstrzykiwalny, by testy nie odczekiwały realnego backoffu
+        # Ponawianie 5xx/timeoutów wyłączają konsumenci, KTÓRZY MAJĄ WŁASNĄ pętlę ponowień —
+        # dziś skrzynka nadawcza (plik zostaje, następna tura ponawia). Dwie warstwy retry nad tą
+        # samą operacją mnożą najgorszy przypadek: 4 próby × timeout × dwa żądania, a to opóźnienie
+        # płaci rozmówca czekający na odpowiedź tury. 429 zostaje ponawiane niezależnie od tej
+        # flagi (patrz ``graph_http``) — tam odczekanie jest wymogiem Graph, nie wyborem.
+        self._retry_transient = retry_transient
 
     def upload_channel_file(
         self,
@@ -126,8 +133,8 @@ class HttpxGraphFileSender:
         self._client.headers["Authorization"] = f"Bearer {self._token()}"
 
     def _get(self, url: str) -> dict[str, Any]:
-        # GET nic nie zmienia → powtórzenie zawsze bezpieczne.
-        response = self._request("GET", url, retry_transient=True)
+        # GET nic nie zmienia → powtórzenie zawsze bezpieczne (o ile wołający go chce).
+        response = self._request("GET", url, retry_transient=self._retry_transient)
         data: dict[str, Any] = response.json()
         return data
 
@@ -138,7 +145,7 @@ class HttpxGraphFileSender:
             url,
             content=content,
             headers={"Content-Type": content_type},
-            retry_transient=True,
+            retry_transient=self._retry_transient,
         )
         return response.json() if response.content else {}
 

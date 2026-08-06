@@ -342,3 +342,97 @@ def test_BEZ_migawki_nie_wysylamy_nic():
     assert sent == []
     assert report.is_empty()
     assert repo.discarded == [], "bez migawki nie kasujemy też niczego"
+
+
+def _fail_always(item: Deliverable) -> None:
+    raise RuntimeError("Graph 503")
+
+
+def test_plik_niewysylalny_NIE_blokuje_reszty_kolejki():
+    """Sortowanie po samej nazwie stawiało trwale zawodzącą pozycję na czele KAŻDEJ tury:
+    zjadała budżet i odkładała wszystko za sobą, bez końca."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    delivery.snapshot(_DIR)  # skrzynka pusta na starcie tury — pliki powstają w jej trakcie
+    repo.files.update({"a-zepsuty.md": b"x", "z-zdrowy.md": b"x"})
+    delivery.deliver(_DIR, lambda item: None if item.name.startswith("z") else _fail_always(item))
+
+    sent: list[str] = []
+    delivery.snapshot(_DIR)  # `a-zepsuty.md` został do ponowienia i jest w migawce jako NASZ
+    repo.files["m-nowy.md"] = b"x"  # świeży wynik tury drugiej
+    delivery.deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert sent[0] == "m-nowy.md", (
+        "pozycja z próbami ma zejść na koniec okna mimo wcześniejszej nazwy alfabetycznie — "
+        f"kolejność wysyłki: {sent}"
+    )
+
+
+def test_po_trzeciej_probie_pozycja_jest_sprzatana_i_przestaje_obiecywac_ponowienie():
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    for _ in range(3):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.failed == ()
+    assert report.rejected == (("raport.md", "nie udało się wysłać po 3 próbach"),)
+    assert "raport.md" not in repo.files
+    assert "spróbuję ponownie" not in report.notice()
+
+
+def test_licznik_prob_NIE_rosnie_od_odlozenia_przez_budzet():
+    """Pozycja odłożona budżetem nie została nawet spróbowana — wliczanie jej do sufitu
+    kasowałoby po trzech turach plik, którego nikt nie wysyłał."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_seconds=0.0, monotonic=FakeClock(step=1.0))
+
+    for _ in range(4):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.deferred == ("raport.md",)
+    assert "raport.md" in repo.files, "plik odłożony budżetem nie może zostać skasowany"
+
+
+def test_ponowione_pozycje_NIE_wypadaja_przez_limit_liczby_plikow():
+    """Gdyby liczba prób wchodziła do WYBORU okna, a nie tylko do porządku w nim, pozycja
+    zatrzymana do ponowienia lądowałaby w ogonie i została skasowana z powodem o limicie
+    liczby plików — czyli obietnica „spróbuję ponownie" kończyłaby się cichym usunięciem."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=2)
+
+    delivery.snapshot(_DIR)
+    repo.files["a-ponawiany.md"] = b"x"
+    delivery.deliver(_DIR, _fail_always)
+
+    delivery.snapshot(_DIR)
+    repo.files.update({"b-nowy.md": b"x", "c-nowy.md": b"x"})
+    report = delivery.deliver(_DIR, lambda item: None)
+
+    powody = {name: reason for name, reason in report.rejected}
+    assert "a-ponawiany.md" not in powody, f"ponawiana pozycja odrzucona: {powody}"
+
+
+def test_licznik_zeruje_sie_po_udanej_wysylce():
+    """Klucz to nazwa, a model użyje jej ponownie — świeży plik nie może dziedziczyć prób."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    delivery.snapshot(_DIR)
+    repo.files["raport.md"] = b"x"
+    delivery.deliver(_DIR, _fail_always)
+
+    delivery.snapshot(_DIR)
+    delivery.deliver(_DIR, lambda item: None)  # ta sama nazwa, tym razem sukces
+
+    for _ in range(2):
+        delivery.snapshot(_DIR)
+        repo.files["raport.md"] = b"x"
+        report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.failed, "licznik nie wyzerował się — plik zginął przedwcześnie"

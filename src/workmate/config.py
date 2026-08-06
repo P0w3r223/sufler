@@ -657,6 +657,11 @@ class TeamsGraphSettings:
     # Odpowiedź plikiem w wątku (ADR 0026, A′2) — OSOBNA bramka zapisu, domyślnie OFF (ADR 0006).
     enable_file_reply: bool = False
     max_file_reply_kb: int = 512  # sufit rozmiaru zrenderowanego pliku odpowiedzi
+    # Skrzynka nadawcza rozmowy (ADR 0009 paczki). Oba limity WCHODZĄ w deklarowaną granicę
+    # opóźnienia tury, więc muszą dać się nastroić razem z nią — inaczej dokument opisujący
+    # sufit czasu rozjedzie się z kodem przy pierwszej zmianie.
+    outbox_max_files_per_turn: int = 5
+    outbox_max_seconds: float = 20.0
     # Push OBRAZU do rozmówcy 1:1 (ADR 0027, A′3) — OSOBNA bramka zapisu, domyślnie OFF (ADR 0006).
     enable_user_file_push: bool = False
     max_user_image_kb: int = 1024  # sufit rozmiaru obrazu push-owanego do usera
@@ -738,6 +743,8 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY", default=False
             ),
             max_file_reply_kb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_FILE_REPLY_KB", 512),
+            outbox_max_files_per_turn=_int_from_env("WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_FILES", 5),
+            outbox_max_seconds=float(_int_from_env("WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_SECONDS", 20)),
             enable_user_file_push=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", default=False
             ),

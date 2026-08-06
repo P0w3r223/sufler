@@ -17,7 +17,12 @@ Reguła sprzątania rozróżnia dwa rodzaje niepowodzenia, bo mają przeciwne w�
   ktoś ręcznie wejdzie na wolumen. Nic się przy tym nie traci — skrzynka jest katalogiem
   PRZESYŁKOWYM, a materiał źródłowy leży w katalogu roboczym piętro wyżej;
 - **awaria przejściowa** — sieć, 5xx, limit żądań. Plik ZOSTAJE, więc następna tura ponowi.
-  Tu ubytek byłby realny: treść powstała, a odbiorca jej nie zobaczył.
+  Tu ubytek byłby realny: treść powstała, a odbiorca jej nie zobaczył. **Z sufitem prób**:
+  po trzeciej nieudanej próbie pozycja przechodzi w odrzucenie trwałe. Ta reguła świadomie łamie
+  zdanie powyżej, bo bez sufitu plik trwale niewysyłalny kosztowałby dwa żądania Graph w KAŻDEJ
+  turze tej rozmowy, bez końca, doklejając „spróbuję ponownie" do każdej odpowiedzi. Uzasadnienie
+  „materiał źródłowy leży piętro wyżej" jest przy tym założeniem o zachowaniu modelu, nie
+  własnością systemu — nikt nie wymusza, że kopia została w katalogu roboczym.
 
 Odczyt z dysku dotyka WYŁĄCZNIE pozycji, które przeszły kontrolę metadanych — zawartość skrzynki
 dyktuje model z powłoką, a proces drzwi obsługuje wszystkie kanały naraz.
@@ -57,6 +62,11 @@ _ALLOWED_EXT = frozenset(FILE_REPLY_FORMATS)
 # odpowiedzi, a wiadomość Teams ma sufit rozmiaru — trzysta zdań o odrzuconych plikach mogłoby
 # sprawić, że rozmówca nie dostanie NICZEGO, choć pliki zostały już sprzątnięte.
 _MAX_NAMED_REJECTIONS = 3
+
+# Po ilu nieudanych próbach pozycja przechodzi w odrzucenie trwałe. Sufit istnieje po to, żeby
+# jeden plik niewysyłalny nie blokował czoła kolejki w nieskończoność: pozycje z próbami schodzą
+# na koniec okna, ale bez sufitu i tak wracałyby przy każdej turze.
+_MAX_SEND_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +132,11 @@ class OutboxDelivery:
         # Nazwy, które MY zostawiliśmy po nieudanej wysyłce — jedyne wolno dostarczyć mimo
         # obecności w migawce, bo ich pochodzenie znamy.
         self._ours: dict[str, frozenset[str]] = {}
+        # Nieudane próby wysyłki per (katalog rozmowy, nazwa). Sterują PORZĄDKIEM w oknie tury
+        # (pozycje z próbami schodzą na koniec, więc jeden plik niewysyłalny nie blokuje reszty)
+        # i sufitem, po którym pozycja przechodzi w odrzucenie trwałe. Pamięć procesu wystarcza:
+        # stan ponawiania (``_ours``) i tak nie przeżywa restartu, więc czasy życia się pokrywają.
+        self._attempts: dict[str, dict[str, int]] = {}
         # Zegar wstrzykiwany jak w responderze — testy mierzą budżet bez czekania realnego czasu.
         # MONOTONICZNY, bo mierzymy upływ, a nie porę: przestawienie zegara systemowego w środku
         # dostawy nie ma prawa jej urwać ani przedłużyć.
@@ -189,8 +204,18 @@ class OutboxDelivery:
             )
             self._repo.discard(dirpath, entry.name)
 
+        attempts = self._attempts.setdefault(dirpath, {})
+        # OKNO wybieramy po nazwie (wyżej), a PORZĄDEK ustalamy dopiero w jego wnętrzu. Gdyby
+        # liczba prób wchodziła do wyboru okna, pozycje zatrzymane do ponowienia lądowałyby
+        # w ogonie i zostały SKASOWANE z powodem „na turę wysyłam najwyżej N plików" — czyli
+        # obietnica „spróbuję ponownie" kończyłaby się cichym usunięciem pliku.
+        window = sorted(
+            entries[: self._limits.max_files_per_turn],
+            key=lambda e: (attempts.get(e.name, 0), e.name),
+        )
+
         deadline = self._monotonic() + self._limits.max_total_seconds
-        for entry in entries[: self._limits.max_files_per_turn]:
+        for entry in window:
             reason = self._rejection(entry)
             if reason is not None:
                 rejected.append((entry.name, reason))
@@ -215,7 +240,16 @@ class OutboxDelivery:
                 rejected.append((entry.name, outcome[1]))
                 self._repo.discard(dirpath, entry.name)
             else:
-                failed.append((entry.name, outcome[1]))
+                tries = attempts.get(entry.name, 0) + 1
+                if tries >= _MAX_SEND_ATTEMPTS:
+                    # Sufit prób ŁAMIE regułę „awaria przejściowa zostawia plik" — świadomie,
+                    # patrz docstring modułu. Powód idzie do ``rejected``, nie ``failed``, żeby
+                    # komunikat przestał obiecywać ponowienie, którego już nie będzie.
+                    rejected.append((entry.name, f"nie udało się wysłać po {tries} próbach"))
+                    self._repo.discard(dirpath, entry.name)
+                else:
+                    attempts[entry.name] = tries
+                    failed.append((entry.name, outcome[1]))
 
         # Zapamiętaj, co ZOSTAWILIŚMY — tylko te nazwy wolno wysłać w kolejnej turze mimo
         # obecności w migawce. Pusty zbiór usuwamy, żeby słownik nie rósł z liczbą rozmów.
@@ -224,6 +258,14 @@ class OutboxDelivery:
             self._ours[dirpath] = retained
         else:
             self._ours.pop(dirpath, None)
+        # Licznik prób jest jedyną strukturą kluczowaną NAZWĄ OD MODELU, a poller chodzi dobami —
+        # zawężamy go do pozycji faktycznie zatrzymanych. Bez tego świeży `raport.md` dziedziczyłby
+        # próby po swoim poprzedniku i ginął przy pierwszym spojrzeniu.
+        surviving = {name: tries for name, tries in attempts.items() if name in retained}
+        if surviving:
+            self._attempts[dirpath] = surviving
+        else:
+            self._attempts.pop(dirpath, None)
         return DeliveryReport(tuple(delivered), tuple(rejected), tuple(failed), tuple(deferred))
 
     def _send_one(

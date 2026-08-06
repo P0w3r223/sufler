@@ -182,6 +182,8 @@ def main() -> None:
         # Skrzynka nadawcza rozmowy (ADR 0009 paczki) — dzieli bramkę i limit z `reply_with_file`.
         _build_outbox_send_factory(settings, token_provider),
         settings.max_file_reply_kb * 1024,
+        settings.outbox_max_files_per_turn,
+        settings.outbox_max_seconds,
         # Procedury z `/mnt/skills` (ADR 0005) — bez ścieżki lista zostaje pusta.
         SkillsSettings.from_env(),
     )
@@ -403,9 +405,15 @@ def _build_outbox_send_factory(
     from workmate.core.errors import ThreadRootGone
     from workmate.core.ports.outbox import PermanentDeliveryError
 
-    transport = httpx.Client(timeout=30)
+    # Timeout ROZPISANY na fazy, nie skalarem: `httpx` rozdziela go i tak na connect/read/write,
+    # a skalar 30 s znaczy tu 30 s NA KAŻDĄ z nich. Zapis 512 KB (sufit `max_file_reply_kb`)
+    # potrzebuje więcej niż połączenie, więc `write` jest hojniejszy niż `connect`.
+    transport = httpx.Client(timeout=httpx.Timeout(connect=5, read=15, write=15, pool=5))
     atexit.register(transport.close)
-    sender = HttpxGraphFileSender(transport, token_provider)
+    # Bez ponawiania 5xx/timeoutów — skrzynka MA WŁASNĄ pętlę ponowień (plik zostaje, następna
+    # tura próbuje, licznik prób kończy po trzeciej). Druga warstwa retry mnożyłaby najgorszy
+    # przypadek czterokrotnie, a to opóźnienie płaci rozmówca czekający na odpowiedź tury.
+    sender = HttpxGraphFileSender(transport, token_provider, retry_transient=False)
 
     def factory(external_id: str) -> Callable[[Deliverable], None] | None:
         parts = external_id.split("/")
@@ -1016,6 +1024,8 @@ def _build_responder(
     change_router: ChangeDigestRouter | None = None,
     outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
     outbox_max_file_bytes: int = 0,
+    outbox_max_files_per_turn: int = 5,
+    outbox_max_seconds: float = 20.0,
     skills_settings: SkillsSettings | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
@@ -1051,6 +1061,8 @@ def _build_responder(
         supports_attachments=True,  # jedyne drzwi z materializerem załączników (F8/ADR 0016)
         outbox_send_factory=outbox_send_factory,
         outbox_max_file_bytes=outbox_max_file_bytes,
+        outbox_max_files_per_turn=outbox_max_files_per_turn,
+        outbox_max_seconds=outbox_max_seconds,
         skills_settings=skills_settings,
     )
 

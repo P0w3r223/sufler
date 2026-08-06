@@ -19,12 +19,14 @@ Gdy którykolwiek padnie — zamrożona powierzchnia się ruszyła; zatrzymaj si
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from workmate.adapters.inbound.mcp import tools as mcp_tools
 from workmate.adapters.outbound.sqlite_events import SqliteEventStore
 from workmate.server import build_server
 
@@ -32,6 +34,11 @@ _BASELINE = Path(__file__).parent / "tool_surface_baseline.json"
 _FROZEN = {"search_notes", "get_note", "list_projects", "get_project_status", "save_note"}
 _EVENT_TOOL = "read_events_since"
 _JIRA_TOOLS = {"get_my_jira_tasks", "get_my_jira_history"}
+
+# Rejestratory pokryte macierzą konfiguracji niżej. Rejestrator ≠ narzędzie:
+# `register_my_jira_tasks_tool` wystawia DWA. Dlatego ta lista pilnuje ŹRÓDEŁ narzędzi,
+# a nie ich liczby — nowe źródło ma zerwać bramkę, zanim wejdzie niezauważone.
+_COVERED_BY_MATRIX = {"register_tools", "register_event_tools", "register_my_jira_tasks_tool"}
 
 
 def _surface(mcp: Any) -> dict[str, Any]:
@@ -93,3 +100,27 @@ def test_baseline_holds_every_tool_the_surface_can_expose():
     """Baseline opisujący podzbiór realnej powierzchni jest gorszy niż brak baseline'u:
     wygląda jak bramka, a przepuszcza wszystko, czego nie wymienia."""
     assert set(_baseline()) == _FROZEN | {_EVENT_TOOL} | _JIRA_TOOLS
+
+
+def test_new_registrar_forces_matrix_update():
+    """Nowy rejestrator zrywa bramkę — bo dokładnie tą drogą weszła kiedyś para Jiry.
+
+    Filtr po ``__module__`` jest istotny: bez niego zaimportowany do modułu ``register_*``
+    z innego miejsca dawałby fałszywy sygnał.
+
+    Czego ta asercja NIE łapie — i nie ma udawać, że łapie:
+    - ``mcp.add_tool`` wołane wprost w ``server.py``, z pominięciem rejestratora;
+    - narzędzie warunkowe WEWNĄTRZ istniejącego katalogu (wzorzec `write_service=None` →
+      brak `save_note`) powtórzony pod nową zmienną, wyłączoną w CI;
+    - warunek transportowy (`server.py`: para Jiry znika na `streamable-http`).
+    """
+    registrars = {
+        name
+        for name, fn in inspect.getmembers(mcp_tools, inspect.isfunction)
+        if name.startswith("register_") and fn.__module__ == mcp_tools.__name__
+    }
+
+    assert registrars == _COVERED_BY_MATRIX, (
+        "zmienił się zestaw rejestratorów MCP — dopisz konfigurację do macierzy powyżej "
+        "i zregeneruj baseline, inaczej nowe narzędzie wejdzie na drzwi bez zamrożenia"
+    )

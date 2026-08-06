@@ -336,6 +336,7 @@ def _build_outbox_delivery(
     *,
     max_file_bytes: int,
     max_files_per_turn: int,
+    max_seconds: float,
 ) -> _ScopedOutbox:
     """Zbuduj dostawę ze skrzynki nadawczej rozmowy — wołaną PO turze, zwracającą zdanie raportu.
 
@@ -345,7 +346,11 @@ def _build_outbox_delivery(
     """
     delivery = OutboxDelivery(
         FilesystemOutboxRepository(workspace_settings.workspace_dir),
-        OutboxLimits(max_file_bytes=max_file_bytes, max_files_per_turn=max_files_per_turn),
+        OutboxLimits(
+            max_file_bytes=max_file_bytes,
+            max_files_per_turn=max_files_per_turn,
+            max_total_seconds=max_seconds,
+        ),
     )
 
     return _ScopedOutbox(delivery, send_factory)
@@ -403,6 +408,7 @@ def build_conversational_responder(
     outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
     outbox_max_file_bytes: int = 0,
     outbox_max_files_per_turn: int = 5,
+    outbox_max_seconds: float = 20.0,
     skills_settings: SkillsSettings | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
@@ -492,6 +498,7 @@ def build_conversational_responder(
             outbox_send_factory,  # type: ignore[arg-type]
             max_file_bytes=outbox_max_file_bytes,
             max_files_per_turn=outbox_max_files_per_turn,
+            max_seconds=outbox_max_seconds,
         )
         if outbox_enabled
         else None
