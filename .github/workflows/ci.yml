@@ -23,7 +23,13 @@ jobs:
             # extras co w etapie `test` obrazu (`deploy/docker/Dockerfile`) — jedno źródło prawdy
             # o tym, czego wymaga pełny przebieg testów.
             sync_args: "--extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply --extra seed"
-            lint_paths: "src tests eval"
+            # `deploy` i `scripts` doszły 2026-08-06. Wcześniej lista obejmowała `src tests eval`,
+            # więc trzy pliki narzędziowe stały niezgodne z `ruff format` przy ZIELONYM CI —
+            # wychodziło to dopiero, gdy ktoś uruchomił `ruff format .` lokalnie i zobaczył
+            # w diffie pliki, których nie dotykał. Korzeń wymienia katalogi JAWNIE, a nie `.`,
+            # bo podprojekty mają własne wpisy z własnym `dir` — inaczej lintowalibyśmy je
+            # dwa razy. Nowy katalog z kodem to nowy wpis na tej liście.
+            lint_paths: "src tests eval deploy scripts"
           - name: powiadomienia-teams
             dir: "Powiadomienia_teams"
             sync_args: ""

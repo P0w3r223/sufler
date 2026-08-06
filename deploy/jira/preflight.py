@@ -134,9 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--aad", default="", help="Opcjonalnie: aad_user_id do sprawdzenia mapy tożsamości."
     )
-    parser.add_argument(
-        "--limit", type=int, default=5, help="Ile zadań pokazać (domyślnie 5)."
-    )
+    parser.add_argument("--limit", type=int, default=5, help="Ile zadań pokazać (domyślnie 5).")
     args = parser.parse_args(argv)
     return _run(account=args.account, aad_user_id=args.aad, limit=args.limit)
 

@@ -41,9 +41,35 @@ class FakeRepo:
         self.files.pop(name, None)
 
 
-def _delivery(repo: FakeRepo, *, max_bytes: int = 1024, max_files: int = 5) -> OutboxDelivery:
+class FakeClock:
+    """Zegar monotoniczny sterowany z testu — budżet mierzymy bez czekania realnego czasu."""
+
+    def __init__(self, step: float = 0.0) -> None:
+        self.now = 0.0
+        self._step = step
+
+    def __call__(self) -> float:
+        value = self.now
+        self.now += self._step
+        return value
+
+
+def _delivery(
+    repo: FakeRepo,
+    *,
+    max_bytes: int = 1024,
+    max_files: int = 5,
+    max_seconds: float = 20.0,
+    monotonic: FakeClock | None = None,
+) -> OutboxDelivery:
     return OutboxDelivery(
-        repo, OutboxLimits(max_file_bytes=max_bytes, max_files_per_turn=max_files)
+        repo,
+        OutboxLimits(
+            max_file_bytes=max_bytes,
+            max_files_per_turn=max_files,
+            max_total_seconds=max_seconds,
+        ),
+        monotonic=monotonic or FakeClock(),
     )
 
 
@@ -204,6 +230,36 @@ def test_KOMUNIKAT_zwija_sie_przy_wielu_odrzuceniach():
 
     assert notice.count("Nie wysłałem pliku") == 3
     assert "Pominąłem też 297 innych." in notice
+
+
+def test_BUDZET_CZASU_odklada_reszte_zamiast_wstrzymywac_ture():
+    """Dostawa biegnie w tej samej ścieżce co odpowiedź — rozmówca widzi tekst dopiero po niej.
+
+    Pięć plików po timeoucie klienta HTTP to minuty ciszy po turze, która już się udała.
+    Pozycje ponad budżet ZOSTAJĄ w skrzynce (nie są odrzucone) i jadą przy następnej wiadomości.
+    """
+    repo = FakeRepo({f"{i}.md": b"x" for i in range(4)})
+    sent: list[str] = []
+    zegar = FakeClock(step=4.0)  # każdy odczyt zegara przesuwa go o 4 s
+
+    report = _delivery(repo, max_seconds=10.0, monotonic=zegar).deliver(
+        _DIR, lambda item: sent.append(item.name)
+    )
+
+    assert sent, "część plików musi pójść — budżet nie może blokować wszystkiego"
+    assert report.deferred, "reszta ma zostać odłożona, nie odrzucona"
+    assert set(report.deferred) & set(repo.files), "odłożone pliki zostają w skrzynce"
+    assert [n for n, _ in report.rejected] == []
+    assert "dostarczę je przy następnej wiadomości" in report.notice()
+
+
+def test_hojny_budzet_nie_odklada_niczego():
+    repo = FakeRepo({f"{i}.md": b"x" for i in range(4)})
+
+    report = _delivery(repo, monotonic=FakeClock(step=0.1)).deliver(_DIR, lambda item: None)
+
+    assert report.deferred == ()
+    assert len(report.delivered) == 4
 
 
 def test_komunikat_laczy_dostarczone_i_odrzucone():

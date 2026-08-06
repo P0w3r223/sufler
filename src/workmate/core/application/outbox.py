@@ -21,10 +21,19 @@ Reguła sprzątania rozróżnia dwa rodzaje niepowodzenia, bo mają przeciwne w�
 
 Odczyt z dysku dotyka WYŁĄCZNIE pozycji, które przeszły kontrolę metadanych — zawartość skrzynki
 dyktuje model z powłoką, a proces drzwi obsługuje wszystkie kanały naraz.
+
+**Dostawa ma budżet czasu, bo biegnie w tej samej ścieżce co odpowiedź tury.** Rozmówca widzi
+tekst dopiero, gdy wysyłka się skończy, a pięć plików po timeoucie klienta HTTP oznaczałoby
+minuty ciszy po turze, która już się udała. Pozycje ponad budżet zostają w skrzynce i jadą przy
+następnej wiadomości — opóźnienie jest ograniczone, a nic się nie gubi. Nie zmienia to
+KOLEJNOŚCI: załączniki lądują w wątku przed tekstem, który je zapowiada, bo tekst wysyła poller
+dopiero po powrocie z respondera. Odwrócenie tego wymaga zmiany kontraktu ``Responder``
+(dziś: wiadomość → tekst) na wszystkich czworgu drzwiach i jest osobną decyzją.
 """
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -51,10 +60,11 @@ _MAX_NAMED_REJECTIONS = 3
 
 @dataclass(frozen=True)
 class OutboxLimits:
-    """Granice jednej tury: rozmiar pojedynczego pliku i liczba plików."""
+    """Granice jednej tury: rozmiar pliku, liczba plików i budżet czasu na całą dostawę."""
 
     max_file_bytes: int
     max_files_per_turn: int
+    max_total_seconds: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -64,9 +74,10 @@ class DeliveryReport:
     delivered: tuple[str, ...] = ()
     rejected: tuple[tuple[str, str], ...] = ()
     failed: tuple[tuple[str, str], ...] = ()
+    deferred: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
-        return not (self.delivered or self.rejected or self.failed)
+        return not (self.delivered or self.rejected or self.failed or self.deferred)
 
     def notice(self) -> str:
         """Zdanie doklejane do odpowiedzi; pusty napis, gdy nie było czego dostarczać.
@@ -83,15 +94,30 @@ class DeliveryReport:
             parts.append(f"Pominąłem też {len(self.rejected) - _MAX_NAMED_REJECTIONS} innych.")
         for name, reason in self.failed:
             parts.append(f"Nie udało się wysłać pliku {name} ({reason}) — spróbuję ponownie.")
+        if self.deferred:
+            parts.append(
+                f"Zostało {len(self.deferred)} plików do wysłania — dostarczę je przy "
+                "następnej wiadomości."
+            )
         return " ".join(parts)
 
 
 class OutboxDelivery:
     """Zabierz pliki ze skrzynki rozmowy i wyślij je wstrzykniętym ``send``."""
 
-    def __init__(self, repo: OutboxRepository, limits: OutboxLimits) -> None:
+    def __init__(
+        self,
+        repo: OutboxRepository,
+        limits: OutboxLimits,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._repo = repo
         self._limits = limits
+        # Zegar wstrzykiwany jak w responderze — testy mierzą budżet bez czekania realnego czasu.
+        # MONOTONICZNY, bo mierzymy upływ, a nie porę: przestawienie zegara systemowego w środku
+        # dostawy nie ma prawa jej urwać ani przedłużyć.
+        self._monotonic = monotonic
 
     def deliver(self, dirpath: str, send: Callable[[Deliverable], None]) -> DeliveryReport:
         """Wyślij zawartość skrzynki ``dirpath``; zwróć raport, nigdy nie podnoś wyjątku wysyłki.
@@ -107,6 +133,7 @@ class OutboxDelivery:
         delivered: list[str] = []
         rejected: list[tuple[str, str]] = []
         failed: list[tuple[str, str]] = []
+        deferred: list[str] = []
 
         for entry in entries[self._limits.max_files_per_turn :]:
             rejected.append(
@@ -114,11 +141,19 @@ class OutboxDelivery:
             )
             self._repo.discard(dirpath, entry.name)
 
+        deadline = self._monotonic() + self._limits.max_total_seconds
         for entry in entries[: self._limits.max_files_per_turn]:
             reason = self._rejection(entry)
             if reason is not None:
                 rejected.append((entry.name, reason))
                 self._repo.discard(dirpath, entry.name)
+                continue
+            # Budżet sprawdzamy PRZED wysyłką, nie po: dostawa biegnie w tej samej ścieżce co
+            # odpowiedź tury, więc pięć plików po timeoucie klienta HTTP wstrzymywałoby rozmówcę
+            # minutami. Pozycje ponad budżet zostają w skrzynce i jadą przy następnej wiadomości —
+            # opóźnienie jest ograniczone, a nic się nie gubi.
+            if self._monotonic() >= deadline:
+                deferred.append(entry.name)
                 continue
             item = self._repo.read(dirpath, entry.name)
             if item is None:
@@ -134,7 +169,7 @@ class OutboxDelivery:
             else:
                 failed.append((entry.name, outcome[1]))
 
-        return DeliveryReport(tuple(delivered), tuple(rejected), tuple(failed))
+        return DeliveryReport(tuple(delivered), tuple(rejected), tuple(failed), tuple(deferred))
 
     def _send_one(
         self, item: Deliverable, send: Callable[[Deliverable], None]

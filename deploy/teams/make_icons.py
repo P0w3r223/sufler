@@ -9,6 +9,7 @@ placeholderem, ale wymiary muszą się zgadzać:
 Uruchom: ``uv run --no-sync python deploy/teams/make_icons.py``. Podmień oba pliki
 na docelowe grafiki przed publikacją — to tylko wypełniacze, by pakiet się walidował.
 """
+
 from __future__ import annotations
 
 import struct
@@ -37,12 +38,7 @@ def _assemble(width: int, height: int, raw: bytes) -> bytes:
 
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)  # 8-bit, kolor typ 6 (RGBA)
     idat = zlib.compress(raw, 9)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", ihdr)
-        + chunk(b"IDAT", idat)
-        + chunk(b"IEND", b"")
-    )
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
 def main() -> None:
