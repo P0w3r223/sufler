@@ -33,6 +33,7 @@ dopiero po powrocie z respondera. Odwrócenie tego wymaga zmiany kontraktu ``Res
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -56,6 +57,8 @@ _ALLOWED_EXT = frozenset(FILE_REPLY_FORMATS)
 # odpowiedzi, a wiadomość Teams ma sufit rozmiaru — trzysta zdań o odrzuconych plikach mogłoby
 # sprawić, że rozmówca nie dostanie NICZEGO, choć pliki zostały już sprzątnięte.
 _MAX_NAMED_REJECTIONS = 3
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -114,10 +117,31 @@ class OutboxDelivery:
     ) -> None:
         self._repo = repo
         self._limits = limits
+        # Nazwy widziane w skrzynce NA POCZĄTKU tury, per katalog rozmowy. Patrz ``snapshot``.
+        self._at_start: dict[str, frozenset[str]] = {}
+        # Nazwy, które MY zostawiliśmy po nieudanej wysyłce — jedyne wolno dostarczyć mimo
+        # obecności w migawce, bo ich pochodzenie znamy.
+        self._ours: dict[str, frozenset[str]] = {}
         # Zegar wstrzykiwany jak w responderze — testy mierzą budżet bez czekania realnego czasu.
         # MONOTONICZNY, bo mierzymy upływ, a nie porę: przestawienie zegara systemowego w środku
         # dostawy nie ma prawa jej urwać ani przedłużyć.
         self._monotonic = monotonic
+
+    def snapshot(self, dirpath: str) -> None:
+        """Zapamiętaj zawartość skrzynki PRZED turą — granica pochodzenia plików.
+
+        Wolumen brudnopisu jest WSPÓLNY dla wszystkich rozmów, a wykonawca montuje go w całości
+        i uruchamia polecenia bez chroota — `cwd` jest konwencją, nie zamknięciem. Powłoka
+        rozmowy A może więc policzyć katalog rozmowy B (`sha256(team/channel/root)`, a trójka
+        jest jawna dla każdego w kanale), założyć w nim ``outputs/`` zwykłym ``mkdir`` i podłożyć
+        plik. Bez tej migawki kolektor opublikowałby go w CUDZYM wątku, firmując treść botem —
+        i żaden guard na dowiązania by tego nie dotknął, bo dowiązania tam nie ma.
+
+        Migawka zamyka to, bo **tury są szeregowane**: poller robi ``await self._handle`` w pętli
+        sekwencyjnej, więc powłoka rozmowy A nie biegnie w trakcie tury rozmowy B. Plik podłożony
+        wcześniej jest w migawce i nie zostanie wysłany; plik powstały w trakcie tury — zostanie.
+        """
+        self._at_start[dirpath] = frozenset(e.name for e in self._repo.list_entries(dirpath))
 
     def deliver(self, dirpath: str, send: Callable[[Deliverable], None]) -> DeliveryReport:
         """Wyślij zawartość skrzynki ``dirpath``; zwróć raport, nigdy nie podnoś wyjątku wysyłki.
@@ -126,8 +150,32 @@ class OutboxDelivery:
         do tury, która już się udała, więc jej awaria nie może zabrać rozmówcy odpowiedzi
         tekstowej. Błąd odczytu samej skrzynki propaguje — to defekt montażu, nie treści.
         """
+        if dirpath not in self._at_start:
+            # FAIL-CLOSED. Bez migawki nie umiemy odróżnić pliku od modelu tej rozmowy od
+            # podłożonego przez inną, więc nie wysyłamy nic. Wołający ma zawołać ``snapshot``
+            # na starcie tury; brak wywołania jest defektem okablowania, nie stanem normalnym.
+            logger.error("Dostawa dla %s bez migawki startowej — pomijam całą skrzynkę.", dirpath)
+            return DeliveryReport()
+        at_start = self._at_start.pop(dirpath)
+        ours = self._ours.get(dirpath, frozenset())
+
         entries = sorted(self._repo.list_entries(dirpath), key=lambda e: e.name)
+        foreign = [e for e in entries if e.name in at_start and e.name not in ours]
+        if foreign:
+            # Poza komunikatem dla rozmówcy: nie spowodował tego i nie ma jak zareagować.
+            # Sprzątamy — pozostawienie dawałoby to samo ostrzeżenie przy KAŻDEJ kolejnej turze.
+            logger.warning(
+                "Skrzynka %s zawierała %d plików sprzed tury (%s) — nie wysyłam ich. "
+                "Albo to pozostałość sprzed restartu procesu, albo podłożenie z innej rozmowy.",
+                dirpath,
+                len(foreign),
+                ", ".join(e.name for e in foreign),
+            )
+            for entry in foreign:
+                self._repo.discard(dirpath, entry.name)
+        entries = [e for e in entries if e not in foreign]
         if not entries:
+            self._ours.pop(dirpath, None)
             return DeliveryReport()
 
         delivered: list[str] = []
@@ -169,6 +217,13 @@ class OutboxDelivery:
             else:
                 failed.append((entry.name, outcome[1]))
 
+        # Zapamiętaj, co ZOSTAWILIŚMY — tylko te nazwy wolno wysłać w kolejnej turze mimo
+        # obecności w migawce. Pusty zbiór usuwamy, żeby słownik nie rósł z liczbą rozmów.
+        retained = frozenset([name for name, _ in failed] + deferred)
+        if retained:
+            self._ours[dirpath] = retained
+        else:
+            self._ours.pop(dirpath, None)
         return DeliveryReport(tuple(delivered), tuple(rejected), tuple(failed), tuple(deferred))
 
     def _send_one(

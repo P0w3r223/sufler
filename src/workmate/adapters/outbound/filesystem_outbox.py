@@ -13,9 +13,15 @@ dowiązanie rozwiązuje się w obrębie korzenia, więc wypis oddawałby pliki C
 wysłania, a sprzątanie po udanej wysyłce by je skasowało. Stąd rozwiązanie dwuetapowe (katalog
 rozmowy, potem skrzynka w nim) plus odrzucenie skrzynki będącej dowiązaniem.
 
-Zbieramy wyłącznie zwykłe pliki leżące bezpośrednio w skrzynce; dowiązanie wpisu jest pomijane
-z tego samego powodu co wyżej — model ma bazę wiedzy zamontowaną do odczytu, więc
-``ln -s /mnt/system/notes/…/tajne.md outputs/`` byłby drogą wyniesienia treści.
+Zbieramy wyłącznie zwykłe pliki leżące bezpośrednio w skrzynce, a dowiązania pomijamy — ale
+**to nie jest granica poufności i nie należy jej tak czytać**: `cp /mnt/system/notes/…/tajne.md
+outputs/raport.md` daje ten sam skutek i żaden guard tutaj go nie dotyka. Te sprawdzenia mówią
+dokładnie tyle: kolektor nie wychodzi poza skrzynkę i nie kasuje plików spoza niej. O tym, czego
+model NIE wyniesie, decyduje warstwa wyżej (pre-wiązany cel dostawy, ADR 0026) i to, czego
+w kontenerze wykonawcy nie ma (ADR 0007).
+
+Izolacja rozmów w powłoce jest KONWENCJĄ, nie zamknięciem: wolumen brudnopisu jest wspólny,
+`cwd` tylko ustawiany. Pochodzenia plików pilnuje migawka w ``OutboxDelivery.snapshot``.
 """
 
 from __future__ import annotations

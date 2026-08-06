@@ -54,6 +54,16 @@ class FakeClock:
         return value
 
 
+def _armed(repo: FakeRepo, **kw) -> OutboxDelivery:
+    """Dostawa z ZROBIONĄ migawką — odpowiednik tury, w której skrzynka startuje pusta."""
+    delivery = _delivery(repo, **kw)
+    snapshot = dict(repo.files)
+    repo.files.clear()
+    delivery.snapshot(_DIR)
+    repo.files.update(snapshot)
+    return delivery
+
+
 def _delivery(
     repo: FakeRepo,
     *,
@@ -75,7 +85,7 @@ def _delivery(
 
 def test_pusta_skrzynka_nie_produkuje_zadnego_komunikatu():
     repo = FakeRepo({})
-    report = _delivery(repo).deliver(_DIR, lambda item: None)
+    report = _armed(repo).deliver(_DIR, lambda item: None)
     assert report.is_empty()
     assert report.notice() == ""
     assert repo.discarded == []
@@ -85,7 +95,7 @@ def test_plik_wyslany_znika_ze_skrzynki():
     repo = FakeRepo({"raport.md": b"tresc"})
     sent: list[str] = []
 
-    report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+    report = _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
     assert sent == ["raport.md"]
     assert report.delivered == ("raport.md",)
@@ -101,7 +111,7 @@ def test_ODRZUCONY_plik_nie_jest_w_ogole_czytany_z_dysku():
     """
     repo = FakeRepo({"duzy.md": b"x" * 5000, "maly.md": b"ok"})
 
-    _delivery(repo, max_bytes=2048).deliver(_DIR, lambda item: None)
+    _armed(repo, max_bytes=2048).deliver(_DIR, lambda item: None)
 
     assert repo.read_names == ["maly.md"], "plik ponad limit nie może trafić do pamięci"
 
@@ -113,7 +123,7 @@ def test_awaria_PRZEJSCIOWA_zostawia_plik_do_ponowienia():
     def send(item: Deliverable) -> None:
         raise RuntimeError("Graph 503")
 
-    report = _delivery(repo).deliver(_DIR, send)
+    report = _armed(repo).deliver(_DIR, send)
 
     assert report.delivered == ()
     assert report.failed == (("raport.md", "RuntimeError"),)
@@ -129,7 +139,7 @@ def test_awaria_TRWALA_sprzata_plik_zamiast_zapetlac_ponowienia():
     def send(item: Deliverable) -> None:
         raise PermanentDeliveryError("Graph odrzucił plik (HTTP 400)")
 
-    report = _delivery(repo).deliver(_DIR, send)
+    report = _armed(repo).deliver(_DIR, send)
 
     assert report.failed == ()
     assert report.rejected == (("raport.md", "Graph odrzucił plik (HTTP 400)"),)
@@ -140,7 +150,7 @@ def test_awaria_TRWALA_sprzata_plik_zamiast_zapetlac_ponowienia():
 def test_awaria_wysylki_nie_wypuszcza_wyjatku():
     """Dostawa jest dodatkiem do tury, która już się udała — nie może jej zabrać."""
     repo = FakeRepo({"a.md": b"x"})
-    _delivery(repo).deliver(_DIR, lambda item: (_ for _ in ()).throw(OSError("gniazdo")))
+    _armed(repo).deliver(_DIR, lambda item: (_ for _ in ()).throw(OSError("gniazdo")))
 
 
 def test_nazwa_jest_normalizowana_przed_wyslaniem():
@@ -148,7 +158,7 @@ def test_nazwa_jest_normalizowana_przed_wyslaniem():
     repo = FakeRepo({"Raport MPWiK.md": b"tresc"})
     sent: list[str] = []
 
-    _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+    _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
     assert sent == ["raport-mpwik.md"]
     assert repo.discarded == ["Raport MPWiK.md"], "sprzątamy po nazwie Z DYSKU, nie po slugu"
@@ -158,7 +168,7 @@ def test_rozszerzenie_spoza_bialej_listy_jest_odrzucane_I_sprzatane():
     repo = FakeRepo({"skrypt.sh": b"x"})
     sent: list[str] = []
 
-    report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+    report = _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
     assert sent == []
     assert [name for name, _ in report.rejected] == ["skrypt.sh"]
@@ -169,14 +179,14 @@ def test_rozszerzenie_spoza_bialej_listy_jest_odrzucane_I_sprzatane():
 def test_niebezpieczne_i_nieobslugiwane_nazwy_nie_ida_do_rozmowcy(nazwa: str):
     repo = FakeRepo({nazwa: b"x"})
     sent: list[str] = []
-    _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+    _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
     assert sent == []
 
 
 def test_plik_ponad_limit_jest_odrzucany_z_podaniem_limitu():
     repo = FakeRepo({"duzy.pdf": b"x" * 5000})
 
-    report = _delivery(repo, max_bytes=2048).deliver(_DIR, lambda item: None)
+    report = _armed(repo, max_bytes=2048).deliver(_DIR, lambda item: None)
 
     assert report.delivered == ()
     assert "2 KB" in report.rejected[0][1]
@@ -186,7 +196,7 @@ def test_plik_ponad_limit_jest_odrzucany_z_podaniem_limitu():
 def test_pusty_plik_nie_jest_wysylany():
     repo = FakeRepo({"pusty.md": b""})
     sent: list[str] = []
-    report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+    report = _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
     assert sent == []
     assert report.rejected[0][1] == "jest pusty"
 
@@ -195,7 +205,7 @@ def test_plik_zniknietv_miedzy_wypisem_a_odczytem_jest_pomijany():
     repo = FakeRepo({"znika.md": b"x"})
     repo.files.clear()  # wypis już się odbył, treści już nie ma
 
-    report = _delivery(repo).deliver(_DIR, lambda item: None)
+    report = _armed(repo).deliver(_DIR, lambda item: None)
 
     assert report.is_empty()
 
@@ -204,7 +214,7 @@ def test_nadmiar_ponad_limit_liczby_jest_odrzucany_a_reszta_idzie():
     repo = FakeRepo({f"{i}.md": b"x" for i in range(5)})
     sent: list[str] = []
 
-    report = _delivery(repo, max_files=2).deliver(_DIR, lambda item: sent.append(item.name))
+    report = _armed(repo, max_files=2).deliver(_DIR, lambda item: sent.append(item.name))
 
     assert sent == ["0.md", "1.md"], "wysyłamy deterministycznie — po nazwie, nie po kolejności FS"
     assert len(report.rejected) == 3
@@ -215,7 +225,7 @@ def test_jedna_zla_pozycja_nie_blokuje_pozostalych():
     repo = FakeRepo({"a.md": b"x", "b.sh": b"x", "c.txt": b"x"})
     sent: list[str] = []
 
-    report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+    report = _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
     assert sent == ["a.md", "c.txt"]
     assert [name for name, _ in report.rejected] == ["b.sh"]
@@ -242,7 +252,7 @@ def test_BUDZET_CZASU_odklada_reszte_zamiast_wstrzymywac_ture():
     sent: list[str] = []
     zegar = FakeClock(step=4.0)  # każdy odczyt zegara przesuwa go o 4 s
 
-    report = _delivery(repo, max_seconds=10.0, monotonic=zegar).deliver(
+    report = _armed(repo, max_seconds=10.0, monotonic=zegar).deliver(
         _DIR, lambda item: sent.append(item.name)
     )
 
@@ -256,7 +266,7 @@ def test_BUDZET_CZASU_odklada_reszte_zamiast_wstrzymywac_ture():
 def test_hojny_budzet_nie_odklada_niczego():
     repo = FakeRepo({f"{i}.md": b"x" for i in range(4)})
 
-    report = _delivery(repo, monotonic=FakeClock(step=0.1)).deliver(_DIR, lambda item: None)
+    report = _armed(repo, monotonic=FakeClock(step=0.1)).deliver(_DIR, lambda item: None)
 
     assert report.deferred == ()
     assert len(report.delivered) == 4
@@ -269,3 +279,66 @@ def test_komunikat_laczy_dostarczone_i_odrzucone():
     notice = report.notice()
     assert "W załączniku: raport.pdf." in notice
     assert "Nie wysłałem pliku skrypt.sh — ma złe rozszerzenie." in notice
+
+
+def test_PODLOZONY_plik_sprzed_tury_NIE_jest_wysylany():
+    """Sedno migawki. Wolumen brudnopisu jest WSPÓLNY dla rozmów, a wykonawca ustawia tylko
+    `cwd` — powłoka rozmowy A może policzyć katalog rozmowy B (`sha256(team/channel/root)`,
+    trójka jawna dla każdego w kanale), założyć w nim `outputs/` zwykłym `mkdir` i podłożyć plik.
+
+    Bez migawki kolektor opublikowałby go w CUDZYM wątku, firmując treść botem. Żaden guard na
+    dowiązania by tego nie dotknął — dowiązania tam nie ma.
+    """
+    repo = FakeRepo({"podszywka.pdf": b"tresc od obcej rozmowy"})
+    delivery = _delivery(repo)
+    delivery.snapshot(_DIR)  # migawka widzi plik JUŻ w skrzynce
+    sent: list[str] = []
+
+    report = delivery.deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert sent == [], "plik sprzed tury nie może pójść do rozmówcy"
+    assert report.delivered == ()
+    assert repo.discarded == ["podszywka.pdf"]
+
+
+def test_plik_powstaly_W_TRAKCIE_tury_idzie_normalnie():
+    """Druga strona tej samej granicy — migawka nie może zablokować własnej pracy modelu."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+    delivery.snapshot(_DIR)
+    repo.files["raport.md"] = b"wynik tury"
+    sent: list[str] = []
+
+    delivery.deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert sent == ["raport.md"]
+
+
+def test_ponowienie_wlasnej_nieudanej_wysylki_przechodzi_przez_migawke():
+    """Plik zostawiony przez NAS po awarii przejściowej jest w migawce następnej tury —
+    i musi mimo to pojechać, inaczej mechanizm ponowienia byłby martwy."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    delivery.snapshot(_DIR)  # tura pierwsza: skrzynka pusta na starcie
+    repo.files["raport.md"] = b"tresc"  # model tworzy plik w trakcie tury
+    delivery.deliver(_DIR, lambda item: (_ for _ in ()).throw(RuntimeError("503")))
+    assert "raport.md" in repo.files, "awaria przejściowa zostawia plik"
+
+    sent: list[str] = []
+    delivery.snapshot(_DIR)  # tura druga: plik jest w migawce, ale to NASZ plik
+    delivery.deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert sent == ["raport.md"]
+
+
+def test_BEZ_migawki_nie_wysylamy_nic():
+    """Fail-closed: brak migawki to defekt okablowania, a nie zgoda na wysyłkę wszystkiego."""
+    repo = FakeRepo({"raport.md": b"tresc"})
+    sent: list[str] = []
+
+    report = _delivery(repo).deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert sent == []
+    assert report.is_empty()
+    assert repo.discarded == [], "bez migawki nie kasujemy też niczego"

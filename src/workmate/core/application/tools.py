@@ -305,8 +305,11 @@ def build_shell_catalog(
 
     Polecenie biegnie w OSOBNYM kontenerze bez sieci — ``runner`` to klient gniazda, nie
     lokalny ``subprocess``. Katalog roboczy jest DOMKNIĘTY w closurze (jak ``scope``
-    w ``build_workspace_catalog``): model nie widzi go w schemacie, więc nie wskaże cudzej
-    rozmowy, a polecenia startują tam, gdzie leżą jego własne pliki robocze.
+    w ``build_workspace_catalog``): model nie widzi go w schemacie, więc nie POPROSI o cudzą
+    rozmowę, a polecenia startują tam, gdzie leżą jego własne pliki robocze. Nie jest to
+    zamknięcie — wykonawca montuje cały wolumen brudnopisu i ustawia wyłącznie ``cwd``, więc
+    powłoka sięgnie ścieżką bezwzględną wszędzie. Granicą jest brak sieci (ADR 0057), a nie
+    domknięcie katalogu.
 
     Opis narzędzia niesie mapę montaży, bo prompt systemowy opisuje jeszcze świat narzędzi
     (ADR 0056 §Konsekwencje — sekcja ``ENVIRONMENT`` idzie ZA architekturą). Do czasu tamtej

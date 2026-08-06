@@ -55,6 +55,10 @@ def _configure(monkeypatch, tmp_path, *, bridge: bool, jira: bool) -> None:
     # ADR 0006 (2026-07-31) enable_write jest domyślnie OFF wszędzie, więc test musi go włączyć
     # jawnie — inaczej porównuje z baseline dziurę zamiast kontrakt.
     monkeypatch.setenv("WORKMATE_ENABLE_WRITE", "true")
+    # Para Jiry jest bramkowana także transportem (`server.py`: znika na streamable-http, bo jeden
+    # principal na proces nie obsłuży wielu osób). Bez przypięcia ambientowe
+    # WORKMATE_TRANSPORT=streamable-http wywracałoby dwie konfiguracje — determinizm ma być pełny.
+    monkeypatch.setenv("WORKMATE_TRANSPORT", "stdio")
     if jira:
         monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example.org")
         monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "pat-secret")

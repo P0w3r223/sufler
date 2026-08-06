@@ -37,6 +37,25 @@ def _service() -> ConversationService:
     return ConversationService(SqliteConversationStore(":memory:"), max_context_tokens=1000)
 
 
+class FakeOutbox:
+    """Atrapa dwufazowej dostawy — notuje, czy migawka padła PRZED turą."""
+
+    def __init__(self, notice="", on_deliver=None) -> None:
+        self.snapshots: list[WorkspaceScope] = []
+        self.delivered: list[WorkspaceScope] = []
+        self._notice = notice
+        self._on_deliver = on_deliver
+
+    def snapshot(self, scope: WorkspaceScope) -> None:
+        self.snapshots.append(scope)
+
+    def deliver(self, scope: WorkspaceScope) -> str:
+        self.delivered.append(scope)
+        if self._on_deliver is not None:
+            self._on_deliver(scope)
+        return self._notice
+
+
 def _respond(**kwargs) -> str:
     responder = ConversationalResponder(_Runtime(), _service(), channel="teams_graph", **kwargs)
     return asyncio.run(responder.respond(InboundMessage(text="hej", conversation_id="t/c/r")))
@@ -47,27 +66,31 @@ def test_bez_dostawy_odpowiedz_jest_niezmieniona():
 
 
 def test_komunikat_dostawy_dokleja_sie_do_odpowiedzi():
-    reply = _respond(outbox_delivery=lambda scope: "W załączniku: raport.md.")
+    reply = _respond(outbox_delivery=FakeOutbox("W załączniku: raport.md."))
 
     assert reply == "odp\n\nW załączniku: raport.md."
 
 
 def test_pusty_komunikat_nie_zostawia_ogona():
     """Większość tur nic nie dostarcza — odpowiedź nie może wtedy dostać pustych linii."""
-    assert _respond(outbox_delivery=lambda scope: "") == "odp"
+    assert _respond(outbox_delivery=FakeOutbox()) == "odp"
 
 
 def test_dostawa_dostaje_scope_TEJ_rozmowy():
     """Scope z zaufanego (kanał, external_id) — model nie ma jak wskazać cudzej skrzynki."""
-    seen: list[WorkspaceScope] = []
+    outbox = FakeOutbox()
 
-    _respond(outbox_delivery=lambda scope: seen.append(scope) or "")
+    _respond(outbox_delivery=outbox)
 
-    assert seen == [WorkspaceScope("teams_graph", "t/c/r")]
+    assert outbox.delivered == [WorkspaceScope("teams_graph", "t/c/r")]
+    assert outbox.snapshots == [WorkspaceScope("teams_graph", "t/c/r")], (
+        "migawka musi paść PRZED turą — po niej nie da się już odróżnić pliku tej rozmowy "
+        "od podłożonego wcześniej przez inną"
+    )
 
 
 def test_awaria_dostawy_NIE_zabiera_odpowiedzi_tekstowej():
-    def wybuch(scope: WorkspaceScope) -> str:
+    def wybuch(scope: WorkspaceScope) -> None:
         raise RuntimeError("Graph padł")
 
-    assert _respond(outbox_delivery=wybuch) == "odp"
+    assert _respond(outbox_delivery=FakeOutbox(on_deliver=wybuch)) == "odp"

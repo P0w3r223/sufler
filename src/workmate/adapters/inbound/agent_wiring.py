@@ -336,7 +336,7 @@ def _build_outbox_delivery(
     *,
     max_file_bytes: int,
     max_files_per_turn: int,
-) -> Callable[[WorkspaceScope], str]:
+) -> _ScopedOutbox:
     """Zbuduj dostawę ze skrzynki nadawczej rozmowy — wołaną PO turze, zwracającą zdanie raportu.
 
     Korzeń bierzemy z ``workspace_settings``, tego samego, z którego liczy się ``cwd`` poleceń
@@ -348,15 +348,35 @@ def _build_outbox_delivery(
         OutboxLimits(max_file_bytes=max_file_bytes, max_files_per_turn=max_files_per_turn),
     )
 
-    def deliver(scope: WorkspaceScope) -> str:
-        send = send_factory(scope.conversation)
+    return _ScopedOutbox(delivery, send_factory)
+
+
+class _ScopedOutbox:
+    """Dwufazowa dostawa dla respondera: migawka na starcie tury, wysyłka po niej.
+
+    Fazy są DWIE, bo migawka jest granicą pochodzenia plików — musi powstać, zanim model
+    dostanie powłokę. Zwinięcie ich w jedno wywołanie po turze znaczyłoby, że nie umiemy
+    odróżnić pliku wytworzonego w tej turze od podłożonego wcześniej z innej rozmowy.
+    """
+
+    def __init__(
+        self,
+        delivery: OutboxDelivery,
+        send_factory: Callable[[str], Callable[[Deliverable], None] | None],
+    ) -> None:
+        self._delivery = delivery
+        self._send_factory = send_factory
+
+    def snapshot(self, scope: WorkspaceScope) -> None:
+        self._delivery.snapshot(str(scope.dirpath()))
+
+    def deliver(self, scope: WorkspaceScope) -> str:
+        send = self._send_factory(scope.conversation)
         if send is None:
             # Wątek bez celu dostawy (np. rozmowa spoza kanału): zostawiamy skrzynkę nietkniętą,
             # bo plik nie jest odrzucony — po prostu nie ma dokąd pójść z TYCH drzwi.
             return ""
-        return delivery.deliver(str(scope.dirpath()), send).notice()
-
-    return deliver
+        return self._delivery.deliver(str(scope.dirpath()), send).notice()
 
 
 def build_conversational_responder(

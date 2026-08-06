@@ -432,6 +432,14 @@ def _build_outbox_send_factory(
                 if 400 <= status < 500 and status != 429:
                     raise PermanentDeliveryError(f"Graph odrzucił plik (HTTP {status})") from exc
                 raise
+            except RuntimeError as exc:
+                # `graph_file_sender._require` podnosi `RuntimeError` na odpowiedzi 200
+                # z NIEPEŁNYM payloadem — kanał bez `filesFolder.driveId` (brak dysku plików)
+                # albo `eTag` bez GUID-a. To własność KANAŁU i odpowiedzi, nie chwili: ponowienie
+                # da to samo. Bez tej gałęzi plik zostawałby w skrzynce na zawsze, a każda tura
+                # płaciłaby dwa żądania i doklejała „spróbuję ponownie" — czyli dokładnie zatrutą
+                # wiadomość, której reguła sprzątania ma unikać.
+                raise PermanentDeliveryError(f"kanał nie przyjmuje plików ({exc})") from exc
 
         return send
 

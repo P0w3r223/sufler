@@ -109,6 +109,19 @@ class Responder(Protocol):
     async def respond(self, message: InboundMessage) -> str: ...
 
 
+class OutboxDeliverer(Protocol):
+    """Dwufazowa dostawa ze skrzynki nadawczej rozmowy (ADR 0009 paczki wdrożeniowej).
+
+    ``snapshot`` musi paść PRZED turą, ``deliver`` po niej. Migawka jest granicą pochodzenia
+    plików: wolumen brudnopisu jest wspólny dla rozmów, więc bez niej nie da się odróżnić
+    wyniku tej tury od pliku podłożonego wcześniej przez inną rozmowę.
+    """
+
+    def snapshot(self, scope: WorkspaceScope) -> None: ...
+
+    def deliver(self, scope: WorkspaceScope) -> str: ...
+
+
 class EchoResponder:
     """Spike: potwierdza odbiór, nie dotykając rdzenia WorkMate."""
 
@@ -192,7 +205,7 @@ class ConversationalResponder:
         project_brief: BriefRouter | None = None,
         change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
-        outbox_delivery: Callable[[WorkspaceScope], str] | None = None,
+        outbox_delivery: OutboxDeliverer | None = None,
         skills: Sequence[tuple[str, str]] = (),
     ) -> None:
         self._runtime = runtime
@@ -400,6 +413,17 @@ class ConversationalResponder:
         # jest długożyjący (poller chodzi dobami), więc data zamrożona przy starcie rozjechałaby
         # się z rzeczywistością następnego dnia. ``now`` policzono wyżej — tura ma jedną chwilę,
         # wspólną z kryterium bezczynności.
+        # Migawka skrzynki PRZED wywołaniem modelu — dopiero za chwilę dostanie powłokę.
+        # Po turze nie dałoby się już odróżnić pliku, który wytworzył, od podłożonego wcześniej.
+        if self._outbox_delivery is not None:
+            try:
+                self._outbox_delivery.snapshot(scope)
+            except Exception:
+                logger.warning(
+                    "Nie udało się zrobić migawki skrzynki rozmowy %r — dostawa się wstrzyma",
+                    external_id,
+                    exc_info=True,
+                )
         result = self._runtime.run_turn(
             message.text,
             attachments=message.attachments,
@@ -421,7 +445,7 @@ class ConversationalResponder:
         # wzbogacenia: błąd degraduje do „bez załączników" i idzie do logu, nie do użytkownika.
         if self._outbox_delivery is not None:
             try:
-                notice = self._outbox_delivery(scope)
+                notice = self._outbox_delivery.deliver(scope)
             except Exception:
                 logger.warning(
                     "Nie udało się dostarczyć plików ze skrzynki rozmowy %r — pomijam",
