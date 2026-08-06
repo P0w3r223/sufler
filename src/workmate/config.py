@@ -119,8 +119,13 @@ def _optional_path_from_env(name: str) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
-def require_writable(path: Path, env_var: str) -> None:
+def require_writable(path: Path, env_var: str, *, is_directory: bool = False) -> None:
     """Twardy błąd startu, gdy katalog dla TRWAŁEJ ścieżki nie przyjmie zapisu (R/L1, GAPS).
+
+    ``is_directory=True``, gdy ``path`` JEST katalogiem docelowym (baza wiedzy), a nie plikiem
+    w nim — inaczej sonda badałaby katalog wyżej i przepuszczała ``data/notes`` zamontowane
+    read-only wewnątrz zapisywalnego ``data/``. Dokładnie tak wygląda flota: wolumen bazy wiedzy
+    bywa montowany osobno od reszty stanu (ADR 0008).
 
     Domyślne ścieżki stanu i baz (stałe ``_DEFAULT_*``) celują w ``~/.workmate``, a konto
     kontenera ma ``--no-create-home`` i rootfs ``read_only`` (Dockerfile/compose) — bez nadpisania
@@ -134,7 +139,7 @@ def require_writable(path: Path, env_var: str) -> None:
     ścieżkami. Zapis próbny jest szczery (tak samo pisze ``state.save``): łapie też rootfs
     ``read_only``, którego same bity uprawnień nie ujawniają.
     """
-    target_dir = path.expanduser().parent
+    target_dir = path.expanduser() if is_directory else path.expanduser().parent
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         probe = target_dir / f".workmate-writetest-{os.getpid()}"

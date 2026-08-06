@@ -102,6 +102,14 @@ def main() -> None:
     events_settings = EventsSettings.from_env()
     require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
     require_writable(conv_settings.db_path, "WORKMATE_CONVERSATIONS_DB")
+    # Baza wiedzy — sondowana TYLKO przy włączonym zapisie notatek (inaczej drzwi read-only
+    # wywracałyby się na katalogu, którego nigdy nie tkną). Bez tej sondy montaż read-only
+    # ujawnia się dopiero wyjątkiem w wątku tła (zapis async, ADR 0043) — już PO tym, jak nadawca
+    # dostał potwierdzenie przyjęcia komendy. Katalog, nie plik w nim: wolumen bazy wiedzy bywa
+    # montowany osobno od reszty stanu, więc sonda o poziom wyżej przepuściłaby read-only
+    # (ADR 0008 tej paczki wdrożeniowej).
+    if settings.enable_meeting_note_write or settings.enable_thread_note_capture:
+        require_writable(core_settings.notes_dir, "WORKMATE_NOTES_DIR", is_directory=True)
     if workspace_settings.enabled:
         # TTL sprzątanie katalogu roboczego (ADR 0018) — raz na starcie, backstop przeciw rośnięciu.
         removed = prune_stale(
