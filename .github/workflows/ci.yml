@@ -16,7 +16,13 @@ jobs:
         include:
           - name: workmate
             dir: "."
-            sync_args: "--extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply"
+            # `seed` jest tu, bo `tests/adapters/inbound/test_document_text.py` ekstrahuje tekst
+            # z PDF — a `pypdf` mieszka w TYM extra, nie w `file-reply` (tam jest sam `fpdf2`,
+            # renderer). Bez niego jeden test padał od 2026-07-30, przykrywając wszystkie kroki
+            # po sobie: lint, format, mypy i granice nie wykonywały się wcale. Ta sama lista
+            # extras co w etapie `test` obrazu (`deploy/docker/Dockerfile`) — jedno źródło prawdy
+            # o tym, czego wymaga pełny przebieg testów.
+            sync_args: "--extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply --extra seed"
             lint_paths: "src tests eval"
           - name: powiadomienia-teams
             dir: "Powiadomienia_teams"

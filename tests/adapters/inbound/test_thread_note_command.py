@@ -215,9 +215,7 @@ def test_authorized_member_saves_note():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, authorizer=_AUTHZ)
 
-    reply = router.dispatch(
-        "@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-anna")
-    )
+    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-anna"))
 
     assert reply is not None and "Notatka z wątku zapisana" in reply
     assert service.calls  # rozpoznany członek → serwis wywołany
@@ -228,9 +226,7 @@ def test_unknown_sender_refused_before_work():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, authorizer=_AUTHZ)
 
-    reply = router.dispatch(
-        "@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-obcy")
-    )
+    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-obcy"))
 
     assert reply is not None and "Brak uprawnień" in reply
     assert service.calls == []
@@ -307,13 +303,9 @@ def test_async_refusal_is_sync_and_schedules_no_background():
     service = _FakeThreadService()
     scheduler = _InlineScheduler()
     callback = _RecordingCallback()
-    router = ThreadNoteRouter(
-        service, authorizer=_AUTHZ, scheduler=scheduler, callback=callback
-    )
+    router = ThreadNoteRouter(service, authorizer=_AUTHZ, scheduler=scheduler, callback=callback)
 
-    reply = router.dispatch(
-        "@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-obcy")
-    )
+    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-obcy"))
 
     assert reply is not None and "Brak uprawnień" in reply
     assert scheduler.submitted == 0

@@ -156,8 +156,9 @@ def _with_prose(days: list[DaySummary], *, settings: Settings, person: str) -> l
     return result
 
 
-def _write_files(report: SummaryReport, *, md: str | None, js: str | None, out: Path | None,
-                 settings: Settings) -> None:
+def _write_files(
+    report: SummaryReport, *, md: str | None, js: str | None, out: Path | None, settings: Settings
+) -> None:
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         stem = out.with_suffix("")
@@ -173,8 +174,9 @@ def _write_files(report: SummaryReport, *, md: str | None, js: str | None, out: 
         print(f"Zapisano: {path}", file=sys.stderr)
 
 
-def _emit(report: SummaryReport, *, tz: ZoneInfo, fmt: str, out: Path | None,
-          settings: Settings) -> None:
+def _emit(
+    report: SummaryReport, *, tz: ZoneInfo, fmt: str, out: Path | None, settings: Settings
+) -> None:
     md = render.to_markdown(report, tz=tz) if fmt in ("md", "both") else None
     js = render.to_json(report, tz=tz) if fmt in ("json", "both") else None
     print(js if fmt == "json" else md)

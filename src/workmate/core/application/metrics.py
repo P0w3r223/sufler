@@ -27,9 +27,7 @@ class MetricsService:
 
     def record(self, door: str, raw_user: str, occurred_at: datetime) -> None:
         """Zapisz jedno wywołanie: pseudonimizuj nadawcę i zbucketuj po tygodniu ISO."""
-        self._store.record_call(
-            door, pseudonymize(raw_user), iso_week(occurred_at), occurred_at
-        )
+        self._store.record_call(door, pseudonymize(raw_user), iso_week(occurred_at), occurred_at)
 
     def summary(self) -> MetricsSummary:
         """Zestawienie per drzwi: wywołania, unikalni użytkownicy, powracający (≥2 tygodnie)."""

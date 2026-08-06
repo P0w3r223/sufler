@@ -28,8 +28,9 @@ def test_to_text_renders_header_totals_and_project_sections():
                 by_kind=(("pr_merged", 2), ("issue_opened", 2)),
                 latest=_dt(19, 14),
             ),
-            ProjectChanges(project="scada-integration", total=1, by_kind=(("issue_opened", 1),),
-                           latest=_dt(10)),
+            ProjectChanges(
+                project="scada-integration", total=1, by_kind=(("issue_opened", 1),), latest=_dt(10)
+            ),
         ),
         truncated=False,
     )
@@ -74,8 +75,9 @@ def test_to_text_marks_truncated_window():
         since=date(2026, 7, 1),
         total=3,
         by_source=(("github", 3),),
-        projects=(ProjectChanges(project="workmate", total=3, by_kind=(("ci_failed", 3),),
-                                 latest=_dt(9)),),
+        projects=(
+            ProjectChanges(project="workmate", total=3, by_kind=(("ci_failed", 3),), latest=_dt(9)),
+        ),
         truncated=True,
     )
 
