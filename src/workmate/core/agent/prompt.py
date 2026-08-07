@@ -117,6 +117,7 @@ wrote them. They are the division's institutional memory.
 When you are unsure whether an answer is grounded, picture the person opening the note
 you cited: would they find the claim in it?"""
 
+
 def _static(environment: str) -> str:
     return "\n\n".join((_IDENTITY, environment, _CONVENTIONS, _PRECEDENCE))
 
