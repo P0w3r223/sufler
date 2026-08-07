@@ -34,12 +34,22 @@ It serves the division's staff, one agent per conversation.
 Respond in Polish. Ground answers in what the tools return, and cite the note `id`
 so the reader can open the source. When the tools come back empty, say so plainly."""
 
-# SZEW ARCHITEKTONICZNY (ADR 0056 §Konsekwencje). Opisuje świat, który agent zastaje —
-# dziś baza wiedzy jest osiągalna WYŁĄCZNIE przez narzędzia, a załączniki przychodzą
-# w wiadomości. Po wprowadzeniu montaży kontenerowych ta sekcja opisze ścieżki
-# (/mnt/system/notes, /mnt/user/inputs, /mnt/user/outputs, /mnt/skills) i nic poza nią
-# nie musi się zmienić. Prompt opisujący nieistniejące ścieżki produkowałby decyzje
-# spójne z fałszywym opisem — dlatego sekcja idzie ZA architekturą, nie przed nią.
+# SZEW ARCHITEKTONICZNY (ADR 0056 §Konsekwencje). Sekcja opisuje świat, który agent zastaje,
+# i idzie ZA architekturą, nie przed nią — prompt opisujący nieistniejące ścieżki produkowałby
+# decyzje spójne z fałszywym opisem.
+#
+# UWAGA: architektura już się ruszyła, a ten tekst nie. Zdanie „the knowledge base lives behind
+# tools" jest prawdziwe wyłącznie BEZ powłoki. Z powłoką (`shell_available=True`) narzędzia
+# odczytu notatek nie wchodzą do katalogu (`agent_wiring.build_agent_runtime`), a baza jest
+# montowana pod `/mnt/system` i czytana `workmate-search`/`cat` — czyli zdanie w bloku
+# STATYCZNYM, cache'owanym i najbardziej autorytatywnym, zaprzecza zdolności, którą agent ma.
+# Sprostowanie żyje dziś niżej w hierarchii: w ogonie opisu `Notes` i w opisie `Bash`.
+#
+# Dlatego przepisanie tej sekcji (etap 6 planu przebudowy) musi poprzedzić operacyjne włączenie
+# `WORKMATE_ENABLE_SHELL` na produkcji. Docelowe ścieżki to `/mnt/system`, `/home/scratchpad`
+# (z `outputs/` jako skrzynką nadawczą) i `/mnt/skills`. `/mnt/user/*` NIE — montaż zdjęto
+# 2026-08-06 wraz z obietnicą w opisie `Bash`, więc treść trzeba napisać wobec dzisiejszego
+# compose, a nie odmrozić z ADR 0005.
 ENVIRONMENT = """\
 ## Environment
 
