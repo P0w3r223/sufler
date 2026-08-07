@@ -309,6 +309,91 @@ def test_shell_available_bierze_sie_z_FABRYKI_a_nie_z_ustawienia(tmp_path: Path,
     assert _shell_available(tmp_path, monkeypatch, chciana=False, fabryka_daje=False) is False
 
 
+# --- Etap 6: opis świata idzie z tej samej fabryki co katalog narzędzi ----------
+
+
+def _drzwi_z_powloka(tmp_path: Path, monkeypatch, *, fabryka_daje: bool, skills: Path | None):
+    """Złóż drzwi Teams i zwróć (kwargi budowy runtime'u, responder).
+
+    Fabrykę powłoki podmieniamy z tego samego powodu co wyżej: prawdziwa zwraca ``None``
+    na Windows, więc bez podmiany sonda mierzyłaby platformę zamiast reguły.
+    """
+    from workmate.config import ShellSettings, SkillsSettings, WorkspaceSettings
+
+    korzen = tmp_path / f"{int(fabryka_daje)}{int(skills is not None)}"
+    korzen.mkdir()
+    zebrane: dict[str, object] = {}
+
+    def _runtime(*args, **kwargs):
+        zebrane.update(kwargs)
+        return _DummyRuntime()
+
+    monkeypatch.setattr(agent_wiring, "build_agent_runtime_or_exit", _runtime)
+    monkeypatch.setattr(
+        agent_wiring,
+        "_build_shell_factory",
+        lambda *a, **k: (lambda scope: []) if fabryka_daje else None,
+    )
+    responder = build_conversational_responder(
+        _settings(korzen),
+        AgentSettings(),
+        _conv_settings(korzen),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        enable_workspace=True,
+        workspace_settings=WorkspaceSettings(workspace_dir=korzen / "ws"),
+        shell_settings=ShellSettings(enabled=True, socket_path=korzen / "exec.sock"),
+        skills_settings=None if skills is None else SkillsSettings(skills_dir=skills),
+    )
+    return zebrane, responder
+
+
+def _katalog_procedur(tmp_path: Path) -> Path:
+    root = tmp_path / "skills"
+    (root / "zestawienie").mkdir(parents=True)
+    (root / "zestawienie" / "SKILL.md").write_text(
+        "# Zestawienie\n\nSkłada zestawienie do wysłania.\n", encoding="utf-8"
+    )
+    return root
+
+
+def test_korpus_opisuje_montaze_dokladnie_wtedy_gdy_powloka_istnieje(tmp_path: Path, monkeypatch):
+    """Wariant ``ENVIRONMENT`` bierze się z FABRYKI, tak samo jak ``shell_available``.
+
+    Rozjazd tych dwóch jest defektem, który etap 6 zamyka: agent czytałby „the knowledge base
+    lives behind tools" przy katalogu, z którego te narzędzia właśnie usunięto — albo odwrotnie,
+    dostałby mapę montaży bez powłoki, którą mógłby po niej chodzić.
+    """
+    z_powloka, _ = _drzwi_z_powloka(tmp_path, monkeypatch, fabryka_daje=True, skills=None)
+    bez_powloki, _ = _drzwi_z_powloka(tmp_path, monkeypatch, fabryka_daje=False, skills=None)
+
+    assert z_powloka["shell_available"] is True
+    assert "/mnt/system/notes/" in str(z_powloka["system_prompt"])
+    assert "lives behind tools" not in str(z_powloka["system_prompt"])
+
+    assert bez_powloki["shell_available"] is False
+    assert "lives behind tools" in str(bez_powloki["system_prompt"])
+    assert "/mnt/system/notes/" not in str(bez_powloki["system_prompt"])
+
+
+def test_lista_procedur_wchodzi_do_naglowka_dopiero_z_powloka(tmp_path: Path, monkeypatch):
+    """Martwa obietnica tej samej klasy co ``/mnt/user/outputs`` — złapana w etapie 6.
+
+    Nagłówek sesji mówi „read the one that fits before starting", a jedyną drogą do TREŚCI
+    procedury jest ``cat`` w wykonawcy: narzędzia plikowe katalogu roboczego są domknięte
+    w scope'ie rozmowy i ``/mnt/skills`` nie widzą. Bez powłoki model dostawał więc listę nazw
+    i polecenie przeczytania czegoś, po co nie ma jak sięgnąć.
+    """
+    procedury = _katalog_procedur(tmp_path)
+
+    _, z_powloka = _drzwi_z_powloka(tmp_path, monkeypatch, fabryka_daje=True, skills=procedury)
+    _, bez_powloki = _drzwi_z_powloka(tmp_path, monkeypatch, fabryka_daje=False, skills=procedury)
+
+    assert z_powloka._skills == (("zestawienie", "Składa zestawienie do wysłania."),)
+    assert bez_powloki._skills == ()
+
+
 def test_bez_bramki_katalogu_roboczego_nie_ma_go_nawet_bez_powloki(tmp_path: Path, monkeypatch):
     """Krok 5.5 nie ma prawa WŁĄCZYĆ zdolności tam, gdzie operator jej nie chciał."""
     from workmate.config import ShellSettings, WorkspaceSettings

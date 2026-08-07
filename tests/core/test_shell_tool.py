@@ -143,14 +143,23 @@ def test_runner_failure_is_wrapped_into_an_error_envelope():
     assert result == {"error": "gniazdo zniknęło"}
 
 
-def test_description_carries_the_mount_map_and_the_search_command():
-    """Opis jest jedynym miejscem, z którego model pozna układ montaży — prompt dostanie go w §6."""
+def test_description_carries_running_facts_and_leaves_the_map_to_the_prompt():
+    """Po etapie 6 opis niesie URUCHAMIANIE, a układ montaży — sekcja ``ENVIRONMENT`` promptu.
+
+    Poprzednia wersja tej sondy zamrażała tu mapę i sama zapowiadała przeprowadzkę („prompt
+    dostanie go w §6"). Trzymanie mapy w obu miejscach dałoby dwa źródła do synchronizacji,
+    więc asercja na komplet ścieżek stoi teraz w ``tests/core/test_prompt.py`` — razem
+    z bramką wiążącą ją z tym narzędziem.
+    """
     description = _tool(FakeRunner()).description
 
-    for path in ("/home/scratchpad", "/mnt/system/notes/", "/mnt/system/projects/"):
-        assert path in description
+    assert "/home/scratchpad" in description, "katalog startowy to fakt o URUCHOMIENIU polecenia"
     assert "workmate-search" in description
     assert "64 KB" in description
+
+    # Mapa wyprowadzona: gdyby wróciła tutaj, prompt i opis rozjechałyby się przy następnym montażu.
+    for path in ("/mnt/system/notes/", "/mnt/system/projects/", "/mnt/skills/"):
+        assert path not in description, f"{path} należy do ENVIRONMENT, nie do opisu narzędzia"
 
 
 def test_description_promises_the_outbox_ONLY_when_delivery_exists():

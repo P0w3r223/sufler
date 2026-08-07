@@ -37,7 +37,7 @@ from workmate.adapters.outbound.sqlite_conversations import SqliteConversationSt
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
 from workmate.config import RetrievalSettings
-from workmate.core.agent.prompt import STATIC_PROMPT, static_prompt_for
+from workmate.core.agent.prompt import static_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
@@ -156,7 +156,7 @@ def build_agent_runtime(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = STATIC_PROMPT,
+    system_prompt: str | None = None,
     shell_available: bool = False,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
@@ -167,11 +167,16 @@ def build_agent_runtime(
     (np. odczyt zdarzeń, narzędzia GitHub) doklejane do bazowego katalogu — z definicji poza
     powierzchnią MCP (golden-test nietknięty).
     ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
-    materializujemy załączniki); domyślnie bazowy ``STATIC_PROMPT`` (ADR 0056).
+    materializujemy załączniki). ``None`` wyprowadza korpus z ``shell_available`` (ADR 0056,
+    etap 6 planu przebudowy) — a nie ze stałej. Stała jako domyślna wiązała drzwi z powłoką
+    i opisem świata BEZ powłoki: agent czytał „the knowledge base lives behind tools", dostając
+    katalog, z którego te narzędzia właśnie usunięto. Rozjazd był po cichy i możliwy wyłącznie
+    przez przeoczenie jednego argumentu.
 
     ``shell_available`` mówi, czy te drzwi dają agentowi ``Bash`` (ADR 0057). Steruje trzema
-    narzędziami ODCZYTU bazy wiedzy: z powłoką są zbędne (``workmate-search`` plus ``cat``
-    na montażu ``ro``), bez niej są JEDYNĄ drogą do notatek. Domyślne ``False`` jest celowo
+    narzędziami ODCZYTU bazy wiedzy oraz wariantem sekcji ``ENVIRONMENT``: z powłoką narzędzia
+    są zbędne (``workmate-search`` plus ``cat`` na montażu ``ro``) i świat opisują montaże, bez
+    niej narzędzia są JEDYNĄ drogą do notatek i to one są światem. Domyślne ``False`` jest celowo
     zachowawcze — drzwi, które zapomną o tym parametrze, dostają katalog pełniejszy, a nie
     agenta odciętego od bazy wiedzy.
     """
@@ -198,7 +203,11 @@ def build_agent_runtime(
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
         [*catalog, *extra_catalog],
-        system_prompt=system_prompt,
+        system_prompt=(
+            system_prompt
+            if system_prompt is not None
+            else static_prompt_for(attachments=False, shell=shell_available)
+        ),
         max_tool_iterations=agent_settings.max_tool_iterations,
     )
 
@@ -209,7 +218,7 @@ def build_agent_runtime_or_exit(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = STATIC_PROMPT,
+    system_prompt: str | None = None,
     shell_available: bool = False,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
@@ -477,7 +486,13 @@ def build_conversational_responder(
         agent_settings,
         enable_write=enable_write,
         extra_catalog=extra_catalog,
-        system_prompt=static_prompt_for(attachments=supports_attachments),
+        # Wariant `ENVIRONMENT` z TEJ SAMEJ fabryki co katalog narzędzi (etap 6). Gdyby brał się
+        # z `shell_settings.enabled`, opis świata i katalog rozjechałyby się dokładnie tam, gdzie
+        # rozjeżdża się ustawienie z fabryką: bez `workspace_settings` i na platformie, gdzie
+        # klient wykonawcy się nie importuje.
+        system_prompt=static_prompt_for(
+            attachments=supports_attachments, shell=shell_factory is not None
+        ),
         # Z FABRYKI, nie z ustawień. `shell_settings.enabled` mówi, czego chciał operator;
         # `shell_factory` — co agent faktycznie dostanie. Rozjeżdżają się przy braku
         # `workspace_settings` i na platformie, gdzie klient wykonawcy nie importuje się
@@ -528,9 +543,15 @@ def build_conversational_responder(
     )
     # Procedury z `/mnt/skills` (ADR 0005) — odczyt RAZ przy składaniu drzwi. Brak katalogu daje
     # pustą listę i zachowanie dokładnie dawne; nagłówek sesji nie dostaje wtedy sekcji skilli.
+    #
+    # Warunek na `shell_factory` doszedł w etapie 6 i zamyka martwą obietnicę tej samej klasy co
+    # `/mnt/user/outputs`. Nagłówek mówi „read the one that fits before starting", a jedyną drogą
+    # do treści procedury jest `cat` w wykonawcy: narzędzia plikowe katalogu roboczego są zamknięte
+    # w scope'ie rozmowy i `/mnt/skills` nie widzą. Bez powłoki model dostawał więc listę nazw
+    # i polecenie przeczytania czegoś, po co nie ma jak sięgnąć.
     skills = (
         read_skill_catalog(skills_settings.skills_dir, limit=skills_settings.max_in_header)
-        if skills_settings is not None
+        if skills_settings is not None and shell_factory is not None
         else ()
     )
     # Dostawa ze skrzynki dzieli korzeń z powłoką i katalogiem roboczym; ``outbox_enabled``

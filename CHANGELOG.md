@@ -6,6 +6,31 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Zmienione
+
+- **Sekcja `ENVIRONMENT` promptu opisuje montaże, a nie świat narzędzi** (etap 6 planu
+  przebudowy). Warianty są dwa i wybiera je ta sama flaga co katalog narzędzi
+  (`shell_available`): bez powłoki baza wiedzy nadal „lives behind tools", z powłoką korpus
+  wymienia `/mnt/system/notes/`, `/mnt/system/projects/`, `/mnt/skills/` i `/home/scratchpad/`
+  wraz z granicą zapisu. Do tej zmiany blok STATYCZNY — najbardziej autorytatywny i cache'owany
+  — zaprzeczał zdolności, którą agent w konfiguracji z powłoką ma, a sprostowanie żyło niżej
+  w hierarchii: w ogonie opisu `Notes` i w opisie `Bash`.
+- **Mapa montaży wyprowadziła się z opisu narzędzia `Bash` do promptu.** Opis nosił ją
+  zastępczo, dopóki prompt opisywał świat narzędzi; trzymanie jej w obu miejscach dawałoby dwa
+  źródła do synchronizacji przy następnym montażu. W opisie zostaje to, co dotyczy uruchamiania
+  polecenia: katalog startowy, `workmate-search`, limity wyjścia i czasu.
+- **`build_agent_runtime` wyprowadza korpus z `shell_available`**, gdy `system_prompt` jest
+  `None` — zamiast domyślnej stałej. Stała jako domyślna wiązała drzwi z powłoką z opisem świata
+  BEZ powłoki, a rozjazd był cichy i możliwy przez przeoczenie jednego argumentu.
+
+### Naprawione
+
+- **Lista procedur wchodzi do nagłówka sesji dopiero razem z powłoką.** Nagłówek mówi „read the
+  one that fits before starting", a jedyną drogą do TREŚCI procedury jest `cat` w wykonawcy:
+  narzędzia plikowe katalogu roboczego są domknięte w scope'ie rozmowy i `/mnt/skills` nie
+  widzą. Bez powłoki model dostawał listę nazw i polecenie przeczytania czegoś, po co nie ma
+  jak sięgnąć — martwa obietnica tej samej klasy co dawne `/mnt/user/outputs`.
+
 ## [1.5.0] — 2026-08-05
 
 Wydanie harnessu agenta: model dostaje powłokę w kontenerze bez sieci, wyszukiwarkę notatek

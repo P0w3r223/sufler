@@ -541,26 +541,27 @@ def build_workspace_catalog(
     ]
 
 
+# Mapa montaży wyprowadziła się stąd do sekcji `ENVIRONMENT` promptu (etap 6 planu przebudowy).
+# Tu zostaje to, co dotyczy URUCHAMIANIA polecenia: gdzie startuje, czym szukać w notatkach
+# i jakie ma limity. Układ ścieżek jest własnością świata, a nie tej czynności — trzymany
+# w obu miejscach dawałby dwa źródła do synchronizacji przy następnym montażu.
 _SHELL_HEAD = """\
 Uruchom polecenie powłoki (bash) w izolowanym kontenerze bez dostępu do sieci.
 
-Startujesz we własnym katalogu roboczym tej rozmowy — pliki tworzone tutaj przeżywają
-do kolejnych tur. Układ ścieżek:
-  /home/scratchpad/… — twój katalog roboczy, zapis dozwolony"""
+Startujesz w katalogu roboczym tej rozmowy (/home/scratchpad/…) — pliki tworzone tutaj
+przeżywają do kolejnych tur."""
 
 # Akapit o skrzynce doklejany WYŁĄCZNIE, gdy dostawa faktycznie działa (bramka ``enable_file_reply``
 # na drzwiach). Bezwarunkowa obietnica dostawy przy wyłączonej bramce byłaby dokładnie tym
 # defektem, który ta zdolność likwiduje: model dostaje kod 0 i ciszę, a pliki rosną na wolumenie.
 _SHELL_OUTBOX = """
-  outputs/ — skrzynka nadawcza w katalogu roboczym. Plik zapisany tutaj wysyłam
-    rozmówcy po zakończeniu tury i usuwam ze skrzynki, więc trzymaj tu wyłącznie
-    gotowe wyniki, a materiał roboczy piętro wyżej. Dozwolone rozszerzenia: {formats}.
-    Plik w budowie nazywaj `*.tmp` i zmieniaj nazwę, gdy jest gotowy — pozycje `.tmp`
-    pomijam przy wysyłce."""
+Podkatalog `outputs/` w katalogu roboczym jest skrzynką nadawczą: plik zapisany tam
+wysyłam rozmówcy po zakończeniu tury i usuwam ze skrzynki, więc trzymaj tam wyłącznie
+gotowe wyniki, a materiał roboczy piętro wyżej. Dozwolone rozszerzenia: {formats}.
+Plik w budowie nazywaj `*.tmp` i zmieniaj nazwę, gdy jest gotowy — pozycje `.tmp`
+pomijam przy wysyłce."""
 
 _SHELL_TAIL = """
-  /mnt/system/notes/ — baza wiedzy pionu (notatki), TYLKO ODCZYT
-  /mnt/system/projects/ — rejestr projektów, TYLKO ODCZYT
 Do przeszukiwania notatek użyj `workmate-search "fraza"` — korpus jest polski
 i odmieniony, więc dopasowanie wzorca (grep) gubi trafienia.
 Wyjście jest przycinane do 64 KB (flaga `truncated`), a polecenie przerywane po
@@ -585,9 +586,9 @@ def build_shell_catalog(
     powłoka sięgnie ścieżką bezwzględną wszędzie. Granicą jest brak sieci (ADR 0057), a nie
     domknięcie katalogu.
 
-    Opis narzędzia niesie mapę montaży, bo prompt systemowy opisuje jeszcze świat narzędzi
-    (ADR 0056 §Konsekwencje — sekcja ``ENVIRONMENT`` idzie ZA architekturą). Do czasu tamtej
-    zmiany to jedyne miejsce, z którego model dowiaduje się, gdzie co leży.
+    Mapy montaży opis JUŻ NIE NIESIE — od etapu 6 mieszka w sekcji ``ENVIRONMENT`` promptu,
+    w wariancie wybieranym tą samą flagą, która buduje to narzędzie (``shell_available``
+    w ``build_agent_runtime``). Opis nosił ją zastępczo, dopóki prompt opisywał świat narzędzi.
 
     ``outbox_enabled`` steruje akapitem o ``outputs/``: dostawa ma WŁASNĄ bramkę po stronie
     drzwi, a opis obiecujący ją bezwarunkowo kłamałby przy konfiguracji „powłoka tak, załączniki

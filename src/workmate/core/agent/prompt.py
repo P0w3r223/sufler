@@ -14,8 +14,9 @@ granicą bezpieczeństwa — zdeterminowany prompt-injection je obchodzi. Realna
 architektoniczna: drzwi async read-only + wąskie narzędzia + sekrety poza zasięgiem agenta.
 
 Prompt jest po ANGIELSKU, odpowiedź po polsku — język instrukcji i język wyjścia są
-niezależne. ``ENVIRONMENT`` to SZEW: opisuje świat, w którym agent działa, więc zmienia się
-razem z architekturą (dziś: wiedza przez narzędzia; docelowo: montaże kontenerowe).
+niezależne. ``ENVIRONMENT`` to SZEW: opisuje świat, w którym agent działa, więc ma DWA warianty
+wybierane tą samą flagą co katalog narzędzi — wiedza przez narzędzia (bez powłoki) albo montaże
+kontenerowe (z powłoką). Wybiera je ``static_prompt_for``.
 """
 
 from __future__ import annotations
@@ -38,25 +39,50 @@ so the reader can open the source. When the tools come back empty, say so plainl
 # i idzie ZA architekturą, nie przed nią — prompt opisujący nieistniejące ścieżki produkowałby
 # decyzje spójne z fałszywym opisem.
 #
-# UWAGA: architektura już się ruszyła, a ten tekst nie. Zdanie „the knowledge base lives behind
-# tools" jest prawdziwe wyłącznie BEZ powłoki. Z powłoką (`shell_available=True`) narzędzia
-# odczytu notatek nie wchodzą do katalogu (`agent_wiring.build_agent_runtime`), a baza jest
-# montowana pod `/mnt/system` i czytana `workmate-search`/`cat` — czyli zdanie w bloku
-# STATYCZNYM, cache'owanym i najbardziej autorytatywnym, zaprzecza zdolności, którą agent ma.
-# Sprostowanie żyje dziś niżej w hierarchii: w ogonie opisu `Notes` i w opisie `Bash`.
+# Warianty są DWA, bo światy są dwa i rozstrzyga je ta sama flaga, co katalog narzędzi
+# (`shell_available`). Bez powłoki baza wiedzy jest osiągalna wyłącznie przez narzędzia odczytu
+# (`build_notes_read_catalog`); z powłoką te narzędzia z katalogu znikają, a baza jest montowana
+# `ro` pod `/mnt/system` i czytana `workmate-search`/`cat`. Jeden wspólny tekst musiałby więc
+# kłamać w jednej z dwóch konfiguracji — do etapu 6 kłamał w tej z powłoką, i to w bloku
+# STATYCZNYM, czyli najbardziej autorytatywnym, podczas gdy sprostowanie żyło niżej w hierarchii
+# (w ogonie opisu `Notes` i w opisie `Bash`).
 #
-# Dlatego przepisanie tej sekcji (etap 6 planu przebudowy) musi poprzedzić operacyjne włączenie
-# `WORKMATE_ENABLE_SHELL` na produkcji. Docelowe ścieżki to `/mnt/system`, `/home/scratchpad`
-# (z `outputs/` jako skrzynką nadawczą) i `/mnt/skills`. `/mnt/user/*` NIE — montaż zdjęto
-# 2026-08-06 wraz z obietnicą w opisie `Bash`, więc treść trzeba napisać wobec dzisiejszego
-# compose, a nie odmrozić z ADR 0005.
-ENVIRONMENT = """\
+# Podział na dwa warianty jest DARMOWY kosztowo: oba są stałe per proces, więc cache prefiksu
+# `tools+system` dzieli się najwyżej na dwa — ten sam argument co przy akapicie o skrzynce
+# nadawczej w opisie `Bash`.
+#
+# Treść wariantu z powłoką powstała wobec DZISIEJSZEGO `docker-compose.yml` paczki wdrożeniowej,
+# nie wobec korpusu cytowanego w ADR 0005 — tamten wciąż niesie `/mnt/user/*`, a ten montaż
+# zdjęto 2026-08-06 razem z obietnicą w opisie `Bash`.
+_ENVIRONMENT_TOOLS = """\
 ## Environment
 
 The knowledge base lives behind tools — calling them is how you reach it. Notes are
 identified as `<company>/<project>/<date>-<slug>`; the project registry maps a project
 key to its company, description and declared status. Files a person attaches arrive
 with their message.
+
+Both the notes and the registry are shared across the division and outlive this
+conversation — a note you write is read by a colleague next month as fact."""
+
+# Mapa montaży mieszka TUTAJ, a nie w opisie `Bash` — do etapu 6 było odwrotnie i opis narzędzia
+# nosił ją zastępczo („do czasu tamtej zmiany to jedyne miejsce, z którego model dowiaduje się,
+# gdzie co leży"). Układ ścieżek jest własnością ŚWIATA, a nie czynności uruchamiania poleceń,
+# więc powielenie go w obu miejscach dałoby dwa źródła do synchronizacji przy następnym montażu.
+_ENVIRONMENT_MOUNTS = """\
+## Environment
+
+Your shell runs in a separate container that reaches these paths:
+
+- `/mnt/system/notes/` — the division's knowledge base, read-only. A note is identified
+  as `<company>/<project>/<date>-<slug>`.
+- `/mnt/system/projects/` — the project registry, read-only: a project key maps to its
+  company, description and declared status.
+- `/mnt/skills/` — procedures for recurring work, read-only.
+- `/home/scratchpad/…` — your working directory for this conversation, writable. Files
+  you leave here survive into later turns.
+
+Files a person attaches arrive with their message.
 
 Both the notes and the registry are shared across the division and outlive this
 conversation — a note you write is read by a colleague next month as fact."""
@@ -91,7 +117,15 @@ wrote them. They are the division's institutional memory.
 When you are unsure whether an answer is grounded, picture the person opening the note
 you cited: would they find the claim in it?"""
 
-STATIC_PROMPT = "\n\n".join((_IDENTITY, ENVIRONMENT, _CONVENTIONS, _PRECEDENCE))
+def _static(environment: str) -> str:
+    return "\n\n".join((_IDENTITY, environment, _CONVENTIONS, _PRECEDENCE))
+
+
+#: Korpus dla drzwi BEZ powłoki — baza wiedzy osiągalna wyłącznie przez narzędzia odczytu.
+STATIC_PROMPT = _static(_ENVIRONMENT_TOOLS)
+
+#: Korpus dla drzwi Z powłoką — baza wiedzy osiągalna przez montaże z ``_ENVIRONMENT_MOUNTS``.
+STATIC_PROMPT_SHELL = _static(_ENVIRONMENT_MOUNTS)
 
 # Klauzula multimodalna — DOKLEJANA tylko dla drzwi, które materializują załączniki (dziś:
 # teams-graph). Reklamowanie jej globalnie byłoby mylną obietnicą na drzwiach czysto
@@ -114,9 +148,19 @@ _WEEKDAYS = (
 )
 
 
-def static_prompt_for(*, attachments: bool) -> str:
-    """Blok statyczny dla drzwi: korpus plus (gdy drzwi przyjmują pliki) klauzula multimodalna."""
-    return STATIC_PROMPT + MULTIMODAL_CAPABILITY_CLAUSE if attachments else STATIC_PROMPT
+def static_prompt_for(*, attachments: bool, shell: bool = False) -> str:
+    """Blok statyczny dla drzwi: korpus wg dostępu do bazy wiedzy, plus klauzula multimodalna.
+
+    ``shell`` wybiera wariant sekcji ``ENVIRONMENT`` i musi pochodzić z tego samego źródła co
+    ``shell_available`` katalogu narzędzi (w produkcji: obecność fabryki powłoki, a nie ustawienie
+    operatora). Rozjazd tych dwóch dałby agenta, który czyta o montażach i dostaje narzędzia
+    odczytu, albo odwrotnie — czyli dokładnie ten defekt, który etap 6 zamyka.
+
+    Domyślne ``False`` jest zachowawcze w tę samą stronę co w ``build_agent_runtime``: drzwi,
+    które o parametrze zapomną, opisują świat węższy niż faktyczny, a nie szerszy.
+    """
+    base = STATIC_PROMPT_SHELL if shell else STATIC_PROMPT
+    return base + MULTIMODAL_CAPABILITY_CLAUSE if attachments else base
 
 
 def build_session_header(
