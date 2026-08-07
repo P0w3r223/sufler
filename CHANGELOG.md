@@ -6,30 +6,100 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-08-07
+
+Wydanie konsolidacji: powierzchnia narzędziowa schodzi z **22 rejestracji w 13 builderach do
+pięciu narzędzi** — `Bash` · `Notes` · `GitHub` · `Jira` · `Schedule` — a model dostaje drogę
+dostarczenia pliku rozmówcy i katalog procedur do powtarzalnej pracy. Prompt przestaje opisywać
+świat sprzed tej zmiany.
+
+Kryterium konsolidacji jest **bariera, nie temat**: narzędzie typowane powstaje wyłącznie tam,
+gdzie powłoka w wykonawcy nie może dosięgnąć — brak sieci (Jira, GitHub, Shifts), brak wolumenu
+stanu (`events.db`), brak drogi do kontekstu, skutek poza kontenerem (dostawa pliku, zapis
+notatki). `Skill(name)` i `File(write/list)` z tego powodu **nie powstają**: to przypadki użycia
+`Bash`. Zysk przychodzi z wchłaniania narzędzi o WSPÓLNEJ prozie (`Jira` −1803 znaki przy
+sześciu), a nie z przekształcania pojedynczych — te powierzchnię powiększają.
+
+Zmierzone składaniem katalogu z żywych builderów, w układach uruchamianych naprawdę (bramki wg
+`config/env.example`): **7 narzędzi** dziś na produkcji (wszystko wyłączone), **5** w architekturze
+docelowej (powłoka ON, GitHub write ON), **6** z dostawą plikiem, **8** przy wszystkim włączonym.
+
+### Dodane
+
+- **Skrzynka nadawcza rozmowy — dostawa plików przez `outputs/`.** Plik zapisany przez powłokę
+  w podkatalogu `outputs/` katalogu roboczego rozmowy jedzie do rozmówcy po zakończeniu tury
+  i znika ze skrzynki. Ścieżka jest WZGLĘDNA celowo: opis narzędzia siedzi w cache'owanym
+  prefiksie promptu, więc ścieżka bezwzględna per rozmowa unieważniałaby go przy każdej nowej
+  rozmowie. Limity per tura: `WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_FILES` (5),
+  `WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_SECONDS` (20), `MAX_FILE_REPLY_KB`; pozycje `*.tmp` są
+  pomijane, więc plik w budowie nie wyjedzie. Okno limitu przy trwającej awarii wysyłki oddaje
+  ponowieniom najwyżej `limit − 1` miejsc, dopóki jest co świeżego wysłać — bezwzględny priorytet
+  ponowień zamieniał jedną stratę na drugą.
+- **Katalog procedur `/mnt/skills`** (ADR 0005 paczki wdrożeniowej). Układ `<korzeń>/<nazwa>/SKILL.md`;
+  nazwa procedury to nazwa katalogu, opis to pierwsza niepusta linia spoza nagłówków. **Bez parsera
+  frontmattera i to jest decyzja**: najcięższe udokumentowane ataki na katalogi procedur są
+  własnością preprocesora, nie czytania plików — dopóki treść trafia do kontekstu zwykłym `cat`-em,
+  cała ta klasa nas nie dotyczy. Znaki niewidoczne (zero-width, znaczniki kierunku pisma) są
+  odsiewane na wejściu. Lista wchodzi do nagłówka sesji, `WORKMATE_SKILLS_DIR` i
+  `WORKMATE_SKILLS_MAX_IN_HEADER` sterują źródłem i długością; ucięcie listy jest GŁOŚNE.
+- **`Schedule()`** zamiast `get_team_schedule` — nic nie wchłania, ale cztery pola dostały opisy.
+
 ### Zmienione
 
-- **Sekcja `ENVIRONMENT` promptu opisuje montaże, a nie świat narzędzi** (etap 6 planu
-  przebudowy). Warianty są dwa i wybiera je ta sama flaga co katalog narzędzi
-  (`shell_available`): bez powłoki baza wiedzy nadal „lives behind tools", z powłoką korpus
-  wymienia `/mnt/system/notes/`, `/mnt/system/projects/`, `/mnt/skills/` i `/home/scratchpad/`
-  wraz z granicą zapisu. Do tej zmiany blok STATYCZNY — najbardziej autorytatywny i cache'owany
-  — zaprzeczał zdolności, którą agent w konfiguracji z powłoką ma, a sprostowanie żyło niżej
-  w hierarchii: w ogonie opisu `Notes` i w opisie `Bash`.
-- **Mapa montaży wyprowadziła się z opisu narzędzia `Bash` do promptu.** Opis nosił ją
-  zastępczo, dopóki prompt opisywał świat narzędzi; trzymanie jej w obu miejscach dawałoby dwa
-  źródła do synchronizacji przy następnym montażu. W opisie zostaje to, co dotyczy uruchamiania
-  polecenia: katalog startowy, `workmate-search`, limity wyjścia i czasu.
-- **`build_agent_runtime` wyprowadza korpus z `shell_available`**, gdy `system_prompt` jest
-  `None` — zamiast domyślnej stałej. Stała jako domyślna wiązała drzwi z powłoką z opisem świata
-  BEZ powłoki, a rozjazd był cichy i możliwy przez przeoczenie jednego argumentu.
+- **`GitHub(action=…)`, `Jira(action=…)`, `Notes(action=…)`** wchłaniają odpowiednio pięć, sześć
+  i dwa narzędzia. Wzorzec opiera się na `Annotated[Literal[…], Field(description=…)]`, bo pomiar
+  pokazał, że `func_metadata` przenosi opisy pól, a `Literal` staje się `enum`. **Bramka zapisu
+  wchodzi do `Literal`, nie do ciała funkcji**: przy wyłączonej bramce wartość akcji NIE ISTNIEJE
+  w schemacie, więc model jej nie zaproponuje — bramka sprawdzana dopiero w ciele wyglądałaby
+  w schemacie identycznie jak jej brak.
+- **Powierzchnia MCP zostaje osobna i zamrożona.** Sesja Claude Code nie ma dostępu do naszego
+  wykonawcy, więc `workmate-search` jest dla niej nieosiągalny — konsolidacja tam nie przeniosłaby
+  zdolności, tylko ją skasowała. Agent dostał WŁASNE buildery; baseline objął całą powierzchnię
+  (dotąd zamrażał 6 nazw z 8), a golden biega w czterech konfiguracjach.
+- **Trzy narzędzia odczytu notatek i trzy narzędzia plikowe wchodzą tylko BEZ powłoki.** Cięcie
+  jest warunkowe, nie bezwarunkowe: `WORKMATE_ENABLE_SHELL` jest domyślnie wyłączona, a bez
+  powłoki te narzędzia są jedyną drogą do bazy wiedzy i jedynym sposobem, w jaki model odzyskuje
+  własny szkic po kompaktowaniu kontekstu. Warunek liczy się z FABRYKI powłoki, nie z ustawienia
+  operatora — ustawienie mówi, czego operator chciał, fabryka mówi, co agent dostanie.
+- **`reply_on_thread` zniesione, powiązanie wątku idzie do nagłówka sesji.** Wołało tę samą metodę
+  serwisu co `GitHub(action='comment')`, za tą samą bramką i obok niej — nie zawężało niczego,
+  wypełniało jeden argument. Wypełnienie argumentu należy do treści promptu, a nie do katalogu
+  narzędzi; nagłówek składa się per turę, więc leży POZA cache'owanym prefiksem.
+- **Sekcja `ENVIRONMENT` promptu opisuje montaże, a nie świat narzędzi.** Warianty są dwa i wybiera
+  je ta sama flaga co katalog narzędzi: bez powłoki baza wiedzy nadal „lives behind tools",
+  z powłoką korpus wymienia `/mnt/system/notes/`, `/mnt/system/projects/`, `/mnt/skills/`
+  i `/home/scratchpad/` wraz z granicą zapisu. Do tej zmiany blok STATYCZNY — najbardziej
+  autorytatywny i cache'owany — zaprzeczał zdolności, którą agent z powłoką ma, a sprostowanie
+  żyło niżej w hierarchii. Mapa montaży wyprowadziła się przy okazji z opisu narzędzia `Bash`:
+  układ świata jest własnością promptu, a trzymany w obu miejscach dawałby dwa źródła do
+  synchronizacji przy następnym montażu.
+- **`build_agent_runtime` wyprowadza korpus z `shell_available`**, gdy `system_prompt` jest `None`.
+  Stała jako domyślna wiązała drzwi z powłoką z opisem świata BEZ powłoki, cicho i przez
+  przeoczenie jednego argumentu.
 
 ### Naprawione
 
 - **Lista procedur wchodzi do nagłówka sesji dopiero razem z powłoką.** Nagłówek mówi „read the
   one that fits before starting", a jedyną drogą do TREŚCI procedury jest `cat` w wykonawcy:
-  narzędzia plikowe katalogu roboczego są domknięte w scope'ie rozmowy i `/mnt/skills` nie
-  widzą. Bez powłoki model dostawał listę nazw i polecenie przeczytania czegoś, po co nie ma
-  jak sięgnąć — martwa obietnica tej samej klasy co dawne `/mnt/user/outputs`.
+  narzędzia plikowe są domknięte w scope'ie rozmowy i `/mnt/skills` nie widzą. Martwa obietnica
+  tej samej klasy co dawne `/mnt/user/outputs`.
+- **Bramka spójności wersji obejmuje badge w `README.md`.** Badge mówił **1.3.2**, czyli trzy
+  wydania wstecz — porównanie szło pakiet ↔ `__version__` ↔ Dockerfile ↔ compose deweloperski,
+  więc badge nie miał gdzie się zapalić, a paczka wdrożeniowa sprawdza WŁASNĄ kopię README.
+- **Dispatcher `GitHub` ma jawną ostatnią gałąź** — dotąd domyślną był ZAPIS, więc przyszła akcja
+  bez własnej gałęzi wpadłaby w zapis.
+- **Migawka skrzynki zamyka wstrzykiwanie załączników między rozmowami**, `killpg` jest
+  bezwarunkowy, wysyłka ma sufit prób, a retry HTTP przestało się dublować.
+- **Komenda `/moje-zadania` odzyskana** po konsolidacji Jiry.
+
+### Uwaga wdrożeniowa
+
+Nowe zdolności stoją za bramkami domyślnie WYŁĄCZONYMI (`WORKMATE_ENABLE_SHELL`,
+`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY`), więc bez zmiany `.env` wdrożenie 1.6.0 nie zmienia
+powierzchni widzianej przez użytkowników. Powłoki nie wolno włączać na kanałach, których
+uczestnicy nie ufają sobie wzajemnie — rozmowy dzielą wolumen brudnopisu, a izolacja jest dziś
+zakresowa, nie techniczna (ADR 0010 paczki wdrożeniowej). `preflight.sh` paczki odmawia startu
+przy włączonej powłoce na obrazie starszym niż 1.6.0.
 
 ## [1.5.0] — 2026-08-05
 
