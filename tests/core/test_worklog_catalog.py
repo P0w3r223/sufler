@@ -1,8 +1,12 @@
-"""Testy katalogu narzędzia propozycji czasu (ADR 0034, część odczytowa).
+"""Propozycja czasu przez ``GitHub(action='worklog')`` (ADR 0034; krok 5.2 ADR 0009 paczki).
 
-Katalog jest cienki, ale niesie inwarianty warte przypięcia: koperta zamienia
-``InvalidRequestError`` w ``{"error": ...}`` (jedna zła prośba nie wywraca tury), opis narzędzia
-= docstring, a po wycięciu ścieżki zapisu powierzchnia ma być JEDNONARZĘDZIOWA i tylko odczytowa.
+Sondy przeniesione z ``build_worklog_catalog``, osieroconego krokiem 5.2. Zachowania są te same
+i wszystkie warte utrzymania: koperta zamienia ``InvalidRequestError`` w ``{"error": ...}``
+(jedna zła prośba nie wywraca tury), argumenty dochodzą do serwisu, a opis mówi modelowi wprost,
+że **nie ma dokąd zapisać godzin** — bez tego zdania model szuka nieistniejącego narzędzia zapisu
+(ścieżka ``log_jira_worklog`` została wycięta razem z całą stroną mutującą, ADR 0035).
+
+Asercje na opis biegną teraz po opisie narzędzia ``GitHub``, bo tam ta obietnica żyje.
 """
 
 from __future__ import annotations
@@ -10,9 +14,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from workmate.core.application.tools import build_worklog_catalog
+from workmate.core.application.tools import build_github_catalog
 from workmate.core.domain.worklog import SessionPolicy, build_proposal
 from workmate.core.errors import InvalidRequestError
+
+
+class _FakeEvents:
+    def recent(self, *, source=None, project=None, limit=20):
+        return []
 
 
 class _FakeWorklogService:
@@ -29,41 +38,40 @@ class _FakeWorklogService:
         return build_proposal([], since=since, until=until, policy=SessionPolicy())
 
 
-def _catalog(error: Exception | None = None):
+def _zbuduj(error: Exception | None = None):
     service = _FakeWorklogService(error)
-    return service, {spec.name: spec for spec in build_worklog_catalog(service)}  # type: ignore[arg-type]
+    spec = build_github_catalog(events=_FakeEvents(), worklog=service)[0]  # type: ignore[arg-type]
+    return service, spec
 
 
-def test_catalog_exposes_only_the_read_tool() -> None:
-    """Ścieżka zapisu wycięta — obecność ``log_jira_worklog`` byłaby regresją, nie dodatkiem."""
-    _, specs = _catalog()
-    assert set(specs) == {"propose_worklog"}
+def test_worklog_jest_akcja_dopiero_z_serwisem() -> None:
+    """Bez serwisu propozycji akcja nie istnieje — obietnica bez pokrycia byłaby regresją."""
+    bez = build_github_catalog(events=_FakeEvents())[0]  # type: ignore[arg-type]
+    assert "worklog" not in bez.description
+    assert "`worklog`" in _zbuduj()[1].description
 
 
-def test_description_comes_from_the_docstring() -> None:
-    _, specs = _catalog()
-    assert "ODCZYT" in specs["propose_worklog"].description
-
-
-def test_description_tells_the_model_that_nothing_can_be_written() -> None:
+def test_opis_mowi_ze_to_odczyt_i_nic_nie_zapisuje() -> None:
     """Model musi wiedzieć, że nie ma dokąd zapisać godzin — inaczej będzie szukał narzędzia."""
-    _, specs = _catalog()
-    assert "nic nie zapisuje" in specs["propose_worklog"].description
+    opis = _zbuduj()[1].description
+    assert "ODCZYT" in opis
+    assert "nic nie zapisuje" in opis
 
 
-def test_proposal_is_serialized_to_plain_json() -> None:
-    _, specs = _catalog()
-    result = specs["propose_worklog"].fn(date(2026, 7, 13), date(2026, 7, 19))
-    assert result["since"] == "2026-07-13"
-    assert result["sessions"] == []
+def test_propozycja_serializuje_sie_do_zwyklego_json() -> None:
+    _, spec = _zbuduj()
+    wynik = spec.fn(action="worklog", since=date(2026, 7, 13), until=date(2026, 7, 19))
+    assert wynik["since"] == "2026-07-13"
+    assert wynik["sessions"] == []
 
 
-def test_read_error_is_enveloped_not_raised() -> None:
-    _, specs = _catalog(InvalidRequestError("zakres odrzucony"))
-    assert "error" in specs["propose_worklog"].fn(date(2026, 7, 13), date(2026, 7, 19))
+def test_blad_odczytu_wraca_koperta_a_nie_wyjatkiem() -> None:
+    _, spec = _zbuduj(InvalidRequestError("zakres odrzucony"))
+    wynik = spec.fn(action="worklog", since=date(2026, 7, 13), until=date(2026, 7, 19))
+    assert "error" in wynik
 
 
-def test_arguments_are_forwarded() -> None:
-    service, specs = _catalog()
-    specs["propose_worklog"].fn(date(2026, 7, 13), date(2026, 7, 19), "P0w3r223")
+def test_argumenty_dochodza_do_serwisu() -> None:
+    service, spec = _zbuduj()
+    spec.fn(action="worklog", since=date(2026, 7, 13), until=date(2026, 7, 19), author="P0w3r223")
     assert service.calls[0] == (date(2026, 7, 13), date(2026, 7, 19), "P0w3r223")

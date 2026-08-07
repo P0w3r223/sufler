@@ -22,6 +22,11 @@ from workmate.adapters.inbound.responder import (
     SafeResponder,
 )
 from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer, build_semantic_ranker
+from workmate.adapters.outbound.filesystem_outbox import (
+    OUTBOX_DIRNAME,
+    FilesystemOutboxRepository,
+)
+from workmate.adapters.outbound.filesystem_skills import read_skill_catalog
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
@@ -32,18 +37,21 @@ from workmate.adapters.outbound.sqlite_conversations import SqliteConversationSt
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
 from workmate.config import RetrievalSettings
-from workmate.core.agent.prompt import STATIC_PROMPT, static_prompt_for
+from workmate.core.agent.prompt import static_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
 from workmate.core.application.events import EventService
 from workmate.core.application.metrics import MetricsService
+from workmate.core.application.outbox import OutboxDelivery, OutboxLimits
 from workmate.core.application.services import (
     NotesService,
     NotesWriteService,
     ProjectsService,
 )
 from workmate.core.application.tools import (
+    build_notes_catalog,
+    build_notes_read_catalog,
     build_shell_catalog,
     build_tool_catalog,
     build_workspace_catalog,
@@ -54,6 +62,7 @@ from workmate.core.application.workspace import (
     WorkspaceWriteService,
 )
 from workmate.core.ports.command import CommandResult
+from workmate.core.ports.outbox import Deliverable
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -67,6 +76,7 @@ if TYPE_CHECKING:
         ConversationSettings,
         Settings,
         ShellSettings,
+        SkillsSettings,
         WorkspaceSettings,
     )
     from workmate.core.application.tools import ToolSpec
@@ -146,17 +156,29 @@ def build_agent_runtime(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = STATIC_PROMPT,
+    system_prompt: str | None = None,
+    shell_available: bool = False,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
-    ``enable_write`` steruje profilem zaufania drzwi: ``True`` → katalog z
-    ``save_note`` (zaufane, np. lokalne CLI); ``False`` → katalog tylko do odczytu
-    (mniej zaufane drzwi, np. Teams — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to
-    STATYCZNE narzędzia per drzwi (np. odczyt zdarzeń, narzędzia GitHub) doklejane do
-    bazowego katalogu — z definicji poza powierzchnią MCP (golden-test nietknięty).
+    ``enable_write`` steruje profilem zaufania drzwi: ``True`` → ``Notes`` z akcją ``save``
+    (zaufane, np. lokalne CLI); ``False`` → wariant tylko do odczytu (mniej zaufane drzwi,
+    np. Teams — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to STATYCZNE narzędzia per drzwi
+    (np. odczyt zdarzeń, narzędzia GitHub) doklejane do bazowego katalogu — z definicji poza
+    powierzchnią MCP (golden-test nietknięty).
     ``system_prompt`` pozwala drzwiom doprecyzować zdolności (np. multimodal tylko tam, gdzie
-    materializujemy załączniki); domyślnie bazowy ``STATIC_PROMPT`` (ADR 0056).
+    materializujemy załączniki). ``None`` wyprowadza korpus z ``shell_available`` (ADR 0056,
+    etap 6 planu przebudowy) — a nie ze stałej. Stała jako domyślna wiązała drzwi z powłoką
+    i opisem świata BEZ powłoki: agent czytał „the knowledge base lives behind tools", dostając
+    katalog, z którego te narzędzia właśnie usunięto. Rozjazd był po cichy i możliwy wyłącznie
+    przez przeoczenie jednego argumentu.
+
+    ``shell_available`` mówi, czy te drzwi dają agentowi ``Bash`` (ADR 0057). Steruje trzema
+    narzędziami ODCZYTU bazy wiedzy oraz wariantem sekcji ``ENVIRONMENT``: z powłoką narzędzia
+    są zbędne (``workmate-search`` plus ``cat`` na montażu ``ro``) i świat opisują montaże, bez
+    niej narzędzia są JEDYNĄ drogą do notatek i to one są światem. Domyślne ``False`` jest celowo
+    zachowawcze — drzwi, które zapomną o tym parametrze, dostają katalog pełniejszy, a nie
+    agenta odciętego od bazy wiedzy.
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -169,11 +191,23 @@ def build_agent_runtime(
         if enable_write
         else None
     )
-    catalog = build_tool_catalog(notes_service, projects_service, write_service=write_service)
+    # Powierzchnia agenta jest OSOBNA od powierzchni MCP (ADR 0009, krok 5.4): skonsolidowane
+    # ``Notes`` zamiast ``get_project_status`` i ``save_note``, a trzy narzędzia odczytu bazy
+    # wiedzy warunkowo — zastępuje je powłoka, której przy wyłączonej bramce po prostu nie ma.
+    catalog = [
+        *build_notes_catalog(
+            projects_service, write_service=write_service, shell_available=shell_available
+        ),
+        *([] if shell_available else build_notes_read_catalog(notes_service, projects_service)),
+    ]
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
         [*catalog, *extra_catalog],
-        system_prompt=system_prompt,
+        system_prompt=(
+            system_prompt
+            if system_prompt is not None
+            else static_prompt_for(attachments=False, shell=shell_available)
+        ),
         max_tool_iterations=agent_settings.max_tool_iterations,
     )
 
@@ -184,7 +218,8 @@ def build_agent_runtime_or_exit(
     *,
     enable_write: bool,
     extra_catalog: Sequence[ToolSpec] = (),
-    system_prompt: str = STATIC_PROMPT,
+    system_prompt: str | None = None,
+    shell_available: bool = False,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
@@ -197,6 +232,7 @@ def build_agent_runtime_or_exit(
             enable_write=enable_write,
             extra_catalog=extra_catalog,
             system_prompt=system_prompt,
+            shell_available=shell_available,
         )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
@@ -253,13 +289,21 @@ class _ScopedRunner:
     jako wynik z niezerowym kodem — jak każda inna porażka polecenia (ADR 0057).
     """
 
-    def __init__(self, inner: CommandRunner) -> None:
+    def __init__(self, inner: CommandRunner, *, with_outbox: bool = False) -> None:
         self._inner = inner
+        # Skrzynkę zakładamy TYLKO, gdy jest kto ją opróżnia. Katalog tworzony przy wyłączonej
+        # dostawie byłby zaproszeniem do zapisu, którego nikt nie odbiera — i rósłby bez końca.
+        self._with_outbox = with_outbox
 
     def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
         if cwd:
             try:
-                Path(cwd).mkdir(parents=True, exist_ok=True)
+                # Skrzynkę nadawczą zakłada aplikacja razem z katalogiem roboczym, bo opis
+                # narzędzia każe modelowi pisać do ``outputs/`` ścieżką WZGLĘDNĄ — a
+                # przekierowanie powłoki do nieistniejącego katalogu kończy się błędem,
+                # nie utworzeniem go.
+                target = Path(cwd, OUTBOX_DIRNAME) if self._with_outbox else Path(cwd)
+                target.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 return CommandResult(
                     exit_code=-1,
@@ -270,7 +314,10 @@ class _ScopedRunner:
 
 
 def _build_shell_factory(
-    shell_settings: ShellSettings, workspace_settings: WorkspaceSettings
+    shell_settings: ShellSettings,
+    workspace_settings: WorkspaceSettings,
+    *,
+    outbox_enabled: bool = False,
 ) -> Callable[[WorkspaceScope], list[ToolSpec]] | None:
     """Fabryka narzędzia ``Bash`` (ADR 0057) wiążącego polecenia z katalogiem rozmowy.
 
@@ -294,7 +341,9 @@ def _build_shell_factory(
         )
         return None
 
-    runner = _ScopedRunner(SocketCommandRunner(shell_settings.socket_path))
+    runner = _ScopedRunner(
+        SocketCommandRunner(shell_settings.socket_path), with_outbox=outbox_enabled
+    )
     workspace_root = workspace_settings.workspace_dir.as_posix()
 
     def factory(scope: WorkspaceScope) -> list[ToolSpec]:
@@ -303,9 +352,64 @@ def _build_shell_factory(
             runner,
             workspace_root=workspace_root,
             default_timeout_s=shell_settings.default_timeout_s,
+            outbox_enabled=outbox_enabled,
         )
 
     return factory
+
+
+def _build_outbox_delivery(
+    workspace_settings: WorkspaceSettings,
+    send_factory: Callable[[str], Callable[[Deliverable], None] | None],
+    *,
+    max_file_bytes: int,
+    max_files_per_turn: int,
+    max_seconds: float,
+) -> _ScopedOutbox:
+    """Zbuduj dostawę ze skrzynki nadawczej rozmowy — wołaną PO turze, zwracającą zdanie raportu.
+
+    Korzeń bierzemy z ``workspace_settings``, tego samego, z którego liczy się ``cwd`` poleceń
+    (``_build_shell_factory``) — rozjazd tych dwóch wartości oznaczałby, że model zapisuje plik
+    w skrzynce, której drzwi nie czytają, i to bez żadnego objawu poza brakiem załącznika.
+    """
+    delivery = OutboxDelivery(
+        FilesystemOutboxRepository(workspace_settings.workspace_dir),
+        OutboxLimits(
+            max_file_bytes=max_file_bytes,
+            max_files_per_turn=max_files_per_turn,
+            max_total_seconds=max_seconds,
+        ),
+    )
+
+    return _ScopedOutbox(delivery, send_factory)
+
+
+class _ScopedOutbox:
+    """Dwufazowa dostawa dla respondera: migawka na starcie tury, wysyłka po niej.
+
+    Fazy są DWIE, bo migawka jest granicą pochodzenia plików — musi powstać, zanim model
+    dostanie powłokę. Zwinięcie ich w jedno wywołanie po turze znaczyłoby, że nie umiemy
+    odróżnić pliku wytworzonego w tej turze od podłożonego wcześniej z innej rozmowy.
+    """
+
+    def __init__(
+        self,
+        delivery: OutboxDelivery,
+        send_factory: Callable[[str], Callable[[Deliverable], None] | None],
+    ) -> None:
+        self._delivery = delivery
+        self._send_factory = send_factory
+
+    def snapshot(self, scope: WorkspaceScope) -> None:
+        self._delivery.snapshot(str(scope.dirpath()))
+
+    def deliver(self, scope: WorkspaceScope) -> str:
+        send = self._send_factory(scope.conversation)
+        if send is None:
+            # Wątek bez celu dostawy (np. rozmowa spoza kanału): zostawiamy skrzynkę nietkniętą,
+            # bo plik nie jest odrzucony — po prostu nie ma dokąd pójść z TYCH drzwi.
+            return ""
+        return self._delivery.deliver(str(scope.dirpath()), send).notice()
 
 
 def build_conversational_responder(
@@ -324,11 +428,17 @@ def build_conversational_responder(
     thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
     my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+    github_thread_link: Callable[[str], tuple[str, int] | None] | None = None,
     meeting_notes: MeetingNoteRouter | None = None,
     thread_note: ThreadNoteRouter | None = None,
     project_brief: BriefRouter | None = None,
     change_digest: ChangeDigestRouter | None = None,
     supports_attachments: bool = False,
+    outbox_send_factory: Callable[[str], Callable[[Deliverable], None] | None] | None = None,
+    outbox_max_file_bytes: int = 0,
+    outbox_max_files_per_turn: int = 5,
+    outbox_max_seconds: float = 20.0,
+    skills_settings: SkillsSettings | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -337,7 +447,9 @@ def build_conversational_responder(
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego,
     a ``shell_settings.enabled`` (znów osobna, ADR 0057) — narzędzie ``Bash`` biegnące
-    w kontenerze-wykonawcy bez sieci.
+    w kontenerze-wykonawcy bez sieci. Te dwie bramki są od kroku 5.5 (ADR 0009 paczki)
+    ROZŁĄCZNE w skutku: z powłoką narzędzia plikowe nie wchodzą, bo `Bash` startuje w tym samym
+    katalogu i robi to samo — patrz komentarz przy ``workspace_factory``.
     ``extra_catalog`` (ADR 0019/0020) to statyczne narzędzia per drzwi (odczyt zdarzeń, GitHub) —
     poza powierzchnią MCP; router komend ich NIE dostaje (pozostaje read-only nad notatkami).
     ``thread_tool_factory``/``user_push_tool_factory``/``my_jira_tasks_factory``
@@ -346,13 +458,47 @@ def build_conversational_responder(
     zasila też komendę ``/moje-zadania`` w routerze (jedno miejsce rozwiązywania tożsamości).
     ``supports_attachments`` (F8) uwidacznia zdolność multimodalną (prompt + ``/pomoc``) tylko na
     drzwiach z materializerem załączników — inaczej byłaby mylną obietnicą na drzwiach tekstowych.
+    ``outbox_send_factory`` (ADR 0009 paczki) wiąże skrzynkę nadawczą rozmowy z drogą dostawy per
+    drzwi: z ``external_id`` daje wysyłacz albo ``None`` (wątek bez celu dostawy). Wymaga
+    ``workspace_settings`` — skrzynka leży w katalogu roboczym rozmowy, więc bez wspólnego korzenia
+    drzwi szukałyby plików gdzie indziej, niż zapisuje je wykonawca.
     """
+    # Skrzynka nadawcza ma własną bramkę po stronie drzwi (``enable_file_reply``), niezależną od
+    # powłoki. Rozstrzygamy ją PRZED zbudowaniem powłoki, bo opis narzędzia ``Bash`` obiecuje
+    # dostawę przez ``outputs/`` — a obietnica przy wyłączonej dostawie byłaby tym samym
+    # defektem, który ta zdolność likwiduje: zapis kończy się kodem 0 i ciszą.
+    outbox_enabled = (
+        outbox_send_factory is not None
+        and workspace_settings is not None
+        and outbox_max_file_bytes > 0
+    )
+    # Powłoka (ADR 0057) ma WŁASNĄ bramkę i własny profil zaufania, ale dzieli korzeń ścieżek
+    # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
+    # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
+    # narzędzia plikowe zapisują.
+    shell_factory = (
+        _build_shell_factory(shell_settings, workspace_settings, outbox_enabled=outbox_enabled)
+        if shell_settings is not None and workspace_settings is not None
+        else None
+    )
     runtime = build_agent_runtime_or_exit(
         settings,
         agent_settings,
         enable_write=enable_write,
         extra_catalog=extra_catalog,
-        system_prompt=static_prompt_for(attachments=supports_attachments),
+        # Wariant `ENVIRONMENT` z TEJ SAMEJ fabryki co katalog narzędzi (etap 6). Gdyby brał się
+        # z `shell_settings.enabled`, opis świata i katalog rozjechałyby się dokładnie tam, gdzie
+        # rozjeżdża się ustawienie z fabryką: bez `workspace_settings` i na platformie, gdzie
+        # klient wykonawcy się nie importuje.
+        system_prompt=static_prompt_for(
+            attachments=supports_attachments, shell=shell_factory is not None
+        ),
+        # Z FABRYKI, nie z ustawień. `shell_settings.enabled` mówi, czego chciał operator;
+        # `shell_factory` — co agent faktycznie dostanie. Rozjeżdżają się przy braku
+        # `workspace_settings` i na platformie, gdzie klient wykonawcy nie importuje się
+        # (POSIX-only). Rozjazd oznaczałby agenta bez powłoki I bez narzędzi odczytu, czyli
+        # bez jakiejkolwiek drogi do bazy wiedzy — po cichu.
+        shell_available=shell_factory is not None,
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -368,18 +514,24 @@ def build_conversational_responder(
         supports_attachments=supports_attachments,
         my_jira_tasks=my_jira_tasks_factory,
     )
+    # Narzędzia plikowe katalogu roboczego wchodzą TYLKO tam, gdzie nie ma powłoki (ADR 0009
+    # paczki, krok 5.5). Z powłoką są czystym opakowaniem prymitywu: `Bash` startuje w TYM SAMYM
+    # katalogu, więc `cat`/`ls`/heredoc robią dokładnie to samo, za trzy pozycje w budżecie wyboru.
+    #
+    # Warunek, a nie bezwarunkowe cięcie — z tego samego powodu co przy narzędziach odczytu notatek
+    # (`build_notes_read_catalog`): `WORKMATE_ENABLE_SHELL` jest domyślnie WYŁĄCZONA, a [ADR 0010]
+    # dopuszcza powłokę wyłącznie na kanałach z wzajemnie zaufanymi uczestnikami. Bez powłoki
+    # bariera istnieje i jest węższa, niż wygląda: to NIE jest droga do dostawy pliku
+    # (`reply_with_file` bierze treść wprost, a skrzynka nadawcza czyta `outputs/`, dokąd
+    # `create_file` nie umie zapisać), tylko jedyny sposób, w jaki model odzyskuje własny szkic
+    # po kompaktowaniu kontekstu (ADR 0014) — wtedy tura, w której go pisał, już nie wraca.
+    #
+    # Warunek liczymy z `shell_factory`, nie z `shell_settings.enabled` — z tego samego powodu co
+    # `shell_available` niżej: ustawienie mówi, czego chciał operator, fabryka mówi, co agent
+    # faktycznie dostanie. Rozjazd zostawiłby agenta bez powłoki I bez narzędzi plikowych.
     workspace_factory = (
         _build_workspace_factory(workspace_settings)
-        if enable_workspace and workspace_settings is not None
-        else None
-    )
-    # Powłoka (ADR 0057) ma WŁASNĄ bramkę i własny profil zaufania, ale dzieli korzeń ścieżek
-    # z katalogiem roboczym — dlatego wymaga ``workspace_settings`` nawet przy wyłączonych
-    # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
-    # narzędzia plikowe zapisują.
-    shell_factory = (
-        _build_shell_factory(shell_settings, workspace_settings)
-        if shell_settings is not None and workspace_settings is not None
+        if enable_workspace and workspace_settings is not None and shell_factory is None
         else None
     )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
@@ -387,6 +539,32 @@ def build_conversational_responder(
     metrics = (
         MetricsService(SqliteMetricsStore(settings.metrics_db))
         if settings.metrics_db is not None
+        else None
+    )
+    # Procedury z `/mnt/skills` (ADR 0005) — odczyt RAZ przy składaniu drzwi. Brak katalogu daje
+    # pustą listę i zachowanie dokładnie dawne; nagłówek sesji nie dostaje wtedy sekcji skilli.
+    #
+    # Warunek na `shell_factory` doszedł w etapie 6 i zamyka martwą obietnicę tej samej klasy co
+    # `/mnt/user/outputs`. Nagłówek mówi „read the one that fits before starting", a jedyną drogą
+    # do treści procedury jest `cat` w wykonawcy: narzędzia plikowe katalogu roboczego są zamknięte
+    # w scope'ie rozmowy i `/mnt/skills` nie widzą. Bez powłoki model dostawał więc listę nazw
+    # i polecenie przeczytania czegoś, po co nie ma jak sięgnąć.
+    skills = (
+        read_skill_catalog(skills_settings.skills_dir, limit=skills_settings.max_in_header)
+        if skills_settings is not None and shell_factory is not None
+        else ()
+    )
+    # Dostawa ze skrzynki dzieli korzeń z powłoką i katalogiem roboczym; ``outbox_enabled``
+    # rozstrzygnięto wyżej, razem z opisem narzędzia, żeby obietnica i zdolność miały jedno źródło.
+    outbox_delivery = (
+        _build_outbox_delivery(
+            workspace_settings,  # type: ignore[arg-type]  # zawężone przez ``outbox_enabled``
+            outbox_send_factory,  # type: ignore[arg-type]
+            max_file_bytes=outbox_max_file_bytes,
+            max_files_per_turn=outbox_max_files_per_turn,
+            max_seconds=outbox_max_seconds,
+        )
+        if outbox_enabled
         else None
     )
     inner = ConversationalResponder(
@@ -401,11 +579,14 @@ def build_conversational_responder(
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
         my_jira_tasks_factory=my_jira_tasks_factory,
+        github_thread_link=github_thread_link,
         meeting_notes=meeting_notes,
         thread_note=thread_note,
         project_brief=project_brief,
         change_digest=change_digest,
         metrics=metrics,
+        outbox_delivery=outbox_delivery,
+        skills=skills,
     )
     return SafeResponder(inner) if safe else inner
 

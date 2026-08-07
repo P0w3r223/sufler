@@ -77,6 +77,33 @@ def test_timeout_kills_process_group_and_flags_result(runner: SocketCommandRunne
     assert not marker.exists(), "potomek przeżył timeout — grupa procesów nie została zabita"
 
 
+def test_detached_process_does_not_outlive_the_command(runner: SocketCommandRunner, tmp_path: Path):
+    """Proces ODŁĄCZONY od potoków też ginie — i to jest granica, nie porządek.
+
+    `nohup … >/dev/null 2>&1 &` przekierowuje strumienie, więc potoki zamykają się razem
+    z powłoką: polecenie wraca NATYCHMIAST, z kodem 0 i bez flagi timeoutu, a potomek żyje
+    dalej. Zmierzone przed naprawą: zwrot po 0,01 s, zapis pliku trzy sekundy później.
+
+    Znaczenie jest szersze niż sieroty w kontenerze. Taki proces, zostawiony przez JEDNĄ
+    rozmowę, mógł zapisać do katalogu roboczego INNEJ już po jej migawce skrzynki
+    (`OutboxDelivery.snapshot`) — czyli obejść jedyną kontrolę pochodzenia plików i doprowadzić
+    do opublikowania podłożonej treści w cudzym wątku, firmowanej botem.
+    """
+    marker = tmp_path / "podlozony.md"
+    started = time.monotonic()
+
+    result = runner.run(
+        f"nohup sh -c 'sleep 3; echo x > {marker}' >/dev/null 2>&1 &", cwd=str(tmp_path)
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert elapsed < 2, "polecenie miało wrócić natychmiast — inaczej sonda mierzy co innego"
+    time.sleep(5)  # gdyby potomek przeżył, zdążyłby utworzyć marker
+    assert not marker.exists(), "proces w tle przeżył turę — grupa nie została zabita po zwrocie"
+
+
 def test_cwd_outside_workspace_falls_back_to_default(runner: SocketCommandRunner):
     """Nieistniejący katalog roboczy degraduje do domyślnego zamiast wywracać polecenie."""
     result = runner.run("pwd", cwd="/nie/ma/takiej/sciezki")

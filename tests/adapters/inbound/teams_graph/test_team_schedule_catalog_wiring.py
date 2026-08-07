@@ -2,7 +2,7 @@
 
 Sedno: narzędzie grafiku wchodzi TYLKO gdy ``ScheduleSettings.is_enabled()`` jest prawdziwe (tryb
 ``auto`` sam sprawdza obecność zamontowanego cache tokenu bota powiadomienia-teams) — na hoście
-bez tego montu drzwi po prostu nie wystawiają ``get_team_schedule`` (ciche wyłączenie, nie błąd).
+bez tego montu drzwi po prostu nie wystawiają ``Schedule`` (ciche wyłączenie, nie błąd).
 Cichy token (MSAL) jest LENIWY — ta warstwa nie woła go, więc test nie potrzebuje realnego ``msal``.
 """
 
@@ -35,7 +35,7 @@ def test_enabled_auto_when_app_and_cache_present(tmp_path: Path) -> None:
     cache.write_text("{}", encoding="utf-8")
     settings = ScheduleSettings(client_id="x", tenant_id="y", token_cache_path=cache)
     tools = _build_team_schedule_catalog(settings)
-    assert {t.name for t in tools} == {"get_team_schedule"}
+    assert [t.name for t in tools] == ["Schedule"]
 
 
 def test_forced_enabled_true_without_app_configured_still_builds() -> None:
@@ -43,4 +43,4 @@ def test_forced_enabled_true_without_app_configured_still_builds() -> None:
     wywołaniu)."""
     settings = ScheduleSettings(enabled="true")
     tools = _build_team_schedule_catalog(settings)
-    assert {t.name for t in tools} == {"get_team_schedule"}
+    assert [t.name for t in tools] == ["Schedule"]

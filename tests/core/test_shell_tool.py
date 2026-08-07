@@ -143,20 +143,62 @@ def test_runner_failure_is_wrapped_into_an_error_envelope():
     assert result == {"error": "gniazdo zniknęło"}
 
 
-def test_description_carries_the_mount_map_and_the_search_command():
-    """Opis jest jedynym miejscem, z którego model pozna układ montaży — prompt dostanie go w §6."""
+def test_description_carries_running_facts_and_leaves_the_map_to_the_prompt():
+    """Po etapie 6 opis niesie URUCHAMIANIE, a układ montaży — sekcja ``ENVIRONMENT`` promptu.
+
+    Poprzednia wersja tej sondy zamrażała tu mapę i sama zapowiadała przeprowadzkę („prompt
+    dostanie go w §6"). Trzymanie mapy w obu miejscach dałoby dwa źródła do synchronizacji,
+    więc asercja na komplet ścieżek stoi teraz w ``tests/core/test_prompt.py`` — razem
+    z bramką wiążącą ją z tym narzędziem.
+    """
     description = _tool(FakeRunner()).description
 
-    for path in (
-        "/home/scratchpad",
-        "/mnt/system/notes/",
-        "/mnt/system/projects/",
-        "/mnt/user/inputs/",
-        "/mnt/user/outputs/",
-    ):
-        assert path in description
+    assert "/home/scratchpad" in description, "katalog startowy to fakt o URUCHOMIENIU polecenia"
     assert "workmate-search" in description
     assert "64 KB" in description
+
+    # Mapa wyprowadzona: gdyby wróciła tutaj, prompt i opis rozjechałyby się przy następnym montażu.
+    for path in ("/mnt/system/notes/", "/mnt/system/projects/", "/mnt/skills/"):
+        assert path not in description, f"{path} należy do ENVIRONMENT, nie do opisu narzędzia"
+
+
+def test_description_promises_the_outbox_ONLY_when_delivery_exists():
+    """Dostawa ma WŁASNĄ bramkę na drzwiach, niezależną od powłoki, i obie są domyślnie off.
+
+    Konfiguracja „powłoka tak, załączniki nie" jest realna, a opis obiecujący w niej dostawę
+    byłby dokładnie tym defektem, który ta zdolność likwiduje: model dostaje kod 0 i ciszę,
+    a pliki rosną na wolumenie, którego nikt nie opróżnia.
+    """
+    with_delivery = build_shell_catalog(
+        WorkspaceScope("cli", "x"),
+        FakeRunner(),
+        workspace_root="/home/scratchpad",
+        outbox_enabled=True,
+    )[0].description
+    without = _tool(FakeRunner()).description
+
+    assert "outputs/" in with_delivery
+    assert "md/txt/pdf/docx" in with_delivery, "biała lista składana z jednoźródłowej mapy formatów"
+    assert "outputs/" not in without
+
+
+def test_description_does_not_promise_unimplemented_mounts():
+    """Regresja: opis obiecywał `/mnt/user/{inputs,outputs}`, których ŻADEN kod nie obsługiwał.
+
+    Wolumen był zamontowany w compose, więc `ls` działał, a zapis kończył się zerem i ciszą —
+    model dostawał potwierdzenie dostawy, która nigdy nie następowała. Ta asercja pilnuje,
+    żeby martwa ścieżka nie wróciła do opisu razem z jakimś przyszłym montażem.
+    """
+    for description in (
+        _tool(FakeRunner()).description,
+        build_shell_catalog(
+            WorkspaceScope("cli", "x"),
+            FakeRunner(),
+            workspace_root="/home/scratchpad",
+            outbox_enabled=True,
+        )[0].description,
+    ):
+        assert "/mnt/user" not in description
 
 
 def test_workspace_root_without_trailing_slash_does_not_double_it():

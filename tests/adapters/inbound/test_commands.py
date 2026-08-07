@@ -359,48 +359,75 @@ def test_my_tasks_unresolved_identity_reports_fail_closed_denial():
     assert "nie udało się ustalić" in out.lower()
 
 
-def test_my_tasks_formats_assigned_tasks():
-    def get_my_jira_tasks() -> dict[str, object]:
-        return {
-            "assigned_to_me": [
-                {
-                    "key": "WM-5",
-                    "summary": "Zrobić X",
-                    "status": "In Progress",
-                    "priority": "High",
-                    "due_date": "2026-08-01",
-                    "url": "https://jira.example.org/browse/WM-5",
-                }
-            ],
-            "reported_by_me_unassigned": [],
-        }
+def _jira_spec(tasks=None, history=None, error=None):
+    """PRAWDZIWY ``build_jira_catalog`` — nie atrapa ``ToolSpec`` z wymyśloną nazwą i kształtem.
 
-    def factory(sender_id: str) -> list[ToolSpec]:
-        return [ToolSpec("get_my_jira_tasks", "", get_my_jira_tasks)]
+    Ta funkcja jest sednem tego bloku. Regresja z kroku 5.3 (nazwa, wymagana ``action``, klucze
+    wyniku — trzy rzeczy naraz) przeszła przez komplet zielonych testów właśnie dlatego, że
+    atrapy stały po OBU stronach szwu: router dopasowywał ``get_my_jira_tasks``, a test podawał
+    mu ``ToolSpec`` o tej nazwie. Szew był niesprawdzony, choć obie jego strony miały pokrycie.
+    """
+    from workmate.core.application.tools import build_jira_catalog
+    from workmate.core.domain.jira_tasks import JiraTask
 
-    router, _ = _router(my_jira_tasks=factory)
+    class _Mine:
+        def my_open_tasks(self):
+            if error:
+                raise error
+            return tasks or []
+
+        def my_history(self, since="", until=""):
+            return (history or [], False)
+
+    class _Read:
+        # Uwaga przy rozszerzaniu: to zwraca `[]` na KAŻDĄ metodę, a `member_history` ma
+        # w kontrakcie krotkę `(zadania, truncated)`. Dla `/moje-zadania` nieosiągalne (router
+        # woła wyłącznie `my_tasks`), ale sondy na akcje członka wymagają prawdziwej atrapy.
+        def __getattr__(self, n):
+            return lambda *a, **k: []
+
+    return JiraTask, build_jira_catalog(_Mine(), _Read(), lambda n: None)[0]
+
+
+def test_moje_zadania_wola_narzedzie_ktore_fabryka_naprawde_daje():
+    """Sonda KONTRAKTOWA na szew router↔fabryka — jedyna, która łapie zmianę nazwy lub sygnatury.
+
+    Router jest konsumentem NIE-modelowym: nie widzi go ani golden-test powierzchni MCP, ani
+    żadna sonda na ``input_schema``. Reguła „sprawdź, czy builder nie ma drugiego konsumenta"
+    (ADR 0009) dotyczy więc także kodu aplikacji, nie tylko drugich drzwi.
+    """
+    JiraTask, spec = _jira_spec()
+    router, _ = _router(my_jira_tasks=lambda sender_id: [spec])
+    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
+    assert out == "Nie masz otwartych zadań w Jirze."
+
+
+def test_moje_zadania_formatuje_zadania_przypisane():
+    JiraTask, _ = _jira_spec()
+    zadanie = JiraTask(
+        key="WM-5",
+        summary="Zrobić X",
+        status="In Progress",
+        priority="High",
+        due_date="2026-08-01",
+        assignee="Ja",
+        url="https://jira.example.org/browse/WM-5",
+    )
+    _, spec = _jira_spec(tasks=[zadanie])
+    router, _ = _router(my_jira_tasks=lambda sender_id: [spec])
     out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
     assert out is not None
-    assert "WM-5" in out
-    assert "Zrobić X" in out
-    assert "In Progress" in out
-    assert "https://jira.example.org/browse/WM-5" in out
     assert "Twoje otwarte zadania (1):" in out
+    assert "WM-5" in out and "Zrobić X" in out and "In Progress" in out
+    assert "https://jira.example.org/browse/WM-5" in out
 
 
-def test_my_tasks_formats_both_sections():
-    def get_my_jira_tasks() -> dict[str, object]:
-        return {
-            "assigned_to_me": [{"key": "WM-5", "summary": "Zrobić X", "status": "In Progress"}],
-            "reported_by_me_unassigned": [
-                {"key": "WM-9", "summary": "Zgłoszone", "status": "To Do"}
-            ],
-        }
-
-    def factory(sender_id: str) -> list[ToolSpec]:
-        return [ToolSpec("get_my_jira_tasks", "", get_my_jira_tasks)]
-
-    router, _ = _router(my_jira_tasks=factory)
+def test_moje_zadania_formatuje_obie_sekcje():
+    JiraTask, _ = _jira_spec()
+    przypisane = JiraTask(key="WM-5", summary="Zrobić X", status="In Progress", assignee="Ja")
+    zgloszone = JiraTask(key="WM-9", summary="Zgłoszone", status="To Do")
+    _, spec = _jira_spec(tasks=[przypisane, zgloszone])
+    router, _ = _router(my_jira_tasks=lambda sender_id: [spec])
     out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
     assert out is not None
     assert "Twoje otwarte zadania (1):" in out
@@ -408,60 +435,30 @@ def test_my_tasks_formats_both_sections():
     assert "WM-9" in out
 
 
-def test_my_tasks_selects_tool_by_name_when_factory_returns_several():
-    """Fabryka zwraca WIĘCEJ niż jedno narzędzie (ADR 0059) — router bierze po nazwie, nie
-    pozycji."""
+def test_moje_zadania_bierze_narzedzie_po_nazwie_a_nie_po_pozycji():
+    """Fabryka zwraca dziś jedno narzędzie, ale kolejność nie może być kontraktem."""
+    _, spec = _jira_spec()
 
-    def get_jira_task(key: str) -> dict[str, object]:
+    def nie_wolac(**kw):
         raise AssertionError("nie powinno być wołane przez /moje-zadania")
 
-    def get_my_jira_tasks() -> dict[str, object]:
-        return {"assigned_to_me": [], "reported_by_me_unassigned": []}
-
-    def factory(sender_id: str) -> list[ToolSpec]:
-        return [
-            ToolSpec("get_jira_task", "", get_jira_task),
-            ToolSpec("get_my_jira_tasks", "", get_my_jira_tasks),
-        ]
-
-    router, _ = _router(my_jira_tasks=factory)
-    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
-    assert out == "Nie masz otwartych zadań w Jirze."
+    router, _ = _router(my_jira_tasks=lambda sender_id: [ToolSpec("Schedule", "", nie_wolac), spec])
+    assert router.dispatch("/moje-zadania", _CTX_WITH_SENDER) == "Nie masz otwartych zadań w Jirze."
 
 
-def test_my_tasks_empty_lists_report_no_open_tasks():
-    def factory(sender_id: str) -> list[ToolSpec]:
-        return [
-            ToolSpec(
-                "get_my_jira_tasks",
-                "",
-                lambda: {"assigned_to_me": [], "reported_by_me_unassigned": []},
-            )
-        ]
-
-    router, _ = _router(my_jira_tasks=factory)
-    out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
-    assert out == "Nie masz otwartych zadań w Jirze."
-
-
-def test_my_tasks_missing_get_my_jira_tasks_tool_reports_not_configured():
-    """Fabryka nie zawiera ``get_my_jira_tasks`` po nazwie — degradacja do czytelnej odmowy."""
-
-    def factory(sender_id: str) -> list[ToolSpec]:
-        return [ToolSpec("get_jira_task", "", lambda key: {})]
-
-    router, _ = _router(my_jira_tasks=factory)
+def test_moje_zadania_bez_narzedzia_jiry_degraduje_do_odmowy():
+    router, _ = _router(my_jira_tasks=lambda sender_id: [ToolSpec("Schedule", "", lambda: {})])
     out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
     assert out == "Ta komenda nie jest skonfigurowana na tych drzwiach."
 
 
-def test_my_tasks_surfaces_tool_error():
-    def factory(sender_id: str) -> list[ToolSpec]:
-        return [ToolSpec("get_my_jira_tasks", "", lambda: {"error": "brak dostępu do Jiry"})]
+def test_moje_zadania_pokazuje_blad_narzedzia():
+    from workmate.core.errors import JiraReadError
 
-    router, _ = _router(my_jira_tasks=factory)
+    _, spec = _jira_spec(error=JiraReadError("brak dostępu do Jiry"))
+    router, _ = _router(my_jira_tasks=lambda sender_id: [spec])
     out = router.dispatch("/moje-zadania", _CTX_WITH_SENDER)
-    assert out == "Błąd: brak dostępu do Jiry"
+    assert out is not None and out.startswith("Błąd: ")
 
 
 # --- Read-only: router nie widzi save_note (bramka ADR 0006) --------------------

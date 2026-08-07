@@ -209,9 +209,10 @@ def test_select_events_maps_pull_state_transitions() -> None:
     assert [e.kind for e in events] == ["pr_merged"]
 
 
-def test_get_project_activity_folds_events_by_kind(tmp_path) -> None:
+def test_akcja_activity_zwija_zdarzenia_po_rodzaju(tmp_path) -> None:
+    """Krok 5.2 (ADR 0009 paczki): ``get_project_activity`` to ``GitHub(action='activity')``."""
     from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_activity_catalog
+    from workmate.core.application.tools import build_github_catalog
 
     store = SqliteEventStore(tmp_path / "events.db")
     for e in [
@@ -221,9 +222,9 @@ def test_get_project_activity_folds_events_by_kind(tmp_path) -> None:
     ]:
         store.append(e)
 
-    spec = build_activity_catalog(EventService(store))[0]
-    assert spec.name == "get_project_activity"
-    result = spec.fn(project="wm")
+    spec = build_github_catalog(events=EventService(store))[0]
+    assert spec.name == "GitHub"
+    result = spec.fn(action="activity", project="wm")
     assert result["project"] == "wm"
     assert result["event_count"] == 2
     assert result["by_kind"] == {"pr_opened": 1, "pr_merged": 1}

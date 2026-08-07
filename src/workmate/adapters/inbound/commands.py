@@ -181,12 +181,16 @@ class CommandRouter:
                 "Nie udało się ustalić Twojego konta Jira — zgłoś się do administratora "
                 "(fail-closed, ADR 0054)."
             )
-        # Fabryka zwraca teraz WIĘCEJ niż jedno narzędzie (rozszerzony odczyt Jiry) — wybieramy po
-        # nazwie, nie po pozycji, żeby /moje-zadania nie wywołało przypadkowego narzędzia.
-        tool = next((t for t in tools if t.name == "get_my_jira_tasks"), None)
+        # Router jest DRUGIM konsumentem tej fabryki, obok runtime'u agenta — i konsumentem
+        # NIE-modelowym, więc żadna sonda na `input_schema` ani golden-test powierzchni go nie
+        # widzi. Krok 5.3 (ADR 0009 paczki) zmienił tu trzy rzeczy naraz: nazwę narzędzia
+        # (`get_my_jira_tasks` → `Jira`), sposób wywołania (doszła wymagana `action`) i klucze
+        # wyniku. Sonda kontraktowa na ten szew, zbudowana z PRAWDZIWEGO `build_jira_catalog`,
+        # jest w `test_commands.py` — atrapy po obu stronach przepuściły tę regresję w całości.
+        tool = next((t for t in tools if t.name == "Jira"), None)
         if tool is None:
             return "Ta komenda nie jest skonfigurowana na tych drzwiach."
-        return _format_my_tasks(tool.fn())
+        return _format_my_tasks(tool.fn(action="my_tasks"))
 
     def _thread_status(self, conv: Conversation | None) -> str:
         if conv is None or conv.message_count == 0:
@@ -241,8 +245,12 @@ def _task_lines(tasks: list[dict[str, Any]]) -> list[str]:
 def _format_my_tasks(data: dict[str, Any]) -> str:
     if "error" in data:
         return f"Błąd: {data['error']}"
-    assigned = data.get("assigned_to_me", [])
-    unassigned = data.get("reported_by_me_unassigned", [])
+    # Klucze wspólne dla „moich" i „cudzych" zadań (krok 5.3 ADR 0009 paczki je ujednolicił).
+    # Pomyłka w nazwie klucza NIE daje tu błędu, tylko ciche „nie masz otwartych zadań" —
+    # najgorszy możliwy tryb awarii, bo wygląda jak poprawna odpowiedź. Stąd sonda na realnym
+    # builderze zamiast atrapy zwracającej wymyślony kształt.
+    assigned = data.get("assigned", [])
+    unassigned = data.get("reported_unassigned", [])
     if not assigned and not unassigned:
         return "Nie masz otwartych zadań w Jirze."
     lines: list[str] = []

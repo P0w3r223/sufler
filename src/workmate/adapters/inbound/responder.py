@@ -109,6 +109,19 @@ class Responder(Protocol):
     async def respond(self, message: InboundMessage) -> str: ...
 
 
+class OutboxDeliverer(Protocol):
+    """Dwufazowa dostawa ze skrzynki nadawczej rozmowy (ADR 0009 paczki wdrożeniowej).
+
+    ``snapshot`` musi paść PRZED turą, ``deliver`` po niej. Migawka jest granicą pochodzenia
+    plików: rozmowy dzielą jeden wolumen brudnopisu (ADR 0010 paczki), więc bez niej nie da się
+    odróżnić wyniku tej tury od pliku podłożonego wcześniej przez inną rozmowę.
+    """
+
+    def snapshot(self, scope: WorkspaceScope) -> None: ...
+
+    def deliver(self, scope: WorkspaceScope) -> str: ...
+
+
 class EchoResponder:
     """Spike: potwierdza odbiór, nie dotykając rdzenia WorkMate."""
 
@@ -187,11 +200,14 @@ class ConversationalResponder:
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+        github_thread_link: Callable[[str], tuple[str, int] | None] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
         thread_note: ThreadNoteRouter | None = None,
         project_brief: BriefRouter | None = None,
         change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
+        outbox_delivery: OutboxDeliverer | None = None,
+        skills: Sequence[tuple[str, str]] = (),
     ) -> None:
         self._runtime = runtime
         self._conversations = conversations
@@ -216,6 +232,11 @@ class ConversationalResponder:
         # zasila komendę ``/moje-zadania`` w ``CommandRouter`` — jedno miejsce rozwiązywania
         # tożsamości.
         self._my_jira_tasks_factory = my_jira_tasks_factory
+        # Powiązanie wątku Teams z issue/PR (ADR 0024) — do NAGŁÓWKA SESJI, nie do katalogu.
+        # Do kroku 5.5 (ADR 0009 paczki) jechało jako narzędzie `reply_on_thread` z numerem
+        # domkniętym w closurze; wołało tę samą metodę serwisu co `GitHub(action='comment')`,
+        # za tą samą bramką i obok niej, więc niczego nie zawężało — wypełniało argument.
+        self._github_thread_link = github_thread_link
         # Router komend read-only (``/pomoc``, ``/szukaj``, …); ``None`` → brak komend (dawne
         # zachowanie). Wpinany w ``build_conversational_responder``; obejmuje wszystkie drzwi.
         self._commands = commands
@@ -239,6 +260,15 @@ class ConversationalResponder:
         # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
         # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
         self._metrics = metrics
+        # Dostawa plików ze skrzynki nadawczej rozmowy PO turze (ADR 0009 paczki); ``None`` → brak
+        # (bramka off / inne drzwi). Zwraca zdanie do doklejenia do odpowiedzi albo pusty napis.
+        # Ten sam ``scope`` co narzędzia katalogu roboczego — skrzynka leży w katalogu TEJ rozmowy,
+        # więc model nie ma jak nadać pliku „z cudzej".
+        self._outbox_delivery = outbox_delivery
+        # Lista procedur z `/mnt/skills` (ADR 0005) — czytana RAZ przy składaniu drzwi, bo jest
+        # stała w obrębie procesu. Idzie do nagłówka sesji, nie do korpusu: korpus niesie
+        # breakpoint cache'u, a lista bywa zmieniana między wydaniami obrazu.
+        self._skills = tuple(skills)
         # Kompaktowanie historii (ADR 0014); ``None`` → wyłączone (replay = pełna historia,
         # rollover na limicie działa jak wcześniej). Gdy wpięte, drzwi streszczają starą
         # część rozmowy po przekroczeniu progu i doklejają podsumowanie do kontekstu.
@@ -389,12 +419,29 @@ class ConversationalResponder:
         # jest długożyjący (poller chodzi dobami), więc data zamrożona przy starcie rozjechałaby
         # się z rzeczywistością następnego dnia. ``now`` policzono wyżej — tura ma jedną chwilę,
         # wspólną z kryterium bezczynności.
+        # Migawka skrzynki PRZED wywołaniem modelu — dopiero za chwilę dostanie powłokę.
+        # Po turze nie dałoby się już odróżnić pliku, który wytworzył, od podłożonego wcześniej.
+        if self._outbox_delivery is not None:
+            try:
+                self._outbox_delivery.snapshot(scope)
+            except Exception:
+                logger.warning(
+                    "Nie udało się zrobić migawki skrzynki rozmowy %r — dostawa się wstrzyma",
+                    external_id,
+                    exc_info=True,
+                )
         result = self._runtime.run_turn(
             message.text,
             attachments=message.attachments,
             history=transcript,
             extra_tools=extra_tools,
-            session_header=build_session_header(now, channel=self._channel, thread=external_id),
+            session_header=build_session_header(
+                now,
+                channel=self._channel,
+                thread=external_id,
+                skills=self._skills,
+                github_thread=self._thread_link(external_id),
+            ),
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
@@ -403,6 +450,21 @@ class ConversationalResponder:
                 conversation_id, result.entries, stop_reason=result.stop_reason
             )
         reply = _with_notices(result.reply, rolled_over=rolled_over, stop_reason=result.stop_reason)
+        # Dostawa ze skrzynki nadawczej — PO utrwaleniu tury, żeby awaria wysyłki nie zabrała
+        # rozmówcy odpowiedzi tekstowej ani nie osierociła zapisu. Jak pozostałe opcjonalne
+        # wzbogacenia: błąd degraduje do „bez załączników" i idzie do logu, nie do użytkownika.
+        if self._outbox_delivery is not None:
+            try:
+                notice = self._outbox_delivery.deliver(scope)
+            except Exception:
+                logger.warning(
+                    "Nie udało się dostarczyć plików ze skrzynki rozmowy %r — pomijam",
+                    external_id,
+                    exc_info=True,
+                )
+            else:
+                if notice:
+                    reply = f"{reply}\n\n{notice}"
         if self._show_thinking:
             reply = _with_thinking(reply, result.thinking)
         return reply
@@ -429,6 +491,21 @@ class ConversationalResponder:
             replay = self._conversations.replay_messages(conversation_id)
             summary = self._conversations.active_summary(conversation_id)
         return _to_transcript_with_summary(summary, replay)
+
+    def _thread_link(self, external_id: str) -> tuple[str, int] | None:
+        """Powiązanie wątku z issue/PR albo ``None`` — opcjonalne wzbogacenie nagłówka.
+
+        Jak przy narzędziach per turę: awaria odczytu mapowania (np. blokada SQLite) NIE ma
+        prawa zabić tury odczytowej. Degradujemy do „wątek z niczym niepowiązany" i logujemy —
+        agent traci wtedy tylko podpowiedź numeru, a nie zdolność komentowania.
+        """
+        if self._github_thread_link is None:
+            return None
+        try:
+            return self._github_thread_link(external_id)
+        except Exception:
+            logger.warning("Nie udało się odczytać powiązania wątku %r — pomijam", external_id)
+            return None
 
 
 class SafeResponder:

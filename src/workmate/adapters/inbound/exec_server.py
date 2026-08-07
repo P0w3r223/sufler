@@ -16,6 +16,7 @@ napisu powłoki jest zawodne, a bezpieczeństwo bierze się tu z tego, czego w k
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -76,10 +77,12 @@ def _resolve_cwd(requested: str) -> str | None:
 def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[str, object]:
     """Uruchom polecenie w powłoce i zwróć wynik w postaci słownika protokołu.
 
-    Proces potomny dostaje WŁASNĄ grupę procesów (``start_new_session``), żeby przy timeoucie
-    zabić także jego potomków — bez tego ``sleep 999 &`` przeżywa zabicie powłoki i wykonawca
-    zbiera sieroty. Po ``TimeoutExpired`` wysyłamy sygnał do całej grupy i dopiero wtedy
-    czytamy to, co proces zdążył wypisać.
+    Proces potomny dostaje WŁASNĄ grupę procesów (``start_new_session``), żeby dało się zabić
+    także jego potomków — bez tego ``sleep 999 &`` przeżywa zabicie powłoki. Po ``TimeoutExpired``
+    wysyłamy sygnał do całej grupy i dopiero wtedy czytamy to, co proces zdążył wypisać.
+
+    Grupa ginie ZAWSZE, nie tylko po timeoucie: proces odłączony od potoków wraca natychmiast
+    i przeżywa turę, a wtedy obchodzi migawkę skrzynki nadawczej. Szczegóły przy samym ``finally``.
     """
     workdir = _resolve_cwd(cwd)
     limit = min(timeout_s or _DEFAULT_TIMEOUT_S, _MAX_TIMEOUT_S)
@@ -93,11 +96,25 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
     )
     timed_out = False
     try:
-        out, err = proc.communicate(timeout=limit)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        os.killpg(proc.pid, signal.SIGKILL)
-        out, err = proc.communicate()
+        try:
+            out, err = proc.communicate(timeout=limit)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            os.killpg(proc.pid, signal.SIGKILL)
+            out, err = proc.communicate()
+    finally:
+        # Grupę zabijamy ZAWSZE, nie tylko po timeoucie — i to jest granica bezpieczeństwa.
+        # `nohup … >/dev/null 2>&1 &` przekierowuje strumienie, więc potoki zamykają się razem
+        # z powłoką: ``communicate`` widzi EOF i wraca NATYCHMIAST z kodem 0, a potomek żyje
+        # dalej. Zmierzone w obrazie: polecenie wróciło po 0,01 s, a proces w tle zapisał plik
+        # trzy sekundy później. Osierocony proces jednej rozmowy mógł tak zapisać do katalogu
+        # innej PO jej migawce skrzynki (``OutboxDelivery.snapshot``) — czyli obejść jedyną
+        # kontrolę pochodzenia plików i opublikować treść w cudzym wątku.
+        #
+        # Nic się przy tym nie traci: polecenie jest synchroniczne, a cokolwiek przeżyje jego
+        # zwrot, jest dla modelu i tak nieobserwowalne — wyjście zebrano, tura idzie dalej.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
 
     stdout, cut_out = _truncate(out or b"")
     stderr, cut_err = _truncate(err or b"")

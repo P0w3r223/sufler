@@ -92,3 +92,30 @@ fixed, not the threshold.
   This constraint governs the descriptions written for the consolidated tool set.
 - **Compaction's summariser keeps a single block.** It has no session and no date, so the split
   buys it nothing; `SUMMARY_SYSTEM_PROMPT` passes the same editorial gate.
+
+## The seam, executed — 2026-08-07
+
+The mounts landed, and the section was rewritten against the deployment package's current
+`docker-compose.yml`. Three statements above turned out narrower than reality:
+
+- **The seam has two variants, not one rewrite.** This decision assumed the mounts would replace
+  the tools description outright. They coexist instead: `WORKMATE_ENABLE_SHELL` is off by default
+  and [ADR 0010 of the deployment package] admits the shell only on channels whose participants
+  trust each other, so both worlds are live configurations. A single corpus would therefore have
+  to lie in one of them — and until this change it lied in the one *with* a shell, where the
+  notes-reading tools leave the catalogue and the base is reached over a read-only mount. The
+  variant is chosen by `shell_available`, the same flag that builds the catalogue, so the two
+  cannot drift. Cost is nil: both are process constants, so the `tools+system` cache prefix
+  splits into at most two.
+- **The multimodal clause is no longer the single per-door variation** — it is now one of two
+  orthogonal axes, and it stays for the reason recorded above: `/mnt/user/inputs/` was removed
+  on 2026-08-06, so an empty input directory says nothing without words.
+- **`Skills available` waited on the wrong condition.** It rendered whenever the catalogue was
+  readable, which made it a dead promise without a shell: the header says "read the one that
+  fits" while the working-directory file tools are closed over the conversation scope and cannot
+  see `/mnt/skills`. The list is now gated on the shell as well.
+
+The mount map moved out of the `Bash` description at the same time, under this ADR's own rule
+that tool semantics stay out of the prompt — read the other way round: the layout of the world
+stays out of a tool description. Holding it in both places would have produced the two sources
+to keep in sync that the rule exists to prevent.

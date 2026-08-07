@@ -52,22 +52,20 @@ def test_empty_sender_gets_no_tool(tmp_path) -> None:
     assert factory("") == []
 
 
-def test_known_sender_gets_the_tools(tmp_path) -> None:
-    """ADR 0059: fabryka zwraca teraz "moje zadania"/historia + rozszerzony odczyt Jiry (razem)."""
+def test_known_sender_gets_the_tool(tmp_path) -> None:
+    """Krok 5.3 (ADR 0009 paczki): sześć dawnych narzędzi Jiry to jedno ``Jira(action=…)``.
+
+    Fabryka wciąż buduje serwis DOMKNIĘTY na koncie nadawcy (ADR 0054) — zmienia się tylko to,
+    ile ``ToolSpec``-ów z niego wychodzi. Same akcje i inwariant „``my_*`` nie czyta ``member``"
+    sondujemy w ``tests/core/test_jira_catalog.py``, bo tam jest builder.
+    """
     settings = TeamsGraphSettings(
         meeting_note_identities=_identities_file(tmp_path, aad_user_id="aad-123")
     )
     factory = _build_my_jira_tasks_factory(settings, _JIRA)
     assert factory is not None
     tools = factory("aad-123")
-    assert {t.name for t in tools} == {
-        "get_my_jira_tasks",
-        "get_my_jira_history",
-        "get_jira_task",
-        "search_jira_tasks",
-        "get_member_jira_tasks",
-        "get_member_jira_history",
-    }
+    assert [t.name for t in tools] == ["Jira"]
 
 
 def test_sender_mapped_to_a_different_person_gets_no_tool(tmp_path) -> None:

@@ -657,6 +657,11 @@ class TeamsGraphSettings:
     # Odpowiedź plikiem w wątku (ADR 0026, A′2) — OSOBNA bramka zapisu, domyślnie OFF (ADR 0006).
     enable_file_reply: bool = False
     max_file_reply_kb: int = 512  # sufit rozmiaru zrenderowanego pliku odpowiedzi
+    # Skrzynka nadawcza rozmowy (ADR 0009 paczki). Oba limity WCHODZĄ w deklarowaną granicę
+    # opóźnienia tury, więc muszą dać się nastroić razem z nią — inaczej dokument opisujący
+    # sufit czasu rozjedzie się z kodem przy pierwszej zmianie.
+    outbox_max_files_per_turn: int = 5
+    outbox_max_seconds: float = 20.0
     # Push OBRAZU do rozmówcy 1:1 (ADR 0027, A′3) — OSOBNA bramka zapisu, domyślnie OFF (ADR 0006).
     enable_user_file_push: bool = False
     max_user_image_kb: int = 1024  # sufit rozmiaru obrazu push-owanego do usera
@@ -738,6 +743,8 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY", default=False
             ),
             max_file_reply_kb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_FILE_REPLY_KB", 512),
+            outbox_max_files_per_turn=_int_from_env("WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_FILES", 5),
+            outbox_max_seconds=float(_int_from_env("WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_SECONDS", 20)),
             enable_user_file_push=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", default=False
             ),
@@ -1090,6 +1097,33 @@ class ShellSettings:
                 f"WORKMATE_SHELL_TIMEOUT_S musi być w zakresie 1..{_MAX_SHELL_TIMEOUT_S}, "
                 f"jest: {self.default_timeout_s}."
             )
+
+
+# Ile procedur trafia do nagłówka sesji. Granica jest po to, żeby lista nie rosła w nieskończoność
+# kosztem KAŻDEJ tury (nagłówek jest poza cache'em prefiksu), a przekroczenie było GŁOŚNE:
+# w Claude Code analogiczny budżet ucina listę bez ostrzeżenia, więc procedura leży na dysku,
+# jest poprawna i jest nieosiągalna — objaw nie do odróżnienia od „model jej nie użył".
+_MAX_SKILLS_IN_HEADER = 20
+
+
+@dataclass(frozen=True)
+class SkillsSettings:
+    """Katalog procedur powtarzalnej pracy montowany read-only (ADR 0005, `/mnt/skills`).
+
+    Zdolność włącza się SAMĄ obecnością ścieżki — nie ma osobnej bramki, bo nie ma czego bramkować:
+    katalog jest read-only, a model czyta go tą samą powłoką, którą już ma. Bez ścieżki lista
+    w nagłówku sesji zostaje pusta i zachowanie jest dokładnie dawne.
+    """
+
+    skills_dir: Path | None = None
+    max_in_header: int = _MAX_SKILLS_IN_HEADER
+
+    @classmethod
+    def from_env(cls) -> SkillsSettings:
+        return cls(
+            skills_dir=_optional_path_from_env("WORKMATE_SKILLS_DIR"),
+            max_in_header=_int_from_env("WORKMATE_SKILLS_MAX_IN_HEADER", _MAX_SKILLS_IN_HEADER),
+        )
 
 
 # Domyślny stan pollera GitHub (watermark ``since``): POZA repo i data/ — dane operacyjne.
