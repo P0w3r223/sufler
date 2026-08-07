@@ -24,6 +24,7 @@ _KORZEN = Path(__file__).resolve().parents[1]
 _PYPROJECT = _KORZEN / "pyproject.toml"
 _DOCKERFILE = _KORZEN / "deploy" / "docker" / "Dockerfile"
 _COMPOSE = _KORZEN / "deploy" / "docker" / "docker-compose.yml"
+_README = _KORZEN / "README.md"
 
 # `version = "1.5.0"` z sekcji [project]. Czytamy regexem, a nie `tomllib`, bo pakiet
 # deklaruje `requires-python = ">=3.10"`, a `tomllib` jest dopiero od 3.11 — import
@@ -32,6 +33,7 @@ _WERSJA_PAKIETU = re.compile(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', re.M)
 _ARG_WERSJA = re.compile(r"^ARG\s+WERSJA=(\d+\.\d+\.\d+)", re.M)
 _OBRAZ = re.compile(r"workmate:(\d+\.\d+\.\d+)")
 _WERSJA_BUILD = re.compile(r"WERSJA:\s*\"(\d+\.\d+\.\d+)\"")
+_BADGE = re.compile(r"badge/wersja-(\d+\.\d+\.\d+)-")
 
 
 def _wersja_pakietu() -> str:
@@ -57,6 +59,23 @@ def test_dockerfile_buduje_te_sama_wersje() -> None:
     # Komentarze z komendą budowania też niosą tag — operator kopiuje je wprost do powłoki.
     rozjazdy = sorted({w for w in _OBRAZ.findall(tresc) if w != oczekiwana})
     assert not rozjazdy, f"Dockerfile wymienia obraz w wersji {rozjazdy}, pakiet ma {oczekiwana}"
+
+
+def test_badge_w_readme_mowi_wersje_pakietu() -> None:
+    """Badge też jest miejscem z zaszytą wersją — i zjechał o trzy wydania, zanim ktoś spojrzał.
+
+    Przy podbiciu na 1.6.0 README mówiło jeszcze **1.3.2**. Bramka wyżej porównywała pakiet
+    z ``__init__``, Dockerfile'em i compose'em deweloperskim, więc rozjazd nie miał gdzie się
+    zapalić, a paczka wdrożeniowa sprawdza WŁASNĄ kopię (``image/context/app-README.md``, ta
+    jedzie do obrazu jako ``/app/README.md``) — czyli inny plik. Dwie kopie, jedna bramkowana.
+
+    ``README.md`` wjeżdża do obrazu, więc ta sonda biegnie ZAWSZE — jak para
+    pakiet ↔ ``__version__``, a inaczej niż sondy plików z ``deploy/``.
+    """
+    znalezione = sorted(set(_BADGE.findall(_README.read_text(encoding="utf-8"))))
+    assert znalezione == [_wersja_pakietu()], (
+        f"badge w README mówi {znalezione}, pakiet ma {_wersja_pakietu()}"
+    )
 
 
 @pytest.mark.skipif(not _COMPOSE.is_file(), reason="deploy/ nie wjeżdża do obrazu")
