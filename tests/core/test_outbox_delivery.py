@@ -424,6 +424,42 @@ def test_ponowione_pozycje_NIE_wypadaja_przez_limit_liczby_plikow():
     assert "z-ponawiany.md" in report.delivered, f"ponawiana pozycja niewysłana: {report}"
 
 
+def test_swieza_tresc_dociera_mimo_zaleglych_ponowien():
+    """Ponowienia biorą najwyżej `limit - 1` miejsc, dopóki jest co świeżego wysłać.
+
+    Bezwzględny priorytet ponowień zamieniał jedną stratę na drugą: przy trwającej awarii
+    wysyłki świeże pliki były kasowane, żeby zrobić miejsce pozycjom, które i tak zginą na
+    suficie prób. Rozmówca nie dostawał wtedy nowej treści ANI RAZU.
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=2)
+
+    delivery.snapshot(_DIR)
+    repo.files.update({"a-stary.md": b"x", "b-stary.md": b"x"})
+    delivery.deliver(_DIR, _fail_always)  # oba zostają jako ponawiane
+
+    delivery.snapshot(_DIR)
+    repo.files["c-nowy.md"] = b"x"
+    report = delivery.deliver(_DIR, lambda item: None)
+
+    assert "c-nowy.md" in report.delivered, f"świeży plik nie dojechał: {report}"
+
+
+def test_bez_swiezych_plikow_ponowienia_biora_cale_okno():
+    """Rezerwacja miejsca dla nikogo byłaby trzecią klasą straty — okno ma być pełne."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=2)
+
+    delivery.snapshot(_DIR)
+    repo.files.update({"a-stary.md": b"x", "b-stary.md": b"x"})
+    delivery.deliver(_DIR, _fail_always)
+
+    delivery.snapshot(_DIR)
+    report = delivery.deliver(_DIR, lambda item: None)
+
+    assert sorted(report.delivered) == ["a-stary.md", "b-stary.md"], report
+
+
 def test_licznik_zeruje_sie_po_udanej_wysylce():
     """Klucz to nazwa, a model użyje jej ponownie — świeży plik nie może dziedziczyć prób."""
     repo = FakeRepo({})

@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
 from workmate.core.domain.workspace import safe_filename
@@ -69,6 +69,40 @@ _MAX_NAMED_REJECTIONS = 3
 _MAX_SEND_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
+
+
+def _okno_tury(
+    entries: Sequence[OutboxEntry], ours: frozenset[str], limit: int
+) -> list[OutboxEntry]:
+    """Uszereguj pozycje tak, żeby limit liczby plików nie zjadał ani ponowień, ani nowej treści.
+
+    Dwie klasy strat wykluczały się nawzajem i obie były realne:
+
+    - **Sam alfabet** kasował pozycje zatrzymane do ponowienia — wystarczyło, żeby nazwa
+      sortowała się za plikami nowej tury. Obietnica „spróbuję ponownie" kończyła się cichym
+      usunięciem treści.
+    - **Bezwzględny priorytet ponowień** kasuje z kolei świeże pliki, które model właśnie
+      wytworzył — przy trwającej awarii wysyłki nowa treść nie dociera do rozmówcy ani razu,
+      a ponowienia i tak zginą na suficie prób.
+
+    Stąd rezerwacja: ponowienia biorą najwyżej ``limit - 1`` miejsc, o ile w ogóle jest co
+    świeżego wysłać. Gdy świeżych nie ma, okno należy do nich w całości — rezerwowanie miejsca
+    dla nikogo byłoby stratą trzeciego rodzaju.
+
+    Liczba prób do WYBORU okna nie wchodzi (steruje wyłącznie porządkiem wysyłki), więc pozycja
+    ponawiana nie traci miejsca przez to, że już raz zawiodła.
+    """
+    ponawiane = sorted((e for e in entries if e.name in ours), key=lambda e: e.name)
+    swieze = sorted((e for e in entries if e.name not in ours), key=lambda e: e.name)
+    if not swieze or limit <= 1:
+        return [*ponawiane, *swieze]
+
+    miejsc_na_ponowienia = min(len(ponawiane), limit - 1)
+    return [
+        *ponawiane[:miejsc_na_ponowienia],
+        *swieze,
+        *ponawiane[miejsc_na_ponowienia:],
+    ]
 
 
 @dataclass(frozen=True)
@@ -199,13 +233,7 @@ class OutboxDelivery:
         failed: list[tuple[str, str]] = []
         deferred: list[str] = []
 
-        # WYBÓR okna: pozycje zatrzymane do ponowienia (``ours``) wchodzą przed świeżymi, a nazwa
-        # rozstrzyga dopiero wewnątrz każdej z tych dwóch grup. Sam alfabet tu nie wystarczał:
-        # pozycja ponawiana, której nazwa sortuje się ZA plikami nowej tury, wypadała poza limit
-        # i była KASOWANA z powodem „na turę wysyłam najwyżej N plików" — czyli obietnica
-        # „spróbuję ponownie", którą dostał rozmówca, kończyła się cichym usunięciem treści.
-        # Liczba prób do WYBORU okna nadal nie wchodzi; steruje wyłącznie porządkiem niżej.
-        kolejnosc = sorted(entries, key=lambda e: (e.name not in ours, e.name))
+        kolejnosc = _okno_tury(entries, ours, self._limits.max_files_per_turn)
         for entry in kolejnosc[self._limits.max_files_per_turn :]:
             rejected.append(
                 (entry.name, f"na turę wysyłam najwyżej {self._limits.max_files_per_turn} plików")
