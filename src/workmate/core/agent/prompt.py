@@ -140,6 +140,11 @@ def build_session_header(
     Nagłówek jest właściwym miejscem także kosztowo: składa się per turę i z definicji leży
     POZA cache'owanym prefiksem ``tools+system``, więc zdanie o powiązaniu nic nie unieważnia —
     a schemat narzędzia siedziałby w tablicy ``tools``, czyli dokładnie w tym prefiksie.
+
+    Oba ograniczenia stoją tu w formie POZYTYWNEJ („only when… only on…"), bo nagłówek podlega
+    tej samej bramce redakcyjnej co korpus (ADR 0056), a wyjątek osłabiłby ją na przyszłość.
+    Pierwsza wersja tego zdania niosła dwa „never" i przeszła — bramka ich nie widziała, bo jej
+    fikstura składała nagłówek BEZ ``github_thread``. Dlatego fikstura niesie dziś komplet pól.
     """
     lines = [f"Today is {now:%Y-%m-%d}, {_WEEKDAYS[now.weekday()]}."]
     if channel or thread:
@@ -148,9 +153,9 @@ def build_session_header(
         kind, number = github_thread
         noun = "pull request" if kind == "pr" else "issue"
         lines.append(
-            f"This Teams thread is linked to GitHub {noun} #{number}. When the user explicitly "
-            f"asks you to reply or comment there, call GitHub(action='comment', number={number}) "
-            "— never on your own initiative, and never on a different number for this thread."
+            f"This Teams thread is linked to GitHub {noun} #{number}. To reply there, call "
+            f"GitHub(action='comment', number={number}) — only when the user explicitly asks, "
+            "and only on this number."
         )
     if skills:
         lines.append("")

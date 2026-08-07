@@ -400,22 +400,28 @@ def test_licznik_prob_NIE_rosnie_od_odlozenia_przez_budzet():
 
 
 def test_ponowione_pozycje_NIE_wypadaja_przez_limit_liczby_plikow():
-    """Gdyby liczba prób wchodziła do WYBORU okna, a nie tylko do porządku w nim, pozycja
-    zatrzymana do ponowienia lądowałaby w ogonie i została skasowana z powodem o limicie
-    liczby plików — czyli obietnica „spróbuję ponownie" kończyłaby się cichym usunięciem."""
+    """Pozycja zatrzymana do ponowienia wchodzi do okna PRZED świeżymi plikami tury.
+
+    Nazwa sortuje się tu na SAMYM KOŃCU i to jest cała sonda: dopóki okno brało się z alfabetu,
+    taka pozycja wypadała poza limit i była kasowana z powodem o liczbie plików — obietnica
+    „spróbuję ponownie" kończyła się cichym usunięciem treści. Poprzednia wersja tego testu
+    używała nazwy sortującej się PIERWSZEJ, więc przechodziła nad działającą i nad zepsutą
+    implementacją tak samo.
+    """
     repo = FakeRepo({})
     delivery = _delivery(repo, max_files=2)
 
     delivery.snapshot(_DIR)
-    repo.files["a-ponawiany.md"] = b"x"
+    repo.files["z-ponawiany.md"] = b"x"
     delivery.deliver(_DIR, _fail_always)
 
     delivery.snapshot(_DIR)
-    repo.files.update({"b-nowy.md": b"x", "c-nowy.md": b"x"})
+    repo.files.update({"a-nowy.md": b"x", "b-nowy.md": b"x"})
     report = delivery.deliver(_DIR, lambda item: None)
 
     powody = {name: reason for name, reason in report.rejected}
-    assert "a-ponawiany.md" not in powody, f"ponawiana pozycja odrzucona: {powody}"
+    assert "z-ponawiany.md" not in powody, f"ponawiana pozycja odrzucona: {powody}"
+    assert "z-ponawiany.md" in report.delivered, f"ponawiana pozycja niewysłana: {report}"
 
 
 def test_licznik_zeruje_sie_po_udanej_wysylce():

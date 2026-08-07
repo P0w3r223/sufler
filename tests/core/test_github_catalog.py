@@ -162,6 +162,33 @@ def test_comment_trafia_do_serwisu_z_numerem_od_modelu() -> None:
     assert write.comments == [(12, "ok")]
 
 
+def test_zadna_akcja_poza_comment_nie_dochodzi_do_zapisu_komentarza() -> None:
+    """Sonda na PRZYSZŁĄ akcję, nie na dzisiejszego wołającego.
+
+    Ostatnia gałąź dispatchera przez jeden krok była domyślna: akcja dopisana do zestawu bez
+    własnej gałęzi wpadłaby w komentarz, czyli w ZAPIS. Bramka wejściowa tego nie łapie, bo taka
+    akcja jest w zestawie legalna. Sonda bierze akcje z WYRENDEROWANEGO enumu, więc dopisanie
+    akcji bez gałęzi wywraca ją samo — bez pamiętania o tym pliku.
+    """
+    write = _FakeWrite()
+
+    class _FakeWorklog:
+        def propose_worklog(self, since: date, until: date, author: str):  # pragma: no cover
+            raise AssertionError("worklog wołany bez kompletu dat")
+
+    katalog = build_github_catalog(
+        events=_FakeEvents(), worklog=_FakeWorklog(), write_service=write
+    )[0]
+    akcje = _akcje(_to_tool_def(katalog)["input_schema"])
+    assert "comment" in akcje, "sonda straciła przedmiot — akcji `comment` nie ma w zestawie"
+
+    for akcja in sorted(akcje - {"comment"}):
+        # Z KOMPLETEM pól komentarza: bez nich każda akcja wpadająca w gałąź `comment` wróciłaby
+        # na braku `number` i sonda przepuściłaby mutację, mimo że zapis był o krok.
+        katalog.fn(action=akcja, number=999, body="treść, która nie ma prawa nigdzie pojechać")
+        assert write.comments == [], f"akcja `{akcja}` doszła do zapisu komentarza"
+
+
 def test_worklog_wymaga_obu_dat() -> None:
     class _FakeWorklog:
         def propose_worklog(self, since: date, until: date, author: str):  # pragma: no cover

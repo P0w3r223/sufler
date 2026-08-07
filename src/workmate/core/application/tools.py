@@ -885,8 +885,13 @@ def build_github_catalog(
             return _worklog(since, until, author)
         if action == "create_issue":
             return _create_issue(title, body, labels)
-        # Bez wariantu domyślnego: bramka wyżej domknęła zestaw, więc gałąź „nic nie pasuje"
-        # byłaby nieosiągalna, a nieosiągalny kod obronny czyta się jak czynna obrona.
+        if action != "comment":
+            # Bramka wejściowa domyka zestaw wobec WOŁAJĄCEGO, ta domyka go wobec PRZYSZŁEJ
+            # ZMIANY: akcja dopisana do ``akcje`` bez własnej gałęzi wpadłaby tu w komentarz,
+            # czyli w ZAPIS, zamiast dostać odpowiedź o nieznanej akcji. Kształt ten sam co
+            # w ``Jira`` i ``Notes`` — trzy dispatchery różniące się obroną czytają się jak
+            # reguła opcjonalna i następny wariant powstaje bez niej.
+            return _zla_akcja("GitHub", action, tuple(akcje))
         return _comment(number, body)
 
     # Adnotacja podmieniana PO definicji, bo ``Literal`` zna zestaw akcji dopiero tutaj.

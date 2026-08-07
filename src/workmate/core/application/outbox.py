@@ -199,19 +199,24 @@ class OutboxDelivery:
         failed: list[tuple[str, str]] = []
         deferred: list[str] = []
 
-        for entry in entries[self._limits.max_files_per_turn :]:
+        # WYBÓR okna: pozycje zatrzymane do ponowienia (``ours``) wchodzą przed świeżymi, a nazwa
+        # rozstrzyga dopiero wewnątrz każdej z tych dwóch grup. Sam alfabet tu nie wystarczał:
+        # pozycja ponawiana, której nazwa sortuje się ZA plikami nowej tury, wypadała poza limit
+        # i była KASOWANA z powodem „na turę wysyłam najwyżej N plików" — czyli obietnica
+        # „spróbuję ponownie", którą dostał rozmówca, kończyła się cichym usunięciem treści.
+        # Liczba prób do WYBORU okna nadal nie wchodzi; steruje wyłącznie porządkiem niżej.
+        kolejnosc = sorted(entries, key=lambda e: (e.name not in ours, e.name))
+        for entry in kolejnosc[self._limits.max_files_per_turn :]:
             rejected.append(
                 (entry.name, f"na turę wysyłam najwyżej {self._limits.max_files_per_turn} plików")
             )
             self._repo.discard(dirpath, entry.name)
 
         attempts = self._attempts.setdefault(dirpath, {})
-        # OKNO wybieramy po nazwie (wyżej), a PORZĄDEK ustalamy dopiero w jego wnętrzu. Gdyby
-        # liczba prób wchodziła do wyboru okna, pozycje zatrzymane do ponowienia lądowałyby
-        # w ogonie i zostały SKASOWANE z powodem „na turę wysyłam najwyżej N plików" — czyli
-        # obietnica „spróbuję ponownie" kończyłaby się cichym usunięciem pliku.
+        # PORZĄDEK w oknie: pozycje z nieudanymi próbami schodzą na koniec, żeby jeden plik
+        # niewysyłalny nie zjadał budżetu czasu przed resztą.
         window = sorted(
-            entries[: self._limits.max_files_per_turn],
+            kolejnosc[: self._limits.max_files_per_turn],
             key=lambda e: (attempts.get(e.name, 0), e.name),
         )
 

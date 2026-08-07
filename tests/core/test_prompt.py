@@ -88,11 +88,21 @@ def test_every_prompt_artifact_is_positively_framed():
     """Ta sama bramka na WSZYSTKICH artefaktach, liniami — także w listach i nagłówkach.
 
     Sprawdzanie samych zdań prozy pomijało pozycje list i nagłówki, czyli mniej więcej
-    połowę treści. Nagłówek sesji wchodzi tu z pełnym kompletem pól (kanał, wątek, skille),
-    bo jest składany dynamicznie i jego brzmienie łatwo zmienić bez zauważenia.
+    połowę treści. Nagłówek sesji wchodzi tu z pełnym kompletem pól (kanał, wątek, skille,
+    powiązanie z GitHubem), bo jest składany dynamicznie i jego brzmienie łatwo zmienić bez
+    zauważenia.
+
+    Komplet nie jest ozdobą. ``github_thread`` doszło po zniesieniu ``reply_on_thread``,
+    fikstura została przy czterech polach, a nowe zdanie weszło z dwoma „never" i przeszło.
+    Sonda, która nie umie zawieść, wygląda identycznie jak działająca — każde nowe pole
+    nagłówka dopisujemy tu razem z nim.
     """
     header = build_session_header(
-        datetime(2026, 8, 5), channel="teams_graph", thread="t/c/r", skills=(("brief", "opis"),)
+        datetime(2026, 8, 5),
+        channel="teams_graph",
+        thread="t/c/r",
+        skills=(("brief", "opis"),),
+        github_thread=("issue", 7),
     )
     artifacts = {
         "STATIC_PROMPT": STATIC_PROMPT,
@@ -187,4 +197,4 @@ def test_naglowek_zabrania_komentowania_na_inny_numer_w_tym_watku() -> None:
     bramką. Dawne narzędzie nie zawężało niczego — wypełniało argument.
     """
     naglowek = build_session_header(datetime(2026, 8, 6, 10, 0), github_thread=("issue", 7))
-    assert "never on a different number" in naglowek
+    assert "only on this number" in naglowek
