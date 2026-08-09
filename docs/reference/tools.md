@@ -85,12 +85,13 @@ traversal). Zwraca `{ saved: true, id, path }` lub `{ error }`.
 sprowadziło runtime agenta do **pięciu** narzędzi. Kryterium jest **bariera, nie temat**:
 narzędzie typowane powstaje wyłącznie tam, gdzie powłoka w kontenerze-wykonawcy nie może dosięgnąć.
 
-> **Decyzja o konsolidacji nie ma ADR-u w tej serii.** Mieszka w paczce wdrożeniowej
-> (`docs/decyzje/0009-konsolidacja-powierzchni-narzedziowej.md` w repozytorium
-> `infra-docker-workmate`). Prompt i wykonawca mają wersję po obu stronach
-> ([ADR 0056](../adr/0056-agent-system-prompt-two-blocks.md),
-> [ADR 0057](../adr/0057-shell-executor-container-without-network.md)); konsolidacja — tylko po
-> jednej. Do rozstrzygnięcia: dopisać ADR wskazujący upstream, czy zostawić jedno źródło.
+> **Sama decyzja mieszka w paczce wdrożeniowej** (`docs/decyzje/0009-konsolidacja-powierzchni-narzedziowej.md`
+> w repozytorium `infra-docker-workmate`), bo jej kryterium — którą barierę powłoka w wykonawcy
+> przechodzi, a której nie — jest własnością wdrożenia, nie aplikacji. Po tej stronie stoi
+> [ADR 0061](../adr/0061-consolidated-tool-surface-upstream-pointer.md): wskazuje upstream i niesie
+> to, czego upstream mieć nie może — kryterium cytowane w kodzie, bramkę wchodzącą do `Literal`
+> oraz cenę, którą płaci [ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)
+> (gwarancja strukturalna zamieniona na proceduralną).
 
 | Narzędzie | Parametry | Kiedy wchodzi do katalogu |
 |-----------|-----------|---------------------------|
