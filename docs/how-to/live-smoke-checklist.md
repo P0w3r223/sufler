@@ -89,8 +89,8 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 ## 8. GitHub → EventStore (ingest) — 🐙 (ADR 0019/0020)
 
 - **Krok:** ustaw `WORKMATE_GITHUB_TOKEN`/`_OWNER`/`_REPO`, uruchom `uv run workmate-github`;
-  utwórz ręcznie issue w repo. Podejrzyj `~/.workmate/events.db` (np. przez agenta narzędziem
-  `read_recent_events` na drzwiach Teams).
+  utwórz ręcznie issue w repo. Podejrzyj `~/.workmate/events.db` (np. przez agenta akcją
+  `GitHub(action='events')` na drzwiach Teams).
 - **Oczekiwane:** issue pojawia się jako zdarzenie `source="github", kind="issue_opened"`;
   ponowny poll go NIE dubluje (dedup), a issue utworzone kontem PAT jest pomijane (self-skip).
 

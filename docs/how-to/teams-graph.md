@@ -64,8 +64,9 @@ $env:WORKMATE_GITHUB_ENABLE_WRITE = "true"
 uv run workmate-teams-graph
 ```
 
-Agent dostanie `create_github_issue` / `comment_github_issue` (create-only; owner/repo z konfiguracji).
-Narzędzie `reply_on_thread` pojawi się tylko w wątku powiązanym z issue/PR i **wymaga**, by drzwi
+Agent dostanie akcje `GitHub(action='create_issue')` i `GitHub(action='comment')` (create-only;
+owner/repo z konfiguracji). W wątku powiązanym z issue/PR `comment` trafia w ten numer BEZ podawania
+go przez model (mapa `ThreadLinkStore`) i **wymaga**, by drzwi
 `workmate-github` biegły z `ENABLE_CHANNEL_THREADING=true` na wspólnym `events.db` i tej samej parze
 team/channel — patrz [`github-bridge.md`](github-bridge.md).
 
