@@ -126,7 +126,7 @@ Współdzieli cache tokenu z `TeamsGraphSettings`.
 | `WORKMATE_TEAMS_PUSH_SCOPES` / `_TOKEN_CACHE` | jak Graph | Zakresy push i wspólny cache MSAL. |
 | `WORKMATE_TEAMS_PUSH_ENABLE_CHAT` | `false` | Push na czat 1:1 (wymaga `_CHAT_USER_ID`). |
 | `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL` | `false` | Push na kanał (wymaga `_TEAM_ID` + `_CHANNEL_ID`). |
-| `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING` | `false` | Dwukierunkowe wątki ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)); wymaga `_ENABLE_CHANNEL`. Warunek działania `reply_on_thread`. |
+| `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING` | `false` | Dwukierunkowe wątki ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)); wymaga `_ENABLE_CHANNEL`. Warunek odpowiadania z wątku bez podawania numeru issue przez model. |
 | `WORKMATE_TEAMS_PUSH_CHAT_USER_ID` / `_TEAM_ID` / `_CHANNEL_ID` | — | Cele push (AAD id / team / channel). |
 
 ## Drzwi GitHub / most (`GithubSettings`, extra `github`)
@@ -141,7 +141,7 @@ Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.m
 | `WORKMATE_GITHUB_POLL_INTERVAL` | `60` (podłoga `30`) | Odstęp odpytań (s). |
 | `WORKMATE_GITHUB_PER_PAGE` | `50` | Rozmiar strony. |
 | `WORKMATE_GITHUB_WATCH_KINDS` | `issues,comments` | Białą listą: `issues,comments,pulls,reviews,ci` ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)) oraz `pull_state` (tranzycje PR merged/closed) i `branches` (push/delete gałęzi, SHA-diff) ([ADR 0029](../adr/0029-branch-pr-state-transitions-and-project-activity.md)). |
-| `WORKMATE_GITHUB_ENABLE_WRITE` | `false` | Bramka 4: zapis create-only (issue/komentarz) + `reply_on_thread` ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)). |
+| `WORKMATE_GITHUB_ENABLE_WRITE` | `false` | Bramka 4: akcje `GitHub(action='create_issue'/'comment')`, create-only ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)). |
 | `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT` | `false` | Deterministyczny auto-komentarz przy porażce CI; wymaga `_ENABLE_WRITE` ORAZ `ci` w `WATCH_KINDS`. |
 | `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
 | `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |

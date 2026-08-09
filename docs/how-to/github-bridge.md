@@ -31,8 +31,8 @@ uv run workmate-github
 ```
 
 Oczekiwane: poller wystartuje i przy każdej rundzie zapisze nowe zdarzenia do
-`~/.workmate/events.db`. Zdarzenia można podejrzeć z dowolnych drzwi agenta narzędziem
-`read_recent_events`. **Strażnik pętli**: zdarzenia autorstwa konta PAT są pomijane (self-skip);
+`~/.workmate/events.db`. Zdarzenia można podejrzeć z dowolnych drzwi agenta akcją `GitHub(action='events')`
+(do 1.6.0 było to osobne narzędzie `read_recent_events`). **Strażnik pętli**: zdarzenia autorstwa konta PAT są pomijane (self-skip);
 zdarzenia CI nie mają autora-człowieka i przepływają zawsze.
 
 ## Krok 2 — push do Teams (EventStore → kanał / czat)
@@ -61,16 +61,16 @@ $env:WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING = "true"
 ```
 
 Zdarzenia tego samego issue/PR dokładają się wtedy do jednego wątku (mapa `ThreadLinkStore` w
-`events.db`). To **warunek konieczny** działania `reply_on_thread` po stronie Teams (krok 5).
+`events.db`). To **warunek konieczny** odpowiadania z wątku po stronie Teams (krok 5).
 
 ## Krok 4 — zapis zwrotny z Teams (Teams → GitHub, Bramka 4)
 
 Zapis włącza się **na drzwiach Teams** (`workmate-teams-graph`), nie tutaj — patrz [`teams-graph.md`](teams-graph.md).
-Ustaw tam `WORKMATE_GITHUB_ENABLE_WRITE=true`; agent dostanie `create_github_issue` /
-`comment_github_issue` (create-only, owner/repo z konfiguracji). Echo zapisu idzie do `EventStore`
+Ustaw tam `WORKMATE_GITHUB_ENABLE_WRITE=true`; agent dostanie akcje `GitHub(action='create_issue')`
+i `GitHub(action='comment')` (create-only, owner/repo z konfiguracji). Echo zapisu idzie do `EventStore`
 jako `source="teams"`, więc notifier go nie odsyła (drugi strażnik pętli).
 
-## Krok 5 — `reply_on_thread` (odpowiedź w wątku na właściwe issue/PR)
+## Krok 5 — odpowiedź w wątku na właściwe issue/PR
 
 Działa **tylko**, gdy: drzwi `workmate-github` biegną z `ENABLE_CHANNEL_THREADING=true` (krok 3),
 drzwi Teams mają `ENABLE_GITHUB_WRITE=true`, oba na **wspólnym `events.db`** i **tej samej parze
