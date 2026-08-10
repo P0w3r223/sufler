@@ -46,11 +46,20 @@ class HttpxGraphChannelClient:
 
     async def _get(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         attempts = 0
+        refreshed = False
         while True:
             response = await self._client.get(url, params=params)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES:
                 attempts += 1
                 await asyncio.sleep(_retry_after(response))
+                continue
+            # Przejściowy 401 to NIE wygaśnięcie (wtedy 401 dostałaby cała runda) — Graph
+            # potrafi je zwrócić przy odświeżaniu tokenu albo lagu replik. Wymuszamy jedno
+            # odświeżenie nagłówka i ponawiamy RAZ; realny brak uprawnień poleci niżej jak
+            # dziś. Bez tego każdy taki 401 kosztuje jeden zgubiony cykl pollingu.
+            if response.status_code == 401 and not refreshed:
+                refreshed = True
+                await self.refresh_auth()
                 continue
             response.raise_for_status()  # 429 po wyczerpaniu prób też tu podniesie
             return response.json()
@@ -72,11 +81,16 @@ class HttpxGraphChannelClient:
     async def _get_bytes(self, url: str, *, follow_redirects: bool = False) -> bytes:
         """Pobierz surowe bajty (załącznik) z obsługą 429; ``follow_redirects`` dla /shares."""
         attempts = 0
+        refreshed = False
         while True:
             response = await self._client.get(url, follow_redirects=follow_redirects)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES:
                 attempts += 1
                 await asyncio.sleep(_retry_after(response))
+                continue
+            if response.status_code == 401 and not refreshed:  # patrz ``_get``: 401-refresh raz
+                refreshed = True
+                await self.refresh_auth()
                 continue
             response.raise_for_status()
             return response.content
@@ -188,11 +202,16 @@ class HttpxGraphChannelClient:
         url = f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{root_id}/replies"
         payload = {"body": {"contentType": "html", "content": to_teams_html(text)}}
         attempts = 0
+        refreshed = False
         while True:
             response = await self._client.post(url, json=payload)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES:
                 attempts += 1
                 await asyncio.sleep(_retry_after(response))
+                continue
+            if response.status_code == 401 and not refreshed:  # patrz ``_get``: 401-refresh raz
+                refreshed = True
+                await self.refresh_auth()
                 continue
             response.raise_for_status()
             return
