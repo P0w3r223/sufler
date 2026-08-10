@@ -140,3 +140,51 @@ def test_download_public_url_does_not_follow_redirects(monkeypatch):
 
     with pytest.raises(RuntimeError):  # przekierowanie → RuntimeError, nie pobranie metadata
         asyncio.run(run())
+
+
+def test_get_retries_once_after_401_refreshing_token():
+    """Przejściowy 401 wymusza JEDNO odświeżenie tokenu i ponowienie — cykl pollingu ocalony.
+
+    Regresja: bez tego każdy przejściowy 401 (Graph przy odświeżaniu tokenu / lag replik)
+    propagował z pollera i kosztował jeden zgubiony cykl nasłuchu kanału.
+    """
+    seen_auth: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers.get("Authorization"))
+        if len(seen_auth) == 1:
+            return httpx.Response(401)
+        return httpx.Response(200, json={"value": [{"id": "m-1"}]})
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> list[dict[str, object]]:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "swiezy")
+            return await client.list_root_messages("t", "c", top=20)
+
+    result = asyncio.run(run())
+
+    assert [m["id"] for m in result] == ["m-1"]
+    assert len(seen_auth) == 2  # oryginał + dokładnie jedno ponowienie
+    assert seen_auth[1] == "Bearer swiezy"  # token re-wstrzyknięty przez refresh_auth
+
+
+def test_get_gives_up_on_persistent_401_after_single_refresh():
+    """Uporczywy 401 (realny brak uprawnień) propaguje po jednym ponowieniu — bez pętli."""
+    calls: list[str] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls.append("x")
+        return httpx.Response(401)
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            await client.list_root_messages("t", "c", top=20)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(run())
+    assert len(calls) == 2  # oryginał + jedno ponowienie, potem podnosi (nie pętli)

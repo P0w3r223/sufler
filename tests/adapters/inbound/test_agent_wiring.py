@@ -256,6 +256,130 @@ def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
     assert responder._shell_catalog_factory is None
 
 
+# --- Powłoka wyklucza reply_with_file — szóste narzędzie (etap 7, ADR 0011 paczki) ---
+
+
+def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
+    """Jak ``_responder_z_katalogiem``, ale z ``thread_tool_factory`` (fabryka ``reply_with_file``)."""
+    from workmate.config import ShellSettings, WorkspaceSettings
+
+    monkeypatch.setattr(
+        agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
+    )
+    monkeypatch.setattr(
+        agent_wiring,
+        "_build_shell_factory",
+        lambda *a, **k: (lambda scope: []) if powloka else None,
+    )
+    return build_conversational_responder(
+        _settings(tmp_path),
+        AgentSettings(),
+        _conv_settings(tmp_path),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
+        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+        thread_tool_factory=lambda external_id: [],
+    )
+
+
+def test_z_powloka_reply_with_file_schodzi_z_powierzchni(tmp_path: Path, monkeypatch):
+    """Etap 7: z powłoką dostawa idzie skrzynką ``outputs/``, więc ``reply_with_file`` — szóste
+    narzędzie — nie wchodzi (byłoby DRUGĄ drogą do tej samej zdolności)."""
+    responder = _responder_z_reply_file(tmp_path, monkeypatch, powloka=True)
+    assert responder._thread_tool_factory is None
+
+
+def test_bez_powloki_reply_with_file_zostaje(tmp_path: Path, monkeypatch):
+    """Cięcie WARUNKOWE: bez powłoki ``reply_with_file`` jest JEDYNĄ drogą dostawy pliku — zostaje."""
+    responder = _responder_z_reply_file(tmp_path, monkeypatch, powloka=False)
+    assert responder._thread_tool_factory is not None
+
+
+# --- 7.3: golden ZMONTOWANEJ powierzchni — układ docelowy zamrożony na piątce (etap 7) ---
+
+
+class _RecordingLLM:
+    """Atrapa klienta LLM: zapisuje nazwy narzędzi z JEDNEGO wywołania ``complete`` i kończy turę.
+
+    ``tool_calls`` puste → ``run_turn`` nie dispatchuje i wraca po pierwszej iteracji, więc
+    ``tool_names`` niesie DOKŁADNIE tę powierzchnię, którą model dostał w tej turze.
+    """
+
+    def __init__(self, *_a: object, **_k: object) -> None:
+        self.tool_names: list[str] = []
+
+    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+        from workmate.core.domain.pricing import TokenUsage
+        from workmate.core.ports.llm import LLMResponse
+
+        self.tool_names = [spec.name for spec in tools]
+        return LLMResponse(text="ok", stop_reason="end_turn", usage=TokenUsage())
+
+
+def _zmontowana_powierzchnia(tmp_path, monkeypatch, *, powloka: bool, file_reply: bool) -> list[str]:
+    """Zwróć nazwy narzędzi, jakie model dostaje w turze z realnego respondera.
+
+    GitHub/Jira/Schedule wchodzą jako statyczne STUBY drzwi (ADR 0019/0020) — ich wnętrze ma
+    własne testy; tu mierzymy SKŁADANIE powierzchni i bramkę etapu 7, nie ich budowniki. ``Notes``
+    i bramka ``reply_with_file`` idą przez PRAWDZIWY kod (``build_agent_runtime`` + gating 7.1).
+    """
+    from workmate.config import ShellSettings, WorkspaceSettings
+    from workmate.core.application.tools import ToolSpec
+
+    def _stub(name: str) -> ToolSpec:
+        return ToolSpec(name, "", lambda **_kw: {})
+
+    recording = _RecordingLLM()
+    monkeypatch.setattr(
+        "workmate.adapters.outbound.anthropic_llm.AnthropicLLMClient",
+        lambda *a, **k: recording,
+    )
+    monkeypatch.setattr(
+        agent_wiring,
+        "_build_shell_factory",
+        lambda *a, **k: (lambda scope: [_stub("Bash")]) if powloka else None,
+    )
+    responder = build_conversational_responder(
+        _settings(tmp_path),
+        AgentSettings(),
+        _conv_settings(tmp_path),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        enable_workspace=True,
+        workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
+        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+        extra_catalog=[_stub("GitHub"), _stub("Schedule")],
+        my_jira_tasks_factory=lambda sender: [_stub("Jira")],
+        thread_tool_factory=(lambda ext: [_stub("reply_with_file")]) if file_reply else None,
+    )
+    asyncio.run(
+        responder.respond(InboundMessage(text="q", conversation_id="c", sender_id="u-1"))
+    )
+    return recording.tool_names
+
+
+def test_uklad_docelowy_zamrozony_na_piatce_bez_szostego_narzedzia(tmp_path: Path, monkeypatch):
+    """Etap 7: układ z powłoką + dostawą pliku (dawny C=6) montuje DOKŁADNIE pięć narzędzi
+    docelowych i NIE zawiera ``reply_with_file`` — dostawa zeszła do skrzynki ``outputs/``.
+
+    Golden: nowe narzędzie w powierzchni ZERWIE tę sondę, zanim wejdzie niezauważone — tabela
+    układów A–D nie miała dotąd bramki (przebudowa-harnessu §7.3).
+    """
+    nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=True, file_reply=True)
+    assert set(nazwy) == {"Bash", "Notes", "GitHub", "Jira", "Schedule"}
+    assert "reply_with_file" not in nazwy
+
+
+def test_bez_powloki_reply_with_file_jest_w_zmontowanej_powierzchni(tmp_path: Path, monkeypatch):
+    """Dopełnienie: bez powłoki dostawy nie ma czym zastąpić, więc ``reply_with_file`` JEST
+    w zmontowanej powierzchni (a narzędzia odczytu notatek wchodzą zastępczo)."""
+    nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=False, file_reply=True)
+    assert "reply_with_file" in nazwy
+
+
 def _shell_available(tmp_path: Path, monkeypatch, *, chciana: bool, fabryka_daje: bool) -> bool:
     """Zwróć ``shell_available``, z jakim wiring zawołał budowę runtime'u.
 

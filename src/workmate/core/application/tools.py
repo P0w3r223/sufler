@@ -558,6 +558,8 @@ _SHELL_OUTBOX = """
 Podkatalog `outputs/` w katalogu roboczym jest skrzynką nadawczą: plik zapisany tam
 wysyłam rozmówcy po zakończeniu tury i usuwam ze skrzynki, więc trzymaj tam wyłącznie
 gotowe wyniki, a materiał roboczy piętro wyżej. Dozwolone rozszerzenia: {formats}.
+Pliki `md`/`txt` zapisz wprost (np. `... > outputs/raport.md`); `pdf`/`docx` twórz
+komendą `workmate-render --format pdf --output outputs/raport.pdf < tresc.md`.
 Plik w budowie nazywaj `*.tmp` i zmieniaj nazwę, gdy jest gotowy — pozycje `.tmp`
 pomijam przy wysyłce."""
 
