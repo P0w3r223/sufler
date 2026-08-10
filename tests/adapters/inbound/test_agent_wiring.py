@@ -260,7 +260,10 @@ def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
 
 
 def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
-    """Jak ``_responder_z_katalogiem``, ale z ``thread_tool_factory`` (fabryka ``reply_with_file``)."""
+    """Jak ``_responder_z_katalogiem``, ale z ``thread_tool_factory``.
+
+    Fabryka ``reply_with_file``.
+    """
     from workmate.config import ShellSettings, WorkspaceSettings
 
     monkeypatch.setattr(
@@ -292,7 +295,10 @@ def test_z_powloka_reply_with_file_schodzi_z_powierzchni(tmp_path: Path, monkeyp
 
 
 def test_bez_powloki_reply_with_file_zostaje(tmp_path: Path, monkeypatch):
-    """Cięcie WARUNKOWE: bez powłoki ``reply_with_file`` jest JEDYNĄ drogą dostawy pliku — zostaje."""
+    """Cięcie WARUNKOWE: bez powłoki ``reply_with_file`` jest JEDYNĄ drogą dostawy pliku.
+
+    Zostaje.
+    """
     responder = _responder_z_reply_file(tmp_path, monkeypatch, powloka=False)
     assert responder._thread_tool_factory is not None
 
@@ -318,7 +324,9 @@ class _RecordingLLM:
         return LLMResponse(text="ok", stop_reason="end_turn", usage=TokenUsage())
 
 
-def _zmontowana_powierzchnia(tmp_path, monkeypatch, *, powloka: bool, file_reply: bool) -> list[str]:
+def _zmontowana_powierzchnia(
+    tmp_path, monkeypatch, *, powloka: bool, file_reply: bool
+) -> list[str]:
     """Zwróć nazwy narzędzi, jakie model dostaje w turze z realnego respondera.
 
     GitHub/Jira/Schedule wchodzą jako statyczne STUBY drzwi (ADR 0019/0020) — ich wnętrze ma
@@ -355,9 +363,7 @@ def _zmontowana_powierzchnia(tmp_path, monkeypatch, *, powloka: bool, file_reply
         my_jira_tasks_factory=lambda sender: [_stub("Jira")],
         thread_tool_factory=(lambda ext: [_stub("reply_with_file")]) if file_reply else None,
     )
-    asyncio.run(
-        responder.respond(InboundMessage(text="q", conversation_id="c", sender_id="u-1"))
-    )
+    asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="c", sender_id="u-1")))
     return recording.tool_names
 
 
