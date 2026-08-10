@@ -116,6 +116,10 @@ workmate-meeting = "workmate.adapters.inbound.cli.meeting:main"
 # Ten sam ranker co narzędzie agenta — dopasowanie wzorca po polskim korpusie fleksyjnym gubi
 # trafienia („migracja" nie trafia „migracji"), więc powłoka dostaje ranker, nie grep.
 workmate-search = "workmate.adapters.inbound.cli.search:main"
+# Renderer pliku dla POWŁOKI agenta (etap 7, ADR 0011 paczki): po zdjęciu `reply_with_file`
+# `pdf`/`docx` do skrzynki `outputs/` powstają tą komendą (md/txt agent zapisze wprost):
+# `workmate-render --format pdf --output outputs/raport.pdf < raport.md`.
+workmate-render = "workmate.adapters.inbound.cli.render:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 # Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.
