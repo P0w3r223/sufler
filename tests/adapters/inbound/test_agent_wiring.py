@@ -256,6 +256,47 @@ def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
     assert responder._shell_catalog_factory is None
 
 
+# --- Powłoka wyklucza reply_with_file — szóste narzędzie (etap 7, ADR 0011 paczki) ---
+
+
+def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
+    """Jak ``_responder_z_katalogiem``, ale z ``thread_tool_factory`` (fabryka ``reply_with_file``)."""
+    from workmate.config import ShellSettings, WorkspaceSettings
+
+    monkeypatch.setattr(
+        agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
+    )
+    monkeypatch.setattr(
+        agent_wiring,
+        "_build_shell_factory",
+        lambda *a, **k: (lambda scope: []) if powloka else None,
+    )
+    return build_conversational_responder(
+        _settings(tmp_path),
+        AgentSettings(),
+        _conv_settings(tmp_path),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
+        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+        thread_tool_factory=lambda external_id: [],
+    )
+
+
+def test_z_powloka_reply_with_file_schodzi_z_powierzchni(tmp_path: Path, monkeypatch):
+    """Etap 7: z powłoką dostawa idzie skrzynką ``outputs/``, więc ``reply_with_file`` — szóste
+    narzędzie — nie wchodzi (byłoby DRUGĄ drogą do tej samej zdolności)."""
+    responder = _responder_z_reply_file(tmp_path, monkeypatch, powloka=True)
+    assert responder._thread_tool_factory is None
+
+
+def test_bez_powloki_reply_with_file_zostaje(tmp_path: Path, monkeypatch):
+    """Cięcie WARUNKOWE: bez powłoki ``reply_with_file`` jest JEDYNĄ drogą dostawy pliku — zostaje."""
+    responder = _responder_z_reply_file(tmp_path, monkeypatch, powloka=False)
+    assert responder._thread_tool_factory is not None
+
+
 def _shell_available(tmp_path: Path, monkeypatch, *, chciana: bool, fabryka_daje: bool) -> bool:
     """Zwróć ``shell_available``, z jakim wiring zawołał budowę runtime'u.
 

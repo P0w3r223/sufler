@@ -481,6 +481,15 @@ def build_conversational_responder(
         if shell_settings is not None and workspace_settings is not None
         else None
     )
+    # Etap 7 (ADR 0011 paczki): ``reply_with_file`` — szóste narzędzie — schodzi z powierzchni
+    # tam, gdzie jest powłoka. Dostawa pliku idzie wtedy skrzynką ``outputs/`` (``outbox_delivery``
+    # niżej), a narzędzie byłoby DRUGĄ drogą do tego samego — trzy pozycje budżetu wyboru za
+    # zdolność, którą już mamy. Bez powłoki ``reply_with_file`` zostaje JEDYNĄ drogą dostawy, więc
+    # zostaje. Warunek z ``shell_factory``, nie z ``shell_settings.enabled`` — jak przy narzędziach
+    # plikowych i skillach: ustawienie mówi, czego chce operator, fabryka — co agent dostanie
+    # (rozjazd na platformie bez wykonawcy zostawiłby agenta bez powłoki I bez ``reply_with_file``).
+    if shell_factory is not None:
+        thread_tool_factory = None
     runtime = build_agent_runtime_or_exit(
         settings,
         agent_settings,
