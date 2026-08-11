@@ -1,78 +1,40 @@
-"""Testy czystej funkcji ``_extract_json`` z adaptera streszczania spotkań.
+"""Testy adaptera dwuprzelotowego streszczania spotkań (ADR 0047).
 
-Modele często owijają JSON w blok markdown (```` ```json … ``` ````), co wywracałoby
-``model_validate_json``. ``_extract_json`` zdejmuje ten otok i zwraca surowy JSON.
-Funkcja jest czysta (string → string) — testujemy ją wprost, bez extra ``agent`` i bez
-klienta Claude. Samo ``summarize()`` (wymaga realnego klienta) należy do smoke-testów.
+Dwie warstwy:
+- CZYSTE funkcje (``_summary_max_tokens``, ``_allowlist``, ``_draft_system``, ``_verify_system``,
+  ``_summary_tool``) — string/dict → dane, bez SDK i bez sieci.
+- ``_complete`` z podmienionym klientem Anthropic (atrapa ``messages.create``) — dowodzimy, że
+  wynik bierzemy ze STRUCTURED OUTPUT (blok ``tool_use.input``), a nie z parsowania surowego
+  tekstu modelu. To likwiduje dawną klasę błędu „Model nie zwrócił poprawnego JSON notatki:
+  Expecting ',' delimiter" (kruchy ``json.loads`` na tekście modelu wywracał zapis notatki
+  z wątku, ADR 0048, oraz ``/notatka``, ADR 0041).
+
+Realną jakość (brak halucynacji) weryfikuje smoke na kluczu — atrapa jej nie sprawdzi.
 """
 
 from __future__ import annotations
 
-import json
+import types
+from typing import Any
 
 import pytest
 
 from workmate.adapters.outbound.anthropic_summarizer import (
     _SUMMARY_MAX_TOKENS,
+    _SUMMARY_TOOL_NAME,
+    AnthropicMeetingSummarizer,
     _allowlist,
     _draft_system,
-    _extract_json,
-    _loads_lenient,
     _summary_max_tokens,
+    _summary_tool,
     _verify_system,
 )
+from workmate.config import AgentSettings
+from workmate.core.domain.models import MeetingSummary
 from workmate.core.domain.transcript import SpeakerRoster
+from workmate.core.errors import LLMError
 
-
-def test_extract_json_passes_through_plain_json():
-    text = '{"title": "Spotkanie", "participants": []}'
-
-    assert _extract_json(text) == text
-
-
-def test_extract_json_strips_wrapper_with_language_tag():
-    wrapped = '```json\n{"title": "Spotkanie"}\n```'
-
-    assert _extract_json(wrapped) == '{"title": "Spotkanie"}'
-
-
-def test_extract_json_strips_wrapper_without_language_tag():
-    wrapped = '```\n{"title": "Spotkanie"}\n```'
-
-    assert _extract_json(wrapped) == '{"title": "Spotkanie"}'
-
-
-def test_extract_json_trims_surrounding_whitespace_around_wrapper():
-    wrapped = '\n\n  ```json\n{"a": 1}\n```  \n\n'
-
-    assert _extract_json(wrapped) == '{"a": 1}'
-
-
-def test_extract_json_preserves_multiline_json_inside_wrapper():
-    inner = '{\n  "title": "Spotkanie",\n  "decisions": [\n    "d1",\n    "d2"\n  ]\n}'
-    wrapped = f"```json\n{inner}\n```"
-
-    assert _extract_json(wrapped) == inner
-
-
-def test_extract_json_returns_plain_multiline_json_unchanged():
-    text = '{\n  "title": "Spotkanie",\n  "participants": ["Anna"]\n}'
-
-    assert _extract_json(text) == text
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ('{"a": 1}', '{"a": 1}'),
-        ('   {"a": 1}   ', '{"a": 1}'),
-        ('```json\n{"a": 1}\n```', '{"a": 1}'),
-        ('```\n{"a": 1}\n```', '{"a": 1}'),
-        ('```JSON\n{"a": 1}\n```', '{"a": 1}'),
-    ],
-)
-def test_extract_json_normalizes_various_wrappings(raw: str, expected: str):
-    assert _extract_json(raw) == expected
+# --- czyste funkcje: sufit tokenów --------------------------------------------
 
 
 def test_summary_max_tokens_caps_large_agent_budget():
@@ -91,24 +53,32 @@ def test_summary_max_tokens_stays_below_streaming_threshold():
     assert _SUMMARY_MAX_TOKENS <= 8000
 
 
-def test_loads_lenient_accepts_raw_control_char_in_string():
-    # Model bywa nieszczelny: surowy newline w wartości. strict=False go toleruje.
-    raw = '{"body": "linia1\nlinia2"}'
-    assert _loads_lenient(raw)["body"] == "linia1\nlinia2"
+# --- czyste funkcje: schemat narzędzia structured-output ----------------------
 
 
-def test_loads_lenient_where_strict_json_would_reject():
-    # Ten sam wejściowy JSON wywraca strict parser — dowód, że sufit robi różnicę.
-    raw = '{"a": "x\ny"}'
-    with pytest.raises(ValueError):
-        json.loads(raw)
-    assert _loads_lenient(raw)["a"] == "x\ny"
+def test_summary_tool_derives_input_schema_from_meeting_summary():
+    """Schemat wejścia narzędzia = JSON Schema wyprost z pydantic ``MeetingSummary``.
+
+    Jedno źródło prawdy: kształt WYMUSZONY na modelu jest tym samym, który potem waliduje
+    ``MeetingSummary.model_validate`` — bez ręcznego duplikowania pól.
+    """
+    tool = _summary_tool()
+    assert tool["name"] == _SUMMARY_TOOL_NAME
+    schema = tool["input_schema"]
+    assert schema == MeetingSummary.model_json_schema()
+    # Kluczowe pola notatki obecne w schemacie (kontrakt z rdzeniem).
+    assert set(schema["properties"]) >= {
+        "title",
+        "participants",
+        "decisions",
+        "action_items",
+        "open_questions",
+        "tags",
+        "body",
+    }
 
 
-def test_loads_lenient_still_rejects_truly_broken_json():
-    # Lenient ≠ wszystkożerny: brak zamknięcia nadal jest błędem (łapany jako LLMError wyżej).
-    with pytest.raises(ValueError):
-        _loads_lenient('{"a": ')
+# --- czyste funkcje: allowlist i prompty --------------------------------------
 
 
 def test_allowlist_lists_known_speakers_and_forbids_others():
@@ -134,6 +104,8 @@ def test_draft_system_embeds_allowlist_and_empty_participants_rule():
     assert "participants ZOSTAW PUSTĄ LISTĄ" in prompt
     # Zakaz sklejania faktów w bio (obrona przed plausible-synthesis).
     assert "NIE łącz osobnych wzmianek" in prompt
+    # Prompt kieruje na WYWOŁANIE narzędzia (structured output), nie na surowy JSON.
+    assert _SUMMARY_TOOL_NAME in prompt
 
 
 def test_verify_system_is_a_removing_critic_not_enricher():
@@ -142,3 +114,108 @@ def test_verify_system_is_a_removing_critic_not_enricher():
     assert "NIE dodawaj nowych faktów" in prompt
     assert "USUŃ" in prompt
     assert "Anna Kowalska" in prompt  # allowlist też w passie 2
+    assert _SUMMARY_TOOL_NAME in prompt
+
+
+# --- _complete: structured output przez tool-use ------------------------------
+
+
+class _RecordingMessages:
+    """Atrapa ``client.messages``: zapisuje kwargs ``create`` i oddaje przygotowaną wiadomość."""
+
+    def __init__(self, message: Any) -> None:
+        self._message = message
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return self._message
+
+
+def _summarizer_returning(
+    content: list[Any],
+) -> tuple[AnthropicMeetingSummarizer, _RecordingMessages]:
+    """Zbuduj adapter z podmienionym klientem; klient oddaje ``content`` z ``messages.create``."""
+    summarizer = AnthropicMeetingSummarizer(AgentSettings(api_key="x"))
+    recorder = _RecordingMessages(types.SimpleNamespace(content=content))
+    summarizer._client = types.SimpleNamespace(messages=recorder)
+    return summarizer, recorder
+
+
+def _tool_use_block(payload: dict[str, Any]) -> types.SimpleNamespace:
+    """Blok ``tool_use`` tak, jak zwraca go SDK: ``input`` jest już zwalidowanym słownikiem."""
+    return types.SimpleNamespace(type="tool_use", name=_SUMMARY_TOOL_NAME, input=payload)
+
+
+def test_complete_returns_validated_summary_from_tool_use_input():
+    """DOWÓD NAPRAWY: wynik pochodzi z bloku ``tool_use.input`` (słownik od SDK), nie z parsowania
+    surowego tekstu. Ten sam ładunek — z surowym newline w ``body`` i przecinkami w listach —
+    dawniej (kruchy ``json.loads`` na tekście modelu) wywracał zapis: „Expecting ',' delimiter".
+    Teraz to strukturalnie niemożliwe: nie ma już żadnego parsowania tekstu.
+    """
+    payload = {
+        "title": "Spotkanie",
+        "participants": [],
+        "decisions": ["d1", "d2"],
+        "body": "linia1\nlinia2",
+    }
+    summarizer, recorder = _summarizer_returning([_tool_use_block(payload)])
+
+    result = summarizer.summarize("transkrypt", SpeakerRoster(speakers=(), diarized=False))
+
+    assert isinstance(result, MeetingSummary)
+    assert result.title == "Spotkanie"
+    assert result.decisions == ["d1", "d2"]
+    assert result.body == "linia1\nlinia2"  # surowy newline zachowany, nic się nie rozbiło
+    # Żądanie WYMUSZA narzędzie structured-output (tool_choice) i niesie jego schemat.
+    sent = recorder.calls[0]
+    assert sent["tool_choice"] == {"type": "tool", "name": _SUMMARY_TOOL_NAME}
+    assert [t["name"] for t in sent["tools"]] == [_SUMMARY_TOOL_NAME]
+    assert sent["tools"][0]["input_schema"] == MeetingSummary.model_json_schema()
+
+
+def test_verify_also_takes_summary_from_tool_use_input():
+    """Druga ścieżka (pass 2 / krytyk) idzie przez ten sam ``_complete`` — też structured output."""
+    draft = MeetingSummary(title="Draft", decisions=["do usunięcia"])
+    payload = {"title": "Po weryfikacji", "participants": [], "decisions": []}
+    summarizer, recorder = _summarizer_returning([_tool_use_block(payload)])
+
+    result = summarizer.verify(draft, "transkrypt", SpeakerRoster(speakers=(), diarized=False))
+
+    assert result.title == "Po weryfikacji"
+    assert result.decisions == []
+    assert recorder.calls[0]["tool_choice"] == {"type": "tool", "name": _SUMMARY_TOOL_NAME}
+
+
+def test_complete_raises_llm_error_when_model_returns_no_tool_use():
+    """Ścieżka błędu: brak bloku ``tool_use`` (np. sam tekst) → czytelny ``LLMError``."""
+    summarizer, _ = _summarizer_returning(
+        [types.SimpleNamespace(type="text", text="Przepraszam, nie mogę.")]
+    )
+
+    with pytest.raises(LLMError, match="tool_use"):
+        summarizer.summarize("transkrypt", SpeakerRoster(speakers=(), diarized=False))
+
+
+def test_complete_wraps_validation_error_in_llm_error():
+    """Ładunek bez wymaganego pola ``title`` → walidacja pydantic opakowana w ``LLMError``."""
+    summarizer, _ = _summarizer_returning([_tool_use_block({"decisions": ["d1"]})])
+
+    with pytest.raises(LLMError, match="poprawnej notatki"):
+        summarizer.summarize("transkrypt", SpeakerRoster(speakers=(), diarized=False))
+
+
+def test_complete_wraps_anthropic_api_error_in_llm_error():
+    """``anthropic.APIError`` nadal opakowany w ``LLMError`` (kontrakt bez zmian)."""
+    import anthropic
+
+    summarizer = AnthropicMeetingSummarizer(AgentSettings(api_key="x"))
+
+    class _RaisingMessages:
+        def create(self, **kwargs: Any) -> Any:
+            raise anthropic.APIError("boom", request=None, body=None)  # type: ignore[arg-type]
+
+    summarizer._client = types.SimpleNamespace(messages=_RaisingMessages())
+
+    with pytest.raises(LLMError, match="Błąd Claude API"):
+        summarizer.summarize("transkrypt", SpeakerRoster(speakers=(), diarized=False))
