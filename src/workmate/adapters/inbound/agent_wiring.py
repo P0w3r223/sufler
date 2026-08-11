@@ -10,10 +10,11 @@ zamienia na czytelny komunikat.
 
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound.commands import CommandRouter
 from workmate.adapters.inbound.responder import (
@@ -61,6 +62,7 @@ from workmate.core.application.workspace import (
     WorkspaceService,
     WorkspaceWriteService,
 )
+from workmate.core.errors import NoteAuthorizationError
 from workmate.core.ports.command import CommandResult
 from workmate.core.ports.outbox import Deliverable
 
@@ -79,6 +81,7 @@ if TYPE_CHECKING:
         SkillsSettings,
         WorkspaceSettings,
     )
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.command import CommandRunner
@@ -158,6 +161,7 @@ def build_agent_runtime(
     extra_catalog: Sequence[ToolSpec] = (),
     system_prompt: str | None = None,
     shell_available: bool = False,
+    suppress_notes_read: bool = False,
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
@@ -179,6 +183,11 @@ def build_agent_runtime(
     niej narzędzia są JEDYNĄ drogą do notatek i to one są światem. Domyślne ``False`` jest celowo
     zachowawcze — drzwi, które zapomną o tym parametrze, dostają katalog pełniejszy, a nie
     agenta odciętego od bazy wiedzy.
+
+    ``suppress_notes_read`` zdejmuje trzy narzędzia odczytu z katalogu BAZOWEGO także wtedy, gdy
+    powłoki nie ma — bo przejmuje je PER-TUROWA fabryka bramkowana nadawcą (autoryzacja odczytu,
+    ADR 0062): gdy bramka działa, katalog bazowy nie może oferować tych narzędzi bez tożsamości,
+    inaczej byłaby droga obejścia autoryzacji. Domyślne ``False`` = zachowanie sprzed ADR 0062.
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -198,7 +207,11 @@ def build_agent_runtime(
         *build_notes_catalog(
             projects_service, write_service=write_service, shell_available=shell_available
         ),
-        *([] if shell_available else build_notes_read_catalog(notes_service, projects_service)),
+        *(
+            []
+            if shell_available or suppress_notes_read
+            else build_notes_read_catalog(notes_service, projects_service)
+        ),
     ]
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
@@ -220,6 +233,7 @@ def build_agent_runtime_or_exit(
     extra_catalog: Sequence[ToolSpec] = (),
     system_prompt: str | None = None,
     shell_available: bool = False,
+    suppress_notes_read: bool = False,
 ) -> AgentRuntime:
     """Jak ``build_agent_runtime``, ale brak extra ``agent`` → czytelny ``SystemExit``.
 
@@ -233,9 +247,46 @@ def build_agent_runtime_or_exit(
             extra_catalog=extra_catalog,
             system_prompt=system_prompt,
             shell_available=shell_available,
+            suppress_notes_read=suppress_notes_read,
         )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
+
+
+def _build_notes_read_factory(
+    settings: Settings,
+    authorizer: NoteReadAuthorizer,
+) -> Callable[[str], list[ToolSpec]]:
+    """Per-turowa fabryka narzędzi ODCZYTU bazy wiedzy, bramkowana NADAWCĄ (ADR 0062).
+
+    Wzorzec jak ``user_push_tool_factory``/``my_jira_tasks_factory``: serwisy budujemy RAZ, fabryka
+    na turę domyka je autoryzacją TEGO nadawcy. Rozpoznany członek → realne
+    ``search_notes``/``get_note``/``list_projects``; nierozpoznany → te SAME trzy narzędzia (nazwa
+    i schemat zachowane przez ``functools.wraps``), ale ich ``fn`` zwraca czytelną odmowę, którą
+    model relacjonuje — jak płyną błędy narzędzi. W katalogu bazowym te narzędzia są wtedy
+    STŁUMIONE (``suppress_notes_read``), żeby nie było drogi obejścia bramki.
+    """
+    notes, projects = _read_services(settings)
+
+    def _refusing(
+        original: Callable[..., dict[str, Any]], refusal: dict[str, Any]
+    ) -> Callable[..., dict[str, Any]]:
+        @functools.wraps(original)  # zachowuje sygnaturę → schemat narzędzia bez zmian
+        def refuse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return refusal
+
+        return refuse
+
+    def factory(sender_id: str) -> list[ToolSpec]:
+        catalog = build_notes_read_catalog(notes, projects)
+        try:
+            authorizer.authorize(sender_id)
+        except NoteAuthorizationError as exc:
+            refusal = {"error": f"Brak uprawnień do odczytu bazy wiedzy: {exc}"}
+            return [replace(spec, fn=_refusing(spec.fn, refusal)) for spec in catalog]
+        return catalog
+
+    return factory
 
 
 def build_read_catalog(settings: Settings) -> list[ToolSpec]:
@@ -439,6 +490,7 @@ def build_conversational_responder(
     outbox_max_files_per_turn: int = 5,
     outbox_max_seconds: float = 20.0,
     skills_settings: SkillsSettings | None = None,
+    note_read_authorizer: NoteReadAuthorizer | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -490,6 +542,17 @@ def build_conversational_responder(
     # (rozjazd na platformie bez wykonawcy zostawiłby agenta bez powłoki I bez ``reply_with_file``).
     if shell_factory is not None:
         thread_tool_factory = None
+    # Autoryzacja ODCZYTU (ADR 0062): bramka działa na TYPOWANYCH ścieżkach. Dla narzędzi agenta
+    # ma sens tylko BEZ powłoki — z powłoką narzędzi odczytu i tak nie ma (czyta montaż ``ro``,
+    # poza zakresem). Gdy działa: narzędzia odczytu schodzą z katalogu bazowego (``suppress``) do
+    # per-turowej fabryki bramkowanej nadawcą. Komenda ``/szukaj``/``/projekty`` dostaje authorizer
+    # niezależnie od powłoki (to osobna ścieżka odczytu). ``None`` → wszystko jak przed ADR 0062.
+    notes_read_gated = note_read_authorizer is not None and shell_factory is None
+    notes_read_factory = (
+        _build_notes_read_factory(settings, note_read_authorizer)
+        if notes_read_gated and note_read_authorizer is not None
+        else None
+    )
     runtime = build_agent_runtime_or_exit(
         settings,
         agent_settings,
@@ -508,6 +571,8 @@ def build_conversational_responder(
         # (POSIX-only). Rozjazd oznaczałby agenta bez powłoki I bez narzędzi odczytu, czyli
         # bez jakiejkolwiek drogi do bazy wiedzy — po cichu.
         shell_available=shell_factory is not None,
+        # Bez powłoki i z bramką odczytu (ADR 0062): narzędzia odczytu przejmuje fabryka per turę.
+        suppress_notes_read=notes_read_gated,
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -522,6 +587,7 @@ def build_conversational_responder(
         {spec.name: spec.fn for spec in build_read_catalog(settings)},
         supports_attachments=supports_attachments,
         my_jira_tasks=my_jira_tasks_factory,
+        note_read_authorizer=note_read_authorizer,
     )
     # Narzędzia plikowe katalogu roboczego wchodzą TYLKO tam, gdzie nie ma powłoki (ADR 0009
     # paczki, krok 5.5). Z powłoką są czystym opakowaniem prymitywu: `Bash` startuje w TYM SAMYM
@@ -588,6 +654,7 @@ def build_conversational_responder(
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
         my_jira_tasks_factory=my_jira_tasks_factory,
+        notes_read_factory=notes_read_factory,
         github_thread_link=github_thread_link,
         meeting_notes=meeting_notes,
         thread_note=thread_note,

@@ -51,3 +51,17 @@ def can_write_meeting_note(actor: Actor | None, *, project: str) -> bool:
     """
     _ = project  # szew pod B2-B; bramka członkostwa (B2-A) nie różnicuje po projekcie
     return actor is not None
+
+
+def can_read_note(actor: Actor | None, *, project: str | None = None) -> bool:
+    """Czy ``actor`` może CZYTAĆ bazę wiedzy? Bramka członkostwa: rozpoznany członek → tak;
+    ``None`` → nie (fail-closed, ADR 0062).
+
+    Symetria do ``can_write_meeting_note`` — ta sama polityka B2-A, ale ODDZIELNA funkcja, żeby
+    odczyt i zapis mogły się rozejść później (np. zawężenie odczytu per-projekt przy zapisie wciąż
+    członkostwem) bez ruszania miejsc wywołań. ``project`` jest tu jako TEN SAM SZEW pod politykę
+    per-projekt/firma: dziś rozpoznany członek czyta CAŁĄ bazę (zachowuje kulturę cross-team, na
+    której stoi prompt), a szew czeka na osobny ADR (ADR 0062 §Alternatywy / Follow-ups).
+    """
+    _ = project  # szew pod politykę per-projekt; bramka członkostwa go nie różnicuje
+    return actor is not None

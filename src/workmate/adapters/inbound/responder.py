@@ -200,6 +200,7 @@ class ConversationalResponder:
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
+        notes_read_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         github_thread_link: Callable[[str], tuple[str, int] | None] | None = None,
         meeting_notes: MeetingNoteRouter | None = None,
         thread_note: ThreadNoteRouter | None = None,
@@ -232,6 +233,12 @@ class ConversationalResponder:
         # zasila komendę ``/moje-zadania`` w ``CommandRouter`` — jedno miejsce rozwiązywania
         # tożsamości.
         self._my_jira_tasks_factory = my_jira_tasks_factory
+        # Fabryka narzędzi ODCZYTU bazy wiedzy (ADR 0062), PER NADAWCA (jak push-u/„moje zadania")
+        # — ``None`` gdy bramka odczytu wyłączona / powłoka obecna / inne drzwi. Rozpoznany członek
+        # dostaje realne search_notes/get_note/list_projects; nierozpoznany — te same nazwy jako
+        # odmowa. Gdy wpięta, narzędzia odczytu są STŁUMIONE w katalogu bazowym runtime'u (żeby
+        # nie było drogi obejścia bramki); tu wracają, domknięte tożsamością TEGO nadawcy.
+        self._notes_read_factory = notes_read_factory
         # Powiązanie wątku Teams z issue/PR (ADR 0024) — do NAGŁÓWKA SESJI, nie do katalogu.
         # Do kroku 5.5 (ADR 0009 paczki) jechało jako narzędzie `reply_on_thread` z numerem
         # domkniętym w closurze; wołało tę samą metodę serwisu co `GitHub(action='comment')`,
@@ -412,6 +419,18 @@ class ConversationalResponder:
             except Exception:
                 logger.warning(
                     "Nie udało się zbudować narzędzia 'moje zadania' dla nadawcy %r — pomijam",
+                    message.sender_id,
+                )
+        # Narzędzia ODCZYTU bazy wiedzy bramkowane nadawcą (ADR 0062): gdy bramka wpięta, narzędzia
+        # odczytu są ZDJĘTE z katalogu bazowego, więc ta fabryka jest ich JEDYNĄ drogą — dokładamy
+        # ją ZAWSZE, gdy jest (także przy pustym sender_id: fabryka zwróci wtedy odmowę, nie ciszę).
+        # Błąd budowy degraduje do „brak narzędzi odczytu" (fail-closed) i loguje — nie zabija tury.
+        if self._notes_read_factory is not None:
+            try:
+                extra_tools.extend(self._notes_read_factory(message.sender_id))
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzi odczytu bazy wiedzy dla nadawcy %r — pomijam",
                     message.sender_id,
                 )
         # Błąd runtime propaguje się TU — nic nie utrwalono, brak osieroconej tury.

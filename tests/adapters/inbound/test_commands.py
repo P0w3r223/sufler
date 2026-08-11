@@ -19,6 +19,7 @@ from workmate.adapters.outbound.sqlite_conversations import SqliteConversationSt
 from workmate.core.application.conversations import ConversationService
 from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.pricing import TokenUsage
+from workmate.core.errors import NoteAuthorizationError
 
 _CTX = CommandContext("telegram", "chat1")
 _CTX_WITH_SENDER = CommandContext("teams_graph", "chat1", "aad-123")
@@ -64,6 +65,7 @@ def _router(
     *,
     supports_attachments: bool = False,
     my_jira_tasks=None,
+    note_read_authorizer=None,
 ) -> tuple[CommandRouter, _SpyTools]:
     tools = _SpyTools(canned or {})
     router = CommandRouter(
@@ -71,6 +73,7 @@ def _router(
         tools.as_map(),
         supports_attachments=supports_attachments,
         my_jira_tasks=my_jira_tasks,
+        note_read_authorizer=note_read_authorizer,
     )
     return router, tools
 
@@ -255,6 +258,81 @@ def test_projects_formats_registry_entries():
 def test_projects_empty_registry():
     router, _ = _router({"list_projects": {"count": 0, "projects": []}})
     assert router.dispatch("/projekty", _CTX) == "Brak projektów w rejestrze."
+
+
+# --- autoryzacja ODCZYTU w /szukaj i /projekty (ADR 0062) ------------------------
+
+
+class _StubReadAuthz:
+    """Atrapa authorizera odczytu: przepuszcza znane AAD id, resztę odrzuca (fail-closed)."""
+
+    def __init__(self, allowed: set[str]) -> None:
+        self._allowed = allowed
+
+    def authorize(self, requester_aad_id: str) -> None:
+        if requester_aad_id not in self._allowed:
+            raise NoteAuthorizationError(
+                "nadawca nie jest rozpoznanym członkiem pionu (stub, ADR 0062)"
+            )
+
+
+_HIT = {
+    "search_notes": {
+        "count": 1,
+        "results": [
+            {
+                "date": "2025-06-12",
+                "project": "mpwik",
+                "title": "Przegląd API",
+                "snippet": "fragment",
+                "id": "a/b/c",
+            }
+        ],
+    }
+}
+_PROJECTS = {"list_projects": {"count": 1, "projects": [{"key": "k", "name": "N", "company": ""}]}}
+
+
+def test_search_denied_for_unrecognized_sender():
+    # Nadawca spoza mapy → odmowa, narzędzie wyszukiwania NIE wołane (fail-closed).
+    router, tools = _router(_HIT, note_read_authorizer=_StubReadAuthz(allowed=set()))
+    out = router.dispatch("/szukaj scada", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out
+    assert tools.search_query is None
+
+
+def test_search_allowed_for_recognized_member():
+    # Rozpoznany członek → wyszukiwanie biegnie normalnie.
+    router, tools = _router(_HIT, note_read_authorizer=_StubReadAuthz(allowed={"aad-123"}))
+    out = router.dispatch("/szukaj scada", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "Znaleziono 1" in out
+    assert tools.search_query == "scada"
+
+
+def test_projects_denied_for_unrecognized_sender():
+    router, tools = _router(_PROJECTS, note_read_authorizer=_StubReadAuthz(allowed=set()))
+    out = router.dispatch("/projekty", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out
+    assert tools.list_projects_called is False
+
+
+def test_projects_allowed_for_recognized_member():
+    router, tools = _router(_PROJECTS, note_read_authorizer=_StubReadAuthz(allowed={"aad-123"}))
+    out = router.dispatch("/projekty", _CTX_WITH_SENDER)
+    assert out is not None
+    assert tools.list_projects_called is True
+
+
+def test_search_without_authorizer_unchanged():
+    # Bramka OFF (authorizer None) → zachowanie sprzed ADR 0062, mimo obecnego sender_id.
+    router, tools = _router(_HIT)
+    out = router.dispatch("/szukaj scada", _CTX_WITH_SENDER)
+    assert out is not None
+    assert "Znaleziono 1" in out
+    assert tools.search_query == "scada"
 
 
 # --- /status --------------------------------------------------------------------

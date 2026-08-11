@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.core.application.events import EventService
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.application.worklog import WorklogService
     from workmate.core.ports.github import GithubReadPort
@@ -163,6 +164,8 @@ def main() -> None:
     # (ADR 0052, F5): @wzmianka bota → read-only jednostronicówka, każda osobno bramkowana.
     brief_router = _build_brief_router(settings, core_settings, events_settings, thread_pdf)
     change_router = _build_change_digest_router(settings, events_settings, thread_pdf)
+    # Autoryzacja ODCZYTU bazy wiedzy (ADR 0062), osobno bramkowana — ``None`` gdy wyłączona.
+    note_read_authorizer = _build_note_read_authorizer(settings)
     responder = _build_responder(
         core_settings,
         agent_settings,
@@ -185,6 +188,7 @@ def main() -> None:
         settings.outbox_max_seconds,
         # Procedury z `/mnt/skills` (ADR 0005) — bez ścieżki lista zostaje pusta.
         SkillsSettings.from_env(),
+        note_read_authorizer=note_read_authorizer,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -658,6 +662,30 @@ def _build_my_jira_tasks_factory(
     return factory
 
 
+def _build_note_read_authorizer(settings: TeamsGraphSettings) -> NoteReadAuthorizer | None:
+    """Bramka członkostwa ODCZYTU bazy wiedzy (ADR 0062) albo ``None``.
+
+    ``None``, gdy ``enable_note_read_authz`` wyłączona (domyślnie) — odczyt zachowuje się jak przed
+    ADR 0062. Włączona: config wymusił istnienie mapy tożsamości (ten sam plik co zapis, ADR
+    0042/0062), więc składamy authorizer nad ``YamlIdentityDirectory`` (fail-closed). Wpinany w
+    ``_build_responder``: bramkuje per-turowe narzędzia odczytu agenta (search_notes/get_note/
+    list_projects) ORAZ komendy ``/szukaj``/``/projekty``. Powłoka i drzwi MCP są POZA zakresem —
+    nie niosą tożsamości nadawcy (ADR 0062 §Decision 4 i addendum).
+    """
+    if not settings.enable_note_read_authz:
+        return None
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
+
+    logger.info(
+        "Autoryzacja ODCZYTU bazy wiedzy WŁĄCZONA (ADR 0062) — narzędzia agenta oraz komendy "
+        "/szukaj i /projekty wymagają rozpoznanego członka pionu przez mapę tożsamości %s "
+        "(fail-closed). Powłoka (cat/workmate-search po montażu ro) i drzwi MCP są POZA zakresem.",
+        settings.meeting_note_identities,
+    )
+    return NoteReadAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
+
+
 def _build_meeting_note_router(
     settings: TeamsGraphSettings,
     token_provider: Callable[[], str],
@@ -1008,6 +1036,7 @@ def _build_responder(
     outbox_max_files_per_turn: int = 5,
     outbox_max_seconds: float = 20.0,
     skills_settings: SkillsSettings | None = None,
+    note_read_authorizer: NoteReadAuthorizer | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -1048,6 +1077,7 @@ def _build_responder(
         outbox_max_files_per_turn=outbox_max_files_per_turn,
         outbox_max_seconds=outbox_max_seconds,
         skills_settings=skills_settings,
+        note_read_authorizer=note_read_authorizer,
     )
 
 
