@@ -125,7 +125,12 @@ def test_map_shifts_unknown_user_id_does_not_crash() -> None:
 
 @pytest.mark.parametrize(
     ("theme", "expected_mode"),
-    [("green", "stacjonarnie"), ("darkBlue", "zdalnie"), ("yellow", None)],
+    [
+        ("green", "stacjonarnie"),
+        ("darkBlue", "zdalnie"),
+        ("gray", "urlop"),
+        ("yellow", None),
+    ],
 )
 def test_map_shifts_translates_theme_to_work_mode(theme: str, expected_mode: str | None) -> None:
     window = resolve_schedule_range("current", today=_MONDAY, tz=_TZ)

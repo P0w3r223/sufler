@@ -25,13 +25,16 @@ _MAX_NOTE = 200
 _WEEK_OFFSETS = {"current": 0, "previous": -7, "next": 7}
 
 
-# Konwencja biura: kolor zmiany koduje formę pracy — zielony = stacjonarnie, niebieski = zdalnie.
-# Klucze małymi literami (Graph zwraca camelCase, np. "darkBlue"); inne kolory → brak znaczenia.
+# Konwencja biura: kolor zmiany koduje formę pracy — zielony = stacjonarnie, niebieski = zdalnie —
+# a SZARY koduje URLOP (nieobecność bywa wpisywana jako całodniowa szara zmiana, nie osobny
+# time-off). Klucze małymi literami (Graph zwraca camelCase, np. "darkBlue"); inne kolory → brak
+# znaczenia (``work_mode=None``, agent nie zgaduje formy).
 _THEME_WORK_MODE = {
     "green": "stacjonarnie",
     "darkgreen": "stacjonarnie",
     "blue": "zdalnie",
     "darkblue": "zdalnie",
+    "gray": "urlop",
 }
 
 
@@ -45,7 +48,7 @@ class ShiftEntry(BaseModel):
     label: str = ""
     notes: str = ""
     theme: str = ""  # surowy kolor zmiany z Graph (sharedShift.theme), np. "green"
-    work_mode: str | None = None  # "stacjonarnie" | "zdalnie" | None (kolor bez znaczenia)
+    work_mode: str | None = None  # "stacjonarnie" | "zdalnie" | "urlop" | None
 
 
 class TimeOffEntry(BaseModel):
