@@ -691,6 +691,16 @@ class TeamsGraphSettings:
     # ale — jak /notatka — wymaga mapy tożsamości (autoryzacja B2 wbudowana w bramkę zapisu).
     # Tryb async współdzieli przełącznik ``enable_meeting_note_async`` (ta sama pula/poster).
     enable_thread_note_capture: bool = False
+    # Autoryzacja ODCZYTU bazy wiedzy (ADR 0062): bramka członkostwa na TYPOWANYCH ścieżkach odczytu
+    # (narzędzia agenta search_notes/get_note/list_projects wiązane per turę z nadawcą + komendy
+    # /szukaj i /projekty). OSOBNY toggle, domyślnie OFF — inaczej niż zapis, gdzie autoryzacja jest
+    # WBUDOWANA w bramkę zdolności (ADR 0042): odczyt nie ma bramki zdolności, na której mógłby
+    # jechać (czytanie jest zachowaniem domyślnym), więc potrzebuje własnego przełącznika; domyślne
+    # OFF to świadomy, bezpieczny rollout (luka otwarta do czasu uzupełnienia mapy tożsamości).
+    # Włączony WYMAGA mapy tożsamości (ten sam plik co zapis, walidacja niżej). Powłoka
+    # (cat/workmate-search po montażu ro) jest POZA zakresem — domknięcie wymaga montażu per-rozmowa
+    # (infra ADR 0010); drzwi MCP też (pojedynczy zaufany operator, jak CLI w ADR 0042).
+    enable_note_read_authz: bool = False
     # One-pager „ogarnij mnie na <projekt>" po @wzmiance bota (ADR 0051, F4). READ-ONLY (status +
     # notatki), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez wymogu mapy
     # tożsamości ani RW-montażu (nic nie zapisuje). Dostawa PDF ``| pdf`` reużywa kanału file-reply:
@@ -768,6 +778,9 @@ class TeamsGraphSettings:
             ),
             enable_thread_note_capture=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", default=False
+            ),
+            enable_note_read_authz=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", default=False
             ),
             enable_project_brief=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False
@@ -946,6 +959,15 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE=true wymaga "
                 "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
                 f"autoryzuje zapis, ADR 0042/0048); brak pliku: {self.meeting_note_identities}."
+            )
+        if self.enable_note_read_authz and not self.meeting_note_identities.is_file():
+            # Odczyt bazy wiedzy bramkowany członkostwem (ADR 0062): bez mapy tożsamości nie ma po
+            # czym rozpoznać nadawcy, więc bramka nie miałaby jak działać. Fail-fast — nie pozwalamy
+            # włączyć autoryzacji odczytu bez źródła tożsamości (ten sam plik co zapis i worklogi).
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ=true wymaga "
+                "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
+                f"autoryzuje odczyt, ADR 0062); brak pliku: {self.meeting_note_identities}."
             )
         if self.reply_policy not in ("all", "mention"):
             raise ValueError(

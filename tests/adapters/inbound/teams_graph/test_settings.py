@@ -462,6 +462,31 @@ def test_validate_note_write_on_without_identities_fails():
         _with_meeting_scopes(enable_meeting_note_write=True).validate()
 
 
+def test_validate_note_read_authz_off_passes():
+    """Bramka odczytu OFF (domyślnie) nie wymaga mapy tożsamości — config przechodzi."""
+    _valid(enable_note_read_authz=False).validate()  # nie rzuca
+
+
+def test_validate_note_read_authz_on_without_identities_fails():
+    # Bramka ODCZYTU ON bez mapy tożsamości = nie ma po czym rozpoznać nadawcy → fail-fast (0062).
+    # Nie wymaga transkryptu (to odczyt) — sam brak identities wystarcza do błędu.
+    with pytest.raises(ValueError, match="ENABLE_NOTE_READ_AUTHZ"):
+        _valid(enable_note_read_authz=True).validate()
+
+
+def test_validate_note_read_authz_on_with_identities_passes(tmp_path):
+    # Z mapą tożsamości bramka odczytu przechodzi (ten sam plik co zapis).
+    identities = tmp_path / "identities.yaml"
+    identities.write_text("", encoding="utf-8")
+    _valid(enable_note_read_authz=True, meeting_note_identities=identities).validate()  # nie rzuca
+
+
+def test_from_env_reads_note_read_authz_gate(monkeypatch):
+    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", "true")
+
+    assert TeamsGraphSettings.from_env().enable_note_read_authz is True
+
+
 def test_from_env_reads_identities_path(monkeypatch):
     monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_IDENTITIES", "/etc/workmate/identities.yaml")
 

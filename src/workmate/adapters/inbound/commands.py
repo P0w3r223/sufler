@@ -17,10 +17,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from workmate.core.errors import NoteAuthorizationError
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.conversations import ConversationService
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import Conversation
 
@@ -82,6 +85,7 @@ class CommandRouter:
         *,
         supports_attachments: bool = False,
         my_jira_tasks: Callable[[str], Sequence[ToolSpec]] | None = None,
+        note_read_authorizer: NoteReadAuthorizer | None = None,
     ) -> None:
         self._conversations = conversations
         self._tools = read_tools
@@ -93,6 +97,11 @@ class CommandRouter:
         # czytelną odmową zamiast crashować). Zwraca gotowy ``ToolSpec``, którego ``fn()`` router
         # woła bezpośrednio — ta sama fabryka zasila per-turowy katalog agenta.
         self._my_jira_tasks = my_jira_tasks
+        # Autoryzacja ODCZYTU bazy wiedzy (ADR 0062), bramka członkostwa nadawcy — ``None`` gdy
+        # bramka wyłączona / inne drzwi (wtedy komendy odczytu jak dawniej). Egzekwowana w
+        # ``/szukaj`` i ``/projekty`` (czytają katalog notatek pionu); ``/status`` idzie przez
+        # ``get_project_status`` (poza katalogiem ODCZYTU z ADR 0062 — kandydat na kolejny etap).
+        self._note_read_authorizer = note_read_authorizer
         handlers = {
             "/pomoc": self._help,
             "/nowa": self._new_thread,
@@ -146,12 +155,33 @@ class CommandRouter:
         started = self._conversations.start_new_thread(ctx.channel, ctx.external_id)
         return _NEW_THREAD_ACK if started else _NEW_THREAD_ALREADY_FRESH
 
+    def _read_authz_refusal(self, ctx: CommandContext) -> str | None:
+        """Odmowa odczytu bazy wiedzy (bramka członkostwa, ADR 0062) albo ``None``.
+
+        ``None`` znaczy „wolno" — także gdy authorizera nie ma (bramka wyłączona / inne drzwi),
+        więc komendy odczytu zachowują się jak przed ADR 0062. Fail-closed: nierozpoznany nadawca
+        (w tym pusty ``sender_id``) → czytelna odmowa zamiast wyniku.
+        """
+        if self._note_read_authorizer is None:
+            return None
+        try:
+            self._note_read_authorizer.authorize(ctx.sender_id)
+        except NoteAuthorizationError as exc:
+            return f"Brak uprawnień do odczytu bazy wiedzy: {exc}"
+        return None
+
     def _search(self, args: str, ctx: CommandContext) -> str:
         if not args:
             return "Użycie: /szukaj <fraza> — np. /szukaj integracja SCADA"
+        refusal = self._read_authz_refusal(ctx)
+        if refusal is not None:
+            return refusal
         return _format_search(self._tools["search_notes"](query=args))
 
     def _projects(self, args: str, ctx: CommandContext) -> str:
+        refusal = self._read_authz_refusal(ctx)
+        if refusal is not None:
+            return refusal
         return _format_projects(self._tools["list_projects"]())
 
     def _status(self, args: str, ctx: CommandContext) -> str:

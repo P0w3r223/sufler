@@ -16,6 +16,7 @@ import pytest
 
 from workmate.adapters.inbound import agent_wiring
 from workmate.adapters.inbound.agent_wiring import (
+    _build_notes_read_factory,
     build_agent_runtime_or_exit,
     build_conversational_responder,
     build_read_catalog,
@@ -26,6 +27,7 @@ from workmate.adapters.inbound.responder import (
     SafeResponder,
 )
 from workmate.config import AgentSettings, ConversationSettings, Settings
+from workmate.core.errors import NoteAuthorizationError
 
 _REGISTRY = """projects:
   - key: workmate
@@ -92,6 +94,45 @@ def test_build_read_catalog_tools_are_wired_to_real_read_services(tmp_path: Path
     result = catalog["list_projects"]()
     assert result["count"] == 1
     assert result["projects"][0]["key"] == "workmate"
+
+
+# --- _build_notes_read_factory: bramka odczytu per turę (ADR 0062) ---------------
+
+
+class _StubReadAuthz:
+    """Atrapa authorizera odczytu: przepuszcza znane AAD id, resztę odrzuca (fail-closed)."""
+
+    def __init__(self, allowed: set[str]) -> None:
+        self._allowed = allowed
+
+    def authorize(self, requester_aad_id: str) -> None:
+        if requester_aad_id not in self._allowed:
+            raise NoteAuthorizationError("nierozpoznany nadawca (stub, ADR 0062)")
+
+
+def test_notes_read_factory_recognized_member_gets_real_tools(tmp_path: Path):
+    factory = _build_notes_read_factory(_settings(tmp_path), _StubReadAuthz({"aad-ok"}))
+
+    tools = factory("aad-ok")
+
+    assert [t.name for t in tools] == ["search_notes", "get_note", "list_projects"]
+    by_name = {t.name: t.fn for t in tools}
+    result = by_name["list_projects"]()
+    assert result["count"] == 1  # realny serwis, nie odmowa
+
+
+def test_notes_read_factory_unrecognized_sender_gets_refusals(tmp_path: Path):
+    factory = _build_notes_read_factory(_settings(tmp_path), _StubReadAuthz(set()))
+
+    tools = factory("aad-obcy")
+
+    # Te SAME nazwy (schemat zachowany przez functools.wraps), ale fn zwraca odmowę.
+    assert [t.name for t in tools] == ["search_notes", "get_note", "list_projects"]
+    by_name = {t.name: t.fn for t in tools}
+    # Wołanie z realnym kwargiem nie wybucha (zachowana sygnatura) i zwraca odmowę.
+    search_out = by_name["search_notes"](query="scada")
+    assert "Brak uprawnień do odczytu bazy wiedzy" in search_out["error"]
+    assert "Brak uprawnień do odczytu bazy wiedzy" in by_name["list_projects"]()["error"]
 
 
 # --- build_conversational_responder: SafeResponder vs goły ----------------------
