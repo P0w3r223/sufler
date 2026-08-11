@@ -174,6 +174,16 @@ class AnthropicMeetingSummarizer:
         except anthropic.APIError as exc:
             raise LLMError(f"Błąd Claude API (streszczenie spotkania): {exc}") from exc
 
+        # Ucięcie na suficie tokenów: tool-use może wtedy zwrócić CZĘŚCIOWY ``input`` (``title``
+        # to jedyne pole wymagane, pada wcześnie — walidacja by przeszła), więc notatka wyszłaby
+        # po cichu z urwanym ``body``. Sygnalizujemy głośno, spójnie z konwencją rdzenia
+        # (``runtime.py`` traktuje ``stop_reason == "max_tokens"`` jako ucięcie tury).
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            raise LLMError(
+                "Model uciął notatkę na limicie tokenów (max_tokens) — byłaby niekompletna. "
+                "Skróć źródło (transkrypt/wątek) albo podnieś sufit streszczenia."
+            )
+
         block = next(
             (
                 b

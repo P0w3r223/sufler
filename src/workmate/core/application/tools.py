@@ -1235,9 +1235,11 @@ Zwraca `shifts` (zmiany) i `times_off` (urlopy, nieobecności) w zadanym oknie, 
 (faktycznie użyty zakres), `timezone` i `people_without_entries` (osoby bez żadnego wpisu w tym
 oknie — pole puste, gdy pytasz o jedną osobę).
 
-Każda zmiana ma `work_mode`: 'stacjonarnie' (praca z biura — zielony kolor zmiany) albo
-'zdalnie' (niebieski). Wartość `null` znaczy kolor bez ustalonego u nas znaczenia — podaj wtedy
-surowy kolor z pola `theme` i powiedz wprost, że nie znasz jego znaczenia; nie zgaduj formy pracy.
+Każda zmiana ma `work_mode`: 'stacjonarnie' (praca z biura — zielony kolor zmiany),
+'zdalnie' (niebieski) albo 'urlop' (szary kolor zmiany — nieobecność/urlop wpisany jako
+całodniowa zmiana; taką osobę traktuj jak nieobecną, nie jako pracującą). Wartość `null` znaczy
+kolor bez ustalonego u nas znaczenia — podaj wtedy surowy kolor z pola `theme` i powiedz wprost,
+że nie znasz jego znaczenia; nie zgaduj formy pracy.
 
 Użyj, gdy pytanie dotyczy grafiku, zmian, dyżurów, tego kto pracuje, kto ma urlop albo wolne,
 a także czy ktoś pracuje zdalnie czy stacjonarnie.

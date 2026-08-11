@@ -134,10 +134,12 @@ class _RecordingMessages:
 
 def _summarizer_returning(
     content: list[Any],
+    *,
+    stop_reason: str | None = None,
 ) -> tuple[AnthropicMeetingSummarizer, _RecordingMessages]:
     """Zbuduj adapter z podmienionym klientem; klient oddaje ``content`` z ``messages.create``."""
     summarizer = AnthropicMeetingSummarizer(AgentSettings(api_key="x"))
-    recorder = _RecordingMessages(types.SimpleNamespace(content=content))
+    recorder = _RecordingMessages(types.SimpleNamespace(content=content, stop_reason=stop_reason))
     summarizer._client = types.SimpleNamespace(messages=recorder)
     return summarizer, recorder
 
@@ -218,4 +220,15 @@ def test_complete_wraps_anthropic_api_error_in_llm_error():
     summarizer._client = types.SimpleNamespace(messages=_RaisingMessages())
 
     with pytest.raises(LLMError, match="Błąd Claude API"):
+        summarizer.summarize("transkrypt", SpeakerRoster(speakers=(), diarized=False))
+
+
+def test_complete_raises_on_max_tokens_truncation():
+    """Ucięcie na ``max_tokens``: tool-use może oddać CZĘŚCIOWY ``input`` (``title`` pada wcześnie,
+    walidacja by przeszła) → notatka po cichu z urwanym ``body``. Sygnalizujemy głośno ``LLMError``,
+    spójnie z konwencją rdzenia (``stop_reason == 'max_tokens'``)."""
+    payload = {"title": "Spotkanie", "body": "urwane w poł"}
+    summarizer, _ = _summarizer_returning([_tool_use_block(payload)], stop_reason="max_tokens")
+
+    with pytest.raises(LLMError, match="max_tokens"):
         summarizer.summarize("transkrypt", SpeakerRoster(speakers=(), diarized=False))
