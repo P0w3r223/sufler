@@ -1,7 +1,7 @@
 # 0062 — Note read authorization (Entra identity → membership gate, opt-in)
 
 Date: 2026-08-11
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (write-side membership gate — the template),
 [ADR 0006](0006-write-capability-gate-2.md) (write capability gate),
@@ -175,3 +175,40 @@ Hard constraints (unchanged from ADR 0042):
   ADR 0010; only then is the membership gate enforced under the shell.
 - Once `identities.yaml` is complete and stable: consider promoting read authz from opt-in to intrinsic
   (default-on fail-closed), retiring `WORKMATE_ENABLE_NOTE_READ_AUTHZ`.
+
+## Update (2026-08-11) — enforcement plumbing, before implementation
+
+A pre-implementation review of the wiring corrected two under-specifications in Decision §3. The
+policy (membership gate) and §5 (own toggle, default OFF) are unchanged; only the *where/how* of
+enforcement is pinned down.
+
+1. **The note-read tools are not per-turn today — they move to a per-turn factory keyed on
+   `sender_id`.** Decision §3 said `sender_id` is "closed in the tool closure the same way
+   `WorkspaceScope` is." That was imprecise: `build_notes_read_catalog` is baked into the **once-built**
+   base catalog in `build_agent_runtime` (`agent_wiring.py:201`), where no per-turn `sender_id` exists.
+   `WorkspaceScope` is closed **per turn** in the responder (`responder.py:374-376`), and per-turn
+   `sender_id` injection already exists for exactly one tool — the 1:1 push tool, via
+   `user_push_tool_factory: Callable[[str], Sequence[ToolSpec]]` (`responder.py:201, 398-400`). The gate
+   therefore follows that precedent: a new `notes_read_factory: Callable[[str], Sequence[ToolSpec]]` on
+   `RememberingResponder`, invoked per turn with `message.sender_id`, returning the note-read tools when
+   the sender resolves and a single refusal-returning tool when it does not. When this factory is wired
+   (Teams door, flag ON), the note-read tools are **removed from the base catalog** for that door so
+   they are not offered unauthorized — build_agent_runtime gains an additive flag to suppress the base
+   read-catalog when the per-turn factory owns it. The `shell_available` gate is preserved: with the
+   shell on, note-read tools are absent regardless (shell reads the mount).
+
+2. **The MCP door is explicitly out of scope — trusted single operator, like the CLI in ADR 0042.**
+   `build_notes_read_catalog` has a **second** consumer besides the agent runtime: the composite catalog
+   at `tools.py:199` that also feeds the MCP door. The MCP session is a single OS/token-authenticated
+   operator (Claude Code) with **no** inbound AAD `sender_id` — the same trust position as the operator
+   CLI that ADR 0042 lets call the write service directly with no authorizer. Read authorization is
+   therefore **not** applied on the MCP path; it keeps the base read-catalog unchanged. Only the
+   multi-user Teams door carries the gate. This mirrors 0042's boundary exactly: the check lives at the
+   multi-user door, not in the shared service or the single-operator paths.
+
+Net effect on implementation surface (all still gated OFF by default): `can_read_note` (core/domain);
+`NoteReadAuthorizer` (core/application, over `AadIdentityLookup`, raising the existing
+`core.errors.NoteAuthorizationError`); a per-turn `notes_read_factory` on `RememberingResponder` plus an
+additive `build_agent_runtime` flag to suppress the base read-catalog for the Teams door; `/szukaj`
+enforcement via `ctx.sender_id` (precedent: `/moje-zadania`, `commands.py:178`); the config toggle +
+fail-fast. MCP door and operator CLI untouched; golden MCP surface unchanged.
