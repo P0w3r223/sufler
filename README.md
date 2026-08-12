@@ -11,8 +11,9 @@ wiedzy o projektach, dostępna tam, gdzie zespół już pracuje: w Claude Code, 
 > **Status: produkcyjny — kod Fazy 1–4 domknięty.** Serwer MCP, runtime agenta w rdzeniu, drzwi
 > Teams/CLI/GitHub, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira „moje
 > zadania" oraz lokalny retrieval leksykalny notatek. Karty czasu (WorklogPRO) wycofane z projektu
-> (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). 55 decyzji
-> architektonicznych (`docs/adr/`), pełny zestaw testów zielony. Meta Fazy 1 (wdrożenie HTTP na
+> (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). 65 ADR-ów
+> architektonicznych (`docs/adr/`; dwa najnowsze — 0064/0065, harness plików + baza mutowalna —
+> w statusie `proposed`, poza kodem produkcyjnym), pełny zestaw testów zielony. Meta Fazy 1 (wdrożenie HTTP na
 > serwerze firmowym) wciąż otwarta — patrz [`docs/roadmap-v1-gap-analysis.md`](docs/roadmap-v1-gap-analysis.md).
 
 ## O projekcie
