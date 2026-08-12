@@ -1077,10 +1077,15 @@ class WorkspaceSettings:
             )
 
 
-# Gniazdo kontenera-wykonawcy (ADR 0057). Ta sama wartość domyślna co po stronie serwera
-# (``exec_server``) i klienta — wolumen gniazda montują WYŁĄCZNIE aplikacja i wykonawca,
-# bo uprawnienia pliku gniazda są jedyną kontrolą dostępu do powłoki.
-_DEFAULT_EXEC_SOCKET = Path("/var/run/workmate/exec.sock")
+# Gniazdo KONTROLNE menedżera wykonawców (ADR infra 0012). Aplikacja nie łączy się już ze stałym
+# gniazdem wykonawcy — pyta menedżera ``ensure(scope)`` o gniazdo wykonawcy TEJ rozmowy. Wolumen
+# tego
+# gniazda montują WYŁĄCZNIE aplikacja i menedżer. Ta sama wartość stoi po stronie menedżera
+# (``ExecManagerSettings.control_socket``), bo jeden env (`WORKMATE_EXEC_MANAGER_SOCKET`) opisuje
+# oba
+# końce jednego gniazda — rozjazd oznaczałby, że aplikacja puka pod inny adres, niż menedżer
+# nasłuchuje.
+_DEFAULT_MANAGER_SOCKET = Path("/var/run/workmate-manager/control.sock")
 # Sufit czasu polecenia po stronie wykonawcy (``exec_server._MAX_TIMEOUT_S``) — tu wyłącznie
 # po to, by walidacja odrzuciła konfigurację, którą wykonawca i tak by przyciął.
 _MAX_SHELL_TIMEOUT_S = 300
@@ -1088,7 +1093,7 @@ _MAX_SHELL_TIMEOUT_S = 300
 
 @dataclass(frozen=True)
 class ShellSettings:
-    """Konfiguracja narzędzia ``Bash`` (ADR 0057) — powłoka w kontenerze-wykonawcy.
+    """Konfiguracja narzędzia ``Bash`` (ADR 0057 + infra 0012) — powłoka w wykonawcy per rozmowa.
 
     Bramka ``enabled`` jest OSOBNA od ``WORKMATE_ENABLE_WORKSPACE`` (pliki robocze, ADR 0018).
     Profile zaufania są różne: tam model tworzy pliki narzędziem typowanym, o nazwie z białej
@@ -1097,18 +1102,22 @@ class ShellSettings:
 
     Powłoka biegnie w OSOBNYM kontenerze bez sieci, więc kod od modelu nie ma dokąd wynieść
     danych — bezpieczeństwo bierze się z tego, czego w tamtym kontenerze nie ma, a nie
-    z oceniania treści polecenia.
+    z oceniania treści polecenia. Od ADR 0012 wykonawca jest stawiany PER ROZMOWA (montuje tylko
+    jej podkatalog brudnopisu), więc aplikacja adresuje go przez menedżera, nie przez stałe gniazdo:
+    ``manager_socket_path`` to gniazdo KONTROLNE menedżera, nie samego wykonawcy.
     """
 
     enabled: bool = False
-    socket_path: Path = _DEFAULT_EXEC_SOCKET
+    manager_socket_path: Path = _DEFAULT_MANAGER_SOCKET
     default_timeout_s: int = 60
 
     @classmethod
     def from_env(cls) -> ShellSettings:
         return cls(
             enabled=_bool_from_env("WORKMATE_ENABLE_SHELL", default=False),
-            socket_path=_path_from_env("WORKMATE_EXEC_SOCKET", _DEFAULT_EXEC_SOCKET),
+            manager_socket_path=_path_from_env(
+                "WORKMATE_EXEC_MANAGER_SOCKET", _DEFAULT_MANAGER_SOCKET
+            ),
             default_timeout_s=_int_from_env("WORKMATE_SHELL_TIMEOUT_S", 60),
         )
 
@@ -1118,6 +1127,104 @@ class ShellSettings:
             raise ValueError(
                 f"WORKMATE_SHELL_TIMEOUT_S musi być w zakresie 1..{_MAX_SHELL_TIMEOUT_S}, "
                 f"jest: {self.default_timeout_s}."
+            )
+
+
+# Domyślne punkty montażu i nazwy wolumenów menedżera — spójne z compose (infra 0012). Menedżer
+# montuje wolumen brudnopisu i gniazd pod TYMI SAMYMI ścieżkami co aplikacja, żeby ścieżka gniazda
+# oddawana w ``ensure`` była ważna po obu stronach bez tłumaczenia układów.
+_DEFAULT_SCRATCHPAD_ROOT = Path("/home/scratchpad")
+_DEFAULT_EXEC_SOCK_ROOT = Path("/var/run/workmate-exec")
+_DEFAULT_DOCKER_SOCKET = Path("/var/run/docker.sock")
+
+
+@dataclass(frozen=True)
+class ExecManagerSettings:
+    """Konfiguracja procesu MENEDŻERA wykonawców (``workmate-exec-manager``, ADR infra 0012).
+
+    Menedżer to jedyny komponent floty trzymający ``docker.sock`` (równoważnik roota na hoście),
+    więc
+    jego konfiguracja jest jawna i wąska: gdzie słucha aplikacji (``control_socket``), gdzie ma
+    ``docker.sock``, jakim obrazem i wolumenami stawia wykonawców (stały szablon ``docker run``)
+    oraz
+    parametry cyklu życia (limit N, TTL bezczynności, okno gotowości, takt reapu). ``image`` i nazwy
+    wolumenów NIE mają sensownych wartości domyślnych — podaje je compose przy każdym wydaniu (tag
+    obrazu się pod-bija), więc brak któregoś jest twardym błędem startu (``validate``).
+    """
+
+    control_socket: Path = _DEFAULT_MANAGER_SOCKET
+    docker_socket: Path = _DEFAULT_DOCKER_SOCKET
+    scratchpad_root: Path = _DEFAULT_SCRATCHPAD_ROOT
+    sock_root: Path = _DEFAULT_EXEC_SOCK_ROOT
+    image: str = ""
+    scratchpad_volume: str = ""
+    sock_volume: str = ""
+    data_volume: str = ""
+    notes_dir: str = "/mnt/system/notes"
+    skills_source: str | None = None
+    max_executors: int = 8
+    idle_ttl_s: int = 900
+    ready_timeout_s: int = 15
+    reap_interval_s: int = 60
+    # uid/gid, na którym biegnie wykonawca (``user`` w compose). Menedżer (root) nadaje go
+    # podkatalogom scope'a i GNIAZDU KONTROLNEMU — bez tego aplikacja (10001) nie sięgnęłaby po
+    # gniazdo utworzone przez roota (0660 owner root ≠ 10001), a wykonawca nie zapisałby brudnopisu.
+    exec_uid: int = 10001
+    exec_gid: int = 10001
+
+    @classmethod
+    def from_env(cls) -> ExecManagerSettings:
+        return cls(
+            control_socket=_path_from_env("WORKMATE_EXEC_MANAGER_SOCKET", _DEFAULT_MANAGER_SOCKET),
+            docker_socket=_path_from_env("WORKMATE_DOCKER_SOCKET", _DEFAULT_DOCKER_SOCKET),
+            scratchpad_root=_path_from_env(
+                "WORKMATE_EXEC_SCRATCHPAD_ROOT", _DEFAULT_SCRATCHPAD_ROOT
+            ),
+            sock_root=_path_from_env("WORKMATE_EXEC_SOCK_ROOT", _DEFAULT_EXEC_SOCK_ROOT),
+            image=os.environ.get("WORKMATE_EXEC_IMAGE", "").strip(),
+            scratchpad_volume=os.environ.get("WORKMATE_EXEC_SCRATCHPAD_VOLUME", "").strip(),
+            sock_volume=os.environ.get("WORKMATE_EXEC_SOCK_VOLUME", "").strip(),
+            data_volume=os.environ.get("WORKMATE_EXEC_DATA_VOLUME", "").strip(),
+            notes_dir=os.environ.get("WORKMATE_NOTES_DIR", "/mnt/system/notes").strip(),
+            skills_source=(os.environ.get("WORKMATE_EXEC_SKILLS_SOURCE", "").strip() or None),
+            max_executors=_int_from_env("WORKMATE_EXEC_MAX", 8),
+            idle_ttl_s=_int_from_env("WORKMATE_EXEC_IDLE_TTL_S", 900),
+            ready_timeout_s=_int_from_env("WORKMATE_EXEC_READY_TIMEOUT_S", 15),
+            reap_interval_s=_int_from_env("WORKMATE_EXEC_REAP_INTERVAL_S", 60),
+            exec_uid=_int_from_env("WORKMATE_EXEC_UID", 10001),
+            exec_gid=_int_from_env("WORKMATE_EXEC_GID", 10001),
+        )
+
+    def validate(self) -> None:
+        """Twardy błąd startu, gdy brak stałego szablonu albo parametr cyklu życia jest bez sensu.
+
+        Menedżer bez obrazu/wolumenów nie ma z czego złożyć ``docker run`` — a cichy start
+        „bez szablonu" skończyłby się pierwszym ``ensure`` odbitym błędem Dockera, długo po starcie.
+        Lepszy głośny błąd tu, przy składaniu procesu.
+        """
+        missing = [
+            name
+            for name, value in (
+                ("WORKMATE_EXEC_IMAGE", self.image),
+                ("WORKMATE_EXEC_SCRATCHPAD_VOLUME", self.scratchpad_volume),
+                ("WORKMATE_EXEC_SOCK_VOLUME", self.sock_volume),
+                ("WORKMATE_EXEC_DATA_VOLUME", self.data_volume),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"Menedżer wykonawców wymaga zmiennych: {', '.join(missing)}")
+        if self.max_executors < 1:
+            raise ValueError(f"WORKMATE_EXEC_MAX musi być >= 1, jest: {self.max_executors}")
+        if self.idle_ttl_s < 1:
+            raise ValueError(f"WORKMATE_EXEC_IDLE_TTL_S musi być >= 1, jest: {self.idle_ttl_s}")
+        if self.ready_timeout_s < 1:
+            raise ValueError(
+                f"WORKMATE_EXEC_READY_TIMEOUT_S musi być >= 1, jest: {self.ready_timeout_s}"
+            )
+        if self.reap_interval_s < 1:
+            raise ValueError(
+                f"WORKMATE_EXEC_REAP_INTERVAL_S musi być >= 1, jest: {self.reap_interval_s}"
             )
 
 

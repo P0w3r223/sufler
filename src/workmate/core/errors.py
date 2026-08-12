@@ -92,3 +92,15 @@ class ThreadRootGone(WorkMateError):
     usunęły root). Notifier łapie i degraduje: tworzy NOWY root i przełącza link — dzięki temu
     usunięty wątek nie blokuje na trwałe całego strumienia zdarzeń (zamiast wywracać kursor).
     """
+
+
+class ExecManagerError(WorkMateError):
+    """Menedżer wykonawców (ADR infra 0012) nie zdołał zapewnić wykonawcy scope'a.
+
+    Podnoszony przez ``ExecManagerService`` i klienta gniazda kontrolnego, gdy: scope nie przechodzi
+    ścisłej walidacji (próba wstrzyknięcia montażu), silnik kontenerów odmawia startu, albo
+    wykonawca nie wystawił gniazda w oknie gotowości. Osobny od ``RepositoryError``/``WriteError`` —
+    to nie jest ani magazyn, ani zapis, tylko cykl życia kontenera. Klient ``Bash`` degraduje go do
+    ``CommandResult`` z niezerowym kodem (jak każdą inną niedostępność wykonawcy, ADR 0057), więc
+    tura agenta się nie wywraca — model poprawia się w następnej.
+    """

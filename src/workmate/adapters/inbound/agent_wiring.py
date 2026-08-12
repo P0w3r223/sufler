@@ -388,20 +388,24 @@ def _build_shell_factory(
     (Teams): fabryka bierze więc też ``sender_id``. Nierozpoznany nadawca → powłoki NIE dokładamy
     (build-time omission, jak Jira ADR 0054). ``None`` (drzwi zaufane — jeden operator CLI, brak
     przychodzącego ``sender_id``, jak w ADR 0042/0062) → powłoka bez bramki, jak przed ADR 0063.
+
+    Od ADR infra 0012 wykonawca jest stawiany PER ROZMOWA: zamiast jednego stałego gniazda budujemy
+    KLIENTA MENEDŻERA (raz), a runner per scope pyta go ``ensure(scope)`` o gniazdo wykonawcy TEJ
+    rozmowy przed każdym poleceniem. Izolacja przenosi się z konwencji ``cwd`` na granicę montażu:
+    wykonawca scope'a widzi wyłącznie swój podkatalog brudnopisu.
     """
     if not shell_settings.enabled:
         return None
     try:
-        from workmate.adapters.outbound.exec_client import SocketCommandRunner
+        from workmate.adapters.outbound.exec_client import ManagedCommandRunner
+        from workmate.adapters.outbound.exec_manager_client import SocketExecManagerClient
     except ImportError:
         logger.info(
             "Klient wykonawcy jest POSIX-only — narzędzie powłoki pomijam na tej platformie."
         )
         return None
 
-    runner = _ScopedRunner(
-        SocketCommandRunner(shell_settings.socket_path), with_outbox=outbox_enabled
-    )
+    manager = SocketExecManagerClient(shell_settings.manager_socket_path)
     workspace_root = workspace_settings.workspace_dir.as_posix()
 
     def factory(scope: WorkspaceScope, sender_id: str) -> list[ToolSpec]:
@@ -411,6 +415,13 @@ def _build_shell_factory(
         # dla gościa (fail-closed). Bez autoryzatora (CLI) — powłoka jak dawniej, bez bramki.
         if authorizer is not None and authorizer.resolve(sender_id) is None:
             return []
+        # Runner per scope: ``ensure(str(scope.dirpath()))`` u menedżera zwraca gniazdo wykonawcy
+        # TEJ rozmowy. ``_ScopedRunner`` dalej zakłada po stronie APLIKACJI podkatalog roboczy (i
+        # ``outputs/``), bo aplikacja montuje cały wolumen brudnopisu — a menedżer robi to samo po
+        # swojej stronie przed startem wykonawcy (idempotentnie, ADR 0012 §4).
+        runner = _ScopedRunner(
+            ManagedCommandRunner(manager, str(scope.dirpath())), with_outbox=outbox_enabled
+        )
         return build_shell_catalog(
             scope,
             runner,
