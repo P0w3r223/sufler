@@ -196,7 +196,7 @@ class ConversationalResponder:
         compaction: CompactionService | None = None,
         commands: CommandRouter | None = None,
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
-        shell_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
+        shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
@@ -217,8 +217,11 @@ class ConversationalResponder:
         # Scope budujemy z ZAUFANEGO (kanał, external_id), nie od modelu — rozmowy są izolowane.
         self._workspace_catalog_factory = workspace_catalog_factory
         # Fabryka narzędzia POWŁOKI per rozmowa (ADR 0057); ``None`` → brak (bramka wyłączona
-        # albo platforma bez gniazd unix). Ten sam kształt co wyżej i ten sam scope: polecenia
-        # startują w katalogu roboczym tej rozmowy, którego model nie widzi w schemacie.
+        # albo platforma bez gniazd unix). Bierze scope (``cwd`` rozmowy) ORAZ ``sender_id``: na
+        # drzwiach wieloużytkownikowych (Teams) bramkuje powłokę członkostwem nadawcy (ADR 0063),
+        # bo powłoka sięga ścieżką bezwzględną poza scope — jej granica zaufania musi zrównać się
+        # z ``identities.yaml``, jak każda ścieżka danych. Drzwi zaufane (CLI) podają fabrykę bez
+        # autoryzatora → powłoka nie bramkowana (jeden operator, brak ``sender_id``).
         self._shell_catalog_factory = shell_catalog_factory
         # Fabryka narzędzia ODPOWIEDZI W WĄTKU (ADR 0024, Faza 3b); ``None`` → brak (inne drzwi).
         # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
@@ -385,9 +388,19 @@ class ConversationalResponder:
             else ()
         )
         # Powłoka (ADR 0057) dokładana tym samym scope: polecenia startują w katalogu roboczym
-        # tej rozmowy, więc pliki tworzone narzędziem i widziane powłoką to te same pliki.
+        # tej rozmowy, więc pliki tworzone narzędziem i widziane powłoką to te same pliki. Fabryka
+        # dostaje też ``sender_id``: na drzwiach wieloużytkownikowych bramkuje powłokę członkostwem
+        # (ADR 0063) — nierozpoznany nadawca → pusta lista. Jak przy narzędziach odczytu niżej: błąd
+        # budowy (np. rozwiązywanie tożsamości) degraduje do „brak powłoki" (fail-closed) i loguje,
+        # nie zabija tury.
         if self._shell_catalog_factory is not None:
-            extra_tools.extend(self._shell_catalog_factory(scope))
+            try:
+                extra_tools.extend(self._shell_catalog_factory(scope, message.sender_id))
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzia powłoki dla nadawcy %r — pomijam",
+                    message.sender_id,
+                )
         # Narzędzie odpowiedzi w wątku (ADR 0024, Faza 3b): dokładane, gdy wątek kanału jest
         # powiązany z issue/PR (fabryka odczytuje cel z external_id) — inaczej pusta lista.
         # To OPCJONALNE wzbogacenie: błąd odczytu mapowania (np. blokada SQLite) NIE może zabić

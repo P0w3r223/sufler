@@ -65,3 +65,19 @@ def can_read_note(actor: Actor | None, *, project: str | None = None) -> bool:
     """
     _ = project  # szew pod politykę per-projekt; bramka członkostwa go nie różnicuje
     return actor is not None
+
+
+def can_use_shell(actor: Actor | None) -> bool:
+    """Czy ``actor`` może dostać narzędzie POWŁOKI (``Bash``, ADR 0057)? Bramka członkostwa:
+    rozpoznany członek → tak; ``None`` → nie (fail-closed, ADR 0063).
+
+    Ta sama polityka B2-A co odczyt/zapis, ale ODDZIELNA funkcja — z tego samego powodu, dla którego
+    ``can_read_note`` jest osobna od ``can_write_meeting_note``: polityki mogą się rozejść później
+    bez ruszania miejsc wywołań. Powłoka czyta CAŁY wolumen brudnopisu i montaż ``ro`` bazy wiedzy
+    ścieżką bezwzględną (nie jest zamknięta w scope rozmowy — ADR 0057), więc jej granica zaufania
+    MUSI zrównać się z granicą pozostałych ścieżek danych (``identities.yaml``), a nie z luźniejszym
+    udziałem w kanale. Bez ``project`` — powłoka nie jest per-projekt (dowolny kod, nie akcja na
+    wskazanym projekcie); domknięcie cross-read MIĘDZY członkami to osobna warstwa (montaż
+    per-rozmowa, ADR 0063 §2 / infra ADR 0010), nie ta decyzja.
+    """
+    return actor is not None
