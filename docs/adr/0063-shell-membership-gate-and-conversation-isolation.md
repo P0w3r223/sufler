@@ -1,7 +1,7 @@
 # 0063 — Shell tool membership gate + per-conversation scratchpad isolation
 
 Date: 2026-08-12
-Status: proposed
+Status: accepted
 Author: P0w3r223
 Related to: [ADR 0057](0057-shell-executor-container-without-network.md) (the executor this gates),
 [ADR 0062](0062-note-read-authorization.md) (note-read membership gate — the template applied here to the shell),
