@@ -99,6 +99,7 @@ def _service(
         f"teams graph/{_HASH}",  # spacja
         f"/{_HASH}",  # pusty kanał
         f"teams-graph/{_HASH}x",  # hash za długi
+        f"teams-graph/{_HASH}\n",  # końcowy newline — ``$`` by go przepuścił, ``\Z`` nie
         "",
     ],
 )
@@ -262,3 +263,29 @@ def test_reap_jawny_gasi_konkretny_scope():
 
     assert engine.removed == ["cid-1"]
     assert workspace.cleaned == [_SCOPE]
+
+
+def test_teardown_nie_kasuje_gniazda_re_ensure_owanego_scope():
+    """Wyścig reap↔ensure: reaper NIE może skasować gniazda wykonawcy, który w międzyczasie wrócił.
+
+    Reaper zdejmuje scope z rejestru, ale zanim sprzątnie gniazdo, nowe polecenie tej samej rozmowy
+    stawia świeżego wykonawcę na tym SAMYM gnieździe. Dokończony teardown starego wykonawcy musi
+    wtedy zostawić gniazdo nowego w spokoju — inaczej rozmowa zostałaby zawieszona na trwałe (nowy
+    wpis wygląda zdrowo, a gniazda nie ma). Odtwarzamy przeplot ręcznie, bo jest deterministyczny.
+    """
+    engine, workspace = FakeEngine(), FakeWorkspace()
+    service, _ = _service(engine, workspace)
+    service.ensure(_SCOPE)  # cid-1
+    victim = service._by_scope[_SCOPE]  # noqa: SLF001 — odtwarzamy przeplot od środka
+
+    # Reaper zdjął wpis pod zamkiem; nowe polecenie zdążyło re-ensure'ować scope (cid-2) ZANIM
+    # reaper dokończył teardown starego wykonawcy.
+    with service._lock:  # noqa: SLF001
+        del service._by_scope[_SCOPE]
+    service.ensure(_SCOPE)  # cid-2 — żywy wykonawca na tym samym gnieździe
+
+    service._teardown(victim)  # noqa: SLF001 — dokończenie teardownu starego wykonawcy
+
+    assert "cid-1" in engine.removed, "stary kontener ma zostać ubity"
+    assert workspace.cleaned == [], "gniazdo ŻYWEGO nowego wykonawcy nie może zostać skasowane"
+    assert service._by_scope[_SCOPE].container_id == "cid-2"  # noqa: SLF001

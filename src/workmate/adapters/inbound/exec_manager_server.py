@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 # Sufit linii żądania — zabezpiecza przed wyczerpaniem pamięci przez zepsutego klienta (jak
 # exec_server).
 _MAX_REQUEST_BYTES = 64 * 1024
+# Sufit oczekiwania w JEDNYM połączeniu. Gniazdo zaakceptowane NIE dziedziczy timeoutu nasłuchu,
+# więc bez tego klient, który się łączy i milczy, wieszałby wątek i deskryptor bez końca. ``ensure``
+# bywa wolne (start kontenera + gotowość), więc sufit jest hojny, ale skończony.
+_CONN_TIMEOUT_S = 60.0
 
 
 def _handle(conn: socket.socket, service: ExecManagerService) -> None:
@@ -51,7 +55,11 @@ def _handle(conn: socket.socket, service: ExecManagerService) -> None:
     Każdy błąd (zły JSON, nieznany czasownik, niepoprawny scope, odmowa silnika) zamieniamy na
     ODPOWIEDŹ z polem ``error``. ``ExecManagerError`` niesie już czytelny komunikat po polsku; inne
     wyjątki logujemy z tracebackiem, a klientowi oddajemy krótkie „menedżer odrzucił żądanie".
+
+    Milczącego klienta odcina ``_CONN_TIMEOUT_S`` (``TimeoutError`` jest podklasą ``OSError``, więc
+    łapiemy je razem z zerwaniem), żeby jeden zawieszony wątek nie zjadał deskryptora bez końca.
     """
+    conn.settimeout(_CONN_TIMEOUT_S)
     try:
         with conn, conn.makefile("rwb") as stream:
             line = stream.readline(_MAX_REQUEST_BYTES)

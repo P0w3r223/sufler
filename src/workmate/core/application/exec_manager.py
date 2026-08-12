@@ -37,9 +37,11 @@ logger = logging.getLogger(__name__)
 # hash to 32 znaki hex (sha256 id rozmowy). Walidacja jest GRANICĄ bezpieczeństwa, nie kosmetyką:
 # scope trafia do ``Subpath`` montażu Docker API, więc cokolwiek spoza tego alfabetu (``..``, ``/``
 # w nadmiarze, znaki powłoki) mogłoby wskazać podkatalog spoza wolumenu brudnopisu. Kotwice
-# ``^``/``$``
-# i dokładnie jeden ``/`` są tu istotą — nie wystarczy „zawiera dozwolone znaki".
-_SCOPE_RE = re.compile(r"^[a-z0-9-]{1,64}/[0-9a-f]{32}$")
+# ``^``/``\Z`` i dokładnie jeden ``/`` są tu istotą — nie wystarczy „zawiera dozwolone znaki".
+# Świadomie ``\Z`` (koniec napisu), NIE ``$``: ``$`` dopuszcza końcowy ``\n``, więc scope
+# ``kanał/<hash>\n`` przeszedłby walidację i zdążyłby założyć katalog-śmieć, zanim Docker odrzuci
+# nazwę kontenera z nową linią.
+_SCOPE_RE = re.compile(r"^[a-z0-9-]{1,64}/[0-9a-f]{32}\Z")
 
 # Prefiks nazwy i etykiety kontenera-wykonawcy. Nazwa jest Docker-bezpieczna (spłaszczony scope),
 # etykiety niosą scope w postaci oryginalnej — po nich biegnie reconcile.
@@ -118,31 +120,52 @@ class ExecManagerService:
         Kolejność (ADR 0012 §4, „montaż bez wyścigu"): walidacja → jeśli ciepły, dotknij i wróć →
         w innym razie zrób miejsce (limit N), przygotuj podkatalogi, postaw kontener, POCZEKAJ na
         gotowość gniazda i dopiero wtedy zwróć ścieżkę. Polecenie nigdy nie leci przed gotowością,
-        bo ścieżkę oddajemy dopiero po ``wait_ready``.
+        bo ścieżkę oddajemy dopiero po ``wait_ready`` — a całość biegnie pod zamkiem, więc dwa
+        polecenia tej samej rozmowy nie postawią dwóch kontenerów, a klient nie dostanie ścieżki,
+        zanim gniazdo nasłuchuje.
+
+        Eksmisję LRU (limit N) tylko ODNOTOWUJEMY pod zamkiem (zdejmujemy z rejestru), a właściwe
+        gaszenie ofiar — z jego wolnym I/O Dockera — robimy w ``finally`` POZA zamkiem, żeby jeden
+        `ensure` z eksmisją nie stallował rozmów innych scope'ów przez czas usuwania kontenera.
         """
         validate_scope(scope)
-        with self._lock:
-            existing = self._by_scope.get(scope)
-            if existing is not None:
-                existing.last_used = self._clock()
-                return self._workspace.socket_path(scope)
+        victims: list[_ManagedExecutor] = []
+        container_id = ""
+        ready = False
+        try:
+            with self._lock:
+                existing = self._by_scope.get(scope)
+                if existing is not None:
+                    existing.last_used = self._clock()
+                    return self._workspace.socket_path(scope)
 
-            self._make_room_locked(scope)
-            self._workspace.prepare(scope)
-            spec = self._spec_for(scope)
-            container_id = self._engine.run(spec)
-            # Rejestrujemy PRZED oczekiwaniem na gotowość: gdyby readiness padło, ``_start_failed``
-            # ma po czym posprzątać, a reconcile/reap nie zobaczy kontenera-widma bez wpisu.
-            self._by_scope[scope] = _ManagedExecutor(scope, container_id, self._clock())
+                victims = self._evict_for_room_locked(scope)
+                self._workspace.prepare(scope)
+                spec = self._spec_for(scope)
+                container_id = self._engine.run(spec)
+                # Rejestrujemy PRZED oczekiwaniem na gotowość, żeby reconcile/reap nie zobaczył
+                # kontenera-widma bez wpisu; przy porażce readiness zdejmujemy wpis niżej.
+                self._by_scope[scope] = _ManagedExecutor(scope, container_id, self._clock())
+                ready = self._workspace.wait_ready(scope, self._ready_timeout_s)
+                if not ready:
+                    current = self._by_scope.get(scope)
+                    if current is not None and current.container_id == container_id:
+                        del self._by_scope[scope]
+        finally:
+            # Ofiary eksmisji gaszimy POZA zamkiem (Docker `remove` bywa wolny). Każde
+            # ``_teardown`` sprząta gniazdo dopiero, gdy scope nie został re-ensure'owany.
+            for victim in victims:
+                self._teardown(victim)
 
-            if not self._workspace.wait_ready(scope, self._ready_timeout_s):
-                self._start_failed_locked(scope, container_id)
-                raise ExecManagerError(
-                    f"wykonawca scope {scope!r} nie wystawił gniazda w oknie "
-                    f"{self._ready_timeout_s:.0f}s"
-                )
-            logger.info("Wykonawca scope %s gotowy (%s)", scope, container_id[:12])
-            return self._workspace.socket_path(scope)
+        if not ready:
+            self._safe_remove(container_id)
+            self._cleanup_if_free(scope)
+            raise ExecManagerError(
+                f"wykonawca scope {scope!r} nie wystawił gniazda w oknie "
+                f"{self._ready_timeout_s:.0f}s"
+            )
+        logger.info("Wykonawca scope %s gotowy (%s)", scope, container_id[:12])
+        return self._workspace.socket_path(scope)
 
     def reap(self, scope: str) -> None:
         """Ubij wykonawcę scope'a i sprzątnij jego gniazdo (jawny odpowiednik reap po TTL)."""
@@ -228,40 +251,50 @@ class ExecManagerService:
             },
         )
 
-    def _make_room_locked(self, scope: str) -> None:
-        """Zrób miejsce na nowego wykonawcę: eksmituj LRU, dopóki jest pod limitem.
+    def _evict_for_room_locked(self, scope: str) -> list[_ManagedExecutor]:
+        """Zrób miejsce na nowego wykonawcę: zdejmij LRU z rejestru, dopóki jest pod limitem.
 
+        Zwraca ofiary do zgaszenia POZA zamkiem — sam wpis znika tu (pod zamkiem), ale gaszenie
+        kontenera i sprzątanie gniazda robi ``_teardown`` wywołany przez ``ensure`` już bez zamka.
         „Zajętość" nie jest śledzona osobno (tury i tak są szeregowane wyżej — ADR 0010), więc
         LRU liczymy po ``last_used``. Eksmisja usuwa NAJDAWNIEJ używanego, aż zrobi się miejsce.
         """
+        victims: list[_ManagedExecutor] = []
         while len(self._by_scope) >= self._max:
             victim = min(self._by_scope.values(), key=lambda e: e.last_used)
             del self._by_scope[victim.scope]
+            victims.append(victim)
             logger.info(
                 "Limit N=%d osiągnięty — eksmituję LRU scope %s pod %s",
                 self._max,
                 victim.scope,
                 scope,
             )
-            self._teardown(victim)
-
-    def _start_failed_locked(self, scope: str, container_id: str) -> None:
-        """Wycofaj nieudany start: zdejmij wpis (jeśli to wciąż ten kontener) i ubij kontener."""
-        current = self._by_scope.get(scope)
-        if current is not None and current.container_id == container_id:
-            del self._by_scope[scope]
-        self._safe_remove(container_id)
-        self._workspace.cleanup(scope)
+        return victims
 
     def _teardown(self, executor: _ManagedExecutor) -> None:
-        """Ubij kontener i sprzątnij gniazdo scope'a. Wołane spoza zamka (I/O może być wolne)."""
+        """Ubij kontener (poza zamkiem — wolne I/O) i sprzątnij gniazdo (pod zamkiem, gdy wolne)."""
         self._safe_remove(executor.container_id)
-        try:
-            self._workspace.cleanup(executor.scope)
-        except OSError:
-            logger.warning(
-                "Nie udało się sprzątnąć gniazda scope %s", executor.scope, exc_info=True
-            )
+        self._cleanup_if_free(executor.scope)
+
+    def _cleanup_if_free(self, scope: str) -> None:
+        """Sprzątnij gniazdo scope'a — TYLKO, jeśli scope nie został w międzyczasie re-ensure'owany.
+
+        To domyka wyścig reap↔ensure: reaper zdejmuje scope z rejestru pod zamkiem, ale zanim zdąży
+        sprzątnąć gniazdo, nowe polecenie tej samej rozmowy może postawić świeżego wykonawcę na tym
+        SAMYM gnieździe. Sprawdzenie „scope wciąż nieobecny" i samo sprzątanie biegną pod zamkiem, a
+        ``ensure`` trzyma zamek przez cały ``prepare``/``run``/``wait_ready`` — więc albo sprzątamy,
+        zanim ``ensure`` zdąży odtworzyć katalog, albo widzimy już zarejestrowanego nowego wykonawcę
+        i gniazda NIE ruszamy (należy do żywego procesu). Samo sprzątanie to szybkie ``unlink``+
+        ``rmdir``, więc trzymanie zamka na jego czas nie stalluje niczego.
+        """
+        with self._lock:
+            if scope in self._by_scope:
+                return
+            try:
+                self._workspace.cleanup(scope)
+            except OSError:
+                logger.warning("Nie udało się sprzątnąć gniazda scope %s", scope, exc_info=True)
 
     def _safe_remove(self, container_id: str) -> None:
         try:
