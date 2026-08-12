@@ -82,6 +82,7 @@ if TYPE_CHECKING:
         WorkspaceSettings,
     )
     from workmate.core.application.note_read_authz import NoteReadAuthorizer
+    from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.command import CommandRunner
@@ -369,7 +370,8 @@ def _build_shell_factory(
     workspace_settings: WorkspaceSettings,
     *,
     outbox_enabled: bool = False,
-) -> Callable[[WorkspaceScope], list[ToolSpec]] | None:
+    authorizer: ShellAuthorizer | None = None,
+) -> Callable[[WorkspaceScope, str], list[ToolSpec]] | None:
     """Fabryka narzędzia ``Bash`` (ADR 0057) wiążącego polecenia z katalogiem rozmowy.
 
     Zwraca ``None``, gdy powłoka jest wyłączona ALBO gdy klienta wykonawcy nie da się
@@ -381,6 +383,11 @@ def _build_shell_factory(
     tam pliki narzędziem ``create_file``, a wykonawca dostaje ten sam katalog jako ``cwd``.
     Rozjazd tych dwóch wartości oznaczałby, że model tworzy plik narzędziem i nie widzi go
     powłoką — dlatego korzeń bierzemy z jednej konfiguracji, a nie z dwóch.
+
+    ``authorizer`` (ADR 0063) bramkuje powłokę członkostwem NADAWCY na drzwiach wieloużytkownikowych
+    (Teams): fabryka bierze więc też ``sender_id``. Nierozpoznany nadawca → powłoki NIE dokładamy
+    (build-time omission, jak Jira ADR 0054). ``None`` (drzwi zaufane — jeden operator CLI, brak
+    przychodzącego ``sender_id``, jak w ADR 0042/0062) → powłoka bez bramki, jak przed ADR 0063.
     """
     if not shell_settings.enabled:
         return None
@@ -397,7 +404,13 @@ def _build_shell_factory(
     )
     workspace_root = workspace_settings.workspace_dir.as_posix()
 
-    def factory(scope: WorkspaceScope) -> list[ToolSpec]:
+    def factory(scope: WorkspaceScope, sender_id: str) -> list[ToolSpec]:
+        # Bramka członkostwa (ADR 0063): na drzwiach wieloużytkownikowych nierozpoznany nadawca nie
+        # dostaje powłoki. Przy powłoce ON narzędzia odczytu i tak schodzą z katalogu bazowego
+        # (``shell_available``), więc pominięta powłoka = brak JAKIEJKOLWIEK drogi do bazy wiedzy
+        # dla gościa (fail-closed). Bez autoryzatora (CLI) — powłoka jak dawniej, bez bramki.
+        if authorizer is not None and authorizer.resolve(sender_id) is None:
+            return []
         return build_shell_catalog(
             scope,
             runner,
@@ -491,6 +504,7 @@ def build_conversational_responder(
     outbox_max_seconds: float = 20.0,
     skills_settings: SkillsSettings | None = None,
     note_read_authorizer: NoteReadAuthorizer | None = None,
+    shell_authorizer: ShellAuthorizer | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -529,7 +543,12 @@ def build_conversational_responder(
     # plikach: bez wspólnego korzenia ``cwd`` poleceń rozjechałby się z miejscem, w którym
     # narzędzia plikowe zapisują.
     shell_factory = (
-        _build_shell_factory(shell_settings, workspace_settings, outbox_enabled=outbox_enabled)
+        _build_shell_factory(
+            shell_settings,
+            workspace_settings,
+            outbox_enabled=outbox_enabled,
+            authorizer=shell_authorizer,
+        )
         if shell_settings is not None and workspace_settings is not None
         else None
     )

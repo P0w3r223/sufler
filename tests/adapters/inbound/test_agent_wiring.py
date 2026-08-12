@@ -262,7 +262,7 @@ def _responder_z_katalogiem(tmp_path: Path, monkeypatch, *, powloka: bool):
     monkeypatch.setattr(
         agent_wiring,
         "_build_shell_factory",
-        lambda *a, **k: (lambda scope: []) if powloka else None,
+        lambda *a, **k: (lambda scope, sender_id: []) if powloka else None,
     )
     return build_conversational_responder(
         _settings(tmp_path),
@@ -297,6 +297,61 @@ def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
     assert responder._shell_catalog_factory is None
 
 
+# --- Bramka członkostwa powłoki (ADR 0063) — fabryka omija narzędzie nierozpoznanemu nadawcy ---
+
+
+class _FakeLookup:
+    """Atrapa ``AadIdentityLookup`` — zna wskazane AAD id, resztę zwraca ``None`` (fail-closed)."""
+
+    def __init__(self, people: dict) -> None:
+        self._people = people
+
+    def resolve_by_aad_user_id(self, aad_user_id: str):
+        return self._people.get(aad_user_id)
+
+
+def _shell_factory_with(authorizer, tmp_path: Path):
+    """Prawdziwa fabryka powłoki z podanym autoryzatorem (klient wykonawcy jest POSIX-only)."""
+    from workmate.config import ShellSettings, WorkspaceSettings
+
+    return agent_wiring._build_shell_factory(
+        ShellSettings(enabled=True, socket_path=tmp_path / "exec.sock"),
+        WorkspaceSettings(workspace_dir=tmp_path / "ws"),
+        authorizer=authorizer,
+    )
+
+
+def test_powloka_bramkowana_czlonkostwem(tmp_path: Path):
+    """§1 ADR 0063: z autoryzatorem członek dostaje powłokę, obcy/bez-tożsamości — pustą listę."""
+    pytest.importorskip("workmate.adapters.outbound.exec_client")  # klient wykonawcy POSIX-only
+    from workmate.core.application.shell_authz import ShellAuthorizer
+    from workmate.core.domain.identity import Person
+    from workmate.core.domain.workspace import WorkspaceScope
+
+    anna = Person(
+        source_id="EMP-1", aad_user_id="aad-anna", jira_user="a@example.org", display_name="Anna"
+    )
+    factory = _shell_factory_with(ShellAuthorizer(_FakeLookup({"aad-anna": anna})), tmp_path)
+    assert factory is not None
+    scope = WorkspaceScope("teams_graph", "team/kanal/watek")
+
+    assert factory(scope, "aad-anna")  # rozpoznany członek → powłoka obecna (niepusta lista)
+    assert factory(scope, "aad-obcy") == []  # nie-członek → pominięta (build-time omission)
+    assert factory(scope, "") == []  # brak tożsamości nadawcy → pominięta (fail-closed)
+
+
+def test_powloka_bez_autoryzatora_nie_bramkuje(tmp_path: Path):
+    """Drzwi zaufane (CLI): ``authorizer=None`` → powłoka jak przed ADR 0063, bez bramki nadawcy."""
+    pytest.importorskip("workmate.adapters.outbound.exec_client")
+    from workmate.core.domain.workspace import WorkspaceScope
+
+    factory = _shell_factory_with(None, tmp_path)
+    assert factory is not None
+    scope = WorkspaceScope("teams_graph", "team/kanal/watek")
+
+    assert factory(scope, "")  # brak sender_id i brak autoryzatora → powłoka obecna
+
+
 # --- Powłoka wyklucza reply_with_file — szóste narzędzie (etap 7, ADR 0011 paczki) ---
 
 
@@ -313,7 +368,7 @@ def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
     monkeypatch.setattr(
         agent_wiring,
         "_build_shell_factory",
-        lambda *a, **k: (lambda scope: []) if powloka else None,
+        lambda *a, **k: (lambda scope, sender_id: []) if powloka else None,
     )
     return build_conversational_responder(
         _settings(tmp_path),
@@ -388,7 +443,7 @@ def _zmontowana_powierzchnia(
     monkeypatch.setattr(
         agent_wiring,
         "_build_shell_factory",
-        lambda *a, **k: (lambda scope: [_stub("Bash")]) if powloka else None,
+        lambda *a, **k: (lambda scope, sender_id: [_stub("Bash")]) if powloka else None,
     )
     responder = build_conversational_responder(
         _settings(tmp_path),
@@ -447,7 +502,7 @@ def _shell_available(tmp_path: Path, monkeypatch, *, chciana: bool, fabryka_daje
     monkeypatch.setattr(
         agent_wiring,
         "_build_shell_factory",
-        lambda *a, **k: (lambda scope: []) if fabryka_daje else None,
+        lambda *a, **k: (lambda scope, sender_id: []) if fabryka_daje else None,
     )
     build_conversational_responder(
         _settings(korzen),
@@ -503,7 +558,7 @@ def _drzwi_z_powloka(tmp_path: Path, monkeypatch, *, fabryka_daje: bool, skills:
     monkeypatch.setattr(
         agent_wiring,
         "_build_shell_factory",
-        lambda *a, **k: (lambda scope: []) if fabryka_daje else None,
+        lambda *a, **k: (lambda scope, sender_id: []) if fabryka_daje else None,
     )
     responder = build_conversational_responder(
         _settings(korzen),

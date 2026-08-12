@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.core.application.events import EventService
     from workmate.core.application.note_read_authz import NoteReadAuthorizer
+    from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.application.worklog import WorklogService
     from workmate.core.ports.github import GithubReadPort
@@ -102,6 +103,10 @@ def main() -> None:
     workspace_settings.validate(data_dir=core_settings.data_dir)
     shell_settings = ShellSettings.from_env()
     shell_settings.validate()
+    # Bramka członkostwa POWŁOKI (ADR 0063), osobno — ``None`` gdy powłoka wyłączona. Gdy włączona,
+    # WYMAGA mapy tożsamości (fail-fast w builderze), więc rozstrzygamy ją WCZEŚNIE: brak mapy ma
+    # wywrócić start, zanim ruszymy resztę składania drzwi.
+    shell_authorizer = _build_shell_authorizer(settings, shell_settings)
     # R/L1: pamięć rozmów agenta i wspólny events.db MUSZĄ być zapisywalne (tryb watch pisze oba).
     events_settings = EventsSettings.from_env()
     require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
@@ -189,6 +194,7 @@ def main() -> None:
         # Procedury z `/mnt/skills` (ADR 0005) — bez ścieżki lista zostaje pusta.
         SkillsSettings.from_env(),
         note_read_authorizer=note_read_authorizer,
+        shell_authorizer=shell_authorizer,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -686,6 +692,43 @@ def _build_note_read_authorizer(settings: TeamsGraphSettings) -> NoteReadAuthori
     return NoteReadAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
 
 
+def _build_shell_authorizer(
+    settings: TeamsGraphSettings, shell_settings: ShellSettings
+) -> ShellAuthorizer | None:
+    """Bramka członkostwa POWŁOKI (ADR 0063) albo ``None``.
+
+    ``None``, gdy powłoka wyłączona (``WORKMATE_ENABLE_SHELL`` domyślnie OFF) — powłoki wtedy nie
+    ma, nie ma czego bramkować. Włączona: WYMAGA mapy tożsamości (fail-fast tutaj, jak zapis ADR
+    0042 / odczyt ADR 0062), bo bez niej bramka nie miałaby po czym rozpoznać nadawcy — i wtedy
+    każdy dostałby powłokę, czyli dokładnie luka, którą ADR 0063 zamyka. Bramka jest WBUDOWANA we
+    flagę powłoki (nie osobny toggle): powłoka jest już opt-in OFF, więc „shell ON" znaczy „ON i
+    bramkowany", bez okna otwartego. Składa authorizer nad ``YamlIdentityDirectory`` (fail-closed).
+    Wpinany w ``_build_responder``; egzekwuje per-turową fabrykę powłoki po nadawcy. Drzwi MCP i CLI
+    (jeden zaufany operator, brak ``sender_id``) są POZA zakresem, jak w ADR 0042/0062.
+    """
+    if not shell_settings.enabled:
+        return None
+    if not settings.meeting_note_identities.is_file():
+        # Powłoka bramkowana członkostwem (ADR 0063): bez mapy tożsamości nie ma po czym rozpoznać
+        # nadawcy, więc bramka nie miałaby jak działać — a powłoka sięga ścieżką bezwzględną poza
+        # scope rozmowy. Fail-fast (ten sam plik co zapis/odczyt i worklogi).
+        raise SystemExit(
+            "WORKMATE_ENABLE_SHELL=true na drzwiach Teams wymaga WORKMATE_TEAMS_GRAPH_IDENTITIES "
+            "= ścieżka do mapy tożsamości (członkostwo bramkuje powłokę, ADR 0063); brak pliku: "
+            f"{settings.meeting_note_identities}."
+        )
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from workmate.core.application.shell_authz import ShellAuthorizer
+
+    logger.info(
+        "Bramka członkostwa POWŁOKI WŁĄCZONA (ADR 0063) — narzędzie Bash tylko dla rozpoznanego "
+        "członka pionu przez mapę tożsamości %s (fail-closed). Cross-read MIĘDZY członkami ścieżką "
+        "bezwzględną zostaje — domyka go montaż per-rozmowa (ADR 0063 §2 / infra ADR 0010).",
+        settings.meeting_note_identities,
+    )
+    return ShellAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
+
+
 def _build_meeting_note_router(
     settings: TeamsGraphSettings,
     token_provider: Callable[[], str],
@@ -1037,6 +1080,7 @@ def _build_responder(
     outbox_max_seconds: float = 20.0,
     skills_settings: SkillsSettings | None = None,
     note_read_authorizer: NoteReadAuthorizer | None = None,
+    shell_authorizer: ShellAuthorizer | None = None,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -1078,6 +1122,7 @@ def _build_responder(
         outbox_max_seconds=outbox_max_seconds,
         skills_settings=skills_settings,
         note_read_authorizer=note_read_authorizer,
+        shell_authorizer=shell_authorizer,
     )
 
 
