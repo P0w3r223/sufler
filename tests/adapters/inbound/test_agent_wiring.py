@@ -273,7 +273,9 @@ def _responder_z_katalogiem(tmp_path: Path, monkeypatch, *, powloka: bool):
         safe=False,
         enable_workspace=True,
         workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
-        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+        shell_settings=ShellSettings(
+            enabled=powloka, manager_socket_path=tmp_path / "control.sock"
+        ),
     )
 
 
@@ -315,7 +317,7 @@ def _shell_factory_with(authorizer, tmp_path: Path):
     from workmate.config import ShellSettings, WorkspaceSettings
 
     return agent_wiring._build_shell_factory(
-        ShellSettings(enabled=True, socket_path=tmp_path / "exec.sock"),
+        ShellSettings(enabled=True, manager_socket_path=tmp_path / "control.sock"),
         WorkspaceSettings(workspace_dir=tmp_path / "ws"),
         authorizer=authorizer,
     )
@@ -378,7 +380,9 @@ def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
         enable_write=False,
         safe=False,
         workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
-        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+        shell_settings=ShellSettings(
+            enabled=powloka, manager_socket_path=tmp_path / "control.sock"
+        ),
         thread_tool_factory=lambda external_id: [],
     )
 
@@ -454,7 +458,9 @@ def _zmontowana_powierzchnia(
         safe=False,
         enable_workspace=True,
         workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
-        shell_settings=ShellSettings(enabled=powloka, socket_path=tmp_path / "exec.sock"),
+        shell_settings=ShellSettings(
+            enabled=powloka, manager_socket_path=tmp_path / "control.sock"
+        ),
         extra_catalog=[_stub("GitHub"), _stub("Schedule")],
         my_jira_tasks_factory=lambda sender: [_stub("Jira")],
         thread_tool_factory=(lambda ext: [_stub("reply_with_file")]) if file_reply else None,
@@ -513,7 +519,7 @@ def _shell_available(tmp_path: Path, monkeypatch, *, chciana: bool, fabryka_daje
         safe=False,
         enable_workspace=True,
         workspace_settings=WorkspaceSettings(workspace_dir=korzen / "ws"),
-        shell_settings=ShellSettings(enabled=chciana, socket_path=korzen / "exec.sock"),
+        shell_settings=ShellSettings(enabled=chciana, manager_socket_path=korzen / "control.sock"),
     )
     return bool(zebrane["shell_available"])
 
@@ -569,7 +575,7 @@ def _drzwi_z_powloka(tmp_path: Path, monkeypatch, *, fabryka_daje: bool, skills:
         safe=False,
         enable_workspace=True,
         workspace_settings=WorkspaceSettings(workspace_dir=korzen / "ws"),
-        shell_settings=ShellSettings(enabled=True, socket_path=korzen / "exec.sock"),
+        shell_settings=ShellSettings(enabled=True, manager_socket_path=korzen / "control.sock"),
         skills_settings=None if skills is None else SkillsSettings(skills_dir=skills),
     )
     return zebrane, responder
@@ -637,7 +643,7 @@ def test_bez_bramki_katalogu_roboczego_nie_ma_go_nawet_bez_powloki(tmp_path: Pat
         safe=False,
         enable_workspace=False,
         workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
-        shell_settings=ShellSettings(enabled=False, socket_path=tmp_path / "exec.sock"),
+        shell_settings=ShellSettings(enabled=False, manager_socket_path=tmp_path / "control.sock"),
     )
     assert responder._workspace_catalog_factory is None
 
