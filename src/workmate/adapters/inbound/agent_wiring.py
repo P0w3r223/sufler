@@ -652,9 +652,7 @@ def build_conversational_responder(
     # wyłączony, runtime nie dostaje rejestratora i nie zapisuje nic. Jeden punkt wpięcia (per turę,
     # w responderze) obejmuje wszystkie drzwi agentowe; drzwi MCP są poza szwem (ADR 0067 R7).
     audit = (
-        AuditService(SqliteAuditStore(settings.audit_db))
-        if settings.audit_db is not None
-        else None
+        AuditService(SqliteAuditStore(settings.audit_db)) if settings.audit_db is not None else None
     )
     # Procedury z `/mnt/skills` (ADR 0005) — odczyt RAZ przy składaniu drzwi. Brak katalogu daje
     # pustą listę i zachowanie dokładnie dawne; nagłówek sesji nie dostaje wtedy sekcji skilli.
