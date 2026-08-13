@@ -106,8 +106,13 @@ services:
     command: ["workmate-github"]
     healthcheck:
       <<: *poller-health
-      # interwał 60 s (WORKMATE_GITHUB_POLL_INTERVAL) + zapas ⇒ 180 s.
-      test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/github_state.heartbeat", "--max-age", "180"]
+      # DWA pulsy jednego procesu `github` (ADR 0067 §2): poller (github_state.heartbeat, 180 s =
+      # interwał 60 s + zapas) i notifier zdarzeń→Teams (github_state.notify.heartbeat). To osobne
+      # pętle — notifier zablokowany na TRWALE niewysyłalnym zdarzeniu (kursor stoi) nie zdradza się
+      # pulsem pollera, który dalej bije. Notifier --max-age 420, bo musi tolerować cykl dead-letter:
+      # poison message bije puls dopiero po max_attempts×poll_interval = 5×60 = 300 s ciszy, więc próg
+      # > 300 (inwariant max_attempts×poll < max_age). Dwie sondy, bo jedno wywołanie = jeden --max-age.
+      test: ["CMD-SHELL", "workmate-heartbeat-check --file /var/lib/workmate/github_state.heartbeat --max-age 180 && workmate-heartbeat-check --file /var/lib/workmate/github_state.notify.heartbeat --max-age 420"]
 
   # --- Drzwi Teams (delegowany Graph) + runtime agenta — ADR 0015/0016 ---------------------------
   # Czyta events.db (github), odpowiada na kanale, pcha zdarzenia do Teams; odczyt "moje zadania"
