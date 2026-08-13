@@ -1,7 +1,7 @@
 # Roadmapa WorkMate — „jesteśmy tu"
 
 Ten plik streszcza fazy przedsięwzięcia i pokazuje, gdzie znajduje się kod w tym
-repozytorium. Decyzje szczegółowe: [`adr/`](adr/) (0001–0065).
+repozytorium. Decyzje szczegółowe: [`adr/`](adr/) (0001–0067).
 
 ## Status faz
 

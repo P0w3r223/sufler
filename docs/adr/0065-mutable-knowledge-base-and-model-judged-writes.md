@@ -114,3 +114,9 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 - **Is the security reversal accepted as written?** This ADR flips ADR 0003's "create-only,
   secure-by-default" and ADR 0057's "security by lack, not by filtering". Merging it is the conscious
   consent; the risk register above is what is being consented to.
+- **Where does the judge verdict get recorded? (counted seam against Faza 0).** ADR 0067 §1.4 says the
+  judge "writes its verdict into the same audit row", but the shipped `AuditStore` is **append-only**
+  (`core/ports/audit.py`, no update verb) and the recorder signature is `(tool_name, arguments,
+  status)` with `judge_verdict` hard-`None`. So this ADR must add the seam explicitly — a fourth
+  recorder argument, or a separate `AuditStore` verb keyed on the row id — rather than assume the
+  column is writable today. Decide the shape before implementation.
