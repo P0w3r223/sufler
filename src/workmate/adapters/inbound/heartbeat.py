@@ -29,6 +29,17 @@ def heartbeat_path(state_path: Path | str) -> Path:
     return Path(state_path).with_suffix(".heartbeat")
 
 
+def notifier_heartbeat_path(state_path: Path | str) -> Path:
+    """Puls NOTIFIERA — odrębny plik (``.notify.heartbeat``) obok pulsu pollera (ADR 0067 §2).
+
+    Poller i notifier to różne pętle w tym samym procesie: notifier zablokowany na trwale
+    niewysyłalnym zdarzeniu (kursor stoi) NIE zdradza się pulsem pollera, który dalej bije. Osobny
+    plik pozwala healthcheckowi sprawdzić OBIE pętle. Notifier bije go po rundzie produktywnej
+    (dostarczono / dead-letter / pusta kolejka); runda utknięta na ponowieniu pulsu NIE odświeża.
+    """
+    return Path(state_path).with_suffix(".notify.heartbeat")
+
+
 def write_heartbeat(path: Path | str, *, now: float | None = None) -> None:
     """Zapisz znacznik udanego cyklu, aktualizując ``mtime`` (zapis atomowy: tmp + ``os.replace``).
 
@@ -57,11 +68,20 @@ def is_fresh(path: Path | str, max_age_s: float, *, now: float | None = None) ->
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Healthcheck kontenera: 0 = puls świeży, 1 = nieświeży lub brak. Wołany przez compose."""
+    """Healthcheck kontenera: 0 = WSZYSTKIE pulsy świeże, 1 = którykolwiek nieświeży/brak.
+
+    ``--file`` można podać WIELE razy (poller + notifier, ADR 0067 §2): kontener jest zdrowy tylko,
+    gdy każda pętla domknęła świeżą rundę. Jeden ``--file`` zachowuje dawne zachowanie.
+    """
     parser = argparse.ArgumentParser(
-        description="Sprawdź wiek pulsu pollera WorkMate (healthcheck kontenera)."
+        description="Sprawdź wiek pulsów WorkMate (healthcheck kontenera)."
     )
-    parser.add_argument("--file", required=True, help="ścieżka pliku pulsu na wolumenie stanu")
+    parser.add_argument(
+        "--file",
+        action="append",
+        required=True,
+        help="ścieżka pliku pulsu na wolumenie stanu (można podać wiele: poller + notifier)",
+    )
     parser.add_argument(
         "--max-age",
         type=float,
@@ -69,12 +89,14 @@ def main(argv: list[str] | None = None) -> int:
         help="maksymalny dopuszczalny wiek pulsu w sekundach (interwał pollingu + zapas)",
     )
     args = parser.parse_args(argv)
-    if is_fresh(args.file, args.max_age):
+    stale = [path for path in args.file if not is_fresh(path, args.max_age)]
+    if not stale:
         return 0
-    print(
-        f"puls nieświeży lub brak: {args.file} starszy niż {args.max_age:g}s",
-        file=sys.stderr,
-    )
+    for path in stale:
+        print(
+            f"puls nieświeży lub brak: {path} starszy niż {args.max_age:g}s",
+            file=sys.stderr,
+        )
     return 1
 
 

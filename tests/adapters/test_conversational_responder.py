@@ -73,6 +73,7 @@ class _FakeRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -92,6 +93,7 @@ class _FailingRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -120,6 +122,7 @@ class _ThinkingRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",

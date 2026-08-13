@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
     from workmate.core.agent.runtime import AgentRuntime
+    from workmate.core.application.audit import AuditService
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
     from workmate.core.application.metrics import MetricsService
@@ -207,6 +208,7 @@ class ConversationalResponder:
         project_brief: BriefRouter | None = None,
         change_digest: ChangeDigestRouter | None = None,
         metrics: MetricsService | None = None,
+        audit: AuditService | None = None,
         outbox_delivery: OutboxDeliverer | None = None,
         skills: Sequence[tuple[str, str]] = (),
     ) -> None:
@@ -270,6 +272,10 @@ class ConversationalResponder:
         # Licznik wywołań (Tor A, metryki); ``None`` → wyłączony (brak WORKMATE_METRICS_DB). Zapis
         # jest best-effort na WSZYSTKICH turach (także komendach) — liczymy „wywołania per drzwi".
         self._metrics = metrics
+        # Dziennik audytu wywołań narzędzi (Faza 0, ADR 0067); ``None`` → wyłączony (brak
+        # WORKMATE_AUDIT_DB). Gdy wpięty, budujemy rejestrator PER TURĘ (pseudonim nadawcy/rozmowy
+        # domknięty raz) i podajemy go do ``run_turn`` — runtime woła go dla każdego tool-calla.
+        self._audit = audit
         # Dostawa plików ze skrzynki nadawczej rozmowy PO turze (ADR 0009 paczki); ``None`` → brak
         # (bramka off / inne drzwi). Zwraca zdanie do doklejenia do odpowiedzi albo pusty napis.
         # Ten sam ``scope`` co narzędzia katalogu roboczego — skrzynka leży w katalogu TEJ rozmowy,
@@ -462,6 +468,19 @@ class ConversationalResponder:
                     external_id,
                     exc_info=True,
                 )
+        # Rejestrator audytu (ADR 0067) domknięty PER TURĘ: pseudonim nadawcy/rozmowy liczony raz,
+        # klasa zaufania jednolita "unknown" do czasu ADR 0066. ``None`` → audyt wyłączony. Runtime
+        # woła go dla każdego tool-calla; rejestrator jest best-effort (nie wywróci tury).
+        audit_recorder = (
+            self._audit.turn_recorder(
+                door=self._channel,
+                raw_user=message.sender_id or message.sender,
+                conversation_id=external_id,
+                trust_class="unknown",
+            )
+            if self._audit is not None
+            else None
+        )
         result = self._runtime.run_turn(
             message.text,
             attachments=message.attachments,
@@ -474,6 +493,7 @@ class ConversationalResponder:
                 skills=self._skills,
                 github_thread=self._thread_link(external_id),
             ),
+            audit=audit_recorder,
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.

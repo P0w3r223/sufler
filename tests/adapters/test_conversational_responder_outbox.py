@@ -27,6 +27,7 @@ class _Runtime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         return AgentResult(
             reply="odp", entries=(UserText(query), AssistantTurn("odp", ())), stop_reason="end_turn"

@@ -139,6 +139,7 @@ async def _run(
                             persist,
                             settings,
                             push_settings,
+                            events_settings,
                             thread_links,
                         ).pump()
                     )
@@ -194,6 +195,7 @@ def _build_notifier(
     persist: Callable[[dict[str, Any]], None],
     settings: GithubSettings,
     push_settings: TeamsPushSettings,
+    events_settings: EventsSettings,
     thread_links: Any = None,
 ) -> Any:
     """Złóż notifiera EventStore → Teams (dual-target). Wymaga MSAL (extra teams-graph)."""
@@ -201,7 +203,9 @@ def _build_notifier(
         from workmate.adapters.inbound.teams_graph.auth import build_token_provider
     except ImportError as exc:
         raise SystemExit(_MISSING_PUSH) from exc
+    from workmate.adapters.inbound.heartbeat import notifier_heartbeat_path, write_heartbeat
     from workmate.adapters.outbound.graph_teams_notifier import HttpxTeamsNotifier
+    from workmate.adapters.outbound.sqlite_dead_letters import SqliteDeadLetterStore
     from workmate.core.application.notifier import EventNotifier, NotifyTargets
 
     token_provider = build_token_provider(push_settings)
@@ -218,6 +222,16 @@ def _build_notifier(
         state["notify_cursor"] = cursor_id
         persist(state)
 
+    # Kwarantanna niewysyłalnych zdarzeń (ADR 0067 §2): tabela siostra w ``events.db``, więc
+    # poison message trafia do dead_letters po ``max_attempts`` próbach, a kursor idzie dalej.
+    dead_letters = SqliteDeadLetterStore(events_settings.db_path)
+    # Puls NOTIFIERA — odrębny plik obok pulsu pollera; bity po rundzie produktywnej, więc
+    # zablokowany notifier (kursor stoi) zdradza się nieświeżym pulsem mimo żywego pollera.
+    notify_hb_path = notifier_heartbeat_path(settings.state_path)
+
+    def notifier_beat() -> None:
+        write_heartbeat(notify_hb_path)
+
     return EventNotifier(
         events,
         sender,
@@ -226,6 +240,8 @@ def _build_notifier(
         cursor=int(state.get("notify_cursor", 0)),
         poll_interval=settings.poll_interval_s,
         thread_links=thread_links,
+        dead_letters=dead_letters,
+        heartbeat=notifier_beat,
     )
 
 
