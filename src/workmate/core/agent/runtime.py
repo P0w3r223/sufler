@@ -181,6 +181,12 @@ class AgentRuntime:
     ) -> ToolOutput:
         spec = by_name.get(call.name)
         if spec is None:
+            # Wywołanie ODRZUCONE przed uruchomieniem narzędzia (nieznana nazwa) — cenny ślad
+            # audytu: próba sięgnięcia po narzędzie spoza katalogu (np. za bramką zdolności,
+            # powłoka OFF). Argumenty surowe od modelu; ``project_arguments`` w rejestratorze je
+            # zredaguje, więc treść nie wycieknie mimo braku koercji.
+            if audit is not None:
+                audit(call.name, call.arguments, "rejected")
             return ToolOutput(call.id, f"Nieznane narzędzie: {call.name}", is_error=True)
         # Argumenty pochodzą od modelu (dane niezaufane). Sprawdzamy wiązanie z sygnaturą
         # ORAZ typy, i zwracamy odzyskiwalny błąd — model poprawi w kolejnej turze, pętla
@@ -190,6 +196,10 @@ class AgentRuntime:
         try:
             arguments = _coerce_arguments(spec.fn, call.arguments)
         except (TypeError, ValidationError) as exc:
+            # Odrzucone na walidacji argumentów — też ślad „narzędzie X zawiodło przed wykonaniem".
+            # Argumenty surowe (koercja padła); rejestrator je redaguje.
+            if audit is not None:
+                audit(call.name, call.arguments, "rejected")
             return ToolOutput(
                 call.id,
                 f"Nieprawidłowe argumenty narzędzia {call.name}: {exc}",

@@ -147,14 +147,31 @@ together only because both are Faza 0.
 - **Audit the MCP door** (second seam) or leave out-of-scope (R7)?
 - **Conversation reference in the journal:** pseudonymize `channel/external_id`, or store raw for
   incident correlation? (Faza 7 privacy leans pseudonymized.)
+- **Salt for the actor/conversation pseudonym (review Faza 0):** `pseudonymize` is `sha256[:16]`
+  *without* salt (1:1 with ADR 0049), so it is dictionary-reversible over the known pion AAD id set
+  (tens of people). No new exposure today — `conversations.db` already holds verbatim transcripts
+  beside it. But when Faza 7 gives `audit.db` a **longer** retention than conversations, the audit
+  outlives the transcripts while the mapping stays trivially reversible. Should the audit pseudonym
+  then take a deployment-secret salt (so the journal survives conversations but the mapping does not)?
 
 ## Follow-ups
 
 - On acceptance: implement §1 and §2 in a follow-up PR (ADR-first, per the 0062–0065 precedent), on a
   branch off `Main` (this is independent of the ADR 0064/0065 File-tool work).
 - Infra ADR/change for the compose two-heartbeat healthcheck and the `preflight` metrics/audit gates.
+  **Timing invariant to encode there (review Faza 0):** with defaults `max_attempts=5 × poll_interval
+  =60s = 300s` to quarantine, but the notifier heartbeat may go stale at `--max-age=180s`, so a single
+  permanently-undeliverable event yields ~2 min of `unhealthy` before self-heal. Worse, if anything
+  restarts on `unhealthy` (operator, a future autoheal), the in-memory `_attempts` resets to zero and
+  the event never reaches N — the exact block §2 removes. The infra change must satisfy
+  `max_attempts × poll_interval < notifier max_age` (or give the notifier heartbeat its own larger
+  `--max-age`), and should consider a dead-letter **volume** threshold as an escalation signal rather
+  than only `logger.error`. Today compose has no autoheal, so this is tuning, not an outage.
 - Wire `trust_class` from real values when ADR 0066 lands; wire `judge_verdict` when ADR 0065 lands.
-- Retention for `audit.db` (longer than conversations) in Faza 7.
+- Retention for `audit.db` (longer than conversations) in Faza 7 — see the salt open question above.
+- **Read paths for the write-only stores (review Faza 0):** `AuditService.recent` and
+  `DeadLetterStore.recent` have no caller yet; without a follow-up surface (an `/audyt` command or a
+  CLI) the journal and quarantine sit in a file nobody opens. Acceptable as a Faza 0 floor, tracked here.
 
 ## Execution correction (2026-08-13) — implemented, two premises adjusted against the code
 
@@ -189,3 +206,38 @@ not survive contact with the code and were changed in place (house rule: measure
 rows; cursor held below threshold and no beat; dead-letter after N then cursor advances and beats;
 two-heartbeat health unhealthy when the notifier heartbeat is stale). **Infra follow-up still owed:**
 compose two-heartbeat healthcheck + `preflight` `WORKMATE_METRICS_DB`/`WORKMATE_AUDIT_DB` gates.
+
+## Review corrections (2026-08-13) — code-review of the Faza 0 branch, fixes applied
+
+A structural code review of `feat/adr-0067-faza0-observability` confirmed the at-least-once invariant
+holds (record → cursor → save, exception-safe) and that redaction keeps content out. Findings applied
+on the branch:
+
+1. **(HIGH) The notifier heartbeat now beats on a *partially* productive round.** The two early
+   `return` paths (no dead-letter store; below-threshold retry) skipped the end-of-round beat even
+   when the round had already advanced the cursor on an earlier event — so a catch-up round that
+   delivered N events but hit a snag on the next one reported `unhealthy` despite real progress
+   (contradicting §2.2 "delivered ≥1"). Fix: `_beat_if_progress(sent)` beats before both early returns
+   iff `sent > 0`; a true stall (`sent == 0`, first event stuck) still does not beat. Regression test
+   `test_partial_progress_round_beats_despite_later_retry`.
+2. **(MED) Rejected tool calls are now audited.** `_dispatch` returned before the audit seam for an
+   unknown tool and for argument-validation failures, so an attempt to reach a tool behind a gate
+   (shell OFF, `notes_read` after ADR 0062) left no trace — exactly the "how often did tool X fail"
+   signal Faza 0 wants. Both paths now call `audit(name, raw_args, "rejected")`; raw args are still
+   redacted by `project_arguments`.
+3. **(MED) The redaction allowlist was reconciled with the real tool catalog.** `name`, `file_format`,
+   `image_format`, `week`, `since`, `until` are real structural parameters that were falling to
+   `<str:N>`; added. Content fields (`content`/`body`/`command`/`image_base64`/`title`/`query`) stay
+   off the list. (Direction of the old miss was safe — over-redaction — but it defeated §1.3's "paths.")
+4. **(MED) Coverage added for the two seams that had none:** responder→runtime
+   (`test_audit_recorder_built_per_turn_and_passed_to_runtime` — the recorder is built on
+   door/raw_user/conversation and threaded into `run_turn`) and dead-letter **ordering**
+   (`test_dead_letter_recorded_before_cursor_moves` asserts the `["dead_letter", "cursor"]` sequence,
+   not just end state; `test_cursor_stays_when_dead_letter_record_raises` proves a failed quarantine
+   leaves the cursor put).
+5. **(LOW)** `pump_once` docstring clarified ("events that moved the cursor", not "pushed"); dead
+   `if TYPE_CHECKING: pass` removed from `core/ports/dead_letters.py`.
+
+Deferred (tracked above, not code on this branch): the `max_attempts × poll_interval < max_age`
+timing invariant (Follow-ups, an infra change), the pseudonym-salt question (Open questions, Faza 7),
+and read surfaces for the write-only stores (Follow-ups).

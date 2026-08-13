@@ -384,9 +384,7 @@ def test_runtime_audit_records_each_tool_call_with_status():
         calls.append((name, dict(arguments), status))
 
     llm = _one_tool_then_text("search_notes", {"query": "x"})
-    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn(
-        "q", audit=rec
-    )
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn("q", audit=rec)
 
     assert calls == [("search_notes", {"query": "x"}, "ok")]
 
@@ -434,3 +432,30 @@ def test_runtime_without_audit_dispatches_normally():
 
     assert result.reply == "ok"
     assert seen == ["x"]
+
+
+def test_runtime_audit_records_rejected_unknown_tool():
+    """Wywołanie narzędzia SPOZA katalogu zostawia ślad "rejected" — próba za bramką zdolności."""
+    calls: list[tuple[str, dict, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, dict(arguments), status))
+
+    llm = _one_tool_then_text("Bash", {"command": "ls"})  # brak w katalogu (np. powłoka OFF)
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn("q", audit=rec)
+
+    assert calls == [("Bash", {"command": "ls"}, "rejected")]
+
+
+def test_runtime_audit_records_rejected_bad_arguments():
+    """Odrzucenie na walidacji argumentów (nadmiarowa nazwa) też jest audytowane jako "rejected"."""
+    calls: list[tuple[str, dict, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, dict(arguments), status))
+
+    llm = _one_tool_then_text("search_notes", {"query": "x", "nieznany": 1})
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn("q", audit=rec)
+
+    # Surowe argumenty (koercja padła); rejestrator aplikacji zredaguje je w ``project_arguments``.
+    assert calls == [("search_notes", {"query": "x", "nieznany": 1}, "rejected")]

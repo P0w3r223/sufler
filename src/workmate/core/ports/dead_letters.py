@@ -10,10 +10,7 @@ nie duplikuje. Rdzeń zna TYLKO ten interfejs; fizyczny zapis w adapterze (SQLit
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, Protocol
 
 
 class DeadLetterStore(Protocol):

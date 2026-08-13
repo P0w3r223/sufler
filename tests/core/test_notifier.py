@@ -526,3 +526,79 @@ def test_dead_letter_records_source_and_reason():
     assert dl.records[0]["source"] == "github"
     assert "Graph 503" in dl.records[0]["reason"]
     assert dl.records[0]["attempts"] == 1
+
+
+def test_partial_progress_round_beats_despite_later_retry():
+    """Runda dostarcza zdarzenie 1, a 2 pada poniżej progu → puls MIMO wczesnego wyjścia.
+
+    Regresja review Fazy 0: wczesny ``return`` omijał puls nawet gdy runda RUSZYŁA kursor —
+    healthcheck raportował ``unhealthy`` przy nadrabianiu zaległości mimo realnego postępu
+    (sprzeczne z docstringiem i ADR 0067 §2.2 „delivered ≥1").
+    """
+
+    class _FailSecond(_FakeSender):
+        async def post_channel(self, team_id, channel_id, text) -> str:
+            if "Issue 2" in text:
+                raise RuntimeError("Graph 503")
+            return await super().post_channel(team_id, channel_id, text)
+
+    beats: list[int] = []
+    saved: list[int] = []
+    notifier = _notifier(
+        _FakeEvents([_event(1), _event(2)]),
+        _FailSecond(),
+        targets=_channel_targets(),
+        saved=saved,
+        dead_letters=_FakeDeadLetters(),
+        heartbeat=lambda: beats.append(1),
+        max_attempts=5,
+    )
+    assert asyncio.run(notifier.pump_once()) == 1  # tylko zdarzenie 1 ruszyło kursor
+    assert saved == [1]  # kursor stoi na 1 — zdarzenie 2 ponowi się w następnej rundzie
+    assert beats == [1]  # POSTĘP (dostarczono 1) → puls bije mimo zatoru na zdarzeniu 2
+
+
+def test_dead_letter_recorded_before_cursor_moves():
+    """Kolejność zapis-przed-ruchem: dead-letter TRWAŁY zanim kursor je minie (ADR 0022).
+
+    Sonda KOLEJNOŚCI, nie stanu końcowego: zamiana ``record()`` ↔ ``save_cursor`` przeszłaby test
+    stanu (``test_dead_letter_after_max_attempts_...``), a inwariant at-least-once padłby po cichu.
+    """
+    seq: list[str] = []
+
+    class _SeqDeadLetters(_FakeDeadLetters):
+        def record(self, *, source, event_id, reason, attempts):
+            seq.append("dead_letter")
+            super().record(source=source, event_id=event_id, reason=reason, attempts=attempts)
+
+    notifier = EventNotifier(
+        _FakeEvents([_event(1)]),
+        _FakeSender(fail_channel=True),
+        targets=_channel_targets(),
+        save_cursor=lambda _cid: seq.append("cursor"),
+        dead_letters=_SeqDeadLetters(),
+        max_attempts=1,
+    )
+    asyncio.run(notifier.pump_once())
+    assert seq == ["dead_letter", "cursor"]  # trwałość PRZED przesunięciem kursora
+
+
+def test_cursor_stays_when_dead_letter_record_raises():
+    """Gdy zapis do kwarantanny rzuci, kursor NIE rusza — zdarzenie ponowi się (at-least-once)."""
+    saved: list[int] = []
+
+    class _BrokenDeadLetters(_FakeDeadLetters):
+        def record(self, *, source, event_id, reason, attempts):
+            raise RuntimeError("dysk pełny")
+
+    notifier = EventNotifier(
+        _FakeEvents([_event(1)]),
+        _FakeSender(fail_channel=True),
+        targets=_channel_targets(),
+        save_cursor=saved.append,
+        dead_letters=_BrokenDeadLetters(),
+        max_attempts=1,
+    )
+    with pytest.raises(RuntimeError, match="dysk pełny"):
+        asyncio.run(notifier.pump_once())
+    assert saved == []  # kursor nietknięty gdy kwarantanna zawiodła — brak utraty zdarzenia
