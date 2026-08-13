@@ -182,6 +182,10 @@ class Settings:
     # WORKMATE_METRICS_DB) = metryki wyłączone (drzwi nie zapisują nic). Osobny plik od
     # events.db/conversations.db — dane operacyjne poza bazą wiedzy; pseudonim zamiast tożsamości.
     metrics_db: Path | None
+    # Dziennik audytu (Faza 0, ADR 0067): ścieżka pliku SQLite wpisów wywołań narzędzi. ``None``
+    # (brak WORKMATE_AUDIT_DB) = audyt wyłączony (drzwi nie zapisują nic). Osobny plik, retencja
+    # dłuższa niż rozmów (Faza 7); rejestruje akcje/ścieżki i pseudonim, NIGDY treść.
+    audit_db: Path | None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -214,6 +218,7 @@ class Settings:
             tls_certfile=_optional_path_from_env("WORKMATE_TLS_CERTFILE"),
             tls_keyfile=_optional_path_from_env("WORKMATE_TLS_KEYFILE"),
             metrics_db=_optional_path_from_env("WORKMATE_METRICS_DB"),
+            audit_db=_optional_path_from_env("WORKMATE_AUDIT_DB"),
         )
 
 

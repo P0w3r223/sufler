@@ -63,6 +63,7 @@ def _settings(tmp_path: Path) -> Settings:
         tls_certfile=None,
         tls_keyfile=None,
         metrics_db=None,
+        audit_db=None,
     )
 
 

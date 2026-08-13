@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.pricing import TokenUsage
@@ -361,3 +363,99 @@ def test_run_turn_persists_paired_tool_cycle_entries():
     tool_entry = result.entries[2]
     assert isinstance(tool_entry, ToolResults)
     assert '"count": 1' in tool_entry.outputs[0].content
+
+
+# --- Audyt per wywołanie narzędzia (ADR 0067) ---------------------------------------------------
+
+
+def _one_tool_then_text(tool: str, args: dict) -> _ScriptedLLM:
+    return _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", tool, args),)),
+            LLMResponse(text="ok"),
+        ]
+    )
+
+
+def test_runtime_audit_records_each_tool_call_with_status():
+    calls: list[tuple[str, dict, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, dict(arguments), status))
+
+    llm = _one_tool_then_text("search_notes", {"query": "x"})
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn("q", audit=rec)
+
+    assert calls == [("search_notes", {"query": "x"}, "ok")]
+
+
+def test_runtime_audit_marks_error_result_status():
+    statuses: list[str] = []
+
+    def rec(name, arguments, status):
+        statuses.append(status)
+
+    llm = _one_tool_then_text("search_notes", {"query": "x"})
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"error": "brak"})]).run_turn(
+        "q", audit=rec
+    )
+
+    assert statuses == ["error"]
+
+
+def test_runtime_audit_records_before_raising_defect():
+    calls: list[tuple[str, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, status))
+
+    def boom(query: str) -> dict:
+        raise ValueError("defekt kodu narzędzia")
+
+    llm = _one_tool_then_text("search_notes", {"query": "x"})
+    with pytest.raises(ValueError):
+        AgentRuntime(llm, [_spec("search_notes", boom)]).run_turn("q", audit=rec)
+
+    # Wpis powstaje w ``finally`` (status "error"), a defekt propaguje się dalej (kontrakt rdzenia).
+    assert calls == [("search_notes", "error")]
+
+
+def test_runtime_without_audit_dispatches_normally():
+    seen: list[str] = []
+
+    def search(query: str) -> dict:
+        seen.append(query)
+        return {"ok": True}
+
+    llm = _one_tool_then_text("search_notes", {"query": "x"})
+    result = AgentRuntime(llm, [_spec("search_notes", search)]).run_turn("q")  # audit=None
+
+    assert result.reply == "ok"
+    assert seen == ["x"]
+
+
+def test_runtime_audit_records_rejected_unknown_tool():
+    """Wywołanie narzędzia SPOZA katalogu zostawia ślad "rejected" — próba za bramką zdolności."""
+    calls: list[tuple[str, dict, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, dict(arguments), status))
+
+    llm = _one_tool_then_text("Bash", {"command": "ls"})  # brak w katalogu (np. powłoka OFF)
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn("q", audit=rec)
+
+    assert calls == [("Bash", {"command": "ls"}, "rejected")]
+
+
+def test_runtime_audit_records_rejected_bad_arguments():
+    """Odrzucenie na walidacji argumentów (nadmiarowa nazwa) też jest audytowane jako "rejected"."""
+    calls: list[tuple[str, dict, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, dict(arguments), status))
+
+    llm = _one_tool_then_text("search_notes", {"query": "x", "nieznany": 1})
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn("q", audit=rec)
+
+    # Surowe argumenty (koercja padła); rejestrator aplikacji zredaguje je w ``project_arguments``.
+    assert calls == [("search_notes", {"query": "x", "nieznany": 1}, "rejected")]

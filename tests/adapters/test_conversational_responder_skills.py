@@ -29,6 +29,7 @@ class _HeaderRecordingRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         self.headers.append(session_header)
         return AgentResult(

@@ -73,6 +73,7 @@ class _FakeRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -92,6 +93,7 @@ class _FailingRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -120,6 +122,7 @@ class _ThinkingRuntime:
         history: object = (),
         extra_tools: object = (),
         session_header: str = "",
+        audit: object = None,
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",
@@ -127,6 +130,102 @@ class _ThinkingRuntime:
             stop_reason="end_turn",
             thinking="Analizuję pytanie.",
         )
+
+
+class _AuditCapturingRuntime(_FakeRuntime):
+    """Runtime notujący rejestrator audytu przekazany do ``run_turn`` (szew ADR 0067)."""
+
+    def __init__(self, reply: str = "ok") -> None:
+        super().__init__(reply)
+        self.audit_arg: object = "UNSET"
+
+    def run_turn(
+        self,
+        query: str,
+        *,
+        attachments: object = (),
+        history: object = (),
+        extra_tools: object = (),
+        session_header: str = "",
+        audit: object = None,
+    ) -> AgentResult:
+        self.audit_arg = audit
+        return super().run_turn(
+            query,
+            attachments=attachments,
+            history=history,
+            extra_tools=extra_tools,
+            session_header=session_header,
+            audit=audit,
+        )
+
+
+class _FakeAudit:
+    """Atrapa ``AuditService`` — notuje kontekst tury i zwraca sentinel rejestrator."""
+
+    def __init__(self) -> None:
+        self.turn_calls: list[dict[str, str]] = []
+        self.recorder = object()
+
+    def turn_recorder(
+        self, *, door: str, raw_user: str, conversation_id: str, trust_class: str = "unknown"
+    ) -> object:
+        self.turn_calls.append(
+            {
+                "door": door,
+                "raw_user": raw_user,
+                "conversation_id": conversation_id,
+                "trust_class": trust_class,
+            }
+        )
+        return self.recorder
+
+
+def test_audit_recorder_built_per_turn_and_passed_to_runtime():
+    """Szew responder→runtime: rejestrator audytu domknięty na (kanał, nadawca, rozmowa) i wpięty.
+
+    Jedyne miejsce, gdzie audyt się w ogóle włącza — usunięcie ``audit=audit_recorder`` albo pomyłka
+    w ``door``/``raw_user``/``conversation_id`` przeszłaby bramkę bez śladu bez tego testu (luka
+    pokrycia z review Fazy 0).
+    """
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    runtime = _AuditCapturingRuntime()
+    audit = _FakeAudit()
+    responder = ConversationalResponder(
+        runtime,
+        service,
+        channel="teams",
+        audit=audit,  # type: ignore[arg-type]
+    )
+
+    asyncio.run(
+        responder.respond(
+            InboundMessage(text="pytanie", conversation_id="thr-9", sender_id="aad-123")
+        )
+    )
+
+    assert audit.turn_calls == [
+        {
+            "door": "teams",
+            "raw_user": "aad-123",  # sender_id (AAD id), nie nazwa
+            "conversation_id": "thr-9",
+            "trust_class": "unknown",  # T0–T3 dowiąże ADR 0066
+        }
+    ]
+    assert runtime.audit_arg is audit.recorder  # dokładnie ten rejestrator wpięty do run_turn
+
+
+def test_audit_absent_passes_none_recorder():
+    """Bez ``audit`` (drzwi bez dziennika) runtime dostaje ``audit=None`` — audyt niewłączony."""
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    runtime = _AuditCapturingRuntime()
+    responder = ConversationalResponder(runtime, service, channel="cli")
+
+    asyncio.run(responder.respond(InboundMessage(text="x", conversation_id="c1")))
+
+    assert runtime.audit_arg is None
 
 
 def test_second_turn_receives_prior_history_and_reply_is_recorded():

@@ -30,7 +30,7 @@ from workmate.core.ports.llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.llm import (
@@ -90,8 +90,14 @@ class AgentRuntime:
         history: Sequence[TranscriptEntry] = (),
         extra_tools: Sequence[ToolSpec] = (),
         session_header: str = "",
+        audit: Callable[[str, Mapping[str, Any], str], None] | None = None,
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
+
+        ``audit`` (ADR 0067) to rejestrator per turę: dla KAŻDEGO wywołania narzędzia dostaje
+        ``(nazwa, argumenty, status)``. ``None`` → brak audytu (dawne zachowanie). Kontekst tury
+        (pseudonim nadawcy/rozmowy, klasa zaufania) jest domknięty PO STRONIE drzwi — runtime widzi
+        tylko wąski callback i pozostaje niezależny od pseudonimizacji i magazynu.
 
         ``history`` to wcześniejsze tury bieżącej rozmowy (pamięć, ADR 0010) —
         poprzedzają nową wiadomość jako kontekst. Puste dla drzwi bezstanowych.
@@ -153,7 +159,9 @@ class AgentRuntime:
             )
             transcript.append(assistant)
             new_entries.append(assistant)
-            results = ToolResults(tuple(self._dispatch(c, by_name) for c in response.tool_calls))
+            results = ToolResults(
+                tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+            )
             transcript.append(results)
             new_entries.append(results)
 
@@ -165,9 +173,20 @@ class AgentRuntime:
             usage=run_usage,
         )
 
-    def _dispatch(self, call: ToolCall, by_name: dict[str, ToolSpec]) -> ToolOutput:
+    def _dispatch(
+        self,
+        call: ToolCall,
+        by_name: dict[str, ToolSpec],
+        audit: Callable[[str, Mapping[str, Any], str], None] | None = None,
+    ) -> ToolOutput:
         spec = by_name.get(call.name)
         if spec is None:
+            # Wywołanie ODRZUCONE przed uruchomieniem narzędzia (nieznana nazwa) — cenny ślad
+            # audytu: próba sięgnięcia po narzędzie spoza katalogu (np. za bramką zdolności,
+            # powłoka OFF). Argumenty surowe od modelu; ``project_arguments`` w rejestratorze je
+            # zredaguje, więc treść nie wycieknie mimo braku koercji.
+            if audit is not None:
+                audit(call.name, call.arguments, "rejected")
             return ToolOutput(call.id, f"Nieznane narzędzie: {call.name}", is_error=True)
         # Argumenty pochodzą od modelu (dane niezaufane). Sprawdzamy wiązanie z sygnaturą
         # ORAZ typy, i zwracamy odzyskiwalny błąd — model poprawi w kolejnej turze, pętla
@@ -177,13 +196,29 @@ class AgentRuntime:
         try:
             arguments = _coerce_arguments(spec.fn, call.arguments)
         except (TypeError, ValidationError) as exc:
+            # Odrzucone na walidacji argumentów — też ślad „narzędzie X zawiodło przed wykonaniem".
+            # Argumenty surowe (koercja padła); rejestrator je redaguje.
+            if audit is not None:
+                audit(call.name, call.arguments, "rejected")
             return ToolOutput(
                 call.id,
                 f"Nieprawidłowe argumenty narzędzia {call.name}: {exc}",
                 is_error=True,
             )
-        result = spec.fn(**arguments)
-        return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))
+        if audit is None:
+            result = spec.fn(**arguments)
+            return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))
+        # Audyt per wywołanie (ADR 0067): rejestrujemy nazwę, ZREDAGOWANE argumenty i status w
+        # ``finally``, więc wpis powstaje TAKŻE, gdy narzędzie rzuci defekt (status "error"), a sam
+        # wyjątek propaguje się dalej zgodnie z kontraktem rdzenia. Rejestrator jest best-effort
+        # (łapie własne błędy), więc wołamy go bez osłony — nie może zamaskować wyniku tury.
+        status = "error"
+        try:
+            result = spec.fn(**arguments)
+            status = "error" if isinstance(result, dict) and "error" in result else "ok"
+            return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))
+        finally:
+            audit(call.name, arguments, status)
 
 
 # ``*args``/``**kwargs`` niosą krotkę/słownik, a adnotacja opisuje POJEDYNCZY element —

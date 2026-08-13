@@ -34,12 +34,14 @@ from workmate.adapters.outbound.filesystem_workspace import (
 )
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from workmate.adapters.outbound.sqlite_audit import SqliteAuditStore
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
 from workmate.config import RetrievalSettings
 from workmate.core.agent.prompt import static_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
+from workmate.core.application.audit import AuditService
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
 from workmate.core.application.events import EventService
@@ -646,6 +648,12 @@ def build_conversational_responder(
         if settings.metrics_db is not None
         else None
     )
+    # Dziennik audytu (Faza 0, ADR 0067): włączony obecnością WORKMATE_AUDIT_DB; ``None`` →
+    # wyłączony, runtime nie dostaje rejestratora i nie zapisuje nic. Jeden punkt wpięcia (per turę,
+    # w responderze) obejmuje wszystkie drzwi agentowe; drzwi MCP są poza szwem (ADR 0067 R7).
+    audit = (
+        AuditService(SqliteAuditStore(settings.audit_db)) if settings.audit_db is not None else None
+    )
     # Procedury z `/mnt/skills` (ADR 0005) — odczyt RAZ przy składaniu drzwi. Brak katalogu daje
     # pustą listę i zachowanie dokładnie dawne; nagłówek sesji nie dostaje wtedy sekcji skilli.
     #
@@ -691,6 +699,7 @@ def build_conversational_responder(
         project_brief=project_brief,
         change_digest=change_digest,
         metrics=metrics,
+        audit=audit,
         outbox_delivery=outbox_delivery,
         skills=skills,
     )

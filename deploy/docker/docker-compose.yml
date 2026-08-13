@@ -106,7 +106,15 @@ services:
     command: ["workmate-github"]
     healthcheck:
       <<: *poller-health
-      # interwał 60 s (WORKMATE_GITHUB_POLL_INTERVAL) + zapas ⇒ 180 s.
+      # Healthcheck po pulsie POLLERA (github_state.heartbeat, 180 s = interwał 60 s + zapas) — JEDNA
+      # sonda. Notifier zdarzeń→Teams ma osobny puls (github_state.notify.heartbeat, ADR 0067 §2), ALE
+      # powstaje tylko przy włączonym pushu (github/app.py: if push_settings.enabled = enable_chat OR
+      # enable_channel). Gdy push OFF, github chodzi ingest-only i .notify.heartbeat NIGDY nie powstaje
+      # — druga sonda utrzymałaby github trwale unhealthy (znalezisko z review Fazy 0). DRUGĄ SONDĘ
+      # dodać dopiero przy włączonym pushu (wtedy notifier i pętla dead-letter §2 działają), CMD-SHELL:
+      #   test: ["CMD-SHELL", "workmate-heartbeat-check --file …/github_state.heartbeat --max-age 180
+      #           && workmate-heartbeat-check --file …/github_state.notify.heartbeat --max-age 600"]
+      # Próg notifiera ~600, nie 420: cisza = 5×(poll_interval 60 + timeout httpx 30) ≈ 450 s.
       test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/github_state.heartbeat", "--max-age", "180"]
 
   # --- Drzwi Teams (delegowany Graph) + runtime agenta — ADR 0015/0016 ---------------------------
