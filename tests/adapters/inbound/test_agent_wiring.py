@@ -65,6 +65,7 @@ def _settings(tmp_path: Path) -> Settings:
         tls_keyfile=None,
         metrics_db=None,
         audit_db=None,
+        note_snapshots_dir=tmp_path / "snapshots",
     )
 
 
@@ -801,7 +802,7 @@ def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
     (nazwa,) = stage(scope, (Attachment("document", "application/pdf", "umowa.pdf", "JVBERi0x"),))
 
     queue = AttachmentQueue(budget_bytes=1_000_000)
-    (spec,) = factory(scope, queue)
+    (spec,) = factory(scope, queue, "")
     result = spec.fn(action="read", name=nazwa)
 
     assert result["materialized"] is True
@@ -852,7 +853,7 @@ def test_staged_document_can_actually_be_read_back_by_the_tool(tmp_path: Path):
     (nazwa,) = stage(scope, (Attachment("text", "text/plain", "raport.docx", text="Treść umowy"),))
 
     queue = AttachmentQueue(budget_bytes=1_000_000)
-    (spec,) = factory(scope, queue)
+    (spec,) = factory(scope, queue, "")
     result = spec.fn(action="read", name=nazwa)
 
     assert result["materialized"] is True  # nie „nie jest zipem"

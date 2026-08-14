@@ -14,6 +14,20 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
 - **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
 - **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
 
+- **Mutowalna baza wiedzy pod sędzią** (ADR 0065): agent może POPRAWIĆ istniejącą notatkę
+  (`File(edit)`), a przy osobnej bramce także ją usunąć (`File(delete)`). To **świadome
+  odwrócenie** dotychczasowej postawy: do teraz bazy nie dało się zepsuć, bo jedyny pisarz był
+  create-only, więc odwracalność była strukturalna. Teraz jest proceduralna — migawka przed każdą
+  operacją (jej niepowodzenie ODMAWIA zmiany) plus nocna kopia wolumenu. Nad tym stoi **niezależny
+  sędzia** (osobne wywołanie modelu z wymuszonym schematem werdyktu), który potrafi tylko zawęzić:
+  autoryzacja nadawcy po AAD pada przed nim, ścieżka i schemat poza nim, a każda awaria — sieci,
+  ucięcie odpowiedzi, nieznany werdykt — kończy się odmową. Werdykt `confirm` wymaga **powrotu tej
+  samej prośby w późniejszej turze** (tura powstaje tylko wtedy, gdy ktoś napisał). Notatki ze
+  spotkań i wątków zostają niezmienne — ich niezmienność to mechanizm idempotencji, nie ostrożność.
+  Trzy bramki, wszystkie domyślnie OFF: `..._ENABLE_NOTE_MUTATION`, `..._ENABLE_NOTE_DELETE`
+  (osobna, bo ADR wiąże kasowanie z DZIAŁAJĄCĄ kopią zapasową) oraz wymagana mapa tożsamości.
+  Prompt i twarda reguła 2 w `CLAUDE.md` zaktualizowane — bez tego zamrożony prefiks instruowałby
+  model przeciwko narzędziu, które właśnie dostał.
 - **Klasy zaufania T0–T3 + lepka skaza rozmowy** (ADR 0066): treść OBCA — plik, wynik narzędzia,
   tura nadawcy spoza mapy tożsamości — jedzie do modelu w kopercie z etykietą pochodzenia i
   granicą znaczoną **nonce'em losowanym na turę** (stały znacznik dałoby się podrobić treścią,
@@ -45,10 +59,14 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
   dostaje `workmate-extract plik.pdf` na pdf/docx/xlsx/pptx/html — ten sam `document_text` co drzwi.
   `pypdf` dołożony do extra `teams-graph`, bo obraz floty nie instaluje `seed`, w którym mieszkał.
 
-### Design (ADR-y `accepted` 2026-08-14, kod jeszcze nienapisany)
-- **0064** — narzędzie `File(read|write|edit|delete)` + materializacja do następnej tury użytkownika, ekstrakcja HTML z budżetem anty-maskującym, `workmate-extract`. Pomiar ruchu (31 lip–14 sie: 4 załączniki, 0 kompaktowań) **nie** potwierdził potrzeby — narzędzie powstaje decyzją właściciela, z ponownym pomiarem po miesiącu powłoki jako warunkiem utrzymania.
-- **0065** — mutowalna baza wiedzy: kanał generyczny `File(write/edit/delete)` przez walidator notatek, sędzia-Sonnet jako obrona w głębi, werdykt `confirm` = potwierdzenie w wątku od tego samego zmapowanego nadawcy, snapshot przed każdą operacją + nocna kopia wolumenu.
-- **0066** — klasy zaufania T0–T3: etykiety T3 domyślnie ON, rozszczepienie T1/T2 opt-in za flagą ADR 0062; lepka skaza rozmowy eskaluje (sędzia + audyt), nie blokuje.
+### Uwaga wdrożeniowa
+
+ADR-y 0064/0065/0066 są zaimplementowane, ale **wszystkie ich bramki są domyślnie WYŁĄCZONE** —
+włączenie każdej to świadoma decyzja operatora (`.env` + recreate), nie skutek wdrożenia obrazu.
+Kasowanie notatek (`..._ENABLE_NOTE_DELETE`) ma dodatkowy warunek spoza kodu: **działającą nocną
+kopię wolumenu** (`systemd/workmate-backup.timer` z infry). ADR 0065 opiera na niej całą
+odwracalność, więc włączenie kasowania bez sprawdzenia kopii jest dokładnie tym, przed czym ta
+bramka ma chronić.
 
 ## [1.6.0] — 2026-08-07
 

@@ -228,7 +228,7 @@ def test_scope_is_closed_over_and_invisible_to_the_model():
     """Model nie widzi scope w schemacie, więc nie ma jak sięgnąć cudzej rozmowy."""
     spec, _ = _tool(files={"umowa.pdf": _PDF})
 
-    assert set(spec.fn.__annotations__) == {"action", "name", "return"}
+    assert set(spec.fn.__annotations__) == {"action", "name", "content", "reason", "return"}
 
 
 def test_tool_is_named_file_and_carries_a_usable_description():
@@ -238,3 +238,119 @@ def test_tool_is_named_file_and_carries_a_usable_description():
     assert "read" in spec.description
     # Opis mówi też, KIEDY nie używać — inaczej model sięga po nie do plików tekstowych.
     assert "cat" in spec.description
+
+
+# --- Akcje mutujące bazę wiedzy (ADR 0065) -------------------------------------
+
+
+class _FakeMutations:
+    """Atrapa bramki mutacji — notuje wywołania, oddaje sukces albo zadaną odmowę."""
+
+    def __init__(self, refuse: str = "") -> None:
+        self.refuse = refuse
+        self.edits: list[tuple] = []
+        self.deletes: list[tuple] = []
+
+    def _maybe_refuse(self):
+        if self.refuse:
+            from workmate.core.application.note_mutation import MutationOutcome, MutationRefused
+            from workmate.core.domain.mutation import JudgeVerdict
+
+            raise MutationRefused(MutationOutcome(False, JudgeVerdict("confirm", self.refuse)))
+
+    def edit_note(self, note_id, body, *, requester, intent):  # noqa: ANN001, ANN201
+        self._maybe_refuse()
+        self.edits.append((note_id, body, requester, intent))
+
+    def delete_note(self, note_id, *, requester, intent):  # noqa: ANN001, ANN201
+        from workmate.core.application.note_mutation import MutationOutcome
+        from workmate.core.domain.mutation import JudgeVerdict
+
+        self._maybe_refuse()
+        self.deletes.append((note_id, requester, intent))
+        return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
+
+
+def _tool_z_mutacjami(*, requester: str = "Anna", refuse: str = ""):
+    scope_dir = str(_SCOPE.dirpath())
+    repo = _FakeWorkspace({f"{scope_dir}/umowa.pdf": _PDF})
+    mutations = _FakeMutations(refuse)
+    (spec,) = build_file_catalog(
+        _SCOPE,
+        WorkspaceService(repo),
+        _FakeMaterializer(),  # type: ignore[arg-type]
+        AttachmentQueue(budget_bytes=1_000_000),
+        MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=10_000_000),
+        mutations,  # type: ignore[arg-type]
+        requester,
+    )
+    return spec, mutations
+
+
+def test_mutation_actions_are_absent_when_the_gate_is_closed():
+    """Bez bramki narzędzie ma TYLKO odczyt — model nie zobaczy nawet nazwy akcji mutującej."""
+    spec, _ = _tool()
+
+    assert "edit" not in spec.description and "delete" not in spec.description
+    assert "error" in spec.fn(action="edit", name="x", content="y", reason="z")
+
+
+def test_unrecognised_requester_gets_no_mutation():
+    """Fail-closed jak przy bramce powłoki (ADR 0063): bez rozpoznanego człowieka nie ma komu
+    przypisać zmiany ani kogo zapytać o potwierdzenie."""
+    spec, mutations = _tool_z_mutacjami(requester="")
+
+    wynik = spec.fn(action="edit", name="notatka", content="nowa", reason="poprawka")
+
+    assert "Nie rozpoznaję" in wynik["error"]
+    assert mutations.edits == []
+
+
+def test_edit_requires_a_reason():
+    """Bez powodu nie ma czego oceniać — sędzia dostałby pustą deklarację intencji."""
+    spec, mutations = _tool_z_mutacjami()
+
+    wynik = spec.fn(action="edit", name="notatka", content="nowa", reason="  ")
+
+    assert "reason" in wynik["error"]
+    assert mutations.edits == []
+
+
+def test_empty_content_is_refused_instead_of_silently_emptying_the_note():
+    """Pusta treść skasowałaby notatkę pod pozorem edycji — kasowanie ma być świadome."""
+    spec, mutations = _tool_z_mutacjami()
+
+    wynik = spec.fn(action="edit", name="notatka", content="   ", reason="porządki")
+
+    assert "delete" in wynik["error"]
+    assert mutations.edits == []
+
+
+def test_edit_passes_the_note_id_and_reason_through():
+    spec, mutations = _tool_z_mutacjami()
+
+    wynik = spec.fn(action="edit", name="biap/mpwik/x", content="nowa", reason="poprawka")
+
+    assert wynik["edited"] is True
+    assert mutations.edits == [("biap/mpwik/x", "nowa", "Anna", "poprawka")]
+
+
+def test_delete_reports_where_the_copy_is():
+    """Model ma powiedzieć człowiekowi, gdzie leży kopia — cofnięcie nie ma być śledztwem."""
+    spec, _ = _tool_z_mutacjami()
+
+    wynik = spec.fn(action="delete", name="biap/mpwik/x", reason="duplikat")
+
+    assert wynik["deleted"] is True and wynik["kopia"] == "/snap/x"
+
+
+def test_refusal_comes_back_as_a_result_not_as_a_tool_failure():
+    """Odmowa sędziego to NORMALNY wynik z powodem, który model ma przekazać człowiekowi —
+    nie awaria narzędzia, po której model zacznie ponawiać."""
+    spec, _ = _tool_z_mutacjami(refuse="to skasowałoby ustalenia z całego kwartału")
+
+    wynik = spec.fn(action="delete", name="biap/mpwik/x", reason="porządki")
+
+    assert wynik["verdict"] == "confirm"
+    assert wynik["wymaga_potwierdzenia"] is True
+    assert "kwartału" in wynik["error"]

@@ -16,6 +16,7 @@ więc kolejność pól odpowiada modelowi (title, project, date, …), a
 
 from __future__ import annotations
 
+import contextlib
 import os
 import uuid
 from pathlib import Path
@@ -41,6 +42,32 @@ class MarkdownNotesWriter:
         path = _resolve_within(self._notes_dir, f"{note.id}.md")
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_create(path, _render(note.metadata, note.body))
+
+    def overwrite(self, note: Note) -> None:
+        """Podmień treść ISTNIEJĄCEJ notatki atomowo (ADR 0065) — nigdy w miejscu.
+
+        ``os.replace`` na w pełni zapisanym pliku tymczasowym: czytelnik widzi albo starą, albo
+        nową treść, nigdy połowy. Zapis „w miejscu" (truncate + write) zostawiałby przy awarii
+        w połowie notatkę uciętą — czyli cichą utratę wiedzy pod pozorem udanej edycji.
+
+        Odmawiamy, gdy notatki NIE MA: ``overwrite`` ma zmieniać, nie tworzyć. Gdyby tworzył,
+        literówka w identyfikatorze rodziłaby po cichu nowy plik obok tego, który miał być
+        poprawiony.
+        """
+        path = _resolve_within(self._notes_dir, f"{note.id}.md")
+        if not path.is_file():
+            raise WriteError(f"notatka nie istnieje, nie ma czego podmienić: {note.id}")
+        _atomic_replace(path, _render(note.metadata, note.body))
+
+    def delete(self, note_id: str) -> None:
+        """Usuń POJEDYNCZY plik notatki (ADR 0065). Katalogów nie ruszamy — nawet pustych."""
+        path = _resolve_within(self._notes_dir, f"{note_id}.md")
+        if not path.is_file():
+            raise WriteError(f"notatka nie istnieje: {note_id}")
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise WriteError(f"nie udało się usunąć notatki {note_id}: {exc}") from exc
 
 
 def _render(metadata: NoteMetadata, body: str) -> str:
@@ -91,3 +118,22 @@ def _atomic_create(path: Path, content: str) -> None:
         raise WriteError(f"nie udało się zapisać notatki {path.name}: {exc}") from exc
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def _atomic_replace(path: Path, content: str) -> None:
+    """Podmiana atomowa: pełny zapis do pliku tymczasowego, potem ``os.replace``.
+
+    Odwrotność ``_atomic_create``: tam ``os.link`` chroni PRZED nadpisaniem, tu ``os.replace``
+    nadpisanie wykonuje — świadomie i w jednym kroku widocznym dla czytelnika. Plik tymczasowy
+    leży w tym samym katalogu, bo ``os.replace`` jest atomowe tylko w obrębie systemu plików.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise WriteError(f"nie udało się podmienić notatki {path.name}: {exc}") from exc
+    finally:
+        # Sprzątanie nie może przykryć właściwego błędu (patrz ``filesystem_snapshots``).
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)

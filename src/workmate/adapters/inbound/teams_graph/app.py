@@ -209,6 +209,9 @@ def main() -> None:
         # modelu i pliki użytkownika lecą w TYM SAMYM żądaniu API — dwa niezależne budżety
         # sumowałyby się ponad limit żądania. Stąd te same ustawienia, nie nowe.
         enable_file_tool=settings.enable_file_tool,
+        enable_note_mutation=settings.enable_note_mutation,
+        enable_note_delete=settings.enable_note_delete,
+        mutation_identities=_build_mutation_identities(settings),
         attachment_budget_bytes=settings.max_total_attachment_mb * 1024 * 1024,
         attachment_max_image_edge=settings.max_image_edge_px,
         attachment_max_bytes=settings.max_attachment_mb * 1024 * 1024,
@@ -1101,6 +1104,9 @@ def _build_responder(
     note_read_authorizer: NoteReadAuthorizer | None = None,
     shell_authorizer: ShellAuthorizer | None = None,
     enable_file_tool: bool = False,
+    enable_note_mutation: bool = False,
+    enable_note_delete: bool = False,
+    mutation_identities: object | None = None,
     attachment_budget_bytes: int = 0,
     attachment_max_image_edge: int = 2048,
     attachment_max_bytes: int = 0,
@@ -1164,6 +1170,10 @@ def _build_responder(
         file_tool_staged_ext=_STAGED_ATTACHMENT_EXTS,
         # Koperty T3 (ADR 0066) — bramka niezależna od rozszczepienia nadawcy.
         trust_labels=trust_labels,
+        # Mutacja bazy wiedzy (ADR 0065) — trzy niezależne bramki: edycja, kasowanie, mapa.
+        enable_note_mutation=enable_note_mutation,
+        enable_note_delete=enable_note_delete,
+        identities=mutation_identities,  # type: ignore[arg-type]
     )
 
 
@@ -1251,3 +1261,31 @@ async def _discover(settings: TeamsGraphSettings, token_provider: Callable[[], s
 
 if __name__ == "__main__":
     main()
+
+
+def _build_mutation_identities(settings: TeamsGraphSettings) -> object | None:
+    """Mapa tożsamości dla MUTACJI bazy wiedzy (ADR 0065) albo ``None`` — fail-closed.
+
+    Osobno od ``_build_note_read_authorizer``, bo to inna bramka i inny plik konfiguracji mógłby
+    ją włączyć. Wspólny jest za to warunek konieczny: bez mapy nie ma komu przypisać zmiany
+    ani kogo zapytać o potwierdzenie, więc brak pliku ZAMYKA mutacje zamiast je przepuścić.
+    """
+    if not settings.enable_note_mutation:
+        return None
+    if not settings.meeting_note_identities.is_file():
+        logger.error(
+            "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION=true, ale mapy tożsamości %s nie ma — "
+            "mutacje bazy wiedzy POZOSTAJĄ WYŁĄCZONE (fail-closed, ADR 0065).",
+            settings.meeting_note_identities,
+        )
+        return None
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+
+    logger.warning(
+        "MUTACJA bazy wiedzy WŁĄCZONA (ADR 0065): agent może zmieniać notatki przez File(edit)"
+        "%s. Każda zmiana idzie przez migawkę i niezależnego sędziego; nadawca musi być "
+        "rozpoznany przez mapę %s.",
+        " ORAZ JE USUWAĆ (File(delete))" if settings.enable_note_delete else "",
+        settings.meeting_note_identities,
+    )
+    return YamlIdentityDirectory(settings.meeting_note_identities)

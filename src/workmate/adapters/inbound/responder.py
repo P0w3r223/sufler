@@ -217,7 +217,7 @@ class ConversationalResponder:
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
         file_catalog_factory: (
-            Callable[[WorkspaceScope, AttachmentQueue], Sequence[ToolSpec]] | None
+            Callable[[WorkspaceScope, AttachmentQueue, str], Sequence[ToolSpec]] | None
         ) = None,
         attachment_stager: (
             Callable[[WorkspaceScope, Sequence[Attachment]], Sequence[str]] | None
@@ -476,7 +476,12 @@ class ConversationalResponder:
         )
         if self._file_catalog_factory is not None:
             try:
-                extra_tools.extend(self._file_catalog_factory(scope, attachment_queue))
+                # ``sender_id`` idzie do fabryki, bo akcje MUTUJĄCE (ADR 0065) wiążą się
+                # z człowiekiem: bez rozpoznanego nadawcy nie ma komu przypisać zmiany ani
+                # kogo zapytać o potwierdzenie, więc fabryka ich wtedy nie dokłada.
+                extra_tools.extend(
+                    self._file_catalog_factory(scope, attachment_queue, message.sender_id)
+                )
             except Exception:
                 logger.warning(
                     "Nie udało się zbudować narzędzia File dla %r — pomijam", external_id

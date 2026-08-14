@@ -295,3 +295,29 @@ def test_session_header_without_a_nonce_says_nothing_about_envelopes():
     header = build_session_header(datetime(2026, 8, 5))
 
     assert "dane-obce" not in header
+
+
+def test_prompt_stops_forbidding_note_changes_when_mutation_is_on():
+    """Zamrożony prefiks nie może mówić „nie zmieniaj notatek" obok narzędzia, które to umie.
+
+    Wariant podmienia ZNANE zdanie, więc gdyby korpus je przeredagował bez zmiany stałej,
+    podmiana stałaby się cichym no-opem — ta sonda właśnie to łapie.
+    """
+    bez = static_prompt_for(attachments=False)
+    z_mutacja = static_prompt_for(attachments=False, mutation=True)
+
+    assert "leave existing ones as their authors" in bez
+    assert "leave existing ones as their authors" not in z_mutacja
+    assert "only when someone asks you to" in z_mutacja
+    assert "independent reviewer" in z_mutacja
+
+
+def test_mutation_variant_is_still_positively_framed():
+    """Nowe zdanie podlega tej samej bramce redakcyjnej co reszta promptu (ADR 0056)."""
+    hits = [
+        line.strip()
+        for line in static_prompt_for(attachments=True, shell=True, mutation=True).splitlines()
+        if _NEGATIONS.search(line)
+    ]
+
+    assert not hits, f"linie przeczące: {hits}"
