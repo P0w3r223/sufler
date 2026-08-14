@@ -368,6 +368,31 @@ def test_file_html_is_extracted_to_text_not_handed_over_as_markup():
     assert not att.data_base64  # tekst nie zjada budżetu bajtów API
 
 
+def test_file_htm_alias_goes_through_the_same_dispatcher_as_html():
+    """Alias ``.htm`` nie może zależeć od osobnej listy w drzwiach — to droga cichego rozjazdu."""
+    client = _FakeGraphClient(files={"u://r": b"<p>tresc strony</p>"})
+    ref = AttachmentRef(kind="file", name="raport.htm", url="u://r")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.text == "tresc strony"
+
+
+def test_readable_file_without_text_yields_a_note_instead_of_an_empty_label():
+    """Pusty wynik ekstrakcji ma być NAZWANY — inaczej model dostaje samą etykietę pliku.
+
+    Uwaga: strona z samą grafiką NIE jest tym przypadkiem — ekstraktor policzy obrazy bez opisu
+    i to JEST treść (o tym mówi anty-maskowanie). Chodzi o plik faktycznie bez czego czytać.
+    """
+    client = _FakeGraphClient(files={"u://r": b"<html><body><div></div></body></html>"})
+    ref = AttachmentRef(kind="file", name="pusta.html", url="u://r")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.name == "status załącznika"
+    assert "nie zawiera tekstu" in att.text
+
+
 def test_file_image_media_type_from_content_overrides_extension():
     """Typ obrazu bierzemy z ZAWARTOŚCI, nie z rozszerzenia — plik JPEG nazwany .png → jpeg."""
     client = _FakeGraphClient(files={"u://foto": _JPEG})

@@ -9,6 +9,9 @@ oddaje DOKŁADNIE ten sam tekst, co ekstraktor w procesie drzwi — rozjazd mię
 
 from __future__ import annotations
 
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,3 +101,29 @@ def test_missing_path_argument_is_a_usage_error(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 2
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGPIPE"), reason="brak SIGPIPE (nie-POSIX)")
+def test_piping_into_head_does_not_produce_a_traceback(tmp_path: Path):
+    """`workmate-extract plik | head` to wzorzec, do którego kieruje sam opis narzędzia.
+
+    Bez ustawienia SIGPIPE na domyślną akcję kończył się `BrokenPipeError` na STDERR — potok
+    działał, a model, który widzi wyłącznie kod wyjścia i strumienie, dostawał sygnał awarii.
+    Sondujemy PRAWDZIWYM potokiem w podprocesie, bo tego stanu nie da się udać w procesie testu.
+    """
+    duzy = tmp_path / "duzy.html"
+    duzy.write_bytes(b"<p>" + b"linia tekstu<br>" * 50_000 + b"</p>")
+
+    proces = subprocess.run(
+        f"{sys.executable} -c "
+        f'\'import sys; sys.argv=["workmate-extract", "{duzy}"]; '
+        "from workmate.adapters.inbound.cli.extract import main; main()' | head -3",
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert "BrokenPipeError" not in proces.stderr
+    assert "Traceback" not in proces.stderr
+    assert "linia tekstu" in proces.stdout

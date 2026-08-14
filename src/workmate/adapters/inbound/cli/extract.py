@@ -6,14 +6,21 @@ domyka tę lukę od strony powłoki (ADR 0064) — tekstową ekstrakcję zostawi
 dokładać ją do typowanej powierzchni narzędzi, bo kryterium ADR 0061 mówi, że narzędzie typowane
 istnieje tylko tam, gdzie powłoka NIE sięga. Tu sięga — brakowało jej wyłącznie ekstraktora.
 
-Ten sam ``document_text`` co materializer drzwi i importer korpusu, więc `workmate-extract` i
-`File(read)` widzą ten sam tekst — rozjazd między nimi byłby błędem trudnym do zauważenia.
+Ten sam ``document_text`` co materializer drzwi i importer korpusu, więc dla formatów
+EKSTRAHOWANYCH (docx/xlsx/pptx/html/tekst) komenda i załącznik dają identyczny tekst — rozjazd
+byłby błędem trudnym do zauważenia. PDF jest wyjątkiem świadomym: drzwi oddają go modelowi
+NATYWNIE (blok ``document``), a ta komenda wyciąga z niego warstwę tekstową, więc skan bez tej
+warstwy wróci tu pusty, choć jako załącznik byłby czytelny — dlatego notka o pustym PDF mówi
+o tym wprost, zamiast zostawiać model z „plik nie ma tekstu".
+
 Treść pliku to DANE: komenda ją wypisuje, niczego nie wykonuje i niczego nie interpretuje.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import signal
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -56,6 +63,12 @@ def main() -> None:
     notką, bo plik jest czytelny — po prostu nie ma w nim tekstu.
     """
     env.force_utf8_io()
+    # Zachowaj się jak zwykły filtr uniksowy: bez tego `workmate-extract plik | head` — wzorzec,
+    # do którego kieruje sam opis narzędzia — kończył się `BrokenPipeError` na STDERR, mimo że
+    # potok zadziałał. Model widzi wyłącznie kod wyjścia i strumienie, więc sukces udawał awarię.
+    # `head` zamyka wejście po swoich N liniach; SIGPIPE jest wtedy normalnym końcem, nie błędem.
+    with contextlib.suppress(AttributeError, ValueError):  # brak SIGPIPE (Windows) → bez zmian
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     args = _parse_args(sys.argv[1:])
     path = Path(args.path)
 
@@ -75,6 +88,11 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     if not text:
-        print(f"Plik {args.path} jest czytelny, ale nie zawiera tekstu.", file=sys.stderr)
+        powod = (
+            " Jeśli to skan, prześlij go jako załącznik — wtedy zobaczysz sam dokument."
+            if path.suffix.lower() == ".pdf"
+            else ""
+        )
+        print(f"Plik {args.path} jest czytelny, ale nie zawiera tekstu.{powod}", file=sys.stderr)
         return
     print(text)
