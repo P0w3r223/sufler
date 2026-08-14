@@ -29,6 +29,8 @@ class _Runtime:
         session_header: str = "",
         audit: object = None,
         attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         return AgentResult(
             reply="odp", entries=(UserText(query), AssistantTurn("odp", ())), stop_reason="end_turn"

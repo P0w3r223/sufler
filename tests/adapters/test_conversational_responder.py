@@ -35,6 +35,7 @@ from workmate.core.ports.llm import (
     Attachment,
     LLMResponse,
     RawTurn,
+    ToolCall,
     ToolOutput,
     ToolResults,
     UserText,
@@ -76,6 +77,8 @@ class _FakeRuntime:
         session_header: str = "",
         audit: object = None,
         attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -97,6 +100,8 @@ class _FailingRuntime:
         session_header: str = "",
         audit: object = None,
         attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -127,6 +132,8 @@ class _ThinkingRuntime:
         session_header: str = "",
         audit: object = None,
         attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",
@@ -153,6 +160,8 @@ class _AuditCapturingRuntime(_FakeRuntime):
         session_header: str = "",
         audit: object = None,
         attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         self.audit_arg = audit
         return super().run_turn(
@@ -559,7 +568,7 @@ class _FakeSummarizer:
     def __init__(self, text: str = "SKRÓT") -> None:
         self.text = text
 
-    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+    def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
         return LLMResponse(text=self.text, usage=TokenUsage(input_tokens=10, output_tokens=5))
 
 
@@ -643,3 +652,175 @@ def test_metrics_failure_does_not_break_turn():
 
     reply = asyncio.run(responder.respond(InboundMessage(text="czesc", conversation_id="c")))
     assert reply == "ok"
+
+
+# --- Klasy zaufania i lepka skaza (ADR 0066) -----------------------------------
+
+
+class _ToolCallingRuntime(_FakeRuntime):
+    """Runtime, który udaje turę z wywołaniem WSKAZANEGO narzędzia (do wyzwalaczy skazy)."""
+
+    def __init__(self, tool_name: str) -> None:
+        super().__init__("ok")
+        self._tool = tool_name
+        self.trust_seen: list[str] = []
+        self.nonce_seen: list[str] = []
+
+    def run_turn(self, query, **kwargs) -> AgentResult:  # type: ignore[override]
+        self.calls.append((query, list(kwargs.get("history", []))))
+        self.trust_seen.append(str(kwargs.get("trust")))
+        self.nonce_seen.append(str(kwargs.get("trust_nonce")))
+        return AgentResult(
+            reply="ok",
+            entries=(
+                UserText(query, (), kwargs.get("trust", "T1")),
+                AssistantTurn("ok", (ToolCall("t1", self._tool, {}),)),
+                AssistantTurn("ok", ()),
+            ),
+            stop_reason="end_turn",
+        )
+
+
+def _responder_z_zaufaniem(runtime, **kwargs):
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    responder = ConversationalResponder(runtime, service, channel="teams_graph", **kwargs)
+    return responder, service, store
+
+
+def test_attachment_taints_the_conversation():
+    """Załącznik to treść obca — od tej chwili rozmowa jest skażona do końca wątku."""
+    responder, service, _ = _responder_z_zaufaniem(_FakeRuntime("ok"))
+    plik = Attachment("document", "application/pdf", "u.pdf", data_base64="QQ==")
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="zobacz", conversation_id="t", attachments=(plik,)))
+    )
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+    assert conv.taint_source == "attachment"
+
+
+def test_reading_own_notes_does_not_taint():
+    """Gdyby skaziło wszystko, sygnał nie znaczyłby nic (ADR 0066 R2).
+
+    Notatki własnego pionu są zza bramek zdolności — czytanie ich to praca, nie kontakt
+    z treścią obcą.
+    """
+    responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("Notes"))
+
+    asyncio.run(responder.respond(InboundMessage(text="co wiemy?", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is False
+
+
+def test_github_content_taints_the_conversation():
+    """Komentarz na GitHubie pisze ktokolwiek, a mapa tożsamości nie zna loginów GitHuba."""
+    responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("GitHub"))
+
+    asyncio.run(responder.respond(InboundMessage(text="co w PR?", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+    assert conv.taint_source == "tool"
+
+
+def test_first_taint_source_wins():
+    """Skaza mówi „od kiedy i przez co", nie „co ostatnio wpadło" — inaczej ślad audytowy
+    zamienia się w migawkę ostatniej tury."""
+    responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("GitHub"))
+    plik = Attachment("document", "application/pdf", "u.pdf", data_base64="QQ==")
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="a", conversation_id="t", attachments=(plik,)))
+    )
+    asyncio.run(responder.respond(InboundMessage(text="b", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.taint_source == "attachment"  # pierwszy zapłon, nie ostatni
+
+
+def test_a_clean_turn_leaves_the_conversation_clean():
+    responder, service, _ = _responder_z_zaufaniem(_FakeRuntime("ok"))
+
+    asyncio.run(responder.respond(InboundMessage(text="dzień dobry", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is False
+
+
+def test_unmapped_sender_turn_is_data_and_taints():
+    """Rozszczepienie T1/T2: gość dostaje odpowiedź, ale jego słowa schodzą do danych."""
+    runtime = _ToolCallingRuntime("Notes")
+    responder, service, _ = _responder_z_zaufaniem(
+        runtime, sender_trust=lambda sender_id: "T1" if sender_id == "aad-znany" else "T2"
+    )
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="cześć", conversation_id="t", sender_id="obcy"))
+    )
+
+    assert runtime.trust_seen == ["T2"]
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.taint_source == "guest"
+
+
+def test_mapped_sender_stays_an_instruction_and_does_not_taint():
+    runtime = _ToolCallingRuntime("Notes")
+    responder, service, _ = _responder_z_zaufaniem(
+        runtime, sender_trust=lambda sender_id: "T1" if sender_id == "aad-znany" else "T2"
+    )
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="cześć", conversation_id="t", sender_id="aad-znany"))
+    )
+
+    assert runtime.trust_seen == ["T1"]
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is False
+
+
+def test_failure_to_resolve_the_sender_is_fail_closed():
+    """Nie wiemy, kto pisze → traktujemy słowa jak dane. Odwrotny domysł byłby awansem
+    nieznajomego do rangi operatora."""
+
+    def wybuchowy(sender_id: str) -> str:
+        raise RuntimeError("mapa tożsamości nieczytelna")
+
+    runtime = _ToolCallingRuntime("Notes")
+    responder, _service, _ = _responder_z_zaufaniem(runtime, sender_trust=wybuchowy)
+
+    asyncio.run(responder.respond(InboundMessage(text="cześć", conversation_id="t", sender_id="x")))
+
+    assert runtime.trust_seen == ["T2"]
+
+
+def test_trust_class_survives_storage_and_replay():
+    """Bez trwałości granica trzymałaby JEDNĄ turę: przy następnej wiadomości tekst gościa
+    wracałby z pamięci jako zwykła instrukcja."""
+    runtime = _ToolCallingRuntime("Notes")
+    responder, _service, _ = _responder_z_zaufaniem(runtime, sender_trust=lambda _s: "T2")
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="pierwsza", conversation_id="t", sender_id="x"))
+    )
+    asyncio.run(responder.respond(InboundMessage(text="druga", conversation_id="t", sender_id="x")))
+
+    historia = [e for e in runtime.calls[-1][1] if isinstance(e, UserText)]
+    assert historia and all(e.trust == "T2" for e in historia)
+
+
+def test_nonce_is_absent_when_labels_are_off_and_fresh_per_turn_when_on():
+    runtime = _ToolCallingRuntime("Notes")
+    responder, _service, _ = _responder_z_zaufaniem(runtime, trust_labels=True)
+    wylaczony_runtime = _ToolCallingRuntime("Notes")
+    wylaczony, _s2, _st2 = _responder_z_zaufaniem(wylaczony_runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="a", conversation_id="t")))
+    asyncio.run(responder.respond(InboundMessage(text="b", conversation_id="t")))
+    asyncio.run(wylaczony.respond(InboundMessage(text="a", conversation_id="t2")))
+
+    assert wylaczony_runtime.nonce_seen == [""]  # bramka OFF = dawne zachowanie
+    assert all(runtime.nonce_seen) and len(set(runtime.nonce_seen)) == 2  # świeży na turę

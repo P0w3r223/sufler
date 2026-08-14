@@ -28,7 +28,7 @@ class _FakeLLM:
         self.usage = usage or TokenUsage(input_tokens=50, output_tokens=20)
         self.calls: list[tuple[str, list, list]] = []
 
-    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+    def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
         self.calls.append((system, list(transcript), list(tools)))
         return LLMResponse(text=self.text, usage=self.usage)
 

@@ -184,7 +184,14 @@ class ConversationService:
                 blocks=blocks,
                 stop_reason=entry_stop,
                 usage=usage,
+                # Klasa pochodzenia (ADR 0066) dotyczy WYŁĄCZNIE tury użytkownika — model i
+                # narzędzia nie mają nadawcy do rozwiązania.
+                trust=entry.trust if isinstance(entry, UserText) else None,
             )
+
+    def mark_tainted(self, conversation_id: str, source: str) -> None:
+        """Zapal lepką skazę rozmowy (ADR 0066) — delegacja do magazynu."""
+        self._store.mark_tainted(conversation_id, source)
 
     def search(
         self,

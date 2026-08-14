@@ -602,3 +602,66 @@ def test_pre_0014_db_migrates_archived_column_and_summaries_table(tmp_path: Path
     assert old.archived is False
     rec = store.save_summary("c1", "skrót", old.id)
     assert store.active_summary("c1").id == rec.id
+
+
+def test_pre_0066_db_gains_taint_and_trust_columns(tmp_path):
+    """Baza sprzed 0066 dostaje kolumny skazy i klasy zaufania migracją ADDYTYWNĄ.
+
+    Skaza musi żyć NA DYSKU, nie w pamięci procesu: recreate kontenera (a ten w tej flocie
+    zdarza się przy każdym wdrożeniu) nie może zgubić stanu eskalacji.
+    """
+    import sqlite3
+
+    db = tmp_path / "stara.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id TEXT PRIMARY KEY, channel TEXT NOT NULL, external_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        );
+        INSERT INTO conversations(id, channel, external_id, status)
+        VALUES ('c1', 'teams_graph', 'thr-1', 'active');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = SqliteConversationStore(db)
+
+    conv = store.active_conversation("teams_graph", "thr-1")
+    assert conv is not None
+    assert conv.tainted is False  # istniejące rozmowy startują CZYSTE
+    store.mark_tainted("c1", "attachment")
+    odczyt = store.active_conversation("teams_graph", "thr-1")
+    assert odczyt is not None and odczyt.tainted is True
+    assert odczyt.taint_source == "attachment"
+
+
+def test_mark_tainted_is_idempotent_and_keeps_the_first_source(tmp_path):
+    store = SqliteConversationStore(":memory:")
+    conv = store.open_conversation("teams_graph", "thr-2")
+
+    store.mark_tainted(conv.id, "attachment")
+    store.mark_tainted(conv.id, "tool")
+
+    odczyt = store.active_conversation("teams_graph", "thr-2")
+    assert odczyt is not None and odczyt.taint_source == "attachment"
+
+
+def test_rollover_opens_a_clean_conversation(tmp_path):
+    """Rollover otwiera NOWY wiersz, więc skaza nie przechodzi — i tak ma być (ADR 0066).
+
+    Skażona treść znika razem ze starą rozmową; przenoszenie skazy „na wszelki wypadek"
+    skaziłoby z czasem każdą rozmowę i uczyniło sygnał bezużytecznym.
+    """
+    store = SqliteConversationStore(":memory:")
+    stara = store.open_conversation("teams_graph", "thr-3")
+    store.mark_tainted(stara.id, "attachment")
+    store.close_conversation(stara.id)
+
+    nowa = store.open_conversation("teams_graph", "thr-3")
+
+    assert nowa.tainted is False

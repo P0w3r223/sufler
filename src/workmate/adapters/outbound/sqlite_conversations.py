@@ -57,6 +57,7 @@ def _messages_ddl(table: str, *, if_not_exists: bool = False) -> str:
         cache_read_input_tokens     INTEGER,
         cache_creation_input_tokens INTEGER,
         archived                    INTEGER NOT NULL DEFAULT 0,
+        trust                       TEXT,
         created_at                  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
     );
     """
@@ -117,6 +118,20 @@ _MESSAGES_ADDED_COLUMNS = {
     # ADR 0014: flaga zarchiwizowania tury przez kompaktowanie. DEFAULT 0 → istniejące
     # wiersze są „nie zarchiwizowane" (pełny replay), zanim padnie pierwsze kompaktowanie.
     "archived": "INTEGER NOT NULL DEFAULT 0",
+    # ADR 0066: klasa POCHODZENIA tury użytkownika (T1 instrukcja / T2 dane). NULL na wierszach
+    # sprzed 0066 i na turach asystenta/narzędzi — odczyt degraduje wtedy do T1, czyli do
+    # zachowania dawnego. Klasa musi być TRWAŁA, bo replay z pamięci nie zna już nadawcy:
+    # bez kolumny tura gościa wracałaby w kolejnych turach jako instrukcja.
+    "trust": "TEXT",
+}
+
+# Kolumny skazy rozmowy (ADR 0066). Migracja addytywna wołana dla ``conversations`` — ten sam
+# mechanizm co dla ``messages``, tyle że tabela rozmów dotąd go nie potrzebowała. Skaza siedzi
+# NA DYSKU, nie w pamięci procesu: recreate kontenera nie może zgubić stanu eskalacji.
+_CONVERSATIONS_ADDED_COLUMNS = {
+    "tainted": "INTEGER NOT NULL DEFAULT 0",
+    "first_tainted_at": "TEXT",
+    "taint_source": "TEXT",
 }
 
 # Jawna lista kolumn messages (kolejność DDL) do ``INSERT ... SELECT`` przy rebuildzie
@@ -125,7 +140,7 @@ _MESSAGES_ADDED_COLUMNS = {
 _MESSAGES_COLUMN_LIST = (
     "id, conversation_id, role, text, token_estimate, blocks_json, stop_reason, "
     "input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, "
-    "archived, created_at"
+    "archived, trust, created_at"
 )
 
 
@@ -151,6 +166,7 @@ class SqliteConversationStore:
             for stmt in _SCHEMA:
                 self._conn.execute(stmt)
             self._add_missing_columns("messages", _MESSAGES_ADDED_COLUMNS)
+            self._add_missing_columns("conversations", _CONVERSATIONS_ADDED_COLUMNS)
             migrated_fk = self._migrate_messages_add_fk()
             fts = True
             try:
@@ -266,6 +282,7 @@ class SqliteConversationStore:
         blocks: list[dict[str, Any]] | None = None,
         stop_reason: str | None = None,
         usage: TokenUsage | None = None,
+        trust: str | None = None,
     ) -> ConversationMessage:
         blocks_json = json.dumps(blocks, ensure_ascii=False) if blocks is not None else None
         u = usage  # realne usage (Design 2) — tylko na turze asystenta; NULL inaczej
@@ -274,8 +291,8 @@ class SqliteConversationStore:
                 "INSERT INTO messages("
                 "conversation_id, role, text, token_estimate, blocks_json, stop_reason, "
                 "input_tokens, output_tokens, cache_read_input_tokens, "
-                "cache_creation_input_tokens) "
-                "VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",  # token_estimate WYGASZONE (0)
+                "cache_creation_input_tokens, trust) "
+                "VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",  # token_estimate WYGASZONE (0)
                 (
                     conversation_id,
                     role,
@@ -286,6 +303,7 @@ class SqliteConversationStore:
                     u.output_tokens if u else None,
                     u.cache_read_input_tokens if u else None,
                     u.cache_creation_input_tokens if u else None,
+                    trust,
                 ),
             )
             msg_id = cur.lastrowid
@@ -302,6 +320,21 @@ class SqliteConversationStore:
             self._conn.commit()
             row = self._conn.execute("SELECT * FROM messages WHERE id=?", (msg_id,)).fetchone()
         return _message(row)
+
+    def mark_tainted(self, conversation_id: str, source: str) -> None:
+        """Zapal skazę rozmowy (ADR 0066); ``WHERE tainted=0`` czyni to idempotentnym.
+
+        Warunek w SQL, nie odczyt-i-zapis w Pythonie: dwoje drzwi na jednej rozmowie to osobne
+        PROCESY nad tym samym plikiem, więc „sprawdź, potem zapisz" byłoby wyścigiem i mogłoby
+        przestawić źródło pierwszego zapłonu.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE conversations SET tainted=1, first_tainted_at=CURRENT_TIMESTAMP, "
+                "taint_source=? WHERE id=? AND tainted=0",
+                (source, conversation_id),
+            )
+            self._conn.commit()
 
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
         with self._lock:
@@ -521,6 +554,8 @@ def _conversation(
         message_count=message_count,
         created_at=_parse_ts(row["created_at"]),
         updated_at=_parse_ts(row["updated_at"]),
+        tainted=bool(row["tainted"]),
+        taint_source=row["taint_source"] or "",
     )
 
 
@@ -584,6 +619,7 @@ def _message(row: Any) -> ConversationMessage:
         stop_reason=row["stop_reason"],
         usage=_message_usage(row),
         archived=bool(row["archived"]),
+        trust=row["trust"],
     )
 
 

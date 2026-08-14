@@ -37,7 +37,7 @@ class _ScriptedLLM:
         self.transcripts: list[list] = []
         self.tools_seen: list[list[str]] = []
 
-    def complete(self, *, system, transcript, tools):
+    def complete(self, *, system, transcript, tools, trust_nonce=""):
         self.transcripts.append(list(transcript))
         self.tools_seen.append([t.name for t in tools])
         return self._responses.pop(0)
@@ -205,7 +205,7 @@ def test_runtime_respects_iteration_budget():
         def __init__(self) -> None:
             self.calls = 0
 
-        def complete(self, *, system, transcript, tools):
+        def complete(self, *, system, transcript, tools, trust_nonce=""):
             self.calls += 1
             return LLMResponse(text="myślę", tool_calls=(ToolCall("t", "tool", {}),))
 

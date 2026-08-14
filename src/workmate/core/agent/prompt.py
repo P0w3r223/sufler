@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from workmate.core.domain.trust import describe_envelope
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
@@ -172,6 +174,7 @@ def build_session_header(
     skills: Sequence[tuple[str, str]] = (),
     github_thread: tuple[str, int] | None = None,
     staged_files: Sequence[str] = (),
+    trust_nonce: str = "",
 ) -> str:
     """Złóż nagłówek sesji: data, identyfikator rozmowy, powiązanie z GitHubem i skille.
 
@@ -213,6 +216,12 @@ def build_session_header(
             f"GitHub(action='comment', number={number}) — only when the user explicitly asks, "
             "and only on this number."
         )
+    if trust_nonce:
+        # Znacznik koperty bez wyjaśnienia byłby samym szumem, a wyjaśnienie w STAŁYM
+        # korpusie promptu unieważniałoby cache prefiksu tools+system przy każdej turze
+        # (nonce jest losowy na turę) — stąd nagłówek sesji, który i tak leży poza cachem.
+        lines.append("")
+        lines.append(describe_envelope(trust_nonce))
     if staged_files:
         # Nazwa na dysku jest SLUGIEM oryginalnej (ADR 0018 ``safe_filename``), więc bez tej
         # linii model zgadywałby, jak nazywa się plik, który przed chwilą dostał — i zgadywałby

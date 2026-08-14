@@ -623,6 +623,7 @@ def build_conversational_responder(
     file_tool_max_image_edge: int = 2048,
     file_tool_staged_ext: frozenset[str] = frozenset(),
     file_tool_limits: MaterializationLimits = _BEZ_PULAPOW,
+    trust_labels: bool = False,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -814,6 +815,16 @@ def build_conversational_responder(
         commands=router,
         workspace_catalog_factory=workspace_factory,
         shell_catalog_factory=shell_factory,
+        # Etykiety T3 (ADR 0066) — niezależne od rozszczepienia nadawcy: nie zależą od mapy
+        # tożsamości i nikogo nie degradują, więc mają własną bramkę.
+        trust_labels=trust_labels,
+        # Rozszczepienie T1/T2 jedzie za bramką 0062, bo obie zależą od kompletności mapy:
+        # ten sam autoryzator, jedno rozwiązanie tożsamości na turę (ADR 0066 R4).
+        sender_trust=(
+            note_read_authorizer.trust_class
+            if notes_read_gated and note_read_authorizer is not None
+            else None
+        ),
         file_catalog_factory=file_factory,
         attachment_stager=attachment_stager,
         attachment_budget_bytes=file_tool_budget_bytes,

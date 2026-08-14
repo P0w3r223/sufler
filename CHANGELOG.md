@@ -14,6 +14,18 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
 - **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
 - **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
 
+- **Klasy zaufania T0–T3 + lepka skaza rozmowy** (ADR 0066): treść OBCA — plik, wynik narzędzia,
+  tura nadawcy spoza mapy tożsamości — jedzie do modelu w kopercie z etykietą pochodzenia i
+  granicą znaczoną **nonce'em losowanym na turę** (stały znacznik dałoby się podrobić treścią,
+  która sama go zawiera). Rozszczepienie nadawcy na T1/T2 liczy TEN SAM autoryzator co bramka
+  odczytu notatek — jedno rozwiązanie tożsamości na turę zasila obie osie. Rozmowa, do której
+  weszła treść obca, dostaje **trwałą skazę** (kolumny na wierszu rozmowy, przeżywa recreate
+  kontenera); skaza niczego nie blokuje — będzie kierować operacje mutujące przez sędziego
+  (ADR 0065). Rollover otwiera nową rozmowę, czyli czystą. Dwie bramki, obie domyślnie OFF:
+  `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS` (koperty; wyłączone = żądanie bajt w bajt jak dotąd)
+  oraz rozszczepienie T1/T2, które jedzie za istniejącą `..._ENABLE_NOTE_READ_AUTHZ`, bo obie
+  zależą od kompletności `identities.yaml`. **To nie jest obrona przed wstrzyknięciem promptu** —
+  granicą zostają bramki zdolności, montaż `ro`, wykonawca bez sieci i odwracalność.
 - **Narzędzie `File(action='read')` + odkładanie załączników na dysk rozmowy** (ADR 0064, druga
   część): model może podać sobie plik z katalogu roboczego DO WGLĄDU — obraz jako obraz, PDF jako
   dokument, resztę jako wyciągnięty tekst. Plik jedzie osobnym blokiem obok wyniku narzędzia (bo

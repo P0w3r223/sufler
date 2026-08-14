@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from workmate.core.domain.pricing import TokenUsage
+from workmate.core.domain.trust import TrustClass
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -101,10 +102,17 @@ class UserText:
     ``attachments`` (addytywne, domyślnie puste — zgodność wsteczna) niosą treść
     multimodalną wysłaną przez użytkownika. Adapter odsyła je co turę jako bloki treści
     ``user`` (obraz/dokument PRZED tekstem); rdzeń trzyma tylko formę neutralną.
+
+    ``trust`` (ADR 0066) to klasa POCHODZENIA tej tury, nadawana przy DRZWIACH i nigdy przez
+    model: ``T1`` — nadawca rozwiązał się do osoby z mapy tożsamości (instrukcja), ``T2`` —
+    nie rozwiązał się (gość, bot, konto spoza mapy), więc jego słowa są danymi. Domyślne
+    ``T1`` zachowuje dawne zachowanie tam, gdzie rozszczepienie jest wyłączone albo drzwi
+    nie mają pojęcia nadawcy (CLI z jednym operatorem).
     """
 
     text: str
     attachments: tuple[Attachment, ...] = ()
+    trust: TrustClass = "T1"
 
 
 @dataclass(frozen=True)
@@ -253,4 +261,5 @@ class LLMClient(Protocol):
         system: str | Sequence[str],
         transcript: Sequence[TranscriptEntry],
         tools: Sequence[ToolSpec],
+        trust_nonce: str = "",
     ) -> LLMResponse: ...

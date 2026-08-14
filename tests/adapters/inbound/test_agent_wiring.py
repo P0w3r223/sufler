@@ -418,7 +418,7 @@ class _RecordingLLM:
     def __init__(self, *_a: object, **_k: object) -> None:
         self.tool_names: list[str] = []
 
-    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+    def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
         from workmate.core.domain.pricing import TokenUsage
         from workmate.core.ports.llm import LLMResponse
 

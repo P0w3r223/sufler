@@ -724,6 +724,12 @@ class TeamsGraphSettings:
     # zastosowanie — ADR zapowiada ponowny pomiar użycia i USUNIĘCIE narzędzia, jeśli okaże się
     # martwe; bez flagi „wyłączenie" znaczyłoby wydanie nowego obrazu.
     enable_file_tool: bool = False
+    # Strukturalne koperty T3 na treści OBCEJ (ADR 0066): plik, wynik narzędzia, tura
+    # nadawcy spoza mapy. Domyślnie OFF jak każda bramka — włączona zmienia PROMPT każdej
+    # tury (nagłówek tłumaczy znacznik) i kształt treści wysyłanej do modelu, więc operator
+    # ma to włączyć świadomie i móc porównać zachowanie przed/po. Rozszczepienie nadawcy na
+    # T1/T2 jedzie OSOBNO, za bramką odczytu notatek — zależy od kompletności identities.yaml.
+    enable_trust_labels: bool = False
     # Polityka „czy w ogóle odpowiadać" (SZKIELET pod wielokanałowe wdrożenie WorkMate).
     # ``all`` (domyślnie) = zachowanie sprzed tej zmiany: odpowiedź na każdą wiadomość od
     # innego człowieka w kanałach z ``watch``. ``mention`` odpowiada tylko po @wzmiance bota
@@ -796,6 +802,9 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", default=False
             ),
             enable_file_tool=_bool_from_env("WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL", default=False),
+            enable_trust_labels=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS", default=False
+            ),
             enable_project_brief=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False
             ),

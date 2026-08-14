@@ -213,6 +213,7 @@ def main() -> None:
         attachment_max_image_edge=settings.max_image_edge_px,
         attachment_max_bytes=settings.max_attachment_mb * 1024 * 1024,
         attachment_max_extract_bytes=settings.max_extract_mb * 1024 * 1024,
+        trust_labels=settings.enable_trust_labels,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -1104,6 +1105,7 @@ def _build_responder(
     attachment_max_image_edge: int = 2048,
     attachment_max_bytes: int = 0,
     attachment_max_extract_bytes: int = 0,
+    trust_labels: bool = False,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -1160,6 +1162,8 @@ def _build_responder(
         # Szersze niż lista formatów, które model wolno mu TWORZYĆ (``workspace_settings``) —
         # odkładamy cudzy plik do wglądu, nie pozwalamy modelowi pisać binariów.
         file_tool_staged_ext=_STAGED_ATTACHMENT_EXTS,
+        # Koperty T3 (ADR 0066) — bramka niezależna od rozszczepienia nadawcy.
+        trust_labels=trust_labels,
     )
 
 

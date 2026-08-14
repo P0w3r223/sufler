@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.domain.pricing import TokenUsage
+from workmate.core.domain.trust import DATA_CLASSES, wrap_untrusted
 from workmate.core.errors import LLMError
 from workmate.core.ports.llm import (
     AssistantTurn,
@@ -57,10 +58,15 @@ class AnthropicLLMClient:
         system: str | Sequence[str],
         transcript: Sequence[TranscriptEntry],
         tools: Sequence[ToolSpec],
+        trust_nonce: str = "",
     ) -> LLMResponse:
         import anthropic
 
-        messages = _mark_cache(_to_messages(transcript))
+        # ``trust_nonce`` (ADR 0066) opakowuje treść OBCĄ w kopertę z etykietą pochodzenia.
+        # Owijamy TU, przy renderowaniu żądania, a nie przy zapisie do pamięci: nonce jest
+        # losowy na turę, więc zapisany w bazie rozjechałby się z każdą kolejną turą, a replay
+        # niósłby znaczniki, których nagłówek tej tury już nie tłumaczy. Puste = dawny kształt.
+        messages = _mark_cache(_to_messages(transcript, trust_nonce))
         tool_defs = [_to_tool_def(spec) for spec in tools]
         edits = _context_management(self._settings)
         # Czyszczenie wyników narzędzi żyje na ścieżce beta SDK, więc wywołanie wybieramy
@@ -238,11 +244,25 @@ def _replayable_block(block: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in block.items() if value is not None}
 
 
-def _attachment_block(att: Attachment) -> dict[str, Any]:
+def _obce(text: str, *, origin: str, nonce: str) -> str:
+    """Opakuj treść obcą kopertą T3 (ADR 0066); bez nonce'a zwróć ją bez zmian.
+
+    Pusty nonce to WYŁĄCZONE etykiety — wtedy żądanie ma dokładnie dawny kształt, co pozwala
+    włączyć tę warstwę osobno i porównać zachowanie modelu bez przebudowy ścieżki.
+    """
+    return wrap_untrusted(text, origin=origin, nonce=nonce) if nonce else text
+
+
+def _attachment_block(att: Attachment, nonce: str = "") -> dict[str, Any]:
     """Zmapuj neutralny ``Attachment`` na blok treści Anthropic — format żyje TU, nie w rdzeniu.
 
     ``image``/``document`` idą jako base64 (PDF: ``application/pdf``); ``.docx`` po ekstrakcji
     (``kind="text"``) jako blok tekstowy z etykietą pliku. Treść to DANE, nie polecenia.
+
+    Kopertę T3 (ADR 0066) zakłada tylko gałąź TEKSTOWA. Obraz i PDF są osobnymi typami bloków
+    — API nie przyjmie w nich znacznika, a i nie ma po co: ich treść z definicji nie jest
+    tekstem, który model mógłby wziąć za instrukcję systemową. Tekst wyciągnięty z dokumentu
+    jest dokładnie odwrotny — wygląda jak zwykła wiadomość i to on wymaga granicy.
     """
     if att.kind == "image":
         return {
@@ -262,10 +282,13 @@ def _attachment_block(att: Attachment) -> dict[str, Any]:
                 "data": att.data_base64,
             },
         }
-    return {"type": "text", "text": f"[Plik: {att.name}]\n{att.text}"}
+    return {
+        "type": "text",
+        "text": _obce(f"[Plik: {att.name}]\n{att.text}", origin="plik", nonce=nonce),
+    }
 
 
-def _user_message(entry: UserText) -> dict[str, Any]:
+def _user_message(entry: UserText, nonce: str = "") -> dict[str, Any]:
     """Zbuduj wiadomość ``user``: goły string bez załączników, inaczej lista bloków.
 
     Bez załączników zwracamy string (jak wcześniej — golden-testy niezmienione). Z
@@ -273,15 +296,27 @@ def _user_message(entry: UserText) -> dict[str, Any]:
     (wymóg API dla PDF), więc caption idzie na końcu — i tylko gdy niepusty (API odrzuca
     pusty blok ``text``).
     """
+    # Tura nadawcy, który się nie rozwiązał (T2, ADR 0066), schodzi do DANYCH: opakowujemy jej
+    # tekst tą samą kopertą co plik. Bot dalej odpowiada — bramki zdolności (0062/0063) już
+    # osobno odmawiają mu narzędzi — ale „zignoruj poprzednie instrukcje" od gościa przestaje
+    # być instrukcją w oczach modelu. Załączniki są T3 niezależnie od klasy nadawcy: zmapowany
+    # członek też może przesłać zatruty plik.
+    text = (
+        _obce(entry.text, origin="goscie", nonce=nonce)
+        if entry.trust in DATA_CLASSES
+        else (entry.text)
+    )
     if not entry.attachments:
-        return {"role": "user", "content": entry.text}
-    content: list[dict[str, Any]] = [_attachment_block(att) for att in entry.attachments]
-    if entry.text:
-        content.append({"type": "text", "text": entry.text})
+        return {"role": "user", "content": text}
+    content: list[dict[str, Any]] = [_attachment_block(att, nonce) for att in entry.attachments]
+    if text:
+        content.append({"type": "text", "text": text})
     return {"role": "user", "content": content}
 
 
-def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
+def _to_messages(
+    transcript: Sequence[TranscriptEntry], trust_nonce: str = ""
+) -> list[dict[str, Any]]:
     """Zmapuj słownik domenowy na listę wiadomości Anthropic.
 
     Tury z blokami (``RawTurn`` z pamięci, ``AssistantTurn`` z bieżącego przebiegu)
@@ -289,11 +324,16 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
     z niezmienioną ``signature``, inaczej API 400), oczyszczając jedynie puste pola wyjściowe
     przez ``_replayable_block`` (patrz jego docstring). ``AssistantTurn`` bez bloków (atrapy,
     wiersze legacy) składamy z ``text``/``tool_calls``.
+
+    ``trust_nonce`` (ADR 0066) włącza koperty T2/T3 na treści OBCEJ. Tury asystenta zostają
+    nietknięte i to jest istotne: ich bloki wracają VERBATIM z ``signature`` thinking, więc
+    jakakolwiek zmiana bajtu unieważniłaby replay (API 400). Model i tak nie jest dla siebie
+    treścią obcą — kopertowanie go byłoby szumem za cenę zerwanej pamięci.
     """
     messages: list[dict[str, Any]] = []
     for entry in transcript:
         if isinstance(entry, UserText):
-            messages.append(_user_message(entry))
+            messages.append(_user_message(entry, trust_nonce))
         elif isinstance(entry, RawTurn):
             messages.append(
                 {"role": entry.role, "content": [_replayable_block(b) for b in entry.blocks]}
@@ -321,7 +361,11 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
                 block: dict[str, Any] = {
                     "type": "tool_result",
                     "tool_use_id": output.call_id,
-                    "content": output.content,
+                    # Wynik narzędzia to T3 (ADR 0066) — bez wyjątków dla „naszych" narzędzi.
+                    # Wyjście `Bash`, treść komentarza z GitHuba i notatka z bazy wiedzy jadą
+                    # tą samą drogą, a polityka per narzędzie byłaby listą do rozjechania się
+                    # przy pierwszym nowym narzędziu.
+                    "content": _obce(output.content, origin="narzedzie", nonce=trust_nonce),
                 }
                 if output.is_error:
                     block["is_error"] = True
@@ -330,7 +374,7 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
             # wyniku: ``tool_result`` przyjmuje tekst i obraz, ale NIE blok ``document`` (PDF).
             # Kolejność jest wymogiem API — bloki ``tool_result`` muszą stać na początku
             # wiadomości ``user``, więc materiał dokleja się po nich.
-            results.extend(_attachment_block(att) for att in entry.attachments)
+            results.extend(_attachment_block(att, trust_nonce) for att in entry.attachments)
             messages.append({"role": "user", "content": results})
     return messages
 

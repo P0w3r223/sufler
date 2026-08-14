@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.domain.trust import TrustClass
     from workmate.core.ports.llm import (
         Attachment,
         AttachmentQueue,
@@ -93,8 +94,13 @@ class AgentRuntime:
         session_header: str = "",
         audit: Callable[[str, Mapping[str, Any], str], None] | None = None,
         attachment_queue: AttachmentQueue | None = None,
+        trust_nonce: str = "",
+        trust: TrustClass = "T1",
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
+
+        ``trust_nonce`` (ADR 0066) włącza koperty na treści obcej; runtime tylko go PRZENOSI
+        do adaptera — nie generuje go i nie wie, co znaczy. Pusty = etykiety wyłączone.
 
         ``attachment_queue`` (ADR 0064) to kolejka plików, które narzędzie ``File`` materializuje
         w trakcie tury. Runtime jej nie wypełnia — tylko OPRÓŻNIA po każdej rundzie wywołań i
@@ -127,7 +133,9 @@ class AgentRuntime:
         # Bloki systemowe składamy RAZ na turę, nie w pętli: w obrębie jednej tury data i
         # rozmowa są stałe, a powtórne składanie tylko rozmnażałoby okazje do rozjazdu.
         system = system_blocks(self._system_prompt, session_header)
-        user_turn = UserText(query, tuple(attachments))
+        # Klasa pochodzenia tury (ADR 0066) nadana przez DRZWI — runtime jej nie wylicza
+        # i nie zna nadawcy; niesie ją dalej, bo to ona ląduje w pamięci i w audycie.
+        user_turn = UserText(query, tuple(attachments), trust)
         transcript: list[TranscriptEntry] = [*history, user_turn]
         new_entries: list[TranscriptEntry] = [user_turn]
         last_text = ""
@@ -136,7 +144,9 @@ class AgentRuntime:
         # swojego wywołania (Design 2 — do rozliczenia i do bramki rolloveru na ostatniej turze).
         run_usage = TokenUsage()
         for _ in range(self._max_tool_iterations):
-            response = self._llm.complete(system=system, transcript=transcript, tools=catalog)
+            response = self._llm.complete(
+                system=system, transcript=transcript, tools=catalog, trust_nonce=trust_nonce
+            )
             run_usage = run_usage + response.usage
             last_text = response.text or last_text
 
