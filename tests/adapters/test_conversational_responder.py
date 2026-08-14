@@ -26,7 +26,7 @@ from workmate.adapters.inbound.responder import (
 )
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.compaction import CompactionService
-from workmate.core.application.conversations import ConversationService
+from workmate.core.application.conversations import ConversationService, _row_of
 from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
@@ -35,6 +35,7 @@ from workmate.core.ports.llm import (
     Attachment,
     LLMResponse,
     RawTurn,
+    ToolOutput,
     ToolResults,
     UserText,
     attachment_to_row,
@@ -74,6 +75,7 @@ class _FakeRuntime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -94,6 +96,7 @@ class _FailingRuntime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -123,6 +126,7 @@ class _ThinkingRuntime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",
@@ -148,6 +152,7 @@ class _AuditCapturingRuntime(_FakeRuntime):
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
     ) -> AgentResult:
         self.audit_arg = audit
         return super().run_turn(
@@ -332,6 +337,35 @@ def test_to_transcript_rebuilds_tool_row_as_tool_results():
     assert isinstance(results, ToolResults)
     out = results.outputs[0]
     assert (out.call_id, out.content, out.is_error) == ("t1", '{"count": 1}', False)
+
+
+def test_tool_row_round_trips_materialized_files_through_storage():
+    """Plik podany przez ``File`` (ADR 0064) musi przeżyć zapis i odtworzenie z pamięci.
+
+    Bez tego replay oddawał modelowi turę, w której MÓWI o pliku, ale samego pliku już nie ma —
+    czyli najgorszy wariant: model tłumaczy treść, której nie widzi. Sonda idzie przez OBA
+    końce szwu (zapis ``_row_of`` i odczyt ``_to_transcript``), bo rozjazd między nimi jest
+    dokładnie tym, co ten test ma łapać.
+    """
+    original = ToolResults(
+        (ToolOutput("t1", '{"materialized": true}'),),
+        (Attachment("document", "application/pdf", "umowa.pdf", data_base64="QkFTRTY0"),),
+    )
+
+    role, text, blocks, _usage = _row_of(original)
+    (restored,) = _to_transcript([_msg(role, text, blocks=blocks)])
+
+    assert isinstance(restored, ToolResults)
+    assert restored.outputs == original.outputs  # wyniki nie pomieszały się z plikami
+    assert restored.attachments == original.attachments
+
+
+def test_tool_row_without_files_restores_exactly_as_before():
+    role, text, blocks, _usage = _row_of(ToolResults((ToolOutput("t1", "ok"),)))
+    (restored,) = _to_transcript([_msg(role, text, blocks=blocks)])
+
+    assert isinstance(restored, ToolResults)
+    assert restored.attachments == ()
 
 
 def test_to_transcript_degrades_legacy_row_without_blocks_to_text_only():

@@ -17,6 +17,7 @@ from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
     Attachment,
+    AttachmentQueue,
     LLMResponse,
     ToolCall,
     ToolResults,
@@ -459,3 +460,44 @@ def test_runtime_audit_records_rejected_bad_arguments():
 
     # Surowe argumenty (koercja padła); rejestrator aplikacji zredaguje je w ``project_arguments``.
     assert calls == [("search_notes", {"query": "x", "nieznany": 1}, "rejected")]
+
+
+def test_runtime_attaches_queued_files_to_the_tool_results_of_that_round():
+    """Plik odłożony przez ``File`` (ADR 0064) jedzie z wynikami TEJ rundy, nie z następną turą.
+
+    Dzięki temu model widzi go w tej samej turze, w której o niego poprosił — gdyby czekał na
+    kolejną wiadomość człowieka, narzędzie byłoby bezużyteczne w rozmowie o jednym pliku.
+    """
+    queue = AttachmentQueue(budget_bytes=1000)
+
+    def podaj() -> dict:
+        queue.offer(Attachment("document", "application/pdf", "umowa.pdf", data_base64="AAAA"), 3)
+        return {"materialized": True}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "File", {}),)),
+            LLMResponse(text="Widzę umowę."),
+        ]
+    )
+
+    AgentRuntime(llm, [_spec("File", podaj)]).run_turn("pokaż umowę", attachment_queue=queue)
+
+    (results,) = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)]
+    assert [a.name for a in results.attachments] == ["umowa.pdf"]
+    # Wynik narzędzia niesie samo potwierdzenie — bajty nie wracają jego treścią.
+    assert "AAAA" not in results.outputs[0].content
+
+
+def test_runtime_without_a_queue_behaves_exactly_as_before():
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "search_notes", {"query": "x"}),)),
+            LLMResponse(text="ok"),
+        ]
+    )
+
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 0})]).run_turn("q")
+
+    (results,) = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)]
+    assert results.attachments == ()

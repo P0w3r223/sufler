@@ -10,6 +10,8 @@ zamienia na czytelny komunikat.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import functools
 import logging
 from dataclasses import replace
@@ -23,6 +25,7 @@ from workmate.adapters.inbound.responder import (
     SafeResponder,
 )
 from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer, build_semantic_ranker
+from workmate.adapters.inbound.teams_graph.attachments import FileBytesMaterializer
 from workmate.adapters.outbound.filesystem_outbox import (
     OUTBOX_DIRNAME,
     FilesystemOutboxRepository,
@@ -53,6 +56,7 @@ from workmate.core.application.services import (
     ProjectsService,
 )
 from workmate.core.application.tools import (
+    build_file_catalog,
     build_notes_catalog,
     build_notes_read_catalog,
     build_shell_catalog,
@@ -64,8 +68,9 @@ from workmate.core.application.workspace import (
     WorkspaceService,
     WorkspaceWriteService,
 )
-from workmate.core.errors import NoteAuthorizationError
+from workmate.core.errors import NoteAuthorizationError, WriteError
 from workmate.core.ports.command import CommandResult
+from workmate.core.ports.llm import Attachment, AttachmentQueue
 from workmate.core.ports.outbox import Deliverable
 
 if TYPE_CHECKING:
@@ -328,6 +333,83 @@ def _build_workspace_factory(
     return factory
 
 
+def build_file_support(
+    workspace_settings: WorkspaceSettings,
+    *,
+    max_image_edge: int,
+    staged_ext: frozenset[str],
+) -> tuple[
+    Callable[[WorkspaceScope, AttachmentQueue], list[ToolSpec]],
+    Callable[[WorkspaceScope, Sequence[Attachment]], list[str]],
+]:
+    """Zbuduj parę dla ``File`` (ADR 0064): fabrykę narzędzia i odkładanie załączników.
+
+    Jedna funkcja zwraca oba, bo obie strony MUSZĄ patrzeć na ten sam katalog roboczy —
+    rozdzielone montaże rozjechałyby się cicho: model czytałby z jednego miejsca, drzwi pisały
+    do drugiego, a objawem byłoby wyłącznie „nie ma takiego pliku".
+
+    ``staged_ext`` jest szersza niż lista rozszerzeń, które model wolno mu TWORZYĆ: użytkownik
+    przysyła pdf/obrazy/dokumenty, a nie tylko md/txt/csv/json. To rozróżnienie jest celowe —
+    odkładamy CUDZY plik do wglądu, nie pozwalamy modelowi pisać binariów.
+    """
+    repo = FilesystemWorkspaceRepository(workspace_settings.workspace_dir)
+    limits = WorkspaceLimits(
+        max_file_bytes=workspace_settings.max_file_mb * 1024 * 1024,
+        max_files_per_scope=workspace_settings.max_files_per_scope,
+        max_total_bytes=workspace_settings.max_total_mb * 1024 * 1024,
+        allowed_ext=frozenset(workspace_settings.allowed_ext),
+    )
+    read_service = WorkspaceService(repo)
+    write_service = WorkspaceWriteService(
+        FilesystemWorkspaceWriter(workspace_settings.workspace_dir), repo, limits
+    )
+    materializer = FileBytesMaterializer(max_image_edge=max_image_edge)
+
+    def factory(scope: WorkspaceScope, queue: AttachmentQueue) -> list[ToolSpec]:
+        return build_file_catalog(scope, read_service, materializer, queue)
+
+    def stage(scope: WorkspaceScope, attachments: Sequence[Attachment]) -> list[str]:
+        """Zapisz załączniki tury na dysk rozmowy; zwróć nazwy, pod którymi wylądowały.
+
+        Pojedynczy załącznik, którego nie da się odłożyć (nieznane rozszerzenie, limit dysku),
+        jest POMIJANY z logiem — reszta tury jedzie dalej. Model i tak widzi go w kontekście;
+        brak kopii na dysku odbiera mu jedynie możliwość wrócenia do pliku później.
+        """
+        names: list[str] = []
+        for att in attachments:
+            data = _attachment_bytes_for_disk(att)
+            if data is None:
+                continue
+            try:
+                names.append(
+                    write_service.stage_attachment(
+                        scope, att.name, data, allowed_ext=staged_ext
+                    ).name
+                )
+            except (WriteError, OSError):
+                logger.warning("Nie odłożyłem załącznika %r na dysk rozmowy — pomijam", att.name)
+        return names
+
+    return factory, stage
+
+
+def _attachment_bytes_for_disk(att: Attachment) -> bytes | None:
+    """Bajty do zapisu: base64 dla obrazu/PDF, tekst dla plików już zekstrahowanych.
+
+    ``None`` dla załącznika, który nie niesie ani jednego, ani drugiego — czyli dla NOTKI
+    statusu, którą materializer wstawia zamiast pliku (limit/błąd/nieobsługiwany typ). Odkładanie
+    notki na dysk byłoby zapisaniem komunikatu o błędzie pod nazwą pliku, którego nie ma.
+    """
+    if att.data_base64:
+        try:
+            return base64.b64decode(att.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+    if att.text and "." in att.name:
+        return att.text.encode("utf-8")
+    return None
+
+
 class _ScopedRunner:
     """``CommandRunner`` zapewniający istnienie katalogu rozmowy przed wysłaniem polecenia.
 
@@ -518,6 +600,9 @@ def build_conversational_responder(
     skills_settings: SkillsSettings | None = None,
     note_read_authorizer: NoteReadAuthorizer | None = None,
     shell_authorizer: ShellAuthorizer | None = None,
+    file_tool_budget_bytes: int = 0,
+    file_tool_max_image_edge: int = 2048,
+    file_tool_staged_ext: frozenset[str] = frozenset(),
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -641,6 +726,20 @@ def build_conversational_responder(
         if enable_workspace and workspace_settings is not None and shell_factory is None
         else None
     )
+    # Narzędzie ``File`` i odkładanie załączników (ADR 0064). Bramka jest inna niż przy narzędziach
+    # katalogu roboczego: te ostatnie znikają, gdy jest powłoka (bo `cat` robi to samo), a ``File``
+    # zostaje w OBU układach — wstawienia obrazu czy PDF do kontekstu powłoka nie zrobi, bo zwraca
+    # tekst. Warunkiem jest natomiast to, żeby drzwi w ogóle MATERIALIZOWAŁY załączniki
+    # (``supports_attachments``) i miały katalog roboczy: bez jednego nie ma czego odkładać, bez
+    # drugiego nie ma gdzie. Budżet 0 = brak narzędzia (operator nie podał sufitu → nie obiecujemy).
+    file_factory = None
+    attachment_stager = None
+    if supports_attachments and workspace_settings is not None and file_tool_budget_bytes > 0:
+        file_factory, attachment_stager = build_file_support(
+            workspace_settings,
+            max_image_edge=file_tool_max_image_edge,
+            staged_ext=file_tool_staged_ext,
+        )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
     # responder nie zapisuje nic. Jeden punkt wpięcia obejmuje wszystkie drzwi agentowe.
     metrics = (
@@ -689,6 +788,9 @@ def build_conversational_responder(
         commands=router,
         workspace_catalog_factory=workspace_factory,
         shell_catalog_factory=shell_factory,
+        file_catalog_factory=file_factory,
+        attachment_stager=attachment_stager,
+        attachment_budget_bytes=file_tool_budget_bytes,
         thread_tool_factory=thread_tool_factory,
         user_push_tool_factory=user_push_tool_factory,
         my_jira_tasks_factory=my_jira_tasks_factory,

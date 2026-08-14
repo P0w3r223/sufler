@@ -700,3 +700,95 @@ def test_skrzynka_czyta_ten_sam_katalog_w_ktorym_pisze_powloka(tmp_path: Path):
     komunikat = dostawa.deliver(scope)
 
     assert wyslane == ["raport.md"], f"plik z powłoki nie dojechał do skrzynki: {komunikat!r}"
+
+
+# --- ``File`` i odkładanie załączników (ADR 0064) -------------------------------
+
+
+def _workspace_settings(tmp_path: Path):
+    from workmate.config import WorkspaceSettings
+
+    return WorkspaceSettings(
+        enabled=True,
+        workspace_dir=tmp_path / "scratchpad",
+        max_file_mb=5,
+        max_files_per_scope=20,
+        max_total_mb=20,
+        allowed_ext=("md", "txt", "csv", "json"),
+    )
+
+
+def test_stager_writes_the_users_file_to_the_conversation_directory(tmp_path: Path):
+    """Sedno: dotąd załącznik żył WYŁĄCZNIE w blokach rozmowy, na wolumenie, którego wykonawca
+    nie montuje — więc ani powłoka, ani ``File(read)`` nie miały czego czytać."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import Attachment
+
+    _factory, stage = agent_wiring.build_file_support(
+        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf", "md"})
+    )
+    scope = WorkspaceScope("teams_graph", "team/chan/root")
+
+    names = stage(scope, (Attachment("document", "application/pdf", "umowa.pdf", "QkFTRTY0"),))
+
+    assert names == ["umowa.pdf"]
+    zapisany = (tmp_path / "scratchpad" / scope.dirpath() / "umowa.pdf").read_bytes()
+    assert zapisany == b"BASE64"  # bajty ODKODOWANE, nie base64 jako tekst
+
+
+def test_stager_skips_the_status_note_that_stands_in_for_a_missing_file(tmp_path: Path):
+    """Notka „nie udało się pobrać" to KOMUNIKAT, nie plik — zapisanie jej pod nazwą pliku
+    dałoby model, który czyta własny błąd i bierze go za treść dokumentu."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import Attachment
+
+    _factory, stage = agent_wiring.build_file_support(
+        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf"})
+    )
+
+    names = stage(
+        WorkspaceScope("teams_graph", "t/c/r"),
+        (Attachment("text", "text/plain", "status załącznika", text="nie udało się pobrać"),),
+    )
+
+    assert names == []
+
+
+def test_stager_skips_a_file_it_cannot_place_without_killing_the_rest(tmp_path: Path):
+    """Jeden plik nie do odłożenia (rozszerzenie spoza listy) nie może zabrać pozostałych."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import Attachment
+
+    _factory, stage = agent_wiring.build_file_support(
+        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf"})
+    )
+
+    names = stage(
+        WorkspaceScope("teams_graph", "t/c/r"),
+        (
+            Attachment("image", "image/png", "zrzut.exe", "QkFTRTY0"),
+            Attachment("document", "application/pdf", "umowa.pdf", "QkFTRTY0"),
+        ),
+    )
+
+    assert names == ["umowa.pdf"]
+
+
+def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
+    """Pętla domknięta: drzwi odkładają plik, model prosi o niego ``File(read)`` i go dostaje."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import Attachment, AttachmentQueue
+
+    factory, stage = agent_wiring.build_file_support(
+        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf"})
+    )
+    scope = WorkspaceScope("teams_graph", "team/chan/root")
+    (nazwa,) = stage(scope, (Attachment("document", "application/pdf", "umowa.pdf", "JVBERi0x"),))
+
+    queue = AttachmentQueue(budget_bytes=1_000_000)
+    (spec,) = factory(scope, queue)
+    result = spec.fn(action="read", name=nazwa)
+
+    assert result["materialized"] is True
+    (podany,) = queue.drain()
+    assert (podany.kind, podany.media_type) == ("document", "application/pdf")

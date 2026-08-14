@@ -28,6 +28,7 @@ class _Runtime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
     ) -> AgentResult:
         return AgentResult(
             reply="odp", entries=(UserText(query), AssistantTurn("odp", ())), stop_reason="end_turn"

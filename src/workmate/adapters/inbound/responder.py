@@ -33,6 +33,7 @@ from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
     AssistantTurn,
     Attachment,
+    AttachmentQueue,
     RawTurn,
     ToolOutput,
     ToolResults,
@@ -198,6 +199,13 @@ class ConversationalResponder:
         commands: CommandRouter | None = None,
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
+        file_catalog_factory: (
+            Callable[[WorkspaceScope, AttachmentQueue], Sequence[ToolSpec]] | None
+        ) = None,
+        attachment_stager: (
+            Callable[[WorkspaceScope, Sequence[Attachment]], Sequence[str]] | None
+        ) = None,
+        attachment_budget_bytes: int = 0,
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
@@ -225,6 +233,13 @@ class ConversationalResponder:
         # z ``identities.yaml``, jak każda ścieżka danych. Drzwi zaufane (CLI) podają fabrykę bez
         # autoryzatora → powłoka nie bramkowana (jeden operator, brak ``sender_id``).
         self._shell_catalog_factory = shell_catalog_factory
+        # Narzędzie ``File`` (ADR 0064) i odkładanie załączników na dysk rozmowy. ``None`` →
+        # dawne zachowanie: załącznik żyje wyłącznie w blokach rozmowy, a model nie ma jak po
+        # niego wrócić. Budżet materiałów tury jest WSPÓLNY z drzwiami — pobrania modelu i
+        # załączniki użytkownika jadą w tym samym żądaniu API, więc dzielą jeden sufit.
+        self._file_catalog_factory = file_catalog_factory
+        self._attachment_stager = attachment_stager
+        self._attachment_budget_bytes = attachment_budget_bytes
         # Fabryka narzędzia ODPOWIEDZI W WĄTKU (ADR 0024, Faza 3b); ``None`` → brak (inne drzwi).
         # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
         # ``reply_on_thread`` z PRE-ZWIĄZANYM numerem — model nie przekieruje na inne issue.
@@ -407,6 +422,33 @@ class ConversationalResponder:
                     "Nie udało się zbudować narzędzia powłoki dla nadawcy %r — pomijam",
                     message.sender_id,
                 )
+        # Załączniki tej tury odkładamy na dysk katalogu rozmowy (ADR 0064), zanim model
+        # cokolwiek zobaczy: dopiero plik na dysku widzi ZARAZEM powłoka i ``File(read)``, i tylko
+        # on przeżywa kompaktowanie kontekstu, po którym z załącznika zostaje sam opis. Odkładanie
+        # jest OPCJONALNYM wzbogaceniem — pełny dysk czy zła nazwa nie mogą zabić tury, w której
+        # model i tak dostaje załącznik w kontekście. Nazwy trafiają do nagłówka sesji, bo na dysku
+        # są slugiem oryginalnej nazwy i model inaczej zgadywałby, jak wołać ``File``.
+        staged_files: list[str] = []
+        if self._attachment_stager is not None and message.attachments:
+            try:
+                staged_files = list(self._attachment_stager(scope, message.attachments))
+            except Exception:
+                logger.warning(
+                    "Nie udało się odłożyć załączników rozmowy %r — pomijam", external_id
+                )
+        # Kolejka materiałów tej tury: sufit pomniejszony o to, co drzwi już wstawiły do tury
+        # użytkownika (dzielą jedno żądanie API). Ujemny wynik podcinamy do zera — model dostanie
+        # rzeczową odmowę „budżet wyczerpany", zamiast pobrania, które wywróci żądanie.
+        attachment_queue = AttachmentQueue(
+            budget_bytes=max(0, self._attachment_budget_bytes - _attachment_bytes(message))
+        )
+        if self._file_catalog_factory is not None:
+            try:
+                extra_tools.extend(self._file_catalog_factory(scope, attachment_queue))
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzia File dla %r — pomijam", external_id
+                )
         # Narzędzie odpowiedzi w wątku (ADR 0024, Faza 3b): dokładane, gdy wątek kanału jest
         # powiązany z issue/PR (fabryka odczytuje cel z external_id) — inaczej pusta lista.
         # To OPCJONALNE wzbogacenie: błąd odczytu mapowania (np. blokada SQLite) NIE może zabić
@@ -492,8 +534,10 @@ class ConversationalResponder:
                 thread=external_id,
                 skills=self._skills,
                 github_thread=self._thread_link(external_id),
+                staged_files=staged_files,
             ),
             audit=audit_recorder,
+            attachment_queue=attachment_queue,
         )
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
@@ -633,6 +677,16 @@ def _with_notices(reply: str, *, rolled_over: bool, stop_reason: str) -> str:
     return "\n".join(notices) + "\n\n" + reply
 
 
+def _attachment_bytes(message: InboundMessage) -> int:
+    """Ile bajtów base64 drzwi już wstawiły do tury użytkownika (ADR 0064 — wspólny budżet).
+
+    Liczymy SUROWE bajty (base64 ÷ 4 × 3), bo w tej samej jednostce wyrażony jest sufit
+    materializacji. Pliki zamienione na tekst nie niosą base64 i słusznie ważą zero — nie idą
+    do API jako bajty.
+    """
+    return sum(len(a.data_base64) * 3 // 4 for a in message.attachments)
+
+
 def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]:
     """Zmapuj tury rozmowy na wpisy transkryptu LLM — bezstratnie (ADR 0011).
 
@@ -650,12 +704,17 @@ def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]
                 entries.append(AssistantTurn(msg.text, ()))
         elif msg.role == "tool":
             if msg.blocks:
+                # Wiersz tury narzędziowej niesie DWA rodzaje bloków (ADR 0064): wyniki narzędzi
+                # (mają ``call_id``) oraz pliki podane przez ``File`` w formie neutralnej. Bez
+                # tego podziału plik wróciłby jako wynik bez ``call_id`` i wywrócił replay.
                 entries.append(
                     ToolResults(
                         tuple(
                             ToolOutput(b["call_id"], b["content"], b.get("is_error", False))
                             for b in msg.blocks
-                        )
+                            if "call_id" in b
+                        ),
+                        tuple(attachment_from_row(b) for b in msg.blocks if "call_id" not in b),
                     )
                 )
         elif msg.text or msg.blocks:

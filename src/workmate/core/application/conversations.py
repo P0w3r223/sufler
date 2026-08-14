@@ -254,6 +254,10 @@ def _row_of(
             {"call_id": o.call_id, "content": o.content, "is_error": o.is_error}
             for o in entry.outputs
         ]
+        # Pliki podane przez ``File`` (ADR 0064) dopisujemy do tych samych ``blocks`` w formie
+        # NEUTRALNEJ — inaczej replay z pamięci oddałby model bez materiału, o którym mówi jego
+        # własna, zapisaną turę wyżej. Rozróżnia je obecność ``call_id`` (wynik) kontra ``kind``.
+        blocks.extend(attachment_to_row(a) for a in entry.attachments)
         return "tool", "", blocks, None
     # RawTurn: odtworzona tura z pamięci — nie powinna trafić do zapisu nowej tury,
     # ale gdyby, zachowujemy jej bloki bezstratnie (pusta projekcja tekstu).

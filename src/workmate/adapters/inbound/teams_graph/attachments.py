@@ -25,14 +25,15 @@ from workmate.adapters.inbound.document_text import (
 from workmate.adapters.inbound.document_text import (
     extract_text_from_bytes,
 )
+
+# ``AttachmentRef`` jest tu potrzebny W CZASIE WYKONANIA (``FileBytesMaterializer`` składa
+# referencję syntetyczną), więc import jest zwykły, nie pod ``TYPE_CHECKING``.
+from workmate.adapters.inbound.teams_graph.selection import AttachmentRef
 from workmate.core.ports.llm import Attachment
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.teams_graph.poller import GraphChannelClient
-    from workmate.adapters.inbound.teams_graph.selection import (
-        AttachmentRef,
-        ChannelMessage,
-    )
+    from workmate.adapters.inbound.teams_graph.selection import ChannelMessage
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,25 @@ def _build(
     if ext not in _SUPPORTED_EXTS:
         return None
     return Attachment("text", "text/plain", ref.name, text=extract_text_from_bytes(data, ext)), 0
+
+
+class FileBytesMaterializer:
+    """Port ``FileMaterializer`` (ADR 0064): bajty pliku → blok treści dla modelu.
+
+    Cały mechanizm to ``_build`` — TEN SAM, którym drzwi materializują załącznik użytkownika
+    (ADR 0016). Osobna implementacja rozpoznawania formatów dla ``File(read)`` znaczyłaby, że
+    model i drzwi widzą ten sam plik inaczej; to jest dokładnie ta klasa błędu, której nie widać
+    aż do rozmowy. ``AttachmentRef`` składamy syntetycznie, bo tu nie ma referencji z Graph —
+    plik leży już na dysku, w katalogu roboczym rozmowy.
+    """
+
+    def __init__(self, *, max_image_edge: int = 2048) -> None:
+        self._max_image_edge = max_image_edge
+
+    def materialize(self, name: str, data: bytes) -> tuple[Attachment, int] | None:
+        """Zbuduj załącznik z bajtów; ``None`` gdy formatu nie umiemy podać modelowi."""
+        ref = AttachmentRef(kind="file", name=name, url="")
+        return _build(ref, data, max_image_edge=self._max_image_edge)
 
 
 _heif_state: bool | None = None  # None=nie próbowano; True=zarejestrowano; False=brak wtyczki

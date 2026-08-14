@@ -171,6 +171,7 @@ def build_session_header(
     thread: str = "",
     skills: Sequence[tuple[str, str]] = (),
     github_thread: tuple[str, int] | None = None,
+    staged_files: Sequence[str] = (),
 ) -> str:
     """Złóż nagłówek sesji: data, identyfikator rozmowy, powiązanie z GitHubem i skille.
 
@@ -211,6 +212,17 @@ def build_session_header(
             f"This Teams thread is linked to GitHub {noun} #{number}. To reply there, call "
             f"GitHub(action='comment', number={number}) — only when the user explicitly asks, "
             "and only on this number."
+        )
+    if staged_files:
+        # Nazwa na dysku jest SLUGIEM oryginalnej (ADR 0018 ``safe_filename``), więc bez tej
+        # linii model zgadywałby, jak nazywa się plik, który przed chwilą dostał — i zgadywałby
+        # źle. Fakt o świecie, nie zachęta: plik zostaje w katalogu rozmowy także wtedy, gdy
+        # kompaktowanie (ADR 0014) zredukuje sam załącznik do opisu.
+        lines.append("")
+        lines.append(
+            "Files attached in this turn were saved to your working directory as: "
+            + ", ".join(staged_files)
+            + ". They stay there for later turns."
         )
     if skills:
         lines.append("")

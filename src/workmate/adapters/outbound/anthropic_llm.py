@@ -326,6 +326,11 @@ def _to_messages(transcript: Sequence[TranscriptEntry]) -> list[dict[str, Any]]:
                 if output.is_error:
                     block["is_error"] = True
                 results.append(block)
+            # Pliki podane przez ``File`` (ADR 0064) jadą jako bloki RÓWNORZĘDNE, nie w treści
+            # wyniku: ``tool_result`` przyjmuje tekst i obraz, ale NIE blok ``document`` (PDF).
+            # Kolejność jest wymogiem API — bloki ``tool_result`` muszą stać na początku
+            # wiadomości ``user``, więc materiał dokleja się po nich.
+            results.extend(_attachment_block(att) for att in entry.attachments)
             messages.append({"role": "user", "content": results})
     return messages
 

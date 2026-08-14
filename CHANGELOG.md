@@ -14,6 +14,16 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
 - **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
 - **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
 
+- **Narzędzie `File(action='read')` + odkładanie załączników na dysk rozmowy** (ADR 0064, druga
+  część): model może podać sobie plik z katalogu roboczego DO WGLĄDU — obraz jako obraz, PDF jako
+  dokument, resztę jako wyciągnięty tekst. Plik jedzie osobnym blokiem obok wyniku narzędzia (bo
+  `tool_result` nie unosi bloku `document`, a jego treść bywa czyszczona przez edycję kontekstu),
+  w tej samej turze, i przeżywa zapis do pamięci rozmowy. Załączniki użytkownika są od teraz
+  ODKŁADANE na dysk katalogu rozmowy — dotąd żyły wyłącznie w blokach rozmowy, na wolumenie,
+  którego wykonawca świadomie nie montuje, więc ani powłoka, ani model nie miały jak do nich
+  wrócić po kompaktowaniu. Nazwy odłożonych plików trafiają do nagłówka sesji (na dysku są
+  slugiem oryginalnej nazwy). Budżet materiałów tury jest WSPÓLNY z materializerem drzwi — jedno
+  żądanie API, jeden sufit. Narzędzie jest agent-only (golden powierzchni MCP pilnuje tego wprost).
 - **Ekstrakcja HTML + komenda `workmate-extract`** (ADR 0064, pierwsza część): plik `.html`/`.htm`
   przestaje odbijać się od drzwi jako „nieobsługiwany typ" — idzie ekstraktorem (`html.parser` ze
   stdlib, bez nowej zależności), który pomija skrypty i style, wciąga `alt` obrazów i raportuje

@@ -32,8 +32,14 @@ class FilesystemWorkspaceWriter:
     def create(self, relpath: str, content: str) -> WorkspaceFile:
         path = _resolve_within(self._root, relpath)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_create(path, content)
+        _atomic_create(path, content.encode("utf-8"))
         return WorkspaceFile(name=path.name, relpath=relpath, size=len(content.encode("utf-8")))
+
+    def create_bytes(self, relpath: str, data: bytes) -> WorkspaceFile:
+        path = _resolve_within(self._root, relpath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_create(path, data)
+        return WorkspaceFile(name=path.name, relpath=relpath, size=len(data))
 
 
 class FilesystemWorkspaceRepository:
@@ -61,6 +67,10 @@ class FilesystemWorkspaceRepository:
     def read(self, scope_dir: str, name: str) -> str | None:
         path = _resolve_within(self._root, f"{scope_dir}/{name}")
         return path.read_text(encoding="utf-8") if path.is_file() else None
+
+    def read_bytes(self, scope_dir: str, name: str) -> bytes | None:
+        path = _resolve_within(self._root, f"{scope_dir}/{name}")
+        return path.read_bytes() if path.is_file() else None
 
 
 def _resolve_within(root: Path, relpath: str) -> Path:
@@ -100,17 +110,19 @@ def prune_stale(root: Path, *, older_than: timedelta, now: datetime) -> int:
     return removed
 
 
-def _atomic_create(path: Path, content: str) -> None:
+def _atomic_create(path: Path, data: bytes) -> None:
     """Zapis atomowy i create-only (UNIKALNY temp + ``os.link``); kolizja/I/O → ``WriteError``.
 
     Plik tymczasowy ma unikalną nazwę (``mkstemp``) — dwa równoległe ``create`` na tę samą nazwę
     docelową nie ścigają się o wspólny temp (istotne przy agencie w pętli / multi-user).
+    Bajty, nie tekst: tą samą drogą idzie plik tekstowy modelu i odłożony załącznik binarny
+    (ADR 0064), a dwie ścieżki zapisu oznaczałyby dwa miejsca na pomyłkę w atomowości.
     """
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
         os.close(fd)
-        tmp.write_text(content, encoding="utf-8")
+        tmp.write_bytes(data)
         os.link(tmp, path)
     except FileExistsError as exc:
         raise WriteError(f"plik już istnieje: {path.name}") from exc

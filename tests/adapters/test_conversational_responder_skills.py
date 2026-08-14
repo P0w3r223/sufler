@@ -30,6 +30,7 @@ class _HeaderRecordingRuntime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
     ) -> AgentResult:
         self.headers.append(session_header)
         return AgentResult(

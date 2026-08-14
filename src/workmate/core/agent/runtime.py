@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from workmate.core.application.tools import ToolSpec
     from workmate.core.ports.llm import (
         Attachment,
+        AttachmentQueue,
         LLMClient,
         ToolCall,
         TranscriptEntry,
@@ -91,8 +92,14 @@ class AgentRuntime:
         extra_tools: Sequence[ToolSpec] = (),
         session_header: str = "",
         audit: Callable[[str, Mapping[str, Any], str], None] | None = None,
+        attachment_queue: AttachmentQueue | None = None,
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
+
+        ``attachment_queue`` (ADR 0064) to kolejka plików, które narzędzie ``File`` materializuje
+        w trakcie tury. Runtime jej nie wypełnia — tylko OPRÓŻNIA po każdej rundzie wywołań i
+        dokłada zabrane pliki do ``ToolResults``. Drzwi tworzą ją per tura razem z narzędziem
+        (wspólna closure), więc runtime zostaje bezstanowy i nie wie nic o materializacji.
 
         ``audit`` (ADR 0067) to rejestrator per turę: dla KAŻDEGO wywołania narzędzia dostaje
         ``(nazwa, argumenty, status)``. ``None`` → brak audytu (dawne zachowanie). Kontekst tury
@@ -159,8 +166,13 @@ class AgentRuntime:
             )
             transcript.append(assistant)
             new_entries.append(assistant)
+            outputs = tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+            # Pliki zmaterializowane przez ``File`` w TEJ rundzie (ADR 0064). Zabieramy je po
+            # dispatchu, więc jadą jako bloki obok wyników narzędzi, w tej samej wiadomości
+            # ``user`` — i model widzi je od razu, w tej samej turze, a nie dopiero gdy odezwie
+            # się człowiek. Bez kolejki: dawne zachowanie co do bajta.
             results = ToolResults(
-                tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+                outputs, attachment_queue.drain() if attachment_queue is not None else ()
             )
             transcript.append(results)
             new_entries.append(results)

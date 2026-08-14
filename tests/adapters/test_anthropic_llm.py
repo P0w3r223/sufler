@@ -155,6 +155,33 @@ def test_to_messages_maps_user_text_and_tool_results():
     assert tool_msg["content"][1]["is_error"] is True
 
 
+def test_tool_results_render_materialized_files_after_the_result_blocks():
+    """Plik z ``File(read)`` (ADR 0064) jedzie jako blok RÓWNORZĘDNY, nie w treści wyniku.
+
+    Kolejność jest wymogiem API: bloki ``tool_result`` muszą stać na POCZĄTKU wiadomości
+    ``user``, więc materiał dokleja się po nich. Sam blok ``document`` w treści ``tool_result``
+    byłby nielegalny — to jest cały powód, dla którego ten szew istnieje.
+    """
+    entries = [
+        ToolResults(
+            (ToolOutput("t1", '{"materialized": true}'),),
+            (Attachment("document", "application/pdf", "umowa.pdf", data_base64="QkFTRTY0"),),
+        )
+    ]
+
+    (message,) = _to_messages(entries)
+
+    assert [block["type"] for block in message["content"]] == ["tool_result", "document"]
+    assert message["content"][1]["source"]["data"] == "QkFTRTY0"
+    assert "QkFTRTY0" not in message["content"][0]["content"]
+
+
+def test_tool_results_without_files_render_exactly_as_before():
+    (message,) = _to_messages([ToolResults((ToolOutput("t1", "ok"),))])
+
+    assert [block["type"] for block in message["content"]] == ["tool_result"]
+
+
 # --- _user_message / _attachment_block: załączniki multimodalne (ADR 0016) -----
 
 
