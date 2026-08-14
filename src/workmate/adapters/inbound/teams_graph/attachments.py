@@ -20,13 +20,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.document_text import (
-    TEXT_EXTS as _TEXT_EXTS,
+    SUPPORTED_EXTS as _SUPPORTED_EXTS,
 )
 from workmate.adapters.inbound.document_text import (
-    extract_docx,
-    extract_pptx,
-    extract_text,
-    extract_xlsx,
+    extract_text_from_bytes,
 )
 from workmate.core.ports.llm import Attachment
 
@@ -166,6 +163,12 @@ class AttachmentMaterializer:
                 f"Załącznika „{ref.name}” nie udało się odczytać: nieobsługiwany typ pliku."
             ), 0
         built, sent = result
+        if built.kind == "text" and not built.text.strip():
+            # Plik czytelny, ale bez tekstu (strona wyłącznie graficzna, pusty dokument).
+            # Bez tej gałęzi model dostawał samą etykietę „[Plik: raport.html]" i nic dalej —
+            # nieodróżnialne od pliku, którego treść po prostu przemilczano. Komenda powłoki
+            # rozróżnia ten stan od dawna; drzwi milczały.
+            return _note(f"Załącznik „{ref.name}” nie zawiera tekstu do odczytania."), 0
         if sent > self._limits.max_bytes:
             return _note(
                 f"Załącznika „{ref.name}” nie udało się odczytać: przekracza limit rozmiaru."
@@ -188,6 +191,12 @@ def _build(
     bajtów). Kolejność: najpierw OBRAZ po ZAWARTOŚCI (nie po rozszerzeniu) — łapie png/jpg/gif/
     webp wklejone inline ORAZ załączone jako plik, niezależnie od nazwy. Dopiero potem plik po
     rozszerzeniu (dokumenty/tekst). Obrazy inline (hosted) mogą być WYŁĄCZNIE obrazem.
+
+    Poza obrazem i PDF-em (jedyne dwa formaty, które Claude API przyjmuje NATYWNIE) o obsłudze
+    rozstrzyga ``SUPPORTED_EXTS`` i wspólny dyspozytor ``extract_text_from_bytes`` — nie własna
+    lista ``if``-ów. Wcześniej były dwie tablice na to samo pytanie i rozjeżdżały się cicho:
+    format dołożony do dyspozytora nie docierał do drzwi, a alias (``.htm``) nie był tu niczym
+    zabezpieczony.
     """
     image = _process_image(data, max_image_edge)
     if image is not None:
@@ -199,15 +208,9 @@ def _build(
     if ext == "pdf":
         pdf = Attachment("document", "application/pdf", ref.name, data_base64=_b64(data))
         return pdf, len(data)
-    if ext == "docx":
-        return Attachment("text", "text/plain", ref.name, text=extract_docx(data)), 0
-    if ext == "xlsx":
-        return Attachment("text", "text/plain", ref.name, text=extract_xlsx(data)), 0
-    if ext == "pptx":
-        return Attachment("text", "text/plain", ref.name, text=extract_pptx(data)), 0
-    if ext in _TEXT_EXTS:
-        return Attachment("text", "text/plain", ref.name, text=extract_text(data)), 0
-    return None
+    if ext not in _SUPPORTED_EXTS:
+        return None
+    return Attachment("text", "text/plain", ref.name, text=extract_text_from_bytes(data, ext)), 0
 
 
 _heif_state: bool | None = None  # None=nie próbowano; True=zarejestrowano; False=brak wtyczki

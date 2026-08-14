@@ -54,6 +54,12 @@ teams-graph = [
     "openpyxl>=3.1",
     "python-pptx>=1.0",
     "pillow>=10",
+    # Ekstrakcja tekstu z PDF dla komendy `workmate-extract` w POWŁOCE (ADR 0064). Materializer
+    # drzwi PDF-a nie ekstrahuje (leci base64 jako blok `document`), ale wykonawca dostaje ten
+    # sam obraz floty co drzwi — a `seed`, gdzie pypdf mieszkał dotąd, obraz świadomie POMIJA
+    # (Dockerfile instaluje agent/github/jira/teams-graph/file-reply/retrieval). Bez tej linii
+    # `workmate-extract umowa.pdf` odbijałby się w wykonawcy o brak biblioteki.
+    "pypdf>=4.0",
     # Dekoder HEIC/HEIF (domyślny format zdjęć iPhone) — Pillow sam nie czyta HEIF; wtyczka
     # rejestruje opener (register_heif_opener), a materializer konwertuje HEIC→JPEG. Wheel'e
     # pakują libheif — bez systemowej zależności. Import/rejestracja LENIWE w adapterze. ADR 0016.
@@ -120,6 +126,10 @@ workmate-search = "workmate.adapters.inbound.cli.search:main"
 # `pdf`/`docx` do skrzynki `outputs/` powstają tą komendą (md/txt agent zapisze wprost):
 # `workmate-render --format pdf --output outputs/raport.pdf < raport.md`.
 workmate-render = "workmate.adapters.inbound.cli.render:main"
+# Ekstraktor tekstu dla POWŁOKI agenta (ADR 0064): `workmate-extract umowa.pdf`. Powłoka czyta
+# pliki `cat`-em i staje na PDF/docx/xlsx/pptx/HTML — ta komenda domyka lukę bez powiększania
+# typowanej powierzchni (kryterium ADR 0061). Ten sam `document_text` co drzwi i importer.
+workmate-extract = "workmate.adapters.inbound.cli.extract:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 # Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.
