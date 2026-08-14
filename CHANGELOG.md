@@ -14,8 +14,10 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
 - **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
 - **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
 
-### Design (ADR-y `proposed`, poza kodem)
-- 0064 (harness plików + materializacja), 0065 (mutowalna baza + sędzia-Sonnet), 0066 (klasy zaufania T0–T3).
+### Design (ADR-y `accepted` 2026-08-14, kod jeszcze nienapisany)
+- **0064** — narzędzie `File(read|write|edit|delete)` + materializacja do następnej tury użytkownika, ekstrakcja HTML z budżetem anty-maskującym, `workmate-extract`. Pomiar ruchu (31 lip–14 sie: 4 załączniki, 0 kompaktowań) **nie** potwierdził potrzeby — narzędzie powstaje decyzją właściciela, z ponownym pomiarem po miesiącu powłoki jako warunkiem utrzymania.
+- **0065** — mutowalna baza wiedzy: kanał generyczny `File(write/edit/delete)` przez walidator notatek, sędzia-Sonnet jako obrona w głębi, werdykt `confirm` = potwierdzenie w wątku od tego samego zmapowanego nadawcy, snapshot przed każdą operacją + nocna kopia wolumenu.
+- **0066** — klasy zaufania T0–T3: etykiety T3 domyślnie ON, rozszczepienie T1/T2 opt-in za flagą ADR 0062; lepka skaza rozmowy eskaluje (sędzia + audyt), nie blokuje.
 
 ## [1.6.0] — 2026-08-07
 
