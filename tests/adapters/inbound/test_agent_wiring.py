@@ -65,6 +65,7 @@ def _settings(tmp_path: Path) -> Settings:
         tls_keyfile=None,
         metrics_db=None,
         audit_db=None,
+        note_snapshots_dir=tmp_path / "snapshots",
     )
 
 
@@ -801,7 +802,7 @@ def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
     (nazwa,) = stage(scope, (Attachment("document", "application/pdf", "umowa.pdf", "JVBERi0x"),))
 
     queue = AttachmentQueue(budget_bytes=1_000_000)
-    (spec,) = factory(scope, queue)
+    (spec,) = factory(scope, queue, "")
     result = spec.fn(action="read", name=nazwa)
 
     assert result["materialized"] is True
@@ -852,7 +853,7 @@ def test_staged_document_can_actually_be_read_back_by_the_tool(tmp_path: Path):
     (nazwa,) = stage(scope, (Attachment("text", "text/plain", "raport.docx", text="Treść umowy"),))
 
     queue = AttachmentQueue(budget_bytes=1_000_000)
-    (spec,) = factory(scope, queue)
+    (spec,) = factory(scope, queue, "")
     result = spec.fn(action="read", name=nazwa)
 
     assert result["materialized"] is True  # nie „nie jest zipem"
@@ -902,3 +903,122 @@ def test_file_tool_gate_on_wires_both_sides(tmp_path: Path, monkeypatch):
 
     assert responder._file_catalog_factory is not None
     assert responder._attachment_stager is not None
+
+
+# --- Bramki MUTACJI bazy wiedzy (ADR 0065) -------------------------------------
+
+
+def _para_file_z_mutacja(tmp_path: Path, *, mutations, identities=None, read_authorizer=None):
+    return agent_wiring.build_file_support(
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "txt"}),
+        materialization_limits=_PULAPY,
+        mutations=mutations,
+        identities=identities,
+        read_authorizer=read_authorizer,
+    )
+
+
+class _StubMutations:
+    """Sentinel — bramka montażu ma rozstrzygać o OBECNOŚCI akcji, nie o ich działaniu."""
+
+
+class _StubIdentities:
+    def __init__(self, person=None) -> None:
+        self._person = person
+
+    def resolve_by_aad_user_id(self, aad_user_id: str):  # noqa: ANN201
+        return self._person
+
+
+def _akcje(spec) -> set[str]:  # noqa: ANN001
+    import typing
+
+    return set(typing.get_args(typing.get_type_hints(spec.fn)["action"]))
+
+
+def test_without_the_mutation_gate_the_tool_is_read_only(tmp_path: Path):
+    """Warunki decydujące, czy baza wiedzy jest w ogóle mutowalna, muszą mieć sondę —
+    inaczej ich usunięcie przechodzi zielono, a zauważa się to na produkcji."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+
+    factory, _stage = _para_file_z_mutacja(tmp_path, mutations=None)
+    (spec,) = factory(
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+    )
+
+    assert _akcje(spec) == {"read"}
+
+
+def test_mutation_gate_without_an_identity_map_stays_read_only(tmp_path: Path):
+    """Bez mapy nie ma komu przypisać zmiany ani kogo zapytać o potwierdzenie — fail-closed."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+
+    factory, _stage = _para_file_z_mutacja(tmp_path, mutations=_StubMutations(), identities=None)
+    (spec,) = factory(
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+    )
+
+    assert _akcje(spec) == {"read"}
+
+
+def test_unresolvable_sender_stays_read_only(tmp_path: Path):
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+
+    factory, _stage = _para_file_z_mutacja(
+        tmp_path, mutations=_StubMutations(), identities=_StubIdentities(person=None)
+    )
+    (spec,) = factory(
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-obcy"
+    )
+
+    assert _akcje(spec) == {"read"}
+
+
+def test_recognised_member_gets_the_mutating_actions(tmp_path: Path):
+    from workmate.core.domain.identity import Person
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+
+    osoba = Person(source_id="anna", display_name="Anna", aad_user_id="aad-1", jira_user="anna.k")
+    factory, _stage = _para_file_z_mutacja(
+        tmp_path, mutations=_StubMutations(), identities=_StubIdentities(osoba)
+    )
+    (spec,) = factory(
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+    )
+
+    assert _akcje(spec) == {"read", "edit", "delete"}
+
+
+def test_member_without_read_authorization_cannot_mutate(tmp_path: Path):
+    """ADR 0065 §7: kto nie może CZYTAĆ bazy wiedzy, nie może jej też zmieniać.
+
+    Inaczej bramka odczytu (ADR 0062) przestawałaby cokolwiek znaczyć dla ścieżki NISZCZĄCEJ,
+    a odmowa sędziego — niosąca fragment treści — byłaby kanałem odczytu wokół niej.
+    """
+    from workmate.core.domain.identity import Person
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.errors import NoteAuthorizationError
+    from workmate.core.ports.llm import AttachmentQueue
+
+    class _OdmawiajacyAutoryzator:
+        def authorize(self, requester_aad_id: str):  # noqa: ANN201
+            raise NoteAuthorizationError("nie jest członkiem pionu")
+
+    osoba = Person(source_id="anna", display_name="Anna", aad_user_id="aad-1", jira_user="anna.k")
+    factory, _stage = _para_file_z_mutacja(
+        tmp_path,
+        mutations=_StubMutations(),
+        identities=_StubIdentities(osoba),
+        read_authorizer=_OdmawiajacyAutoryzator(),
+    )
+    (spec,) = factory(
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+    )
+
+    assert _akcje(spec) == {"read"}

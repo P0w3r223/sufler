@@ -101,6 +101,21 @@ the few facts that carry the answer. Teams renders dense blocks poorly.
 When asked about yourself, describe what you help with and keep the account of how you
 are built brief: the people you serve came for the knowledge base."""
 
+# Zdanie o notatkach w dwóch wariantach — którym prompt opisuje świat, rozstrzyga bramka
+# mutacji (ADR 0065). Tekst wydzielony do stałych, żeby podmiana była wymianą ZNANEGO zdania,
+# a nie dopasowaniem wzorca do prozy, które po pierwszej korekcie stylistycznej przestaje trafiać.
+_NOTES_IMMUTABLE = (
+    "One constraint worth its cost: add notes, and leave existing ones as their authors\n"
+    "wrote them. They are the division's institutional memory."
+)
+
+_NOTES_MUTABLE = (
+    "One constraint worth its cost: the notes are the division's institutional memory, so\n"
+    "change an existing one only when someone asks you to, change only what they asked\n"
+    "about, and say plainly what you changed. An independent reviewer sees every such\n"
+    "change, and a copy of the previous version is kept."
+)
+
 _PRECEDENCE = """\
 ## Precedence
 
@@ -151,7 +166,7 @@ _WEEKDAYS = (
 )
 
 
-def static_prompt_for(*, attachments: bool, shell: bool = False) -> str:
+def static_prompt_for(*, attachments: bool, shell: bool = False, mutation: bool = False) -> str:
     """Blok statyczny dla drzwi: korpus wg dostępu do bazy wiedzy, plus klauzula multimodalna.
 
     ``shell`` wybiera wariant sekcji ``ENVIRONMENT`` i musi pochodzić z tego samego źródła co
@@ -163,6 +178,13 @@ def static_prompt_for(*, attachments: bool, shell: bool = False) -> str:
     które o parametrze zapomną, opisują świat węższy niż faktyczny, a nie szerszy.
     """
     base = STATIC_PROMPT_SHELL if shell else STATIC_PROMPT
+    if mutation:
+        # Zdanie o niezmienności notatek jest PRAWDZIWE dokładnie wtedy, gdy mutacji nie ma.
+        # Z włączoną bramką (ADR 0065) zostawienie go dałoby zamrożony prefiks instruujący
+        # model PRZECIWKO narzędziu, które właśnie dostał — czyli albo martwe narzędzie, albo
+        # cicho fałszywy prompt. Podmieniamy zdanie, nie dopisujemy drugiego: dwa zdania o tej
+        # samej rzeczy, jedno przeczące drugiemu, są gorsze niż każde z osobna.
+        base = base.replace(_NOTES_IMMUTABLE, _NOTES_MUTABLE)
     return base + MULTIMODAL_CAPABILITY_CLAUSE if attachments else base
 
 

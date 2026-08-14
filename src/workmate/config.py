@@ -186,6 +186,10 @@ class Settings:
     # (brak WORKMATE_AUDIT_DB) = audyt wyłączony (drzwi nie zapisują nic). Osobny plik, retencja
     # dłuższa niż rozmów (Faza 7); rejestruje akcje/ścieżki i pseudonim, NIGDY treść.
     audit_db: Path | None
+    # Migawki notatek przed mutacją (ADR 0065). POZA ``notes_dir`` rozmyślnie: agent czyta
+    # katalog notatek zachłannie, więc kopie w środku wracałyby jako wyniki wyszukiwania,
+    # a wykonawca montuje bazę wiedzy ``ro`` i stanu nie widzi wcale.
+    note_snapshots_dir: Path
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -206,6 +210,9 @@ class Settings:
         return cls(
             data_dir=data_dir,
             notes_dir=notes_dir,
+            note_snapshots_dir=_path_from_env(
+                "WORKMATE_NOTE_SNAPSHOTS_DIR", data_dir / "snapshots" / "notes"
+            ),
             projects_registry=projects_registry,
             transport=transport,
             log_level=os.environ.get("WORKMATE_LOG_LEVEL", "INFO"),
@@ -724,6 +731,13 @@ class TeamsGraphSettings:
     # zastosowanie — ADR zapowiada ponowny pomiar użycia i USUNIĘCIE narzędzia, jeśli okaże się
     # martwe; bez flagi „wyłączenie" znaczyłoby wydanie nowego obrazu.
     enable_file_tool: bool = False
+    # MUTACJA bazy wiedzy przez `File(edit)` (ADR 0065). Odwraca dotychczasową postawę
+    # „create-only": do 0065 nie dało się zepsuć notatki, bo nie było czym. Domyślnie OFF.
+    enable_note_mutation: bool = False
+    # KASOWANIE notatek — osobno od edycji, bo ADR 0065 wiąże je z DZIAŁAJĄCĄ nocną kopią
+    # wolumenu: migawka cofa jedną pomyłkę, przed złym dniem ratuje dopiero kopia poza
+    # hostem. Włączenie bez sprawdzenia kopii jest tym, przed czym ta flaga ma chronić.
+    enable_note_delete: bool = False
     # Strukturalne koperty T3 na treści OBCEJ (ADR 0066): plik, wynik narzędzia, tura
     # nadawcy spoza mapy. Domyślnie OFF jak każda bramka — włączona zmienia PROMPT każdej
     # tury (nagłówek tłumaczy znacznik) i kształt treści wysyłanej do modelu, więc operator
@@ -802,6 +816,12 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", default=False
             ),
             enable_file_tool=_bool_from_env("WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL", default=False),
+            enable_note_mutation=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION", default=False
+            ),
+            enable_note_delete=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_DELETE", default=False
+            ),
             enable_trust_labels=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS", default=False
             ),

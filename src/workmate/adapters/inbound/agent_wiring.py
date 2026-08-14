@@ -14,6 +14,7 @@ import base64
 import binascii
 import functools
 import logging
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,17 +28,20 @@ from workmate.adapters.inbound.responder import (
 )
 from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer, build_semantic_ranker
 from workmate.adapters.inbound.teams_graph.attachments import FileBytesMaterializer
+from workmate.adapters.outbound.anthropic_judge import AnthropicMutationJudge
 from workmate.adapters.outbound.filesystem_outbox import (
     OUTBOX_DIRNAME,
     FilesystemOutboxRepository,
 )
 from workmate.adapters.outbound.filesystem_skills import read_skill_catalog
+from workmate.adapters.outbound.filesystem_snapshots import FilesystemNoteSnapshots
 from workmate.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
 )
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from workmate.adapters.outbound.memory_confirmations import InMemoryConfirmations
 from workmate.adapters.outbound.sqlite_audit import SqliteAuditStore
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
@@ -50,6 +54,7 @@ from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
 from workmate.core.application.events import EventService
 from workmate.core.application.metrics import MetricsService
+from workmate.core.application.note_mutation import NoteMutationService
 from workmate.core.application.outbox import OutboxDelivery, OutboxLimits
 from workmate.core.application.services import (
     NotesService,
@@ -90,12 +95,14 @@ if TYPE_CHECKING:
         SkillsSettings,
         WorkspaceSettings,
     )
+    from workmate.core.application.note_mutation import NoteMutationService
     from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.conversations import ConversationStore
+    from workmate.core.ports.identity import AadIdentityLookup
     from workmate.core.ports.repositories import NotesRepository
 
 logger = logging.getLogger(__name__)
@@ -346,8 +353,11 @@ def build_file_support(
     max_image_edge: int,
     staged_ext: frozenset[str],
     materialization_limits: MaterializationLimits,
+    mutations: NoteMutationService | None = None,
+    identities: AadIdentityLookup | None = None,
+    read_authorizer: NoteReadAuthorizer | None = None,
 ) -> tuple[
-    Callable[[WorkspaceScope, AttachmentQueue], list[ToolSpec]],
+    Callable[[WorkspaceScope, AttachmentQueue, str, str, bool], list[ToolSpec]],
     Callable[[WorkspaceScope, Sequence[Attachment]], list[str]],
 ]:
     """Zbuduj parę dla ``File`` (ADR 0064): fabrykę narzędzia i odkładanie załączników.
@@ -373,8 +383,53 @@ def build_file_support(
     )
     materializer = FileBytesMaterializer(max_image_edge=max_image_edge)
 
-    def factory(scope: WorkspaceScope, queue: AttachmentQueue) -> list[ToolSpec]:
-        return build_file_catalog(scope, read_service, materializer, queue, materialization_limits)
+    def factory(
+        scope: WorkspaceScope,
+        queue: AttachmentQueue,
+        sender_id: str,
+        trust_class: str = "unknown",
+        tainted: bool = True,
+    ) -> list[ToolSpec]:
+        """Zbuduj ``File`` dla tej tury; akcje mutujące TYLKO dla rozpoznanego człowieka.
+
+        Rozwiązanie tożsamości pada TU, przy budowie katalogu — tak samo jak przy bramce
+        powłoki (ADR 0063): nierozpoznany nadawca nie dostaje zdolności, zamiast dostawać ją
+        i odbijać się dopiero przy wywołaniu. Nierozwiązywalna tożsamość degraduje do samego
+        odczytu (fail-closed), nie do wyjątku — tura ma się odbyć.
+        """
+        requester = ""
+        if mutations is not None and identities is not None and sender_id:
+            try:
+                person = identities.resolve_by_aad_user_id(sender_id)
+                # Kluczem jest ``source_id`` (klucz mapy, unikalny z definicji), nie nazwa
+                # wyświetlana: ta bywa pusta i bywa wspólna dla dwóch osób, a służy tu ZARAZEM
+                # za tożsamość w rejestrze potwierdzeń. Dwie osoby o tej samej nazwie dzieliłyby
+                # przestrzeń zgód — jedna domykałaby zapowiedź drugiej.
+                requester = person.source_id if person is not None else ""
+                if requester and read_authorizer is not None:
+                    # ADR 0065 §7: kto nie może CZYTAĆ bazy wiedzy, nie może jej też zmieniać.
+                    # Bez tego bramka odczytu (ADR 0062) przestawałaby cokolwiek znaczyć dla
+                    # ścieżki NISZCZĄCEJ, a odmowa sędziego (niosąca fragment treści) byłaby
+                    # kanałem odczytu wokół niej.
+                    read_authorizer.authorize(sender_id)
+            except Exception:
+                logger.warning("Nadawca %r bez prawa mutacji bazy wiedzy — same odczyty", sender_id)
+                requester = ""
+        return build_file_catalog(
+            scope,
+            read_service,
+            materializer,
+            queue,
+            materialization_limits,
+            mutations if requester else None,
+            requester,
+            trust_class,
+            tainted,
+            # Token TURY: każde wywołanie fabryki to jedna tura, więc token wylosowany tutaj
+            # jest dokładnie tym, czego potrzebuje punkt kontrolny człowieka — zapowiedź i
+            # wykonanie muszą pochodzić z RÓŻNYCH tur.
+            uuid.uuid4().hex,
+        )
 
     def stage(scope: WorkspaceScope, attachments: Sequence[Attachment]) -> list[str]:
         """Zapisz załączniki tury na dysk rozmowy; zwróć nazwy, pod którymi wylądowały.
@@ -624,6 +679,9 @@ def build_conversational_responder(
     file_tool_staged_ext: frozenset[str] = frozenset(),
     file_tool_limits: MaterializationLimits = _BEZ_PULAPOW,
     trust_labels: bool = False,
+    enable_note_mutation: bool = False,
+    enable_note_delete: bool = False,
+    identities: AadIdentityLookup | None = None,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -691,6 +749,44 @@ def build_conversational_responder(
         if notes_read_gated and note_read_authorizer is not None
         else None
     )
+    # Bramka MUTACJI bazy wiedzy (ADR 0065). Dwa warunki i oba są konieczne: przełącznik
+    # operatora oraz mapa tożsamości — bez niej nie ma komu przypisać zmiany ani kogo zapytać
+    # o potwierdzenie. Kasowanie ma WŁASNY przełącznik, bo ADR wiąże je z działającą kopią
+    # zapasową, a to fakt o infrastrukturze, nie o kodzie.
+    #
+    # ``enable_write`` (profil zapisu drzwi, ADR 0006) NIE jest tu warunkiem i to jest
+    # świadome: właściciel wybrał dla mutacji osobny kanał (`File`), a nie rozszerzenie
+    # `Notes(save)`. Drzwi Teams mają `enable_write=False` i mimo to mogą — po włączeniu tej
+    # bramki — zmieniać notatki. To dwie różne zdolności za dwoma różnymi przełącznikami,
+    # nie przeoczenie.
+    mutations = None
+    if enable_note_mutation and identities is not None:
+        notes_repo = MarkdownNotesRepository(settings.notes_dir)
+        mutations = NoteMutationService(
+            notes_repo,
+            MarkdownNotesWriter(settings.notes_dir),
+            FilesystemNoteSnapshots(settings.note_snapshots_dir),
+            AnthropicMutationJudge(agent_settings),
+            InMemoryConfirmations(),
+            allow_delete=enable_note_delete,
+        )
+    file_factory = None
+    attachment_stager = None
+    if (
+        enable_file_tool
+        and supports_attachments
+        and workspace_settings is not None
+        and file_tool_budget_bytes > 0
+    ):
+        file_factory, attachment_stager = build_file_support(
+            workspace_settings,
+            max_image_edge=file_tool_max_image_edge,
+            staged_ext=file_tool_staged_ext,
+            materialization_limits=file_tool_limits,
+            mutations=mutations,
+            identities=identities,
+            read_authorizer=note_read_authorizer,
+        )
     runtime = build_agent_runtime_or_exit(
         settings,
         agent_settings,
@@ -701,7 +797,18 @@ def build_conversational_responder(
         # rozjeżdża się ustawienie z fabryką: bez `workspace_settings` i na platformie, gdzie
         # klient wykonawcy się nie importuje.
         system_prompt=static_prompt_for(
-            attachments=supports_attachments, shell=shell_factory is not None
+            attachments=supports_attachments,
+            shell=shell_factory is not None,
+            # Wariant zdania o notatkach z TEGO SAMEGO źródła co bramka mutacji (ADR 0065),
+            # dokładnie jak wariant `ENVIRONMENT` z fabryki powłoki. Rozjazd dałby prefiks
+            # mówiący „nie zmieniaj notatek" obok narzędzia, które właśnie to umie — czyli
+            # albo martwe narzędzie, albo cicho fałszywy prompt.
+            # Z FAKTYCZNEJ dostępności, nie z samej bramki: `File` wymaga jeszcze własnego
+            # przełącznika, materializera i katalogu roboczego. Przy `ENABLE_NOTE_MUTATION`
+            # i wyłączonym `ENABLE_FILE_TOOL` prompt obiecywałby zmienianie notatek bez
+            # narzędzia, które to robi — czyli świat SZERSZY niż faktyczny, w stronę, którą
+            # docstring `static_prompt_for` nazywa gorszą.
+            mutation=mutations is not None and file_factory is not None,
         ),
         # Z FABRYKI, nie z ustawień. `shell_settings.enabled` mówi, czego chciał operator;
         # `shell_factory` — co agent faktycznie dostanie. Rozjeżdżają się przy braku
@@ -753,20 +860,6 @@ def build_conversational_responder(
     # tekst. Warunkiem jest natomiast to, żeby drzwi w ogóle MATERIALIZOWAŁY załączniki
     # (``supports_attachments``) i miały katalog roboczy: bez jednego nie ma czego odkładać, bez
     # drugiego nie ma gdzie. Budżet 0 = brak narzędzia (operator nie podał sufitu → nie obiecujemy).
-    file_factory = None
-    attachment_stager = None
-    if (
-        enable_file_tool
-        and supports_attachments
-        and workspace_settings is not None
-        and file_tool_budget_bytes > 0
-    ):
-        file_factory, attachment_stager = build_file_support(
-            workspace_settings,
-            max_image_edge=file_tool_max_image_edge,
-            staged_ext=file_tool_staged_ext,
-            materialization_limits=file_tool_limits,
-        )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
     # responder nie zapisuje nic. Jeden punkt wpięcia obejmuje wszystkie drzwi agentowe.
     metrics = (
