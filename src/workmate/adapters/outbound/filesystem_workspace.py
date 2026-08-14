@@ -65,12 +65,34 @@ class FilesystemWorkspaceRepository:
         return files
 
     def read(self, scope_dir: str, name: str) -> str | None:
-        path = _resolve_within(self._root, f"{scope_dir}/{name}")
-        return path.read_text(encoding="utf-8") if path.is_file() else None
+        path = _resolve_in_scope(self._root, scope_dir, name)
+        return path.read_text(encoding="utf-8") if path is not None else None
 
     def read_bytes(self, scope_dir: str, name: str) -> bytes | None:
-        path = _resolve_within(self._root, f"{scope_dir}/{name}")
-        return path.read_bytes() if path.is_file() else None
+        path = _resolve_in_scope(self._root, scope_dir, name)
+        return path.read_bytes() if path is not None else None
+
+
+def _resolve_in_scope(root: Path, scope_dir: str, name: str) -> Path | None:
+    """Rozwiąż plik ``name`` W KATALOGU ROZMOWY; ``None``, gdy to nie jest tam zwykły plik.
+
+    ``_resolve_within`` pilnuje wyłącznie KORZENIA brudnopisu, a to za mało dla odczytu:
+    ``resolve()`` rozwija dowiązania, więc symlink ``../<hash innej rozmowy>/plik.pdf`` ląduje
+    wewnątrz korzenia i przechodzi — czytelnik dostaje cudzy plik, mimo że nazwa jest czysta.
+    Symlink da się założyć powłoką, a ``File`` zostaje na powierzchni WŁAŚNIE w układzie
+    z powłoką, więc to jest droga realna, nie teoretyczna. Warunek jest tu ostrzejszy:
+    rozwiązany rodzic musi być DOKŁADNIE rozwiązanym katalogiem tej rozmowy — czyli tą samą
+    granicą, którą infra ADR 0012 wymusza montażem wyłącznie podkatalogu scope'a.
+    """
+    base = _resolve_within(root, scope_dir)
+    # Ucieczka POZA KORZEŃ zostaje głośna (``WriteError``, jak dotąd) — to jawna próba wyjścia
+    # ścieżką i wołający ma o niej wiedzieć. Trafienie w INNĄ ROZMOWĘ (symlink w obrębie korzenia)
+    # zwraca ``None``, czyli „nie ma takiego pliku": model nie ma się z czego dowiedzieć, czyj
+    # plik istnieje obok, a odpowiedź jest nieodróżnialna od zwykłej pomyłki w nazwie.
+    candidate = _resolve_within(root, f"{scope_dir}/{name}")
+    if candidate.parent != base or not candidate.is_file():
+        return None
+    return candidate
 
 
 def _resolve_within(root: Path, relpath: str) -> Path:

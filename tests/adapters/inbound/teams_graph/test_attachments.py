@@ -24,6 +24,7 @@ from pptx.util import Inches
 from workmate.adapters.inbound.teams_graph.attachments import (
     AttachmentLimits,
     AttachmentMaterializer,
+    FileBytesMaterializer,
 )
 from workmate.adapters.inbound.teams_graph.selection import AttachmentRef, ChannelMessage
 
@@ -718,3 +719,26 @@ def test_mixed_refs_materialize_independently():
     assert img.kind == "image"
     assert good.kind == "document"
     assert bad.kind == "text" and "nie udało się pobrać" in bad.text
+
+
+def test_file_materializer_degrades_a_broken_document_instead_of_raising():
+    """Uszkodzony plik NIE MOŻE wyjść wyjątkiem — rdzeń woła narzędzie poza ``try``.
+
+    ``DocumentExtractionError`` nie dziedziczy z ``WorkMateError``, więc bez osłony TUTAJ
+    przelatywał kopertę narzędzia i zabijał całą turę: użytkownik dostawał „chwilowy błąd",
+    a tura nie trafiała do pamięci rozmowy. ADR 0064 obiecuje degradację do notki, nigdy crash.
+    """
+    materializer = FileBytesMaterializer(max_image_edge=2048)
+
+    assert materializer.materialize("umowa.docx", b"to nie jest zip") is None
+
+
+def test_file_materializer_builds_the_same_attachment_as_the_door():
+    """Model i drzwi mają widzieć ten sam plik tak samo — stąd wspólny ``_build``, nie kopia."""
+    materializer = FileBytesMaterializer(max_image_edge=2048)
+
+    built = materializer.materialize("raport.html", b"<p>tresc strony</p>")
+
+    assert built is not None
+    attachment, sent = built
+    assert (attachment.kind, attachment.text, sent) == ("text", "tresc strony", 0)

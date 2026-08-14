@@ -12,10 +12,13 @@ się nie pojawia (sonda negatywna niżej).
 
 from __future__ import annotations
 
+import pytest
+
 from workmate.core.application.tools import build_file_catalog
 from workmate.core.application.workspace import WorkspaceService
 from workmate.core.domain.workspace import WorkspaceFile, WorkspaceScope
 from workmate.core.ports.llm import Attachment, AttachmentQueue
+from workmate.core.ports.materialization import MaterializationLimits
 
 _SCOPE = WorkspaceScope("teams_graph", "team/chan/root")
 _PDF = b"%PDF-1.7 udawany dokument"
@@ -43,19 +46,34 @@ class _FakeWorkspace:
 
 
 class _FakeMaterializer:
-    """Port materializacji: PDF → dokument, ``.nieznany`` → None (format nieobsługiwany)."""
+    """Port materializacji: PDF → dokument, ``.txt`` → tekst, reszta → None (nieobsługiwany)."""
 
     def materialize(self, name: str, data: bytes) -> tuple[Attachment, int] | None:
-        if not name.endswith(".pdf"):
-            return None
-        return Attachment("document", "application/pdf", name, data_base64="AAAA"), len(data)
+        if name.endswith(".pdf"):
+            return Attachment("document", "application/pdf", name, data_base64="AAAA"), len(data)
+        if name.endswith(".txt"):
+            # Tekst nie niesie bajtów do API — stąd 0, jak w materializerze drzwi.
+            return Attachment("text", "text/plain", name, text=data.decode("utf-8")), 0
+        return None
 
 
-def _tool(*, files: dict[str, bytes] | None = None, budget: int = 1_000_000):
+def _tool(
+    *,
+    files: dict[str, bytes] | None = None,
+    budget: int = 1_000_000,
+    materializer: object | None = None,
+    limits: MaterializationLimits | None = None,
+):
     scope_dir = str(_SCOPE.dirpath())
     repo = _FakeWorkspace({f"{scope_dir}/{n}": d for n, d in (files or {}).items()})
     queue = AttachmentQueue(budget_bytes=budget)
-    (spec,) = build_file_catalog(_SCOPE, WorkspaceService(repo), _FakeMaterializer(), queue)
+    (spec,) = build_file_catalog(
+        _SCOPE,
+        WorkspaceService(repo),
+        materializer or _FakeMaterializer(),  # type: ignore[arg-type]
+        queue,
+        limits or MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=10_000_000),
+    )
     return spec, queue
 
 
@@ -130,12 +148,80 @@ def test_unknown_action_is_named_not_silently_treated_as_read():
 
 
 def test_path_in_the_name_is_rejected_before_touching_the_disk():
-    """Nazwa pochodzi od modelu; katalog rozmowy jest granicą, nie sugestią."""
+    """Nazwa pochodzi od modelu; katalog rozmowy jest granicą, nie sugestią.
+
+    Asercja celuje w KOMUNIKAT strażnika, nie w samo „error": samo „error" spełnia też
+    „plik nie istnieje", więc sonda przechodziłaby po usunięciu strażnika — czyli pilnowałaby
+    niczego. To ta sama pułapka, którą łatwo przeoczyć w każdym teście bezpieczeństwa.
+    """
     spec, _ = _tool(files={"umowa.pdf": _PDF})
 
     result = spec.fn(action="read", name="../../etc/passwd")
 
-    assert "error" in result
+    assert "niedozwolona nazwa" in result["error"]
+
+
+def test_extractor_failure_comes_back_as_a_refusal_not_a_dead_turn():
+    """Uszkodzony plik NIE MOŻE zabić tury — ADR 0064 obiecuje degradację do notki.
+
+    Błąd ekstraktora nie dziedziczy z ``WorkMateError``, a rdzeń woła narzędzie poza ``try``
+    (nieznany wyjątek = defekt kodu), więc bez osłony w materializerze jeden zepsuty dokument
+    kończył turę komunikatem „chwilowy błąd" i nie zapisywał jej w pamięci.
+    """
+
+    class _Wybuchowy:
+        def materialize(self, name, data):
+            raise RuntimeError("czytnik dokumentu padł")
+
+    spec, queue = _tool(files={"umowa.pdf": _PDF}, materializer=_Wybuchowy())
+
+    with pytest.raises(RuntimeError):
+        spec.fn(action="read", name="umowa.pdf")  # atrapa rzuca WPROST — patrz sonda w adapterze
+    assert queue.drain() == ()
+
+
+def test_readable_but_empty_file_is_a_refusal_not_a_silent_materialization():
+    """„materialized: true" plus pusta etykieta: model nie wie, że nic nie dostał."""
+    spec, queue = _tool(files={"pusty.txt": b"   \n  "})
+
+    result = spec.fn(action="read", name="pusty.txt")
+
+    assert "nie zawiera tekstu" in result["error"]
+    assert queue.drain() == ()  # pusty plik nie pali budżetu
+
+
+def test_text_files_are_charged_against_the_budget_too():
+    """Plik zamieniony na tekst nie niesie bajtów do API, ale kontekst zajmuje.
+
+    Bez obciążania budżetu model mógł pobierać go bez końca — także ten sam w kółko — i wysycić
+    żądanie treścią, którą sam sobie podaje.
+    """
+    spec, queue = _tool(files={"notatka.txt": b"x" * 500}, budget=600)
+
+    first = spec.fn(action="read", name="notatka.txt")
+    second = spec.fn(action="read", name="notatka.txt")
+
+    assert first["materialized"] is True
+    assert "budżecie" in second["error"]
+
+
+def test_single_file_ceiling_is_enforced_on_top_of_the_turn_budget():
+    """Budżet tury nie zastępuje pułapu na JEDEN plik — inaczej jeden plik wysyca żądanie."""
+    spec, _ = _tool(
+        files={"umowa.pdf": _PDF},
+        limits=MaterializationLimits(max_bytes=1, max_extract_bytes=10_000_000),
+    )
+
+    assert "limit rozmiaru" in spec.fn(action="read", name="umowa.pdf")["error"]
+
+
+def test_oversized_file_is_refused_before_it_is_processed():
+    spec, _ = _tool(
+        files={"umowa.pdf": _PDF},
+        limits=MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=1),
+    )
+
+    assert "za duży" in spec.fn(action="read", name="umowa.pdf")["error"]
 
 
 def test_scope_is_closed_over_and_invisible_to_the_model():

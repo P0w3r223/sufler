@@ -228,9 +228,21 @@ class FileBytesMaterializer:
         self._max_image_edge = max_image_edge
 
     def materialize(self, name: str, data: bytes) -> tuple[Attachment, int] | None:
-        """Zbuduj załącznik z bajtów; ``None`` gdy formatu nie umiemy podać modelowi."""
+        """Zbuduj załącznik z bajtów; ``None`` gdy formatu nie umiemy podać modelowi.
+
+        Błąd ekstraktora (uszkodzony/zaszyfrowany dokument, brak biblioteki) degraduje TU do
+        ``None``, tak samo jak w ścieżce drzwi. Bez tego wyjątek uciekał kopertą narzędzia —
+        ``DocumentExtractionError`` nie dziedziczy z ``WorkMateError``, a rdzeń woła narzędzie
+        poza ``try`` (nieznany wyjątek = defekt kodu) — więc jeden uszkodzony plik zabijał CAŁĄ
+        turę: użytkownik dostawał „chwilowy błąd", a tura nie trafiała do pamięci. ADR 0064
+        obiecuje wprost „degraduje do notki, nigdy crash".
+        """
         ref = AttachmentRef(kind="file", name=name, url="")
-        return _build(ref, data, max_image_edge=self._max_image_edge)
+        try:
+            return _build(ref, data, max_image_edge=self._max_image_edge)
+        except Exception:
+            logger.exception("Nie udało się zmaterializować pliku %s", name)
+            return None
 
 
 _heif_state: bool | None = None  # None=nie próbowano; True=zarejestrowano; False=brak wtyczki

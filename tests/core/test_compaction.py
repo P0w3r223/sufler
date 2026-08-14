@@ -216,3 +216,31 @@ def test_flatten_describes_user_attachments_and_excludes_base64():
     assert "Użytkownik: zobacz zrzut" in flat
     assert "[Załącznik z.png (image/png)]" in flat
     assert "TEEJBUE5H" not in flat  # base64 poza streszczaczem
+
+
+def test_flatten_keeps_a_trace_of_a_file_the_model_pulled_in(monkeypatch):
+    """Plik podany przez ``File`` (ADR 0064) musi zostawić ślad w streszczeniu.
+
+    Po kompaktowaniu streszczenie jest JEDYNYM, co z tury zostaje. Załącznik użytkownika
+    dostawał choćby wiersz „[Załącznik …]", a plik z wiersza narzędziowego znikał bez śladu —
+    model tracił wtedy nawet informację, że jakiś dokument w tej rozmowie w ogóle był.
+    """
+    store = _store()
+    service = CompactionService(store, _FakeLLM(), threshold_tokens=100, keep_turns=2)
+    plik = attachment_to_row(
+        Attachment("document", "application/pdf", "umowa.pdf", data_base64="QkFTRTY0")
+    )
+    wiersz = ConversationMessage(
+        id=2,
+        conversation_id="c",
+        role="tool",
+        text="",
+        created_at=_TS,
+        blocks=[{"call_id": "t1", "content": '{"materialized": true}', "is_error": False}, plik],
+    )
+
+    flat = service._flatten(None, [wiersz])
+
+    assert "[Załącznik umowa.pdf (application/pdf)]" in flat
+    assert "QkFTRTY0" not in flat  # base64 poza streszczaczem, jak przy załączniku użytkownika
+    assert "materialized" not in flat  # treść wyniku narzędzia dalej nie wchodzi

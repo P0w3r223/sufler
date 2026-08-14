@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound.commands import CommandRouter
+from workmate.adapters.inbound.document_text import BINARY_EXTS
 from workmate.adapters.inbound.responder import (
     ConversationalResponder,
     Responder,
@@ -71,6 +72,7 @@ from workmate.core.application.workspace import (
 from workmate.core.errors import NoteAuthorizationError, WriteError
 from workmate.core.ports.command import CommandResult
 from workmate.core.ports.llm import Attachment, AttachmentQueue
+from workmate.core.ports.materialization import MaterializationLimits
 from workmate.core.ports.outbox import Deliverable
 
 if TYPE_CHECKING:
@@ -100,6 +102,11 @@ logger = logging.getLogger(__name__)
 
 # Jedno źródło komunikatu o brakującym extra ``agent`` (dawniej powielone w 4 ``app.py``).
 _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --extra agent"
+
+# Domyślne pułapy ``File`` dla drzwi, które go nie budują: same zera, czyli KAŻDY plik odpada.
+# Fail-closed rozmyślnie — drzwi, które chcą narzędzia, muszą podać własne liczby, a nie
+# odziedziczyć hojny domyślny sufit z sygnatury.
+_BEZ_PULAPOW = MaterializationLimits(max_bytes=0, max_extract_bytes=0)
 
 
 def build_notes_service(
@@ -338,6 +345,7 @@ def build_file_support(
     *,
     max_image_edge: int,
     staged_ext: frozenset[str],
+    materialization_limits: MaterializationLimits,
 ) -> tuple[
     Callable[[WorkspaceScope, AttachmentQueue], list[ToolSpec]],
     Callable[[WorkspaceScope, Sequence[Attachment]], list[str]],
@@ -366,7 +374,7 @@ def build_file_support(
     materializer = FileBytesMaterializer(max_image_edge=max_image_edge)
 
     def factory(scope: WorkspaceScope, queue: AttachmentQueue) -> list[ToolSpec]:
-        return build_file_catalog(scope, read_service, materializer, queue)
+        return build_file_catalog(scope, read_service, materializer, queue, materialization_limits)
 
     def stage(scope: WorkspaceScope, attachments: Sequence[Attachment]) -> list[str]:
         """Zapisz załączniki tury na dysk rozmowy; zwróć nazwy, pod którymi wylądowały.
@@ -377,14 +385,13 @@ def build_file_support(
         """
         names: list[str] = []
         for att in attachments:
-            data = _attachment_bytes_for_disk(att)
-            if data is None:
+            plik = _attachment_for_disk(att)
+            if plik is None:
                 continue
+            nazwa, data = plik
             try:
                 names.append(
-                    write_service.stage_attachment(
-                        scope, att.name, data, allowed_ext=staged_ext
-                    ).name
+                    write_service.stage_attachment(scope, nazwa, data, allowed_ext=staged_ext).name
                 )
             except (WriteError, OSError):
                 logger.warning("Nie odłożyłem załącznika %r na dysk rozmowy — pomijam", att.name)
@@ -393,21 +400,32 @@ def build_file_support(
     return factory, stage
 
 
-def _attachment_bytes_for_disk(att: Attachment) -> bytes | None:
-    """Bajty do zapisu: base64 dla obrazu/PDF, tekst dla plików już zekstrahowanych.
+def _attachment_for_disk(att: Attachment) -> tuple[str, bytes] | None:
+    """``(nazwa, bajty)`` do zapisu: base64 dla obrazu/PDF, tekst dla plików zekstrahowanych.
 
     ``None`` dla załącznika, który nie niesie ani jednego, ani drugiego — czyli dla NOTKI
     statusu, którą materializer wstawia zamiast pliku (limit/błąd/nieobsługiwany typ). Odkładanie
     notki na dysk byłoby zapisaniem komunikatu o błędzie pod nazwą pliku, którego nie ma.
+
+    NAZWA bywa inna niż oryginalna i to jest sedno tej funkcji. Drzwi materializują ``.docx``/
+    ``.xlsx``/``.pptx`` jako TEKST po ekstrakcji (Claude API nie przyjmuje Worda natywnie) —
+    oryginalnych bajtów już nie ma. Zapisanie tego tekstu pod nazwą ``raport.docx`` dawało plik,
+    który KŁAMIE rozszerzeniem: model czytał go potem ``File(read)``, materializer rozpoznawał
+    ``.docx`` i puszczał na niego czytnik Worda, który przewracał się na „to nie jest zip".
+    Ta sama pułapka czekała na ``workmate-extract`` w powłoce. Rozszerzenie idzie więc za
+    ZAWARTOŚCIĄ: tekst zapisujemy jako ``.txt``, a nazwa (razem z nią) trafia do nagłówka sesji,
+    więc model woła plik tak, jak ten naprawdę się nazywa.
     """
     if att.data_base64:
         try:
-            return base64.b64decode(att.data_base64, validate=True)
+            return att.name, base64.b64decode(att.data_base64, validate=True)
         except (binascii.Error, ValueError):
             return None
-    if att.text and "." in att.name:
-        return att.text.encode("utf-8")
-    return None
+    if not att.text or "." not in att.name:
+        return None
+    stem, _, ext = att.name.rpartition(".")
+    nazwa = f"{stem}.txt" if ext.lower() in BINARY_EXTS else att.name
+    return nazwa, att.text.encode("utf-8")
 
 
 class _ScopedRunner:
@@ -600,9 +618,11 @@ def build_conversational_responder(
     skills_settings: SkillsSettings | None = None,
     note_read_authorizer: NoteReadAuthorizer | None = None,
     shell_authorizer: ShellAuthorizer | None = None,
+    enable_file_tool: bool = False,
     file_tool_budget_bytes: int = 0,
     file_tool_max_image_edge: int = 2048,
     file_tool_staged_ext: frozenset[str] = frozenset(),
+    file_tool_limits: MaterializationLimits = _BEZ_PULAPOW,
 ) -> Responder:
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
@@ -734,11 +754,17 @@ def build_conversational_responder(
     # drugiego nie ma gdzie. Budżet 0 = brak narzędzia (operator nie podał sufitu → nie obiecujemy).
     file_factory = None
     attachment_stager = None
-    if supports_attachments and workspace_settings is not None and file_tool_budget_bytes > 0:
+    if (
+        enable_file_tool
+        and supports_attachments
+        and workspace_settings is not None
+        and file_tool_budget_bytes > 0
+    ):
         file_factory, attachment_stager = build_file_support(
             workspace_settings,
             max_image_edge=file_tool_max_image_edge,
             staged_ext=file_tool_staged_ext,
+            materialization_limits=file_tool_limits,
         )
     # Licznik wywołań (Tor A): włączony obecnością WORKMATE_METRICS_DB; ``None`` → wyłączony,
     # responder nie zapisuje nic. Jeden punkt wpięcia obejmuje wszystkie drzwi agentowe.

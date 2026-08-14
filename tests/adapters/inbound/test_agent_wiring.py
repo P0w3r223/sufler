@@ -28,6 +28,7 @@ from workmate.adapters.inbound.responder import (
 )
 from workmate.config import AgentSettings, ConversationSettings, Settings
 from workmate.core.errors import NoteAuthorizationError
+from workmate.core.ports.materialization import MaterializationLimits
 
 _REGISTRY = """projects:
   - key: workmate
@@ -704,6 +705,8 @@ def test_skrzynka_czyta_ten_sam_katalog_w_ktorym_pisze_powloka(tmp_path: Path):
 
 # --- ``File`` i odkładanie załączników (ADR 0064) -------------------------------
 
+_PULAPY = MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=10_000_000)
+
 
 def _workspace_settings(tmp_path: Path):
     from workmate.config import WorkspaceSettings
@@ -725,7 +728,10 @@ def test_stager_writes_the_users_file_to_the_conversation_directory(tmp_path: Pa
     from workmate.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
-        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf", "md"})
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "md", "txt"}),
+        materialization_limits=_PULAPY,
     )
     scope = WorkspaceScope("teams_graph", "team/chan/root")
 
@@ -743,7 +749,10 @@ def test_stager_skips_the_status_note_that_stands_in_for_a_missing_file(tmp_path
     from workmate.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
-        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf"})
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "txt"}),
+        materialization_limits=_PULAPY,
     )
 
     names = stage(
@@ -760,7 +769,10 @@ def test_stager_skips_a_file_it_cannot_place_without_killing_the_rest(tmp_path: 
     from workmate.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
-        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf"})
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "txt"}),
+        materialization_limits=_PULAPY,
     )
 
     names = stage(
@@ -780,7 +792,10 @@ def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
     from workmate.core.ports.llm import Attachment, AttachmentQueue
 
     factory, stage = agent_wiring.build_file_support(
-        _workspace_settings(tmp_path), max_image_edge=2048, staged_ext=frozenset({"pdf"})
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "txt"}),
+        materialization_limits=_PULAPY,
     )
     scope = WorkspaceScope("teams_graph", "team/chan/root")
     (nazwa,) = stage(scope, (Attachment("document", "application/pdf", "umowa.pdf", "JVBERi0x"),))
@@ -792,3 +807,98 @@ def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
     assert result["materialized"] is True
     (podany,) = queue.drain()
     assert (podany.kind, podany.media_type) == ("document", "application/pdf")
+
+
+def test_extracted_document_is_staged_under_a_name_that_does_not_lie(tmp_path: Path):
+    """Odłożony ``.docx`` zawiera TEKST po ekstrakcji — pod nazwą ``.docx`` byłby pułapką.
+
+    Drzwi materializują Worda jako tekst (API nie przyjmuje go natywnie), więc oryginalnych
+    bajtów już nie ma. Zapisany pod ``raport.docx`` plik kłamałby rozszerzeniem: ``File(read)``
+    rozpoznałby ``.docx`` i puścił na niego czytnik Worda, który przewraca się na „to nie jest
+    zip" — a tak samo `workmate-extract` w powłoce.
+    """
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import Attachment
+
+    _factory, stage = agent_wiring.build_file_support(
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "txt"}),
+        materialization_limits=_PULAPY,
+    )
+    scope = WorkspaceScope("teams_graph", "t/c/r")
+
+    names = stage(
+        scope, (Attachment("text", "text/plain", "raport.docx", text="Treść umowy po ekstrakcji"),)
+    )
+
+    assert names == ["raport.txt"]
+    zapisany = tmp_path / "scratchpad" / scope.dirpath() / "raport.txt"
+    assert zapisany.read_text(encoding="utf-8") == "Treść umowy po ekstrakcji"
+
+
+def test_staged_document_can_actually_be_read_back_by_the_tool(tmp_path: Path):
+    """Pętla domknięta dla dokumentu: co drzwi odłożyły, to model musi umieć odczytać."""
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import Attachment, AttachmentQueue
+
+    factory, stage = agent_wiring.build_file_support(
+        _workspace_settings(tmp_path),
+        max_image_edge=2048,
+        staged_ext=frozenset({"pdf", "txt"}),
+        materialization_limits=_PULAPY,
+    )
+    scope = WorkspaceScope("teams_graph", "t/c/r")
+    (nazwa,) = stage(scope, (Attachment("text", "text/plain", "raport.docx", text="Treść umowy"),))
+
+    queue = AttachmentQueue(budget_bytes=1_000_000)
+    (spec,) = factory(scope, queue)
+    result = spec.fn(action="read", name=nazwa)
+
+    assert result["materialized"] is True  # nie „nie jest zipem"
+    (podany,) = queue.drain()
+    assert podany.text == "Treść umowy"
+
+
+def _responder_z_file(tmp_path: Path, monkeypatch, *, wlaczony: bool):
+    """Responder z bramką ``File`` w zadanym stanie (reszta jak w sondach powłoki)."""
+    from workmate.config import WorkspaceSettings
+
+    monkeypatch.setattr(
+        agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
+    )
+    monkeypatch.setattr(agent_wiring, "_build_shell_factory", lambda *a, **k: None)
+    return build_conversational_responder(
+        _settings(tmp_path),
+        AgentSettings(),
+        _conv_settings(tmp_path),
+        channel="teams_graph",
+        enable_write=False,
+        safe=False,
+        enable_workspace=True,
+        workspace_settings=WorkspaceSettings(enabled=True, workspace_dir=tmp_path / "ws"),
+        supports_attachments=True,
+        enable_file_tool=wlaczony,
+        file_tool_budget_bytes=1_000_000,
+        file_tool_staged_ext=frozenset({"pdf"}),
+        file_tool_limits=_PULAPY,
+    )
+
+
+def test_file_tool_gate_off_means_no_tool_and_no_staging(tmp_path: Path, monkeypatch):
+    """Bramka ma naprawdę gasić OBIE strony — samo narzędzie i zapis cudzego pliku na dysk.
+
+    Bramka, która wyłącza narzędzie, ale zostawia odkładanie plików, wyglądałaby jak wyłączona,
+    a dalej zapisywałaby załączniki użytkownika na dysk floty.
+    """
+    responder = _responder_z_file(tmp_path, monkeypatch, wlaczony=False)
+
+    assert responder._file_catalog_factory is None
+    assert responder._attachment_stager is None
+
+
+def test_file_tool_gate_on_wires_both_sides(tmp_path: Path, monkeypatch):
+    responder = _responder_z_file(tmp_path, monkeypatch, wlaczony=True)
+
+    assert responder._file_catalog_factory is not None
+    assert responder._attachment_stager is not None

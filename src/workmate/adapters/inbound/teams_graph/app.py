@@ -45,6 +45,7 @@ from workmate.config import (
     WorkspaceSettings,
     require_writable,
 )
+from workmate.core.ports.materialization import MaterializationLimits
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.brief_command import BriefRouter
@@ -207,8 +208,11 @@ def main() -> None:
         # Narzędzie ``File`` (ADR 0064) dzieli sufit z materializerem załączników, bo pobrania
         # modelu i pliki użytkownika lecą w TYM SAMYM żądaniu API — dwa niezależne budżety
         # sumowałyby się ponad limit żądania. Stąd te same ustawienia, nie nowe.
+        enable_file_tool=settings.enable_file_tool,
         attachment_budget_bytes=settings.max_total_attachment_mb * 1024 * 1024,
         attachment_max_image_edge=settings.max_image_edge_px,
+        attachment_max_bytes=settings.max_attachment_mb * 1024 * 1024,
+        attachment_max_extract_bytes=settings.max_extract_mb * 1024 * 1024,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -1095,8 +1099,11 @@ def _build_responder(
     skills_settings: SkillsSettings | None = None,
     note_read_authorizer: NoteReadAuthorizer | None = None,
     shell_authorizer: ShellAuthorizer | None = None,
+    enable_file_tool: bool = False,
     attachment_budget_bytes: int = 0,
     attachment_max_image_edge: int = 2048,
+    attachment_max_bytes: int = 0,
+    attachment_max_extract_bytes: int = 0,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -1142,8 +1149,13 @@ def _build_responder(
         # Narzędzie ``File`` (ADR 0064) dzieli sufit z materializerem drzwi, bo pobrania modelu i
         # załączniki użytkownika lecą w TYM SAMYM żądaniu API — dwa niezależne budżety sumowałyby
         # się do przekroczenia limitu żądania. Stąd te same ustawienia, nie nowe.
+        enable_file_tool=enable_file_tool,
         file_tool_budget_bytes=attachment_budget_bytes,
         file_tool_max_image_edge=attachment_max_image_edge,
+        file_tool_limits=MaterializationLimits(
+            max_bytes=attachment_max_bytes,
+            max_extract_bytes=attachment_max_extract_bytes,
+        ),
         # Rozszerzenia, które wolno ODŁOŻYĆ na dysk rozmowy: to, co drzwi w ogóle materializują.
         # Szersze niż lista formatów, które model wolno mu TWORZYĆ (``workspace_settings``) —
         # odkładamy cudzy plik do wglądu, nie pozwalamy modelowi pisać binariów.

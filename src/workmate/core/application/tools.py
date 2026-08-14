@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from workmate.core.ports.document import DocumentRenderer
     from workmate.core.ports.file_output import TeamsFileSender
     from workmate.core.ports.llm import AttachmentQueue
-    from workmate.core.ports.materialization import FileMaterializer
+    from workmate.core.ports.materialization import FileMaterializer, MaterializationLimits
     from workmate.core.ports.user_doc_push import UserDocSender
     from workmate.core.ports.user_push import UserImageSender
 
@@ -563,6 +563,7 @@ def build_file_catalog(
     read_service: WorkspaceService,
     materializer: FileMaterializer,
     queue: AttachmentQueue,
+    limits: MaterializationLimits,
 ) -> list[ToolSpec]:
     """Zbuduj narzędzie ``File`` dla danej rozmowy (ADR 0064) — WYŁĄCZNIE dla runtime agenta.
 
@@ -594,16 +595,28 @@ def build_file_catalog(
             data = read_service.read_bytes(scope, name)
             if data is None:
                 return {"error": f"Plik nie istnieje w katalogu roboczym: {name}"}
+            if len(data) > limits.max_extract_bytes:
+                return {"error": f"Plik {name} jest za duży, żeby go otworzyć."}
             built = materializer.materialize(name, data)
             if built is None:
                 return {
                     "error": (
-                        f"Nie umiem podać pliku {name} do wglądu (nieobsługiwany format). "
-                        "Jeśli to dokument, spróbuj `workmate-extract` w powłoce."
+                        f"Nie umiem podać pliku {name} do wglądu — nieobsługiwany format albo "
+                        "plik jest uszkodzony. Jeśli to dokument, spróbuj `workmate-extract`."
                     )
                 }
             attachment, sent = built
-            if not queue.offer(attachment, sent):
+            if sent > limits.max_bytes:
+                return {"error": f"Plik {name} przekracza limit rozmiaru pojedynczego materiału."}
+            if attachment.kind == "text" and not attachment.text.strip():
+                # Plik czytelny, ale bez treści. Bez tej gałęzi model dostawał „materialized:
+                # true" i pustą etykietę — nieodróżnialne od pliku, którego treść przemilczano.
+                # Sprawdzamy PRZED ``offer``, żeby pusty plik nie palił budżetu tury.
+                return {"error": f"Plik {name} nie zawiera tekstu do odczytania."}
+            # Pliki zamienione na tekst nie niosą bajtów do API (``sent`` = 0), ale kontekst
+            # zajmują — bez obciążenia budżetu model mógł pobierać je bez końca (także ten sam
+            # w kółko) i wysycić żądanie treścią, którą sam sobie podaje.
+            if not queue.offer(attachment, sent or len(attachment.text.encode("utf-8"))):
                 return {
                     "error": (
                         f"Plik {name} nie mieści się w budżecie materiałów tej tury "

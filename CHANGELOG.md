@@ -23,7 +23,9 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
   którego wykonawca świadomie nie montuje, więc ani powłoka, ani model nie miały jak do nich
   wrócić po kompaktowaniu. Nazwy odłożonych plików trafiają do nagłówka sesji (na dysku są
   slugiem oryginalnej nazwy). Budżet materiałów tury jest WSPÓLNY z materializerem drzwi — jedno
-  żądanie API, jeden sufit. Narzędzie jest agent-only (golden powierzchni MCP pilnuje tego wprost).
+  żądanie API, jeden sufit. Narzędzie jest agent-only (golden powierzchni MCP pilnuje tego wprost)
+  i **domyślnie WYŁĄCZONE** (`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL`) — jak każda bramka w tym
+  projekcie; wyłączona gasi obie strony naraz (narzędzie i odkładanie plików).
 - **Ekstrakcja HTML + komenda `workmate-extract`** (ADR 0064, pierwsza część): plik `.html`/`.htm`
   przestaje odbijać się od drzwi jako „nieobsługiwany typ" — idzie ekstraktorem (`html.parser` ze
   stdlib, bez nowej zależności), który pomija skrypty i style, wciąga `alt` obrazów i raportuje

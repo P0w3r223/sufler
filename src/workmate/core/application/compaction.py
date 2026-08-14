@@ -129,6 +129,13 @@ class CompactionService:
                 lines.append(f"{label}: {m.text}")
             if m.role == "user" and m.blocks:
                 lines.extend(_describe_attachment(b) for b in m.blocks)
+            elif m.role == "tool" and m.blocks:
+                # Wiersz tury narzędziowej niesie DWA rodzaje bloków (ADR 0064): wyniki narzędzi
+                # (mają ``call_id``, do streszczenia nie wchodzą — tekst wyniku bywa ogromny)
+                # oraz PLIKI podane przez ``File``. Bez tej gałęzi plik znikał ze streszczenia
+                # bez śladu, choć załącznik użytkownika dostawał choćby wiersz „[Załącznik …]" —
+                # a to właśnie streszczenie jest jedynym, co po kompaktowaniu z tury zostaje.
+                lines.extend(_describe_attachment(b) for b in m.blocks if "call_id" not in b)
         return "\n".join(lines)
 
 

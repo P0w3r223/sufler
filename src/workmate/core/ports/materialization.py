@@ -12,10 +12,26 @@ istnieje po to, żeby model i drzwi widziały plik identycznie, a nie po to, by 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from workmate.core.ports.llm import Attachment
+
+
+@dataclass(frozen=True)
+class MaterializationLimits:
+    """Pułapy POJEDYNCZEGO pobrania przez ``File`` — te same liczby, co ma materializer drzwi.
+
+    Budżet CAŁEJ tury mieszka w ``AttachmentQueue`` (dzielony z drzwiami); tutaj są granice
+    jednego pliku, których budżet nie zastępuje: bez nich jeden plik mieszczący się w budżecie
+    mógłby sam wysycić żądanie API, a wielki plik zostałby wczytany i przetworzony w całości,
+    zanim ktokolwiek zdążyłby go odrzucić. ADR 0064 wymaga KOMPLETU pułapów, nie podzbioru —
+    lista podana częściowo wygląda jak bramka, a przepuszcza to, czego nie wymienia.
+    """
+
+    max_bytes: int  # pojedynczy plik idący do API jako base64 (obraz/PDF), bajty surowe
+    max_extract_bytes: int  # twardy cap odczytu z dysku — dotyczy KAŻDEGO typu
 
 
 class FileMaterializer(Protocol):

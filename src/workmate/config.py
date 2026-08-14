@@ -716,6 +716,14 @@ class TeamsGraphSettings:
     # z warstwy spajającej), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez
     # wymogu tożsamości/RW-montażu. Dostawa PDF ``| pdf`` reużywa kanał file-reply (jak brief).
     enable_change_digest: bool = False
+    # Narzędzie ``File(read)`` + odkładanie załączników użytkownika na dysk katalogu rozmowy
+    # (ADR 0064). Domyślnie OFF jak KAŻDA bramka w tym projekcie (twarda reguła CLAUDE.md,
+    # egzekwowana przez ``test_gates_closed_by_default``) — i zasłużenie, bo ta zdolność zapisuje
+    # CUDZY plik na dysk floty i wstrzykuje jego treść do kontekstu modelu. Operator włącza ją
+    # świadomie: jedna linia `.env` + recreate, tak samo jak powłokę. Wyłącznik ma też drugie
+    # zastosowanie — ADR zapowiada ponowny pomiar użycia i USUNIĘCIE narzędzia, jeśli okaże się
+    # martwe; bez flagi „wyłączenie" znaczyłoby wydanie nowego obrazu.
+    enable_file_tool: bool = False
     # Polityka „czy w ogóle odpowiadać" (SZKIELET pod wielokanałowe wdrożenie WorkMate).
     # ``all`` (domyślnie) = zachowanie sprzed tej zmiany: odpowiedź na każdą wiadomość od
     # innego człowieka w kanałach z ``watch``. ``mention`` odpowiada tylko po @wzmiance bota
@@ -787,6 +795,7 @@ class TeamsGraphSettings:
             enable_note_read_authz=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", default=False
             ),
+            enable_file_tool=_bool_from_env("WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL", default=False),
             enable_project_brief=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False
             ),
