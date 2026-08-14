@@ -6,6 +6,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług release'u).
+
+### Added
+- **Autoryzacja odczytu notatek** na drzwiach Teams — fail-closed po mapie tożsamości ([ADR 0062](docs/adr/0062-note-read-authorization.md)).
+- **Bramka członkostwa na powłoce** (`Bash`) — nie-członek pionu dostaje pustą listę narzędzi powłoki, symetrycznie do odczytu notatek ([ADR 0063](docs/adr/0063-shell-membership-gate-and-conversation-isolation.md)).
+- **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
+- **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
+
+### Design (ADR-y `proposed`, poza kodem)
+- 0064 (harness plików + materializacja), 0065 (mutowalna baza + sędzia-Sonnet), 0066 (klasy zaufania T0–T3).
+
 ## [1.6.0] — 2026-08-07
 
 Wydanie konsolidacji: powierzchnia narzędziowa schodzi z **22 rejestracji w 13 builderach do

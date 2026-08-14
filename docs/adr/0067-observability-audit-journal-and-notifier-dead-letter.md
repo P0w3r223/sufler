@@ -1,7 +1,7 @@
 # 0067 — Observability: per-tool audit journal + notifier dead-letter and cursor-progress health
 
 Date: 2026-08-13
-Status: proposed
+Status: accepted (implemented — audit journal + notifier dead-letter, PR #48)
 Author: P0w3r223
 Related to: [ADR 0049](0049-usage-metrics-pseudonymized-counter.md) (pseudonymized-store pattern — copied 1:1),
   [ADR 0022](0022-proactive-dual-target-teams-push.md) (the at-least-once cursor invariant this must not break),
@@ -56,16 +56,23 @@ together only because both are Faza 0.
    and every write is **best-effort, never fatal** (a failed audit write logs a warning and the turn
    proceeds — the ADR 0049 §4 rule).
 
-2. **The seam is a per-turn audit wrapper on `ToolSpec`, not a change to the runtime.** The responder
-   has the turn's identity (`message.sender_id`, `conversation_id`) and — once ADR 0066 lands — its
-   trust class, but does not see individual tool calls; `runtime._dispatch` (`runtime.py:168-186`)
-   sees each call (name, arguments, result/error) but is deliberately context-free. Rather than thread
-   an audit sink down into the pure runtime (ADR 0049 deferred per-tool metrics for exactly this
-   reason), wrap each `ToolSpec.fn` in a decorator whose closure carries the turn context — the same
-   per-turn closure mechanism already used for `WorkspaceScope`, the note-read factory (ADR 0062), and
-   the shell factory (ADR 0063). The wrapper records `(pseudonym, conversation-ref, door, tool name,
-   redacted-arg-projection, result status, trust class, judge verdict)` around `spec.fn(**arguments)`
-   and returns the result unchanged. `AgentRuntime` is byte-for-byte untouched.
+2. **The seam is an optional audit callback threaded through `run_turn`, consulted once in
+   `_dispatch`** *(revised in place during implementation — see "Execution correction"; the original
+   proposal below was a per-turn wrapper on `ToolSpec.fn`, rejected because it breaks argument
+   coercion)*. The responder has the turn's identity (`message.sender_id`, `conversation_id`) and —
+   once ADR 0066 lands — its trust class, but does not see individual tool calls; `runtime._dispatch`
+   sees each call (name, arguments, result/error) but is deliberately context-free. The runtime gains
+   **one optional parameter** `audit: Callable[[str, Mapping, str], None]` on `run_turn`, consulted
+   once in `_dispatch` at the single point where name/args/status exist — additive exactly like
+   `session_header`/`extra_tools`, covering base **and** per-turn tools. The turn context (pseudonym,
+   conversation-ref, door, trust class) is closed **at the door**: the responder builds the recorder
+   via `AuditService.turn_recorder`, which records `(pseudonym, conversation-ref, door, tool name,
+   redacted-arg-projection, result status, trust class, judge verdict)` and pseudonymizes/stores;
+   the runtime sees only an opaque callback and stays free of storage. **Why not the wrapper:**
+   wrapping `ToolSpec.fn` breaks `AgentRuntime._coerce_arguments`, which introspects each tool's `fn`
+   via `inspect.signature`/`get_type_hints` over string annotations, and the base catalog lives in the
+   once-built shared runtime so it cannot carry per-turn context. `AgentRuntime` gains one optional
+   param, not a dependency.
 
 3. **Record actions and paths, never content — redact by default.** The recorded arguments are a
    **per-tool projection**: `action`, target `path`/note-id/issue-number and similar structural
@@ -109,7 +116,7 @@ together only because both are Faza 0.
 | R1 | Dead-letter reads as silent event loss (at-most-once by the back door). | Write-to-`dead_letters` **before** advancing the cursor (crash re-delivers); the quarantined event is durable, carries its failure reason, and is surfaced — not skipped. ADR 0022 invariant intact. |
 | R2 | Per-event attempt counter in memory resets on restart → a poison event is retried N times again every restart. | Persist `first_failed_at`/`attempts` (or accept bounded extra retries) — **open question**; either way the stream is unblocked after N within a run. |
 | R3 | The audit wrapper captures content by accident (note body, `Bash` command). | Allowlist projection — unnamed fields redacted to `type+length`; a test asserts no raw body/command string appears in any audit row. |
-| R4 | Audit erodes the pure runtime contract. | The wrapper closes context at build time in the responder/wiring; `AgentRuntime` runs a catalog and is unchanged. |
+| R4 | Audit erodes the pure runtime contract. | The runtime gains **one optional** `audit` callback param on `run_turn` (additive, like `session_header`), consulted once in `_dispatch`, defaulting to `None`. Turn context is closed at the door (responder/wiring); pseudonymization and storage stay outside. The runtime holds no audit dependency. *(Revised from the wrapper design — see Execution correction.)* |
 | R5 | The notifier heartbeat beats on an empty queue, masking a stall. | Beating on empty is correct (nothing to do = healthy); a stall is non-empty **and** zero progress, which does not beat. |
 | R6 | `audit.db` / `dead_letters` grow unbounded. | Retention deferred to Faza 7 (audit retention > conversations); `dead_letters` is small by construction. |
 | R7 | MCP-door tool calls are not audited (they bypass the responder/per-turn-catalog seam, ADR 0049 §Alternatives). | Recorded as out-of-scope residual, like ADR 0049's deferred per-tool metrics; the agent (Teams) runtime is covered. A second seam for MCP is a later ADR if measured to matter. |
@@ -118,8 +125,14 @@ together only because both are Faza 0.
 
 - **Audit at the responder only (one row per turn, like metrics).** Rejected: loses the per-tool
   granularity the judge and incident-reconstruction need — the whole point of the journal.
-- **Thread an audit sink into `run_turn`/`_dispatch`.** Rejected: pollutes the pure runtime contract;
-  the per-turn wrapper achieves the same with the context closed where it already exists.
+- **Thread an audit sink into `run_turn`/`_dispatch`.** **Chosen (after implementation).** Originally
+  rejected here in favor of a per-turn `ToolSpec.fn` wrapper — but that wrapper breaks
+  `_coerce_arguments` (signature introspection over string annotations) and cannot carry per-turn
+  context into the once-built base catalog. One **optional** `run_turn` param — additive like
+  `session_header`, consulted once in `_dispatch` — records at the single point where name/args/status
+  exist, with the turn context still closed at the door. See "Execution correction".
+- **A per-turn wrapper on `ToolSpec.fn`.** Rejected during implementation: it breaks
+  `AgentRuntime._coerce_arguments` and cannot be applied per-turn to the shared base catalog.
 - **Dead-letter by advancing the cursor on any failure (at-most-once).** Rejected: breaks ADR 0022 —
   a transient transport blip would silently drop events.
 - **Healthcheck compares `notify_cursor` (state.json) against `MAX(id)` in events.db.** Workable but

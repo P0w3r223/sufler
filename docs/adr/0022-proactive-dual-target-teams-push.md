@@ -5,6 +5,11 @@ Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0015-teams-delegated-graph-polling.md, docs/adr/0019-shared-event-store.md,
   docs/adr/0020-github-delegated-polling-door.md
+Amended by: [ADR 0067](0067-observability-audit-journal-and-notifier-dead-letter.md) — after N failed
+  attempts the event is quarantined in `dead_letters` (write **before** the cursor advances) and the
+  cursor moves past it. The at-least-once invariant is preserved (nothing is dropped; a poison event
+  is quarantined with its reason, not skipped), but the literal rule below — "cursor advances only
+  after a successful send" — now has that one exception.
 
 ---
 
