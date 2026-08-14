@@ -1,12 +1,12 @@
 # 0066 — Content trust classes (T0–T3) and sticky conversation taint
 
 Date: 2026-08-13
-Status: proposed
+Status: accepted (owner decisions 2026-08-14 — T3 labels default-ON, T1/T2 sender split opt-in behind ADR 0062's flag)
 Author: P0w3r223
 Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (sender membership gate — the identity primitive),
   [ADR 0056](0056-agent-system-prompt-two-blocks.md) (two system blocks, the `_PRECEDENCE` rule),
   [ADR 0016](0016-user-multimodal-attachments.md) (attachment materialization),
-  [ADR 0024](0024-github-thread-reply-number-from-store.md) (reply number from trusted store, not the model),
+  [ADR 0024](0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md) (reply number from trusted store, not the model),
   [ADR 0057](0057-shell-executor-container-without-network.md) (security by lack, not by filtering),
   [ADR 0062](0062-note-read-authorization.md) / [ADR 0063](0063-shell-membership-gate-and-conversation-isolation.md)
   (capability membership gates — the pattern this ADR sits *beside*, not *inside*);
@@ -194,9 +194,13 @@ restart-surviving conversation taint that escalates — never blocks — consequ
   **0065's judge treating every turn as tainted-by-default until 0066 supplies the real class.** 0065
   is then not blocked, and is strictly-safe (over-escalates) until 0066 refines. This resolves the
   plan §0 sequencing tension in 0065's favor while keeping the fail-closed posture.
-- **Three prompt facts gain a structural sibling, none is removed:** `_PRECEDENCE`, the `[Plik:]`
-  prefix, the SUMMARY data-boundary sentence. They still shape cooperative behavior; each gets the
-  structural marker the label adds.
+- **Three prompt facts gain a structural sibling:** `_PRECEDENCE`, the `[Plik:]` prefix, the SUMMARY
+  data-boundary sentence. They still shape cooperative behavior; each gets the structural marker the
+  label adds. **This ADR removes none of them — but ADR 0065 changes one of them**, and the two must
+  not be read as contradicting: `_PRECEDENCE`'s closing sentence ("leave existing notes as their
+  authors wrote them") is rewritten by 0065 when knowledge-base mutation ships. The *layer* structure
+  this ADR makes structural is untouched by that edit; only the note-immutability sentence inside
+  layer 1 changes.
 - **The GitHub-comment provenance item (plan Faza 3) is confirmed real:** event summaries
   (comment/issue/PR bodies) already reach the model via `GitHub(action='events')` and
   `read_events_since`; they become explicitly T3.
@@ -204,25 +208,43 @@ restart-surviving conversation taint that escalates — never blocks — consequ
   matched against the map to promote a mapped author's comment above generic T3 — a later, additive
   refinement, not required for the T1/T2 split.
 
-## Open questions (to close before code, as in ADR 0064/0065)
+## Closed questions — decisions of 2026-08-14
 
-- **The exact taint trigger set (R2) — the load-bearing decision.** Does reading the own division's
-  notes/events through typed tools taint? Recommend **no** (internal, trusted-ish); **yes** for web,
-  attachments, materialized files, unmapped-sender turns, and GitHub comment/issue bodies from a
-  non-mapped author. This choice *is* the meaning of "tainted" — owner's call.
-- **Does a T2 sender's turn taint the conversation, or only relabel that turn?** Relabeling is certain;
-  tainting the whole conversation on a guest turn is the question.
-- **Default-ON or opt-in?** With `identities.yaml` holding ~2 people (ADR 0062), a default-ON T1/T2
-  split would demote most real users to T2/data. Recommend the same opt-in posture as ADR 0062
-  (`WORKMATE_ENABLE_NOTE_READ_AUTHZ`) until the map is populated — a shared toggle, or ride 0062's.
-- **Label rendering (R7):** per-turn nonce boundary format that the content cannot forge.
-- **Judge-tainted-by-default stance for 0065** (Consequences) — confirm this is the accepted way to
-  ship 0065 ahead of 0066.
+- **Rollout posture — the question is split by dependency, and so is the answer.** The two halves of
+  this ADR do not depend on the same thing, so they do not ship the same way:
+  - **T3 structural labels: default-ON.** Wrapping foreign content (attachments, materialized files,
+    tool results, GitHub event/comment bodies) depends on nothing operational — it demotes no person,
+    needs no map, and costs a delimiter. It ships on.
+  - **T1/T2 sender split: opt-in, riding ADR 0062's flag** (`WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ`).
+    It depends on `identities.yaml` being complete, which today it is not (~2 of the division mapped —
+    the same reason 0062's rollout is held). Turning it on early would demote real members' requests to
+    data. One flag, not two: both halves gate on the same fact (is the map trustworthy?), and a second
+    toggle would let them drift apart.
+- **The exact taint trigger set (R2).** Taints: web content (Faza 5), attachments and files
+  materialized by `File(read)` (ADR 0064), turns from senders that do not resolve (once the split is
+  on), and GitHub issue/PR/comment bodies whose author is not mapped. Does **not** taint: reading the
+  division's own notes and events through the typed tools — that is internal content behind the
+  capability gates, and if it tainted, every conversation would be tainted and the signal would mean
+  nothing (R2).
+- **Does a T2 sender's turn taint the conversation, or only relabel that turn?** → **Both: it relabels
+  the turn and taints the conversation.** This is the cross-sender injection case that motivates the
+  whole ADR — a guest writes into a shared channel, a mapped member later asks for a knowledge-base
+  mutation in the same conversation, and the guest's words are still in context. Taint is cheap here
+  because it *escalates* rather than blocks (ADR 0065 judge + audit class), and the mutation itself
+  still requires a resolved T1 requester. Recorded as the author's call rather than the owner's — it is
+  the one decision in this set made on structure rather than instruction, and the cheapest to reverse
+  (it is one predicate).
+- **Label rendering (R7)** → a **per-turn nonce** boundary (random per turn, not a fixed string, never
+  derived from the content), so wrapped content cannot close its own envelope by emitting the marker.
+  The nonce is generated at the door, never at model request.
+- **Judge-tainted-by-default for ADR 0065** → **confirmed.** 0065 ships without waiting for this ADR
+  and treats every turn as tainted until this label exists; with T3 labels default-ON, real provenance
+  for read content arrives immediately, and the T1/T2 refinement follows 0062's flag.
 
 ## Follow-ups
 
-- On acceptance: flip to `accepted`; sequence with ADR 0065 (judge-tainted-by-default until this lands);
-  wire the audit trust-class field (Faza 0 `audit.db`).
+- Sequence with ADR 0065 (judge-tainted-by-default until this lands); wire the audit trust-class field
+  (Faza 0 `audit.db`), which ADR 0065 Decision 7 now writes alongside the judge verdict.
 - Re-run ADR 0063's non-member probe from an unmapped account and confirm the turn text is rendered as
   T2/data (wrapped), while the capability tools remain absent (0063) — the two boundaries verified
   together.

@@ -1,7 +1,7 @@
 # 0065 — Mutable knowledge base, judged by a model instead of blocked by a rule
 
 Date: 2026-08-12
-Status: proposed
+Status: accepted (owner decisions 2026-08-14 — generic `File` channel, `delete` in scope, `confirm` = human checkpoint in the thread)
 Author: P0w3r223
 Related to: [ADR 0003](0003-note-schema.md) (note schema, create-only),
   [ADR 0006](0006-write-capability-gate-2.md), [ADR 0025](0025-teams-notes-write-gate.md),
@@ -50,14 +50,21 @@ This ADR records that reversal with its risks stated as conscious consent, and s
    `save_*` methods before the `NotesWriter.write` port (the real single choke-point — every
    `save_note`/`save_meeting_note`/`save_thread_note` calls it). The judge and the pre-write backup
    live in that application gate — **not** in `core/domain/authorization.py`, which is pure and has no
-   I/O and covers only the meeting path (`can_write_meeting_note`).
+   I/O and covers only the meeting path (`can_write_meeting_note`). The **generic `File(write/edit/
+   delete)`** surface (owner decision 2026-08-14, ADR 0064) enters through this same gate and no other
+   — the tool is a caller of the choke-point, never a second writer beside it.
 
 2. **Layers below the judge, in order, all fail-closed:**
    - **Sender authorization (AAD, ADR 0042)** — resolved before the judge; an unrecognized sender is
      refused with no model call. The judge never widens who may write.
-   - **Path/schema confinement** — `_resolve_within` (anti-traversal), the frozen note-id/company/
-     project derivation (`paths.py`, ADR 0003/0005), and `reject_dangerous_content`. A mutation cannot
-     land outside `notes_dir` or fabricate a company/project the registry does not know.
+   - **Path/schema confinement** — the frozen note-id/company/project derivation (`paths.py`,
+     ADR 0003/0005) and `reject_dangerous_content` in the application gate, plus anti-traversal
+     `_resolve_within` **in the adapter**, where it already lives (it is a private helper of
+     `markdown_notes_writer`, duplicated in the workspace/outbox adapters; `core/` cannot import it and
+     `lint-imports` enforces that). Consequence for implementation: **every new port verb re-uses
+     `_resolve_within` inside the adapter** — the guard does not move up into the gate, so a `delete`
+     verb that forgets it would be unprotected. A mutation cannot land outside `notes_dir` or fabricate
+     a company/project the registry does not know.
    - **Pre-mutation snapshot** — a backup of the target (and cadence-based full-volume backups,
      infra ADR 0008) *before* any destructive write. Reversibility stops being structural (create-only)
      and becomes backup-dependent (see R2) — so the backup is load-bearing, not a safety net.
@@ -71,23 +78,61 @@ This ADR records that reversal with its risks stated as conscious consent, and s
    never becomes instructions to the judge). **Output:** `verdict ∈ {allow, refuse, confirm}` +
    `reason`. The judge **fails toward refusal** (any error or ambiguity → refuse).
 
-4. **Mutation is create-only-safe where determinism is load-bearing.** `edit`/overwrite is offered
-   only on the title-derived, suffixed `save_note` path. The deterministic meeting/thread paths
-   (`-mtg-`/`-thr-` ids) **stay create-only** — they rely on the `os.link` collision
+4. **Mutation is create-only-safe where determinism is load-bearing.** `edit`/overwrite and `delete`
+   are offered only on the title-derived, suffixed `save_note` path. The deterministic meeting/thread
+   paths (`-mtg-`/`-thr-` ids) **stay create-only** — they rely on the `os.link` collision
    (`FileExists → NoteExistsError`) as an idempotency guarantee (ADR 0043/0048); a probabilistic judge
-   plus write-new+swap must not weaken that (R8). `edit` is odczyt→podmiana→atomic-write-new+swap with
+   plus write-new+swap must not weaken that (R8). `edit` is read→replace→atomic-write-new+swap with
    the pre-mutation snapshot retained — never in-place without a snapshot.
+
+5. **`delete` exists, and is the narrowest thing that can be called deletion** (owner decision
+   2026-08-14; the safer option of shipping `edit` only was offered and declined). One note per call,
+   **never a directory, never a glob, never recursive**; a pre-deletion snapshot is written first and
+   the operation fails closed if the snapshot cannot be written. The removed note is recoverable from
+   that snapshot and from the nightly volume backup (below) — deletion is therefore *reversible by
+   procedure*, which is the entire basis on which the create-only invariant is being given up (R2).
+
+6. **`confirm` is a human checkpoint in the Teams thread** (owner decision 2026-08-14). On a `confirm`
+   verdict the bot does not mutate: it states plainly what the operation would change and waits. The
+   confirmation counts **only** if it arrives as a new turn from a sender whose `sender_id` resolves
+   to the *same* `Person` who requested the mutation (ADR 0042/0054 resolution, T1 in ADR 0066 terms) —
+   so a confirmation can never be satisfied by content the model read, by another participant, or by
+   the model quoting itself. It expires with the request (no standing consent), and an expired or
+   absent confirmation is a refusal. This is the Rule-of-Two checkpoint: when the flow reaches
+   untrusted content, sensitive data and a mutating effect at once, a person decides.
+
+7. **How `edit`/`delete` name their target.** The model addresses a note by the **note id it already
+   received from `search_notes`/`get_note`** — never by a free-form filesystem path, and never by
+   re-deriving one. This matters because `note_id(company, project, on, title)` (`paths.py`) is a pure
+   function of title/project/date, while the collision suffix (`-2`, `-3`, …) is added *afterwards* by
+   `_unique_id`: a suffixed note is therefore **not** addressable by "unchanged derivation" at all, and
+   an implementation that tried would silently target the wrong file. The gate resolves the id to a
+   path, refuses anything that does not resolve to an existing note under `notes_dir`, and refuses ids
+   the requester may not read (ADR 0062 authz, so mutation can never be a read oracle). In the
+   shell-on layout the model sees note *paths* under `/mnt/system/notes` while the typed
+   `search_notes`/`get_note` tools step aside (`agent_wiring.py`) — there the gate accepts the path
+   **only** by mapping it back to an id under `notes_dir`, applying the same refusals; the path is a
+   lookup key, never an instruction to open a file.
+
+8. **The judge's verdict is recorded in the audit row at append time** — closing the seam question
+   this ADR raised against ADR 0067. The judge runs *before* the mutation, so its verdict is already
+   known when the tool call's audit row is written: the recorder gains an explicit fourth argument
+   (`judge_verdict`), and the shipped append-only `AuditStore` (`core/ports/audit.py`) needs **no**
+   update verb. What is recorded is the verdict, the reason, and the trust class of the turn — never
+   the note content (ADR 0067 redaction rule holds unchanged).
 
 ## Risk register — this is the conscious-consent content
 
 | # | Risk introduced | Mitigation |
 |---|---|---|
 | R1 | The judge becomes the *only* real boundary, and it is probabilistic — the exact failure mode ADR 0057 avoids. | The judge is defense-in-depth **on top of** AAD authz (hard, pre-judge), path/schema confinement, and pre-mutation backup. It can only narrow, never widen. |
-| R2 | `edit`/overwrite kills the create-only invariant (`os.link`); reversibility stops being structural. | Snapshot before every destructive write + cadenced full-volume backup (infra ADR 0008); overwrite is write-new+swap, never in-place-without-snapshot. |
-| R3 | A generic `File(write)` bypasses the note schema/provenance/id derivation and could break the `company/project` layout that authz and retrieval depend on. | Mutation routes through the `NotesWriteService` validator (metadata/path enforced, body free). **Open:** prefer a typed `Notes(action=edit)` over generic `File` (below). |
+| R2 | `edit`/overwrite **and now `delete`** kill the create-only invariant (`os.link`); reversibility stops being structural and becomes procedural. | Per-operation snapshot before every destructive write, written *first* and fail-closed; **nightly full-volume backup already shipped** (infra `systemd/workmate-backup.timer`, 03:00, `WORKMATE_BACKUP_DEST` mandatory, keep 30). Worst case is one restore, not a lost note. |
+| R3 | The **chosen** generic `File(write/edit/delete)` channel bypasses the note schema/provenance/id derivation and could break the `company/project` layout that authz and retrieval depend on. | The owner chose the generic channel over the typed one, so the mitigation must be structural rather than a smaller surface: every mutating `File` call is **rewritten into a validated note operation** by the `NotesWriteService` validator before it reaches the port — company/project resolved against the registry, path through `_resolve_within`, id derivation unchanged, body free. A `File` path that does not resolve to an existing note under `notes_dir` is refused, not created ad hoc. The tool argument is a *request*, never a filesystem path taken at face value. |
 | R4 | Prompt-injection drives a destructive write; the second model can be injected too. | Structural, not just the judge: AAD authz before the judge, content-as-data boundaries on both the agent and the judge, backups, single-file ops. |
 | R8 | Probabilistic judge + write-new+swap collide with create-only-as-race-guard on deterministic ids (ADR 0043/0048). | Mutation only on `save_note`; `-mtg-`/`-thr-` stay create-only. |
-| R9 | Extending the `NotesWriter` port with overwrite touches ~6 assembly sites + every fake (`server.py`, `agent_wiring.py`, `teams_graph/app.py`, `cli/meeting.py`, `seed_corpus.py`, golden/fakes) — not "localized in `os.link`". | A separate, explicitly-counted port method (`overwrite`/`mutate`), not a change to `write`; all implementors + fakes in one PR; a negative probe per consumer. |
+| R10 | The judge is **not** a Dual-LLM boundary, though it looks like one: it branches on the very content that may be hostile (the diff, the intent), so data-flow becomes control-flow — the known limit of the pattern. An injected note body can therefore aim at the judge as well as at the agent. | Accepted as *defense in depth*, never as the boundary: the hard controls under it (AAD authz before any model call, registry-validated paths, snapshot, single-file, `confirm` requiring a real T1 turn) hold whatever the judge decides. The judge fails toward refusal, and its input is framed as data on its own injection boundary. The boundary is the architecture; the judge only narrows. |
+| R11 | `delete` widens R2/R4 blast radius: a successful injection now removes knowledge instead of only corrupting it, and removal is quieter than corruption. | Single-file, non-recursive, snapshot-first-or-refuse, judge + `confirm` from a resolved requester, and an audit row per attempt (ADR 0067). Removal is recoverable from the snapshot and the nightly backup; the audit makes it noisy after the fact. |
+| R9 | Extending the `NotesWriter` port touches ~6 assembly sites + every fake (`server.py`, `agent_wiring.py`, `teams_graph/app.py`, `cli/meeting.py`, `seed_corpus.py`, golden/fakes) — not "localized in `os.link`". **Recount 2026-08-14: the original figure was ~half the real delta.** It is now *three* port verbs, not one (`overwrite`, `delete`, and a way to *read* the note back), because Decision 4 defines `edit` as read→replace→write-new+swap while `NotesWriteService.__init__` takes only `(writer, projects)` — it has nothing to read with. | A separate, explicitly-counted set of port methods, never a change to `write`; all implementors + fakes in one PR; a negative probe per consumer. **The read dependency is resolved by injecting the existing `NotesRepository`** into the service rather than growing a read verb on `NotesWriter` — ADR 0006 split those ports deliberately, and merging them here would reverse that split as a side effect of an unrelated feature. This makes the service's constructor a third assembly-site change; count it. |
 
 ## Options considered
 
@@ -100,23 +145,51 @@ This ADR records that reversal with its risks stated as conscious consent, and s
   schema validator forced in front (R3); the open question below asks whether a typed `Notes(action)`
   is the better channel for the same effect.
 
-## Open questions (to close before code, as in ADR 0012)
+## Consequences the reversal drags along (found in review, 2026-08-14)
 
-- **`confirm` semantics.** What does a `confirm` verdict do — refuse with reason, warn-and-proceed, or
-  require an explicit human confirmation in the Teams thread? This is the core UX+security fork.
-- **Mutation channel: generic `File(write/edit)` vs typed `Notes(action=edit/delete)`.** The typed
-  action preserves schema/provenance/authz and keeps the judge on one narrow surface (R3); the generic
-  `File` is closer to the literal ask but broader. Owner's call.
-- **Does `delete` exist at all?** No delete exists today. Decide whether the mutation surface is
-  `edit`/overwrite only, or includes `delete` (which raises the R2/R4 blast radius).
-- **Backup cadence and trigger** before a destructive write (per-op snapshot always; full-volume how
-  often?).
-- **Is the security reversal accepted as written?** This ADR flips ADR 0003's "create-only,
-  secure-by-default" and ADR 0057's "security by lack, not by filtering". Merging it is the conscious
-  consent; the risk register above is what is being consented to.
-- **Where does the judge verdict get recorded? (counted seam against Faza 0).** ADR 0067 §1.4 says the
-  judge "writes its verdict into the same audit row", but the shipped `AuditStore` is **append-only**
-  (`core/ports/audit.py`, no update verb) and the recorder signature is `(tool_name, arguments,
-  status)` with `judge_verdict` hard-`None`. So this ADR must add the seam explicitly — a fourth
-  recorder argument, or a separate `AuditStore` verb keyed on the row id — rather than assume the
-  column is writable today. Decide the shape before implementation.
+- **Three model-facing texts currently say the opposite, and they ship in the frozen prefix.** The
+  reversal is not complete until they change **in the same PR as the code** — otherwise the cached
+  `tools + system` prefix (ADR 0056) instructs the model against the very capability being added, and
+  the likely outcome is a tool that exists and goes unused:
+  - `_PRECEDENCE` (`core/agent/prompt.py`): *"add notes, and leave existing ones as their authors
+    wrote them"* — the sentence has to become the *judged-and-confirmed* rule, not a prohibition.
+  - `_NOTES_SAVE` (`core/application/tools.py`): *"istniejąca notatka nigdy nie jest nadpisywana"* —
+    true of `Notes(save)` and must stay true of it, while naming `File` as the mutation path.
+  - **Hard rule 2 in `CLAUDE.md`** ("create-only via `os.link`", "the model has exactly one write
+    tool") becomes false the moment the code merges. It changes in that same PR — this ADR is the
+    "own ADR" its escape clause requires.
+- **The nightly volume backup is shipped but NOT installed on prod (verified 2026-08-14:
+  `systemctl is-enabled workmate-backup.timer` → `not-found`, no `/etc/workmate/backup.env`).** R2 and
+  R11 rest their entire case on procedural reversibility, so this is a **precondition, not a
+  follow-up**: `delete` does not ship until the timer is installed, enabled, pointed at an off-host
+  destination, and has one successful run to show. Per-operation snapshots alone protect a single
+  mistake, not a bad day.
+
+## Closed questions — decisions of 2026-08-14
+
+- **`confirm` semantics** → a **human checkpoint in the thread**, satisfiable only by a new turn from
+  the same resolved requester (Decision 6). Warn-and-proceed was rejected: it would reduce the verdict
+  to telemetry. `confirm ≡ refuse` was rejected: it leaves a legitimate operation with no way to
+  complete except rephrasing, which trains users to argue with the judge.
+- **Mutation channel** → the **generic `File(write/edit/delete)`** of ADR 0064, not a typed
+  `Notes(action=…)`. The narrower typed channel was recommended (Action-Selector: the model picks an
+  action and typed arguments, never a path) and declined in favour of the literal ask. The cost lands
+  in **R3**, whose mitigation is correspondingly structural: a mutating `File` call is *rewritten* into
+  a validated note operation, never executed as a raw path.
+- **Does `delete` exist?** → **Yes** (Decision 5), single-file and snapshot-first. Consented risk
+  **R11**.
+- **Backup cadence** → per-operation snapshot **always**, plus the **nightly full-volume backup that
+  already exists** (infra `systemd/workmate-backup.timer`, 03:00 daily, off-host destination
+  mandatory, 30 kept). No new cadence is invented here; the question was answered by shipped infra.
+- **Is the security reversal accepted as written?** → **Yes**, 2026-08-14. What is consented to is the
+  register above: R1–R4, R8–R9 as written, plus **R10** (the judge is not a Dual-LLM boundary) and
+  **R11** (`delete` blast radius). ADR 0003's create-only invariant and ADR 0057's "security by lack"
+  remain true *of the executor*; they stop being true of the application's note path, and that is the
+  deliberate change.
+- **Where does the judge verdict get recorded?** → **In the audit row at append time**, via an explicit
+  fourth recorder argument (Decision 7). The append-only `AuditStore` needs no update verb, and ADR
+  0067's §1.4 wording ("writes its verdict into the same audit row") becomes accurate rather than
+  aspirational.
+- **Trust class of the turn** → until ADR 0066 supplies a real class, the judge treats **every turn as
+  tainted** (confirmed 2026-08-14). With 0066's T3 labels shipping default-ON, the judge gets real
+  provenance for read content immediately; the T1/T2 sender split arrives with 0062's flag.

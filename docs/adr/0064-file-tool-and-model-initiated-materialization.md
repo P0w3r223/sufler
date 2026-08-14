@@ -1,7 +1,7 @@
 # 0064 — A first-class `File` tool and model-initiated materialization
 
 Date: 2026-08-12
-Status: proposed
+Status: accepted (owner decisions 2026-08-14 — built despite the measurement; actions `read`/`write`/`edit`/`delete`)
 Author: P0w3r223
 Related to: [ADR 0008](0008-agent-runtime-and-tool-catalog.md) (tool catalog),
   [ADR 0009](0009-meeting-note-flow-and-write-surface.md), [ADR 0016](0016-user-multimodal-attachments.md)
@@ -68,11 +68,15 @@ separate security decision and lives in ADR 0065.
 
 ## Decision
 
-1. **Build a typed `File` tool with `action=read` as the load-bearing action.** It materializes a
+1. **Build a typed `File` tool.** Its action set is `read | write | edit | delete`
+   (owner decision 2026-08-14 — see *Measurement* below). This ADR owns **`read`**: it materializes a
    file from the conversation's scratchpad scope into the model's context. `read` is scoped in a
    closure over the `WorkspaceScope` (mirroring `build_workspace_catalog`); the tool never takes an
-   absolute path from the model. `write`/`edit` are addressed in ADR 0065 (notes) and are otherwise
-   left to `Bash` (scratchpad) — consistent with ADR 0061.
+   absolute path from the model. The three mutating actions target the **knowledge base** — their
+   gate, judge, confirmation and blast-radius controls live in **ADR 0065**, which the owner chose as a
+   generic `File` channel rather than a typed `Notes(action=…)` one. Scratchpad writes remain a `Bash`
+   use case (ADR 0061); `File(write/edit/delete)` is not a second door to the scratchpad.
+   One `ToolSpec`, one `Literal`, one runtime seam — split ownership across two ADRs, not two tools.
 
 2. **Materialize into the next user turn, not the tool result** (see Context, fact 2). Images become
    `image` blocks, PDFs become `document` blocks, Word/HTML/other formats become extracted-text blocks
@@ -94,12 +98,39 @@ separate security decision and lives in ADR 0065.
    model-initiated extraction from the shell. This keeps text extraction off the typed surface
    (criterion, ADR 0061) while spanning the gap the owner named.
 
-**Precondition (measure first).** Per `przebudowa-harnessu.md` §6 stage 4, this stage *begins with a
-measurement*: is there a real case where the model must fetch a file itself, given the door already
-materializes up to 20 attachments per message? Measure **memory compaction** (ADR 0014,
-`_describe_attachment` degrading user attachments — the correct mechanism, not ADR 0058 tool-result
-clearing), the over-limit / over-size case, and the new formats (HTML). If no such case survives, the
-tool is not built and the surface stays at five.
+## Measurement — run 2026-08-14, and what the owner decided against it
+
+`przebudowa-harnessu.md` §6 stage 4 makes this stage begin with a measurement: *is there a real case
+where the model must fetch a file itself, given the door already materializes up to 20 attachments per
+message?* It was run twice on the live `conversations.db` (`workmate-state` volume) over the window
+**2026-07-31 → 2026-08-14**. `teams_graph` is the only door that holds conversations at all (`github`
+is ingest-only), so this is the whole population, not a sample:
+
+| Signal | Measured | What it says about the tool |
+|---|---|---|
+| user turns / conversations | 45 / 13 | the denominator is small — a signal, not a proof |
+| messages carrying an attachment | **4**, every one a **singleton** | the door's cap of 20 was never approached; the over-limit case has not occurred |
+| formats seen | 1 `image/jpeg`, 1 `application/pdf`, 2 `text/plain` (one of them an in-band `_note` status block) | inside today's coverage; no HTML, no rejected format observed |
+| compaction rounds (ADR 0014) | **0** | `_describe_attachment` — the degradation this ADR cites as the loss `File(read)` would repair — **has never fired in production** |
+| materialization failures in the door log | **0** across 56k lines since 2026-08-13 | no user has yet handed the bot a file it could not take in |
+| tool calls | 11 `Bash` (all from the 2026-08-12 shell probe), rest typed, **0 errors** | no shell-side file-handling friction either |
+
+**The measurement does not meet the stage-4 condition.** Read literally, §6 stage 4 says the tool is
+then not built and the surface stays at five.
+
+**Owner decision, 2026-08-14: build `File` anyway, with `read`/`write`/`edit`/`delete`.** This is
+recorded here the same way ADR 0065 records its security reversal — as conscious consent, not as a
+finding. What is being accepted without a demonstrated case: one more tool description in the cached
+`tools + system` prefix of every turn (ADR 0056), a new runtime seam (a tool turn injecting an
+attachment into the *next* user turn), and the maintenance surface of four actions. The reasoning the
+owner is acting on is forward-looking — the traffic measured above is from a fleet where the shell was
+off, attachments are rare because the bot visibly cannot do much with them, and the capability is
+wanted before the demand rather than after it.
+
+**Follow-up that keeps this honest:** re-measure after the shell has lived a month on prod (same
+query, plus `File` call counts from `audit.db`, ADR 0067). If `File` is unused by then, the honest
+move is removal, not silence — a tool that costs prefix bytes every turn and buys nothing is exactly
+the scaffolding this project deletes.
 
 ## Options considered
 
@@ -122,9 +153,12 @@ tool is not built and the surface stays at five.
   confirmation string plus a queued attachment the responder/runtime attaches to the following user
   turn. `selection.py` and the core stay provider-neutral; the Anthropic block schema stays in the
   outbound adapter (ADR 0016).
-- **Infra dependency.** `File(read)` end-to-end needs the shared scratchpad volume mounted into the
-  application (`WORKMATE_WORKSPACE_DIR` = scratchpad root), which is also required to deploy ADR 0012.
-  Until then the tool has nothing to read; sequence it after the ADR 0012 deployment.
+- **Infra dependency — satisfied since the 1.10.0 compose (verified 2026-08-14).** `File(read)`
+  end-to-end needs the shared scratchpad volume mounted into the application; the `x-workmate` anchor
+  now sets `WORKMATE_WORKSPACE_DIR: /home/scratchpad` and mounts `workmate-scratchpad` there, and the
+  `teams-graph` service repeats both in its own `environment`/`volumes` (YAML merge replaces the map,
+  it does not merge it). No separate infra ADR is needed for the mount; what remains is deploying the
+  1.10.0 image, which is where ADR 0012 lands anyway.
 - **Limits reuse `AttachmentLimits`** (ADR 0016): `max_bytes`, `max_total_bytes`, `max_image_edge`,
   `_MAX_IMAGE_PIXELS`, plus a format allowlist. HTML adds `html.parser` only (stdlib).
 - **Gates.** Negative probes as in this series (a gate that passes everything looks like one that
@@ -132,17 +166,37 @@ tool is not built and the surface stays at five.
   in-process extractor; a materialized `File(read)` block survives a compaction round (ADR 0014) and is
   re-materializable; over-limit degrades to an in-band note, never a crash.
 
-## Open questions (to close before code, as in ADR 0012)
+## Closed questions — decisions of 2026-08-14
 
-- **Does the measurement justify the tool at all?** If the door's 20-attachment path already covers
-  every real case, `File(read)` is not built (stage-4 condition). Decide on measured traffic, not this
-  note.
-- **Which formats does `read` materialize** (image/PDF/docx today; HTML new; xlsx/pptx already text) —
-  and what is the size/count ceiling for a model-initiated pull versus the door's push?
-- **Anti-masking surface budget:** the exact policy that keeps a dominant embedded image from
-  crowding out extracted text (ratio? absolute text floor?).
-- **Does `File` hide when the shell is present?** `build_workspace_catalog` hides at
-  `shell_factory is None` (`agent_wiring.py`). `read`-into-context is *not* a shell use case, so it
-  should likely stay even with the shell on — unlike scratchpad file tools. Confirm.
-- **`write`/`edit` scope** is deferred to ADR 0065; if the owner keeps generic `File(write/edit)` for
-  notes there, this tool's `Literal` gains those actions and the runtime seam is shared.
+- **Does the measurement justify the tool?** No — and the tool is built regardless, by owner decision.
+  See *Measurement* above, including the re-measure follow-up that keeps the decision falsifiable.
+- **Formats `read` materializes.** Images (png/jpeg/gif/webp), PDF, docx, xlsx/pptx (already extracted
+  to text), plain text, and **HTML** (new `extract_html`). Ceilings **reuse the `AttachmentLimits`
+  values** unchanged (`max_bytes`, `max_total_bytes`, `max_extract_bytes`, `max_image_edge`,
+  `max_count`). Over-limit degrades to the same in-band `_note`, never a crash.
+- **Which message's budget does a pull charge?** The door's budget is stateless: it is computed inside
+  a single `materialize()` call over one `ChannelMessage`'s references, so there is no running counter
+  to debit — and `File(read)` materializes into a *different* (later) user turn than the one the model
+  was reading. So the rule is stated in terms that exist: **the pulled attachments are budgeted
+  together with whatever the door is materializing into that same next user turn**, one budget
+  computed once for that turn (door pushes first, model pulls second, the remainder is what the pull
+  may spend). The limits themselves move out of the Teams-door settings into a place the tool can also
+  reach — today `AttachmentLimits` is constructed from `teams_graph` settings (`teams_graph/app.py`),
+  which is the door, not the agent. That relocation is part of building this tool, not a detail.
+- **Anti-masking surface budget.** Extracted **text has absolute priority**: it is materialized first,
+  up to `max_extract_bytes`. Embedded images from an HTML file are surfaced **only from the budget
+  left over**, at most **3**, and never displace text; if the text alone exhausts the budget the
+  images are dropped with an in-band note naming how many. This is what makes the owner's case — a
+  decorative image occupying ~95% of the page — unable to crowd out the small real content. It is an
+  extraction-quality rule, not a security gate (file content stays data either way).
+- **Does `File` hide when the shell is present?** **No — it stays on the surface in both layouts.**
+  `build_workspace_catalog` is built **only when `shell_factory is None`** and therefore **disappears
+  once the shell is present** (`agent_wiring.py:639-643`) — scratchpad file operations are `Bash` use
+  cases, so the typed workspace tools step aside for it. Neither `read`-into-context nor notes mutation
+  is a shell use case (notes are `ro` to the executor, ADR 0057), so `File` does **not** follow that
+  rule and stays on the surface in both layouts.
+- **`write`/`edit`/`delete` scope.** Owner chose the **generic `File` channel** over a typed
+  `Notes(action=…)` one (2026-08-14). The actions live in this tool's `Literal` and share this
+  runtime seam; their gate, judge, confirmation and risk register are **ADR 0065**.
+- **MCP surface.** `File` is **agent-only** (factory / `extra_catalog`, never `register_*` on
+  FastMCP); the A–D golden `test_mcp_tool_surface.py` gains a negative assertion that `File` is absent.

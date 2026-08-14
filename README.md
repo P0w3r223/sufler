@@ -13,8 +13,8 @@ wiedzy o projektach, dostępna tam, gdzie zespół już pracuje: w Claude Code, 
 > zadania" oraz lokalny retrieval leksykalny notatek. Karty czasu (WorklogPRO) wycofane z projektu
 > (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). 67 ADR-ów
 > architektonicznych (`docs/adr/`; z najnowszych 0064/0065/0066 — harness plików, baza mutowalna,
-> klasy zaufania — są `proposed`, poza kodem produkcyjnym, a 0067 (obserwowalność Fazy 0: dziennik
-> audytu + dead-letter) jest wdrożony), pełny zestaw testów zielony. Meta Fazy 1 (wdrożenie HTTP na
+> klasy zaufania — są `accepted` decyzjami właściciela z 2026-08-14, ale **jeszcze bez kodu**,
+> a 0067 (obserwowalność Fazy 0: dziennik audytu + dead-letter) jest wdrożony), pełny zestaw testów zielony. Meta Fazy 1 (wdrożenie HTTP na
 > serwerze firmowym) wciąż otwarta — patrz [`docs/roadmap-v1-gap-analysis.md`](docs/roadmap-v1-gap-analysis.md).
 
 ## O projekcie
