@@ -228,7 +228,9 @@ def test_scope_is_closed_over_and_invisible_to_the_model():
     """Model nie widzi scope w schemacie, więc nie ma jak sięgnąć cudzej rozmowy."""
     spec, _ = _tool(files={"umowa.pdf": _PDF})
 
-    assert set(spec.fn.__annotations__) == {"action", "name", "content", "reason", "return"}
+    import typing
+
+    assert set(typing.get_type_hints(spec.fn)) == {"action", "name", "return"}
 
 
 def test_tool_is_named_file_and_carries_a_usable_description():
@@ -258,11 +260,15 @@ class _FakeMutations:
 
             raise MutationRefused(MutationOutcome(False, JudgeVerdict("confirm", self.refuse)))
 
-    def edit_note(self, note_id, body, *, requester, intent):  # noqa: ANN001, ANN201
+    def edit_note(  # noqa: ANN001, ANN201
+        self, note_id, body, *, requester, intent, turn_token="", trust_class="", tainted=True
+    ):
         self._maybe_refuse()
         self.edits.append((note_id, body, requester, intent))
 
-    def delete_note(self, note_id, *, requester, intent):  # noqa: ANN001, ANN201
+    def delete_note(  # noqa: ANN001, ANN201
+        self, note_id, *, requester, intent, turn_token="", trust_class="", tainted=True
+    ):
         from workmate.core.application.note_mutation import MutationOutcome
         from workmate.core.domain.mutation import JudgeVerdict
 
@@ -287,12 +293,25 @@ def _tool_z_mutacjami(*, requester: str = "Anna", refuse: str = ""):
     return spec, mutations
 
 
-def test_mutation_actions_are_absent_when_the_gate_is_closed():
-    """Bez bramki narzędzie ma TYLKO odczyt — model nie zobaczy nawet nazwy akcji mutującej."""
-    spec, _ = _tool()
+def test_mutation_actions_are_absent_from_the_schema_when_the_gate_is_closed():
+    """Model widzi zdolności przez SCHEMAT, nie przez opis — więc bada się schemat.
 
-    assert "edit" not in spec.description and "delete" not in spec.description
-    assert "error" in spec.fn(action="edit", name="x", content="y", reason="z")
+    Wcześniejsza wersja tej sondy sprawdzała sam opis i twierdziła „model nie zobaczy nawet
+    nazwy akcji mutującej", podczas gdy enum sygnatury wystawiał `edit`/`delete` na każdych
+    drzwiach. Sonda przechodziła, twierdzenie było nieprawdziwe.
+    """
+    import typing
+
+    zamknieta, _ = _tool()
+    otwarta, _ = _tool_z_mutacjami()
+
+    # ``get_type_hints``, nie ``__annotations__``: moduł ma ``from __future__ import annotations``,
+    # więc surowe adnotacje są NAPISAMI — a schemat dla modelu powstaje z rozwiązanych typów.
+    zamk = typing.get_type_hints(zamknieta.fn)["action"]
+    otw = typing.get_type_hints(otwarta.fn)["action"]
+    assert typing.get_args(zamk) == ("read",)
+    assert set(typing.get_args(otw)) == {"read", "edit", "delete"}
+    assert "edit" not in zamknieta.description
 
 
 def test_unrecognised_requester_gets_no_mutation():
@@ -341,7 +360,8 @@ def test_delete_reports_where_the_copy_is():
 
     wynik = spec.fn(action="delete", name="biap/mpwik/x", reason="duplikat")
 
-    assert wynik["deleted"] is True and wynik["kopia"] == "/snap/x"
+    assert wynik["deleted"] is True
+    assert wynik["kopia"] == "snap/x"  # bez układu katalogów hosta
 
 
 def test_refusal_comes_back_as_a_result_not_as_a_tool_failure():

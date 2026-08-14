@@ -217,7 +217,7 @@ class ConversationalResponder:
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
         file_catalog_factory: (
-            Callable[[WorkspaceScope, AttachmentQueue, str], Sequence[ToolSpec]] | None
+            Callable[[WorkspaceScope, AttachmentQueue, str, str, bool], Sequence[ToolSpec]] | None
         ) = None,
         attachment_stager: (
             Callable[[WorkspaceScope, Sequence[Attachment]], Sequence[str]] | None
@@ -432,6 +432,18 @@ class ConversationalResponder:
                 self._channel, external_id, message.text, now=now
             )
         transcript = self._build_transcript(conversation_id, external_id, history, rolled_over)
+        # Klasa POCHODZENIA tej tury (ADR 0066). Rozwiązanie nadawcy pada RAZ i zasila obie
+        # osie: tę etykietę oraz — osobno, przez własne fabryki — bramki zdolności (0062/0063).
+        # Bez rozszczepienia (fabryka nie podana) każda tura jest T1, czyli zachowanie dawne.
+        trust: TrustClass = "T1"
+        if self._sender_trust is not None:
+            try:
+                trust = self._sender_trust(message.sender_id)
+            except Exception:
+                # Fail-closed: nie umiemy rozstrzygnąć, kto pisze → traktujemy słowa jak dane.
+                logger.warning("Nie rozstrzygnąłem klasy nadawcy %r — T2", message.sender_id)
+                trust = "T2"
+
         # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
         # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
         scope = WorkspaceScope(self._channel, external_id)
@@ -479,8 +491,17 @@ class ConversationalResponder:
                 # ``sender_id`` idzie do fabryki, bo akcje MUTUJĄCE (ADR 0065) wiążą się
                 # z człowiekiem: bez rozpoznanego nadawcy nie ma komu przypisać zmiany ani
                 # kogo zapytać o potwierdzenie, więc fabryka ich wtedy nie dokłada.
+                # Klasa i skaza jadą do fabryki, bo sędzia mutacji (ADR 0065) ma orzekać
+                # ze świadomością POCHODZENIA tury: „prośba padła w rozmowie, do której
+                # weszła treść obca" to inny fakt niż ta sama prośba w rozmowie czystej.
                 extra_tools.extend(
-                    self._file_catalog_factory(scope, attachment_queue, message.sender_id)
+                    self._file_catalog_factory(
+                        scope,
+                        attachment_queue,
+                        message.sender_id,
+                        trust,
+                        self._is_tainted(conversation_id),
+                    )
                 )
             except Exception:
                 logger.warning(
@@ -547,17 +568,6 @@ class ConversationalResponder:
                     external_id,
                     exc_info=True,
                 )
-        # Klasa POCHODZENIA tej tury (ADR 0066). Rozwiązanie nadawcy pada RAZ i zasila obie
-        # osie: tę etykietę oraz — osobno, przez własne fabryki — bramki zdolności (0062/0063).
-        # Bez rozszczepienia (fabryka nie podana) każda tura jest T1, czyli zachowanie dawne.
-        trust: TrustClass = "T1"
-        if self._sender_trust is not None:
-            try:
-                trust = self._sender_trust(message.sender_id)
-            except Exception:
-                # Fail-closed: nie umiemy rozstrzygnąć, kto pisze → traktujemy słowa jak dane.
-                logger.warning("Nie rozstrzygnąłem klasy nadawcy %r — T2", message.sender_id)
-                trust = "T2"
         # Skaza z faktów ZNANYCH PRZED turą (ADR 0066). Rozdzielenie na dwie połowy nie jest
         # kosmetyką: załącznik ląduje na dysku rozmowy PRZED wywołaniem modelu, więc gdyby
         # cała skaza czekała na wynik tury, błąd API w pętli narzędzi zostawiałby zatruty
@@ -654,6 +664,19 @@ class ConversationalResponder:
             replay = self._conversations.replay_messages(conversation_id)
             summary = self._conversations.active_summary(conversation_id)
         return _to_transcript_with_summary(summary, replay)
+
+    def _is_tainted(self, conversation_id: str) -> bool:
+        """Czy do TEJ rozmowy weszła już treść obca (ADR 0066) — best-effort, fail-SAFE.
+
+        Nieudany odczyt zwraca ``True``, nie ``False``: sędzia ma wtedy orzekać ostrożniej,
+        a nie mniej ostrożnie. Domysł w drugą stronę byłby pocieszaniem się przy awarii bazy.
+        """
+        try:
+            with self._store_lock:
+                return self._conversations.is_tainted(conversation_id)
+        except Exception:
+            logger.warning("Nie odczytałem skazy rozmowy %r — zakładam skażoną", conversation_id)
+            return True
 
     def _trust_nonce(self, external_id: str) -> str:
         """Nonce koperty (ADR 0066): stały w obrębie ROZMOWY, nieprzewidywalny z treści.

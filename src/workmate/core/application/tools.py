@@ -576,6 +576,16 @@ Notatki ze spotkań i wątków (`-mtg-`, `-thr-`) są tylko do odczytu — popra
 zapisuj jako nową notatkę."""
 
 
+def _skrot_kopii(sciezka: str) -> str:
+    """Dwa ostatnie segmenty ścieżki migawki — tyle, by ją odnaleźć, bez układu katalogów hosta.
+
+    Pełna ścieżka wracała do modelu, a stamtąd potrafi trafić do odpowiedzi na kanale: to darmowa
+    informacja o wnętrzu kontenera, której rozmówca nie potrzebuje, żeby poprosić o cofnięcie.
+    """
+    segmenty = [s for s in sciezka.replace("\\", "/").split("/") if s]
+    return "/".join(segmenty[-2:]) if segmenty else ""
+
+
 def build_file_catalog(
     scope: WorkspaceScope,
     read_service: WorkspaceService,
@@ -584,6 +594,9 @@ def build_file_catalog(
     limits: MaterializationLimits,
     mutations: NoteMutationService | None = None,
     requester: str = "",
+    trust_class: str = "unknown",
+    tainted: bool = True,
+    turn_token: str = "",
 ) -> list[ToolSpec]:
     """Zbuduj narzędzie ``File`` dla danej rozmowy (ADR 0064) — WYŁĄCZNIE dla runtime agenta.
 
@@ -621,7 +634,7 @@ def build_file_catalog(
             if action in ("edit", "delete"):
                 return _mutacja(action, name, content, reason)
             if action != "read":
-                return _zla_akcja("File", action, akcje)
+                return _zla_akcja("File", action, ("read", "edit", "delete"))
             data = read_service.read_bytes(scope, name)
             if data is None:
                 return {"error": f"Plik nie istnieje w katalogu roboczym: {name}"}
@@ -688,9 +701,24 @@ def build_file_catalog(
             return {"error": "Pusta `content` skasowałaby treść notatki. Użyj `delete` świadomie."}
         try:
             if action == "delete":
-                wynik = mutations.delete_note(note_id, requester=requester, intent=reason)
-                return {"deleted": True, "id": note_id, "kopia": wynik.snapshot}
-            mutations.edit_note(note_id, content, requester=requester, intent=reason)
+                wynik = mutations.delete_note(
+                    note_id,
+                    requester=requester,
+                    intent=reason,
+                    turn_token=turn_token,
+                    trust_class=trust_class,
+                    tainted=tainted,
+                )
+                return {"deleted": True, "id": note_id, "kopia": _skrot_kopii(wynik.snapshot)}
+            mutations.edit_note(
+                note_id,
+                content,
+                requester=requester,
+                intent=reason,
+                turn_token=turn_token,
+                trust_class=trust_class,
+                tainted=tainted,
+            )
             return {"edited": True, "id": note_id}
         except MutationRefused as odmowa:
             # Odmowa NIE jest awarią — to normalny wynik z powodem, który model ma przekazać
@@ -701,9 +729,17 @@ def build_file_catalog(
                 "wymaga_potwierdzenia": odmowa.outcome.verdict.verdict == "confirm",
             }
 
-    akcje: tuple[str, ...] = ("read", "edit", "delete") if mutations is not None else ("read",)
-    opis = _FILE_OPIS + (_FILE_OPIS_MUTACJE if mutations is not None else "")
-    return [ToolSpec("File", opis, file)]
+    def file_tylko_odczyt(action: Literal["read"], name: str) -> dict[str, Any]:
+        """Podaj plik `name` z katalogu roboczego tej rozmowy do wglądu (obraz/PDF/dokument)."""
+        return file(action, name)
+
+    # Dwie osobne funkcje, bo schemat pokazywany modelowi wywodzi się z SYGNATURY. Jedna funkcja
+    # z pełnym ``Literal`` wystawiałaby `edit`/`delete` w enumie także przy zamkniętej bramce —
+    # runtime i tak by je odrzucił, ale model widziałby zdolność, której nie ma, i próbowałby
+    # jej użyć. Przy powłoce ten sam problem rozwiązano tak samo: narzędzia po prostu nie ma.
+    if mutations is None:
+        return [ToolSpec("File", _FILE_OPIS, file_tylko_odczyt)]
+    return [ToolSpec("File", _FILE_OPIS + _FILE_OPIS_MUTACJE, file)]
 
 
 # Mapa montaży wyprowadziła się stąd do sekcji `ENVIRONMENT` promptu (etap 6 planu przebudowy).

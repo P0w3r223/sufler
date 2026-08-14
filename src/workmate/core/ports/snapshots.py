@@ -13,14 +13,23 @@ mieszka na tym samym wolumenie co notatki.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from workmate.core.domain.models import Note
 
 
 class NoteSnapshots(Protocol):
     """Zapis kopii treści notatki przed jej zmianą albo usunięciem."""
 
-    def save(self, note_id: str, content: str) -> str:
-        """Zapisz migawkę i zwróć jej lokalizację (do komunikatu i do audytu).
+    def save(self, note: Note) -> str:
+        """Zapisz migawkę CAŁEJ notatki i zwróć jej lokalizację (do komunikatu i do audytu).
+
+        Całej, nie samej treści — i to jest istotne przy usuwaniu. Wartość notatki w tym
+        schemacie siedzi w dużej mierze we frontmatterze: tytuł, uczestnicy, DECYZJE, zadania,
+        pytania otwarte. Kopia samych akapitów pozwoliłaby odtworzyć prozę i zgubić ustalenia,
+        czyli dokładnie to, po co ta baza istnieje — a odwracalność ``delete`` stoi wyłącznie
+        na tej kopii.
 
         Podnosi ``WriteError``, gdy kopia się nie uda — wołający MUSI wtedy odmówić mutacji.
         """

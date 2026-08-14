@@ -23,12 +23,17 @@ from typing import Protocol
 class ConfirmationLedger(Protocol):
     """Pamięć mutacji zapowiedzianych i czekających na powrót tej samej prośby."""
 
-    def seen(self, key: str) -> bool:
-        """Czy ta dokładnie prośba została już zapowiedziana (i nie wygasła)?"""
+    def turn_of(self, key: str) -> str | None:
+        """Token TURY, w której tę prośbę zapowiedziano — albo ``None``, gdy jej nie było.
+
+        Zwracamy turę, nie samo „było/nie było": zgoda ma wynikać z tego, że prośba wróciła
+        z INNEJ tury. Sam fakt wcześniejszego wystąpienia niczego nie dowodzi, bo model potrafi
+        powtórzyć wywołanie w tej samej turze — pętla narzędzi ma na to osiem rund.
+        """
         ...
 
-    def remember(self, key: str) -> None:
-        """Zapamiętaj zapowiedzianą prośbę; wpis ma wygasać, a nie czekać w nieskończoność."""
+    def remember(self, key: str, turn_token: str) -> None:
+        """Zapamiętaj zapowiedź wraz z turą; wpis ma wygasać, a nie czekać w nieskończoność."""
         ...
 
     def forget(self, key: str) -> None:

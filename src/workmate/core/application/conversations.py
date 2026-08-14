@@ -189,6 +189,11 @@ class ConversationService:
                 trust=entry.trust if isinstance(entry, UserText) else None,
             )
 
+    def is_tainted(self, conversation_id: str) -> bool:
+        """Czy do rozmowy weszła treść obca (ADR 0066) — odczyt lepkiej skazy."""
+        conv = self._store.get(conversation_id)
+        return conv.tainted if conv is not None else False
+
     def mark_tainted(self, conversation_id: str, source: str) -> None:
         """Zapal lepką skazę rozmowy (ADR 0066) — delegacja do magazynu."""
         self._store.mark_tainted(conversation_id, source)

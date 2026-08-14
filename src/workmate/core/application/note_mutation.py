@@ -18,6 +18,7 @@ o tym, czy TA zmiana jest rozsądna.
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -37,6 +38,12 @@ if TYPE_CHECKING:
 # ponowne przetworzenie tego samego spotkania ma trafić na istniejący plik i odbić się, a nie
 # nadpisać wynik poprzedniego przebiegu.
 _DETERMINISTIC_MARKERS = ("-mtg-", "-thr-")
+# Znacznik liczy się tylko w części identyfikatora po DACIE (``…/RRRR-MM-DD-<znacznik>-<hash>``).
+# Test podłańcucha na całym id brałby zwykłą notatkę „Notatka mtg z klientem" za wygenerowaną
+# ze spotkania i zamrażał ją na zawsze — z komunikatem, który dodatkowo kłamie o jej pochodzeniu.
+_DATE_PREFIX_LEN = len("RRRR-MM-DD")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -76,7 +83,17 @@ class NoteMutationService:
         # zostać niedostępna — nie „dostępna z ostrzeżeniem".
         self._allow_delete = allow_delete
 
-    def edit_note(self, note_id: str, new_body: str, *, requester: str, intent: str) -> Note:
+    def edit_note(
+        self,
+        note_id: str,
+        new_body: str,
+        *,
+        requester: str,
+        intent: str,
+        turn_token: str = "",
+        trust_class: str = "unknown",
+        tainted: bool = True,
+    ) -> Note:
         """Podmień TREŚĆ istniejącej notatki; metadane zostają nietknięte.
 
         Metadane (projekt, data, uczestnicy) są poza zasięgiem rozmyślnie: to z nich wywodzi się
@@ -85,6 +102,9 @@ class NoteMutationService:
         """
         note = self._require_mutable(note_id)
         reject_dangerous_content(new_body)
+        # Znacznik wersji bierzemy TERAZ, przed oceną zmiany: między odczytem a zapisem leży
+        # wywołanie sieciowe, a drzwi obsługują tury równolegle.
+        wersja = self._writer.digest(note_id)
         request = MutationRequest(
             kind="edit",
             note_id=note_id,
@@ -92,14 +112,29 @@ class NoteMutationService:
             intent=intent,
             current_body=note.body,
             new_body=new_body.strip(),
+            turn_token=turn_token,
+            trust_class=trust_class,
+            tainted=tainted,
         )
-        outcome = self._decide(request, note.body)
+        outcome = self._decide(request, note)
         if not outcome.applied:
             raise MutationRefused(outcome)
-        self._writer.overwrite(note.model_copy(update={"body": new_body.strip()}))
-        return note.model_copy(update={"body": new_body.strip()})
+        zmieniona = note.model_copy(update={"body": new_body.strip()})
+        # Skrót liczony z TEGO SAMEGO renderu, który leży na dysku — kontrola wersji ma
+        # porównywać plik z plikiem, nie model z plikiem.
+        self._writer.overwrite(zmieniona, expected_sha256=wersja)
+        return zmieniona
 
-    def delete_note(self, note_id: str, *, requester: str, intent: str) -> MutationOutcome:
+    def delete_note(
+        self,
+        note_id: str,
+        *,
+        requester: str,
+        intent: str,
+        turn_token: str = "",
+        trust_class: str = "unknown",
+        tainted: bool = True,
+    ) -> MutationOutcome:
         """Usuń POJEDYNCZĄ notatkę — po migawce i po werdykcie sędziego."""
         if not self._allow_delete:
             raise WriteError(
@@ -112,8 +147,11 @@ class NoteMutationService:
             requester=requester,
             intent=intent,
             current_body=note.body,
+            turn_token=turn_token,
+            trust_class=trust_class,
+            tainted=tainted,
         )
-        outcome = self._decide(request, note.body)
+        outcome = self._decide(request, note)
         if not outcome.applied:
             raise MutationRefused(outcome)
         self._writer.delete(note_id)
@@ -121,7 +159,7 @@ class NoteMutationService:
 
     def _require_mutable(self, note_id: str) -> Note:
         """Zwróć notatkę, jeśli w ogóle wolno ją ruszać; inaczej ``WriteError`` z powodem."""
-        if any(marker in note_id for marker in _DETERMINISTIC_MARKERS):
+        if _jest_deterministyczna(note_id):
             raise WriteError(
                 f"notatka {note_id} pochodzi ze spotkania lub wątku i jest tylko do odczytu "
                 "— jej niezmienność jest gwarancją, że powtórne przetworzenie źródła niczego "
@@ -132,7 +170,7 @@ class NoteMutationService:
             raise WriteError(f"notatka nie istnieje: {note_id}")
         return note
 
-    def _decide(self, request: MutationRequest, current: str) -> MutationOutcome:
+    def _decide(self, request: MutationRequest, note: Note) -> MutationOutcome:
         """Migawka, potem sędzia. Awaria któregokolwiek kroku = odmowa.
 
         Migawka PRZED werdyktem, choć przy odmowie okaże się niepotrzebna: gdyby powstawała po
@@ -140,30 +178,52 @@ class NoteMutationService:
         stan niż jedna zbędna kopia. Kopia jest tania, utrata notatki nie.
         """
         try:
-            location = self._snapshots.save(request.note_id, current)
+            location = self._snapshots.save(note)
         except Exception as exc:
             return MutationOutcome(False, refusal(f"nie udało się zabezpieczyć kopii: {exc}"))
         try:
             verdict = self._judge.review(request)
         except Exception as exc:  # implementacja portu ma nie rzucać — ale to bramka, nie ufa
             return MutationOutcome(False, refusal(f"sędzia niedostępny: {exc}"), location)
-        if verdict.verdict == "confirm":
-            return MutationOutcome(self._confirmed(request), verdict, location)
-        return MutationOutcome(verdict.verdict == "allow", verdict, location)
+        applied = (
+            self._confirmed(request) if verdict.verdict == "confirm" else verdict.verdict == "allow"
+        )
+        # Ślad w dzienniku procesu: BEZ treści notatki i bez uzasadnienia sędziego (oba mogą
+        # nieść fragmenty bazy wiedzy) — sama decyzja, kto, co i czy weszła w życie. To jest
+        # ta połowa mitygacji R11, która czyni usunięcie głośnym PO fakcie; wpisanie werdyktu
+        # do wiersza audytu (ADR 0065 §8) wymaga przeprowadzenia rejestratora tury przez
+        # fabryki narzędzi i zostaje jako osobny krok.
+        logger.warning(
+            "Mutacja bazy wiedzy: %s %s przez %s — werdykt %s, wykonana=%s, kopia=%s",
+            request.kind,
+            request.note_id,
+            request.requester,
+            verdict.verdict,
+            applied,
+            location,
+        )
+        return MutationOutcome(applied, verdict, location)
 
     def _confirmed(self, request: MutationRequest) -> bool:
         """Czy ta dokładnie prośba wróciła po zapowiedzi (punkt kontrolny człowieka).
 
         Pierwsze wystąpienie: zapamiętujemy i ODMAWIAMY — model ma powiedzieć człowiekowi, co
-        miałoby się stać. Powtórzenie w późniejszej turze przechodzi, bo tura powstaje tylko
-        wtedy, gdy ktoś napisał. Zgoda jest jednorazowa: po wykonaniu wpis znika, więc kolejne
-        kasowanie znów zaczyna od zapowiedzi.
+        miałoby się stać. Przechodzi dopiero powtórzenie z INNEJ tury, bo tura powstaje tylko
+        wtedy, gdy ktoś napisał. Zgoda jest jednorazowa: po wykonaniu wpis znika, więc kolejna
+        zmiana znów zaczyna od zapowiedzi.
+
+        Czego to nie dowodzi: że człowiek się ZGODZIŁ. Dowodzi, że napisał. Mocniejszy dowód
+        wymagałby kanału poza modelem, którego ta instalacja nie ma.
         """
         key = self._confirmation_key(request)
-        if self._confirmations.seen(key):
+        zapowiedziana_w = self._confirmations.turn_of(key)
+        if zapowiedziana_w is not None and zapowiedziana_w != request.turn_token:
             self._confirmations.forget(key)
             return True
-        self._confirmations.remember(key)
+        # Ta sama tura (albo brak zapowiedzi) → tylko zapowiadamy. Warunek na RÓŻNICĘ tur jest
+        # tu całą treścią: bez niego model zapowiadał i wykonywał zmianę sam, w jednej turze —
+        # pętla narzędzi ma na to osiem rund, a każda runda może nieść wiele wywołań naraz.
+        self._confirmations.remember(key, request.turn_token)
         return False
 
     @staticmethod
@@ -176,6 +236,17 @@ class NoteMutationService:
         """
         material = f"{request.requester}|{request.kind}|{request.note_id}|{request.new_body}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _jest_deterministyczna(note_id: str) -> bool:
+    """Czy identyfikator pochodzi ze ŹRÓDŁA (spotkanie, wątek) — sprawdzane po dacie w nazwie.
+
+    Nazwa pliku ma kształt ``<data>-<reszta>``; znacznika szukamy dopiero w reszcie, żeby tytuł
+    użytkownika nie mógł przypadkiem uczynić notatki niezmienną.
+    """
+    nazwa = note_id.rsplit("/", 1)[-1]
+    ogon = nazwa[_DATE_PREFIX_LEN:]
+    return any(marker in ogon for marker in _DETERMINISTIC_MARKERS)
 
 
 class MutationRefused(WriteError):

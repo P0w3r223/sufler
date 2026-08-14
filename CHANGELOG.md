@@ -22,7 +22,8 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
   sędzia** (osobne wywołanie modelu z wymuszonym schematem werdyktu), który potrafi tylko zawęzić:
   autoryzacja nadawcy po AAD pada przed nim, ścieżka i schemat poza nim, a każda awaria — sieci,
   ucięcie odpowiedzi, nieznany werdykt — kończy się odmową. Werdykt `confirm` wymaga **powrotu tej
-  samej prośby w późniejszej turze** (tura powstaje tylko wtedy, gdy ktoś napisał). Notatki ze
+  samej prośby z INNEJ tury** (token tury pilnuje, że model nie zaliczy potwierdzenia sam —
+  pętla narzędzi ma osiem rund w jednej turze). Notatki ze
   spotkań i wątków zostają niezmienne — ich niezmienność to mechanizm idempotencji, nie ostrożność.
   Trzy bramki, wszystkie domyślnie OFF: `..._ENABLE_NOTE_MUTATION`, `..._ENABLE_NOTE_DELETE`
   (osobna, bo ADR wiąże kasowanie z DZIAŁAJĄCĄ kopią zapasową) oraz wymagana mapa tożsamości.

@@ -51,6 +51,11 @@ class MutationRequest:
     new_body: str = ""  # pusty dla ``delete``
     trust_class: str = "unknown"
     tainted: bool = True
+    # Token TURY (ADR 0065). Punkt kontrolny człowieka opiera się na tym, że powtórzenie
+    # prośby przychodzi z INNEJ tury — a tura powstaje tylko wtedy, gdy ktoś napisał. Bez
+    # tego pola pętla narzędzi (do 8 rund w jednej turze, a każda runda może nieść wiele
+    # wywołań) pozwalała modelowi zapowiedzieć i wykonać zmianę samemu, bez udziału człowieka.
+    turn_token: str = ""
 
 
 @dataclass(frozen=True)

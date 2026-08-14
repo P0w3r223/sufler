@@ -17,6 +17,7 @@ więc kolejność pól odpowiada modelowi (title, project, date, …), a
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import uuid
 from pathlib import Path
@@ -43,7 +44,14 @@ class MarkdownNotesWriter:
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_create(path, _render(note.metadata, note.body))
 
-    def overwrite(self, note: Note) -> None:
+    def digest(self, note_id: str) -> str:
+        """Skrót pliku notatki albo pusty napis, gdy notatki nie ma (patrz port)."""
+        path = _resolve_within(self._notes_dir, f"{note_id}.md")
+        if not path.is_file():
+            return ""
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
         """Podmień treść ISTNIEJĄCEJ notatki atomowo (ADR 0065) — nigdy w miejscu.
 
         ``os.replace`` na w pełni zapisanym pliku tymczasowym: czytelnik widzi albo starą, albo
@@ -57,6 +65,11 @@ class MarkdownNotesWriter:
         path = _resolve_within(self._notes_dir, f"{note.id}.md")
         if not path.is_file():
             raise WriteError(f"notatka nie istnieje, nie ma czego podmienić: {note.id}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
+            raise WriteError(
+                f"notatka {note.id} zmieniła się od odczytu — nie nadpisuję. "
+                "Przeczytaj ją ponownie i powtórz zmianę."
+            )
         _atomic_replace(path, _render(note.metadata, note.body))
 
     def delete(self, note_id: str) -> None:
@@ -68,6 +81,15 @@ class MarkdownNotesWriter:
             path.unlink()
         except OSError as exc:
             raise WriteError(f"nie udało się usunąć notatki {note_id}: {exc}") from exc
+
+
+def render_note(note: Note) -> str:
+    """Publiczny kształt pliku notatki — jedno źródło dla zapisu i dla MIGAWKI (ADR 0065).
+
+    Migawka renderowana osobno rozjechałaby się z formatem zapisu przy pierwszej zmianie
+    frontmatteru, a zauważono by to dopiero przy próbie odtworzenia skasowanej notatki.
+    """
+    return _render(note.metadata, note.body)
 
 
 def _render(metadata: NoteMetadata, body: str) -> str:

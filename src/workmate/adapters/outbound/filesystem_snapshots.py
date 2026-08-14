@@ -17,8 +17,13 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from workmate.adapters.outbound.markdown_notes_writer import render_note
 from workmate.core.errors import WriteError
+
+if TYPE_CHECKING:
+    from workmate.core.domain.models import Note
 
 
 class FilesystemNoteSnapshots:
@@ -27,7 +32,7 @@ class FilesystemNoteSnapshots:
     def __init__(self, snapshots_dir: Path) -> None:
         self._root = snapshots_dir
 
-    def save(self, note_id: str, content: str) -> str:
+    def save(self, note: Note) -> str:
         """Zapisz migawkę atomowo i zwróć jej ścieżkę; ``WriteError``, gdy się nie uda.
 
         Błąd jest GŁOŚNY rozmyślnie — bramka mutacji zamienia go na odmowę operacji. Migawka,
@@ -37,6 +42,10 @@ class FilesystemNoteSnapshots:
         slugifikacji serwisu, ale to jedyne miejsce, które składa z niego ŚCIEŻKĘ, a obrona
         w głąb kosztuje tu jedną linię.
         """
+        # TYM SAMYM rendererem co pisarz notatek: migawka ma być plikiem, który wystarczy
+        # skopiować z powrotem, a nie fragmentem wymagającym ręcznego odtworzenia frontmatteru.
+        content = render_note(note)
+        note_id = note.id
         katalog = self._root / _bezpieczny_segment(note_id)
         znacznik = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
         cel = katalog / f"{znacznik}.md"

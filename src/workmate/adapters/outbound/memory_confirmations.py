@@ -39,23 +39,25 @@ class InMemoryConfirmations:
         # Sufit wpisów jest backstopem przed rośnięciem bez końca: rejestr karmi go model, więc
         # bez limitu wystarczyłaby pętla proszenia o mutacje, żeby rozdąć pamięć procesu drzwi.
         self._max = max_entries
-        self._entries: dict[str, datetime] = {}
+        # klucz → (kiedy wygasa, token tury, w której padła zapowiedź)
+        self._entries: dict[str, tuple[datetime, str]] = {}
         self._lock = threading.Lock()
 
-    def seen(self, key: str) -> bool:
+    def turn_of(self, key: str) -> str | None:
         with self._lock:
             self._prune()
-            return key in self._entries
+            wpis = self._entries.get(key)
+            return wpis[1] if wpis is not None else None
 
-    def remember(self, key: str) -> None:
+    def remember(self, key: str, turn_token: str) -> None:
         with self._lock:
             self._prune()
             if len(self._entries) >= self._max and key not in self._entries:
                 # Przepełnienie: usuwamy NAJSTARSZY wpis. Odrzucenie nowego byłoby gorsze —
                 # zamiast zapomnieć starą zapowiedź, zablokowałoby bieżącą rozmowę.
-                najstarszy = min(self._entries, key=lambda k: self._entries[k])
+                najstarszy = min(self._entries, key=lambda k: self._entries[k][0])
                 del self._entries[najstarszy]
-            self._entries[key] = self._clock() + self._ttl
+            self._entries[key] = (self._clock() + self._ttl, turn_token)
 
     def forget(self, key: str) -> None:
         with self._lock:
@@ -64,5 +66,5 @@ class InMemoryConfirmations:
     def _prune(self) -> None:
         """Usuń wpisy wygasłe — wołane pod zamkiem, przy każdym dotknięciu rejestru."""
         teraz = self._clock()
-        for key in [k for k, wygasa in self._entries.items() if wygasa <= teraz]:
+        for key in [k for k, (wygasa, _tura) in self._entries.items() if wygasa <= teraz]:
             del self._entries[key]

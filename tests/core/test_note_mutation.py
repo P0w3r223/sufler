@@ -36,16 +36,21 @@ class _FakeNotes:
 class _FakeWriter:
     def __init__(self) -> None:
         self.overwritten: list[Note] = []
+        self.expected: list[str] = []
         self.deleted: list[str] = []
 
     def exists(self, note_id: str) -> bool:
         return True
 
-    def write(self, note: Note) -> None:
-        raise AssertionError("mutacja nie wolno używać create-only `write`")
+    def digest(self, note_id: str) -> str:
+        return "wersja-v0"
 
-    def overwrite(self, note: Note) -> None:
+    def write(self, note: Note) -> None:
+        raise AssertionError("mutacji nie wolno używać create-only `write`")
+
+    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
         self.overwritten.append(note)
+        self.expected.append(expected_sha256)
 
     def delete(self, note_id: str) -> None:
         self.deleted.append(note_id)
@@ -53,14 +58,15 @@ class _FakeWriter:
 
 class _FakeSnapshots:
     def __init__(self, *, fail: bool = False) -> None:
-        self.saved: list[tuple[str, str]] = []
+        self.saved: list[tuple[str, str, str]] = []
         self._fail = fail
 
-    def save(self, note_id: str, content: str) -> str:
+    def save(self, note: Note) -> str:
         if self._fail:
             raise WriteError("dysk pełny")
-        self.saved.append((note_id, content))
-        return f"/snap/{note_id}"
+        # Notujemy metadane RAZEM z treścią — sonda ma widzieć, że kopia jest pełna.
+        self.saved.append((note.id, note.body, note.metadata.title))
+        return f"/snap/{note.id}"
 
 
 class _FakeJudge:
@@ -78,16 +84,16 @@ class _FakeJudge:
 
 class _FakeLedger:
     def __init__(self) -> None:
-        self.keys: set[str] = set()
+        self.keys: dict[str, str] = {}
 
-    def seen(self, key: str) -> bool:
-        return key in self.keys
+    def turn_of(self, key: str) -> str | None:
+        return self.keys.get(key)
 
-    def remember(self, key: str) -> None:
-        self.keys.add(key)
+    def remember(self, key: str, turn_token: str) -> None:
+        self.keys[key] = turn_token
 
     def forget(self, key: str) -> None:
-        self.keys.discard(key)
+        self.keys.pop(key, None)
 
 
 def _service(**kwargs):
@@ -106,7 +112,7 @@ def test_allowed_edit_replaces_the_body_and_keeps_a_snapshot():
     service.edit_note(_note().id, "nowa treść", requester="Anna", intent="poprawka literówki")
 
     assert writer.overwritten[0].body == "nowa treść"
-    assert snapshots.saved == [(_note().id, "treść")]  # kopia SPRZED zmiany
+    assert snapshots.saved == [(_note().id, "treść", "Ustalenia")]  # PEŁNA kopia sprzed zmiany
 
 
 def test_snapshot_failure_refuses_the_mutation():
@@ -143,23 +149,55 @@ def test_refused_verdict_keeps_the_note_intact():
     assert writer.overwritten == []
 
 
-def test_confirm_announces_first_and_applies_only_on_the_repeat():
-    """Punkt kontrolny człowieka: pierwsza prośba jest ZAPOWIEDZIĄ, druga wykonaniem.
+def test_confirm_is_announced_first_and_applied_only_from_a_later_turn():
+    """Punkt kontrolny człowieka: zapowiedź w jednej turze, wykonanie w NASTĘPNEJ.
 
-    Tura powstaje tylko wtedy, gdy ktoś napisał, więc powtórzenie dowodzi, że człowiek odezwał
-    się po zobaczeniu, co miałoby się zmienić.
+    Tura powstaje tylko wtedy, gdy ktoś napisał, więc powrót prośby z innej tury dowodzi, że
+    człowiek odezwał się po zobaczeniu, co miałoby się zmienić.
     """
     service, writer, _s, _j, ledger = _service(judge=_FakeJudge("confirm"))
 
     with pytest.raises(MutationRefused):
-        service.edit_note(_note().id, "nowa", requester="Anna", intent="x")
+        service.edit_note(_note().id, "nowa", requester="Anna", intent="x", turn_token="tura-1")
     assert writer.overwritten == []
     assert ledger.keys  # zapowiedź zapamiętana
 
-    service.edit_note(_note().id, "nowa", requester="Anna", intent="x")
+    service.edit_note(_note().id, "nowa", requester="Anna", intent="x", turn_token="tura-2")
 
     assert writer.overwritten[0].body == "nowa"
     assert not ledger.keys  # zgoda JEDNORAZOWA — kolejna zmiana zaczyna od zapowiedzi
+
+
+def test_model_cannot_confirm_itself_within_one_turn():
+    """REGRESJA (znalezisko krytyczne): pętla narzędzi ma do ośmiu rund w JEDNEJ turze, a każda
+    runda może nieść wiele wywołań naraz.
+
+    Dopóki zgoda wynikała z samego „ta prośba już kiedyś padła", model zapowiadał i wykonywał
+    kasowanie sam, bez udziału człowieka — a warstwa, która miała być ostatnią przed
+    nieodwracalnością, nie kosztowała go nic poza powtórzeniem wywołania.
+    """
+    service, writer, _s, _j, _l = _service(judge=_FakeJudge("confirm"), allow_delete=True)
+
+    for _ in range(5):
+        with pytest.raises(MutationRefused):
+            service.delete_note(_note().id, requester="Anna", intent="x", turn_token="ta-sama")
+
+    assert writer.deleted == []
+
+
+def test_confirmation_does_not_transfer_between_conversations_of_one_person():
+    """Zapowiedź z kanału nie domyka się w rozmowie prywatnej — token tury jest inny."""
+    service, writer, _s, _j, _l = _service(judge=_FakeJudge("confirm"), allow_delete=True)
+
+    with pytest.raises(MutationRefused):
+        service.delete_note(_note().id, requester="Anna", intent="x", turn_token="kanal-1")
+
+    # Inna tura, więc zgoda przechodzi — i to jest zamierzone: dowodem jest odezwanie się
+    # człowieka, nie miejsce, w którym to zrobił. Sonda pilnuje, że mechanizm opiera się na
+    # RÓŻNICY tur, a nie na przypadkowej zbieżności kluczy.
+    service.delete_note(_note().id, requester="Anna", intent="x", turn_token="kanal-2")
+
+    assert writer.deleted == [_note().id]
 
 
 def test_confirmation_does_not_transfer_to_a_different_change():
@@ -167,9 +205,13 @@ def test_confirmation_does_not_transfer_to_a_different_change():
     service, writer, _s, _j, _l = _service(judge=_FakeJudge("confirm"))
 
     with pytest.raises(MutationRefused):
-        service.edit_note(_note().id, "drobna poprawka", requester="Anna", intent="x")
+        service.edit_note(
+            _note().id, "drobna poprawka", requester="Anna", intent="x", turn_token="tura-1"
+        )
     with pytest.raises(MutationRefused):
-        service.edit_note(_note().id, "CAŁKIEM INNA TREŚĆ", requester="Anna", intent="x")
+        service.edit_note(
+            _note().id, "CAŁKIEM INNA TREŚĆ", requester="Anna", intent="x", turn_token="tura-2"
+        )
 
     assert writer.overwritten == []
 
@@ -178,9 +220,9 @@ def test_confirmation_does_not_transfer_between_people():
     service, writer, _s, _j, _l = _service(judge=_FakeJudge("confirm"))
 
     with pytest.raises(MutationRefused):
-        service.edit_note(_note().id, "nowa", requester="Anna", intent="x")
+        service.edit_note(_note().id, "nowa", requester="Anna", intent="x", turn_token="tura-1")
     with pytest.raises(MutationRefused):
-        service.edit_note(_note().id, "nowa", requester="Piotr", intent="x")
+        service.edit_note(_note().id, "nowa", requester="Piotr", intent="x", turn_token="tura-2")
 
     assert writer.overwritten == []
 
@@ -225,7 +267,7 @@ def test_enabled_delete_removes_the_note_after_a_snapshot():
     wynik = service.delete_note(_note().id, requester="Anna", intent="duplikat")
 
     assert writer.deleted == [_note().id]
-    assert snapshots.saved == [(_note().id, "treść")]
+    assert snapshots.saved == [(_note().id, "treść", "Ustalenia")]
     assert wynik.snapshot.endswith(_note().id)
 
 
