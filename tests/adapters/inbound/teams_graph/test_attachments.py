@@ -349,6 +349,25 @@ def test_file_pdf_becomes_document():
     assert att.data_base64
 
 
+def test_file_html_is_extracted_to_text_not_handed_over_as_markup():
+    """HTML przechodzi ekstraktorem (ADR 0064), a nie gałęzią tekstową.
+
+    Do 1.10.0 plik .html odbijał się notką „nieobsługiwany typ pliku" — użytkownik dostawał
+    odmowę na format, który w tym pionie krąży najczęściej (zapisana strona, wyeksportowany
+    raport). Gałąź tekstowa byłaby gorsza niż odmowa: model dostałby znaczniki i skrypty.
+    """
+    html = b"<html><body><script>var x=1;</script><p>Kwota: 12 300 zl</p></body></html>"
+    client = _FakeGraphClient(files={"u://raport": html})
+    ref = AttachmentRef(kind="file", name="raport.html", url="u://raport")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert (att.kind, att.media_type) == ("text", "text/plain")
+    assert att.text == "Kwota: 12 300 zl"
+    assert "<p>" not in att.text and "var x" not in att.text
+    assert not att.data_base64  # tekst nie zjada budżetu bajtów API
+
+
 def test_file_image_media_type_from_content_overrides_extension():
     """Typ obrazu bierzemy z ZAWARTOŚCI, nie z rozszerzenia — plik JPEG nazwany .png → jpeg."""
     client = _FakeGraphClient(files={"u://foto": _JPEG})

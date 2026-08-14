@@ -566,6 +566,8 @@ pomijam przy wysyłce."""
 _SHELL_TAIL = """
 Do przeszukiwania notatek użyj `workmate-search "fraza"` — korpus jest polski
 i odmieniony, więc dopasowanie wzorca (grep) gubi trafienia.
+Pliku, który nie jest tekstem, nie czytaj `cat`-em — `workmate-extract plik.pdf`
+wypisze tekst z pdf, docx, xlsx, pptx i html (długie wyjście filtruj, np. `| head`).
 Wyjście jest przycinane do 64 KB (flaga `truncated`), a polecenie przerywane po
 `timeout_s` sekund (domyślnie 60, maksymalnie 300; flaga `timed_out`)."""
 

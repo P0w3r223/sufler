@@ -24,6 +24,7 @@ from workmate.adapters.inbound.document_text import (
 )
 from workmate.adapters.inbound.document_text import (
     extract_docx,
+    extract_html,
     extract_pptx,
     extract_text,
     extract_xlsx,
@@ -205,6 +206,10 @@ def _build(
         return Attachment("text", "text/plain", ref.name, text=extract_xlsx(data)), 0
     if ext == "pptx":
         return Attachment("text", "text/plain", ref.name, text=extract_pptx(data)), 0
+    if ext in ("html", "htm"):
+        # HTML idzie przez ekstraktor, NIE przez gałąź tekstową niżej (ADR 0064): zdekodowany
+        # jako czysty tekst oddałby modelowi znaczniki, skrypty i style zamiast treści.
+        return Attachment("text", "text/plain", ref.name, text=extract_html(data)), 0
     if ext in _TEXT_EXTS:
         return Attachment("text", "text/plain", ref.name, text=extract_text(data)), 0
     return None
