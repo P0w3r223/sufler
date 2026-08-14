@@ -57,9 +57,14 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 2. **Layers below the judge, in order, all fail-closed:**
    - **Sender authorization (AAD, ADR 0042)** — resolved before the judge; an unrecognized sender is
      refused with no model call. The judge never widens who may write.
-   - **Path/schema confinement** — `_resolve_within` (anti-traversal), the frozen note-id/company/
-     project derivation (`paths.py`, ADR 0003/0005), and `reject_dangerous_content`. A mutation cannot
-     land outside `notes_dir` or fabricate a company/project the registry does not know.
+   - **Path/schema confinement** — the frozen note-id/company/project derivation (`paths.py`,
+     ADR 0003/0005) and `reject_dangerous_content` in the application gate, plus anti-traversal
+     `_resolve_within` **in the adapter**, where it already lives (it is a private helper of
+     `markdown_notes_writer`, duplicated in the workspace/outbox adapters; `core/` cannot import it and
+     `lint-imports` enforces that). Consequence for implementation: **every new port verb re-uses
+     `_resolve_within` inside the adapter** — the guard does not move up into the gate, so a `delete`
+     verb that forgets it would be unprotected. A mutation cannot land outside `notes_dir` or fabricate
+     a company/project the registry does not know.
    - **Pre-mutation snapshot** — a backup of the target (and cadence-based full-volume backups,
      infra ADR 0008) *before* any destructive write. Reversibility stops being structural (create-only)
      and becomes backup-dependent (see R2) — so the backup is load-bearing, not a safety net.
@@ -96,7 +101,20 @@ This ADR records that reversal with its risks stated as conscious consent, and s
    absent confirmation is a refusal. This is the Rule-of-Two checkpoint: when the flow reaches
    untrusted content, sensitive data and a mutating effect at once, a person decides.
 
-7. **The judge's verdict is recorded in the audit row at append time** — closing the seam question
+7. **How `edit`/`delete` name their target.** The model addresses a note by the **note id it already
+   received from `search_notes`/`get_note`** — never by a free-form filesystem path, and never by
+   re-deriving one. This matters because `note_id(company, project, on, title)` (`paths.py`) is a pure
+   function of title/project/date, while the collision suffix (`-2`, `-3`, …) is added *afterwards* by
+   `_unique_id`: a suffixed note is therefore **not** addressable by "unchanged derivation" at all, and
+   an implementation that tried would silently target the wrong file. The gate resolves the id to a
+   path, refuses anything that does not resolve to an existing note under `notes_dir`, and refuses ids
+   the requester may not read (ADR 0062 authz, so mutation can never be a read oracle). In the
+   shell-on layout the model sees note *paths* under `/mnt/system/notes` while the typed
+   `search_notes`/`get_note` tools step aside (`agent_wiring.py`) — there the gate accepts the path
+   **only** by mapping it back to an id under `notes_dir`, applying the same refusals; the path is a
+   lookup key, never an instruction to open a file.
+
+8. **The judge's verdict is recorded in the audit row at append time** — closing the seam question
    this ADR raised against ADR 0067. The judge runs *before* the mutation, so its verdict is already
    known when the tool call's audit row is written: the recorder gains an explicit fourth argument
    (`judge_verdict`), and the shipped append-only `AuditStore` (`core/ports/audit.py`) needs **no**
@@ -114,7 +132,7 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 | R8 | Probabilistic judge + write-new+swap collide with create-only-as-race-guard on deterministic ids (ADR 0043/0048). | Mutation only on `save_note`; `-mtg-`/`-thr-` stay create-only. |
 | R10 | The judge is **not** a Dual-LLM boundary, though it looks like one: it branches on the very content that may be hostile (the diff, the intent), so data-flow becomes control-flow — the known limit of the pattern. An injected note body can therefore aim at the judge as well as at the agent. | Accepted as *defense in depth*, never as the boundary: the hard controls under it (AAD authz before any model call, registry-validated paths, snapshot, single-file, `confirm` requiring a real T1 turn) hold whatever the judge decides. The judge fails toward refusal, and its input is framed as data on its own injection boundary. The boundary is the architecture; the judge only narrows. |
 | R11 | `delete` widens R2/R4 blast radius: a successful injection now removes knowledge instead of only corrupting it, and removal is quieter than corruption. | Single-file, non-recursive, snapshot-first-or-refuse, judge + `confirm` from a resolved requester, and an audit row per attempt (ADR 0067). Removal is recoverable from the snapshot and the nightly backup; the audit makes it noisy after the fact. |
-| R9 | Extending the `NotesWriter` port with overwrite touches ~6 assembly sites + every fake (`server.py`, `agent_wiring.py`, `teams_graph/app.py`, `cli/meeting.py`, `seed_corpus.py`, golden/fakes) — not "localized in `os.link`". | A separate, explicitly-counted port method (`overwrite`/`mutate`), not a change to `write`; all implementors + fakes in one PR; a negative probe per consumer. |
+| R9 | Extending the `NotesWriter` port touches ~6 assembly sites + every fake (`server.py`, `agent_wiring.py`, `teams_graph/app.py`, `cli/meeting.py`, `seed_corpus.py`, golden/fakes) — not "localized in `os.link`". **Recount 2026-08-14: the original figure was ~half the real delta.** It is now *three* port verbs, not one (`overwrite`, `delete`, and a way to *read* the note back), because Decision 4 defines `edit` as read→replace→write-new+swap while `NotesWriteService.__init__` takes only `(writer, projects)` — it has nothing to read with. | A separate, explicitly-counted set of port methods, never a change to `write`; all implementors + fakes in one PR; a negative probe per consumer. **The read dependency is resolved by injecting the existing `NotesRepository`** into the service rather than growing a read verb on `NotesWriter` — ADR 0006 split those ports deliberately, and merging them here would reverse that split as a side effect of an unrelated feature. This makes the service's constructor a third assembly-site change; count it. |
 
 ## Options considered
 
@@ -126,6 +144,26 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 - **Generic `File(write/edit)` straight to notes** (the owner's literal ask): carried, but with the
   schema validator forced in front (R3); the open question below asks whether a typed `Notes(action)`
   is the better channel for the same effect.
+
+## Consequences the reversal drags along (found in review, 2026-08-14)
+
+- **Three model-facing texts currently say the opposite, and they ship in the frozen prefix.** The
+  reversal is not complete until they change **in the same PR as the code** — otherwise the cached
+  `tools + system` prefix (ADR 0056) instructs the model against the very capability being added, and
+  the likely outcome is a tool that exists and goes unused:
+  - `_PRECEDENCE` (`core/agent/prompt.py`): *"add notes, and leave existing ones as their authors
+    wrote them"* — the sentence has to become the *judged-and-confirmed* rule, not a prohibition.
+  - `_NOTES_SAVE` (`core/application/tools.py`): *"istniejąca notatka nigdy nie jest nadpisywana"* —
+    true of `Notes(save)` and must stay true of it, while naming `File` as the mutation path.
+  - **Hard rule 2 in `CLAUDE.md`** ("create-only via `os.link`", "the model has exactly one write
+    tool") becomes false the moment the code merges. It changes in that same PR — this ADR is the
+    "own ADR" its escape clause requires.
+- **The nightly volume backup is shipped but NOT installed on prod (verified 2026-08-14:
+  `systemctl is-enabled workmate-backup.timer` → `not-found`, no `/etc/workmate/backup.env`).** R2 and
+  R11 rest their entire case on procedural reversibility, so this is a **precondition, not a
+  follow-up**: `delete` does not ship until the timer is installed, enabled, pointed at an off-host
+  destination, and has one successful run to show. Per-operation snapshots alone protect a single
+  mistake, not a bad day.
 
 ## Closed questions — decisions of 2026-08-14
 

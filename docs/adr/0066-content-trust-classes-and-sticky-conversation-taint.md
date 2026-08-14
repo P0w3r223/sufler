@@ -6,7 +6,7 @@ Author: P0w3r223
 Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (sender membership gate — the identity primitive),
   [ADR 0056](0056-agent-system-prompt-two-blocks.md) (two system blocks, the `_PRECEDENCE` rule),
   [ADR 0016](0016-user-multimodal-attachments.md) (attachment materialization),
-  [ADR 0024](0024-github-thread-reply-number-from-store.md) (reply number from trusted store, not the model),
+  [ADR 0024](0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md) (reply number from trusted store, not the model),
   [ADR 0057](0057-shell-executor-container-without-network.md) (security by lack, not by filtering),
   [ADR 0062](0062-note-read-authorization.md) / [ADR 0063](0063-shell-membership-gate-and-conversation-isolation.md)
   (capability membership gates — the pattern this ADR sits *beside*, not *inside*);
@@ -194,9 +194,13 @@ restart-surviving conversation taint that escalates — never blocks — consequ
   **0065's judge treating every turn as tainted-by-default until 0066 supplies the real class.** 0065
   is then not blocked, and is strictly-safe (over-escalates) until 0066 refines. This resolves the
   plan §0 sequencing tension in 0065's favor while keeping the fail-closed posture.
-- **Three prompt facts gain a structural sibling, none is removed:** `_PRECEDENCE`, the `[Plik:]`
-  prefix, the SUMMARY data-boundary sentence. They still shape cooperative behavior; each gets the
-  structural marker the label adds.
+- **Three prompt facts gain a structural sibling:** `_PRECEDENCE`, the `[Plik:]` prefix, the SUMMARY
+  data-boundary sentence. They still shape cooperative behavior; each gets the structural marker the
+  label adds. **This ADR removes none of them — but ADR 0065 changes one of them**, and the two must
+  not be read as contradicting: `_PRECEDENCE`'s closing sentence ("leave existing notes as their
+  authors wrote them") is rewritten by 0065 when knowledge-base mutation ships. The *layer* structure
+  this ADR makes structural is untouched by that edit; only the note-immutability sentence inside
+  layer 1 changes.
 - **The GitHub-comment provenance item (plan Faza 3) is confirmed real:** event summaries
   (comment/issue/PR bodies) already reach the model via `GitHub(action='events')` and
   `read_events_since`; they become explicitly T3.

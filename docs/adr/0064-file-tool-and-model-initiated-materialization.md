@@ -153,9 +153,12 @@ the scaffolding this project deletes.
   confirmation string plus a queued attachment the responder/runtime attaches to the following user
   turn. `selection.py` and the core stay provider-neutral; the Anthropic block schema stays in the
   outbound adapter (ADR 0016).
-- **Infra dependency.** `File(read)` end-to-end needs the shared scratchpad volume mounted into the
-  application (`WORKMATE_WORKSPACE_DIR` = scratchpad root), which is also required to deploy ADR 0012.
-  Until then the tool has nothing to read; sequence it after the ADR 0012 deployment.
+- **Infra dependency — satisfied since the 1.10.0 compose (verified 2026-08-14).** `File(read)`
+  end-to-end needs the shared scratchpad volume mounted into the application; the `x-workmate` anchor
+  now sets `WORKMATE_WORKSPACE_DIR: /home/scratchpad` and mounts `workmate-scratchpad` there, and the
+  `teams-graph` service repeats both in its own `environment`/`volumes` (YAML merge replaces the map,
+  it does not merge it). No separate infra ADR is needed for the mount; what remains is deploying the
+  1.10.0 image, which is where ADR 0012 lands anyway.
 - **Limits reuse `AttachmentLimits`** (ADR 0016): `max_bytes`, `max_total_bytes`, `max_image_edge`,
   `_MAX_IMAGE_PIXELS`, plus a format allowlist. HTML adds `html.parser` only (stdlib).
 - **Gates.** Negative probes as in this series (a gate that passes everything looks like one that
@@ -168,11 +171,18 @@ the scaffolding this project deletes.
 - **Does the measurement justify the tool?** No — and the tool is built regardless, by owner decision.
   See *Measurement* above, including the re-measure follow-up that keeps the decision falsifiable.
 - **Formats `read` materializes.** Images (png/jpeg/gif/webp), PDF, docx, xlsx/pptx (already extracted
-  to text), plain text, and **HTML** (new `extract_html`). Ceilings **reuse `AttachmentLimits`**
-  unchanged (`max_bytes`, `max_total_bytes`, `max_extract_bytes`, `max_image_edge`) and a
-  model-initiated pull is charged against **the same per-message budget** as the door's push — so
-  `File(read)` can never deliver more than the door would have. Over-limit degrades to the same
-  in-band `_note`, never a crash.
+  to text), plain text, and **HTML** (new `extract_html`). Ceilings **reuse the `AttachmentLimits`
+  values** unchanged (`max_bytes`, `max_total_bytes`, `max_extract_bytes`, `max_image_edge`,
+  `max_count`). Over-limit degrades to the same in-band `_note`, never a crash.
+- **Which message's budget does a pull charge?** The door's budget is stateless: it is computed inside
+  a single `materialize()` call over one `ChannelMessage`'s references, so there is no running counter
+  to debit — and `File(read)` materializes into a *different* (later) user turn than the one the model
+  was reading. So the rule is stated in terms that exist: **the pulled attachments are budgeted
+  together with whatever the door is materializing into that same next user turn**, one budget
+  computed once for that turn (door pushes first, model pulls second, the remainder is what the pull
+  may spend). The limits themselves move out of the Teams-door settings into a place the tool can also
+  reach — today `AttachmentLimits` is constructed from `teams_graph` settings (`teams_graph/app.py`),
+  which is the door, not the agent. That relocation is part of building this tool, not a detail.
 - **Anti-masking surface budget.** Extracted **text has absolute priority**: it is materialized first,
   up to `max_extract_bytes`. Embedded images from an HTML file are surfaced **only from the budget
   left over**, at most **3**, and never displace text; if the text alone exhausts the budget the
@@ -180,9 +190,11 @@ the scaffolding this project deletes.
   decorative image occupying ~95% of the page — unable to crowd out the small real content. It is an
   extraction-quality rule, not a security gate (file content stays data either way).
 - **Does `File` hide when the shell is present?** **No — it stays on the surface in both layouts.**
-  `build_workspace_catalog` hides at `shell_factory is None` because scratchpad file operations are
-  `Bash` use cases; neither `read`-into-context nor notes mutation is (notes are `ro` to the executor,
-  ADR 0057), so neither disappears when the shell arrives.
+  `build_workspace_catalog` is built **only when `shell_factory is None`** and therefore **disappears
+  once the shell is present** (`agent_wiring.py:639-643`) — scratchpad file operations are `Bash` use
+  cases, so the typed workspace tools step aside for it. Neither `read`-into-context nor notes mutation
+  is a shell use case (notes are `ro` to the executor, ADR 0057), so `File` does **not** follow that
+  rule and stays on the surface in both layouts.
 - **`write`/`edit`/`delete` scope.** Owner chose the **generic `File` channel** over a typed
   `Notes(action=…)` one (2026-08-14). The actions live in this tool's `Literal` and share this
   runtime seam; their gate, judge, confirmation and risk register are **ADR 0065**.
