@@ -93,3 +93,38 @@ def test_prune_stale_removes_idle_conversation_dirs(tmp_path):
     assert removed == 1
     assert not (tmp_path / "teams_graph" / "stary").exists()
     assert (tmp_path / "teams_graph" / "swiezy").exists()
+
+
+def test_read_does_not_follow_a_symlink_out_of_the_conversation_directory(tmp_path):
+    """Granicą odczytu jest KATALOG ROZMOWY, nie korzeń brudnopisu (ADR 0064 / infra 0012).
+
+    ``resolve()`` rozwija dowiązania, więc symlink ``../<inna rozmowa>/plik`` ląduje wewnątrz
+    korzenia i przechodziłby kontrolę ``relative_to(root)`` — czytelnik dostawał CUDZY plik,
+    mimo że nazwa jest czysta i strażnik nazw niczego nie widzi. Symlink zakłada się powłoką,
+    a ``File`` zostaje na powierzchni właśnie w układzie z powłoką, więc droga jest realna.
+    """
+    root = tmp_path / "scratchpad"
+    moja = root / "teams_graph" / "aaa"
+    cudza = root / "teams_graph" / "bbb"
+    moja.mkdir(parents=True)
+    cudza.mkdir(parents=True)
+    (cudza / "tajne.txt").write_text("CUDZA UMOWA", encoding="utf-8")
+    (moja / "podglad.txt").symlink_to(cudza / "tajne.txt")
+
+    repo = FilesystemWorkspaceRepository(root)
+
+    assert repo.read("teams_graph/aaa", "podglad.txt") is None
+    assert repo.read_bytes("teams_graph/aaa", "podglad.txt") is None
+
+
+def test_read_still_returns_an_ordinary_file_from_the_conversation_directory(tmp_path):
+    """Kontrola symlinków nie może zabrać zwykłego odczytu — inaczej zamiast bramki mamy blokadę."""
+    root = tmp_path / "scratchpad"
+    scope = root / "teams_graph" / "aaa"
+    scope.mkdir(parents=True)
+    (scope / "notatka.txt").write_text("treść", encoding="utf-8")
+
+    repo = FilesystemWorkspaceRepository(root)
+
+    assert repo.read("teams_graph/aaa", "notatka.txt") == "treść"
+    assert repo.read_bytes("teams_graph/aaa", "notatka.txt") == b"tre\xc5\x9b\xc4\x87"

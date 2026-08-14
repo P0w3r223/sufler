@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 from workmate.adapters.inbound import env
 from workmate.adapters.inbound.agent_wiring import build_conversational_responder
+from workmate.adapters.inbound.document_text import SUPPORTED_EXTS
 from workmate.adapters.inbound.teams_graph.handler import make_handle_message
 from workmate.adapters.outbound.filesystem_workspace import prune_stale
 from workmate.config import (
@@ -44,6 +45,7 @@ from workmate.config import (
     WorkspaceSettings,
     require_writable,
 )
+from workmate.core.ports.materialization import MaterializationLimits
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.brief_command import BriefRouter
@@ -66,6 +68,14 @@ logger = logging.getLogger(__name__)
 
 _MISSING_TEAMS_GRAPH = (
     "Drzwi Teams (delegowane) wymagają extra 'teams-graph'. Zainstaluj: uv sync --extra teams-graph"
+)
+
+# Rozszerzenia załączników odkładanych na dysk katalogu rozmowy (ADR 0064): wszystko, co drzwi
+# umieją zamienić na tekst, plus formaty, które Claude API przyjmuje natywnie (obrazy i PDF).
+# Lista jest jawna, a nie „cokolwiek przyszło": nazwa pliku pochodzi od użytkownika, a katalog
+# roboczy dzieli korzeń z powłoką — plik z rozszerzeniem wykonywalnym nie ma po co tam leżeć.
+_STAGED_ATTACHMENT_EXTS = SUPPORTED_EXTS | frozenset(
+    {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 )
 
 
@@ -195,6 +205,18 @@ def main() -> None:
         SkillsSettings.from_env(),
         note_read_authorizer=note_read_authorizer,
         shell_authorizer=shell_authorizer,
+        # Narzędzie ``File`` (ADR 0064) dzieli sufit z materializerem załączników, bo pobrania
+        # modelu i pliki użytkownika lecą w TYM SAMYM żądaniu API — dwa niezależne budżety
+        # sumowałyby się ponad limit żądania. Stąd te same ustawienia, nie nowe.
+        enable_file_tool=settings.enable_file_tool,
+        enable_note_mutation=settings.enable_note_mutation,
+        enable_note_delete=settings.enable_note_delete,
+        mutation_identities=_build_mutation_identities(settings),
+        attachment_budget_bytes=settings.max_total_attachment_mb * 1024 * 1024,
+        attachment_max_image_edge=settings.max_image_edge_px,
+        attachment_max_bytes=settings.max_attachment_mb * 1024 * 1024,
+        attachment_max_extract_bytes=settings.max_extract_mb * 1024 * 1024,
+        trust_labels=settings.enable_trust_labels,
     )
     handle = make_handle_message(responder)
     asyncio.run(_run(settings, token_provider, handle))
@@ -1081,6 +1103,15 @@ def _build_responder(
     skills_settings: SkillsSettings | None = None,
     note_read_authorizer: NoteReadAuthorizer | None = None,
     shell_authorizer: ShellAuthorizer | None = None,
+    enable_file_tool: bool = False,
+    enable_note_mutation: bool = False,
+    enable_note_delete: bool = False,
+    mutation_identities: object | None = None,
+    attachment_budget_bytes: int = 0,
+    attachment_max_image_edge: int = 2048,
+    attachment_max_bytes: int = 0,
+    attachment_max_extract_bytes: int = 0,
+    trust_labels: bool = False,
 ) -> Responder:
     """Złóż respondera wspólnym builderem: katalog notatek READ-ONLY (``enable_write=False``,
     ADR 0006), ``SafeResponder`` (async), komendy read-only, kompaktowanie. Katalog roboczy
@@ -1123,6 +1154,26 @@ def _build_responder(
         skills_settings=skills_settings,
         note_read_authorizer=note_read_authorizer,
         shell_authorizer=shell_authorizer,
+        # Narzędzie ``File`` (ADR 0064) dzieli sufit z materializerem drzwi, bo pobrania modelu i
+        # załączniki użytkownika lecą w TYM SAMYM żądaniu API — dwa niezależne budżety sumowałyby
+        # się do przekroczenia limitu żądania. Stąd te same ustawienia, nie nowe.
+        enable_file_tool=enable_file_tool,
+        file_tool_budget_bytes=attachment_budget_bytes,
+        file_tool_max_image_edge=attachment_max_image_edge,
+        file_tool_limits=MaterializationLimits(
+            max_bytes=attachment_max_bytes,
+            max_extract_bytes=attachment_max_extract_bytes,
+        ),
+        # Rozszerzenia, które wolno ODŁOŻYĆ na dysk rozmowy: to, co drzwi w ogóle materializują.
+        # Szersze niż lista formatów, które model wolno mu TWORZYĆ (``workspace_settings``) —
+        # odkładamy cudzy plik do wglądu, nie pozwalamy modelowi pisać binariów.
+        file_tool_staged_ext=_STAGED_ATTACHMENT_EXTS,
+        # Koperty T3 (ADR 0066) — bramka niezależna od rozszczepienia nadawcy.
+        trust_labels=trust_labels,
+        # Mutacja bazy wiedzy (ADR 0065) — trzy niezależne bramki: edycja, kasowanie, mapa.
+        enable_note_mutation=enable_note_mutation,
+        enable_note_delete=enable_note_delete,
+        identities=mutation_identities,  # type: ignore[arg-type]
     )
 
 
@@ -1210,3 +1261,31 @@ async def _discover(settings: TeamsGraphSettings, token_provider: Callable[[], s
 
 if __name__ == "__main__":
     main()
+
+
+def _build_mutation_identities(settings: TeamsGraphSettings) -> object | None:
+    """Mapa tożsamości dla MUTACJI bazy wiedzy (ADR 0065) albo ``None`` — fail-closed.
+
+    Osobno od ``_build_note_read_authorizer``, bo to inna bramka i inny plik konfiguracji mógłby
+    ją włączyć. Wspólny jest za to warunek konieczny: bez mapy nie ma komu przypisać zmiany
+    ani kogo zapytać o potwierdzenie, więc brak pliku ZAMYKA mutacje zamiast je przepuścić.
+    """
+    if not settings.enable_note_mutation:
+        return None
+    if not settings.meeting_note_identities.is_file():
+        logger.error(
+            "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION=true, ale mapy tożsamości %s nie ma — "
+            "mutacje bazy wiedzy POZOSTAJĄ WYŁĄCZONE (fail-closed, ADR 0065).",
+            settings.meeting_note_identities,
+        )
+        return None
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+
+    logger.warning(
+        "MUTACJA bazy wiedzy WŁĄCZONA (ADR 0065): agent może zmieniać notatki przez File(edit)"
+        "%s. Każda zmiana idzie przez migawkę i niezależnego sędziego; nadawca musi być "
+        "rozpoznany przez mapę %s.",
+        " ORAZ JE USUWAĆ (File(delete))" if settings.enable_note_delete else "",
+        settings.meeting_note_identities,
+    )
+    return YamlIdentityDirectory(settings.meeting_note_identities)

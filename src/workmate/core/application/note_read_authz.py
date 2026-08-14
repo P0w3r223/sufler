@@ -20,6 +20,7 @@ from workmate.core.domain.authorization import Actor, actor_from_person, can_rea
 from workmate.core.errors import NoteAuthorizationError
 
 if TYPE_CHECKING:
+    from workmate.core.domain.trust import TrustClass
     from workmate.core.ports.identity import AadIdentityLookup
 
 
@@ -28,6 +29,19 @@ class NoteReadAuthorizer:
 
     def __init__(self, identities: AadIdentityLookup) -> None:
         self._identities = identities
+
+    def trust_class(self, requester_aad_id: str) -> TrustClass:
+        """Klasa POCHODZENIA tury tego nadawcy (ADR 0066): ``T1`` zmapowany, ``T2`` reszta.
+
+        Osobna metoda na TYM SAMYM obiekcie, bo obie osie mają wynikać z JEDNEGO rozwiązania
+        tożsamości (ADR 0066 R4): gdyby klasę liczył ktoś inny, odpowiedzi mogłyby się rozjechać
+        i bot odmawiałby komuś zdolności, traktując jego słowa dalej jak instrukcje. Ta metoda
+        niczego nie odmawia — tylko etykietuje treść; odmowy zostają w ``authorize``.
+        """
+        person = (
+            self._identities.resolve_by_aad_user_id(requester_aad_id) if requester_aad_id else None
+        )
+        return "T1" if person is not None else "T2"
 
     def authorize(self, requester_aad_id: str) -> Actor:
         """Zwróć ``Actor`` uprawnionego czytelnika albo podnieś ``NoteAuthorizationError``.

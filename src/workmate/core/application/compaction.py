@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.agent.prompt import SUMMARY_SYSTEM_PROMPT
+from workmate.core.domain.trust import wrap_untrusted
 from workmate.core.ports.llm import UserText, attachment_from_row
 
 if TYPE_CHECKING:
@@ -52,7 +53,9 @@ class CompactionService:
         self._threshold = threshold_tokens
         self._keep_turns = keep_turns
 
-    def maybe_compact(self, conversation_id: str) -> ConversationSummary | None:
+    def maybe_compact(
+        self, conversation_id: str, *, trust_nonce: str = ""
+    ) -> ConversationSummary | None:
         """Skompaktuj wątek, jeśli trzeba; zwróć nowe podsumowanie albo ``None``.
 
         Trigger: ``last_input_tokens`` (wejście + cache ostatniej tury) > próg. Zachowuje
@@ -78,10 +81,20 @@ class CompactionService:
 
         to_summarize = messages[:boundary]
         previous = self._store.active_summary(conversation_id)
+        # Historia idąca do streszczacza jest z jego punktu widzenia treścią OBCĄ w całości
+        # (ADR 0066): siedzą w niej wyniki narzędzi i tury nadawców spoza mapy, spłaszczone do
+        # jednego tekstu. Bez koperty streszczacz czytał to jako instrukcje — a jego wynik wraca
+        # potem do rozmowy doklejony do PIERWSZEJ tury, więc zatruta treść awansowała do rangi
+        # prozy instrukcyjnej dokładnie tam, gdzie nikt by jej nie szukał. Nonce podają drzwi,
+        # bo to one nim zarządzają; puste = dawne zachowanie.
+        historia = self._flatten(previous, to_summarize)
+        if trust_nonce:
+            historia = wrap_untrusted(historia, origin="historia", nonce=trust_nonce)
         response = self._llm.complete(
             system=SUMMARY_SYSTEM_PROMPT,
-            transcript=[UserText(self._flatten(previous, to_summarize))],
+            transcript=[UserText(historia)],
             tools=[],
+            trust_nonce=trust_nonce,
         )
         summary_text = response.text.strip()
         if not summary_text:
@@ -129,6 +142,13 @@ class CompactionService:
                 lines.append(f"{label}: {m.text}")
             if m.role == "user" and m.blocks:
                 lines.extend(_describe_attachment(b) for b in m.blocks)
+            elif m.role == "tool" and m.blocks:
+                # Wiersz tury narzędziowej niesie DWA rodzaje bloków (ADR 0064): wyniki narzędzi
+                # (mają ``call_id``, do streszczenia nie wchodzą — tekst wyniku bywa ogromny)
+                # oraz PLIKI podane przez ``File``. Bez tej gałęzi plik znikał ze streszczenia
+                # bez śladu, choć załącznik użytkownika dostawał choćby wiersz „[Załącznik …]" —
+                # a to właśnie streszczenie jest jedynym, co po kompaktowaniu z tury zostaje.
+                lines.extend(_describe_attachment(b) for b in m.blocks if "call_id" not in b)
         return "\n".join(lines)
 
 

@@ -186,6 +186,10 @@ class Settings:
     # (brak WORKMATE_AUDIT_DB) = audyt wyłączony (drzwi nie zapisują nic). Osobny plik, retencja
     # dłuższa niż rozmów (Faza 7); rejestruje akcje/ścieżki i pseudonim, NIGDY treść.
     audit_db: Path | None
+    # Migawki notatek przed mutacją (ADR 0065). POZA ``notes_dir`` rozmyślnie: agent czyta
+    # katalog notatek zachłannie, więc kopie w środku wracałyby jako wyniki wyszukiwania,
+    # a wykonawca montuje bazę wiedzy ``ro`` i stanu nie widzi wcale.
+    note_snapshots_dir: Path
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -206,6 +210,9 @@ class Settings:
         return cls(
             data_dir=data_dir,
             notes_dir=notes_dir,
+            note_snapshots_dir=_path_from_env(
+                "WORKMATE_NOTE_SNAPSHOTS_DIR", data_dir / "snapshots" / "notes"
+            ),
             projects_registry=projects_registry,
             transport=transport,
             log_level=os.environ.get("WORKMATE_LOG_LEVEL", "INFO"),
@@ -716,6 +723,27 @@ class TeamsGraphSettings:
     # z warstwy spajającej), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez
     # wymogu tożsamości/RW-montażu. Dostawa PDF ``| pdf`` reużywa kanał file-reply (jak brief).
     enable_change_digest: bool = False
+    # Narzędzie ``File(read)`` + odkładanie załączników użytkownika na dysk katalogu rozmowy
+    # (ADR 0064). Domyślnie OFF jak KAŻDA bramka w tym projekcie (twarda reguła CLAUDE.md,
+    # egzekwowana przez ``test_gates_closed_by_default``) — i zasłużenie, bo ta zdolność zapisuje
+    # CUDZY plik na dysk floty i wstrzykuje jego treść do kontekstu modelu. Operator włącza ją
+    # świadomie: jedna linia `.env` + recreate, tak samo jak powłokę. Wyłącznik ma też drugie
+    # zastosowanie — ADR zapowiada ponowny pomiar użycia i USUNIĘCIE narzędzia, jeśli okaże się
+    # martwe; bez flagi „wyłączenie" znaczyłoby wydanie nowego obrazu.
+    enable_file_tool: bool = False
+    # MUTACJA bazy wiedzy przez `File(edit)` (ADR 0065). Odwraca dotychczasową postawę
+    # „create-only": do 0065 nie dało się zepsuć notatki, bo nie było czym. Domyślnie OFF.
+    enable_note_mutation: bool = False
+    # KASOWANIE notatek — osobno od edycji, bo ADR 0065 wiąże je z DZIAŁAJĄCĄ nocną kopią
+    # wolumenu: migawka cofa jedną pomyłkę, przed złym dniem ratuje dopiero kopia poza
+    # hostem. Włączenie bez sprawdzenia kopii jest tym, przed czym ta flaga ma chronić.
+    enable_note_delete: bool = False
+    # Strukturalne koperty T3 na treści OBCEJ (ADR 0066): plik, wynik narzędzia, tura
+    # nadawcy spoza mapy. Domyślnie OFF jak każda bramka — włączona zmienia PROMPT każdej
+    # tury (nagłówek tłumaczy znacznik) i kształt treści wysyłanej do modelu, więc operator
+    # ma to włączyć świadomie i móc porównać zachowanie przed/po. Rozszczepienie nadawcy na
+    # T1/T2 jedzie OSOBNO, za bramką odczytu notatek — zależy od kompletności identities.yaml.
+    enable_trust_labels: bool = False
     # Polityka „czy w ogóle odpowiadać" (SZKIELET pod wielokanałowe wdrożenie WorkMate).
     # ``all`` (domyślnie) = zachowanie sprzed tej zmiany: odpowiedź na każdą wiadomość od
     # innego człowieka w kanałach z ``watch``. ``mention`` odpowiada tylko po @wzmiance bota
@@ -786,6 +814,16 @@ class TeamsGraphSettings:
             ),
             enable_note_read_authz=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", default=False
+            ),
+            enable_file_tool=_bool_from_env("WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL", default=False),
+            enable_note_mutation=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION", default=False
+            ),
+            enable_note_delete=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_DELETE", default=False
+            ),
+            enable_trust_labels=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS", default=False
             ),
             enable_project_brief=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from workmate.core.domain.trust import describe_envelope
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
@@ -99,6 +101,21 @@ the few facts that carry the answer. Teams renders dense blocks poorly.
 When asked about yourself, describe what you help with and keep the account of how you
 are built brief: the people you serve came for the knowledge base."""
 
+# Zdanie o notatkach w dwóch wariantach — którym prompt opisuje świat, rozstrzyga bramka
+# mutacji (ADR 0065). Tekst wydzielony do stałych, żeby podmiana była wymianą ZNANEGO zdania,
+# a nie dopasowaniem wzorca do prozy, które po pierwszej korekcie stylistycznej przestaje trafiać.
+_NOTES_IMMUTABLE = (
+    "One constraint worth its cost: add notes, and leave existing ones as their authors\n"
+    "wrote them. They are the division's institutional memory."
+)
+
+_NOTES_MUTABLE = (
+    "One constraint worth its cost: the notes are the division's institutional memory, so\n"
+    "change an existing one only when someone asks you to, change only what they asked\n"
+    "about, and say plainly what you changed. An independent reviewer sees every such\n"
+    "change, and a copy of the previous version is kept."
+)
+
 _PRECEDENCE = """\
 ## Precedence
 
@@ -149,7 +166,7 @@ _WEEKDAYS = (
 )
 
 
-def static_prompt_for(*, attachments: bool, shell: bool = False) -> str:
+def static_prompt_for(*, attachments: bool, shell: bool = False, mutation: bool = False) -> str:
     """Blok statyczny dla drzwi: korpus wg dostępu do bazy wiedzy, plus klauzula multimodalna.
 
     ``shell`` wybiera wariant sekcji ``ENVIRONMENT`` i musi pochodzić z tego samego źródła co
@@ -161,6 +178,13 @@ def static_prompt_for(*, attachments: bool, shell: bool = False) -> str:
     które o parametrze zapomną, opisują świat węższy niż faktyczny, a nie szerszy.
     """
     base = STATIC_PROMPT_SHELL if shell else STATIC_PROMPT
+    if mutation:
+        # Zdanie o niezmienności notatek jest PRAWDZIWE dokładnie wtedy, gdy mutacji nie ma.
+        # Z włączoną bramką (ADR 0065) zostawienie go dałoby zamrożony prefiks instruujący
+        # model PRZECIWKO narzędziu, które właśnie dostał — czyli albo martwe narzędzie, albo
+        # cicho fałszywy prompt. Podmieniamy zdanie, nie dopisujemy drugiego: dwa zdania o tej
+        # samej rzeczy, jedno przeczące drugiemu, są gorsze niż każde z osobna.
+        base = base.replace(_NOTES_IMMUTABLE, _NOTES_MUTABLE)
     return base + MULTIMODAL_CAPABILITY_CLAUSE if attachments else base
 
 
@@ -171,6 +195,8 @@ def build_session_header(
     thread: str = "",
     skills: Sequence[tuple[str, str]] = (),
     github_thread: tuple[str, int] | None = None,
+    staged_files: Sequence[str] = (),
+    trust_nonce: str = "",
 ) -> str:
     """Złóż nagłówek sesji: data, identyfikator rozmowy, powiązanie z GitHubem i skille.
 
@@ -211,6 +237,23 @@ def build_session_header(
             f"This Teams thread is linked to GitHub {noun} #{number}. To reply there, call "
             f"GitHub(action='comment', number={number}) — only when the user explicitly asks, "
             "and only on this number."
+        )
+    if trust_nonce:
+        # Znacznik koperty bez wyjaśnienia byłby samym szumem, a wyjaśnienie w STAŁYM
+        # korpusie promptu unieważniałoby cache prefiksu tools+system przy każdej turze
+        # (nonce jest losowy na turę) — stąd nagłówek sesji, który i tak leży poza cachem.
+        lines.append("")
+        lines.append(describe_envelope(trust_nonce))
+    if staged_files:
+        # Nazwa na dysku jest SLUGIEM oryginalnej (ADR 0018 ``safe_filename``), więc bez tej
+        # linii model zgadywałby, jak nazywa się plik, który przed chwilą dostał — i zgadywałby
+        # źle. Fakt o świecie, nie zachęta: plik zostaje w katalogu rozmowy także wtedy, gdy
+        # kompaktowanie (ADR 0014) zredukuje sam załącznik do opisu.
+        lines.append("")
+        lines.append(
+            "Files attached in this turn were saved to your working directory as: "
+            + ", ".join(staged_files)
+            + ". They stay there for later turns."
         )
     if skills:
         lines.append("")

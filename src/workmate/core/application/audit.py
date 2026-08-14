@@ -59,8 +59,9 @@ class AuditService:
         """Domknij kontekst tury i zwróć rejestrator pojedynczego wywołania narzędzia.
 
         Pseudonim nadawcy i rozmowy liczymy RAZ na turę (nieodwracalny ``sha256[:16]``), nie przy
-        każdym tool-callu. ``trust_class`` jest dziś jednolite ("unknown") — realną klasę T0–T3
-        dowiąże ADR 0066 (to jest jego pole-szew, ADR 0066 §5). Rejestrator jest best-effort.
+        każdym tool-callu. ``trust_class`` niesie realną klasę pochodzenia tury (T1/T2, ADR 0066
+        §5); "unknown" zostaje dla drzwi bez rozszczepienia nadawcy — tam nie ma tożsamości do
+        rozwiązania, więc udawanie klasy byłoby gorsze niż jej brak. Rejestrator jest best-effort.
         """
         actor_key = pseudonymize(raw_user)
         conversation_key = pseudonymize(conversation_id)

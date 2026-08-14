@@ -32,8 +32,14 @@ class FilesystemWorkspaceWriter:
     def create(self, relpath: str, content: str) -> WorkspaceFile:
         path = _resolve_within(self._root, relpath)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_create(path, content)
+        _atomic_create(path, content.encode("utf-8"))
         return WorkspaceFile(name=path.name, relpath=relpath, size=len(content.encode("utf-8")))
+
+    def create_bytes(self, relpath: str, data: bytes) -> WorkspaceFile:
+        path = _resolve_within(self._root, relpath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_create(path, data)
+        return WorkspaceFile(name=path.name, relpath=relpath, size=len(data))
 
 
 class FilesystemWorkspaceRepository:
@@ -59,8 +65,34 @@ class FilesystemWorkspaceRepository:
         return files
 
     def read(self, scope_dir: str, name: str) -> str | None:
-        path = _resolve_within(self._root, f"{scope_dir}/{name}")
-        return path.read_text(encoding="utf-8") if path.is_file() else None
+        path = _resolve_in_scope(self._root, scope_dir, name)
+        return path.read_text(encoding="utf-8") if path is not None else None
+
+    def read_bytes(self, scope_dir: str, name: str) -> bytes | None:
+        path = _resolve_in_scope(self._root, scope_dir, name)
+        return path.read_bytes() if path is not None else None
+
+
+def _resolve_in_scope(root: Path, scope_dir: str, name: str) -> Path | None:
+    """Rozwiąż plik ``name`` W KATALOGU ROZMOWY; ``None``, gdy to nie jest tam zwykły plik.
+
+    ``_resolve_within`` pilnuje wyłącznie KORZENIA brudnopisu, a to za mało dla odczytu:
+    ``resolve()`` rozwija dowiązania, więc symlink ``../<hash innej rozmowy>/plik.pdf`` ląduje
+    wewnątrz korzenia i przechodzi — czytelnik dostaje cudzy plik, mimo że nazwa jest czysta.
+    Symlink da się założyć powłoką, a ``File`` zostaje na powierzchni WŁAŚNIE w układzie
+    z powłoką, więc to jest droga realna, nie teoretyczna. Warunek jest tu ostrzejszy:
+    rozwiązany rodzic musi być DOKŁADNIE rozwiązanym katalogiem tej rozmowy — czyli tą samą
+    granicą, którą infra ADR 0012 wymusza montażem wyłącznie podkatalogu scope'a.
+    """
+    base = _resolve_within(root, scope_dir)
+    # Ucieczka POZA KORZEŃ zostaje głośna (``WriteError``, jak dotąd) — to jawna próba wyjścia
+    # ścieżką i wołający ma o niej wiedzieć. Trafienie w INNĄ ROZMOWĘ (symlink w obrębie korzenia)
+    # zwraca ``None``, czyli „nie ma takiego pliku": model nie ma się z czego dowiedzieć, czyj
+    # plik istnieje obok, a odpowiedź jest nieodróżnialna od zwykłej pomyłki w nazwie.
+    candidate = _resolve_within(root, f"{scope_dir}/{name}")
+    if candidate.parent != base or not candidate.is_file():
+        return None
+    return candidate
 
 
 def _resolve_within(root: Path, relpath: str) -> Path:
@@ -100,17 +132,19 @@ def prune_stale(root: Path, *, older_than: timedelta, now: datetime) -> int:
     return removed
 
 
-def _atomic_create(path: Path, content: str) -> None:
+def _atomic_create(path: Path, data: bytes) -> None:
     """Zapis atomowy i create-only (UNIKALNY temp + ``os.link``); kolizja/I/O → ``WriteError``.
 
     Plik tymczasowy ma unikalną nazwę (``mkstemp``) — dwa równoległe ``create`` na tę samą nazwę
     docelową nie ścigają się o wspólny temp (istotne przy agencie w pętli / multi-user).
+    Bajty, nie tekst: tą samą drogą idzie plik tekstowy modelu i odłożony załącznik binarny
+    (ADR 0064), a dwie ścieżki zapisu oznaczałyby dwa miejsca na pomyłkę w atomowości.
     """
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
         os.close(fd)
-        tmp.write_text(content, encoding="utf-8")
+        tmp.write_bytes(data)
         os.link(tmp, path)
     except FileExistsError as exc:
         raise WriteError(f"plik już istnieje: {path.name}") from exc

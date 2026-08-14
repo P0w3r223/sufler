@@ -124,3 +124,16 @@ def test_new_registrar_forces_matrix_update():
         "zmienił się zestaw rejestratorów MCP — dopisz konfigurację do macierzy powyżej "
         "i zregeneruj baseline, inaczej nowe narzędzie wejdzie na drzwi bez zamrożenia"
     )
+
+
+def test_file_tool_never_reaches_the_mcp_surface(monkeypatch, tmp_path):
+    """``File`` (ADR 0064) jest AGENT-ONLY — na drzwiach MCP nie ma prawa się pojawić.
+
+    Baseline złapałby to i tak, ale asercja nazwana wprost mówi CZEMU: narzędzie materializuje
+    plik do kontekstu modelu, a drzwi MCP nie mają ani rozmowy, ani katalogu roboczego, w którym
+    ten plik miałby leżeć. Wejście na tę powierzchnię byłoby obietnicą bez pokrycia — i zamrożony
+    kontrakt czterech narzędzi przestałby być zamrożony.
+    """
+    _configure(monkeypatch, tmp_path, bridge=True, jira=True)
+
+    assert "File" not in _surface(build_server())

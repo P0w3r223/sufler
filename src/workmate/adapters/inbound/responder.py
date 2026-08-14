@@ -17,7 +17,10 @@ w testach).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
+import secrets
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,11 +31,14 @@ from workmate.adapters.inbound.change_command import ChangeDigestContext
 from workmate.adapters.inbound.commands import CommandContext
 from workmate.adapters.inbound.thread_note_command import ThreadNoteContext
 from workmate.core.agent.prompt import build_session_header
+from workmate.core.domain.trust import TrustClass
 from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
+    AgentResult,
     AssistantTurn,
     Attachment,
+    AttachmentQueue,
     RawTurn,
     ToolOutput,
     ToolResults,
@@ -64,6 +70,18 @@ if TYPE_CHECKING:
 # Prefiks wiadomości z podsumowaniem kompaktowania (ADR 0014). Sonnet 5 nie ma systemowych
 # wiadomości w środku rozmowy, więc podsumowanie idzie jako treść użytkownika z tym nagłówkiem.
 _SUMMARY_PREFIX = "[Podsumowanie wcześniejszej rozmowy]"
+
+# Narzędzia, których WYNIK niesie treść spoza bramek zdolności (ADR 0066): komentarze i opisy
+# z GitHuba, wyjście powłoki oraz pliki katalogu roboczego. `Notes`/`Jira`/`Schedule` tu NIE są —
+# czytają treść zza bramek, więc skaziłyby każdą rozmowę i zamieniły sygnał w szum.
+#
+# ``read_file``/``list_files`` są na liście, choć brzmią niewinnie: katalog roboczy trzyma
+# ODŁOŻONE ZAŁĄCZNIKI (ADR 0064) i przeżywa rollover, bo jest per (kanał, wątek). Bez nich
+# ścieżka „załącznik w rozmowie A → rollover → `read_file` w czystej rozmowie B" wciągałaby tę
+# samą zatrutą treść do rozmowy oznaczonej jako czysta — a `Bash` i `File` w tym samym
+# scenariuszu skażają. Nazwy pilnuje sonda wiążąca ten zbiór z realnym katalogiem narzędzi;
+# bez niej zmiana nazwy narzędzia po cichu gasiłaby wyzwalacz.
+_TAINTING_TOOLS = frozenset({"GitHub", "Bash", "File", "read_file", "list_files"})
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +216,15 @@ class ConversationalResponder:
         commands: CommandRouter | None = None,
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
+        file_catalog_factory: (
+            Callable[[WorkspaceScope, AttachmentQueue, str, str, bool], Sequence[ToolSpec]] | None
+        ) = None,
+        attachment_stager: (
+            Callable[[WorkspaceScope, Sequence[Attachment]], Sequence[str]] | None
+        ) = None,
+        attachment_budget_bytes: int = 0,
+        sender_trust: Callable[[str], TrustClass] | None = None,
+        trust_labels: bool = False,
         thread_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         user_push_tool_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
         my_jira_tasks_factory: Callable[[str], Sequence[ToolSpec]] | None = None,
@@ -225,6 +252,26 @@ class ConversationalResponder:
         # z ``identities.yaml``, jak każda ścieżka danych. Drzwi zaufane (CLI) podają fabrykę bez
         # autoryzatora → powłoka nie bramkowana (jeden operator, brak ``sender_id``).
         self._shell_catalog_factory = shell_catalog_factory
+        # Narzędzie ``File`` (ADR 0064) i odkładanie załączników na dysk rozmowy. ``None`` →
+        # dawne zachowanie: załącznik żyje wyłącznie w blokach rozmowy, a model nie ma jak po
+        # niego wrócić. Budżet materiałów tury jest WSPÓLNY z drzwiami — pobrania modelu i
+        # załączniki użytkownika jadą w tym samym żądaniu API, więc dzielą jeden sufit.
+        self._file_catalog_factory = file_catalog_factory
+        self._attachment_stager = attachment_stager
+        self._attachment_budget_bytes = attachment_budget_bytes
+        # Rozszczepienie nadawcy na T1/T2 (ADR 0066) — OPT-IN, jedzie za tą samą bramką co
+        # autoryzacja odczytu notatek (0062), bo obie zależą od tego samego faktu: czy mapa
+        # tożsamości jest kompletna. Przy niekompletnej mapie włączenie zdegradowałoby realnych
+        # członków pionu do danych. ``None`` → każda tura jest T1, jak dotąd.
+        self._sender_trust = sender_trust
+        # Strukturalne koperty T3 na treści obcej — niezależne od powyższego, bo NIE zależą od
+        # mapy tożsamości i nikogo nie degradują: plik jest plikiem niezależnie od tego, kto go
+        # przysłał. Stąd osobna bramka, a nie jedna wspólna.
+        self._trust_labels = trust_labels
+        # Sekret nonce'a: losowany RAZ przy składaniu drzwi, żyje tylko w pamięci procesu.
+        # Nie zapisujemy go — nonce ma być nieprzewidywalny z treści, a nie trwały; restart
+        # odświeża wszystkie znaczniki i to jest cecha, nie wada.
+        self._nonce_secret = secrets.token_bytes(32)
         # Fabryka narzędzia ODPOWIEDZI W WĄTKU (ADR 0024, Faza 3b); ``None`` → brak (inne drzwi).
         # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
         # ``reply_on_thread`` z PRE-ZWIĄZANYM numerem — model nie przekieruje na inne issue.
@@ -384,7 +431,19 @@ class ConversationalResponder:
             conversation_id, history, rolled_over = self._conversations.prepare_turn(
                 self._channel, external_id, message.text, now=now
             )
-        transcript = self._build_transcript(conversation_id, history, rolled_over)
+        transcript = self._build_transcript(conversation_id, external_id, history, rolled_over)
+        # Klasa POCHODZENIA tej tury (ADR 0066). Rozwiązanie nadawcy pada RAZ i zasila obie
+        # osie: tę etykietę oraz — osobno, przez własne fabryki — bramki zdolności (0062/0063).
+        # Bez rozszczepienia (fabryka nie podana) każda tura jest T1, czyli zachowanie dawne.
+        trust: TrustClass = "T1"
+        if self._sender_trust is not None:
+            try:
+                trust = self._sender_trust(message.sender_id)
+            except Exception:
+                # Fail-closed: nie umiemy rozstrzygnąć, kto pisze → traktujemy słowa jak dane.
+                logger.warning("Nie rozstrzygnąłem klasy nadawcy %r — T2", message.sender_id)
+                trust = "T2"
+
         # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
         # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
         scope = WorkspaceScope(self._channel, external_id)
@@ -406,6 +465,47 @@ class ConversationalResponder:
                 logger.warning(
                     "Nie udało się zbudować narzędzia powłoki dla nadawcy %r — pomijam",
                     message.sender_id,
+                )
+        # Załączniki tej tury odkładamy na dysk katalogu rozmowy (ADR 0064), zanim model
+        # cokolwiek zobaczy: dopiero plik na dysku widzi ZARAZEM powłoka i ``File(read)``, i tylko
+        # on przeżywa kompaktowanie kontekstu, po którym z załącznika zostaje sam opis. Odkładanie
+        # jest OPCJONALNYM wzbogaceniem — pełny dysk czy zła nazwa nie mogą zabić tury, w której
+        # model i tak dostaje załącznik w kontekście. Nazwy trafiają do nagłówka sesji, bo na dysku
+        # są slugiem oryginalnej nazwy i model inaczej zgadywałby, jak wołać ``File``.
+        staged_files: list[str] = []
+        if self._attachment_stager is not None and message.attachments:
+            try:
+                staged_files = list(self._attachment_stager(scope, message.attachments))
+            except Exception:
+                logger.warning(
+                    "Nie udało się odłożyć załączników rozmowy %r — pomijam", external_id
+                )
+        # Kolejka materiałów tej tury: sufit pomniejszony o to, co drzwi już wstawiły do tury
+        # użytkownika (dzielą jedno żądanie API). Ujemny wynik podcinamy do zera — model dostanie
+        # rzeczową odmowę „budżet wyczerpany", zamiast pobrania, które wywróci żądanie.
+        attachment_queue = AttachmentQueue(
+            budget_bytes=max(0, self._attachment_budget_bytes - _attachment_bytes(message))
+        )
+        if self._file_catalog_factory is not None:
+            try:
+                # ``sender_id`` idzie do fabryki, bo akcje MUTUJĄCE (ADR 0065) wiążą się
+                # z człowiekiem: bez rozpoznanego nadawcy nie ma komu przypisać zmiany ani
+                # kogo zapytać o potwierdzenie, więc fabryka ich wtedy nie dokłada.
+                # Klasa i skaza jadą do fabryki, bo sędzia mutacji (ADR 0065) ma orzekać
+                # ze świadomością POCHODZENIA tury: „prośba padła w rozmowie, do której
+                # weszła treść obca" to inny fakt niż ta sama prośba w rozmowie czystej.
+                extra_tools.extend(
+                    self._file_catalog_factory(
+                        scope,
+                        attachment_queue,
+                        message.sender_id,
+                        trust,
+                        self._is_tainted(conversation_id),
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Nie udało się zbudować narzędzia File dla %r — pomijam", external_id
                 )
         # Narzędzie odpowiedzi w wątku (ADR 0024, Faza 3b): dokładane, gdy wątek kanału jest
         # powiązany z issue/PR (fabryka odczytuje cel z external_id) — inaczej pusta lista.
@@ -468,15 +568,24 @@ class ConversationalResponder:
                     external_id,
                     exc_info=True,
                 )
+        # Skaza z faktów ZNANYCH PRZED turą (ADR 0066). Rozdzielenie na dwie połowy nie jest
+        # kosmetyką: załącznik ląduje na dysku rozmowy PRZED wywołaniem modelu, więc gdyby
+        # cała skaza czekała na wynik tury, błąd API w pętli narzędzi zostawiałby zatruty
+        # plik w katalogu i rozmowę oznaczoną jako czysta.
+        if message.attachments:
+            self._mark_taint(conversation_id, "attachment")
+        elif trust == "T2":
+            self._mark_taint(conversation_id, "guest")
+        trust_nonce = self._trust_nonce(external_id)
         # Rejestrator audytu (ADR 0067) domknięty PER TURĘ: pseudonim nadawcy/rozmowy liczony raz,
-        # klasa zaufania jednolita "unknown" do czasu ADR 0066. ``None`` → audyt wyłączony. Runtime
-        # woła go dla każdego tool-calla; rejestrator jest best-effort (nie wywróci tury).
+        # klasa zaufania z osi pochodzenia. ``None`` → audyt wyłączony. Runtime woła go dla
+        # każdego tool-calla; rejestrator jest best-effort (nie wywróci tury).
         audit_recorder = (
             self._audit.turn_recorder(
                 door=self._channel,
                 raw_user=message.sender_id or message.sender,
                 conversation_id=external_id,
-                trust_class="unknown",
+                trust_class=trust if self._sender_trust is not None else "unknown",
             )
             if self._audit is not None
             else None
@@ -492,9 +601,16 @@ class ConversationalResponder:
                 thread=external_id,
                 skills=self._skills,
                 github_thread=self._thread_link(external_id),
+                staged_files=staged_files,
+                trust_nonce=trust_nonce,
             ),
             audit=audit_recorder,
+            attachment_queue=attachment_queue,
+            trust_nonce=trust_nonce,
+            trust=trust,
         )
+        # Druga połowa skazy: to, co wiadomo dopiero PO turze — po co model sięgnął.
+        self._mark_taint_from_tools(conversation_id, result)
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
         with self._store_lock:
@@ -524,6 +640,7 @@ class ConversationalResponder:
     def _build_transcript(
         self,
         conversation_id: str,
+        external_id: str,
         history: list[ConversationMessage],
         rolled_over: bool,
     ) -> list[TranscriptEntry]:
@@ -538,11 +655,74 @@ class ConversationalResponder:
         if self._compaction is None:
             return _to_transcript(history)
         if not rolled_over:
-            self._compaction.maybe_compact(conversation_id)
+            # Nonce tej ROZMOWY, nie tury — streszczacz ma dostać historię w kopercie
+            # (ADR 0066), inaczej pierze treść obcą na prozę instrukcyjną.
+            self._compaction.maybe_compact(
+                conversation_id, trust_nonce=self._trust_nonce(external_id)
+            )
         with self._store_lock:
             replay = self._conversations.replay_messages(conversation_id)
             summary = self._conversations.active_summary(conversation_id)
         return _to_transcript_with_summary(summary, replay)
+
+    def _is_tainted(self, conversation_id: str) -> bool:
+        """Czy do TEJ rozmowy weszła już treść obca (ADR 0066) — best-effort, fail-SAFE.
+
+        Nieudany odczyt zwraca ``True``, nie ``False``: sędzia ma wtedy orzekać ostrożniej,
+        a nie mniej ostrożnie. Domysł w drugą stronę byłby pocieszaniem się przy awarii bazy.
+        """
+        try:
+            with self._store_lock:
+                return self._conversations.is_tainted(conversation_id)
+        except Exception:
+            logger.warning("Nie odczytałem skazy rozmowy %r — zakładam skażoną", conversation_id)
+            return True
+
+    def _trust_nonce(self, external_id: str) -> str:
+        """Nonce koperty (ADR 0066): stały w obrębie ROZMOWY, nieprzewidywalny z treści.
+
+        Był losowany na turę i to psuło cache: żądanie niesie całą historię, więc gdyby każdy
+        opakowany wynik narzędzia miał w kolejnej turze inne bajty, wspólny prefiks urywałby się
+        na pierwszym z nich i praktycznie cały kontekst szedłby po pełnej cenie wejścia. Stały
+        w rozmowie nonce zachowuje własność, która jest tu istotna — treść go nie zna, bo
+        wywodzi się z sekretu wylosowanego przy starcie procesu, a nie z niczego, co czytamy.
+
+        Cena: gdyby model wypisał znacznik w odpowiedzi na kanał, nonce byłby odtąd widoczny dla
+        uczestników TEJ rozmowy. Przyjęte świadomie — ADR 0066 mówi wprost, że etykieta nie jest
+        granicą bezpieczeństwa, więc płacenie za jej hartowanie kosztem każdej tury byłoby złym
+        kursem. Sekret ginie z procesem, więc restart i tak odświeża wszystkie nonce.
+        """
+        if not self._trust_labels:
+            return ""
+        return hmac.new(
+            self._nonce_secret, external_id.encode("utf-8"), hashlib.sha256
+        ).hexdigest()[:16]
+
+    def _mark_taint(self, conversation_id: str, source: str) -> None:
+        """Zapal skazę best-effort — nieudany zapis nie może zabrać użytkownikowi odpowiedzi.
+
+        Idzie do logu, bo cicha utrata skazy to cicha utrata eskalacji.
+        """
+        try:
+            with self._store_lock:
+                self._conversations.mark_tainted(conversation_id, source)
+        except Exception:
+            logger.warning("Nie zapisałem skazy rozmowy %r (źródło %s)", conversation_id, source)
+
+    def _mark_taint_from_tools(self, conversation_id: str, result: AgentResult) -> None:
+        """Skaza z tego, po co model sięgnął w tej turze (znane dopiero PO turze).
+
+        Zbiór wyzwalaczy jest wąski ROZMYŚLNIE (ADR 0066 R2): gdyby skaziło wszystko, sygnał
+        nie znaczyłby nic. Odczyt notatek i zdarzeń własnego pionu typowanymi narzędziami NIE
+        skaża — to treść zza bramek zdolności.
+        """
+        if any(
+            call.name in _TAINTING_TOOLS
+            for entry in result.entries
+            if isinstance(entry, AssistantTurn)
+            for call in entry.tool_calls
+        ):
+            self._mark_taint(conversation_id, "tool")
 
     def _thread_link(self, external_id: str) -> tuple[str, int] | None:
         """Powiązanie wątku z issue/PR albo ``None`` — opcjonalne wzbogacenie nagłówka.
@@ -633,6 +813,16 @@ def _with_notices(reply: str, *, rolled_over: bool, stop_reason: str) -> str:
     return "\n".join(notices) + "\n\n" + reply
 
 
+def _attachment_bytes(message: InboundMessage) -> int:
+    """Ile bajtów base64 drzwi już wstawiły do tury użytkownika (ADR 0064 — wspólny budżet).
+
+    Liczymy SUROWE bajty (base64 ÷ 4 × 3), bo w tej samej jednostce wyrażony jest sufit
+    materializacji. Pliki zamienione na tekst nie niosą base64 i słusznie ważą zero — nie idą
+    do API jako bajty.
+    """
+    return sum(len(a.data_base64) * 3 // 4 for a in message.attachments)
+
+
 def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]:
     """Zmapuj tury rozmowy na wpisy transkryptu LLM — bezstratnie (ADR 0011).
 
@@ -650,12 +840,17 @@ def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]
                 entries.append(AssistantTurn(msg.text, ()))
         elif msg.role == "tool":
             if msg.blocks:
+                # Wiersz tury narzędziowej niesie DWA rodzaje bloków (ADR 0064): wyniki narzędzi
+                # (mają ``call_id``) oraz pliki podane przez ``File`` w formie neutralnej. Bez
+                # tego podziału plik wróciłby jako wynik bez ``call_id`` i wywrócił replay.
                 entries.append(
                     ToolResults(
                         tuple(
                             ToolOutput(b["call_id"], b["content"], b.get("is_error", False))
                             for b in msg.blocks
-                        )
+                            if "call_id" in b
+                        ),
+                        tuple(attachment_from_row(b) for b in msg.blocks if "call_id" not in b),
                     )
                 )
         elif msg.text or msg.blocks:
@@ -663,7 +858,11 @@ def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]
             # odtwarzamy je, by replay był bezstratny. Warunek ``or msg.blocks`` pilnuje,
             # by wiadomość z SAMYM plikiem (pusty caption) nie wypadła z transkryptu.
             attachments = tuple(attachment_from_row(b) for b in (msg.blocks or []))
-            entries.append(UserText(msg.text, attachments))
+            # Klasa pochodzenia (ADR 0066) wraca z wiersza; wiersze sprzed 0066 i drzwi bez
+            # rozszczepienia mają NULL → T1, czyli dawne zachowanie. Bez tego tura gościa
+            # wracałaby w kolejnych turach jako instrukcja — granica trzymałaby JEDNĄ turę.
+            trust: TrustClass = "T2" if msg.trust == "T2" else "T1"
+            entries.append(UserText(msg.text, attachments, trust))
     return entries
 
 
@@ -685,5 +884,11 @@ def _to_transcript_with_summary(
     if entries and isinstance(entries[0], UserText):
         first = entries[0]
         # Doklejamy nagłówek do tekstu, ale ZACHOWUJEMY załączniki pierwszej tury.
-        return [UserText(f"{header}\n\n{first.text}", first.attachments), *entries[1:]]
+        # ZACHOWUJEMY klasę pierwszej tury (ADR 0066): podsumowanie doklejamy do jej
+        # tekstu, więc gdyby klasa przepadła, tura gościa awansowałaby do instrukcji
+        # dokładnie w momencie kompaktowania — czyli tam, gdzie nikt by tego nie szukał.
+        return [
+            UserText(f"{header}\n\n{first.text}", first.attachments, first.trust),
+            *entries[1:],
+        ]
     return [UserText(header), *entries]

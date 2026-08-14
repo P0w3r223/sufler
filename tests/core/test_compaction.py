@@ -27,9 +27,11 @@ class _FakeLLM:
         self.text = text
         self.usage = usage or TokenUsage(input_tokens=50, output_tokens=20)
         self.calls: list[tuple[str, list, list]] = []
+        self.nonces: list[str] = []
 
-    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+    def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
         self.calls.append((system, list(transcript), list(tools)))
+        self.nonces.append(trust_nonce)
         return LLMResponse(text=self.text, usage=self.usage)
 
 
@@ -216,3 +218,69 @@ def test_flatten_describes_user_attachments_and_excludes_base64():
     assert "Użytkownik: zobacz zrzut" in flat
     assert "[Załącznik z.png (image/png)]" in flat
     assert "TEEJBUE5H" not in flat  # base64 poza streszczaczem
+
+
+def test_flatten_keeps_a_trace_of_a_file_the_model_pulled_in(monkeypatch):
+    """Plik podany przez ``File`` (ADR 0064) musi zostawić ślad w streszczeniu.
+
+    Po kompaktowaniu streszczenie jest JEDYNYM, co z tury zostaje. Załącznik użytkownika
+    dostawał choćby wiersz „[Załącznik …]", a plik z wiersza narzędziowego znikał bez śladu —
+    model tracił wtedy nawet informację, że jakiś dokument w tej rozmowie w ogóle był.
+    """
+    store = _store()
+    service = CompactionService(store, _FakeLLM(), threshold_tokens=100, keep_turns=2)
+    plik = attachment_to_row(
+        Attachment("document", "application/pdf", "umowa.pdf", data_base64="QkFTRTY0")
+    )
+    wiersz = ConversationMessage(
+        id=2,
+        conversation_id="c",
+        role="tool",
+        text="",
+        created_at=_TS,
+        blocks=[{"call_id": "t1", "content": '{"materialized": true}', "is_error": False}, plik],
+    )
+
+    flat = service._flatten(None, [wiersz])
+
+    assert "[Załącznik umowa.pdf (application/pdf)]" in flat
+    assert "QkFTRTY0" not in flat  # base64 poza streszczaczem, jak przy załączniku użytkownika
+    assert "materialized" not in flat  # treść wyniku narzędzia dalej nie wchodzi
+
+
+def test_history_reaches_the_summarizer_as_foreign_content():
+    """Streszczacz dostaje historię w KOPERCIE (ADR 0066) — inaczej pierze treść obcą.
+
+    Do streszczania idzie spłaszczony tekst, w którym siedzą wyniki narzędzi i tury nadawców
+    spoza mapy. Bez koperty streszczacz czytał to jako instrukcje, a jego wynik wraca potem do
+    rozmowy DOKLEJONY DO PIERWSZEJ TURY — czyli zatruta treść awansowała do rangi prozy
+    instrukcyjnej dokładnie tam, gdzie nikt by jej nie szukał.
+    """
+    store = _store()
+    llm = _FakeLLM()
+    service = CompactionService(store, llm, threshold_tokens=100, keep_turns=2)
+    conv = store.open_conversation("teams_graph", "chat")
+    for i in range(4):
+        _seed_exchange(store, conv.id, f"pytanie {i}", f"odpowiedz {i}")
+    _seed_exchange(store, conv.id, "ostatnie", "ostatnia", input_tokens=500)
+
+    service.maybe_compact(conv.id, trust_nonce="abcd1234")
+
+    (_system, transcript, _tools) = llm.calls[0]
+    assert transcript[0].text.startswith("<dane-obce:historia abcd1234>")
+    assert llm.nonces == ["abcd1234"]  # nonce jedzie też do adaptera
+
+
+def test_without_a_nonce_compaction_behaves_exactly_as_before():
+    store = _store()
+    llm = _FakeLLM()
+    service = CompactionService(store, llm, threshold_tokens=100, keep_turns=2)
+    conv = store.open_conversation("teams_graph", "chat")
+    for i in range(4):
+        _seed_exchange(store, conv.id, f"pytanie {i}", f"odpowiedz {i}")
+    _seed_exchange(store, conv.id, "ostatnie", "ostatnia", input_tokens=500)
+
+    service.maybe_compact(conv.id)
+
+    (_system, transcript, _tools) = llm.calls[0]
+    assert "dane-obce" not in transcript[0].text

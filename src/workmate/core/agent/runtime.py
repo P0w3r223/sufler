@@ -33,8 +33,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.domain.trust import TrustClass
     from workmate.core.ports.llm import (
         Attachment,
+        AttachmentQueue,
         LLMClient,
         ToolCall,
         TranscriptEntry,
@@ -91,8 +93,19 @@ class AgentRuntime:
         extra_tools: Sequence[ToolSpec] = (),
         session_header: str = "",
         audit: Callable[[str, Mapping[str, Any], str], None] | None = None,
+        attachment_queue: AttachmentQueue | None = None,
+        trust_nonce: str = "",
+        trust: TrustClass = "T1",
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
+
+        ``trust_nonce`` (ADR 0066) włącza koperty na treści obcej; runtime tylko go PRZENOSI
+        do adaptera — nie generuje go i nie wie, co znaczy. Pusty = etykiety wyłączone.
+
+        ``attachment_queue`` (ADR 0064) to kolejka plików, które narzędzie ``File`` materializuje
+        w trakcie tury. Runtime jej nie wypełnia — tylko OPRÓŻNIA po każdej rundzie wywołań i
+        dokłada zabrane pliki do ``ToolResults``. Drzwi tworzą ją per tura razem z narzędziem
+        (wspólna closure), więc runtime zostaje bezstanowy i nie wie nic o materializacji.
 
         ``audit`` (ADR 0067) to rejestrator per turę: dla KAŻDEGO wywołania narzędzia dostaje
         ``(nazwa, argumenty, status)``. ``None`` → brak audytu (dawne zachowanie). Kontekst tury
@@ -120,7 +133,9 @@ class AgentRuntime:
         # Bloki systemowe składamy RAZ na turę, nie w pętli: w obrębie jednej tury data i
         # rozmowa są stałe, a powtórne składanie tylko rozmnażałoby okazje do rozjazdu.
         system = system_blocks(self._system_prompt, session_header)
-        user_turn = UserText(query, tuple(attachments))
+        # Klasa pochodzenia tury (ADR 0066) nadana przez DRZWI — runtime jej nie wylicza
+        # i nie zna nadawcy; niesie ją dalej, bo to ona ląduje w pamięci i w audycie.
+        user_turn = UserText(query, tuple(attachments), trust)
         transcript: list[TranscriptEntry] = [*history, user_turn]
         new_entries: list[TranscriptEntry] = [user_turn]
         last_text = ""
@@ -129,7 +144,9 @@ class AgentRuntime:
         # swojego wywołania (Design 2 — do rozliczenia i do bramki rolloveru na ostatniej turze).
         run_usage = TokenUsage()
         for _ in range(self._max_tool_iterations):
-            response = self._llm.complete(system=system, transcript=transcript, tools=catalog)
+            response = self._llm.complete(
+                system=system, transcript=transcript, tools=catalog, trust_nonce=trust_nonce
+            )
             run_usage = run_usage + response.usage
             last_text = response.text or last_text
 
@@ -159,8 +176,13 @@ class AgentRuntime:
             )
             transcript.append(assistant)
             new_entries.append(assistant)
+            outputs = tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+            # Pliki zmaterializowane przez ``File`` w TEJ rundzie (ADR 0064). Zabieramy je po
+            # dispatchu, więc jadą jako bloki obok wyników narzędzi, w tej samej wiadomości
+            # ``user`` — i model widzi je od razu, w tej samej turze, a nie dopiero gdy odezwie
+            # się człowiek. Bez kolejki: dawne zachowanie co do bajta.
             results = ToolResults(
-                tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+                outputs, attachment_queue.drain() if attachment_queue is not None else ()
             )
             transcript.append(results)
             new_entries.append(results)

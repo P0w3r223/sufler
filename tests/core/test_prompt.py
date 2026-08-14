@@ -110,7 +110,9 @@ def test_every_prompt_artifact_is_positively_framed():
     Komplet nie jest ozdobą. ``github_thread`` doszło po zniesieniu ``reply_on_thread``,
     fikstura została przy czterech polach, a nowe zdanie weszło z dwoma „never" i przeszło.
     Sonda, która nie umie zawieść, wygląda identycznie jak działająca — każde nowe pole
-    nagłówka dopisujemy tu razem z nim.
+    nagłówka dopisujemy tu razem z nim. Powtórka historii: pola z ADR 0064/0066
+    (odłożone pliki, koperta treści obcej) doszły później, a pierwsza wersja zdania
+    o kopercie znowu weszła z dwoma przeczeniami.
     """
     header = build_session_header(
         datetime(2026, 8, 5),
@@ -118,6 +120,8 @@ def test_every_prompt_artifact_is_positively_framed():
         thread="t/c/r",
         skills=(("brief", "opis"),),
         github_thread=("issue", 7),
+        staged_files=("umowa.pdf",),
+        trust_nonce="abcd1234",
     )
     artifacts = {
         "STATIC_PROMPT": STATIC_PROMPT,
@@ -274,3 +278,46 @@ def test_naglowek_zabrania_komentowania_na_inny_numer_w_tym_watku() -> None:
     """
     naglowek = build_session_header(datetime(2026, 8, 6, 10, 0), github_thread=("issue", 7))
     assert "only on this number" in naglowek
+
+
+def test_session_header_explains_the_envelope_when_a_nonce_is_given():
+    """Znacznik bez zdania, które go tłumaczy, to sam szum — a wycięcie tego warunku
+    przechodziło przez cały pakiet, bo nikt nie sprawdzał nagłówka pod tym kątem."""
+    header = build_session_header(datetime(2026, 8, 5), trust_nonce="abcd1234")
+
+    assert "abcd1234" in header
+    assert "data you are reading" in header
+
+
+def test_session_header_without_a_nonce_says_nothing_about_envelopes():
+    """Bramka OFF = nagłówek dokładnie jak dotąd; inaczej model dostawałby instrukcję
+    o znacznikach, których w treści nie ma."""
+    header = build_session_header(datetime(2026, 8, 5))
+
+    assert "dane-obce" not in header
+
+
+def test_prompt_stops_forbidding_note_changes_when_mutation_is_on():
+    """Zamrożony prefiks nie może mówić „nie zmieniaj notatek" obok narzędzia, które to umie.
+
+    Wariant podmienia ZNANE zdanie, więc gdyby korpus je przeredagował bez zmiany stałej,
+    podmiana stałaby się cichym no-opem — ta sonda właśnie to łapie.
+    """
+    bez = static_prompt_for(attachments=False)
+    z_mutacja = static_prompt_for(attachments=False, mutation=True)
+
+    assert "leave existing ones as their authors" in bez
+    assert "leave existing ones as their authors" not in z_mutacja
+    assert "only when someone asks you to" in z_mutacja
+    assert "independent reviewer" in z_mutacja
+
+
+def test_mutation_variant_is_still_positively_framed():
+    """Nowe zdanie podlega tej samej bramce redakcyjnej co reszta promptu (ADR 0056)."""
+    hits = [
+        line.strip()
+        for line in static_prompt_for(attachments=True, shell=True, mutation=True).splitlines()
+        if _NEGATIONS.search(line)
+    ]
+
+    assert not hits, f"linie przeczące: {hits}"

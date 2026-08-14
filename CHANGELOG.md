@@ -14,6 +14,45 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
 - **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
 - **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
 
+- **Mutowalna baza wiedzy pod sędzią** (ADR 0065): agent może POPRAWIĆ istniejącą notatkę
+  (`File(edit)`), a przy osobnej bramce także ją usunąć (`File(delete)`). To **świadome
+  odwrócenie** dotychczasowej postawy: do teraz bazy nie dało się zepsuć, bo jedyny pisarz był
+  create-only, więc odwracalność była strukturalna. Teraz jest proceduralna — migawka przed każdą
+  operacją (jej niepowodzenie ODMAWIA zmiany) plus nocna kopia wolumenu. Nad tym stoi **niezależny
+  sędzia** (osobne wywołanie modelu z wymuszonym schematem werdyktu), który potrafi tylko zawęzić:
+  autoryzacja nadawcy po AAD pada przed nim, ścieżka i schemat poza nim, a każda awaria — sieci,
+  ucięcie odpowiedzi, nieznany werdykt — kończy się odmową. Werdykt `confirm` wymaga **powrotu tej
+  samej prośby z INNEJ tury** (token tury pilnuje, że model nie zaliczy potwierdzenia sam —
+  pętla narzędzi ma osiem rund w jednej turze). Notatki ze
+  spotkań i wątków zostają niezmienne — ich niezmienność to mechanizm idempotencji, nie ostrożność.
+  Trzy bramki, wszystkie domyślnie OFF: `..._ENABLE_NOTE_MUTATION`, `..._ENABLE_NOTE_DELETE`
+  (osobna, bo ADR wiąże kasowanie z DZIAŁAJĄCĄ kopią zapasową) oraz wymagana mapa tożsamości.
+  Prompt i twarda reguła 2 w `CLAUDE.md` zaktualizowane — bez tego zamrożony prefiks instruowałby
+  model przeciwko narzędziu, które właśnie dostał.
+- **Klasy zaufania T0–T3 + lepka skaza rozmowy** (ADR 0066): treść OBCA — plik, wynik narzędzia,
+  tura nadawcy spoza mapy tożsamości — jedzie do modelu w kopercie z etykietą pochodzenia i
+  granicą znaczoną **nonce'em losowanym na turę** (stały znacznik dałoby się podrobić treścią,
+  która sama go zawiera). Rozszczepienie nadawcy na T1/T2 liczy TEN SAM autoryzator co bramka
+  odczytu notatek — jedno rozwiązanie tożsamości na turę zasila obie osie. Rozmowa, do której
+  weszła treść obca, dostaje **trwałą skazę** (kolumny na wierszu rozmowy, przeżywa recreate
+  kontenera); skaza niczego nie blokuje — będzie kierować operacje mutujące przez sędziego
+  (ADR 0065). Rollover otwiera nową rozmowę, czyli czystą. Dwie bramki, obie domyślnie OFF:
+  `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS` (koperty; wyłączone = żądanie bajt w bajt jak dotąd)
+  oraz rozszczepienie T1/T2, które jedzie za istniejącą `..._ENABLE_NOTE_READ_AUTHZ`, bo obie
+  zależą od kompletności `identities.yaml`. **To nie jest obrona przed wstrzyknięciem promptu** —
+  granicą zostają bramki zdolności, montaż `ro`, wykonawca bez sieci i odwracalność.
+- **Narzędzie `File(action='read')` + odkładanie załączników na dysk rozmowy** (ADR 0064, druga
+  część): model może podać sobie plik z katalogu roboczego DO WGLĄDU — obraz jako obraz, PDF jako
+  dokument, resztę jako wyciągnięty tekst. Plik jedzie osobnym blokiem obok wyniku narzędzia (bo
+  `tool_result` nie unosi bloku `document`, a jego treść bywa czyszczona przez edycję kontekstu),
+  w tej samej turze, i przeżywa zapis do pamięci rozmowy. Załączniki użytkownika są od teraz
+  ODKŁADANE na dysk katalogu rozmowy — dotąd żyły wyłącznie w blokach rozmowy, na wolumenie,
+  którego wykonawca świadomie nie montuje, więc ani powłoka, ani model nie miały jak do nich
+  wrócić po kompaktowaniu. Nazwy odłożonych plików trafiają do nagłówka sesji (na dysku są
+  slugiem oryginalnej nazwy). Budżet materiałów tury jest WSPÓLNY z materializerem drzwi — jedno
+  żądanie API, jeden sufit. Narzędzie jest agent-only (golden powierzchni MCP pilnuje tego wprost)
+  i **domyślnie WYŁĄCZONE** (`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL`) — jak każda bramka w tym
+  projekcie; wyłączona gasi obie strony naraz (narzędzie i odkładanie plików).
 - **Ekstrakcja HTML + komenda `workmate-extract`** (ADR 0064, pierwsza część): plik `.html`/`.htm`
   przestaje odbijać się od drzwi jako „nieobsługiwany typ" — idzie ekstraktorem (`html.parser` ze
   stdlib, bez nowej zależności), który pomija skrypty i style, wciąga `alt` obrazów i raportuje
@@ -21,10 +60,14 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
   dostaje `workmate-extract plik.pdf` na pdf/docx/xlsx/pptx/html — ten sam `document_text` co drzwi.
   `pypdf` dołożony do extra `teams-graph`, bo obraz floty nie instaluje `seed`, w którym mieszkał.
 
-### Design (ADR-y `accepted` 2026-08-14, kod jeszcze nienapisany)
-- **0064** — narzędzie `File(read|write|edit|delete)` + materializacja do następnej tury użytkownika, ekstrakcja HTML z budżetem anty-maskującym, `workmate-extract`. Pomiar ruchu (31 lip–14 sie: 4 załączniki, 0 kompaktowań) **nie** potwierdził potrzeby — narzędzie powstaje decyzją właściciela, z ponownym pomiarem po miesiącu powłoki jako warunkiem utrzymania.
-- **0065** — mutowalna baza wiedzy: kanał generyczny `File(write/edit/delete)` przez walidator notatek, sędzia-Sonnet jako obrona w głębi, werdykt `confirm` = potwierdzenie w wątku od tego samego zmapowanego nadawcy, snapshot przed każdą operacją + nocna kopia wolumenu.
-- **0066** — klasy zaufania T0–T3: etykiety T3 domyślnie ON, rozszczepienie T1/T2 opt-in za flagą ADR 0062; lepka skaza rozmowy eskaluje (sędzia + audyt), nie blokuje.
+### Uwaga wdrożeniowa
+
+ADR-y 0064/0065/0066 są zaimplementowane, ale **wszystkie ich bramki są domyślnie WYŁĄCZONE** —
+włączenie każdej to świadoma decyzja operatora (`.env` + recreate), nie skutek wdrożenia obrazu.
+Kasowanie notatek (`..._ENABLE_NOTE_DELETE`) ma dodatkowy warunek spoza kodu: **działającą nocną
+kopię wolumenu** (`systemd/workmate-backup.timer` z infry). ADR 0065 opiera na niej całą
+odwracalność, więc włączenie kasowania bez sprawdzenia kopii jest dokładnie tym, przed czym ta
+bramka ma chronić.
 
 ## [1.6.0] — 2026-08-07
 

@@ -44,6 +44,7 @@ class ConversationStore(Protocol):
         blocks: list[dict[str, Any]] | None = None,
         stop_reason: str | None = None,
         usage: TokenUsage | None = None,
+        trust: str | None = None,
     ) -> ConversationMessage:
         """Dołóż turę do rozmowy i zwróć ją (z nadanym id i znacznikiem czasu).
 
@@ -52,6 +53,17 @@ class ConversationStore(Protocol):
         ``text`` jest indeksowane w FTS; puste (tury narzędziowe) poza indeksem.
         ``usage`` (Design 2) to REALNE użycie tokenów tury asystenta (z pola ``usage``
         odpowiedzi API); ``None`` dla user/tool/legacy — do rozliczenia i bramki rolloveru.
+        ``trust`` (ADR 0066) to klasa pochodzenia tury użytkownika; ``None`` dla pozostałych
+        ról i dla drzwi bez pojęcia nadawcy — odczyt degraduje wtedy do T1.
+        """
+        ...
+
+    def mark_tainted(self, conversation_id: str, source: str) -> None:
+        """Zapal lepką skazę rozmowy (ADR 0066) — idempotentnie, źródło z PIERWSZEGO zapłonu.
+
+        Idempotencja jest tu istotna: skaza ma mówić „od kiedy i przez co", a nie „co ostatnio
+        wpadło". Nadpisywanie źródła przy każdym kolejnym pliku zamieniłoby ślad audytowy
+        w migawkę ostatniej tury i skasowało informację o początku eskalacji.
         """
         ...
 

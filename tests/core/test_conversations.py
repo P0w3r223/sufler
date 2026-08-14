@@ -107,6 +107,7 @@ class _FakeStore:
         blocks: list[dict] | None = None,
         stop_reason: str | None = None,
         usage: TokenUsage | None = None,
+        trust: str | None = None,
     ) -> ConversationMessage:
         self._msg_seq += 1
         msg = ConversationMessage(

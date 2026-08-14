@@ -184,7 +184,19 @@ class ConversationService:
                 blocks=blocks,
                 stop_reason=entry_stop,
                 usage=usage,
+                # Klasa pochodzenia (ADR 0066) dotyczy WYŁĄCZNIE tury użytkownika — model i
+                # narzędzia nie mają nadawcy do rozwiązania.
+                trust=entry.trust if isinstance(entry, UserText) else None,
             )
+
+    def is_tainted(self, conversation_id: str) -> bool:
+        """Czy do rozmowy weszła treść obca (ADR 0066) — odczyt lepkiej skazy."""
+        conv = self._store.get(conversation_id)
+        return conv.tainted if conv is not None else False
+
+    def mark_tainted(self, conversation_id: str, source: str) -> None:
+        """Zapal lepką skazę rozmowy (ADR 0066) — delegacja do magazynu."""
+        self._store.mark_tainted(conversation_id, source)
 
     def search(
         self,
@@ -254,6 +266,10 @@ def _row_of(
             {"call_id": o.call_id, "content": o.content, "is_error": o.is_error}
             for o in entry.outputs
         ]
+        # Pliki podane przez ``File`` (ADR 0064) dopisujemy do tych samych ``blocks`` w formie
+        # NEUTRALNEJ — inaczej replay z pamięci oddałby model bez materiału, o którym mówi jego
+        # własna, zapisaną turę wyżej. Rozróżnia je obecność ``call_id`` (wynik) kontra ``kind``.
+        blocks.extend(attachment_to_row(a) for a in entry.attachments)
         return "tool", "", blocks, None
     # RawTurn: odtworzona tura z pamięci — nie powinna trafić do zapisu nowej tury,
     # ale gdyby, zachowujemy jej bloki bezstratnie (pusta projekcja tekstu).

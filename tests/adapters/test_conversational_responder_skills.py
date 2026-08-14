@@ -30,6 +30,9 @@ class _HeaderRecordingRuntime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         self.headers.append(session_header)
         return AgentResult(

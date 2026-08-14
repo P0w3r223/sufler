@@ -17,6 +17,7 @@ from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AssistantTurn,
     Attachment,
+    AttachmentQueue,
     LLMResponse,
     ToolCall,
     ToolResults,
@@ -35,10 +36,12 @@ class _ScriptedLLM:
         self._responses = list(responses)
         self.transcripts: list[list] = []
         self.tools_seen: list[list[str]] = []
+        self.nonces_seen: list[str] = []
 
-    def complete(self, *, system, transcript, tools):
+    def complete(self, *, system, transcript, tools, trust_nonce=""):
         self.transcripts.append(list(transcript))
         self.tools_seen.append([t.name for t in tools])
+        self.nonces_seen.append(trust_nonce)
         return self._responses.pop(0)
 
 
@@ -204,7 +207,7 @@ def test_runtime_respects_iteration_budget():
         def __init__(self) -> None:
             self.calls = 0
 
-        def complete(self, *, system, transcript, tools):
+        def complete(self, *, system, transcript, tools, trust_nonce=""):
             self.calls += 1
             return LLMResponse(text="myślę", tool_calls=(ToolCall("t", "tool", {}),))
 
@@ -459,3 +462,74 @@ def test_runtime_audit_records_rejected_bad_arguments():
 
     # Surowe argumenty (koercja padła); rejestrator aplikacji zredaguje je w ``project_arguments``.
     assert calls == [("search_notes", {"query": "x", "nieznany": 1}, "rejected")]
+
+
+def test_runtime_attaches_queued_files_to_the_tool_results_of_that_round():
+    """Plik odłożony przez ``File`` (ADR 0064) jedzie z wynikami TEJ rundy, nie z następną turą.
+
+    Dzięki temu model widzi go w tej samej turze, w której o niego poprosił — gdyby czekał na
+    kolejną wiadomość człowieka, narzędzie byłoby bezużyteczne w rozmowie o jednym pliku.
+    """
+    queue = AttachmentQueue(budget_bytes=1000)
+
+    def podaj() -> dict:
+        queue.offer(Attachment("document", "application/pdf", "umowa.pdf", data_base64="AAAA"), 3)
+        return {"materialized": True}
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "File", {}),)),
+            LLMResponse(text="Widzę umowę."),
+        ]
+    )
+
+    AgentRuntime(llm, [_spec("File", podaj)]).run_turn("pokaż umowę", attachment_queue=queue)
+
+    (results,) = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)]
+    assert [a.name for a in results.attachments] == ["umowa.pdf"]
+    # Wynik narzędzia niesie samo potwierdzenie — bajty nie wracają jego treścią.
+    assert "AAAA" not in results.outputs[0].content
+
+
+def test_runtime_without_a_queue_behaves_exactly_as_before():
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "search_notes", {"query": "x"}),)),
+            LLMResponse(text="ok"),
+        ]
+    )
+
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 0})]).run_turn("q")
+
+    (results,) = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)]
+    assert results.attachments == ()
+
+
+def test_runtime_carries_the_trust_nonce_to_every_api_call():
+    """Bez tego przeniesienia ŻADNA koperta nie dociera do modelu — bramka włączona czy nie.
+
+    To jest szew, który czyni całą funkcję działającą, a jego wycięcie przechodziło przez cały
+    pakiet: sondy koperty badały czyste funkcje i mapowanie wołane wprost, więc łańcuch
+    drzwi → runtime → adapter nie był zamknięty żadną asercją.
+    """
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "search_notes", {"query": "x"}),)),
+            LLMResponse(text="ok"),
+        ]
+    )
+
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 0})]).run_turn(
+        "q", trust_nonce="abcd1234"
+    )
+
+    # Także w DRUGIEJ rundzie pętli narzędzi — nie tylko w pierwszym wywołaniu.
+    assert llm.nonces_seen == ["abcd1234", "abcd1234"]
+
+
+def test_runtime_without_a_nonce_passes_an_empty_one():
+    llm = _ScriptedLLM([LLMResponse(text="ok")])
+
+    AgentRuntime(llm, []).run_turn("q")
+
+    assert llm.nonces_seen == [""]
