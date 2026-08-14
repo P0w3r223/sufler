@@ -90,9 +90,11 @@ def test_empty_sender_id_is_t2():
     assert authorizer.trust_class("") == "T2"
 
 
-def test_labelling_never_refuses():
-    """Etykietowanie nie jest bramką: gość dostaje klasę, a nie wyjątek — odmowy zostają
+def test_labelling_returns_a_class_instead_of_refusing():
+    """Etykietowanie nie jest bramką: gość dostaje KLASĘ, a nie wyjątek — odmowy zostają
     w ``authorize``, żeby jedna zmiana nie zabrała botowi możliwości odpowiadania gościom."""
     authorizer = NoteReadAuthorizer(_FakeLookup({}))
 
-    assert authorizer.trust_class("ktokolwiek") in {"T1", "T2"}
+    assert authorizer.trust_class("ktokolwiek") == "T2"
+    with pytest.raises(NoteAuthorizationError):
+        authorizer.authorize("ktokolwiek")  # ta sama osoba, druga oś: zdolność ODMÓWIONA

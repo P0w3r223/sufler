@@ -604,7 +604,7 @@ def test_pre_0014_db_migrates_archived_column_and_summaries_table(tmp_path: Path
     assert store.active_summary("c1").id == rec.id
 
 
-def test_pre_0066_db_gains_taint_and_trust_columns(tmp_path):
+def test_pre_0066_db_gains_taint_columns_on_the_conversations_table(tmp_path):
     """Baza sprzed 0066 dostaje kolumny skazy i klasy zaufania migracją ADDYTYWNĄ.
 
     Skaza musi żyć NA DYSKU, nie w pamięci procesu: recreate kontenera (a ten w tej flocie

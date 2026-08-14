@@ -17,6 +17,8 @@ w testach).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import secrets
 import threading
@@ -69,10 +71,17 @@ if TYPE_CHECKING:
 # wiadomości w środku rozmowy, więc podsumowanie idzie jako treść użytkownika z tym nagłówkiem.
 _SUMMARY_PREFIX = "[Podsumowanie wcześniejszej rozmowy]"
 
-# Narzędzia, których WYNIK niesie treść pisaną przez osoby spoza pionu (ADR 0066): komentarze,
-# opisy issue/PR i wyjście powłoki. `Notes`/`Jira`/`Schedule` tu NIE są — czytają treść zza
-# bramek zdolności, więc skaziłyby każdą rozmowę i zamieniły sygnał w szum.
-_TAINTING_TOOLS = frozenset({"GitHub", "Bash", "File"})
+# Narzędzia, których WYNIK niesie treść spoza bramek zdolności (ADR 0066): komentarze i opisy
+# z GitHuba, wyjście powłoki oraz pliki katalogu roboczego. `Notes`/`Jira`/`Schedule` tu NIE są —
+# czytają treść zza bramek, więc skaziłyby każdą rozmowę i zamieniły sygnał w szum.
+#
+# ``read_file``/``list_files`` są na liście, choć brzmią niewinnie: katalog roboczy trzyma
+# ODŁOŻONE ZAŁĄCZNIKI (ADR 0064) i przeżywa rollover, bo jest per (kanał, wątek). Bez nich
+# ścieżka „załącznik w rozmowie A → rollover → `read_file` w czystej rozmowie B" wciągałaby tę
+# samą zatrutą treść do rozmowy oznaczonej jako czysta — a `Bash` i `File` w tym samym
+# scenariuszu skażają. Nazwy pilnuje sonda wiążąca ten zbiór z realnym katalogiem narzędzi;
+# bez niej zmiana nazwy narzędzia po cichu gasiłaby wyzwalacz.
+_TAINTING_TOOLS = frozenset({"GitHub", "Bash", "File", "read_file", "list_files"})
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +268,10 @@ class ConversationalResponder:
         # mapy tożsamości i nikogo nie degradują: plik jest plikiem niezależnie od tego, kto go
         # przysłał. Stąd osobna bramka, a nie jedna wspólna.
         self._trust_labels = trust_labels
+        # Sekret nonce'a: losowany RAZ przy składaniu drzwi, żyje tylko w pamięci procesu.
+        # Nie zapisujemy go — nonce ma być nieprzewidywalny z treści, a nie trwały; restart
+        # odświeża wszystkie znaczniki i to jest cecha, nie wada.
+        self._nonce_secret = secrets.token_bytes(32)
         # Fabryka narzędzia ODPOWIEDZI W WĄTKU (ADR 0024, Faza 3b); ``None`` → brak (inne drzwi).
         # Z ``external_id`` (``team/channel/root``) odczytuje cel wątku i wstrzykuje scoped
         # ``reply_on_thread`` z PRE-ZWIĄZANYM numerem — model nie przekieruje na inne issue.
@@ -418,7 +431,7 @@ class ConversationalResponder:
             conversation_id, history, rolled_over = self._conversations.prepare_turn(
                 self._channel, external_id, message.text, now=now
             )
-        transcript = self._build_transcript(conversation_id, history, rolled_over)
+        transcript = self._build_transcript(conversation_id, external_id, history, rolled_over)
         # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
         # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
         scope = WorkspaceScope(self._channel, external_id)
@@ -540,9 +553,15 @@ class ConversationalResponder:
                 # Fail-closed: nie umiemy rozstrzygnąć, kto pisze → traktujemy słowa jak dane.
                 logger.warning("Nie rozstrzygnąłem klasy nadawcy %r — T2", message.sender_id)
                 trust = "T2"
-        # Nonce koperty: LOSOWY NA TURĘ i nigdy z treści. Stały znacznik dałoby się podrobić
-        # plikiem, który sam zawiera znacznik zamykający.
-        trust_nonce = secrets.token_hex(4) if self._trust_labels else ""
+        # Skaza z faktów ZNANYCH PRZED turą (ADR 0066). Rozdzielenie na dwie połowy nie jest
+        # kosmetyką: załącznik ląduje na dysku rozmowy PRZED wywołaniem modelu, więc gdyby
+        # cała skaza czekała na wynik tury, błąd API w pętli narzędzi zostawiałby zatruty
+        # plik w katalogu i rozmowę oznaczoną jako czysta.
+        if message.attachments:
+            self._mark_taint(conversation_id, "attachment")
+        elif trust == "T2":
+            self._mark_taint(conversation_id, "guest")
+        trust_nonce = self._trust_nonce(external_id)
         # Rejestrator audytu (ADR 0067) domknięty PER TURĘ: pseudonim nadawcy/rozmowy liczony raz,
         # klasa zaufania z osi pochodzenia. ``None`` → audyt wyłączony. Runtime woła go dla
         # każdego tool-calla; rejestrator jest best-effort (nie wywróci tury).
@@ -575,10 +594,8 @@ class ConversationalResponder:
             trust_nonce=trust_nonce,
             trust=trust,
         )
-        # Lepka skaza (ADR 0066) — PO turze, bo dopiero teraz wiadomo, po co model sięgnął.
-        # Skaza nie blokuje niczego; zapala się, żeby operacja konsekwentna w tej rozmowie
-        # poszła później przez sędziego (ADR 0065) i wylądowała w audycie z klasą tury.
-        self._mark_taint(conversation_id, message, trust, result)
+        # Druga połowa skazy: to, co wiadomo dopiero PO turze — po co model sięgnął.
+        self._mark_taint_from_tools(conversation_id, result)
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
         with self._store_lock:
@@ -608,6 +625,7 @@ class ConversationalResponder:
     def _build_transcript(
         self,
         conversation_id: str,
+        external_id: str,
         history: list[ConversationMessage],
         rolled_over: bool,
     ) -> list[TranscriptEntry]:
@@ -622,52 +640,61 @@ class ConversationalResponder:
         if self._compaction is None:
             return _to_transcript(history)
         if not rolled_over:
-            self._compaction.maybe_compact(conversation_id)
+            # Nonce tej ROZMOWY, nie tury — streszczacz ma dostać historię w kopercie
+            # (ADR 0066), inaczej pierze treść obcą na prozę instrukcyjną.
+            self._compaction.maybe_compact(
+                conversation_id, trust_nonce=self._trust_nonce(external_id)
+            )
         with self._store_lock:
             replay = self._conversations.replay_messages(conversation_id)
             summary = self._conversations.active_summary(conversation_id)
         return _to_transcript_with_summary(summary, replay)
 
-    def _mark_taint(
-        self,
-        conversation_id: str,
-        message: InboundMessage,
-        trust: TrustClass,
-        result: AgentResult,
-    ) -> None:
-        """Zapal skazę, jeśli do TEJ tury weszła treść obca — pierwsze źródło wygrywa.
+    def _trust_nonce(self, external_id: str) -> str:
+        """Nonce koperty (ADR 0066): stały w obrębie ROZMOWY, nieprzewidywalny z treści.
 
-        Zbiór wyzwalaczy jest wąski ROZMYŚLNIE (ADR 0066 R2): gdyby skaziło wszystko, sygnał
-        nie znaczyłby nic. Odczyt notatek i zdarzeń własnego pionu typowanymi narzędziami NIE
-        skaża — to treść zza bramek zdolności. Skażają: załącznik, plik podany przez ``File``,
-        tura nadawcy, który się nie rozwiązał, oraz treści z GitHuba (komentarze i opisy pisze
-        ktokolwiek, a mapa tożsamości nie zna dziś loginów GitHuba, więc autora nie umiemy
-        podnieść ponad T3).
+        Był losowany na turę i to psuło cache: żądanie niesie całą historię, więc gdyby każdy
+        opakowany wynik narzędzia miał w kolejnej turze inne bajty, wspólny prefiks urywałby się
+        na pierwszym z nich i praktycznie cały kontekst szedłby po pełnej cenie wejścia. Stały
+        w rozmowie nonce zachowuje własność, która jest tu istotna — treść go nie zna, bo
+        wywodzi się z sekretu wylosowanego przy starcie procesu, a nie z niczego, co czytamy.
 
-        Best-effort: nieudany zapis skazy nie może zabrać użytkownikowi odpowiedzi, która
-        właśnie powstała — ale idzie do logu, bo cicha utrata skazy to cicha utrata eskalacji.
+        Cena: gdyby model wypisał znacznik w odpowiedzi na kanał, nonce byłby odtąd widoczny dla
+        uczestników TEJ rozmowy. Przyjęte świadomie — ADR 0066 mówi wprost, że etykieta nie jest
+        granicą bezpieczeństwa, więc płacenie za jej hartowanie kosztem każdej tury byłoby złym
+        kursem. Sekret ginie z procesem, więc restart i tak odświeża wszystkie nonce.
         """
-        if self._conversations is None:  # pragma: no cover — obrona przed refaktorem
-            return
-        source = ""
-        if message.attachments:
-            source = "attachment"
-        elif trust == "T2":
-            source = "guest"
-        elif any(
-            call.name in _TAINTING_TOOLS
-            for entry in result.entries
-            if isinstance(entry, AssistantTurn)
-            for call in entry.tool_calls
-        ):
-            source = "tool"
-        if not source:
-            return
+        if not self._trust_labels:
+            return ""
+        return hmac.new(
+            self._nonce_secret, external_id.encode("utf-8"), hashlib.sha256
+        ).hexdigest()[:16]
+
+    def _mark_taint(self, conversation_id: str, source: str) -> None:
+        """Zapal skazę best-effort — nieudany zapis nie może zabrać użytkownikowi odpowiedzi.
+
+        Idzie do logu, bo cicha utrata skazy to cicha utrata eskalacji.
+        """
         try:
             with self._store_lock:
                 self._conversations.mark_tainted(conversation_id, source)
         except Exception:
             logger.warning("Nie zapisałem skazy rozmowy %r (źródło %s)", conversation_id, source)
+
+    def _mark_taint_from_tools(self, conversation_id: str, result: AgentResult) -> None:
+        """Skaza z tego, po co model sięgnął w tej turze (znane dopiero PO turze).
+
+        Zbiór wyzwalaczy jest wąski ROZMYŚLNIE (ADR 0066 R2): gdyby skaziło wszystko, sygnał
+        nie znaczyłby nic. Odczyt notatek i zdarzeń własnego pionu typowanymi narzędziami NIE
+        skaża — to treść zza bramek zdolności.
+        """
+        if any(
+            call.name in _TAINTING_TOOLS
+            for entry in result.entries
+            if isinstance(entry, AssistantTurn)
+            for call in entry.tool_calls
+        ):
+            self._mark_taint(conversation_id, "tool")
 
     def _thread_link(self, external_id: str) -> tuple[str, int] | None:
         """Powiązanie wątku z issue/PR albo ``None`` — opcjonalne wzbogacenie nagłówka.

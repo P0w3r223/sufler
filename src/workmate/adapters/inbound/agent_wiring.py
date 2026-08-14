@@ -820,10 +820,15 @@ def build_conversational_responder(
         trust_labels=trust_labels,
         # Rozszczepienie T1/T2 jedzie za bramką 0062, bo obie zależą od kompletności mapy:
         # ten sam autoryzator, jedno rozwiązanie tożsamości na turę (ADR 0066 R4).
+        #
+        # Warunek to SAMA obecność autoryzatora — NIE ``notes_read_gated``. Tamten niesie
+        # dodatkowo ``shell_factory is None``, bo z powłoką typowane narzędzia odczytu i tak
+        # nie wchodzą do katalogu. Pochodzenie treści nie ma z tym nic wspólnego: pod tamtym
+        # warunkiem rozszczepienie WYGASAŁO po cichu przy włączonej powłoce — czyli dokładnie
+        # w układzie docelowym — a tekst gościa wracał do rangi instrukcji i audyt notował
+        # „unknown". Splątanie dwóch niezależnych warunków w jednej nazwie.
         sender_trust=(
-            note_read_authorizer.trust_class
-            if notes_read_gated and note_read_authorizer is not None
-            else None
+            note_read_authorizer.trust_class if note_read_authorizer is not None else None
         ),
         file_catalog_factory=file_factory,
         attachment_stager=attachment_stager,

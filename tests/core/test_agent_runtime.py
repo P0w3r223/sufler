@@ -36,10 +36,12 @@ class _ScriptedLLM:
         self._responses = list(responses)
         self.transcripts: list[list] = []
         self.tools_seen: list[list[str]] = []
+        self.nonces_seen: list[str] = []
 
     def complete(self, *, system, transcript, tools, trust_nonce=""):
         self.transcripts.append(list(transcript))
         self.tools_seen.append([t.name for t in tools])
+        self.nonces_seen.append(trust_nonce)
         return self._responses.pop(0)
 
 
@@ -501,3 +503,33 @@ def test_runtime_without_a_queue_behaves_exactly_as_before():
 
     (results,) = [e for e in llm.transcripts[1] if isinstance(e, ToolResults)]
     assert results.attachments == ()
+
+
+def test_runtime_carries_the_trust_nonce_to_every_api_call():
+    """Bez tego przeniesienia ŻADNA koperta nie dociera do modelu — bramka włączona czy nie.
+
+    To jest szew, który czyni całą funkcję działającą, a jego wycięcie przechodziło przez cały
+    pakiet: sondy koperty badały czyste funkcje i mapowanie wołane wprost, więc łańcuch
+    drzwi → runtime → adapter nie był zamknięty żadną asercją.
+    """
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "search_notes", {"query": "x"}),)),
+            LLMResponse(text="ok"),
+        ]
+    )
+
+    AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 0})]).run_turn(
+        "q", trust_nonce="abcd1234"
+    )
+
+    # Także w DRUGIEJ rundzie pętli narzędzi — nie tylko w pierwszym wywołaniu.
+    assert llm.nonces_seen == ["abcd1234", "abcd1234"]
+
+
+def test_runtime_without_a_nonce_passes_an_empty_one():
+    llm = _ScriptedLLM([LLMResponse(text="ok")])
+
+    AgentRuntime(llm, []).run_turn("q")
+
+    assert llm.nonces_seen == [""]

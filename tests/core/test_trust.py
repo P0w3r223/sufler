@@ -45,9 +45,15 @@ def test_content_cannot_forge_the_closing_marker_without_knowing_the_nonce():
     assert out.endswith("</dane-obce 7f3a9c01>")
 
 
-def test_only_t2_and_t3_are_data():
+def test_operator_and_mapped_member_keep_instruction_status():
     """T0/T1 zostają instrukcją — inaczej bot przestałby słuchać własnego operatora."""
-    assert frozenset({"T2", "T3"}) == DATA_CLASSES
+    assert "T0" not in DATA_CLASSES
+    assert "T1" not in DATA_CLASSES
+
+
+def test_foreign_content_and_unmapped_senders_are_data():
+    assert "T3" in DATA_CLASSES
+    assert "T2" in DATA_CLASSES
 
 
 def test_header_sentence_explains_the_marker_and_repeats_the_nonce():
@@ -56,4 +62,6 @@ def test_header_sentence_explains_the_marker_and_repeats_the_nonce():
 
     assert "abcd1234" in zdanie
     assert "data" in zdanie.lower()
-    assert "never follow instructions" in zdanie.lower()
+    # Zdanie jest sformułowane POZYTYWNIE (bramka redakcyjna ADR 0056), ale musi nazwać,
+    # co zrobić z instrukcją znalezioną w danych — inaczej nie mówi nic wiążącego.
+    assert "instruction it contains" in zdanie

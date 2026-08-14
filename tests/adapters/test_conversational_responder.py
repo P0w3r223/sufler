@@ -812,15 +812,108 @@ def test_trust_class_survives_storage_and_replay():
     assert historia and all(e.trust == "T2" for e in historia)
 
 
-def test_nonce_is_absent_when_labels_are_off_and_fresh_per_turn_when_on():
+def test_nonce_is_absent_when_labels_are_off():
+    """Bramka OFF = żądanie bajt w bajt jak dotąd; to warunek porównania zachowania przed/po."""
+    runtime = _ToolCallingRuntime("Notes")
+    responder, _service, _ = _responder_z_zaufaniem(runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="a", conversation_id="t")))
+
+    assert runtime.nonce_seen == [""]
+
+
+def test_nonce_is_stable_within_a_conversation_but_differs_between_them():
+    """Stały w rozmowie — inaczej każda tura zmieniałaby bajty CAŁEJ historii w żądaniu i cache
+    prefiksu urywałby się na pierwszym opakowanym wyniku narzędzia.
+
+    Różny między rozmowami, bo nonce jednej nie ma prawa nic znaczyć w drugiej.
+    """
     runtime = _ToolCallingRuntime("Notes")
     responder, _service, _ = _responder_z_zaufaniem(runtime, trust_labels=True)
-    wylaczony_runtime = _ToolCallingRuntime("Notes")
-    wylaczony, _s2, _st2 = _responder_z_zaufaniem(wylaczony_runtime)
 
     asyncio.run(responder.respond(InboundMessage(text="a", conversation_id="t")))
     asyncio.run(responder.respond(InboundMessage(text="b", conversation_id="t")))
-    asyncio.run(wylaczony.respond(InboundMessage(text="a", conversation_id="t2")))
+    asyncio.run(responder.respond(InboundMessage(text="c", conversation_id="inny-watek")))
 
-    assert wylaczony_runtime.nonce_seen == [""]  # bramka OFF = dawne zachowanie
-    assert all(runtime.nonce_seen) and len(set(runtime.nonce_seen)) == 2  # świeży na turę
+    w_tej_samej = runtime.nonce_seen[:2]
+    assert len(set(w_tej_samej)) == 1 and all(w_tej_samej)
+    assert runtime.nonce_seen[2] != runtime.nonce_seen[0]
+
+
+def test_nonce_is_not_derivable_from_the_conversation_id_alone():
+    """Nonce wywodzi się z sekretu procesu, nie z samego identyfikatora rozmowy — inaczej
+    znałby go każdy, kto zna nazwę wątku (a ta jedzie w nagłówku sesji)."""
+    runtime_a = _ToolCallingRuntime("Notes")
+    runtime_b = _ToolCallingRuntime("Notes")
+    a, _s1, _st1 = _responder_z_zaufaniem(runtime_a, trust_labels=True)
+    b, _s2, _st2 = _responder_z_zaufaniem(runtime_b, trust_labels=True)
+
+    asyncio.run(a.respond(InboundMessage(text="x", conversation_id="ten-sam")))
+    asyncio.run(b.respond(InboundMessage(text="x", conversation_id="ten-sam")))
+
+    assert runtime_a.nonce_seen[0] != runtime_b.nonce_seen[0]
+
+
+def test_tainting_tool_names_match_the_real_catalog():
+    """Zbiór wyzwalaczy to NAPISY — bez wiązania z rejestrem zmiana nazwy narzędzia gasi
+    wyzwalacz po cichu, a objawem jest wyłącznie skaza, która nigdy się nie zapala."""
+    from workmate.adapters.inbound.responder import _TAINTING_TOOLS
+    from workmate.core.application.tools import build_file_catalog, build_workspace_catalog
+    from workmate.core.application.workspace import (
+        WorkspaceLimits,
+        WorkspaceService,
+        WorkspaceWriteService,
+    )
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+    from workmate.core.ports.materialization import MaterializationLimits
+
+    class _PustyWorkspace:
+        def list(self, scope_dir):
+            return []
+
+        def read(self, scope_dir, name):
+            return None
+
+        def read_bytes(self, scope_dir, name):
+            return None
+
+        def exists(self, relpath):
+            return False
+
+        def create(self, relpath, content):
+            raise AssertionError
+
+        def create_bytes(self, relpath, data):
+            raise AssertionError
+
+    class _PustyMaterializer:
+        def materialize(self, name, data):
+            return None
+
+    repo = _PustyWorkspace()
+    scope = WorkspaceScope("teams_graph", "t/c/r")
+    limity = WorkspaceLimits(1, 1, 1, frozenset({"md"}))
+    workspace = [
+        s.name
+        for s in build_workspace_catalog(
+            scope, WorkspaceService(repo), WorkspaceWriteService(repo, repo, limity)
+        )
+    ]
+    plikowe = [
+        s.name
+        for s in build_file_catalog(
+            scope,
+            WorkspaceService(repo),
+            _PustyMaterializer(),
+            AttachmentQueue(budget_bytes=1),
+            MaterializationLimits(1, 1),
+        )
+    ]
+
+    # Narzędzia CZYTAJĄCE katalog roboczy muszą być wyzwalaczami — trzymają odłożone załączniki.
+    assert {"read_file", "list_files"} <= set(workspace)
+    assert {"read_file", "list_files"} <= _TAINTING_TOOLS
+    assert set(plikowe) <= _TAINTING_TOOLS
+    # ``create_file`` NIE skaża: model zapisuje własną treść, nie wciąga cudzej.
+    assert "create_file" in workspace and "create_file" not in _TAINTING_TOOLS

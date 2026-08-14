@@ -92,7 +92,10 @@ _SCHEMA = (
         external_id TEXT NOT NULL,
         status      TEXT NOT NULL,
         created_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-        updated_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        updated_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        tainted     INTEGER NOT NULL DEFAULT 0,
+        first_tainted_at TEXT,
+        taint_source     TEXT
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_conv_lookup ON conversations(channel, external_id, status);",
