@@ -19,6 +19,12 @@ import yaml
 
 _CI = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 
+# Ten sam wzorzec co w `tests/test_version_consistency.py`: pakiet biegnie także WEWNĄTRZ obrazu
+# (etap `test` Dockerfile'a), a obraz nie wozi konfiguracji CI — bez tej bramki cała ta grupa
+# wywracała budowanie obrazu na `FileNotFoundError` przy kolekcji. Sondy mają sens tylko tam,
+# gdzie jest pełne repozytorium, czyli w jobie „Bramka jakości".
+pytestmark = pytest.mark.skipif(not _CI.is_file(), reason=".github/ nie wjeżdża do obrazu")
+
 # Kroki, których wynik jest osobną informacją o jakości — żaden nie może przepaść przez to,
 # że wcześniejszy był czerwony.
 _BRAMKI = (

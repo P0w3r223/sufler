@@ -23,10 +23,20 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 _KORZEN = Path(__file__).resolve().parents[2]
 _PYPROJECT = _KORZEN / "pyproject.toml"
 _PYTHON_VERSION = _KORZEN / ".python-version"
 _DOCKERFILE = _KORZEN / "deploy" / "docker" / "Dockerfile"
+
+# Jak w `tests/test_version_consistency.py`: pakiet biegnie też WEWNĄTRZ obrazu, a ani
+# `.python-version`, ani `deploy/` tam nie wjeżdżają. Wiązanie deklaracji z tymi plikami ma sens
+# wyłącznie w pełnym repozytorium — w obrazie nie ma z czym porównywać.
+pytestmark = pytest.mark.skipif(
+    not (_PYTHON_VERSION.is_file() and _DOCKERFILE.is_file()),
+    reason=".python-version i deploy/ nie wjeżdżają do obrazu",
+)
 
 _OBRAZ_PYTHONA = re.compile(r"^FROM\s+python:(\d+\.\d+)", re.M)
 

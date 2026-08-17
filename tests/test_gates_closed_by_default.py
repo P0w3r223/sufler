@@ -293,6 +293,14 @@ def _aktywne_bramki_w_szablonie(sciezka: Path) -> dict[str, str]:
     return otwarte
 
 
+@pytest.mark.skipif(
+    not (_KORZEN / "deploy" / "docker" / "Dockerfile").is_file(),
+    # Pakiet biegnie też WEWNĄTRZ obrazu (etap `test`), a szablony konfiguracji tam nie wjeżdżają —
+    # obraz nie wozi `.env.example` ani `deploy/`. Wskaźnikiem „to pełne repozytorium" jest
+    # Dockerfile, tak samo jak w `tests/test_version_consistency.py`. Dzięki temu asercja niżej
+    # („brak szablonu") zostaje twardym błędem tam, gdzie szablon MA być, zamiast cichnąć wszędzie.
+    reason="szablony konfiguracji nie wjeżdżają do obrazu",
+)
 @pytest.mark.parametrize("szablon", _SZABLONY, ids=lambda p: p.name)
 def test_szablon_konfiguracji_nie_otwiera_zadnej_bramki(szablon: Path) -> None:
     """Trzecia droga otwarcia bramki: skopiowany szablon.
