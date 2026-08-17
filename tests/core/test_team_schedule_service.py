@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -127,3 +127,61 @@ def test_schedule_maps_times_off_with_translated_reason() -> None:
         date_from="2026-08-01", date_to="2026-08-10"
     )
     assert result["times_off"][0]["reason"] == "Urlop"
+
+
+# --- Sufit wpisów: cisza o przycięciu robiła z odpowiedzi wewnętrzną sprzeczność ---
+
+
+def _duzo_zmian(ile: int) -> list[dict]:
+    """Tyle zmian jednej osoby, ile trzeba, żeby przekroczyć sufit odpowiedzi."""
+    return [
+        {
+            "userId": "U1",
+            "sharedShift": {
+                "startDateTime": f"2026-08-{1 + i % 28:02d}T{i % 12:02d}:00:00Z",
+                "endDateTime": f"2026-08-{1 + i % 28:02d}T{(i % 12) + 1:02d}:00:00Z",
+            },
+        }
+        for i in range(ile)
+    ]
+
+
+def test_schedule_SIGNALS_that_the_result_was_cut_instead_of_cutting_it_silently() -> None:
+    """Ciche przycięcie robiło z dwóch pól tej samej odpowiedzi wzajemną sprzeczność.
+
+    ``people_without_entries`` liczy się z PEŁNYCH list, więc osoba mająca same wpisy poza
+    sufitem nie pojawiała się ani w `shifts`, ani wśród „bez wpisów" — model dostawał wycinek
+    bez żadnego znaku, że to wycinek, i przedstawiał go jako całość grafiku.
+    """
+    from workmate.core.application.team_schedule import _MAX_ENTRIES
+
+    result = _service(shifts=_duzo_zmian(_MAX_ENTRIES + 25)).schedule(
+        date_from="2026-08-01", date_to="2026-08-28"
+    )
+
+    assert len(result["shifts"]) == _MAX_ENTRIES
+    assert result["truncated"] is True
+    assert result["omitted_entries"] == 25
+
+
+def test_schedule_that_fits_is_NOT_flagged_as_truncated() -> None:
+    """Flaga ma znaczyć „coś ucięto", a nie „grafik jest duży" — inaczej model ostrzega zawsze."""
+    result = _service(shifts=_duzo_zmian(3)).schedule(date_from="2026-08-01", date_to="2026-08-28")
+
+    assert result["truncated"] is False
+    assert result["omitted_entries"] == 0
+
+
+def test_the_clock_is_INJECTED_so_the_current_week_is_testable() -> None:
+    """„Bieżący tydzień" jest funkcją chwili — rdzeń nie ma po nią sięgać sam (jak ``worklog``)."""
+
+    service = TeamScheduleService(
+        _FakeScheduleRead(),
+        team_id="team-1",
+        tz="Europe/Warsaw",
+        now=lambda: datetime(2026, 8, 5, 12, 0, tzinfo=UTC),  # środa
+    )
+
+    result = service.schedule(week="current")
+
+    assert result["range"] == {"from": "2026-08-03", "to": "2026-08-09"}

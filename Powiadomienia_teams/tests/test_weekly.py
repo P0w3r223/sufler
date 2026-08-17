@@ -8,42 +8,42 @@ WAW = ZoneInfo("Europe/Warsaw")
 
 def test_next_sunday_from_midweek():
     now = datetime(2026, 7, 14, 10, 0, tzinfo=WAW)  # wtorek
-    r = next_run(now, tz=WAW)
+    r = next_run(now, tz=WAW, weekday=6)
     assert (r.year, r.month, r.day, r.hour, r.minute) == (2026, 7, 19, 16, 0)
     assert r.weekday() == 6
 
 
 def test_same_sunday_before_hour():
     now = datetime(2026, 7, 19, 15, 0, tzinfo=WAW)
-    r = next_run(now, tz=WAW)
+    r = next_run(now, tz=WAW, weekday=6)
     assert r.day == 19 and r.hour == 16
 
 
 def test_sunday_exactly_at_hour_rolls_forward():
     now = datetime(2026, 7, 19, 16, 0, tzinfo=WAW)
-    r = next_run(now, tz=WAW)
+    r = next_run(now, tz=WAW, weekday=6)
     assert r.day == 26
 
 
 def test_sunday_after_hour_goes_next_week():
     now = datetime(2026, 7, 19, 17, 0, tzinfo=WAW)
-    r = next_run(now, tz=WAW)
+    r = next_run(now, tz=WAW, weekday=6)
     assert r.day == 26
 
 
 def test_now_in_utc_is_converted():
     now = datetime(2026, 7, 14, 8, 0, tzinfo=timezone.utc)  # 10:00 w Warszawie
-    r = next_run(now, tz=WAW)
+    r = next_run(now, tz=WAW, weekday=6)
     assert (r.month, r.day, r.hour) == (7, 19, 16)
 
 
 def test_dst_summer_offset_is_plus_two():
-    r = next_run(datetime(2026, 8, 1, 12, 0, tzinfo=WAW), tz=WAW)
+    r = next_run(datetime(2026, 8, 1, 12, 0, tzinfo=WAW), tz=WAW, weekday=6)
     assert r.utcoffset() == timedelta(hours=2)
 
 
 def test_dst_winter_offset_is_plus_one():
-    r = next_run(datetime(2026, 12, 1, 12, 0, tzinfo=WAW), tz=WAW)
+    r = next_run(datetime(2026, 12, 1, 12, 0, tzinfo=WAW), tz=WAW, weekday=6)
     assert r.utcoffset() == timedelta(hours=1)
 
 
@@ -88,3 +88,23 @@ def test_week_windows_from_friday_targets_next_working_week():
     assert target.date().isoformat() == "2026-07-20"  # następny tydzień = cel
     assert target_end.date().isoformat() == "2026-07-27"
     assert target.weekday() == 0  # poniedziałek
+
+
+def test_domyslny_termin_modulu_zgadza_sie_z_ustawieniami():
+    """Domyślne `weekday`/`hour` MUSZĄ odpowiadać `Settings` — inaczej moduł kłamie.
+
+    Docstring i domyślne `weekday=6` mówiły „niedziela 16:00", czyli konfigurację, której
+    walidacja krzyżowa `Settings.validate` nie przepuszcza przy domyślnym oknie wysyłki (pn–pt).
+    Jedynym źródłem prawdy jest `Settings`; te domyślne są wygodą testów kalendarzowych i nie
+    wolno im się z nim rozjechać.
+    """
+    import inspect
+
+    from powiadomienia_teams.config import Settings
+
+    domyslne = Settings(client_id="c", tenant_id="t", team_id="T")
+    for funkcja in (next_run, previous_run):
+        podpis = inspect.signature(funkcja).parameters
+        assert podpis["weekday"].default == domyslne.run_weekday, funkcja.__name__
+        assert podpis["hour"].default == domyslne.run_hour, funkcja.__name__
+        assert podpis["minute"].default == domyslne.run_minute, funkcja.__name__

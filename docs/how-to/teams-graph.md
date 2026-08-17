@@ -64,7 +64,7 @@ $env:WORKMATE_GITHUB_ENABLE_WRITE = "true"
 uv run workmate-teams-graph
 ```
 
-Agent dostanie akcje `GitHub(action='create_issue')` i `GitHub(action='comment')` (create-only;
+Agent dostanie akcje `Activity(action='create_issue')` i `Activity(action='comment')` (create-only;
 owner/repo z konfiguracji). W wątku powiązanym z issue/PR `comment` trafia w ten numer BEZ podawania
 go przez model (mapa `ThreadLinkStore`) i **wymaga**, by drzwi
 `workmate-github` biegły z `ENABLE_CHANNEL_THREADING=true` na wspólnym `events.db` i tej samej parze

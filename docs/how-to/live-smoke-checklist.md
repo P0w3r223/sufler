@@ -90,7 +90,7 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 
 - **Krok:** ustaw `WORKMATE_GITHUB_TOKEN`/`_OWNER`/`_REPO`, uruchom `uv run workmate-github`;
   utwórz ręcznie issue w repo. Podejrzyj `~/.workmate/events.db` (np. przez agenta akcją
-  `GitHub(action='events')` na drzwiach Teams).
+  `Activity(action='events')` na drzwiach Teams).
 - **Oczekiwane:** issue pojawia się jako zdarzenie `source="github", kind="issue_opened"`;
   ponowny poll go NIE dubluje (dedup), a issue utworzone kontem PAT jest pomijane (self-skip).
 

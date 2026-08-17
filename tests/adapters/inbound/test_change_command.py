@@ -125,3 +125,67 @@ def test_pdf_delivery_failure_degrades_to_text():
     assert reply is not None
     assert reply.startswith("TREŚĆ")
     assert "Nie udało się wysłać PDF" in reply
+
+
+# --- bramka odczytu bazy wiedzy (ADR 0062) -------------------------------------
+
+
+class _StubReadAuthz:
+    """Atrapa ``NoteReadAuthorizer``: przepuszcza znane AAD id, resztę odrzuca (fail-closed)."""
+
+    def __init__(self, allowed: set[str]) -> None:
+        self._allowed = allowed
+
+    def authorize(self, requester_aad_id: str) -> None:
+        from workmate.core.errors import NoteAuthorizationError
+
+        if requester_aad_id not in self._allowed:
+            raise NoteAuthorizationError("nierozpoznany nadawca (stub, ADR 0062)")
+
+
+def _gated_router(allowed: set[str]) -> tuple[ChangeDigestRouter, _FakeService]:
+    service = _FakeService("PRZEGLĄD ZMIAN CAŁEGO PIONU")
+    router = ChangeDigestRouter(  # type: ignore[arg-type]
+        service, read_authorizer=_StubReadAuthz(allowed)
+    )
+    return router, service
+
+
+def test_digest_is_refused_for_an_unrecognized_sender():
+    """Regresja ADR 0062: digest odpalał się PRZED jakąkolwiek autoryzacją.
+
+    Zdarzenia same w sobie nie są bazą wiedzy (``GitHub(action='events')`` zostaje otwarty —
+    decyzja właściciela, ADR 0062 amendment), ale ta dyrektywa jest ODPOWIEDZIĄ DRZWI składaną
+    poza turą agenta i streszcza aktywność wszystkich projektów pionu.
+    """
+    router, service = _gated_router(allowed=set())
+
+    out = router.dispatch(
+        "@WorkMate co się zmieniło od 2026-07-01",
+        ChangeDigestContext(external_id=_EID, mentions_bot=True, sender_id="aad-obcy"),
+    )
+
+    assert out is not None
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out
+    assert service.asked == []  # fail-closed: zdarzeń nawet nie foldowaliśmy
+
+
+def test_digest_runs_for_a_recognized_member():
+    router, service = _gated_router(allowed={"aad-ok"})
+
+    out = router.dispatch(
+        "@WorkMate co się zmieniło od 2026-07-01",
+        ChangeDigestContext(external_id=_EID, mentions_bot=True, sender_id="aad-ok"),
+    )
+
+    assert out == "PRZEGLĄD ZMIAN CAŁEGO PIONU"
+    assert service.asked == [date(2026, 7, 1)]
+
+
+def test_digest_without_authorizer_behaves_as_before():
+    router, service = _router()
+
+    out = router.dispatch("@WorkMate co się zmieniło od 2026-07-01", _ctx())
+
+    assert out == "DIGEST"
+    assert service.asked == [date(2026, 7, 1)]

@@ -95,9 +95,9 @@ def test_bridge_catalog_gate_off_yields_no_thread_factory():
     # Od kroku 5.2 (ADR 0009) to JEDNO narzędzie: odczyt zdarzeń, podsumowanie aktywności projektu
     # (ADR 0029) i propozycja czasu z commitów (ADR 0034) są jego akcjami. Zapis GitHub OFF, więc
     # akcje mutujące nie istnieją w schemacie — bramka siedzi w `Literal`, nie w ciele funkcji.
-    assert [spec.name for spec in catalog] == ["GitHub"]
+    assert [spec.name for spec in catalog] == ["Activity"]
     akcje = str(catalog[0].fn.__annotations__["action"])
-    assert "events" in akcje and "activity" in akcje and "worklog" in akcje
+    assert "events" in akcje and "summary" in akcje and "worklog" in akcje
     assert "create_issue" not in akcje and "comment" not in akcje
 
 
@@ -114,7 +114,7 @@ def test_file_reply_factory_on_yields_scoped_reply_with_file_tool():
     settings = TeamsGraphSettings(enable_file_reply=True, max_file_reply_kb=256)
     factory = _build_file_reply_factory(settings, lambda: "tok")
     assert factory is not None
-    assert [spec.name for spec in factory("team-1/chan-1/root-9")] == ["reply_with_file"]
+    assert [spec.name for spec in factory("team-1/chan-1/root-9")] == ["ReplyWithFile"]
     # Źle uformowany external_id (nie 3 części) → pusta lista, bez wyjątku (jak fabryka GitHub).
     assert factory("u1") == []
 
@@ -140,7 +140,7 @@ def test_user_push_factory_on_yields_scoped_send_image_tool():
     factory = _build_user_push_factory(settings, lambda: "tok")
     assert factory is not None
     # Klucz to sender_id (AAD id nadawcy), NIE external_id wątku — narzędzie dla realnego nadawcy.
-    assert [spec.name for spec in factory("u-anna-aad")] == ["send_image_to_user"]
+    assert [spec.name for spec in factory("u-anna-aad")] == ["SendImage"]
     # Pusty sender_id (drzwi bez pojęcia nadawcy) → brak celu → pusta lista, bez wyjątku.
     assert factory("") == []
 
@@ -165,17 +165,15 @@ def test_user_doc_push_factory_on_yields_scoped_send_document_tool():
     )
     factory = _build_user_doc_push_factory(settings, lambda: "tok")
     assert factory is not None
-    assert [spec.name for spec in factory("u-anna-aad")] == ["send_document_to_user"]
+    assert [spec.name for spec in factory("u-anna-aad")] == ["SendDocument"]
     assert factory("") == []  # pusty sender_id → brak celu → pusta lista
 
 
 def test_compose_user_push_factories_concatenates_image_and_doc():
     """Obraz + dokument (obie kluczowane sender_id) łączą się w jedną fabrykę per turę."""
-    combined = _compose_user_push_factories(
-        lambda sid: ["send_image_to_user"], lambda sid: ["send_document_to_user"]
-    )
+    combined = _compose_user_push_factories(lambda sid: ["SendImage"], lambda sid: ["SendDocument"])
     assert combined is not None
-    assert combined("u-anna") == ["send_image_to_user", "send_document_to_user"]
+    assert combined("u-anna") == ["SendImage", "SendDocument"]
 
 
 def test_compose_user_push_factories_all_none_is_none():

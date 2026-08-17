@@ -136,3 +136,78 @@ def test_pdf_delivery_failure_degrades_to_text():
     assert reply is not None
     assert reply.startswith("TREŚĆ")
     assert "Nie udało się wysłać PDF" in reply
+
+
+# --- bramka odczytu bazy wiedzy (ADR 0062) -------------------------------------
+
+
+class _StubReadAuthz:
+    """Atrapa ``NoteReadAuthorizer``: przepuszcza znane AAD id, resztę odrzuca (fail-closed)."""
+
+    def __init__(self, allowed: set[str]) -> None:
+        self._allowed = allowed
+
+    def authorize(self, requester_aad_id: str) -> None:
+        from workmate.core.errors import NoteAuthorizationError
+
+        if requester_aad_id not in self._allowed:
+            raise NoteAuthorizationError("nierozpoznany nadawca (stub, ADR 0062)")
+
+
+def _gated_router(allowed: set[str]) -> tuple[BriefRouter, _FakeService]:
+    service = _FakeService({"workmate": "PIĘĆ OSTATNICH NOTATEK Z UCZESTNIKAMI"})
+    router = BriefRouter(service, read_authorizer=_StubReadAuthz(allowed))  # type: ignore[arg-type]
+    return router, service
+
+
+def test_brief_is_refused_for_an_unrecognized_sender():
+    """Regresja ADR 0062: brief odpalał się PRZED jakąkolwiek autoryzacją.
+
+    ``ProjectBrief.to_text`` zwraca pięć ostatnich notatek projektu z datami, tytułami i
+    uczestnikami — czyli tę samą treść, której bramka broni w ``search_notes``. Jedna @wzmianka
+    obchodziła więc całą bramkę, bo ``BriefContext`` nie miał nawet pola nadawcy.
+    """
+    router, service = _gated_router(allowed=set())
+
+    out = router.dispatch(
+        "@WorkMate ogarnij mnie na workmate",
+        BriefContext(external_id=_EID, mentions_bot=True, sender_id="aad-obcy"),
+    )
+
+    assert out is not None
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out
+    assert service.asked == []  # fail-closed: notatek nawet nie dotknęliśmy
+
+
+def test_brief_runs_for_a_recognized_member():
+    router, service = _gated_router(allowed={"aad-ok"})
+
+    out = router.dispatch(
+        "@WorkMate ogarnij mnie na workmate",
+        BriefContext(external_id=_EID, mentions_bot=True, sender_id="aad-ok"),
+    )
+
+    assert out == "PIĘĆ OSTATNICH NOTATEK Z UCZESTNIKAMI"
+    assert service.asked == ["workmate"]
+
+
+def test_message_without_the_directive_still_falls_through_to_the_agent_turn():
+    """Bramka nie może porywać zwykłych wiadomości — odmowa dotyczy TYLKO dyrektywy."""
+    router, _ = _gated_router(allowed=set())
+
+    assert (
+        router.dispatch(
+            "@WorkMate co u ciebie?",
+            BriefContext(external_id=_EID, mentions_bot=True, sender_id="aad-obcy"),
+        )
+        is None
+    )
+
+
+def test_brief_without_authorizer_behaves_as_before():
+    router, service = _router({"workmate": "BRIEF"})
+
+    out = router.dispatch("@WorkMate ogarnij mnie na workmate", _ctx())
+
+    assert out == "BRIEF"
+    assert service.asked == ["workmate"]

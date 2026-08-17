@@ -28,7 +28,9 @@ def build_silent_token_provider(settings: ScheduleSettings) -> Callable[[], str]
 
         cache = msal.SerializableTokenCache()
         try:
-            cache.deserialize(settings.token_cache_path.read_text())
+            # ``encoding`` jawnie: cache MSAL jest UTF-8, a domyślne kodowanie platformy
+            # (cp1250 na Windows) rozsypywałoby odczyt cudzego pliku bez powodu.
+            cache.deserialize(settings.token_cache_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise ScheduleReadError(
                 "Grafik jest chwilowo niedostępny: nie mogę odczytać pamięci logowania "

@@ -210,10 +210,16 @@ class ConversationService:
         return self._store.search(query, channel=channel, external_id=external_id, limit=limit)
 
     def list_conversations(
-        self, *, channel: str | None = None, limit: int = 50
+        self, *, channel: str | None = None, external_id: str | None = None, limit: int = 50
     ) -> list[Conversation]:
-        """Wylistuj rozmowy do podglądu historii (delegacja do magazynu)."""
-        return self._store.list_conversations(channel=channel, limit=limit)
+        """Wylistuj rozmowy do podglądu historii (delegacja do magazynu).
+
+        ``external_id`` zawęża do JEDNEGO wątku — po to, żeby wołający nie musiał filtrować
+        po fakcie: filtr w Pythonie nad oknem ``limit`` mylił „ten wątek nie ma historii"
+        z „historia wątku wypadła poza okno" i kazał magazynowi liczyć koszt rozmów, które
+        zaraz odpadną. Zestaw filtrów jak w ``search``.
+        """
+        return self._store.list_conversations(channel=channel, external_id=external_id, limit=limit)
 
     def active_conversation(self, channel: str, external_id: str) -> Conversation | None:
         """Aktywny wątek (kanał, rozmowa) albo ``None`` — generyczny odczyt (delegacja)."""

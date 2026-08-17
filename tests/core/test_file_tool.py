@@ -239,19 +239,28 @@ def test_tool_is_named_file_and_carries_a_usable_description():
     assert spec.name == "File"
     assert "read" in spec.description
     # Opis mówi też, KIEDY nie używać — inaczej model sięga po nie do plików tekstowych.
-    assert "cat" in spec.description
+    # Dokąd odesłać, zależy od drzwi (ADR 0068 §2): bez powłoki `cat` byłby obietnicą bez pokrycia.
+    assert "ReadFile" in spec.description
+    assert "cat" not in spec.description
 
 
 # --- Akcje mutujące bazę wiedzy (ADR 0065) -------------------------------------
 
 
 class _FakeMutations:
-    """Atrapa bramki mutacji — notuje wywołania, oddaje sukces albo zadaną odmowę."""
+    """Atrapa bramki mutacji — notuje wywołania, oddaje sukces albo zadaną odmowę.
 
-    def __init__(self, refuse: str = "") -> None:
+    ``allow_delete`` jest tu, bo od rundy 4 ADR 0068 czyta go BUDOWNICZY katalogu: bramka
+    kasowania musi zamknąć ``Literal``, a nie dopiero ciało serwisu. Atrapa bez tego pola
+    opisywałaby serwis, którego nie ma.
+    """
+
+    def __init__(self, refuse: str = "", allow_delete: bool = True) -> None:
         self.refuse = refuse
+        self.allow_delete = allow_delete
         self.edits: list[tuple] = []
         self.deletes: list[tuple] = []
+        self.origin: list[tuple] = []
 
     def _maybe_refuse(self):
         if self.refuse:
@@ -265,6 +274,9 @@ class _FakeMutations:
     ):
         self._maybe_refuse()
         self.edits.append((note_id, body, requester, intent))
+        # Pochodzenie tury (ADR 0066) i token tury (ADR 0065) notujemy OSOBNO: dopóki atrapa je
+        # połykała, narzędzie mogło przestać je przekazywać i żadna sonda by tego nie zauważyła.
+        self.origin.append((turn_token, trust_class, tainted))
 
     def delete_note(  # noqa: ANN001, ANN201
         self, note_id, *, requester, intent, turn_token="", trust_class="", tainted=True
@@ -274,13 +286,22 @@ class _FakeMutations:
 
         self._maybe_refuse()
         self.deletes.append((note_id, requester, intent))
+        self.origin.append((turn_token, trust_class, tainted))
         return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
 
 
-def _tool_z_mutacjami(*, requester: str = "Anna", refuse: str = ""):
+def _tool_z_mutacjami(
+    *,
+    requester: str = "Anna",
+    refuse: str = "",
+    turn_token: str = "",
+    trust_class: str = "unknown",
+    tainted=True,
+    allow_delete: bool = True,
+):
     scope_dir = str(_SCOPE.dirpath())
     repo = _FakeWorkspace({f"{scope_dir}/umowa.pdf": _PDF})
-    mutations = _FakeMutations(refuse)
+    mutations = _FakeMutations(refuse, allow_delete=allow_delete)
     (spec,) = build_file_catalog(
         _SCOPE,
         WorkspaceService(repo),
@@ -289,6 +310,9 @@ def _tool_z_mutacjami(*, requester: str = "Anna", refuse: str = ""):
         MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=10_000_000),
         mutations,  # type: ignore[arg-type]
         requester,
+        trust_class,
+        tainted,
+        turn_token,
     )
     return spec, mutations
 
@@ -374,3 +398,242 @@ def test_refusal_comes_back_as_a_result_not_as_a_tool_failure():
     assert wynik["verdict"] == "confirm"
     assert wynik["wymaga_potwierdzenia"] is True
     assert "kwartału" in wynik["error"]
+
+
+# --- Szew 0064/0065 ↔ 0066: pochodzenie tury i token tury jadą do bramki mutacji ---
+
+
+def test_the_turn_token_reaches_the_mutation_gate():
+    """Punkt kontrolny człowieka stoi CAŁY na tym tokenie: bez niego bramka nie odróżni
+    powtórzenia z nowej tury od ponowienia w tej samej pętli narzędzi (do ośmiu rund)."""
+    spec, mutations = _tool_z_mutacjami(turn_token="tura-42")
+
+    spec.fn(action="edit", name="biap/mpwik/x", content="nowa", reason="poprawka")
+
+    assert mutations.origin == [("tura-42", "unknown", True)]
+
+
+def test_the_trust_class_and_taint_of_the_turn_reach_the_mutation_gate():
+    """Sędzia ma widzieć, że zmianę zleca tura po przeczytaniu obcego pliku — to eskaluje ocenę."""
+    spec, mutations = _tool_z_mutacjami(turn_token="t1", trust_class="T2", tainted=True)
+
+    spec.fn(action="delete", name="biap/mpwik/x", reason="porządki")
+
+    assert mutations.origin == [("t1", "T2", True)]
+
+
+def test_a_clean_turn_is_reported_as_clean_not_flattened_to_the_safe_default():
+    """Odwrotny kierunek tej samej sondy: gdyby narzędzie zawsze wysyłało domyślne
+    „skażona/unknown", klasa pochodzenia byłaby ozdobnikiem, a nie sygnałem."""
+    spec, mutations = _tool_z_mutacjami(turn_token="t1", trust_class="T1", tainted=False)
+
+    spec.fn(action="edit", name="biap/mpwik/x", content="nowa", reason="x")
+
+    assert mutations.origin == [("t1", "T1", False)]
+
+
+def test_the_taint_is_read_AT_CALL_TIME_not_frozen_when_the_catalog_is_built():
+    """Katalog powstaje raz, na starcie tury; skaza zapala się z faktów TEJ tury — później.
+
+    Ta kolejność nie jest teoretyczna: drzwi budują narzędzia, a dopiero potem oznaczają rozmowę
+    jako skażoną. Wartość domknięta przy budowie opisuje więc stan SPRZED tury. Członek dostaje
+    zatruty PDF, w tej samej turze robi `File(read)` i `File(edit)` — a sędzia widzi „rozmowa
+    czysta", dokładnie w turze, dla której ADR 0066 R2 tę eskalację wprowadził.
+
+    Stąd kontrakt: ``tainted`` wolno podać jako funkcję, a fabryka ma ją wołać przy mutacji.
+    """
+    skaza = {"tainted": False}
+    spec, mutations = _tool_z_mutacjami(
+        turn_token="t1", trust_class="T1", tainted=lambda: skaza["tainted"]
+    )
+
+    skaza["tainted"] = True  # załącznik wjechał do rozmowy PO zbudowaniu narzędzi
+    spec.fn(action="edit", name="biap/mpwik/x", content="nowa", reason="x")
+
+    assert mutations.origin == [("t1", "T1", True)]
+
+
+def test_a_plain_bool_still_works_so_existing_doors_are_not_broken():
+    """Wartość ma dalej działać — inaczej zmiana kontraktu byłaby cichym zerwaniem okablowania."""
+    spec, mutations = _tool_z_mutacjami(turn_token="t1", trust_class="T1", tainted=True)
+
+    spec.fn(action="edit", name="biap/mpwik/x", content="nowa", reason="x")
+
+    assert mutations.origin == [("t1", "T1", True)]
+
+
+def test_defaults_of_the_factory_are_the_safe_ones():
+    """Drzwi, które o 0066 jeszcze nie wiedzą, mają dostać ściśle bezpieczny domysł."""
+    scope_dir = str(_SCOPE.dirpath())
+    mutations = _FakeMutations()
+    (spec,) = build_file_catalog(
+        _SCOPE,
+        WorkspaceService(_FakeWorkspace({f"{scope_dir}/umowa.pdf": _PDF})),
+        _FakeMaterializer(),  # type: ignore[arg-type]
+        AttachmentQueue(budget_bytes=1_000_000),
+        MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=10_000_000),
+        mutations,  # type: ignore[arg-type]
+        "Anna",
+    )
+
+    spec.fn(action="edit", name="biap/mpwik/x", content="nowa", reason="x")
+
+    assert mutations.origin == [("", "unknown", True)]
+
+
+# --- Obrona w głąb: zamknięta bramka odmawia także wtedy, gdy akcja ominie schemat ---
+
+
+@pytest.mark.parametrize("action", ["edit", "delete"])
+def test_a_smuggled_mutation_is_refused_by_the_read_only_door(action: str):
+    """Schemat NIE jest granicą — jest podpowiedzią. Runtime dostaje argumenty od modelu i
+    ``Literal`` niczego w czasie działania nie wymusza, więc zamknięta bramka musi odmówić
+    także wtedy, gdy akcja przyjedzie mimo braku w enumie.
+    """
+    spec, queue = _tool(files={"umowa.pdf": _PDF})
+
+    wynik = spec.fn(action=action, name="biap/mpwik/x")
+
+    assert "wyłączone" in wynik["error"]
+    assert queue.drain() == ()
+
+
+def test_the_read_only_door_names_the_alternative_instead_of_just_refusing():
+    """Odmowa ma prowadzić do wyjścia — inaczej model ponawia albo zmyśla, że zapisał."""
+    spec, _ = _tool(files={"umowa.pdf": _PDF})
+
+    wynik = spec.fn(action="edit", name="biap/mpwik/x")
+
+    assert "nową notatkę" in wynik["error"]
+
+
+# --- Opis odsyla tam, gdzie zdolnosc faktycznie jest (ADR 0068 §2) --------------------
+
+
+def _opis(*, shell: bool, mutacje: bool = False) -> str:
+    repo = _FakeWorkspace({})
+    (spec,) = build_file_catalog(
+        _SCOPE,
+        WorkspaceService(repo),
+        _FakeMaterializer(),  # type: ignore[arg-type]
+        AttachmentQueue(budget_bytes=1),
+        MaterializationLimits(max_bytes=1, max_extract_bytes=1),
+        _FakeMutations() if mutacje else None,  # type: ignore[arg-type]
+        "u-anna" if mutacje else "",
+        shell_available=shell,
+    )
+    return spec.description
+
+
+def test_bez_powloki_opis_odsyla_do_narzedzi_katalogu_roboczego():
+    """`cat` bez `Bash` to obietnica bez pokrycia — i to w stanie DOMYSLNYM produkcji."""
+    opis = _opis(shell=False)
+
+    assert "ReadFile" in opis and "ListFiles" in opis
+    assert "cat" not in opis
+
+
+def test_z_powloka_opis_odsyla_do_powloki():
+    opis = _opis(shell=True)
+
+    assert "cat" in opis
+    assert "ReadFile" not in opis
+
+
+def test_zrodlo_identyfikatora_notatki_zalezy_od_powloki():
+    """Z powloka narzedzia odczytu SA ZDJETE, wiec odeslanie do nich bylo puste w druga strone."""
+    z_powloka = _opis(shell=True, mutacje=True)
+    bez_powloki = _opis(shell=False, mutacje=True)
+
+    assert "workmate-search" in z_powloka and "SearchNotes" not in z_powloka
+    assert "SearchNotes" in bez_powloki and "workmate-search" not in bez_powloki
+
+
+def test_brak_pliku_niesie_podpowiedz_jak_brak_pola():
+    """Ksztalt `tool`/`action`/`hint` ten sam co przy bledzie wywolania (ADR 0068 §9)."""
+    spec, _ = _tool(files={})
+
+    wynik = spec.fn(action="read", name="nie-ma.pdf")
+
+    assert wynik["status"] == "not_found"
+    assert wynik["tool"] == "File"
+    assert wynik["action"] == "read"
+    assert "ListFiles" in wynik["hint"]
+
+
+# --- Bramka kasowania siedzi w `Literal`, nie w ciele (ADR 0068, runda 4) --------------
+
+
+def test_delete_nie_istnieje_w_schemacie_gdy_kasowanie_jest_wylaczone():
+    """Trzeci wariant sygnatury, bo bramki sa DWIE i niezalezne.
+
+    `..._ENABLE_NOTE_MUTATION=true` + `..._ENABLE_NOTE_DELETE=false` to konfiguracja domyslna po
+    wlaczeniu mutacji (ADR 0065 wiaze kasowanie z dzialajaca kopia zapasowa). Do tej rundy model
+    widzial w enumie `delete`, probowal go uzyc i tracil runde narzedziowa na odmowe z ciala —
+    czyli dokladnie to, czemu miala zapobiec regula „bramka w `Literal`, nie w ciele".
+    """
+    import typing
+
+    spec, _ = _tool_z_mutacjami(allow_delete=False)
+
+    akcje = typing.get_args(typing.get_type_hints(spec.fn)["action"])
+
+    assert set(akcje) == {"read", "edit"}
+    assert "delete" not in spec.description
+
+
+def test_delete_jest_w_schemacie_gdy_kasowanie_jest_wlaczone():
+    import typing
+
+    spec, _ = _tool_z_mutacjami(allow_delete=True)
+
+    akcje = typing.get_args(typing.get_type_hints(spec.fn)["action"])
+
+    assert set(akcje) == {"read", "edit", "delete"}
+
+
+def test_opis_reklamuje_delete_dokladnie_wtedy_gdy_akcja_istnieje():
+    """Opis i `Literal` musza mowic to samo — inaczej model dostaje sprzecznosc w jednym miejscu."""
+    z_kasowaniem = _tool_z_mutacjami(allow_delete=True)[0].description
+    bez_kasowania = _tool_z_mutacjami(allow_delete=False)[0].description
+
+    assert "`delete`" in z_kasowaniem
+    assert "`delete`" not in bez_kasowania
+    assert "`edit`" in bez_kasowania  # edycja zostaje — to osobna bramka
+
+
+def test_przemycone_delete_przy_zamknietej_bramce_dostaje_odmowe_ze_wskazaniem_wyjscia():
+    """Obrona w glab: `spec.fn` wola tez kod aplikacji, z pominieciem koercji argumentow.
+
+    Odmowa jest MERYTORYCZNA (co zrobic zamiast), nie „nie ma takiej akcji" — bo akcja istnieje
+    w produkcie, tylko nie na tych drzwiach. Serwis odrzucilby to samo, ale komunikatem pisanym
+    do operatora.
+    """
+    spec, mutations = _tool_z_mutacjami(allow_delete=False)
+
+    wynik = spec.fn(action="delete", name="biap/mpwik/x", reason="po co")
+
+    assert "Usuwanie notatek jest wyłączone" in wynik["error"]
+    assert "`edit`" in wynik["error"]
+    assert mutations.deletes == []  # serwis NIE zostal zawolany
+
+
+def test_edycja_dziala_normalnie_przy_zamknietej_bramce_kasowania():
+    """Bramki sa niezalezne — zamkniecie kasowania nie moze zabrac edycji."""
+    spec, mutations = _tool_z_mutacjami(allow_delete=False)
+
+    wynik = spec.fn(action="edit", name="biap/mpwik/x", content="nowa tresc", reason="poprawka")
+
+    assert wynik["edited"] is True
+    assert len(mutations.edits) == 1
+
+
+def test_odmowa_nieznanej_akcji_nie_podpowiada_delete_gdy_go_nie_ma():
+    """Lista dozwolonych jedzie z tego samego zrodla co `Literal` — inaczej odmowa reklamuje
+    zdolnosc, ktorej schemat nie ma (ten sam blad co w wariancie odczytu `Project`)."""
+    spec, _ = _tool_z_mutacjami(allow_delete=False)
+
+    wynik = spec.fn(action="wymyslona", name="x")
+
+    assert wynik["allowed"] == ["read", "edit"]
+    assert "delete" not in wynik["hint"]

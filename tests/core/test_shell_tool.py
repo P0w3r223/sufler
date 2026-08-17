@@ -7,6 +7,7 @@ co narzędzie przekazuje wykonawcy i co oddaje modelowi. Sam wykonawca ma własn
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 
 from workmate.core.application.tools import build_shell_catalog
@@ -60,12 +61,16 @@ def test_working_directory_is_bound_to_the_conversation_scope():
 
 
 def test_scope_is_absent_from_the_tool_schema():
-    """Katalog rozmowy jest DOMKNIĘTY w closurze — schemat niesie sam ``command``/``timeout_s``."""
+    """Katalog rozmowy jest DOMKNIĘTY w closurze — schemat niesie sam ``command``/``timeout_s``.
+
+    Sondujemy przez ``inspect.signature``, nie przez ``__code__.co_varnames[:co_argcount]``:
+    ``co_argcount`` NIE liczy parametrów keyword-only, więc dołożenie ``*, scope_dir``
+    przeszłoby tamtą asercję niezauważone — czyli model dostałby drogę do cudzej rozmowy,
+    a sonda dalej świeciłaby na zielono.
+    """
     spec = _tool(FakeRunner())
 
-    names = spec.fn.__code__.co_varnames[: spec.fn.__code__.co_argcount]
-
-    assert set(names) == {"command", "timeout_s"}
+    assert set(inspect.signature(spec.fn).parameters) == {"command", "timeout_s"}
 
 
 def test_different_conversations_get_different_directories():
@@ -98,6 +103,30 @@ def test_model_timeout_overrides_the_default():
     _tool(runner, default_timeout_s=45).fn(command="long", timeout_s=120)
 
     assert runner.calls[0][2] == 120.0
+
+
+def test_a_NEGATIVE_timeout_is_a_readable_refusal_not_an_instant_timeout():
+    """``timeout_s`` przychodzi OD MODELU i nie miał dolnej granicy.
+
+    Wartość ujemna jechała wprost do wykonawcy, który oddawał ``timed_out`` bez uruchomienia
+    polecenia. Model czytał to jako „polecenie za wolne" i poprawiał NIE TEN parametr —
+    zamiast dowiedzieć się, że podał złą liczbę. Polecenie nie ma się wtedy w ogóle odpalić.
+    """
+    runner = FakeRunner()
+
+    wynik = _tool(runner, default_timeout_s=45).fn(command="ls", timeout_s=-5)
+
+    assert "timeout_s" in wynik["error"] and "45" in wynik["error"]
+    assert runner.calls == [], "polecenie nie może pójść do wykonawcy z ujemnym budżetem"
+
+
+def test_zero_still_means_use_the_default_not_a_refusal():
+    """Zero jest umowne (schemat ma domyślne 0) — odmowa na nim zablokowałaby zwykłe wywołanie."""
+    runner = FakeRunner()
+
+    _tool(runner, default_timeout_s=45).fn(command="ls", timeout_s=0)
+
+    assert runner.calls[0][2] == 45.0
 
 
 def test_degradation_flags_reach_the_model_separately_from_exit_code():
@@ -208,3 +237,38 @@ def test_workspace_root_without_trailing_slash_does_not_double_it():
     _tool(runner, workspace_root="/home/scratchpad/").fn(command="pwd")
 
     assert "//" not in runner.calls[0][1]
+
+
+# --- Cisza po udanym poleceniu (ADR 0068 §8) ------------------------------------------
+
+
+def test_udane_polecenie_bez_wyjscia_nazywa_pustke_wprost():
+    """Same puste napisy czytaja sie jak awaria i zapraszaja do powtorki tego samego polecenia.
+
+    `mkdir`, `mv` i przekierowanie do pliku konczy sie kodem 0 i cisza — to NORMALNY wynik.
+    Wzorzec jak `count` w `search_notes`: pusty zbior ma byc widoczny jako zbior pusty.
+    """
+    runner = FakeRunner(result=CommandResult(exit_code=0, stdout="", stderr=""))
+
+    wynik = _tool(runner).fn(command="mkdir raporty")
+
+    assert wynik["exit_code"] == 0
+    assert "nic nie wypisa" in wynik["note"]
+
+
+def test_polecenie_z_wyjsciem_nie_dostaje_notki():
+    """Notka jest o CISZY — dopisana do kazdego wyniku bylaby szumem w kazdej turze."""
+    wynik = _tool(FakeRunner(result=CommandResult(exit_code=0, stdout="plik.md", stderr=""))).fn(
+        command="ls"
+    )
+
+    assert "note" not in wynik
+
+
+def test_niepowodzenie_bez_wyjscia_nie_dostaje_notki_o_sukcesie():
+    """Kod niezerowy i cisza to co innego niz sukces i cisza — notka nie ma tego zacierac."""
+    wynik = _tool(FakeRunner(result=CommandResult(exit_code=1, stdout="", stderr=""))).fn(
+        command="false"
+    )
+
+    assert "note" not in wynik

@@ -85,7 +85,24 @@ Skopiuj `.env.example` → `.env` i uzupełnij. Zmienne mają prefiks `POWIADOMI
   backoffu — nieobecny pracownik = sprawdzanie czatu raz na godzinę; obsłużona odpowiedź
   natychmiast wraca do odstępu bazowego).
 - `CATCHUP_GRACE_HOURS` (6) — ile h po minionym terminie wolno nadrobić zaległy przebieg (0 = off).
+- `SEND_WINDOW_START_HOUR` (8), `SEND_WINDOW_END_HOUR` (18), `SEND_WINDOW_WEEKDAYS` (`0,1,2,3,4`)
+  — okno wysyłki wiadomości INICJOWANYCH przez bota (prośba tygodniowa, domknięcie, podziękowanie),
+  w czasie lokalnym zespołu, przedział `[start, end)`. Poza oknem wiadomość CZEKA na najbliższe
+  otwarcie; status terminalny utrwalany jest od razu, a zaległy przebieg tygodniowy przeżywa
+  wygaśnięcie okna łaski (`CATCHUP_GRACE_HOURS`) i rusza przy otwarciu okna. Nieudana wysyłka już
+  odłożonego domknięcia nie jest ponawiana — to uprzejmość, nie zapis, a ponawianie groziłoby serią.
+  **Czekanie ma własny sufit**: `3 × REPLY_WINDOW_HOURS` od ostatniej aktywności wpisu — po nim
+  odłożone domknięcie jest porzucane (log ostrzegawczy; status terminalny i tak już utrwalony), bo
+  spóźniona o kilka dni uprzejmość jest dla pracownika zagadką, a wpis z niewysłaną wiadomością
+  zostaje poza zasięgiem sprzątania. Przy domyślnych 48 h sufit to 144 h i weekend go nie dosięga;
+  przy `REPLY_WINDOW_HOURS=8` sufit to 24 h, a odłożenie z piątku 19:00 na poniedziałek 8:00 to
+  ~62 h — wtedy domknięcie przepada. Skracając okno odpowiedzi, licz się z tym.
+  Odpowiedź na wiadomość pracownika idzie zawsze — rozmowę zaczął on.
+  Termin przebiegu (`RUN_WEEKDAY`/`RUN_HOUR`) MUSI mieścić się w oknie — inaczej start pada błędem
+  konfiguracji, zamiast po cichu przestać wysyłać cokolwiek.
 - `DRY_RUN` (domyślnie `true`) — nic nie jest wysyłane ani zapisywane, dopóki nie ustawisz `false`.
+  Wartość musi być rozpoznana (`1/true/yes/on/tak` albo `0/false/no/off/nie`) — literówka zatrzymuje
+  start błędem konfiguracji, zamiast po cichu włączyć tryb na żywo.
 
 ## Uprawnienia (Microsoft Graph, delegowane, admin consent)
 

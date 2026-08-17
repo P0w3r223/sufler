@@ -4,6 +4,7 @@ from powiadomienia_teams.domain.models import TimeOff
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     is_expired,
+    past_hard_ceiling,
     prune_terminal,
     ready_for_self_fill_check,
     should_expire,
@@ -209,3 +210,70 @@ def test_ready_for_self_fill_check_watermark_extends_like_expiry():
         nudged_at=_iso(NOW - timedelta(hours=100)),
     )
     assert ready_for_self_fill_check(p, NOW, 3600) is False
+
+
+def test_twardy_sufit_domyka_wpis_ktory_nigdy_nie_dostal_dowodu():
+    """Wpis, którego czatu trwale nie da się odczytać, musi kiedyś zejść ze stanu.
+
+    `should_expire` słusznie odmawia wygaszenia bez udanego odczytu („brak dowodu ≠ dowód
+    braku"). Gdy odczyt pada TRWALE, ta odmowa jest wieczna: wpis nigdy nie jest terminalny,
+    nigdy nie podlega `prune_terminal`, a `run_once` co tydzień omija tę osobę, bo jej wpis
+    „istnieje". Sufit domyka to od góry.
+    """
+    nudge = "2026-07-17T09:00:00Z"
+    pending = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-20",
+        status="awaiting_reply",
+        watermark=nudge,
+        nudged_at=nudge,
+    )
+    kotwica = datetime(2026, 7, 17, 9, 0, tzinfo=timezone.utc)
+    # Zwykłe okno (48 h) już minęło, ale sufit (3 × 48 h) jeszcze nie.
+    assert not past_hard_ceiling(pending, kotwica + timedelta(hours=100), 48)
+    assert past_hard_ceiling(pending, kotwica + timedelta(hours=145), 48)
+
+
+def test_twardy_sufit_nie_dziala_bez_kotwicy():
+    """Bez znacznika czasu nie znamy wieku wpisu — zgadywanie byłoby gorsze od czekania."""
+    pending = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-20",
+        status="awaiting_reply",
+    )
+    assert not past_hard_ceiling(pending, datetime(2030, 1, 1, tzinfo=timezone.utc), 48)
+
+
+def test_prune_zostawia_wpis_z_niewyslana_wiadomoscia():
+    """Godziny ciszy PRZESUWAJĄ wysyłkę, nie kasują jej — GC nie może zjeść wpisu z kolejki.
+
+    Domknięcie odłożone w piątek wieczorem czeka do poniedziałku rana, czyli dłużej niż typowe
+    `retain_hours`. Bez tego wyjątku tygodniowe GC kasowałoby wpis razem z niewysłaną wiadomością.
+    """
+    stary = "2026-07-01T09:00:00Z"
+    z_kolejka = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-06",
+        status=EXPIRED,
+        watermark=stary,
+        nudged_at=stary,
+        odlozona_wiadomosc="<p>domknięcie</p>",
+    )
+    bez_kolejki = PendingReminder(
+        member_id="u2",
+        member_name="Bok",
+        chat_id="c2",
+        week_start="2026-07-06",
+        status=EXPIRED,
+        watermark=stary,
+        nudged_at=stary,
+    )
+    stan = {"u1": z_kolejka, "u2": bez_kolejki}
+    zostalo = prune_terminal(stan, datetime(2026, 8, 1, tzinfo=timezone.utc), 48)
+    assert set(zostalo) == {"u1"}

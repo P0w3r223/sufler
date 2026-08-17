@@ -52,7 +52,7 @@ def _baseline() -> dict[str, Any]:
     return json.loads(_BASELINE.read_text(encoding="utf-8"))
 
 
-def _configure(monkeypatch, tmp_path, *, bridge: bool, jira: bool) -> None:
+def _configure(monkeypatch, tmp_path, *, bridge: bool, jira: bool, write: bool = True) -> None:
     """Ustaw środowisko DETERMINISTYCZNIE — niezależnie od ambientowego `~/.workmate`."""
     db = tmp_path / "events.db"
     if bridge:
@@ -61,7 +61,7 @@ def _configure(monkeypatch, tmp_path, *, bridge: bool, jira: bool) -> None:
     # Baseline zamraża powierzchnię PRZY WŁĄCZONYM zapisie (save_note obecne); od amendmentu
     # ADR 0006 (2026-07-31) enable_write jest domyślnie OFF wszędzie, więc test musi go włączyć
     # jawnie — inaczej porównuje z baseline dziurę zamiast kontrakt.
-    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", "true")
+    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", "true" if write else "false")
     # Para Jiry jest bramkowana także transportem (`server.py`: znika na streamable-http, bo jeden
     # principal na proces nie obsłuży wielu osób). Bez przypięcia ambientowe
     # WORKMATE_TRANSPORT=streamable-http wywracałoby dwie konfiguracje — determinizm ma być pełny.
@@ -94,6 +94,41 @@ def test_surface_matches_baseline_in_every_configuration(
 
     assert set(surface) == expected
     assert surface == {name: spec for name, spec in _baseline().items() if name in expected}
+
+
+def test_default_surface_without_write_is_frozen_too(monkeypatch, tmp_path):
+    """DOMYŚLNA powierzchnia produkcyjna — bez zapisu — też musi być zamrożona.
+
+    Cała macierz wyżej wymusza ``WORKMATE_ENABLE_WRITE=true``, a od amendmentu ADR 0006 zapis
+    jest domyślnie WYŁĄCZONY WSZĘDZIE. Zamrożony jest więc wariant, którego domyślnie nikt nie
+    dostaje, a wariant, który dostają wszyscy, nie był porównywany z baseline w ogóle: regres
+    w parsowaniu ``enable_write`` (albo w warunku rejestracji) zmieniłby realne drzwi bez
+    zerwania żadnej bramki. Cztery odczyty muszą tu wyjść bajt w bajt jak w baseline — nie tylko
+    „bez save_note".
+    """
+    _configure(monkeypatch, tmp_path, bridge=False, jira=False, write=False)
+
+    surface = _surface(build_server())
+
+    assert set(surface) == _FROZEN - {"save_note"}
+    assert surface == {name: spec for name, spec in _baseline().items() if name in surface}
+
+
+def test_write_gate_is_the_only_difference_between_the_two_default_profiles(monkeypatch, tmp_path):
+    """Włączenie zapisu ma DOKŁADAĆ ``save_note`` i nic poza tym.
+
+    Bramka zapisu przechodzi przez ``build_server`` (``write_service=None``), a nie przez
+    filtrowanie gotowej listy — regres, w którym gałąź „bez zapisu" buduje serwis odczytu inaczej
+    (inny opis, inny schemat), przeszedłby zarówno tu, jak i w macierzy, bo każda z nich patrzy
+    tylko na swoją stronę bramki.
+    """
+    _configure(monkeypatch, tmp_path, bridge=False, jira=False, write=False)
+    bez_zapisu = _surface(build_server())
+    _configure(monkeypatch, tmp_path, bridge=False, jira=False, write=True)
+    z_zapisem = _surface(build_server())
+
+    assert set(z_zapisem) - set(bez_zapisu) == {"save_note"}
+    assert {k: v for k, v in z_zapisem.items() if k != "save_note"} == bez_zapisu
 
 
 def test_baseline_holds_every_tool_the_surface_can_expose():

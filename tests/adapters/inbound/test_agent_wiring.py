@@ -10,6 +10,7 @@ komenda ``/pomoc`` idzie przez router BEZ wołania runtime. Osobno: brak extra `
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,17 @@ from workmate.adapters.inbound.responder import (
 from workmate.config import AgentSettings, ConversationSettings, Settings
 from workmate.core.errors import NoteAuthorizationError
 from workmate.core.ports.materialization import MaterializationLimits
+
+# Sondy, które budują PRAWDZIWĄ fabrykę powłoki, dotykają klienta wykonawcy — a ten jest
+# POSIX-only (gniazda unix) i na Windows podnosi ``ImportError`` w ciele modułu. Bramką jest
+# platforma, nie import: od pytest 9.1 ``importorskip`` domyślnie zamienia na skip wyłącznie
+# ``ModuleNotFoundError``, więc wyjątek podniesiony WEWNĄTRZ istniejącego modułu leci dalej jako
+# porażka. Warunek jest tu dosłownie tym samym, co strażnik produkcyjny
+# (``exec_client.py``: ``if sys.platform == "win32": raise ImportError``), więc na Linuksie
+# (obraz floty, CI) obie sondy biegną w pełni.
+posix_only = pytest.mark.skipif(
+    sys.platform == "win32", reason="klient wykonawcy jest POSIX-only (gniazda unix)"
+)
 
 _REGISTRY = """projects:
   - key: workmate
@@ -118,9 +130,9 @@ def test_notes_read_factory_recognized_member_gets_real_tools(tmp_path: Path):
 
     tools = factory("aad-ok")
 
-    assert [t.name for t in tools] == ["search_notes", "get_note", "list_projects"]
+    assert [t.name for t in tools] == ["Project", "SearchNotes", "GetNote", "ListProjects"]
     by_name = {t.name: t.fn for t in tools}
-    result = by_name["list_projects"]()
+    result = by_name["ListProjects"]()
     assert result["count"] == 1  # realny serwis, nie odmowa
 
 
@@ -130,12 +142,46 @@ def test_notes_read_factory_unrecognized_sender_gets_refusals(tmp_path: Path):
     tools = factory("aad-obcy")
 
     # Te SAME nazwy (schemat zachowany przez functools.wraps), ale fn zwraca odmowę.
-    assert [t.name for t in tools] == ["search_notes", "get_note", "list_projects"]
+    assert [t.name for t in tools] == ["Project", "SearchNotes", "GetNote", "ListProjects"]
     by_name = {t.name: t.fn for t in tools}
     # Wołanie z realnym kwargiem nie wybucha (zachowana sygnatura) i zwraca odmowę.
-    search_out = by_name["search_notes"](query="scada")
+    search_out = by_name["SearchNotes"](query="scada")
     assert "Brak uprawnień do odczytu bazy wiedzy" in search_out["error"]
-    assert "Brak uprawnień do odczytu bazy wiedzy" in by_name["list_projects"]()["error"]
+    assert "Brak uprawnień do odczytu bazy wiedzy" in by_name["ListProjects"]()["error"]
+
+
+def test_project_status_is_gated_like_the_rest_of_the_read_surface(tmp_path: Path):
+    """Regresja ADR 0062: ``Project(action='status')`` był JEDYNĄ drogą odczytu bazy
+    wiedzy, która przeżyła wpięcie bramki — ``suppress_notes_read`` zdejmował tylko trójkę
+    ``build_agent_notes_read_catalog``, a ``Project`` z katalogu bazowego zostawał zawsze.
+    """
+    factory = _build_notes_read_factory(_settings(tmp_path), _StubReadAuthz(set()))
+
+    notes = next(t for t in factory("aad-obcy") if t.name == "Project")
+
+    out = notes.fn(action="status", project="workmate")
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out["error"]
+
+
+def test_base_catalog_offers_no_knowledge_base_tool_when_the_gate_owns_them(tmp_path: Path):
+    """Bramka domyka się tylko wtedy, gdy katalog BAZOWY nie oferuje niczego z bazy wiedzy.
+
+    Sonda jest po stronie katalogu, bo to on jedzie do modelu: gdyby ``Project`` w nim został,
+    per-turowa odmowa byłaby dekoracją obok czynnego narzędzia o tej samej nazwie.
+    """
+    from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+    from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+    from workmate.core.application.services import ProjectsService
+    from workmate.core.application.tools import build_project_catalog
+
+    settings = _settings(tmp_path)
+    projects = ProjectsService(
+        YamlProjectsRepository(settings.projects_registry),
+        MarkdownNotesRepository(settings.notes_dir),
+    )
+    bazowe = build_project_catalog(projects)
+
+    assert [t.name for t in bazowe] == ["Project"]  # to właśnie znika przy suppress_notes_read
 
 
 # --- build_conversational_responder: SafeResponder vs goły ----------------------
@@ -251,43 +297,22 @@ def test_scoped_runner_reports_a_failed_mkdir_as_a_command_result(tmp_path):
 # --- Powłoka wyklucza narzędzia plikowe (ADR 0009 paczki, krok 5.5) --------------
 
 
-def _responder_z_katalogiem(tmp_path: Path, monkeypatch, *, powloka: bool):
-    """Złóż responder z włączonym katalogiem roboczym i sterowaną obecnością powłoki.
-
-    Fabrykę powłoki podmieniamy, bo prawdziwa zwraca ``None`` na Windows (klient wykonawcy
-    jest POSIX-only) — bez podmiany ten test mierzyłby platformę, a nie regułę.
-    """
-    from workmate.config import ShellSettings, WorkspaceSettings
-
-    monkeypatch.setattr(
-        agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
-    )
-    monkeypatch.setattr(
-        agent_wiring,
-        "_build_shell_factory",
-        lambda *a, **k: (lambda scope, sender_id: []) if powloka else None,
-    )
-    return build_conversational_responder(
-        _settings(tmp_path),
-        AgentSettings(),
-        _conv_settings(tmp_path),
-        channel="teams_graph",
-        enable_write=False,
-        safe=False,
-        enable_workspace=True,
-        workspace_settings=WorkspaceSettings(workspace_dir=tmp_path / "ws"),
-        shell_settings=ShellSettings(
-            enabled=powloka, manager_socket_path=tmp_path / "control.sock"
-        ),
-    )
+_PLIKOWE = {"CreateFile", "ReadFile", "ListFiles"}
 
 
 def test_z_powloka_narzedzia_plikowe_nie_wchodza(tmp_path: Path, monkeypatch):
     """`Bash` startuje w TYM SAMYM katalogu, więc `create_file`/`read_file`/`list_files`
-    byłyby opakowaniem prymitywu za trzy pozycje w budżecie wyboru."""
-    responder = _responder_z_katalogiem(tmp_path, monkeypatch, powloka=True)
-    assert responder._workspace_catalog_factory is None
-    assert responder._shell_catalog_factory is not None
+    byłyby opakowaniem prymitywu za trzy pozycje w budżecie wyboru.
+
+    Sonda mierzy ZMONTOWANĄ powierzchnię tury (co model naprawdę dostał), nie obecność fabryki
+    w responderze: fabryka zwracająca pustą listę przechodziła asercję na atrybut, a agentowi
+    nie dawała niczego — i odwrotnie, samo pole ``None`` nie dowodzi, że narzędzia nie weszły
+    inną drogą (katalog bazowy, ``extra_catalog``).
+    """
+    nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=True, file_reply=False)
+
+    assert "Bash" in nazwy
+    assert _PLIKOWE.isdisjoint(nazwy)
 
 
 def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
@@ -297,9 +322,10 @@ def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
     kanałach z wzajemnie zaufanymi uczestnikami), a bez niej narzędzia plikowe są jedyną drogą,
     którą model odzyskuje własny szkic po kompaktowaniu kontekstu.
     """
-    responder = _responder_z_katalogiem(tmp_path, monkeypatch, powloka=False)
-    assert responder._workspace_catalog_factory is not None
-    assert responder._shell_catalog_factory is None
+    nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=False, file_reply=False)
+
+    assert set(nazwy) >= _PLIKOWE
+    assert "Bash" not in nazwy
 
 
 # --- Bramka członkostwa powłoki (ADR 0063) — fabryka omija narzędzie nierozpoznanemu nadawcy ---
@@ -326,9 +352,9 @@ def _shell_factory_with(authorizer, tmp_path: Path):
     )
 
 
+@posix_only
 def test_powloka_bramkowana_czlonkostwem(tmp_path: Path):
     """§1 ADR 0063: z autoryzatorem członek dostaje powłokę, obcy/bez-tożsamości — pustą listę."""
-    pytest.importorskip("workmate.adapters.outbound.exec_client")  # klient wykonawcy POSIX-only
     from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.domain.identity import Person
     from workmate.core.domain.workspace import WorkspaceScope
@@ -345,9 +371,9 @@ def test_powloka_bramkowana_czlonkostwem(tmp_path: Path):
     assert factory(scope, "") == []  # brak tożsamości nadawcy → pominięta (fail-closed)
 
 
+@posix_only
 def test_powloka_bez_autoryzatora_nie_bramkuje(tmp_path: Path):
     """Drzwi zaufane (CLI): ``authorizer=None`` → powłoka jak przed ADR 0063, bez bramki nadawcy."""
-    pytest.importorskip("workmate.adapters.outbound.exec_client")
     from workmate.core.domain.workspace import WorkspaceScope
 
     factory = _shell_factory_with(None, tmp_path)
@@ -361,9 +387,10 @@ def test_powloka_bez_autoryzatora_nie_bramkuje(tmp_path: Path):
 
 
 def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
-    """Jak ``_responder_z_katalogiem``, ale z ``thread_tool_factory``.
+    """Responder z ``thread_tool_factory`` (fabryka ``ReplyWithFile``) i sterowaną powłoką.
 
-    Fabryka ``reply_with_file``.
+    Fabrykę powłoki podmieniamy, bo prawdziwa zwraca ``None`` na Windows (klient wykonawcy
+    jest POSIX-only) — bez podmiany ta sonda mierzyłaby platformę, a nie regułę.
     """
     from workmate.config import ShellSettings, WorkspaceSettings
 
@@ -391,14 +418,14 @@ def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
 
 
 def test_z_powloka_reply_with_file_schodzi_z_powierzchni(tmp_path: Path, monkeypatch):
-    """Etap 7: z powłoką dostawa idzie skrzynką ``outputs/``, więc ``reply_with_file`` — szóste
+    """Etap 7: z powłoką dostawa idzie skrzynką ``outputs/``, więc ``ReplyWithFile`` — szóste
     narzędzie — nie wchodzi (byłoby DRUGĄ drogą do tej samej zdolności)."""
     responder = _responder_z_reply_file(tmp_path, monkeypatch, powloka=True)
     assert responder._thread_tool_factory is None
 
 
 def test_bez_powloki_reply_with_file_zostaje(tmp_path: Path, monkeypatch):
-    """Cięcie WARUNKOWE: bez powłoki ``reply_with_file`` jest JEDYNĄ drogą dostawy pliku.
+    """Cięcie WARUNKOWE: bez powłoki ``ReplyWithFile`` jest JEDYNĄ drogą dostawy pliku.
 
     Zostaje.
     """
@@ -434,7 +461,7 @@ def _zmontowana_powierzchnia(
 
     GitHub/Jira/Schedule wchodzą jako statyczne STUBY drzwi (ADR 0019/0020) — ich wnętrze ma
     własne testy; tu mierzymy SKŁADANIE powierzchni i bramkę etapu 7, nie ich budowniki. ``Notes``
-    i bramka ``reply_with_file`` idą przez PRAWDZIWY kod (``build_agent_runtime`` + gating 7.1).
+    i bramka ``ReplyWithFile`` idą przez PRAWDZIWY kod (``build_agent_runtime`` + gating 7.1).
     """
     from workmate.config import ShellSettings, WorkspaceSettings
     from workmate.core.application.tools import ToolSpec
@@ -464,9 +491,9 @@ def _zmontowana_powierzchnia(
         shell_settings=ShellSettings(
             enabled=powloka, manager_socket_path=tmp_path / "control.sock"
         ),
-        extra_catalog=[_stub("GitHub"), _stub("Schedule")],
+        extra_catalog=[_stub("Activity"), _stub("Schedule")],
         my_jira_tasks_factory=lambda sender: [_stub("Jira")],
-        thread_tool_factory=(lambda ext: [_stub("reply_with_file")]) if file_reply else None,
+        thread_tool_factory=(lambda ext: [_stub("ReplyWithFile")]) if file_reply else None,
     )
     asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="c", sender_id="u-1")))
     return recording.tool_names
@@ -474,21 +501,21 @@ def _zmontowana_powierzchnia(
 
 def test_uklad_docelowy_zamrozony_na_piatce_bez_szostego_narzedzia(tmp_path: Path, monkeypatch):
     """Etap 7: układ z powłoką + dostawą pliku (dawny C=6) montuje DOKŁADNIE pięć narzędzi
-    docelowych i NIE zawiera ``reply_with_file`` — dostawa zeszła do skrzynki ``outputs/``.
+    docelowych i NIE zawiera ``ReplyWithFile`` — dostawa zeszła do skrzynki ``outputs/``.
 
     Golden: nowe narzędzie w powierzchni ZERWIE tę sondę, zanim wejdzie niezauważone — tabela
     układów A–D nie miała dotąd bramki (przebudowa-harnessu §7.3).
     """
     nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=True, file_reply=True)
-    assert set(nazwy) == {"Bash", "Notes", "GitHub", "Jira", "Schedule"}
-    assert "reply_with_file" not in nazwy
+    assert set(nazwy) == {"Bash", "Project", "Activity", "Jira", "Schedule"}
+    assert "ReplyWithFile" not in nazwy
 
 
 def test_bez_powloki_reply_with_file_jest_w_zmontowanej_powierzchni(tmp_path: Path, monkeypatch):
-    """Dopełnienie: bez powłoki dostawy nie ma czym zastąpić, więc ``reply_with_file`` JEST
+    """Dopełnienie: bez powłoki dostawy nie ma czym zastąpić, więc ``ReplyWithFile`` JEST
     w zmontowanej powierzchni (a narzędzia odczytu notatek wchodzą zastępczo)."""
     nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=False, file_reply=True)
-    assert "reply_with_file" in nazwy
+    assert "ReplyWithFile" in nazwy
 
 
 def _shell_available(tmp_path: Path, monkeypatch, *, chciana: bool, fabryka_daje: bool) -> bool:
@@ -701,7 +728,14 @@ def test_skrzynka_czyta_ten_sam_katalog_w_ktorym_pisze_powloka(tmp_path: Path):
     powloka.fn(command="echo tresc raportu > outputs/raport.md")
     komunikat = dostawa.deliver(scope)
 
-    assert wyslane == ["raport.md"], f"plik z powłoki nie dojechał do skrzynki: {komunikat!r}"
+    # Skrzynka dokleja do nazwy skrót TREŚCI (``raport-<8 hex>.md``), żeby plik z jednego wątku
+    # nie nadpisał pliku z drugiego na wspólnym dysku kanału. Ta sonda jest o SZWIE powłoka →
+    # skrzynka, więc porównuje po zdjęciu sufiksu; regułę nazewnictwa zamraża
+    # ``tests/core/test_outbox_delivery.py``.
+    import re
+
+    bez_skrotu = [re.sub(r"-[0-9a-f]{8}(?=\.[^.]+$)", "", n) for n in wyslane]
+    assert bez_skrotu == ["raport.md"], f"plik z powłoki nie dojechał do skrzynki: {komunikat!r}"
 
 
 # --- ``File`` i odkładanie załączników (ADR 0064) -------------------------------
@@ -921,7 +955,15 @@ def _para_file_z_mutacja(tmp_path: Path, *, mutations, identities=None, read_aut
 
 
 class _StubMutations:
-    """Sentinel — bramka montażu ma rozstrzygać o OBECNOŚCI akcji, nie o ich działaniu."""
+    """Sentinel — bramka montażu ma rozstrzygać o OBECNOŚCI akcji, nie o ich działaniu.
+
+    ``allow_delete`` musi tu być, bo od rundy 4 ADR 0068 budowniczy katalogu CZYTA tę bramkę
+    z serwisu: kasowanie ma zamykać ``Literal``, a nie dopiero ciało. Domyślnie ``True``, żeby
+    ta sonda dalej opisywała najbogatszy wariant, o którym mówi jej nazwa.
+    """
+
+    def __init__(self, allow_delete: bool = True) -> None:
+        self.allow_delete = allow_delete
 
 
 class _StubIdentities:
@@ -1022,3 +1064,50 @@ def test_member_without_read_authorization_cannot_mutate(tmp_path: Path):
     )
 
     assert _akcje(spec) == {"read"}
+
+
+# --- serwisy odczytu: jeden komplet na proces -----------------------------------
+
+
+def test_read_services_are_built_once_per_configuration(tmp_path: Path):
+    """Regresja wydajności: składanie JEDNYCH drzwi wołało ``_read_services`` trzy razy.
+
+    Każde wywołanie budowało własny ranker semantyczny — własny model ONNX w pamięci i własny
+    warmup. Trzy modele zamiast jednego to czysty koszt startu i pamięci; poprawność była cała
+    (repozytoria mają własny cache, ranker własne zamki), więc objawem był tylko wolniejszy
+    i grubszy proces.
+    """
+    settings = _settings(tmp_path)
+
+    pierwszy = agent_wiring._read_services(settings)
+    drugi = agent_wiring._read_services(settings)
+
+    assert pierwszy[0] is drugi[0]  # NotesService (z rankerem) — ta sama instancja
+    assert pierwszy[1] is drugi[1]  # ProjectsService — również
+
+
+def test_read_services_do_not_leak_between_different_configurations(tmp_path: Path):
+    """Memoizacja nie może przeciekać między drzwiami o RÓŻNEJ konfiguracji."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    jedne = agent_wiring._read_services(_settings(tmp_path / "a"))
+    drugie = agent_wiring._read_services(_settings(tmp_path / "b"))
+
+    assert jedne[0] is not drugie[0]
+
+
+def test_read_services_key_includes_the_retrieval_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Ranker czyta ``RetrievalSettings`` z ENV, więc ENV MUSI wchodzić do klucza cache'u.
+
+    Bez tego drzwi zbudowane po zmianie zmiennej dostawałyby ranker z poprzedniego świata —
+    po cichu, bo wynik wygląda tak samo, tylko liczy według starej konfiguracji.
+    """
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("WORKMATE_RETRIEVAL_RRF_K", "60")
+    przed = agent_wiring._read_services(settings)
+    monkeypatch.setenv("WORKMATE_RETRIEVAL_RRF_K", "17")
+    po = agent_wiring._read_services(settings)
+
+    assert przed[0] is not po[0]

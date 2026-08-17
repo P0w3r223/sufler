@@ -38,7 +38,11 @@ whose per-line `cwd` lies under the repo tree (covers parent-launched sessions a
 Without `--repo`, include all folders.
 
 **Consent.** Reading private prompt history is fail-closed: `--consent` / `CLAUDE_SUMMARY_CONSENT=1`
-is required, otherwise the tool refuses with a clear message.
+is required, otherwise the tool refuses with a clear message. *(The policy still holds; the
+mechanism does not. As written, the check lived in the orchestrator — a convention of the call site,
+so the adapter accepted a call from anyone. Superseded by
+[[0004-consent-as-a-type-at-the-read-boundary]]: consent is now a `ConsentProof` argument required
+at the read itself.)*
 
 ## Consequences
 

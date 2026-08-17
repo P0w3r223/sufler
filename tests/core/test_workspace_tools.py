@@ -56,13 +56,13 @@ def _catalog():
 
 def test_catalog_exposes_three_workspace_tools():
     tools, _ = _catalog()
-    assert set(tools) == {"create_file", "read_file", "list_files"}
+    assert set(tools) == {"CreateFile", "ReadFile", "ListFiles"}
 
 
 def test_create_file_tool_creates_and_reports_path():
     tools, fake = _catalog()
 
-    result = tools["create_file"](name="raport.md", content="treść")
+    result = tools["CreateFile"](name="raport.md", content="treść")
 
     assert result == {
         "created": True,
@@ -75,17 +75,17 @@ def test_create_file_tool_creates_and_reports_path():
 def test_create_file_tool_bad_extension_returns_error_envelope():
     tools, _ = _catalog()
 
-    result = tools["create_file"](name="skrypt.exe", content="echo")
+    result = tools["CreateFile"](name="skrypt.exe", content="echo")
 
     assert "error" in result and "created" not in result  # koperta: WriteError → {"error": ...}
 
 
 def test_read_and_list_file_tools():
     tools, _ = _catalog()
-    tools["create_file"](name="raport.md", content="pełna treść")
+    tools["CreateFile"](name="raport.md", content="pełna treść")
 
-    assert tools["read_file"](name="raport.md") == {"name": "raport.md", "content": "pełna treść"}
-    assert "error" in tools["read_file"](name="brak.md")
-    listing = tools["list_files"]()
+    assert tools["ReadFile"](name="raport.md") == {"name": "raport.md", "content": "pełna treść"}
+    assert "error" in tools["ReadFile"](name="brak.md")
+    listing = tools["ListFiles"]()
     assert listing["count"] == 1
     assert listing["files"] == [{"name": "raport.md", "size": len("pełna treść".encode())}]

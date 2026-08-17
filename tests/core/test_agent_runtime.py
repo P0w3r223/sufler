@@ -423,6 +423,43 @@ def test_runtime_audit_records_before_raising_defect():
     assert calls == [("search_notes", "error")]
 
 
+def test_a_FAILING_recorder_does_not_replace_the_tool_result():
+    """Rejestrator jest best-effort, ale to własność WOŁANIA, nie obietnica implementacji.
+
+    Wpis powstaje w ``finally``, więc wyjątek stamtąd ZASTĘPUJE wynik narzędzia swoim własnym:
+    udana operacja wracała do modelu jako awaria dziennika. Blokada SQLite na wolumenie audytu
+    wystarczała, żeby zabić turę, która się powiodła.
+    """
+    llm = _one_tool_then_text("search_notes", {"query": "x"})
+
+    def rec(name, arguments, status):
+        raise RuntimeError("baza audytu zablokowana")
+
+    result = AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn(
+        "q", audit=rec
+    )
+
+    assert result.reply == "ok"
+
+
+def test_a_FAILING_recorder_does_not_mask_the_tools_own_defect():
+    """Druga strona: gdy narzędzie rzuca, w górę ma lecieć JEGO wyjątek, nie awaria dziennika.
+
+    Inaczej prawdziwa przyczyna znikała z logu, a operator dostawał trop prowadzący donikąd.
+    """
+
+    def boom(query: str) -> dict:
+        raise ValueError("defekt kodu narzędzia")
+
+    def rec(name, arguments, status):
+        raise RuntimeError("baza audytu zablokowana")
+
+    llm = _one_tool_then_text("search_notes", {"query": "x"})
+
+    with pytest.raises(ValueError, match="defekt kodu narzędzia"):
+        AgentRuntime(llm, [_spec("search_notes", boom)]).run_turn("q", audit=rec)
+
+
 def test_runtime_without_audit_dispatches_normally():
     seen: list[str] = []
 
@@ -533,3 +570,60 @@ def test_runtime_without_a_nonce_passes_an_empty_one():
     AgentRuntime(llm, []).run_turn("q")
 
     assert llm.nonces_seen == [""]
+
+
+# --- Sygnal budzetu iteracji w petli (ADR 0068 §6) ------------------------------------
+
+
+class _ZapisujeSystem:
+    """Atrapa notujaca BLOKI SYSTEMOWE kazdej rundy — tam jedzie sygnal budzetu."""
+
+    def __init__(self, rundy: int) -> None:
+        self.systems: list[tuple[str, ...]] = []
+        self._rundy = rundy
+
+    def complete(self, *, system, transcript, tools, trust_nonce=""):
+        self.systems.append(tuple(system))
+        self._rundy -= 1
+        if self._rundy <= 0:
+            return LLMResponse(text="odpowiadam tym, co mam")
+        return LLMResponse(text="szukam", tool_calls=(ToolCall("t", "tool", {}),))
+
+
+def _petla(max_iter: int, rundy: int) -> _ZapisujeSystem:
+    llm = _ZapisujeSystem(rundy)
+    AgentRuntime(llm, [_spec("tool", lambda **_: {"ok": True})], max_tool_iterations=max_iter).run(
+        "x", session_header="Today is 2026-08-17, Monday."
+    )
+    return llm
+
+
+def test_model_dostaje_ostrzezenie_zanim_budzet_sie_wyczerpie():
+    """Wyczerpanie limitu kasowalo CALA ture razem z wiadomoscia uzytkownika (ADR 0011).
+
+    Inwariant zapisu zostaje; zmienia sie to, ze model widzi zblizajaca sie granice i moze
+    przejsc na „odpowiadam tym, co mam" zamiast planowac kolejne wywolania w ciemno.
+    """
+    llm = _petla(max_iter=4, rundy=4)
+
+    naglowki = [s[-1] for s in llm.systems]
+    assert "rounds of tool calls remain" not in naglowki[0]
+    assert "rounds of tool calls remain" not in naglowki[1]
+    assert "2 rounds of tool calls remain" in naglowki[2]
+    assert "last round of tool calls" in naglowki[3]
+
+
+def test_sygnal_budzetu_nie_rusza_bloku_statycznego():
+    """Korpus niesie breakpoint cache'u — sygnal ma zostac w drugim bloku (ADR 0056)."""
+    llm = _petla(max_iter=2, rundy=2)
+
+    statyczne = {s[0] for s in llm.systems}
+    assert len(statyczne) == 1, "korpus zmienil sie miedzy rundami — cache prefiksu unieważniony"
+
+
+def test_naglowek_sesji_przezywa_doklejenie_sygnalu():
+    """Data i rozmowa maja zostac — sygnal jest DOPISKIEM, nie podmiana naglowka."""
+    llm = _petla(max_iter=1, rundy=1)
+
+    assert "Today is 2026-08-17" in llm.systems[0][-1]
+    assert "last round of tool calls" in llm.systems[0][-1]

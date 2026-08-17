@@ -12,11 +12,14 @@ w obrębie korzenia; stąd rozwiązanie dwuetapowe.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
+from workmate.adapters.outbound import filesystem_outbox
 from workmate.adapters.outbound.filesystem_outbox import FilesystemOutboxRepository
 from workmate.core.errors import WriteError
+from workmate.core.ports.outbox import OutboxReadError
 
 _DIR = "teams-graph/abc123"
 
@@ -174,3 +177,92 @@ def test_discard_nie_siega_skrzynki_innej_rozmowy_przez_nazwe(tmp_path, outbox):
         FilesystemOutboxRepository(tmp_path).discard(_DIR, "../../inna/outputs/raport.md")
 
     assert (cudza / "raport.md").exists()
+
+
+def test_odczyt_nie_ufa_rozmiarowi_ze_skanu_i_ma_wlasny_sufit(tmp_path, outbox, monkeypatch):
+    """Rozmiar z ``list_entries`` jest mierzony przy SKANIE, a treść pisze model z powłoką.
+
+    Rdzeń odrzuca pozycje ponad limit po metadanych — właśnie po to, żeby wielki plik nie wszedł
+    do pamięci procesu. Plik rosnący MIĘDZY skanem a dostawą omija tę bramkę: ``read`` wczytywał
+    go w całości, bo ufał rozmiarowi sprzed chwili. Sufit stoi więc również w kolektorze.
+    """
+    monkeypatch.setattr(filesystem_outbox, "_READ_CEILING_BYTES", 16)
+    plik = outbox / "raport.md"
+    plik.write_bytes(b"maly")
+
+    (entry,) = FilesystemOutboxRepository(tmp_path).list_entries(_DIR)
+    assert entry.size == 4  # tyle widział rdzeń, gdy przepuszczał pozycję
+
+    plik.write_bytes(b"x" * 4096)  # model dopisał do pliku po skanie
+
+    # ``None`` znaczy w porcie „pozycja zniknęła" i rdzeń przechodzi nad nim do porządku
+    # dziennego — plik, który JEST, tylko za duży, wypadał wtedy ze zbioru zatrzymanych
+    # i następna tura kasowała go jako obcy, bez słowa dla rozmówcy.
+    with pytest.raises(OutboxReadError) as odmowa:
+        FilesystemOutboxRepository(tmp_path).read(_DIR, "raport.md")
+
+    assert odmowa.value.permanent, "sufit odczytu jest werdyktem trwałym, nie awarią do ponowienia"
+
+
+def test_pozycji_ktorej_nie_da_sie_odczytac_NIE_wolno_udawac_znikniona(
+    tmp_path, outbox, monkeypatch
+):
+    """Odmowa odczytu to stan PRZECIWNY do zniknięcia — plik jest i ma zostać na wolumenie.
+
+    Skrzynkę zapełnia model powłoką, więc ``chmod 000 outputs/raport.md`` jest jego zwykłym
+    ruchem, a nie egzotyką. Zwrócone stąd ``None`` trafiało w rdzeniu na gałąź „nie ma czego
+    wysyłać ani sprzątać": pozycja nie szła ani do ``failed``, ani do ``deferred``, wypadała
+    ze zbioru zatrzymanych — i w następnej turze była kasowana jako podłożona z innej rozmowy.
+    """
+    (outbox / "raport.md").write_bytes(b"# Raport")
+    prawdziwy_open = Path.open
+
+    def opener(self: Path, *args: object, **kwargs: object):
+        if self.name == "raport.md":
+            raise PermissionError(13, "Permission denied", str(self))
+        return prawdziwy_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", opener)
+
+    with pytest.raises(OutboxReadError) as odmowa:
+        FilesystemOutboxRepository(tmp_path).read(_DIR, "raport.md")
+
+    assert not odmowa.value.permanent, "odmowa dostępu bywa przejściowa — plik ma czekać"
+    assert "Permission denied" in str(odmowa.value)
+    assert str(tmp_path) not in str(odmowa.value), "powód jedzie do rozmówcy — bez ścieżek serwera"
+
+
+def test_odczyt_pozycji_w_granicy_sufitu_dziala_bez_zmian(tmp_path, outbox, monkeypatch):
+    """Sufit nie może zabrać zwykłej dostawy — inaczej zamiast bramki mamy blokadę."""
+    monkeypatch.setattr(filesystem_outbox, "_READ_CEILING_BYTES", 16)
+    (outbox / "raport.md").write_bytes(b"0123456789abcdef")  # dokładnie sufit
+
+    item = FilesystemOutboxRepository(tmp_path).read(_DIR, "raport.md")
+
+    assert item is not None and item.content == b"0123456789abcdef"
+
+
+def test_nieudane_sprzatniecie_nie_wywraca_dostawy(tmp_path, outbox, monkeypatch, caplog):
+    """``discard`` jest idempotentne wobec BRAKU pliku, ale odmowa dostępu to inna sprawa.
+
+    Rdzeń woła sprzątanie w środku pętli dostawy — już po zdjęciu migawki startowej i przed
+    aktualizacją stanu ponawiania — i nie ma na wyjątek stąd żadnej gałęzi. ``chmod 500
+    outputs`` z powłoki modelu (albo uchwyt na pliku na Windows) wypuszczał go do respondera:
+    tura ocalała, ale dostawa dla tej rozmowy cichła na stałe, a przy sprzątaniu częściowo
+    udanym zbiór „naszych" rozjeżdżał się z tym, co zostało na wolumenie.
+    """
+    (outbox / "raport.md").write_bytes(b"# Raport")
+    prawdziwy_unlink = Path.unlink
+
+    def unlink(self: Path, *args: object, **kwargs: object):
+        if self.name == "raport.md":
+            raise PermissionError(13, "Permission denied", str(self))
+        return prawdziwy_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    with caplog.at_level("WARNING"):
+        FilesystemOutboxRepository(tmp_path).discard(_DIR, "raport.md")
+
+    assert (outbox / "raport.md").exists(), "sonda nic nie sprawdza, jeśli plik jednak zniknął"
+    assert "raport.md" in caplog.text, "nieudane sprzątanie ma zostawić ślad w dzienniku"

@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 # oczekiwanie menedżera na gotowość gniazda. Klient czeka DŁUŻEJ niż okno gotowości menedżera, żeby
 # to menedżer zgłosił „nie wystał" czytelnym błędem, a nie klient zerwaniem po drugiej stronie.
 _ENSURE_TIMEOUT_S = 30.0
+# Sufit linii odpowiedzi — jak w ``exec_client``: ``settimeout`` obowiązuje per ``recv``, więc
+# strumień sączony powoli nie przerywa odczytu ani po czasie, ani po rozmiarze. Odpowiedź
+# menedżera to jedna ścieżka gniazda, czyli setki bajtów.
+_MAX_RESPONSE_BYTES = 64 * 1024
 
 
 class SocketExecManagerClient:
@@ -62,9 +66,14 @@ class SocketExecManagerClient:
             with sock.makefile("rwb") as stream:
                 stream.write(json.dumps(request, ensure_ascii=False).encode("utf-8") + b"\n")
                 stream.flush()
-                line = stream.readline()
+                line = stream.readline(_MAX_RESPONSE_BYTES)
         if not line:
             raise ValueError("menedżer zamknął połączenie bez odpowiedzi")
+        if not line.endswith(b"\n"):
+            raise ValueError(
+                f"odpowiedź menedżera przekracza sufit {_MAX_RESPONSE_BYTES} B albo urwała się "
+                "bez końca linii"
+            )
         parsed = json.loads(line)
         if not isinstance(parsed, dict):
             raise ValueError("odpowiedź menedżera nie jest obiektem JSON")

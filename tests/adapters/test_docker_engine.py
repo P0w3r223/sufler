@@ -9,14 +9,18 @@ JSON, nie do wiersza poleceń. Prawdziwy ``docker.sock`` ma pokrycie w obrazie/i
 
 from __future__ import annotations
 
+import http.client
+
 import pytest
 
 pytest.importorskip("fcntl", reason="silnik Docker jest POSIX-only (gniazdo unix docker.sock)")
 
+from workmate.adapters.outbound import docker_engine  # noqa: E402
 from workmate.adapters.outbound.docker_engine import (  # noqa: E402
     DockerHttpEngine,
     DockerRunTemplate,
 )
+from workmate.core.errors import ExecManagerError  # noqa: E402
 from workmate.core.ports.exec_manager import ContainerSpec  # noqa: E402
 
 _SCOPE = f"teams-graph/{'a' * 32}"
@@ -101,3 +105,78 @@ def test_notes_dir_jest_w_env_wykonawcy():
     body = _engine()._create_body(_spec())  # noqa: SLF001
 
     assert "WORKMATE_NOTES_DIR=/mnt/system/notes" in body["Env"]
+
+
+class _FakeResponse:
+    """Odpowiedź ``http.client`` o zadanym statusie i surowej treści."""
+
+    def __init__(self, status: int, raw: bytes) -> None:
+        self.status = status
+        self._raw = raw
+
+    def read(self) -> bytes:
+        return self._raw
+
+
+class _FakeConnection:
+    """Połączenie, które zamiast rozmawiać z demonem oddaje zadaną odpowiedź albo wyjątek."""
+
+    def __init__(self, *, raises: Exception | None = None, status: int = 200, raw: bytes = b"{}"):
+        self._raises = raises
+        self._status = status
+        self._raw = raw
+
+    def request(self, method, path, body=None, headers=None) -> None:  # noqa: ARG002
+        return None
+
+    def getresponse(self) -> _FakeResponse:
+        if self._raises is not None:
+            raise self._raises
+        return _FakeResponse(self._status, self._raw)
+
+    def close(self) -> None:
+        return None
+
+
+def _with_connection(monkeypatch, connection: _FakeConnection) -> DockerHttpEngine:
+    monkeypatch.setattr(
+        docker_engine, "_UnixHTTPConnection", lambda socket_path, *, timeout: connection
+    )
+    return _engine()
+
+
+def test_uciety_dialog_http_wraca_jako_ExecManagerError(monkeypatch):
+    """``http.client`` sygnalizuje zerwaną odpowiedź WŁASNYMI wyjątkami, nie ``OSError``.
+
+    ``BadStatusLine``/``IncompleteRead`` przelatywały obok ``except OSError`` i wywracały turę,
+    zamiast wrócić jako niedostępność wykonawcy — a ``ManagedCommandRunner`` degraduje wyłącznie
+    ``ExecManagerError``.
+    """
+    engine = _with_connection(
+        monkeypatch, _FakeConnection(raises=http.client.BadStatusLine("smieci"))
+    )
+
+    with pytest.raises(ExecManagerError):
+        engine.list_managed()
+
+
+def test_zepsuty_json_od_demona_wraca_jako_ExecManagerError(monkeypatch):
+    """``JSONDecodeError`` to ``ValueError``, nie ``OSError`` — też przelatywał obok osłony."""
+    engine = _with_connection(monkeypatch, _FakeConnection(raw=b"to nie jest JSON"))
+
+    with pytest.raises(ExecManagerError):
+        engine.list_managed()
+
+
+def test_odmowa_docker_api_przy_starcie_wraca_jako_ExecManagerError(monkeypatch):
+    """Status != 2xx z ``/containers/create`` wychodził surowym ``_DockerApiError``.
+
+    ``remove`` tłumaczył go od początku; ``run`` — nie, więc odmowa demona (brak obrazu, konflikt
+    nazwy) kładła turę agenta zamiast wrócić wynikiem polecenia z kodem ``-1``.
+    """
+    engine = _with_connection(
+        monkeypatch, _FakeConnection(status=500, raw=b'{"message": "no such image"}')
+    )
+
+    with pytest.raises(ExecManagerError):
+        engine.run(_spec())

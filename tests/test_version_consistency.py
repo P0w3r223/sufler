@@ -14,6 +14,7 @@ sprawdzamy tylko wtedy, gdy istnieją; w CI i na maszynie deweloperskiej istniej
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -26,10 +27,6 @@ _DOCKERFILE = _KORZEN / "deploy" / "docker" / "Dockerfile"
 _COMPOSE = _KORZEN / "deploy" / "docker" / "docker-compose.yml"
 _README = _KORZEN / "README.md"
 
-# `version = "1.5.0"` z sekcji [project]. Czytamy regexem, a nie `tomllib`, bo pakiet
-# deklaruje `requires-python = ">=3.10"`, a `tomllib` jest dopiero od 3.11 — import
-# wywaliłby całą kolekcję testów na najniższej wspieranej wersji.
-_WERSJA_PAKIETU = re.compile(r'^version\s*=\s*"(\d+\.\d+\.\d+)"', re.M)
 _ARG_WERSJA = re.compile(r"^ARG\s+WERSJA=(\d+\.\d+\.\d+)", re.M)
 _OBRAZ = re.compile(r"workmate:(\d+\.\d+\.\d+)")
 _WERSJA_BUILD = re.compile(r"WERSJA:\s*\"(\d+\.\d+\.\d+)\"")
@@ -37,9 +34,17 @@ _BADGE = re.compile(r"badge/wersja-(\d+\.\d+\.\d+)-")
 
 
 def _wersja_pakietu() -> str:
-    dopasowanie = _WERSJA_PAKIETU.search(_PYPROJECT.read_text(encoding="utf-8"))
-    assert dopasowanie is not None, 'brak `version = "N.N.N"` w pyproject.toml'
-    return dopasowanie.group(1)
+    """``[project].version`` czytana ``tomllib`` — parserem formatu, nie wzorcem tekstowym.
+
+    Do 2026-08-17 stał tu regex, uzasadniony deklaracją ``requires-python = ">=3.10"``
+    (``tomllib`` wchodzi dopiero w 3.11, więc import wywróciłby kolekcję na najniższej
+    wspieranej wersji). Deklaracja zeszła do ``>=3.11`` — bo 3.10 nie było testowane
+    NIGDZIE — więc obejście straciło powód i zostaje zdjęte razem z nim.
+    """
+    metadane = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    wersja = metadane["project"]["version"]
+    assert isinstance(wersja, str), 'brak `version = "N.N.N"` w [project] pyproject.toml'
+    return wersja
 
 
 def test_pyproject_zgodny_z_dunder_version() -> None:
@@ -73,6 +78,9 @@ def test_badge_w_readme_mowi_wersje_pakietu() -> None:
     pakiet ↔ ``__version__``, a inaczej niż sondy plików z ``deploy/``.
     """
     znalezione = sorted(set(_BADGE.findall(_README.read_text(encoding="utf-8"))))
+    # Rozdzielone od porównania, bo brak badge'a i badge rozjechany to DWIE różne usterki —
+    # wspólna asercja mówiła na obie „badge mówi []", co nie naprowadza na przyczynę.
+    assert znalezione, "README nie ma badge'a z wersją (wzorzec: badge/wersja-N.N.N-)"
     assert znalezione == [_wersja_pakietu()], (
         f"badge w README mówi {znalezione}, pakiet ma {_wersja_pakietu()}"
     )

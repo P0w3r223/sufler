@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from claude_summary.core.models import DaySummary
 from claude_summary.core.ports import LlmClient
+from claude_summary.core.redaction import person_label
 
 _SYSTEM = (
     "Jesteś asystentem, który zwięźle opisuje, co dana osoba robiła w pracy danego dnia. "
@@ -32,7 +33,8 @@ _SYSTEM = (
 def _day_payload(day: DaySummary, *, person: str) -> str:
     return json.dumps(
         {
-            "osoba": person,
+            # Do modelu idzie ETYKIETA osoby, nie adres e-mail (ADR 0003, poprawka 2026-08-17).
+            "osoba": person_label(person),
             "dzien": day.day.isoformat(),
             "prompty": [prompt.text for prompt in day.prompts],
             "commity": [commit.message for commit in day.commits],

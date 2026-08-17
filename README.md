@@ -1,6 +1,6 @@
 # WorkMate
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml/badge.svg)](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml)
 [![Wersja](https://img.shields.io/badge/wersja-1.6.0-green.svg)](CHANGELOG.md)
 [![Licencja](https://img.shields.io/badge/licencja-Proprietary-red.svg)](LICENSE)
@@ -11,10 +11,14 @@ wiedzy o projektach, dostępna tam, gdzie zespół już pracuje: w Claude Code, 
 > **Status: produkcyjny — kod Fazy 1–4 domknięty.** Serwer MCP, runtime agenta w rdzeniu, drzwi
 > Teams/CLI/GitHub, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira „moje
 > zadania" oraz lokalny retrieval leksykalny notatek. Karty czasu (WorklogPRO) wycofane z projektu
-> (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). 67 ADR-ów
-> architektonicznych (`docs/adr/`; z najnowszych 0064/0065/0066 — harness plików, baza mutowalna,
-> klasy zaufania — są `accepted` decyzjami właściciela z 2026-08-14, ale **jeszcze bez kodu**,
-> a 0067 (obserwowalność Fazy 0: dziennik audytu + dead-letter) jest wdrożony), pełny zestaw testów zielony. Meta Fazy 1 (wdrożenie HTTP na
+> (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). **69 ADR-ów**
+> architektonicznych (`docs/adr/0001–0069`) — sześć najnowszych jest **wdrożonych**: 0064 (harness
+> plików), 0065 (mutowalna baza wiedzy pod sędzią), 0066 (klasy zaufania), 0067 (obserwowalność
+> Fazy 0: dziennik audytu + dead-letter notifiera), 0068 (nazwy narzędzi agenta: `Notes`→`Project`,
+> `GitHub`→`Activity`, bramka budżetu opisów) i 0069 (kwarantanna porzuconych wiadomości
+> przychodzących). Wszystkie bramki 0064/0065/0066 są przy tym
+> **domyślnie WYŁĄCZONE** — kod jest, zdolność włącza dopiero operator. Pełny zestaw testów
+> zielony. Meta Fazy 1 (wdrożenie HTTP na
 > serwerze firmowym) wciąż otwarta — patrz [`docs/roadmap-v1-gap-analysis.md`](docs/roadmap-v1-gap-analysis.md).
 
 ## O projekcie
@@ -76,7 +80,7 @@ flowchart TB
         GHD["GitHub<br/>workmate-github"]
     end
     subgraph C["RDZEŃ · core"]
-        CAT["Jedno źródło narzędzi<br/>4+1 MCP + katalog agenta"]
+        CAT["Jedno źródło narzędzi<br/>5–8 MCP (zamrożone) + katalog agenta"]
         AG["Runtime agenta<br/>(Claude, pamięć rozmów)"]
         SVC["Serwisy: notatki · status<br/>zdarzenia · retrieval · notifier"]
     end
@@ -120,7 +124,11 @@ Szczegóły i pełne diagramy warstw: [`docs/explanation/architecture.md`](docs/
 
 ## Wymagania i instalacja
 
-Wymagania: **Python 3.10+** oraz [`uv`](https://docs.astral.sh/uv/).
+Wymagania: **Python 3.11+** oraz [`uv`](https://docs.astral.sh/uv/). Dolna granica jest równa
+wersji, na której cokolwiek tu biega. `tests/deploy/test_python_version_floor.py` wiąże
+`requires-python` z dwoma miejscami, które da się sprawdzić plikiem: `.python-version` i obrazem
+bazowym z `deploy/docker/Dockerfile`. CI nie jest osobnym dowodem — bierze wersję z
+`.python-version` przez `setup-uv`, więc pilnuje jej ta sama sonda.
 
 ```bash
 # Instalacja rdzenia (serwer MCP działa bez sekretów, na lokalnych plikach)
@@ -172,7 +180,26 @@ Każde drzwi to osobny console-script, uruchamiany po instalacji odpowiedniego e
 | `workmate-teams-digest` | Proaktywny cotygodniowy digest zmian ([ADR 0053](docs/adr/0053-proactive-weekly-change-digest.md)). |
 | `workmate-heartbeat-check` | Healthcheck pulsu pollerów (używany przez `docker compose`). |
 | `workmate-metrics` | Raport metryk użycia (licznik SQLite, pseudonimizowany). |
+| `workmate-diagnostics` | Odczyt dziennika audytu i obu kwarantann ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md)) — patrz niżej. |
 | `workmate-seed-corpus` | Import korpusu początkowego notatek — dry-run domyślnie. |
+
+### Diagnostyka po incydencie
+
+Trzy magazyny obserwowalności czyta jedno polecenie — dziennik audytu (`audit`), kwarantannę
+zdarzeń niewysłanych (`dead-letters`) i kwarantannę wiadomości porzuconych przez drzwi
+(`inbound`). Ścieżka bazy nie jest zaszyta: `--db` albo zmienna (`WORKMATE_EVENTS_DB` dla obu
+kwarantann, `WORKMATE_AUDIT_DB` dla audytu). Połączenie jest tylko do odczytu — bazę w tej samej
+chwili piszą procesy drzwi.
+
+```bash
+workmate-diagnostics inbound --since 24h                 # kto nie dostał odpowiedzi
+workmate-diagnostics dead-letters --source github --since 7d
+workmate-diagnostics audit --source teams_graph --limit 100 --json
+```
+
+Wpis niesie identyfikatory (kanał, wątek, id wiadomości, nadawca po AAD id), powód i czas —
+**nigdy treści**. Kwarantanna ma pomóc wiadomość ODNALEŹĆ w Teams, nie ją odtworzyć
+([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md) §5).
 
 ## Testy i jakość
 
@@ -200,7 +227,7 @@ Dokumentacja jest uporządkowana wg [Diátaxis](https://diataxis.fr/) — patrz 
 - **How-to** (`docs/how-to/`) — konkretne procedury operacyjne: wdrożenie, aktywacja drzwi, smoke test.
 - **Reference** (`docs/reference/`) — fakty do sprawdzenia: narzędzia, konfiguracja, schemat notatki.
 - **Explanation** (`docs/explanation/`) — kontekst i uzasadnienie: architektura systemu.
-- **ADR** (`docs/adr/`) — zapis decyzji architektonicznych, 0001–0055.
+- **ADR** (`docs/adr/`) — zapis decyzji architektonicznych, 0001–0069.
 - **Research** (`docs/research/`) — notatki badawcze uzasadniające wybory techniczne.
 
 Zmiany między wersjami: [`CHANGELOG.md`](CHANGELOG.md). Chcesz coś zmienić? →
@@ -212,7 +239,14 @@ Bezpieczeństwo jest ograniczeniem na każdą funkcję, nie osobnym modułem:
 
 - **Odczyt jest domyślny; zapis jest bramkowany.** Każda zdolność mutująca ma własną, domyślnie
   wyłączoną bramkę, włączaną per drzwi.
-- **Treść notatek i zdarzeń to dane, nie polecenia** — nigdy nie są wykonywane jako instrukcje.
+- **Treść notatek i zdarzeń to dane, nie polecenia** — postawa, nie granica. **Egzekwowane**
+  maszynowo są wyłącznie znaki sterujące (`reject_dangerous_content`, `strip_control_chars`) — to
+  jedyne miejsce, w którym coś zostaje odrzucone lub wycięte. Klasy zaufania T0–T3
+  ([ADR 0066](docs/adr/0066-content-trust-classes-and-sticky-conversation-taint.md)) treść
+  **etykietują**, a nie blokują: koperta z nonce'em na turę mówi modelowi, skąd tekst pochodzi,
+  niczego nie zabraniając — i jest domyślnie wyłączona. Reszta kształtuje zachowanie modelu.
+  **To nie jest obrona przed wstrzyknięciem promptu** — tą są bramki zdolności, montaż `ro`,
+  wykonawca bez sieci i odwracalność.
 - **Zamrożony kontrakt narzędzi i schematu notatki** — pilnowany golden-testem.
 - **Sekrety poza zasięgiem rdzenia** — czytane z env/plików poza `data/`, nigdy w repo.
 - **Testy bezpieczeństwa w CI** — wstrzyknięcia, path traversal, wyciek sekretów

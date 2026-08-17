@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+import contextlib
+from datetime import UTC, datetime
 
 from workmate.adapters.inbound.github.poller import GithubPoller, _iso_z
 from workmate.core.application.events import EventService
 from workmate.core.domain.events import Event, NewEvent
 
-_WHEN = datetime(2026, 7, 15, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 15, tzinfo=UTC)
 
 
 class _FakeStore:
@@ -359,5 +360,109 @@ def test_seed_initializes_all_four_watermarks():
 def test_iso_z_seeds_in_github_format_not_isoformat():
     """Seed watermarku musi mieć format GitHuba (``…Z``), nie ``isoformat`` (``+00:00``) — inaczej
     porównanie leksykograficzne watermarków CI/recenzji ze znacznikami GitHuba by się rozjechało."""
-    seeded = _iso_z(datetime(2026, 7, 16, 10, 38, 26, 123456, tzinfo=timezone.utc))
+    seeded = _iso_z(datetime(2026, 7, 16, 10, 38, 26, 123456, tzinfo=UTC))
     assert seeded == "2026-07-16T10:38:26Z"  # bez ułamków sekund i bez „+00:00"
+
+
+# --- gałęzie i cap recenzji: regresje audytu -----------------------------------
+
+
+class _BranchClient(_FakeClient):
+    """``_FakeClient`` + gałęzie i PR-y (port ma je, atrapa bazowa jeszcze nie miała)."""
+
+    def __init__(self, *, branches=(), pulls=(), **kwargs):
+        super().__init__(**kwargs)
+        self._branches = list(branches)
+        self._pulls = list(pulls)
+
+    def list_branches(self, owner, repo, *, per_page=50):
+        return self._branches
+
+    def list_pulls(self, owner, repo, *, state="all", per_page=50):
+        return self._pulls
+
+
+def _branch(name: str, sha: str) -> dict:
+    return {"name": name, "commit": {"sha": sha}}
+
+
+class _ExplodingStore(_FakeStore):
+    """Magazyn, który pada na zapisie inaczej niż ``WriteError`` (blokada SQLite, dysk)."""
+
+    def append(self, event: NewEvent) -> Event:
+        raise OSError("database is locked")
+
+
+def test_branch_heads_do_not_advance_when_ingest_fails():
+    """Regresja: mapa gałęzi to WATERMARK i musi się przesuwać PO ingest, jak wszystkie inne.
+
+    Push/usunięcie wykrywamy RÓŻNICĄ wobec poprzedniej rundy, więc mapa zapisana przy nieudanym
+    ingest kasowała zdarzenie bezpowrotnie — następna runda widziała już „bez zmian".
+    """
+    state = {"branch_heads": {"main": "aaa"}}
+    client = _BranchClient(branches=[_branch("main", "bbb")])
+    poller = _poller(client, _ExplodingStore(), state=state, watch=("branches",))
+
+    with contextlib.suppress(OSError):
+        asyncio.run(poller.poll_once())
+
+    assert state["branch_heads"] == {"main": "aaa"}  # nietknięta — push da się ponowić
+
+
+def test_branch_heads_advance_after_a_successful_ingest():
+    state = {"branch_heads": {"main": "aaa"}}
+    client = _BranchClient(branches=[_branch("main", "bbb")])
+    store = _FakeStore()
+
+    asyncio.run(_poller(client, store, state=state, watch=("branches",)).poll_once())
+
+    assert state["branch_heads"] == {"main": "bbb"}
+    assert [r.kind for r in store.rows] == ["branch_pushed"]
+
+
+def test_full_branch_page_is_not_read_as_a_wave_of_deletions():
+    """Regresja: ciche ucięcie paginacji wyglądało jak usunięcie gałęzi — i to TRWALE.
+
+    ``events.db`` jest append-only, więc zmyślone ``branch_deleted`` zostaje w nim i w digestach
+    na zawsze. Pełne wiadro (``per_page × strony``) traktujemy więc jako „mogło być więcej".
+    """
+    strona = [_branch(f"feat/{i}", f"sha{i}") for i in range(500)]  # per_page 50 × 10 stron
+    state = {"branch_heads": {**{f"feat/{i}": f"sha{i}" for i in range(500)}, "stara": "zzz"}}
+    store = _FakeStore()
+
+    asyncio.run(
+        _poller(_BranchClient(branches=strona), store, state=state, watch=("branches",)).poll_once()
+    )
+
+    assert store.rows == []  # ani jednego zmyślonego branch_deleted
+    assert state["branch_heads"]["stara"] == "zzz"  # gałąź spoza strony zostaje w mapie
+
+
+def test_review_cap_keeps_the_freshest_prs_not_the_stalest():
+    """Regresja: cap tnie z KOŃCA listy — ``/issues`` jedzie ``direction=asc``.
+
+    Cięcie z przodu odrzucało PR-y NAJŚWIEŻSZE, a ``reviews_since`` awansowało tak czy tak;
+    filtr recenzji jest kliencki i wykluczający, więc te recenzje ginęły na stałe.
+    """
+    prs = [_pr(n) for n in range(1, 31)]  # rosnąco po ``updated`` (jak GitHub przy asc)
+    client = _BranchClient(issues=prs)
+
+    asyncio.run(_poller(client, _FakeStore(), watch=("issues", "reviews")).poll_once())
+
+    assert client.reviews_seen == list(range(11, 31))  # 20 NAJŚWIEŻSZYCH, nie 1..20
+
+
+def test_page_budget_of_the_poller_matches_the_client_it_describes():
+    """``_CLIENT_MAX_PAGES`` to ODWZOROWANIE prywatnej stałej klienta, przez granicę in/out.
+
+    Rozjazd nie wywraca niczego głośno i na tym polega jego cena: heurystyka ucięcia
+    (``_branches_truncated``) przestaje trafiać w pełne wiadro, ``diff_branches`` znów orzeka
+    o usunięciach z niepełnej listy, a ``events.db`` jest append-only — zmyślone
+    ``branch_deleted`` zostaje w nim i w digestach na zawsze. Import stałej z adaptera
+    WYJŚCIOWEGO byłby sprzęgnięciem, którego port dziś nie ma; asercja wiąże obie kopie
+    bez sprzęgania kodu.
+    """
+    from workmate.adapters.inbound.github import poller as poller_module
+    from workmate.adapters.outbound.github_api import _MAX_PAGES
+
+    assert poller_module._CLIENT_MAX_PAGES == _MAX_PAGES

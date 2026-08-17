@@ -15,7 +15,7 @@ from __future__ import annotations
 import contextlib
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -47,7 +47,7 @@ class FilesystemNoteSnapshots:
         content = render_note(note)
         note_id = note.id
         katalog = self._root / _bezpieczny_segment(note_id)
-        znacznik = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+        znacznik = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
         cel = katalog / f"{znacznik}.md"
         tmp = katalog / f"{znacznik}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         try:

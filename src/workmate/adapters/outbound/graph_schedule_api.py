@@ -12,7 +12,7 @@ schedule) na POSZERZONYM oknie; dokładny filtr nakładania robi domena (``sched
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -47,17 +47,10 @@ class HttpxGraphScheduleClient:
 
     def list_members(self, team_id: str) -> list[dict[str, Any]]:
         """Członkowie zespołu (aadUserConversationMember → userId + displayName)."""
-        members: list[dict[str, Any]] = []
-        url = f"{self._base_url}/teams/{team_id}/members"
-        for _ in range(_MAX_PAGES):
-            body = self._get(url)
-            raw = body.get("value")
-            page = [m for m in raw if isinstance(m, dict)] if isinstance(raw, list) else []
-            members.extend(page)
-            url = body.get("@odata.nextLink") or ""
-            if not url:
-                break
-        return members
+        # Ta sama pętla po ``value``/``@odata.nextLink`` co reszta zasobów grafiku — jedna
+        # implementacja paginacji znaczy też jedno miejsce, w którym ucięcie na suficie stron
+        # zostawia ślad w logu.
+        return self._get_paged(f"{self._base_url}/teams/{team_id}/members", None)
 
     def list_shifts(self, team_id: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
         from datetime import timedelta
@@ -101,6 +94,17 @@ class HttpxGraphScheduleClient:
             next_url = body.get("@odata.nextLink") or ""
             if not next_url:
                 break
+        if next_url:
+            # Graph ma jeszcze ``@odata.nextLink``, a sufit stron się skończył — wynik jest
+            # NIEPEŁNY. Bez śladu w logu „brakuje połowy zespołu w grafiku" wygląda jak stan
+            # faktyczny, a nie jak ucięcie (por. ``transcript_sources``, które w tym miejscu
+            # podnosi błąd; odczyt grafiku ma wrócić, więc zostaje ostrzeżenie z nazwą zasobu).
+            logger.warning(
+                "Odczyt %s ucięty po %d stronach — oddaję %d pozycji, dalsze pominięte.",
+                httpx.URL(url).path,
+                _MAX_PAGES,
+                len(items),
+            )
         return items
 
     def _get(self, url: str) -> dict[str, Any]:
@@ -134,9 +138,8 @@ def _window_filter(prefix: str, start: datetime, end: datetime) -> str:
 
 def _graph_iso(value: datetime) -> str:
     """Znacznik czasu w formacie Graph (UTC, ``...Z``) — bez mikrosekund."""
-    from datetime import timezone
 
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _status_message(status_code: int) -> str:

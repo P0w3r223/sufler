@@ -37,6 +37,11 @@ _DEFAULT_SOCKET = Path(os.environ.get("WORKMATE_EXEC_SOCKET", "/var/run/workmate
 # polecenia wracał jako wynik z flagą ``timed_out``, a nie jako zerwanie po stronie klienta —
 # odwrotna kolejność gubiłaby informację, co się właściwie stało.
 _CLIENT_MARGIN_S = 30.0
+# Sufit linii ODPOWIEDZI — lustro ``_MAX_REQUEST_BYTES`` wykonawcy. ``settimeout`` obowiązuje
+# per ``recv``, więc strumień sączony po bajcie nie przerwie odczytu ani po czasie, ani po
+# rozmiarze: bez sufitu jedna zepsuta (albo wroga) odpowiedź rośnie w pamięci bez granicy.
+# Realna odpowiedź jest znacznie mniejsza — wykonawca przycina każdy strumień do 64 KiB.
+_MAX_RESPONSE_BYTES = 1024 * 1024
 
 
 class SocketCommandRunner:
@@ -76,9 +81,14 @@ class SocketCommandRunner:
             with sock.makefile("rwb") as stream:
                 stream.write(request.encode("utf-8") + b"\n")
                 stream.flush()
-                line = stream.readline()
+                line = stream.readline(_MAX_RESPONSE_BYTES)
         if not line:
             raise ValueError("wykonawca zamknął połączenie bez odpowiedzi")
+        if not line.endswith(b"\n"):
+            raise ValueError(
+                f"odpowiedź wykonawcy przekracza sufit {_MAX_RESPONSE_BYTES} B albo urwała się "
+                "bez końca linii"
+            )
         parsed = json.loads(line)
         if not isinstance(parsed, dict):
             raise ValueError("odpowiedź wykonawcy nie jest obiektem JSON")

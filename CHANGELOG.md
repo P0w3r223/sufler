@@ -13,7 +13,22 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
 - **Bramka członkostwa na powłoce** (`Bash`) — nie-członek pionu dostaje pustą listę narzędzi powłoki, symetrycznie do odczytu notatek ([ADR 0063](docs/adr/0063-shell-membership-gate-and-conversation-isolation.md)).
 - **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
 - **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
+- **Kwarantanna porzuconych wiadomości na drzwiach Teams** ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md)): drzwi podchodzą do wiadomości **najwyżej dwa razy** — to gwarancja, która weszła z licznikiem prób (zamyka pętlę restartów na wiadomości ubijającej proces), a teraz jest zapisana jako decyzja, a nie komentarz przy stałej. Porzucona wiadomość trafia do tabeli `inbound_dead_letters` w `events.db`, siostry `dead_letters` notifiera: wpis NAJPIERW trwały, potem zniknięcie ze strumienia (kolejność z ADR 0067 §2), idempotentny po `(drzwi, id wiadomości)`. Wpis niesie to, czym wiadomość da się ODNALEŹĆ w Teams (kanał, wątek, id, nadawca po AAD id) i powód porażki — **nigdy treści**. Osobna tabela, bo `dead_letters` klucz ma całkowity (`event_id` z `events.db`), a id wiadomości Graph jest nieprzezroczystym tekstem bez sensu poza kanałem i wątkiem.
 
+- **Czytelnik powierzchni diagnostycznych** — `workmate-diagnostics {audit|dead-letters|inbound}`
+  ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md), R2). Trzy
+  magazyny obserwowalności (dziennik audytu z ADR 0067 §1, kwarantanna notifiera z ADR 0067 §2,
+  kwarantanna wiadomości przychodzących) były PISANE i nigdy czytane — `recent()` nie miało
+  wołającego w `src/`, a jedyną drogą do wpisów był `sqlite3` na wolumenie produkcyjnym. Jedno
+  polecenie na trzy powierzchnie, bo operator pyta o nie w jednym przebiegu i z tego samego
+  powodu: ktoś nie dostał odpowiedzi. Wpis niesie identyfikatory, powód i czas; `--source` zawęża
+  do drzwi (albo źródła zdarzenia), `--since`/`--until` biorą okres względny (`24h`, `7d`, `30m`)
+  albo znacznik ISO, `--json` oddaje te same pola skryptom. Bazę czytamy połączeniem **tylko do
+  odczytu** (`mode=ro` + dyscyplina współbieżności magazynów), więc narzędzie nie ZAKŁADA bazy ani
+  tabel: zła ścieżka wraca jako pomyłka operatora, a nie jako „brak wpisów" nad świeżo utworzonym
+  pustym plikiem. Ścieżka nigdy nie jest zaszyta — `--db` albo zmienna, która włącza zapis
+  (`WORKMATE_EVENTS_DB` / `WORKMATE_AUDIT_DB`). Treści nadal nie ma i nie będzie: kwarantanna
+  wejściowa jej nie przechowuje, a wydruk ma pomóc wiadomość ODNALEŹĆ w Teams, nie odtworzyć.
 - **Mutowalna baza wiedzy pod sędzią** (ADR 0065): agent może POPRAWIĆ istniejącą notatkę
   (`File(edit)`), a przy osobnej bramce także ją usunąć (`File(delete)`). To **świadome
   odwrócenie** dotychczasowej postawy: do teraz bazy nie dało się zepsuć, bo jedyny pisarz był
@@ -59,6 +74,150 @@ Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług rele
   liczbę grafik bez opisu, więc strona zdominowana przez baner nadal oddaje swoją treść. Powłoka
   dostaje `workmate-extract plik.pdf` na pdf/docx/xlsx/pptx/html — ten sam `document_text` co drzwi.
   `pypdf` dołożony do extra `teams-graph`, bo obraz floty nie instaluje `seed`, w którym mieszkał.
+
+### Changed
+
+- **ZMIANA PUBLICZNEGO KONTRAKTU PAKIETU: `requires-python` idzie z `>=3.10` na `>=3.11`.**
+  Deklarowana dolna granica nie była testowana NIGDZIE: `.python-version` mówi 3.11, oba etapy
+  obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`, a CI biega na jednej wersji —
+  macierz nie ma osi wersji Pythona wcale, `setup-uv` bierze ją z `.python-version`. Deklaracja
+  szersza od pokrycia nie jest neutralna — kosztowała obejście
+  w `tests/test_version_consistency.py`, gdzie `pyproject.toml` czytany był regexem zamiast
+  `tomllib` (3.11+) „żeby nie wywrócić kolekcji na najniższej wspieranej wersji". Obejście zdjęte
+  razem z jego powodem. Nowa bramka `tests/deploy/test_python_version_floor.py` wiąże
+  `requires-python` z `.python-version` i z obrazem bazowym — rozjazd w którąkolwiek stronę zapala
+  się teraz w CI. Dokumentacja (README, CONTRIBUTING, tutorial, how-to Teams, SYSTEM-SPEC oraz
+  kopia README w paczce wdrożeniowej) mówi 3.11+ w siedmiu miejscach, w których mówiła 3.10+.
+- **CI przeorganizowane: bramki statyczne PRZED testami i każda z `!cancelled()`.** Sama kolejność
+  nie wystarczała — jeden czerwony test przykrywał lint, format, mypy i granice na tyle długo, że
+  trzy pliki stały niezgodne z `ruff format` przy „zielonym" CI. Krok, który padł, zabiera teraz
+  ze sobą WYŁĄCZNIE swoją informację. Lista katalogów lintowanych rozszerzona do
+  `src tests eval deploy scripts` (`deploy` i `scripts` wypadały wcześniej z pokrycia) i wymieniona
+  JAWNIE, bo pod-projekty mają własne wpisy macierzy z własnym `dir`. `ruff format --check` jest
+  osobnym krokiem od `ruff check` — `CLAUDE.md` uzupełniony, bo lokalna bramka bez niego dawała
+  czerwone CI.
+- **`Settings` dostaje `validate()`** — była JEDYNĄ klasą ustawień bez niego, choć niesie te same
+  klasy pomyłek co sąsiedzi. `WORKMATE_LOG_LEVEL=verbose` wywracał start dopiero w
+  `logging.basicConfig`/`uvicorn`, komunikatem biblioteki („Unknown level: 'VERBOSE'"), który nie
+  mówi, KTÓRĄ zmienną poprawić. Sprawdzane są transport, poziom logowania i zakres
+  `WORKMATE_BIND_PORT`, także po `replace(settings, ...)` w wiringu.
+- **Bramki mutacji notatek padają na starcie zamiast w runtime.** `TeamsGraphSettings.validate()`
+  wymaga teraz: `_ENABLE_NOTE_MUTATION` → istniejąca mapa tożsamości ORAZ `_ENABLE_FILE_TOOL=true`
+  (mutacja jest akcją narzędzia `File`, nie osobnym narzędziem), `_ENABLE_NOTE_DELETE` →
+  `_ENABLE_NOTE_MUTATION=true` (kasowanie idzie tą samą ścieżką). Trwałe ścieżki zapisu zebrane
+  w jedno miejsce (`Settings.persistent_paths()`) i sondowane `require_writable` na starcie drzwi —
+  wcześniej lista żyła rozsypana po `adapters/inbound/*/app.py` i wypadły z niej trzy pozycje
+  (migawki notatek, baza metryk, baza audytu). Migawki mają przy tym WARUNEK: sonda bada je
+  wyłącznie przy włączonej mutacji, bo domyślna ścieżka leży pod montażem `:ro` floty.
+- **Dokumentacja nadgania kod po dwóch rundach audytu.** Pięć bramek zdolności ADR 0062–0066
+  (`_ENABLE_NOTE_READ_AUTHZ`, `_ENABLE_FILE_TOOL`, `_ENABLE_NOTE_MUTATION`, `_ENABLE_NOTE_DELETE`,
+  `_ENABLE_TRUST_LABELS`) dostaje wiersze w macierzy bramek, w `reference/config.md` i w
+  `deploy/docker/env.example` — do tej pory bramka ADR 0062 była **niewłączalna z dokumentacji**.
+  `reference/tools.md` zyskuje sekcję o `File` — jedynym narzędziu mutującym bazę wiedzy, którego
+  referencja katalogu narzędzi w ogóle nie znała. `how-to/add-a-tool.md` (instrukcja dla następnej
+  osoby) dostaje konwencję PascalCase z ADR 0068 §3 i bramkę budżetu opisów — dwie rzeczy, które
+  nowe narzędzie wywracają natychmiast — i przestaje wskazywać nieistniejące buildery
+  (`build_notes_catalog`/`build_github_catalog` → `build_project_catalog`/`build_activity_catalog`).
+  Macierz bramek odnotowuje też jedyny znany wyjątek od reguły „bramka ON bez celu to twardy błąd
+  startu": `_ENABLE_TRUST_LABELS` przechodzi bez `_ENABLE_NOTE_READ_AUTHZ` i daje wtedy połowę
+  ADR 0066.
+- **Sufit 60 s na `Retry-After`** w trzech transportach (`github_api`, `graph_http`, `jira_http`).
+  Serwer może podać w tym nagłówku wartość dowolnie dużą; bez sufitu jedna odpowiedź 429 potrafiła
+  uśpić pollera na czas nieznany operatorowi. Podłoga i przycięcie są te same we wszystkich trzech —
+  jedna reguła transportu, nie trzy warianty.
+- **Nazwy narzędzi agenta oddają zawartość** ([ADR 0068](docs/adr/0068-agent-tool-names-and-the-cost-of-a-wrong-one.md)):
+  `Notes` → `Project` (akcja `project_status` → `status`) i `GitHub` → `Activity` (akcja
+  `activity` → `summary`). Pierwsze na drzwiach produkcyjnych miało JEDNĄ akcję i 44% opisu
+  zużywało na prostowanie własnej nazwy; drugie nazywało jedno z **dwóch** źródeł warstwy zdarzeń
+  (`EventStore` przyjmuje `source="github"` i `source="teams"`; Jira nie ma mostu), którą w całości
+  obsługuje. Powierzchnia agenta idzie jedną konwencją nazw (PascalCase):
+  `SearchNotes`/`GetNote`/`ListProjects`, `CreateFile`/`ReadFile`/`ListFiles`, `ReplyWithFile`,
+  `SendImage`, `SendDocument`. **Powierzchnia MCP nietknięta** — tam nazwy są zamrożone.
+- **Opisy narzędzi chudsze o ~1,9 KB na żądanie**: instrukcje prezentacji wyniku przeniesione do
+  koperty (pole `note`, wzorzec z `File`), granica danych zostawiona samemu promptowi, opis `Jira`
+  skrócony z 2308 B do 1226 B. Nowa bramka `tests/core/test_tool_descriptions.py` mierzy sufit
+  bajtów per narzędzie (2048 B) i na całą powierzchnię (**8000 B** — pierwsza wersja progu miała
+  7000 B, ale mierzyła katalog bez narzędzi dostawy, więc realnych 7785 B bez powłoki w ogóle nie
+  widziała; próg podniesiony świadomie, zapasu zostaje ~215 B).
+- **Opisy przestały odsyłać do narzędzi nieobecnych w danej konfiguracji**: `File` wybiera wariant
+  flagą `shell_available` (bez powłoki `ReadFile`, z powłoką `cat`), a nagłówek sesji prostuje
+  świat w turze, w której powłoka nie powstała (nierozpoznany nadawca — ADR 0063 — albo błąd
+  budowy). Do tej pory gość czytał prompt o montażach `/mnt/system/…`, mając katalog bez `Bash`.
+- **Model widzi budżet rund narzędziowych**: od dwóch pozostałych nagłówek sesji mówi, ile ich
+  zostało. Inwariant zapisu (ADR 0011) bez zmian — zmienia się to, że model może zdążyć
+  odpowiedzieć tym, co ma, zamiast stracić turę razem z wiadomością użytkownika.
+- **Wyniki narzędzi docierają do streszczacza** (przycięte do 500 znaków): dotąd `_flatten` brał
+  wyłącznie bloki bez `call_id`, więc klucz Jiry ani identyfikator notatki nie przeżywały
+  kompaktowania, o ile model nie powtórzył ich własnymi słowami.
+- **`Bash` nazywa ciszę po udanym poleceniu**, a gałęzie „nie znaleziono" niosą ten sam kształt
+  (`tool`/`action`/`hint`) co błąd wywołania.
+- **Bramka kasowania notatek siedzi w `Literal`, nie w ciele**: `File` ma trzy warianty sygnatury
+  (`read` · `read|edit` · `read|edit|delete`). Przy `ENABLE_NOTE_MUTATION=true` +
+  `ENABLE_NOTE_DELETE=false` model nie widzi już `delete` w schemacie i nie traci rundy
+  narzędziowej na odmowę z ciała serwisu; opis narzędzia i lista dozwolonych akcji w odmowie idą
+  tą samą bramką. Budowniczy czyta ją z `NoteMutationService.allow_delete` — jedno źródło, bez
+  drugiej flagi obok.
+- **Dwie świadome zmiany zamrożonej powierzchni MCP, każda z baseline'em zaktualizowanym dla
+  JEDNEGO wpisu** (zmiana albo usunięcie pozostałych to złamanie kontraktu, nie aktualizacja):
+  opis `get_my_jira_tasks` wspomina o `truncated`, a opis `read_events_since` przestaje obiecywać
+  filtr `source='jira'`. Ten drugi zawsze zwracał pustkę — do `EventStore` trafiają wyłącznie
+  `github` i `teams` (Jira nie ma mostu, twarda reguła 8) — więc opis reklamował modelowi wartość,
+  której magazyn nie zna. To ta sama usterka, którą ADR 0068 naprawił po stronie agenta w opisie
+  `Activity`; powierzchnia MCP została wtedy pominięta.
+
+### Naprawione
+
+- **Drzwi Bot Framework (`workmate-teams`) wracają pod bramkę nadawcy** (audyt 2026-08-17,
+  [ADR 0062](docs/adr/0062-note-read-authorization.md)). Były **strukturalnie poza każdą bramką
+  sender-keyed**: handler składał `InboundMessage` bez `sender_id`, a wiring budował responder bez
+  `NoteReadAuthorizer` — więc `/szukaj`, `/projekty`, `/status` i narzędzia odczytu agenta
+  odpowiadały każdemu, kto dosięgnął endpointu, podczas gdy bliźniacze drzwi delegowane odmawiały.
+  Reszta zdolności sender-keyed degradowała cicho do „nierozpoznany" (fail-closed), więc dziura
+  była JEDNA, ale akurat na treści notatek. Teraz `sender_id` niesie `activity.from.aadObjectId` —
+  ten sam AAD id, którym posługuje się mapa tożsamości i drzwi delegowane (Graph `from.user.id`) —
+  a bramka wpina się przez nowe `WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ` + `WORKMATE_TEAMS_IDENTITIES`
+  (domyślnie OFF, włączona wymaga istniejącej mapy: fail-fast). **Bez fallbacku** na identyfikator
+  Bot Framework (`29:…`): gość, konto spoza tenantu i aktywność systemowa nie mają `aadObjectId`,
+  więc zostają nadawcą nierozpoznanym — podstawienie id kanałowego dałoby tożsamość fałszywą
+  zamiast braku tożsamości.
+- **`mentions_bot` na tych drzwiach przestaje być zawsze fałszywe**: wzmianka rozpoznawana jest po
+  encji `{type: 'mention', mentioned: {id}}` porównanej z `activity.recipient.id`. Routery dyrektyw
+  (brief, digest, „zapisz to") **nie są** na tych drzwiach składane, więc sygnał nie ma jeszcze
+  konsumenta — ale przestał być strukturalną blokadą dla wpięcia ich w przyszłości.
+- **Awaria zapisu stanu przestaje kasować wiadomości** (drzwi Teams, ADR 0069). Licznik prób
+  utrwalał się POZA blokiem `try` obsługi, a `require_writable` sonduje wolumen stanu wyłącznie
+  przy starcie — gdy wolumen przestawał przyjmować zapis w trakcie pracy (pełny dysk, remount
+  `ro`), licznik rósł w PAMIĘCI, wyjątek łapał `except` per kanał, a po dwóch rundach wiadomość
+  była oznaczana jako odpisana i znikała na stałe. Log mówił wtedy „po 2 nieudanych próbach
+  obsługi" — a prób obsługi było ZERO. Od teraz próba liczy się dopiero po POTWIERDZONYM zapisie:
+  nieudany zapis cofa podniesienie licznika i kończy rundę jak każda inna awaria infrastruktury.
+- **Backstop licznika prób obcinał nie ten koniec**: wstawienie na istniejący klucz nie przesuwa go
+  na koniec słownika, więc pod sufitem przycięty zostałby wpis wiadomości aktualnie w obiegu, a nie
+  ten porzucony najdawniej.
+- **Stan z gałęzią `null` (np. `"attempts": null`) nie kładzie już każdej rundy**: `setdefault`
+  łapał brak klucza, ale nie `null` pod kluczem, a wyjściem z `AttributeError` w kółko było ręczne
+  skasowanie pliku stanu. Seed sprawdza teraz TYP każdej gałęzi.
+- **Odmowa zapisu kwarantanny nie zatrzymuje kanału**: wyjątek z magazynu wychodził poza pętlę
+  wiadomości, więc trwała awaria (`SQLITE_CORRUPT`, `disk I/O error`, `SQLITE_BUSY` ponad
+  `busy_timeout`) sprawiała, że zdrowa wiadomość stojąca za trującą nie wchodziła do handlera ani
+  razu — kanał przestawał odpowiadać komukolwiek. Teraz błąd magazynu jest łapany, logowany jako
+  ERROR z KOMPLETEM wpisu (log jest wtedy zapasowym rejestrem), a runda idzie dalej. Treść
+  wiadomości i tak zostaje w Teams — wpis w kwarantannie jest wskaźnikiem, nie kopią.
+- **Pętla drzwi Teams przeżywa wolumen stanu, który przestał przyjmować zapis**: zapis po rundzie
+  stał poza jakimkolwiek `try` i kładł całą pętlę, a nadzorca wznawiał proces prosto w
+  `require_writable`. Puls w takiej rundzie **nie jest bity** — bez tego kontener bywał ZDROWY,
+  choć żadna wiadomość nie mogła przejść (licznik prób nie utrwala się, więc obsługa nie rusza).
+- **Powód w kwarantannie to typ wyjątku i pierwsza linia komunikatu**, nie `repr(exc)`: potok
+  respondera potrafi podnieść wyjątek niosący wartość wejściową, a magazyn deklaruje, że treści nie
+  trzyma. Redukcja ekspozycji, nie granica (twarda reguła 4).
+- **Stan z licznikiem spoza liczb** (`{"attempts": {"root-1": "abc"}}`) też jest naprawiany przy
+  seedzie — to ta sama trwała awaria co `null` pod kluczem, o poziom głębiej.
+- **`is_fresh` traktuje każdy błąd odczytu pulsu jak „niezdrowy"** (był tylko brak pliku):
+  healthcheck ma wydawać werdykt, nie traceback.
+- **Docstring pulsu żywotności zgadza się z kodem**: poller Teams bije po każdej wiadomości, po
+  każdym kanale (także tym, którego polling rzucił) i po rundzie, ale NIE po rundzie bez
+  utrwalonego stanu; poller GitHub — nadal wyłącznie po udanej rundzie. Plik opisywał wcześniej
+  wyłącznie tę drugą regułę.
 
 ### Uwaga wdrożeniowa
 

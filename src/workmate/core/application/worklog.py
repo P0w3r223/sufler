@@ -20,7 +20,7 @@ deterministyczne.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING
 
 from workmate.core.domain.guards import bounded
@@ -44,7 +44,7 @@ _MAX_AUTHOR = 255
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class WorklogService:

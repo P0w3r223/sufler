@@ -51,17 +51,30 @@ def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            # Repozytorium z ``i18n.commitEncoding`` innym niż UTF-8 (np. ISO-8859-2) wywracało
+            # cały bieg na UnicodeDecodeError. Podmiana bajtu jest gorsza od poprawnego ogonka,
+            # ale nie kosztuje raportu.
+            errors="replace",
             check=False,
         )
     except FileNotFoundError as exc:
         raise SystemExit("Nie znaleziono polecenia 'git' w PATH — zainstaluj Git.") from exc
 
 
+def _stdout(result: subprocess.CompletedProcess[str]) -> str:
+    """Wyjście procesu jako tekst — ``None`` (zdarza się na Windows) traktujemy jak pustkę."""
+    return result.stdout or ""
+
+
+def _stderr(result: subprocess.CompletedProcess[str]) -> str:
+    return result.stderr or ""
+
+
 def _ensure_repo(repo: Path) -> None:
     if not repo.exists():
         raise SystemExit(f"Wskazane repo nie istnieje: {repo}")
     result = _run_git(repo, "rev-parse", "--is-inside-work-tree")
-    if result.returncode != 0 or result.stdout.strip() != "true":
+    if result.returncode != 0 or _stdout(result).strip() != "true":
         raise SystemExit(f"To nie jest repozytorium git: {repo}")
 
 
@@ -69,7 +82,7 @@ def resolve_author(repo: Path) -> str:
     """Domyślny autor do filtrowania commitów: ``git config user.email`` w repo (może być pusty)."""
     _ensure_repo(repo)
     result = _run_git(repo, "config", "user.email")
-    return result.stdout.strip() if result.returncode == 0 else ""
+    return _stdout(result).strip() if result.returncode == 0 else ""
 
 
 def run_git_log(repo: Path, *, since: str, until: str, author: str) -> list[Commit]:
@@ -80,5 +93,5 @@ def run_git_log(repo: Path, *, since: str, until: str, author: str) -> list[Comm
         args.append(f"--author={author}")
     result = _run_git(repo, *args)
     if result.returncode != 0:
-        raise SystemExit(f"git log nie powiódł się dla {repo}: {result.stderr.strip()}")
-    return parse_git_log(result.stdout)
+        raise SystemExit(f"git log nie powiódł się dla {repo}: {_stderr(result).strip()}")
+    return parse_git_log(_stdout(result))

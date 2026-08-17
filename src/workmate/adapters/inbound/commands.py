@@ -31,7 +31,8 @@ if TYPE_CHECKING:
 _NEW_THREAD_ACK = "Zaczynam nową rozmowę. Poprzednia została zapisana w archiwum."
 _NEW_THREAD_ALREADY_FRESH = "Jesteś już w nowej, pustej rozmowie — nie ma czego rozdzielać."
 
-# Ile ostatnich rozmów pokazać w ``/historia``.
+# Ile ostatnich rozmów pokazać w ``/historia``. Idzie wprost do magazynu jako ``limit``, bo
+# zawężenie po wątku robi już zapytanie — nie ma czego odsiewać po fakcie.
 _HISTORY_LIMIT = 10
 
 
@@ -186,16 +187,33 @@ class CommandRouter:
 
     def _status(self, args: str, ctx: CommandContext) -> str:
         if args:
+            # Bramka odczytu (ADR 0062) także TUTAJ: ``get_project_status`` zwraca syntezę stanu
+            # projektu złożoną z notatek pionu (streszczenie, liczba notatek, otwarte action items),
+            # więc jest tą samą treścią co ``/szukaj``. ``_status`` był jedynym handlerem odczytu
+            # bez tego sprawdzenia — czyli drogą OBOK bramki, na tych samych drzwiach.
+            refusal = self._read_authz_refusal(ctx)
+            if refusal is not None:
+                return refusal
             return _format_project_status(self._tools["get_project_status"](project=args))
         conv = self._conversations.active_conversation(ctx.channel, ctx.external_id)
         return self._thread_status(conv)
 
     def _history(self, args: str, ctx: CommandContext) -> str:
-        conversations = self._conversations.list_conversations(channel=ctx.channel)
+        # Zawężone do TEGO wątku, nie do całego kanału, i zawężone W ZAPYTANIU. Bez ``external_id``
+        # magazyn zwracał rozmowy WSZYSTKICH wątków kanału, więc ``/historia`` w wątku A pokazywała
+        # metadane wątku B (kiedy, ile tur, ile tokenów) — treści nie, ale sam fakt i rozmiar
+        # cudzej rozmowy to informacja, której uczestnik tego wątku nie miał prawa dostać.
+        #
+        # Filtr MUSI iść do magazynu, a nie za nim: ``limit`` przycina PO filtrach, więc odsiewanie
+        # w Pythonie kazałoby policzyć koszt rozmów, które zaraz odpadną, a przy okazji myliło
+        # „wątek bez historii" z „historia wypadła poza okno". Puste znaczy tu jedno.
+        conversations = self._conversations.list_conversations(
+            channel=ctx.channel, external_id=ctx.external_id, limit=_HISTORY_LIMIT
+        )
         if not conversations:
             return "Brak zapisanych rozmów."
         lines = ["Ostatnie rozmowy:"]
-        for c in conversations[:_HISTORY_LIMIT]:
+        for c in conversations:
             when = c.updated_at.strftime("%Y-%m-%d %H:%M")
             lines.append(
                 f"• {when} · {c.status} · {c.message_count} tur · {c.usage.total_tokens} tok"

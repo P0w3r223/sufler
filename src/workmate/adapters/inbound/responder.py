@@ -23,7 +23,7 @@ import logging
 import secrets
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from workmate.adapters.inbound.brief_command import BriefContext
@@ -81,7 +81,7 @@ _SUMMARY_PREFIX = "[Podsumowanie wcześniejszej rozmowy]"
 # samą zatrutą treść do rozmowy oznaczonej jako czysta — a `Bash` i `File` w tym samym
 # scenariuszu skażają. Nazwy pilnuje sonda wiążąca ten zbiór z realnym katalogiem narzędzi;
 # bez niej zmiana nazwy narzędzia po cichu gasiłaby wyzwalacz.
-_TAINTING_TOOLS = frozenset({"GitHub", "Bash", "File", "read_file", "list_files"})
+_TAINTING_TOOLS = frozenset({"Activity", "Bash", "File", "ReadFile", "ListFiles"})
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def _utcnow() -> datetime:
     więc być w tej samej postaci (naive UTC), inaczej odejmowanie aware−naive rzuca
     ``TypeError``. Zegar jest w adapterze — rdzeń nie woła zegara.
     """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 @dataclass(frozen=True)
@@ -217,7 +217,14 @@ class ConversationalResponder:
         workspace_catalog_factory: Callable[[WorkspaceScope], list[ToolSpec]] | None = None,
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
         file_catalog_factory: (
-            Callable[[WorkspaceScope, AttachmentQueue, str, str, bool], Sequence[ToolSpec]] | None
+            Callable[
+                # Ostatni argument to SKAZA rozmowy: ``Callable`` zamiast ``bool``, bo fabryka
+                # czyta ją w chwili MUTACJI, nie budowy katalogu (ADR 0066) — patrz miejsce
+                # wywołania niżej.
+                [WorkspaceScope, AttachmentQueue, str, str, Callable[[], bool]],
+                Sequence[ToolSpec],
+            ]
+            | None
         ) = None,
         attachment_stager: (
             Callable[[WorkspaceScope, Sequence[Attachment]], Sequence[str]] | None
@@ -410,19 +417,30 @@ class ConversationalResponder:
         # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4) — POZA ``_store_lock`` (odczyt
         # notatek/statusu). Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura
         # agenta niżej. ``external_id`` (team/channel/root) = cel ewentualnej dostawy PDF w wątku.
+        # ``sender_id`` NIESIE tożsamość do bramki odczytu (ADR 0062): brief serwuje treść notatek,
+        # a odpalał się przed jakąkolwiek autoryzacją — jedna @wzmianka obchodziła całą bramkę.
         if self._project_brief is not None:
             reply = self._project_brief.dispatch(
                 message.text,
-                BriefContext(external_id=external_id, mentions_bot=message.mentions_bot),
+                BriefContext(
+                    external_id=external_id,
+                    mentions_bot=message.mentions_bot,
+                    sender_id=message.sender_id,
+                ),
             )
             if reply is not None:
                 return reply
         # Digest „co się zmieniło od <data>" (ADR 0052, F5) — POZA ``_store_lock`` (fold zdarzeń).
         # Rusza TYLKO przy @wzmiance bota; ``None`` = zwykła wiadomość → tura agenta niżej.
+        # ``sender_id`` jak wyżej — bramka jest w routerze, nie tutaj.
         if self._change_digest is not None:
             reply = self._change_digest.dispatch(
                 message.text,
-                ChangeDigestContext(external_id=external_id, mentions_bot=message.mentions_bot),
+                ChangeDigestContext(
+                    external_id=external_id,
+                    mentions_bot=message.mentions_bot,
+                    sender_id=message.sender_id,
+                ),
             )
             if reply is not None:
                 return reply
@@ -444,6 +462,25 @@ class ConversationalResponder:
                 logger.warning("Nie rozstrzygnąłem klasy nadawcy %r — T2", message.sender_id)
                 trust = "T2"
 
+        # Skaza z faktów ZNANYCH PRZED turą (ADR 0066) — zapalana TU, przed budową katalogów.
+        # Rozdzielenie na dwie połowy (druga niżej, po turze) nie jest kosmetyką: załącznik ląduje
+        # na dysku rozmowy PRZED wywołaniem modelu, więc gdyby cała skaza czekała na wynik tury,
+        # błąd API w pętli narzędzi zostawiałby zatruty plik w katalogu i rozmowę oznaczoną jako
+        # czysta.
+        #
+        # Kolejność wobec katalogów jest istotą sprawy: fabryka ``File`` dostaje skazę jako
+        # ARGUMENT (sędzia mutacji ma orzekać ze świadomością pochodzenia tury), więc zapalanie
+        # skazy PO zbudowaniu katalogów znaczyło, że ``File(edit)`` w turze z zatrutym załącznikiem
+        # widzi „rozmowa czysta" — dokładnie w turze, w której świadomość pochodzenia jest
+        # najbardziej potrzebna.
+        #
+        # Dwa niezależne ``if``, nie ``if/elif``: gość Z załącznikiem ma DWA źródła skazy i oba są
+        # faktem. ``elif`` gubił „guest", gdy tura miała też załącznik — a w audycie odróżnienie
+        # „treść przyszła plikiem" od „pisze ktoś spoza pionu" jest tym, czego się szuka.
+        if message.attachments:
+            self._mark_taint(conversation_id, "attachment")
+        if trust == "T2":
+            self._mark_taint(conversation_id, "guest")
         # Narzędzia katalogu roboczego (ADR 0018) dokładane per turę, ze scope z ZAUFANEGO
         # (kanał, external_id) — model nie widzi scope w schemacie, więc nie sięgnie cudzej rozmowy.
         scope = WorkspaceScope(self._channel, external_id)
@@ -500,7 +537,12 @@ class ConversationalResponder:
                         attachment_queue,
                         message.sender_id,
                         trust,
-                        self._is_tainted(conversation_id),
+                        # LENIWA skaza: fabryka czyta ją w chwili MUTACJI, nie budowy katalogu.
+                        # Wartość jest już poprawna w chwili budowy (zapalamy ją wyżej), więc to
+                        # druga, niezależna warstwa — skaza z narzędzi tej samej tury (``Bash``,
+                        # ``GitHub``) zapala się dopiero PO niej, a sędzia ma widzieć rozmowę
+                        # taką, jaka jest w momencie orzekania.
+                        lambda: self._is_tainted(conversation_id),
                     )
                 )
             except Exception:
@@ -568,14 +610,6 @@ class ConversationalResponder:
                     external_id,
                     exc_info=True,
                 )
-        # Skaza z faktów ZNANYCH PRZED turą (ADR 0066). Rozdzielenie na dwie połowy nie jest
-        # kosmetyką: załącznik ląduje na dysku rozmowy PRZED wywołaniem modelu, więc gdyby
-        # cała skaza czekała na wynik tury, błąd API w pętli narzędzi zostawiałby zatruty
-        # plik w katalogu i rozmowę oznaczoną jako czysta.
-        if message.attachments:
-            self._mark_taint(conversation_id, "attachment")
-        elif trust == "T2":
-            self._mark_taint(conversation_id, "guest")
         trust_nonce = self._trust_nonce(external_id)
         # Rejestrator audytu (ADR 0067) domknięty PER TURĘ: pseudonim nadawcy/rozmowy liczony raz,
         # klasa zaufania z osi pochodzenia. ``None`` → audyt wyłączony. Runtime woła go dla
@@ -603,6 +637,13 @@ class ConversationalResponder:
                 github_thread=self._thread_link(external_id),
                 staged_files=staged_files,
                 trust_nonce=trust_nonce,
+                # Rozstrzygnięcie „ta tura MA powłokę" należy do tury, nie do składania drzwi
+                # (ADR 0068 §2). Korpus statyczny i opisy narzędzi wybrano raz, z obecności
+                # fabryki — a fabryka oddaje pustą listę nierozpoznanemu nadawcy (ADR 0063)
+                # i degraduje przy błędzie budowy. Bez tego sprostowania gość czytał
+                # o montażach `/mnt/system/…`, mając katalog bez `Bash` i bez narzędzi odczytu.
+                shell_unavailable=self._shell_catalog_factory is not None
+                and not any(spec.name == "Bash" for spec in extra_tools),
             ),
             audit=audit_recorder,
             attachment_queue=attachment_queue,

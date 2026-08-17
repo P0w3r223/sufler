@@ -6,7 +6,7 @@ ODMAWIAJĄ, więc atrapa systemu plików sprawdzałaby wyłącznie własną atra
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -59,7 +59,7 @@ def test_delete_removes_the_file_but_not_the_directory(tmp_path):
     writer = MarkdownNotesWriter(tmp_path)
     writer.write(_note())
 
-    writer.delete(_note().id)
+    writer.delete(_note().id, expected_sha256=writer.digest(_note().id))
 
     assert not (tmp_path / "biap/mpwik/2026-08-01-ustalenia.md").exists()
     assert (tmp_path / "biap/mpwik").is_dir()  # katalogów nie ruszamy nawet pustych
@@ -69,7 +69,7 @@ def test_delete_refuses_a_missing_note(tmp_path):
     writer = MarkdownNotesWriter(tmp_path)
 
     with pytest.raises(WriteError, match="nie istnieje"):
-        writer.delete("biap/mpwik/nie-ma")
+        writer.delete("biap/mpwik/nie-ma", expected_sha256="cokolwiek")
 
 
 def test_snapshot_lands_outside_the_notes_tree_and_keeps_the_content(tmp_path):
@@ -112,7 +112,7 @@ def test_snapshot_failure_is_loud(tmp_path):
 def test_confirmation_expires_with_time():
     """Zapowiedź ma żyć minuty. Pytanie „czy potwierdzić skasowanie" zadane wczoraj nie może
     autoryzować operacji dzisiaj."""
-    teraz = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    teraz = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
     zegar = lambda: teraz  # noqa: E731
     ledger = InMemoryConfirmations(ttl=timedelta(minutes=15), clock=zegar)
     ledger.remember("klucz", "tura-1")
@@ -153,7 +153,7 @@ def test_new_verbs_refuse_to_escape_the_notes_directory(tmp_path):
     ofiara.write_text("cudza treść", encoding="utf-8")
 
     with pytest.raises(WriteError, match="poza katalogiem"):
-        writer.delete("../poza-baza")
+        writer.delete("../poza-baza", expected_sha256="x")
     with pytest.raises(WriteError, match="poza katalogiem"):
         writer.overwrite(
             Note(id="../poza-baza", metadata=_META, body="podmiana"), expected_sha256="x"
@@ -206,3 +206,21 @@ def test_snapshot_keeps_the_metadata_not_only_the_body(tmp_path):
     kopia = _Path(gdzie).read_text(encoding="utf-8")
     assert "zamawiamy pompę" in kopia  # decyzja przetrwała
     assert "treść" in kopia
+
+
+def test_delete_refuses_when_the_note_changed_since_it_was_read(tmp_path):
+    """Kasowanie też dzieli odczyt od zapisu oceną sędziego, a drzwi obsługują tury równolegle.
+
+    Migawka zabezpiecza wersję, którą przeczytaliśmy PRZED oceną. Gdy w oknie oczekiwania ktoś
+    notatkę zmienił, skasowanie bez kontroli wersji zabrałoby wersję pośrednią — tę, której żadna
+    kopia nie trzyma. Ta sama kontrola co w ``overwrite``.
+    """
+    writer = MarkdownNotesWriter(tmp_path)
+    writer.write(_note("pierwsza"))
+    wersja_z_odczytu = writer.digest(_note().id)
+    writer.overwrite(_note("zmiana w oknie sędziego"), expected_sha256=wersja_z_odczytu)
+
+    with pytest.raises(WriteError, match="zmieniła się od odczytu"):
+        writer.delete(_note().id, expected_sha256=wersja_z_odczytu)
+
+    assert (tmp_path / "biap/mpwik/2026-08-01-ustalenia.md").exists()

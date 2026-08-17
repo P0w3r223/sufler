@@ -17,7 +17,7 @@ from workmate.adapters.outbound import markdown_notes_writer as writer_module
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.errors import WriteError
+from workmate.core.errors import NoteExistsError, WriteError
 
 
 def _note(note_id: str, *, body: str = "Treść notatki.") -> Note:
@@ -120,3 +120,29 @@ def test_write_never_overwrites_existing_note(tmp_path: Path):
     loaded = MarkdownNotesRepository(tmp_path).get(note_id)
     assert loaded is not None
     assert loaded.body == "pierwsza wersja"  # oryginał nietknięty
+
+
+def test_temp_cleanup_failure_does_not_mask_note_exists_error(tmp_path: Path, monkeypatch):
+    """``finally: tmp.unlink()`` bez osłony PODMIENIA ``NoteExistsError`` na błąd sprzątania.
+
+    Na ``NoteExistsError`` stoi idempotencja notatki ze spotkania (ADR 0043): ścieżka równoległa
+    rozpoznaje po nim „już złożona" i kończy pominięciem. Gdy sprzątanie półproduktu padnie
+    (uchwyt trzymany przez inny proces, katalog RO), z ``finally`` wychodzi ``OSError`` i notatka
+    ze spotkania raportuje twardą porażkę zamiast pominięcia. Poprawny kształt jest dwie funkcje
+    niżej — w ``_atomic_replace``.
+    """
+    note_id = "mpwik/scada-integration/2025-06-12-przeglad"
+    writer = MarkdownNotesWriter(tmp_path)
+    writer.write(_note(note_id, body="pierwsza"))
+
+    prawdziwy_unlink = Path.unlink
+
+    def unlink_ktory_pada(self, missing_ok=False):
+        if self.name.endswith(".tmp"):
+            raise PermissionError("plik tymczasowy trzymany przez inny proces")
+        return prawdziwy_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink_ktory_pada)
+
+    with pytest.raises(NoteExistsError):
+        writer.write(_note(note_id, body="druga"))

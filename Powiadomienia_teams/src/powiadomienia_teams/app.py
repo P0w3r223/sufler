@@ -16,6 +16,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -64,6 +65,7 @@ from powiadomienia_teams.reminders.detect import (
 from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
+    past_hard_ceiling,
     prune_terminal,
     ready_for_self_fill_check,
     should_expire,
@@ -79,6 +81,7 @@ from powiadomienia_teams.reminders.replies import (
 )
 from powiadomienia_teams.reminders.timeoff import resolve_time_off
 from powiadomienia_teams.scheduler.backoff import next_poll_delay
+from powiadomienia_teams.scheduler.send_window import in_send_window, next_send_window
 from powiadomienia_teams.scheduler.weekly import next_run, previous_run, week_windows
 from powiadomienia_teams.single_instance import (
     AlreadyRunningError,
@@ -119,6 +122,38 @@ def _latest_activity(pendings: list[st.PendingReminder]) -> datetime | None:
     return max(times) if times else None
 
 
+def _wolno_inicjowac(settings: Settings, moment: datetime) -> bool:
+    """Czy w ``moment`` wolno wysłać wiadomość, którą bot ZACZYNA sam (godziny ciszy).
+
+    Dotyczy cotygodniowej prośby, domknięcia po wygaśnięciu okna i podziękowania za samodzielne
+    uzupełnienie grafiku. Odpowiedź na wiadomość pracownika NIE przechodzi przez tę bramkę — on
+    właśnie napisał i czeka; cisza byłaby wtedy gorsza od wiadomości o 22:00.
+
+    W trybie próbnym zawsze ``True``: nic stąd nie wychodzi, a blokowanie przebiegu po godzinach
+    odbierałoby operatorowi możliwość sprawdzenia wdrożenia o dowolnej porze.
+    """
+    if settings.dry_run:
+        return True
+    return in_send_window(
+        moment,
+        settings.tz,
+        start_hour=settings.send_window_start_hour,
+        end_hour=settings.send_window_end_hour,
+        weekdays=settings.send_window_weekdays,
+    )
+
+
+def _najblizsze_okno(settings: Settings, moment: datetime) -> datetime:
+    """Najbliższa chwila, w której wolno wysłać wiadomość inicjowaną przez bota."""
+    return next_send_window(
+        moment,
+        settings.tz,
+        start_hour=settings.send_window_start_hour,
+        end_hour=settings.send_window_end_hour,
+        weekdays=settings.send_window_weekdays,
+    )
+
+
 def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[Member]:
     """Jeden przebieg powiadomień: wykryj luki, zbuduj propozycje, wyślij (lub loguj w dry-run)."""
     tz = settings.tz
@@ -157,6 +192,14 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     state = st.load_state(settings.state_path)
     # Tygodniowe GC: usuń dawne wpisy terminalne (applied/declined/expired), by stan nie puchł.
     state = prune_terminal(state, now, settings.reply_window_hours)
+    if not settings.dry_run and missing:
+        # Zapisywalność stanu sprawdzana PRZED PIERWSZĄ wysyłką w przebiegu. Kolejność „wyślij,
+        # potem utrwal" (niżej) jest bezpieczna tylko wtedy, gdy utrwalanie działa: przy pełnym
+        # wolumenie wiadomość wychodziła, `save_state` padał, `_run_once_with_retry` ponawiał cały
+        # przebieg — i ta sama osoba dostawała prośbę przy każdej próbie, a przez okno łaski
+        # kilkadziesiąt razy. Odtworzone przy ENOSPC. Wyjątek jest NIEPONAWIALNY
+        # (`StateWriteError`).
+        st.ensure_writable(settings.state_path)
     sent = 0
     for member in missing:
         existing = state.get(member.user_id)
@@ -168,6 +211,14 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
         # udanym zapisem ma już zmianę w grafiku i nie występuje w `missing`.
         if existing is not None and existing.week_start == week_start_iso:
             continue
+        if not settings.dry_run and not _wolno_inicjowac(settings, datetime.now(_UTC)):
+            # Okno sprawdzamy PRZED KAŻDĄ wysyłką, nie raz na przebieg: dławienie Graph potrafi
+            # rozciągnąć przebieg na kilkadziesiąt minut, a wtedy prośby wychodziły już po ciszy.
+            # Przerwanie jest bezpieczne — wysłani mają pending, reszta poczeka na otwarcie okna.
+            raise OknoWysylkiZamknieteError(
+                f"Okno wysyłki zamknęło się w trakcie przebiegu — {len(missing) - sent} osób "
+                f"dostanie prośbę przy najbliższym otwarciu"
+            )
         member_off = off_by_member.get(member.user_id, frozenset())
         proposal = proposal_from_last_week(
             member.user_id, prior_shifts, target_monday.date(), tz=tz, skip_weekdays=member_off
@@ -300,6 +351,10 @@ def poll_replies(
 
     now = now or datetime.now(_UTC)
     state = st.load_state(settings.state_path)
+    # Zaległe wiadomości z godzin ciszy PRZED wyjściem po pustej liście: czekają na wpisach już
+    # TERMINALNYCH, więc `open_items` ich nie widzi, a to jedyny cykl, który biega dość często,
+    # by trafić w otwarcie okna.
+    _wyslij_odlozone(settings, client, state, now)
     open_items = [p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)]
     if not open_items:
         return PollOutcome(0, None)
@@ -327,6 +382,8 @@ def poll_replies(
             outcomes[pending.member_id] = ReadOutcome.UNKNOWN
             logger.exception("Nie udało się obsłużyć odpowiedzi dla %s", pending.member_name)
 
+    _policz_nierozstrzygniete(settings, state, open_items, outcomes)
+
     # 1.5. Kto MILCZY na czacie od dłuższej chwili, mógł uzupełnić grafik SAM w Shifts. Zaglądamy
     #    tam dopiero po odczycie czatu (odpowiedź ma pierwszeństwo: sprawdzamy tylko NOTHING_NEW)
     #    i tylko gdy bot już czeka (``ready_for_self_fill_check``). Krok PRZED wygaszaniem, więc
@@ -349,7 +406,7 @@ def poll_replies(
             and member_filled_week(p.member_id, dane[0], dane[1].get(p.member_id, frozenset()))
         ]
         if samodzielni:
-            _close_self_filled(settings, client, state, samodzielni, tz)
+            _close_self_filled(settings, client, state, samodzielni, tz, now)
 
     # 2. Wygaś te, które PO odczycie wciąż są otwarte, minął im termin I MAMY NA TO DOWÓD: udany
     #    odczyt, który nic nie przyniósł. Domyślne UNKNOWN dla braku wpisu w `outcomes` to
@@ -374,15 +431,78 @@ def poll_replies(
     bez_odpowiedzi = [p for p in newly_expired if p.status == st.AWAITING_REPLY]
     bez_potwierdzenia = [p for p in newly_expired if p.status == st.AWAITING_CONFIRM]
     if bez_odpowiedzi:
-        _close(settings, client, state, bez_odpowiedzi, EXPIRED_TEXT, "brak odpowiedzi")
+        _close(settings, client, state, bez_odpowiedzi, EXPIRED_TEXT, "brak odpowiedzi", now)
     if bez_potwierdzenia:
-        _close(settings, client, state, bez_potwierdzenia, NO_CONFIRM_TEXT, "brak potwierdzenia")
+        _close(
+            settings, client, state, bez_potwierdzenia, NO_CONFIRM_TEXT, "brak potwierdzenia", now
+        )
+
+    # 3. TWARDY SUFIT: wpisy, którym normalna droga wygaszania jest trwale zamknięta (odczyt czatu
+    #    pada w kółko, więc dowodu nigdy nie będzie), muszą kiedyś zejść ze stanu. Zamykamy je
+    #    CICHO i z alertem — patrz `_close_bez_dowodu` i `lifecycle.past_hard_ceiling`.
+    zablokowane = [
+        p
+        for p in state.values()
+        if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
+        and past_hard_ceiling(p, now, settings.reply_window_hours)
+    ]
+    if zablokowane:
+        _close_bez_dowodu(settings, state, zablokowane)
 
     # Ostatnia aktywność liczona z wciąż otwartych (po przetworzeniu): świeża odpowiedź skróci
     # następny odstęp, cisza go wydłuży (patrz ``_poll_delay``/``next_poll_delay``).
     progressed = any(outcome is ReadOutcome.HANDLED for outcome in outcomes.values())
     active = [p for p in still_open if p.status != st.EXPIRED]
     return PollOutcome(len(active), now if progressed else _latest_activity(active))
+
+
+_MAX_CYKLI_UNKNOWN = 20  # po tylu cyklach bez rozstrzygnięcia z rzędu alarmujemy operatora
+
+
+def _policz_nierozstrzygniete(
+    settings: Settings,
+    state: dict[str, st.PendingReminder],
+    open_items: list[st.PendingReminder],
+    outcomes: dict[str, ReadOutcome],
+) -> None:
+    """Zlicz cykle zakończone ``UNKNOWN`` i zaalarmuj, gdy wpis grzęźnie na odczycie czatu.
+
+    Bez tego licznika awaria ``list_chat_messages`` była NIEWIDOCZNA dla eksploatacji: leci przed
+    obsługą wiadomości, więc ``fail_count`` (liczony w ``_record_failure``) nie rósł, a
+    ``should_expire`` słusznie odmawiał wygaszenia bez dowodu. Wpis wisiał otwarty w nieskończoność,
+    co tydzień blokując ponowny nudge dla tej osoby — i nikt się o tym nie dowiadywał.
+
+    Alert idzie DOKŁADNIE RAZ na serię (warunek na równość), jak w ``_puls_sesji``: trwała awaria
+    nie ma prawa zatkać jedynego kanału niezależnego od Graph.
+    """
+    zaalarmowane: list[st.PendingReminder] = []
+    zmienione = False
+    for pending in open_items:
+        if outcomes.get(pending.member_id, ReadOutcome.UNKNOWN) is not ReadOutcome.UNKNOWN:
+            zmienione = zmienione or pending.unknown_count != 0
+            pending.unknown_count = 0
+            continue
+        pending.unknown_count += 1
+        zmienione = True
+        if pending.unknown_count == _MAX_CYKLI_UNKNOWN:
+            zaalarmowane.append(pending)
+    if zmienione:
+        # Zapis TYLKO przy realnej zmianie: cicha rozmowa budzi listener nawet co 10 s, a stan
+        # leży na wolumenie — bezwarunkowy zapis co pobudkę byłby czystym zużyciem dysku.
+        st.save_state(settings.state_path, state)
+    if zaalarmowane:
+        nazwy = ", ".join(sorted(p.member_name for p in zaalarmowane))
+        logger.error(
+            "Nie udało się rozstrzygnąć odczytu czatu %d razy z rzędu dla: %s",
+            _MAX_CYKLI_UNKNOWN,
+            nazwy,
+        )
+        _alert(
+            settings,
+            "Nie da się odczytać czatu przypomnienia",
+            f"{_MAX_CYKLI_UNKNOWN} cykli z rzędu bez rozstrzygnięcia dla: {nazwy}. Dopóki trwa, "
+            f"te osoby nie dostaną ani domknięcia, ani nowego przypomnienia.",
+        )
 
 
 def _close(
@@ -392,17 +512,24 @@ def _close(
     closed: list[st.PendingReminder],
     text: str,
     powod: str,
+    now: datetime,
 ) -> None:
     """Zamknij tematy terminalnie: status EXPIRED utrwalony PRZED wysyłką (»co najwyżej raz«)."""
     for pending in closed:
         pending.status = st.EXPIRED
     st.save_state(settings.state_path, state)
     if settings.send_expiry_message:
-        _notify_closed(client, closed, text, powod)
+        _notify_closed(settings, client, state, closed, text, powod, now)
 
 
 def _notify_closed(
-    client: GraphClient, closed: list[st.PendingReminder], text: str, powod: str
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    closed: list[st.PendingReminder],
+    text: str,
+    powod: str,
+    now: datetime,
 ) -> None:
     """Wyślij uprzejme domknięcie osobom z zamkniętym tematem (stan EXPIRED już utrwalony).
 
@@ -410,10 +537,20 @@ def _notify_closed(
     ani nie ponowimy zapisu, ani nie zdublujemy wiadomości przy kolejnym przebiegu. Treść jest
     parametrem, bo powody domknięcia są różne i KAŻDY komunikat musi być prawdziwy: „nie dostałem
     odpowiedzi" wolno napisać tylko temu, kto faktycznie nie odpisał.
+
+    Domknięcie jest wiadomością INICJOWANĄ przez bota, więc podlega godzinom ciszy: poza oknem
+    wysyłki ląduje w ``odlozona_wiadomosc`` i wychodzi przy najbliższym otwarciu okna. Status
+    terminalny utrwalamy niezależnie od pory — cisza przesuwa wysyłkę, nie obieg.
     """
+    html = to_html(text)
+    odlozone = 0
     for pending in closed:
+        if not _wolno_inicjowac(settings, now):
+            pending.odlozona_wiadomosc = html
+            odlozone += 1
+            continue
         try:
-            client.send_chat_message(pending.chat_id, to_html(text))
+            client.send_chat_message(pending.chat_id, html)
             logger.info("Zamknięto temat dla %s (%s)", pending.member_name, powod)
         except AuthExpiredError:
             # Utrata sesji dotyczy całej usługi, nie tej jednej wiadomości. Bez tego wyjątku
@@ -423,6 +560,107 @@ def _notify_closed(
             raise
         except Exception:
             logger.exception("Nie udało się wysłać domknięcia do %s", pending.member_name)
+    if odlozone:
+        st.save_state(settings.state_path, state)
+        logger.info(
+            "Odłożono %d domknięć poza oknem wysyłki — wyjdą %s",
+            odlozone,
+            _najblizsze_okno(settings, now).isoformat(),
+        )
+
+
+def _close_bez_dowodu(
+    settings: Settings,
+    state: dict[str, st.PendingReminder],
+    zablokowane: list[st.PendingReminder],
+) -> None:
+    """Zamknij wpisy, które przebiły twardy sufit wieku — CICHO, za to z alertem do operatora.
+
+    Bez wiadomości do pracownika, bo nadal nie mamy dowodu, że milczał: sufit dotyczy wpisów,
+    których czatu trwale nie da się odczytać (usunięty czat, konto poza tenantem, `chat_id` po
+    starej instalacji). Wysłanie tam „nie dostałem odpowiedzi" byłoby zgadywaniem, a wysłanie
+    czegokolwiek i tak najpewniej padnie. Alarmujemy operatora — to on ma to rozpoznać.
+    """
+    for pending in zablokowane:
+        pending.status = st.EXPIRED
+        logger.error(
+            "Wpis %s (%s) przebił twardy sufit wieku bez rozstrzygniętego odczytu — zamykam cicho",
+            pending.member_name,
+            pending.member_id,
+        )
+    st.save_state(settings.state_path, state)
+    _alert(
+        settings,
+        "Przypomnienia zablokowane na odczycie czatu",
+        f"{len(zablokowane)} wpisów zamknięto po przekroczeniu twardego sufitu wieku bez "
+        f"udanego odczytu czatu. Pracownicy NIE dostali wiadomości — sprawdź, czy czaty i konta "
+        f"nadal istnieją: {', '.join(sorted(p.member_name for p in zablokowane))}",
+    )
+
+
+def _wyslij_odlozone(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    now: datetime,
+) -> None:
+    """Doślij wiadomości odłożone przez godziny ciszy, gdy okno wysyłki znów jest otwarte.
+
+    Czekanie ma własny sufit (ten sam co ``past_hard_ceiling``): wiadomość, której nie udało się
+    wysłać przez kilka dni, nie jest już uprzejmym domknięciem, tylko zagadką dla pracownika —
+    i trzymałaby wpis poza zasięgiem ``prune_terminal`` w nieskończoność.
+
+    Kolejka jest ZDEJMOWANA PRZED wysyłką i od razu utrwalana — ta sama zasada „co najwyżej raz",
+    którą stosuje reszta modułu, i lustrzana do bramki w ``run_once``. Odwrotna kolejność
+    (kasowanie flagi po udanej wysyłce, jeden zapis na końcu) dawała pętlę bez ucieczki: przy
+    niezapisywalnym stanie flaga zostawała na dysku, ``StateWriteError`` leciał do pętli nasłuchu,
+    ta wracała po 10 s i wysyłała to samo — ~360 wiadomości na godzinę do jednej osoby.
+
+    Utrata odłożonego domknięcia jest tu świadomie tańsza niż jego powtórzenie: to uprzejmość,
+    nie zapis do grafiku, a status terminalny i tak jest już utrwalony.
+    """
+    czekajace = [p for p in state.values() if p.odlozona_wiadomosc]
+    if not czekajace:
+        return
+    przeterminowane = {
+        p.member_id for p in czekajace if past_hard_ceiling(p, now, settings.reply_window_hours)
+    }
+    wolno = _wolno_inicjowac(settings, now)
+    porzucone = [p for p in czekajace if p.member_id in przeterminowane]
+    gotowe = [p for p in czekajace if p.member_id not in przeterminowane] if wolno else []
+    if not porzucone and not gotowe:
+        return
+
+    # Bramka jak przed pierwszą wysyłką w `run_once`: bez zapisywalnego stanu nie wolno wysłać nic,
+    # bo nie będzie czym odnotować, że już poszło.
+    st.ensure_writable(settings.state_path)
+    for pending in porzucone:
+        logger.warning(
+            "Porzucam odłożoną wiadomość do %s — czekała dłużej niż twardy sufit",
+            pending.member_name,
+        )
+        pending.odlozona_wiadomosc = ""
+    # Treść zabieramy PRZED wyczyszczeniem flagi — kolejka schodzi ze stanu w tym samym commicie.
+    do_wyslania = [(p, p.odlozona_wiadomosc) for p in gotowe]
+    for pending in gotowe:
+        pending.odlozona_wiadomosc = ""
+    st.save_state(settings.state_path, state)  # commit PRZED wysyłką
+
+    if not do_wyslania:
+        return
+    client.refresh_auth()
+    for pending, html in do_wyslania:
+        try:
+            client.send_chat_message(pending.chat_id, html)
+            logger.info("Wysłano odłożoną wiadomość do %s", pending.member_name)
+        except AuthExpiredError:
+            raise  # utrata sesji dotyczy całej usługi (jak w `_notify_closed`)
+        except Exception:
+            logger.exception(
+                "Nie udało się wysłać odłożonej wiadomości do %s — nie ponawiam "
+                "(uprzejme domknięcie, nie zapis; ponowienie groziłoby serią)",
+                pending.member_name,
+            )
 
 
 def _filled_weeks_snapshot(
@@ -463,6 +701,7 @@ def _close_self_filled(
     state: dict[str, st.PendingReminder],
     closed: list[st.PendingReminder],
     tz: ZoneInfo,
+    now: datetime,
 ) -> None:
     """Zamknij tematy osób, które SAME uzupełniły grafik: status SELF_FILLED utrwalony PRZED
     wysyłką.
@@ -471,15 +710,25 @@ def _close_self_filled(
     zapis dla wszystkich), potem podziękowania. Podziękowanie leci BEZWARUNKOWO (nie zależy od
     ``send_expiry_message``, inaczej niż wygaśnięcie) — reaguje na działanie pracownika, więc
     milczenie byłoby gorsze niż uprzejme domknięcie (jak przy ``STALE_WEEK_TEXT``).
+
+    Podziękowanie zaczyna bot (pracownik nic do niego nie napisał — uzupełnił grafik w Shifts),
+    więc podlega godzinom ciszy: poza oknem czeka w ``odlozona_wiadomosc``. Status terminalny
+    utrwalamy niezależnie od pory.
     """
     for pending in closed:
         pending.status = st.SELF_FILLED
     st.save_state(settings.state_path, state)
+    odlozone = 0
     for pending in closed:
+        monday = datetime.fromisoformat(pending.week_start).replace(tzinfo=tz)
+        week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
+        html = to_html(build_self_filled_text(week_label))
+        if not _wolno_inicjowac(settings, now):
+            pending.odlozona_wiadomosc = html
+            odlozone += 1
+            continue
         try:
-            monday = datetime.fromisoformat(pending.week_start).replace(tzinfo=tz)
-            week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
-            client.send_chat_message(pending.chat_id, to_html(build_self_filled_text(week_label)))
+            client.send_chat_message(pending.chat_id, html)
             logger.info(
                 "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)", pending.member_name
             )
@@ -487,6 +736,13 @@ def _close_self_filled(
             raise  # utrata sesji dotyczy całej usługi, nie tej wiadomości (jak _notify_closed)
         except Exception:
             logger.exception("Nie udało się wysłać podziękowania do %s", pending.member_name)
+    if odlozone:
+        st.save_state(settings.state_path, state)
+        logger.info(
+            "Odłożono %d podziękowań poza oknem wysyłki — wyjdą %s",
+            odlozone,
+            _najblizsze_okno(settings, now).isoformat(),
+        )
 
 
 def _commit(
@@ -520,6 +776,45 @@ def _commit(
     st.save_state(settings.state_path, state)
 
 
+@dataclass(frozen=True)
+class _Migawka:
+    """Stan pendingu sprzed commitu — do cofnięcia, gdy wysyłka PO commicie nie doszła.
+
+    Commit przed wysyłką jest regułą tego modułu („co najwyżej raz"), ale ma sens tylko dla
+    skutków NIEODWRACALNYCH (zapis do Shifts). Dla wiadomości, która nie doszła, utrwalony stan
+    jest po prostu nieprawdziwy — i to na nim opiera się późniejsze domknięcie rozmowy.
+    """
+
+    status: str
+    watermark: str
+    employee_memory: tuple[str, ...]
+    memory_started_at: str
+    fail_count: int
+    resolved: tuple[dict[str, Any], ...]
+    resolved_time_off: tuple[dict[str, Any], ...]
+
+    @classmethod
+    def z_pendingu(cls, pending: st.PendingReminder) -> _Migawka:
+        return cls(
+            status=pending.status,
+            watermark=pending.watermark,
+            employee_memory=tuple(pending.employee_memory),
+            memory_started_at=pending.memory_started_at,
+            fail_count=pending.fail_count,
+            resolved=tuple(pending.resolved),
+            resolved_time_off=tuple(pending.resolved_time_off),
+        )
+
+    def przywroc(self, pending: st.PendingReminder) -> None:
+        pending.status = self.status
+        pending.watermark = self.watermark
+        pending.employee_memory = list(self.employee_memory)
+        pending.memory_started_at = self.memory_started_at
+        pending.fail_count = self.fail_count
+        pending.resolved = list(self.resolved)
+        pending.resolved_time_off = list(self.resolved_time_off)
+
+
 def _process_pending(
     settings: Settings,
     client: GraphClient,
@@ -538,7 +833,12 @@ def _process_pending(
     JEDYNĄ przesłanką uprawniającą do wygaszenia (patrz ``lifecycle.should_expire``). Wyjątek
     oznacza ``UNKNOWN`` i jest nadawany w miejscu wywołania.
     """
-    incoming = newest_incoming(client.list_chat_messages(pending.chat_id), me_id, pending.watermark)
+    # Nadawca musi być DOKŁADNIE tą osobą, o której grafik pytamy (`pending.member_id`) — sam
+    # warunek „nie bot" wpuszczał do interpretacji wiadomości systemowe i wpisy innych tożsamości,
+    # a ich treść mogła skończyć w GRAFIKU pracownika.
+    incoming = newest_incoming(
+        client.list_chat_messages(pending.chat_id), me_id, pending.member_id, pending.watermark
+    )
     if incoming is None:
         return ReadOutcome.NOTHING_NEW
     watermark = str(incoming.get("createdDateTime", ""))
@@ -662,6 +962,15 @@ def _apply_confirmed_yes(
         )
         client.send_chat_message(pending.chat_id, to_html(WRITE_FAILED_TEXT))
         return
+    except AuthExpiredError:
+        # Utrata sesji dotyczy CAŁEJ usługi, nie zapisu tej jednej osoby. W gałęzi ogólnej log
+        # mówił „Zapis grafiku nie powiódł się" (zła przyczyna — nikt nie szukał wtedy `--login`),
+        # a zaraz po nim szła wysyłka „uzupełnij ręcznie", która i tak padała na tym samym tokenie.
+        # Status jest już APPLIED i utrwalony, więc zatrzymanie tutaj niczego nie psuje.
+        logger.error(
+            "Utracono sesję przy zapisie grafiku dla %s — zatrzymuję usługę", pending.member_name
+        )
+        raise
     except Exception:
         logger.exception("Zapis grafiku dla %s nie powiódł się", pending.member_name)
         client.send_chat_message(pending.chat_id, to_html(WRITE_FAILED_TEXT))
@@ -730,12 +1039,24 @@ def _interpret_and_confirm(
             _commit(settings, state, pending, watermark, reply_text=text)
             client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
             return
+        migawka = _Migawka.z_pendingu(pending)
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
         pending.resolved_time_off = resolved_time_off
         pending.status = st.AWAITING_CONFIRM
         _commit(settings, state, pending, watermark, reply_text=text)
         confirm = build_confirm_text(decision.schedule, resolved_time_off, tz)
-        client.send_chat_message(pending.chat_id, to_html(confirm))
+        try:
+            client.send_chat_message(pending.chat_id, to_html(confirm))
+        except Exception:
+            # Nie udało się ZAPYTAĆ o potwierdzenie — wpisu nie wolno zostawić w AWAITING_CONFIRM.
+            # Po 48 h dostałby domknięcie „nie doczekałem się potwierdzenia", czyli zarzut o
+            # milczenie wobec pytania, którego pracownik nigdy nie zobaczył. Cofamy cały commit
+            # (status, watermark, pamięć, licznik prób), więc kolejny cykl przeczyta tę samą
+            # odpowiedź jeszcze raz; po `_MAX_PENDING_FAILURES` nieudanych próbach `_record_failure`
+            # domknie pętlę PRAWDZIWYM komunikatem — prośbą o doprecyzowanie.
+            migawka.przywroc(pending)
+            st.save_state(settings.state_path, state)
+            raise
     elif decision.action == "decline":
         pending.status = st.DECLINED
         _commit(settings, state, pending, watermark, reply_text=text)
@@ -779,6 +1100,12 @@ def _run_once_with_retry(
     transientne — propagują od razu, bo kolejna próba nie naprawi cofniętej zgody ani utraconej
     roli. Idempotencja ``run_once`` (pomija już-wysłane w tym tygodniu) sprawia, że ponowienie
     nie dubluje powiadomień.
+
+    ``StateWriteError`` też propaguje od razu — i to jest tu najważniejszy warunek. Idempotencja
+    ``run_once`` stoi WYŁĄCZNIE na pliku stanu, więc awaria jego zapisu jest awarią samej ochrony
+    przed duplikatem: ponowienie nie „spróbuje jeszcze raz", tylko wyśle prośbę tej samej osobie
+    po raz kolejny (przy ENOSPC odtworzono trzy wiadomości w jednym wywołaniu, a przez okno łaski
+    kilkadziesiąt). Awaria utrwalania musi zatrzymać wysyłkę, nie mnożyć ją przez liczbę prób.
     """
     for attempt in range(1, attempts + 1):
         # Puls PRZED każdą próbą: przebieg z ponowieniami i dławieniem Graph potrafi trwać minuty,
@@ -787,7 +1114,12 @@ def _run_once_with_retry(
         try:
             run_once(settings, client, now=now)
             return
-        except (AuthExpiredError, GraphPermissionError):
+        except (
+            AuthExpiredError,
+            GraphPermissionError,
+            st.StateWriteError,
+            OknoWysylkiZamknieteError,
+        ):
             raise
         except Exception:
             if attempt >= attempts:
@@ -858,7 +1190,7 @@ def _puls_sesji(settings: Settings, client: GraphClient, stan: StanPulsu) -> Sta
             _alert(
                 settings,
                 "Puls sesji nie powiódł się",
-                f"{nieudane} nieudane próby z rzędu. Ostatni błąd: {blad}",
+                f"{nieudane} nieudane próby z rzędu. Ostatni błąd: {_tresc_publiczna(blad)}",
             )
         return StanPulsu(teraz + timedelta(seconds=_PULS_PONOWIENIE_S), nieudane)
     if stan.nieudane >= _PULS_PROG_ALERTU:
@@ -905,6 +1237,17 @@ def _spij_z_pulsem(settings: Settings, sekundy: float, sleep: Callable[[float], 
     Wiek pliku pulsu ma mówić „czy proces żyje", a nie „jak często odpytujemy Graph". Bez cięcia
     snu na kawałki puls bił co najwyżej raz na godzinę (sufit nasłuchu), więc próg healthchecku
     musiałby wynosić 2 h — czyli stojąca pętla byłaby wykrywana dopiero po dwóch godzinach.
+
+    Ta sama funkcja jest wstrzykiwana jako ``sleep`` klienta Graph, więc puls bije TAKŻE w trakcie
+    czekania na dławienie. Zostawiamy to świadomie: czekanie zgodne z ``Retry-After`` jest pracą,
+    nie zawisem, a proces w tym stanie odpowie na SIGTERM i wznowi obieg. Zastrzeżenie z przeglądu
+    („healthcheck orzeka zdrowy dla procesu, który od godzin nic nie robi") celowało jednak
+    w rzeczywisty problem: budżet dławienia liczony PER ŻĄDANIE pozwalał jednemu odczytowi
+    kolekcji czekać 50 × 900 s. Naprawa jest po stronie klienta (jeden deadline na całą operację,
+    ``graph.client._MAX_RETRY_BUDGET_S``), a nie przez wyciszenie pulsu: najdłuższa możliwa cisza
+    zeszła do 900 s, czyli progu ``health_max_age_s``. Puls, który przestałby bić w czasie
+    dławienia, dawałby „unhealthy" dla usługi działającej zgodnie z projektem — a Docker i tak nie
+    restartuje kontenerów „unhealthy", więc jedynym skutkiem byłby fałszywy alarm.
     """
     pozostalo = sekundy
     while pozostalo > 0:
@@ -961,19 +1304,42 @@ def _send_summary(settings: Settings, client: GraphClient, nastepny_przebieg: da
         logger.exception("Nie udało się wysłać podsumowania do administratora")
 
 
-def _handle_auth_loss(settings: Settings, blad: Exception, sleep: Callable[[float], None]) -> None:
+def _tresc_publiczna(blad: Exception) -> str:
+    """Treść błędu nadająca się na kanał ZEWNĘTRZNY (webhook alertów).
+
+    Webhook bywa poza organizacją — Power Automate, Slack, dowolny endpoint operatora — więc nie
+    wolno mu podawać danych osobowych. ``AmbiguousAccountError`` niesie w pełnym komunikacie
+    ADRESY E-MAIL kont z cache tokenu; na webhook idzie sama liczba kont, a adresy zostają w logu
+    usługi (kanał wewnętrzny). Wyjątki bez własnej wersji publicznej lecą bez zmian.
+    """
+    publiczny = getattr(blad, "publiczny", "")
+    return str(publiczny) if publiczny else str(blad)
+
+
+def _handle_auth_loss(
+    settings: Settings,
+    blad: Exception,
+    sleep: Callable[[float], None],
+    *,
+    zwloka: bool = True,
+) -> None:
     """Zgłoś utratę sesji i odczekaj, zanim proces się zakończy.
 
     Alert idzie webhookiem, NIE przez Teams: wiadomość na Teams wymaga tego samego tokenu, który
     właśnie przestał działać. Opóźnienie przed wyjściem jest konieczne, bo `restart: unless-stopped`
     podniósłby proces natychmiast — martwy token zamieniłby się w restart co sekundę zamiast
     w spokojne czekanie na `--login`, po którym usługa wraca sama.
+
+    ``zwloka=False`` dla poleceń jednorazowych: `--once`/`--poll-once` uruchamia CZŁOWIEK przy
+    wdrożeniu i czeka na wynik w terminalu. Nie ma tam pętli restartów, którą trzeba wyhamować,
+    więc dziesięciominutowa cisza (`auth_failure_exit_delay_s`) była tylko zawieszonym terminalem —
+    operator widział „nic się nie dzieje" zamiast komunikatu, który już padł w logu.
     """
     logger.critical(
         "Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)", blad
     )
-    _alert(settings, "Utracono uwierzytelnienie", str(blad), waga=alerts.KRYTYCZNY)
-    if settings.auth_failure_exit_delay_s > 0:
+    _alert(settings, "Utracono uwierzytelnienie", _tresc_publiczna(blad), waga=alerts.KRYTYCZNY)
+    if zwloka and settings.auth_failure_exit_delay_s > 0:
         logger.info(
             "Czekam %ds przed wyjściem (ogranicza pętlę restartów).",
             settings.auth_failure_exit_delay_s,
@@ -998,6 +1364,8 @@ def _safe_run_once(
         # przekazania parametru wstrzyknięcie atrapy nic nie daje i testy śpią naprawdę.
         _run_once_with_retry(settings, client, now=now, sleep=sleep)
         return True
+    except OknoWysylkiZamknieteError:
+        raise  # nie awaria: godziny ciszy przerwały przebieg — decyduje o tym wołający
     except AuthExpiredError as blad:
         _handle_auth_loss(settings, blad, sleep)
         raise
@@ -1011,22 +1379,147 @@ def _safe_run_once(
         return False
 
 
+@dataclass(frozen=True)
+class ZalegloscPrzebiegu:
+    """Zaległy przebieg czekający na wykonanie: KTÓRY termin, KIEDY próbować, DO KIEDY próbować.
+
+    Trzy pola, bo mierzą trzy różne rzeczy i wcześniej ich zlanie kosztowało tydzień:
+
+    - ``termin`` — odniesienie TYGODNIA docelowego, nigdy „teraz" (odłożenie przez weekend nie może
+      przesunąć planowanego tygodnia o siedem dni).
+    - ``nastepna_proba`` — najwcześniejsza chwila kolejnej próby. Osobne pole, bo przy otwartym
+      oknie ``_najblizsze_okno`` zwraca „teraz", więc bez niego nieudany przebieg ruszałby
+      natychmiast, bez oddechu, w pętli.
+    - ``wygasa`` — kiedy odpuszczamy (budżet okna łaski). ``None`` znaczy „odliczanie ZAWIESZONE",
+      bo trwają godziny ciszy: cisza nie może zużywać budżetu prób. Wcześniej łaska liczona od
+      PIERWOTNEGO terminu wygasała w środku nocy, więc przebieg odłożony z piątku 19:00 dostawał
+      w poniedziałek trzy próby zamiast dwunastu — ścieżka odłożona, wprowadzona po to, żeby
+      tydzień nie przepadał, była SŁABIEJ chroniona niż zwykła.
+    """
+
+    termin: datetime
+    nastepna_proba: datetime
+    wygasa: datetime | None
+
+
+class OknoWysylkiZamknieteError(RuntimeError):
+    """Okno wysyłki zamknęło się W TRAKCIE przebiegu — reszta próśb czeka na kolejne otwarcie.
+
+    Przebieg z dławieniem Graph potrafi trwać kilkadziesiąt minut, więc sprawdzenie okna raz, na
+    starcie, wypuszczało wiadomości długo po zamknięciu — dokładnie tego, przed czym godziny ciszy
+    mają chronić. Przerwanie jest bezpieczne dzięki idempotencji ``run_once``: osoby już zagadnięte
+    mają pending na ten tydzień i zostaną pominięte, reszta dostanie prośbę przy najbliższym
+    otwarciu okna. NIE jest to błąd — orkiestracja tłumaczy go na ``WynikPrzebiegu.ODLOZONY``.
+    """
+
+
+class WynikPrzebiegu(Enum):
+    """Co stało się z przebiegiem powiadomień — trzy stany, nie dwa.
+
+    ``ODLOZONY`` musi być odróżnialny od ``NIEUDANY``, bo naprawy są przeciwstawne: nieudany
+    przebieg ponawiamy szybko, w granicach okna łaski (awaria bywa chwilowa), a odłożony CZEKA
+    na otwarcie okna wysyłki — czasem dłużej niż okno łaski, przez cały weekend. Zlanie obu
+    w jedno ``False`` sprawiało, że okno łaski (6 h od piątku 16:00) kończyło się o 22:00,
+    a okno wysyłki otwierało dopiero w poniedziałek — tydzień przepadał po cichu.
+    """
+
+    UDANY = "udany"
+    NIEUDANY = "nieudany"
+    ODLOZONY = "odlozony"
+
+
 def _przebieg_i_podsumowanie(
     settings: Settings,
     client: GraphClient,
     now: datetime,
     sleep: Callable[[float], None],
-) -> bool:
+    *,
+    teraz: datetime | None = None,
+) -> WynikPrzebiegu:
     """Przebieg RAZEM z podsumowaniem — nierozłącznie. Zwraca, czy przebieg się powiódł.
 
     Podsumowanie jest „dead man's switchem": brak wiadomości w piątek wieczorem to jedyny sygnał
     awarii w instalacji bez monitoringu. Gdy stało tylko po przebiegu ZAPLANOWANYM, tydzień po
     restarcie hosta wyglądał jak awaria — nadrobienie wysyłało prośby, a administrator nie
     dostawał nic. Związanie obu czynności w jednym miejscu sprawia, że nie da się ich rozdzielić.
+
+    ``now`` to odniesienie TYGODNIA (przy nadrobieniu — miniony termin), a ``teraz`` to bieżąca
+    chwila, po której orzekamy o godzinach ciszy. Przy nadrobieniu te dwie wartości są RÓŻNE
+    i mylenie ich znaczyłoby sprawdzanie pory doby sprzed kilku godzin.
     """
-    udany = _safe_run_once(settings, client, now=now, sleep=sleep)
+    teraz = teraz or datetime.now(_UTC)
+    if not _wolno_inicjowac(settings, teraz):
+        # Godziny ciszy: cotygodniowa prośba i podsumowanie to wiadomości INICJOWANE przez bota.
+        # ODLOZONY (nie NIEUDANY) mówi pętli, że ma trzymać ten termin do OTWARCIA okna, zamiast
+        # oddawać go oknu łaski, które w środku nocy wygaśnie.
+        logger.info(
+            "Poza oknem wysyłki (%02d:00–%02d:00, dni %s) — przebieg odłożony do %s.",
+            settings.send_window_start_hour,
+            settings.send_window_end_hour,
+            ",".join(str(d) for d in settings.send_window_weekdays),
+            _najblizsze_okno(settings, teraz).isoformat(),
+        )
+        return WynikPrzebiegu.ODLOZONY
+    try:
+        udany = _safe_run_once(settings, client, now=now, sleep=sleep)
+    except OknoWysylkiZamknieteError as blad:
+        # Okno zamknęło się w trakcie (dławienie Graph). Reszta prośb czeka — to odłożenie,
+        # nie awaria, więc podsumowanie też poczeka na dokończony przebieg.
+        logger.info("%s", blad)
+        return WynikPrzebiegu.ODLOZONY
     _send_summary(settings, client, _kolejny_termin(settings, datetime.now(_UTC)))
-    return udany
+    return WynikPrzebiegu.UDANY if udany else WynikPrzebiegu.NIEUDANY
+
+
+def _zglos_odlozenie(
+    settings: Settings,
+    zaleglosc: ZalegloscPrzebiegu,
+    wynik: WynikPrzebiegu,
+    juz_zgloszony: datetime | None,
+) -> datetime | None:
+    """Powiadom operatora, że przebieg CZEKA na okno wysyłki — raz na termin.
+
+    Odłożenie wstrzymuje też cotygodniowe podsumowanie dla administratora, czyli „dead man's
+    switch" tej usługi. Bez tego alertu weekendowa cisza wyglądała identycznie jak awaria: brak
+    podsumowania i ani słowa więcej. Kanał webhookowy jest niezależny od Graph, więc dociera także
+    wtedy, gdy Teams milczy z naszej decyzji.
+    """
+    if wynik is not WynikPrzebiegu.ODLOZONY or juz_zgloszony == zaleglosc.termin:
+        return juz_zgloszony
+    _alert(
+        settings,
+        "Przebieg powiadomień odłożony do okna wysyłki",
+        f"Termin {zaleglosc.termin.isoformat()} wypadł poza godzinami wysyłki. Prośby o grafik "
+        f"i podsumowanie wyjdą {zaleglosc.nastepna_proba.isoformat()}. To NIE jest awaria.",
+        waga=alerts.INFO,
+    )
+    return zaleglosc.termin
+
+
+def _po_probie(
+    settings: Settings, zaleglosc: ZalegloscPrzebiegu, wynik: WynikPrzebiegu, now: datetime
+) -> ZalegloscPrzebiegu:
+    """Kiedy i do kiedy ponawiać zaległy przebieg po próbie, która nie skończyła się sukcesem.
+
+    ``ODLOZONY`` (godziny ciszy) ZAWIESZA odliczanie okna łaski i celuje w otwarcie okna: cisza
+    to nie jest zużyta szansa, więc nie może konsumować budżetu prób.
+
+    ``NIEUDANY`` odlicza łaskę normalnie, a gdy była zawieszona — startuje ją OD TERAZ, czyli od
+    pierwszej próby, która w ogóle mogła się udać. Dzięki temu przebieg odłożony z piątku dostaje
+    w poniedziałek tyle samo prób co przebieg, któremu nic nie stanęło na drodze.
+
+    Kolejna próba nie wcześniej niż ``_PONOWIENIE_PRZEBIEGU_S`` i nie wcześniej niż otwarcie okna:
+    przy otwartym oknie ``_najblizsze_okno`` zwraca „teraz", więc sam ten człon dawałby przebieg
+    bez oddechu, w pętli.
+    """
+    okno = _najblizsze_okno(settings, now).astimezone(_UTC)
+    if wynik is WynikPrzebiegu.ODLOZONY:
+        return ZalegloscPrzebiegu(zaleglosc.termin, okno, None)
+    return ZalegloscPrzebiegu(
+        termin=zaleglosc.termin,
+        nastepna_proba=max(now + timedelta(seconds=_PONOWIENIE_PRZEBIEGU_S), okno),
+        wygasa=zaleglosc.wygasa or (now + timedelta(hours=settings.catchup_grace_hours)),
+    )
 
 
 def run_forever(
@@ -1037,38 +1530,70 @@ def run_forever(
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Pętla: nadrób zaległy przebieg, do terminu obsługuj odpowiedzi, w terminie wyślij nowe."""
-    last_run_term: datetime | None = None  # termin już obsłużony w TEJ sesji (dedup nadrobień)
+    # Termin ROZSTRZYGNIĘTY w tej sesji: wykonany albo świadomie porzucony. Chroni przed
+    # odtwarzaniem zaległości, którą już zamknęliśmy (`_catchup_due` widzi ten sam termin co cykl).
+    last_run_term: datetime | None = None
+    zaleglosc: ZalegloscPrzebiegu | None = None  # zaległy przebieg: co, kiedy i do kiedy próbować
+    zgloszone_odlozenie: datetime | None = None  # termin, o którego odłożeniu już powiadomiliśmy
     # Start liczy się jako świeżo potwierdzona sesja (`_ensure_authenticated` właśnie ją sprawdził).
     stan_pulsu = StanPulsu(datetime.now(_UTC) + timedelta(hours=settings.heartbeat_interval_h))
     powitanie_wyslane = False
+    zgloszona_awaria_stanu = False
     while True:
         now = datetime.now(_UTC)
-        # Nadrobienie: zaplanowany termin właśnie minął (okno łaski) → wykonaj przebieg teraz
-        # (idempotentnie), z czasem TERMINU jako odniesieniem tygodnia (nie „teraz").
-        # Pomijamy termin obsłużony już w tej sesji: po zaplanowanym przebiegu `previous_run(now)`
-        # wskazuje ten sam termin, więc bez znacznika byłby zbędny podwójny odczyt z Graph co cykl.
-        # Po restarcie znacznik znika — realna zaległość (awaria po terminie) i tak się nadrobi.
-        catchup_term = _catchup_due(settings, now)
-        if catchup_term is not None and catchup_term != last_run_term:
-            logger.info(
-                "Nadrabiam zaległy przebieg powiadomień (okno łaski %dh).",
+        if zaleglosc is not None and zaleglosc.wygasa is not None and now >= zaleglosc.wygasa:
+            # Budżet prób wyczerpany. GŁOŚNO, bo to jest ten moment, w którym tydzień przepada —
+            # wcześniej kończyło się to samą ciszą w logu i nikt się nie dowiadywał.
+            logger.error(
+                "Porzucam zaległy przebieg z terminu %s — wyczerpany budżet ponowień (%d h).",
+                zaleglosc.termin.isoformat(),
                 settings.catchup_grace_hours,
             )
-            if _przebieg_i_podsumowanie(settings, client, catchup_term, sleep):
-                last_run_term = catchup_term  # odhaczamy WYŁĄCZNIE udany przebieg
+            _alert(
+                settings,
+                "Zaległy przebieg powiadomień przepadł",
+                f"Termin {zaleglosc.termin.isoformat()} nie doszedł do skutku mimo ponowień. "
+                f"Nikt nie dostał prośby o grafik na ten tydzień — trzeba to zrobić ręcznie.",
+            )
+            last_run_term = zaleglosc.termin
+            zaleglosc = None
+        # Nadrobienie: zaplanowany termin właśnie minął (okno łaski) → wykonaj przebieg
+        # (idempotentnie), z czasem TERMINU jako odniesieniem tygodnia (nie „teraz").
+        # Pomijamy termin rozstrzygnięty już w tej sesji: po zaplanowanym przebiegu
+        # `previous_run(now)` wskazuje ten sam termin, więc bez znacznika byłby zbędny podwójny
+        # odczyt z Graph co cykl. Po restarcie znacznik znika — realna zaległość i tak się nadrobi.
+        catchup_term = _catchup_due(settings, now)
+        if zaleglosc is None and catchup_term is not None and catchup_term != last_run_term:
+            zaleglosc = ZalegloscPrzebiegu(
+                termin=catchup_term,
+                nastepna_proba=now,
+                wygasa=catchup_term + timedelta(hours=settings.catchup_grace_hours),
+            )
+        if zaleglosc is not None and now >= zaleglosc.nastepna_proba:
+            logger.info(
+                "Nadrabiam zaległy przebieg powiadomień (termin %s).", zaleglosc.termin.isoformat()
+            )
+            wynik = _przebieg_i_podsumowanie(settings, client, zaleglosc.termin, sleep)
             # Zegar MUSI być odczytany ponownie: przebieg z ponowieniami i dławieniem Graph
-            # (budżet 900 s na żądanie × 3 próby) trwa czasem dłużej niż `_PONOWIENIE_PRZEBIEGU_S`.
+            # (budżet 900 s na operację × 3 próby) trwa czasem dłużej niż `_PONOWIENIE_PRZEBIEGU_S`.
             # Na starym `now` `pobudka` wypadałaby wtedy w PRZESZŁOŚCI, więc pętla nasłuchu nie
             # wykonałaby ani jednego obiegu — bot milczałby przez całe okno łaski, mimo że żyje.
             now = datetime.now(_UTC)
+            if wynik is WynikPrzebiegu.UDANY:
+                last_run_term = zaleglosc.termin  # odhaczamy WYŁĄCZNIE udany przebieg
+                zaleglosc = None
+            else:
+                zaleglosc = _po_probie(settings, zaleglosc, wynik, now)
+                zgloszone_odlozenie = _zglos_odlozenie(
+                    settings, zaleglosc, wynik, zgloszone_odlozenie
+                )
         termin = _kolejny_termin(settings, now)
-        # Pobudka może wypaść WCZEŚNIEJ niż termin: gdy zaległy przebieg wciąż czeka w oknie łaski,
-        # wracamy tu za `_PONOWIENIE_PRZEBIEGU_S`, żeby dać mu drugą szansę. Bez tego kilkunasto-
-        # minutowe dławienie Graph w piątek o 16:00 kosztowałoby cały tygodniowy cykl.
-        zalegly = _catchup_due(settings, now)
+        # Pobudka może wypaść WCZEŚNIEJ niż termin: zaległy przebieg czeka na swoją kolejną próbę
+        # (ponowienie awarii albo otwarcie okna wysyłki). Bez tego kilkunastominutowe dławienie
+        # Graph w piątek o 16:00 kosztowałoby cały tygodniowy cykl.
         pobudka = termin
-        if zalegly is not None and zalegly != last_run_term:
-            pobudka = min(termin, now + timedelta(seconds=_PONOWIENIE_PRZEBIEGU_S))
+        if zaleglosc is not None:
+            pobudka = min(termin, zaleglosc.nastepna_proba)
         logger.info("Następny przebieg powiadomień: %s", termin.isoformat())
         if not powitanie_wyslane:
             # Potwierdzenie powrotu po reboocie hosta — bez tego restart usługi jest niewidoczny.
@@ -1089,9 +1614,27 @@ def run_forever(
                 # alertu; `unless-stopped` podniesie usługę, gdy człowiek wykona `--login`.
                 _handle_auth_loss(settings, blad, sleep)
                 raise
+            except st.StateWriteError as blad:
+                # Awaria utrwalania NIE jest przejściowa i nie wolno jej ponawiać w tempie
+                # `poll_interval_s`: to ten sam mechanizm, który w `run_once` mnożył wiadomości.
+                # `PollOutcome(0, None)` zsuwa następną pobudkę na sufit (`poll_max_interval_s`),
+                # więc pełny dysk daje jedną próbę na godzinę zamiast sześciu na minutę.
+                outcome = PollOutcome(0, None)
+                logger.critical("Nie da się utrwalić stanu — wstrzymuję nasłuch: %s", blad)
+                if not zgloszona_awaria_stanu:
+                    _alert(
+                        settings,
+                        "Nie da się utrwalić stanu przypomnień",
+                        f"{blad}. Nasłuch chodzi w zwolnionym tempie i NIE wysyła nic, dopóki "
+                        f"zapis nie wróci — inaczej groziłaby seria powtórzonych wiadomości.",
+                        waga=alerts.KRYTYCZNY,
+                    )
+                    zgloszona_awaria_stanu = True
             except Exception:
                 # Błąd listenera nie może zabić pętli.
                 logger.exception("Listener odpowiedzi zawiódł")
+            else:
+                zgloszona_awaria_stanu = False  # zapis wrócił — kolejna awaria znów zaalarmuje
             # Puls w OSOBNYM bloku: gdy Graph jest niedostępny, `poll_replies` rzuca — a wtedy puls
             # w tym samym `try` nie wykonałby się ani razu, czyli przestałby działać dokładnie
             # w awarii, którą ma wykrywać.
@@ -1109,10 +1652,27 @@ def run_forever(
         _touch_heartbeat(settings)
         # Przebieg wykonujemy TYLKO po dojściu do terminu. Wcześniejsza pobudka oznacza ponowienie
         # zaległego przebiegu — obsłuży je `_catchup_due` na górze pętli.
-        if datetime.now(_UTC) >= termin and _przebieg_i_podsumowanie(
-            settings, client, datetime.now(_UTC), sleep
-        ):
-            last_run_term = termin  # odhaczamy WYŁĄCZNIE udany przebieg
+        if datetime.now(_UTC) >= termin:
+            wynik = _przebieg_i_podsumowanie(settings, client, datetime.now(_UTC), sleep)
+            if wynik is WynikPrzebiegu.UDANY:
+                last_run_term = termin  # odhaczamy WYŁĄCZNIE udany przebieg
+            else:
+                # Zapamiętujemy TERMIN (nie „teraz"), żeby przy późniejszym wykonaniu tydzień
+                # docelowy liczył się od terminu — odłożenie przez weekend nie może przesunąć
+                # planowanego tygodnia o siedem dni. Ta sama droga dla awarii i dla odłożenia:
+                # `_po_probie` nadaje im różne terminy kolejnej próby i różne budżety.
+                teraz = datetime.now(_UTC)
+                zaleglosc = _po_probie(
+                    settings,
+                    ZalegloscPrzebiegu(
+                        termin, teraz, termin + timedelta(hours=settings.catchup_grace_hours)
+                    ),
+                    wynik,
+                    teraz,
+                )
+                zgloszone_odlozenie = _zglos_odlozenie(
+                    settings, zaleglosc, wynik, zgloszone_odlozenie
+                )
 
 
 _AUTH_CHECK_ATTEMPTS = 3
@@ -1125,6 +1685,7 @@ def _ensure_authenticated(
     *,
     attempts: int = _AUTH_CHECK_ATTEMPTS,
     sleep: Callable[[float], None] = time.sleep,
+    zwloka_przed_wyjsciem: bool = True,
 ) -> Callable[[], str]:
     """Sprawdź token na starcie — usługa nie może wejść w pętlę bez ważnego uwierzytelnienia.
 
@@ -1175,7 +1736,7 @@ def _ensure_authenticated(
         # usunąć plik cache, a instrukcja jest już w treści wyjątku.
         logger.critical("%s", utracona)
         if not sys.stdin.isatty():
-            _handle_auth_loss(settings, utracona, sleep)
+            _handle_auth_loss(settings, utracona, sleep, zwloka=zwloka_przed_wyjsciem)
         raise SystemExit(1)
     if sys.stdin.isatty():
         logger.info("Brak ważnego tokenu — uruchamiam jednorazowe logowanie device-code.")
@@ -1189,6 +1750,7 @@ def _ensure_authenticated(
         settings,
         utracona or AuthExpiredError("brak ważnego uwierzytelnienia i brak terminala"),
         sleep,
+        zwloka=zwloka_przed_wyjsciem,
     )
     raise SystemExit(1)
 
@@ -1209,6 +1771,28 @@ def _polecenie_jednorazowe(akcja: Callable[[], Any]) -> None:
     except Exception as blad:
         logger.critical("Polecenie nie powiodło się: %s: %s", type(blad).__name__, blad)
         raise SystemExit(1) from None
+
+
+def _ustawienia_lub_wyjscie() -> Settings:
+    """Zbuduj i sprawdź ustawienia; pomyłka operatora → jedno zdanie w logu i kod 2.
+
+    ODCZYT otoczenia jest tu razem z walidacją, bo ``Settings.from_env`` też potrafi rzucić
+    ``ConfigError`` — robi to każdy parser wartości (``_int``, ``_int_list`` i, od czasu
+    fail-closed, ``_bool``). Gdy stał poza obsługą, literówka w `POWIADOMIENIA_DRY_RUN` dawała
+    ślad stosu i kod 1, czyli „źle skonfigurowane" było nieodróżnialne od „padło w trakcie pracy" —
+    a pod `restart: unless-stopped` kontener wirował zamiast czekać na poprawkę.
+    """
+    try:
+        settings = Settings.from_env()
+        settings.validate()
+    except ConfigError as blad:
+        # Błąd konfiguracji to pomyłka operatora, nie awaria programu. Ma dać JEDNO czytelne zdanie
+        # w logu usługi, a nie ślad stosu, w którym trzeba wyławiać ostatnią linię — na serwerze
+        # czyta to człowiek przez `docker compose logs`, często pod presją czasu.
+        # Kod 2 odróżnia „źle skonfigurowane" od „padło w trakcie pracy" (1).
+        logger.critical("Błąd konfiguracji: %s", blad)
+        raise SystemExit(2) from None
+    return settings
 
 
 def main() -> None:
@@ -1236,23 +1820,22 @@ def main() -> None:
     except ImportError:
         pass
 
-    settings = Settings.from_env()
-    try:
-        settings.validate()
-    except ConfigError as blad:
-        # Błąd konfiguracji to pomyłka operatora, nie awaria programu. Ma dać JEDNO czytelne zdanie
-        # w logu usługi, a nie ślad stosu, w którym trzeba wyławiać ostatnią linię — na serwerze
-        # czyta to człowiek przez `docker compose logs`, często pod presją czasu.
-        # Kod 2 odróżnia „źle skonfigurowane" od „padło w trakcie pracy" (1).
-        logger.critical("Błąd konfiguracji: %s", blad)
-        raise SystemExit(2) from None
+    settings = _ustawienia_lub_wyjscie()
 
     if args.login:
         login_interactive(settings)
         return
 
+    # Tryb logowany ZAWSZE, obiema gałęziami. Milczenie przy `dry_run=false` znaczyło „nie wiem,
+    # czy operator wyłączył bezpiecznik świadomie, czy wpisał literówkę" — a różnica jest widoczna
+    # dopiero w skrzynkach całego zespołu. Jedna linia na starcie daje ją w `docker compose logs`.
     if settings.dry_run:
         logger.info("Tryb DRY-RUN — nic nie zostanie wysłane ani zapisane.")
+    else:
+        logger.warning(
+            "Tryb NA ŻYWO (POWIADOMIENIA_DRY_RUN=false) — wiadomości będą wysyłane do pracowników, "
+            "a potwierdzone zmiany zapisywane do Shifts."
+        )
 
     # Blokada jednej instancji: dwa procesy piszące ten sam stan obeszłyby idempotencję zapisu do
     # Shifts (np. usługa + ręczne --poll-once). Zwalnia się przy zakończeniu procesu.
@@ -1262,10 +1845,15 @@ def main() -> None:
         logger.critical("%s", exc)
         raise SystemExit(1) from None
 
+    # Polecenia jednorazowe uruchamia człowiek i czeka na wynik — nie ma tu pętli restartów
+    # `unless-stopped`, którą trzeba hamować `auth_failure_exit_delay_s`
+    # (patrz `_handle_auth_loss`).
+    jednorazowe = args.once or args.poll_once
+
     with lock:
         # Budowa dostawcy i sprawdzenie tokenu RAZEM — obie czynności odpytują sieć, więc obie
         # muszą podlegać tym samym ponowieniom (patrz `_ensure_authenticated`).
-        provider = _ensure_authenticated(settings)
+        provider = _ensure_authenticated(settings, zwloka_przed_wyjsciem=not jednorazowe)
         llm: LlmClient = AnthropicLlm(settings.anthropic_api_key, model=settings.llm_model)
         with httpx.Client(timeout=30) as http:
             # Czekanie na `Retry-After` (budżet do 900 s na żądanie) jest ŻYCIEM usługi, nie zawisem
@@ -1275,6 +1863,16 @@ def main() -> None:
                 http, provider, sleep=lambda s: _spij_z_pulsem(settings, s, time.sleep)
             )
             if args.once:
+                # Ta sama bramka co w pętli: `--once` wysyła cotygodniowe prośby, czyli wiadomości
+                # inicjowane przez bota. Ręczne uruchomienie nie jest powodem, by pisać do zespołu
+                # w nocy — a w trybie próbnym bramka i tak przepuszcza (patrz `_wolno_inicjowac`).
+                if not _wolno_inicjowac(settings, datetime.now(_UTC)):
+                    logger.warning(
+                        "Poza oknem wysyłki — nic nie wysłano. Najbliższe okno: %s "
+                        "(POWIADOMIENIA_SEND_WINDOW_*).",
+                        _najblizsze_okno(settings, datetime.now(_UTC)).isoformat(),
+                    )
+                    return
                 _polecenie_jednorazowe(lambda: run_once(settings, client, now=datetime.now(_UTC)))
             elif args.poll_once:
                 _polecenie_jednorazowe(lambda: poll_replies(settings, client, llm))

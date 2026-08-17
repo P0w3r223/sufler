@@ -53,14 +53,16 @@ class HttpxGraphUserImagePush:
 
         POST wiadomości NIE jest ponawiany — powtórka po niejednoznacznym timeoucie = drugi obraz.
         """
-        self._refresh_auth()
         me_id = self._me_id_cached()
         chat_id = self._create_or_get_chat(me_id, target_user_id)
         self._post(f"{GRAPH}/chats/{chat_id}/messages", _image_message(content, content_type))
 
-    def _refresh_auth(self) -> None:
-        """Ustaw nagłówek Authorization świeżym tokenem (sync MSAL, cichy refresh z cache)."""
-        self._client.headers["Authorization"] = f"Bearer {self._token()}"
+    def _auth_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """Świeży ``Authorization`` (+ ewentualne nagłówki wołającego) na JEDNO żądanie."""
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        if extra:
+            headers.update(extra)
+        return headers
 
     def _me_id_cached(self) -> str:
         if not self._me_id:
@@ -104,12 +106,19 @@ class HttpxGraphUserImagePush:
         json: dict[str, Any] | None = None,
         retry_transient: bool = False,
     ) -> httpx.Response:
-        """Wykonaj żądanie ze wspólną polityką ponawiania — patrz ``graph_http``."""
+        """Wykonaj żądanie ze wspólną polityką ponawiania — patrz ``graph_http``.
+
+        Nagłówek ``Authorization`` składamy PER ŻĄDANIE (wzorzec ``graph_thread_source``), zamiast
+        wstrzykiwać go w ``client.headers``: klient bywa dzielony między adapterami i wołany z puli
+        wątków, więc token w obiekcie klienta jest stanem, którego czas życia zależy od kolejności
+        wywołań — a nagłówek doklejony do żądania jest zawsze świeży i niczyj poza tym żądaniem.
+        """
         return graph_http.request_with_retry(
             self._client,
             method,
             url,
             json=json,
+            headers=self._auth_headers(),
             retry_transient=retry_transient,
             sleep=self._sleep,
         )

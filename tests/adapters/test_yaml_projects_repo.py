@@ -136,3 +136,28 @@ def test_modified_registry_is_reparsed_on_next_call(tmp_path: Path):
     )
 
     assert {p.key for p in repo.all()} == {"scada-integration", "workmate", "enerkom"}
+
+
+def test_entry_without_key_raises_registry_error_not_keyerror(tmp_path: Path):
+    """Uszkodzony rejestr to BŁĄD DANYCH, nie defekt kodu — tak jak w ``status_record``.
+
+    Surowy ``KeyError: 'key'`` nie mówi ani który plik, ani że chodzi o rejestr projektów, a na
+    granicy nie jest ``RepositoryError``, więc zamiast czytelnej odmowy leci wywrócenie wołającego.
+    """
+    path = _registry(tmp_path, "projects:\n  - name: Bez klucza\n    company: biap\n")
+    repo = YamlProjectsRepository(path)
+
+    with pytest.raises(ProjectsRegistryError, match="niepoprawny wpis projektu"):
+        repo.all()
+
+
+def test_entry_that_is_not_a_mapping_raises_registry_error_not_attributeerror(tmp_path: Path):
+    """Goły napis w liście ``projects`` wywalał się dopiero na ``entry.get``: ``AttributeError``."""
+    path = _registry(tmp_path, "projects:\n  - tylko-napis\n")
+    repo = YamlProjectsRepository(path)
+
+    with pytest.raises(ProjectsRegistryError, match="mapą"):
+        repo.all()
+
+    with pytest.raises(ProjectsRegistryError, match="mapą"):
+        repo.status_record("cokolwiek")

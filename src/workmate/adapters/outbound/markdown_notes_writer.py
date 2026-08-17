@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -26,6 +27,8 @@ import yaml
 
 from workmate.core.domain.models import Note, NoteMetadata
 from workmate.core.errors import NoteExistsError, WriteError
+
+logger = logging.getLogger(__name__)
 
 _FRONTMATTER_FENCE = "---"
 
@@ -41,7 +44,16 @@ class MarkdownNotesWriter:
 
     def write(self, note: Note) -> None:
         path = _resolve_within(self._notes_dir, f"{note.id}.md")
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # ``mkdir`` POD osłoną, tak samo jak sam zapis: katalog firmy/projektu powstaje dopiero
+        # przy pierwszej notatce, więc read-only wolumen bazy wiedzy odmawia WŁAŚNIE tutaj —
+        # i dotąd wychodził surowym ``PermissionError``, czyli dla wołającego jak defekt kodu,
+        # a nie jak oczekiwany stan infrastruktury, którym jest.
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise WriteError(
+                f"nie udało się przygotować katalogu notatki {note.id}: {exc}"
+            ) from exc
         _atomic_create(path, _render(note.metadata, note.body))
 
     def digest(self, note_id: str) -> str:
@@ -49,7 +61,8 @@ class MarkdownNotesWriter:
         path = _resolve_within(self._notes_dir, f"{note_id}.md")
         if not path.is_file():
             return ""
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        raw = _read_bytes_or_none(path)
+        return hashlib.sha256(raw).hexdigest() if raw is not None else ""
 
     def overwrite(self, note: Note, *, expected_sha256: str) -> None:
         """Podmień treść ISTNIEJĄCEJ notatki atomowo (ADR 0065) — nigdy w miejscu.
@@ -63,24 +76,59 @@ class MarkdownNotesWriter:
         poprawiony.
         """
         path = _resolve_within(self._notes_dir, f"{note.id}.md")
-        if not path.is_file():
+        raw = _read_bytes_or_none(path) if path.is_file() else None
+        if raw is None:
             raise WriteError(f"notatka nie istnieje, nie ma czego podmienić: {note.id}")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
             raise WriteError(
                 f"notatka {note.id} zmieniła się od odczytu — nie nadpisuję. "
                 "Przeczytaj ją ponownie i powtórz zmianę."
             )
         _atomic_replace(path, _render(note.metadata, note.body))
 
-    def delete(self, note_id: str) -> None:
-        """Usuń POJEDYNCZY plik notatki (ADR 0065). Katalogów nie ruszamy — nawet pustych."""
+    def delete(self, note_id: str, *, expected_sha256: str) -> None:
+        """Usuń POJEDYNCZY plik notatki (ADR 0065). Katalogów nie ruszamy — nawet pustych.
+
+        ``expected_sha256`` sprawdzamy TĄ SAMĄ drogą co w ``overwrite``: różnica skrótu znaczy
+        „notatka zmieniła się od odczytu", a wtedy migawka zabezpiecza wersję sprzed zmiany —
+        skasowanie zabrałoby wersję pośrednią bez kopii.
+        """
         path = _resolve_within(self._notes_dir, f"{note_id}.md")
-        if not path.is_file():
+        raw = _read_bytes_or_none(path) if path.is_file() else None
+        if raw is None:
             raise WriteError(f"notatka nie istnieje: {note_id}")
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise WriteError(
+                f"notatka {note_id} zmieniła się od odczytu — nie usuwam. "
+                "Przeczytaj ją ponownie i powtórz operację."
+            )
         try:
             path.unlink()
         except OSError as exc:
             raise WriteError(f"nie udało się usunąć notatki {note_id}: {exc}") from exc
+
+
+def _read_bytes_or_none(path: Path) -> bytes | None:
+    """Bajty notatki albo ``None``, gdy notatki NIE MA; nieczytelna notatka jest GŁOŚNA.
+
+    ``is_file()`` i ``read_bytes()`` to DWA podejścia do dysku, a od ADR 0065 istnieje druga
+    droga zapisu (``File(edit|delete)``) i biegnie ona równolegle do bramki mutacji. Notatka
+    skasowana między sprawdzeniem a odczytem dawała surowy ``FileNotFoundError`` w środku tej
+    bramki, choć jej kontrakt mówi „brak notatki → pusty skrót / odmowa", nie „wyjątek".
+
+    Odmowa dostępu i błąd I/O to jednak stan PRZECIWNY: notatka jest, tylko nie da się jej
+    przeczytać. Oddane jako ``None`` wychodziło z bramki komunikatem „notatka nie istnieje" —
+    fail-closed, więc nic nie ginęło, ale zdanie było nieprawdziwe i nie zostawiało śladu.
+    """
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.warning("Nie udało się odczytać notatki %s: %s", path, exc)
+        raise WriteError(
+            f"nie udało się odczytać notatki {path.name}: {exc.strerror or type(exc).__name__}"
+        ) from exc
 
 
 def render_note(note: Note) -> str:
@@ -110,10 +158,16 @@ def _resolve_within(notes_dir: Path, relpath: str) -> Path:
     ``note.id`` przechodzi przez slugifikację serwisu (ADR 0006), więc to nie jest dziura — ale
     ta gwarancja stała dotąd wyłącznie na dyscyplinie wołających, a to JEDYNE miejsce w systemie,
     które PISZE do bazy wiedzy czytanej przez agenta.
+
+    Katalog bazy rozwijamy RAZ i dopiero do niego doklejamy ``relpath``. Dwa niezależne
+    ``resolve()`` potrafią dać różne zapisy TEGO SAMEGO katalogu (krótka nazwa 8.3 w ``TEMP``
+    na Windows, ``/var`` → ``/private/var`` na macOS), a wtedy legalny zapis bywa odrzucany
+    jako ucieczka.
     """
-    candidate = (notes_dir / relpath).resolve()
+    base = notes_dir.resolve()
+    candidate = (base / relpath).resolve()
     try:
-        candidate.relative_to(notes_dir.resolve())
+        candidate.relative_to(base)
     except ValueError as exc:
         raise WriteError(f"ścieżka notatki poza katalogiem bazy wiedzy: {relpath!r}") from exc
     return candidate
@@ -139,7 +193,11 @@ def _atomic_create(path: Path, content: str) -> None:
     except OSError as exc:
         raise WriteError(f"nie udało się zapisać notatki {path.name}: {exc}") from exc
     finally:
-        tmp.unlink(missing_ok=True)
+        # Sprzątanie nie może przykryć właściwego błędu (jak w ``_atomic_replace`` niżej):
+        # ``OSError`` z ``unlink`` zastąpiłby ``NoteExistsError``, a to na nim stoi idempotencja
+        # notatki ze spotkania — „już złożona" zamieniłoby się w twardą porażkę zapisu.
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
 
 
 def _atomic_replace(path: Path, content: str) -> None:

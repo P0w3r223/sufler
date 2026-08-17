@@ -13,14 +13,14 @@ i ``comment`` nie istnieją w schemacie (sonda negatywna stoi w ``test_github_ca
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from workmate.core.application.github import GithubWriteService
-from workmate.core.application.tools import build_github_catalog
+from workmate.core.application.tools import build_activity_catalog
 from workmate.core.domain.events import Event, NewEvent
 from workmate.core.errors import WriteError
 
-_WHEN = datetime(2026, 7, 15, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 15, tzinfo=UTC)
 
 
 class _FakeStore:
@@ -73,7 +73,7 @@ def _github(*, write=None):
     store.append(NewEvent(source="github", kind="issue_opened", external_id="1", occurred_at=_WHEN))
     events = _EventsService(store)
     service = GithubWriteService(write, owner="o", repo="r") if write is not None else None
-    return build_github_catalog(events=events, write_service=service)[0]  # type: ignore[arg-type]
+    return build_activity_catalog(events=events, write_service=service)[0]  # type: ignore[arg-type]
 
 
 def test_akcja_events_czyta_zdarzenia_ze_sklepu():

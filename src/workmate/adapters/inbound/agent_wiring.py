@@ -62,9 +62,9 @@ from workmate.core.application.services import (
     ProjectsService,
 )
 from workmate.core.application.tools import (
+    build_agent_notes_read_catalog,
     build_file_catalog,
-    build_notes_catalog,
-    build_notes_read_catalog,
+    build_project_catalog,
     build_shell_catalog,
     build_tool_catalog,
     build_workspace_catalog,
@@ -146,9 +146,31 @@ def build_notes_service(
 
 
 def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
-    """Zbuduj serwisy ODCZYTU nad repozytoriami (repo z cache — jeden komplet per wywołanie).
+    """Komplet serwisów ODCZYTU dla tej konfiguracji — JEDEN na proces, współdzielony.
 
-    Drzwi agenta są długożyjące, więc model osadzeń rankera dense ładuje się tu raz.
+    Składanie jednych drzwi wołało to trzy razy (runtime, per-turowa fabryka odczytu, katalog
+    komend), a każde wywołanie budowało własny ranker semantyczny, czyli własny model ONNX
+    w pamięci i własny warmup. Trzy modele i trzy warmupy zamiast jednego — koszt startu
+    i pamięci, nie poprawności (repozytoria mają własny cache, a ranker własne zamki).
+
+    Klucz cache'u to CAŁA konfiguracja, od której zależy budowa, a nie samo ``settings``:
+    ranker czyta ``RetrievalSettings`` z ENV, a ``ProjectsService`` — obecność pliku
+    ``events.db``. Bez tych dwóch składników drzwi zbudowane po zmianie zmiennej środowiskowej
+    (albo po pojawieniu się mostu) dostawałyby serwis z poprzedniego świata, i to po cichu.
+    """
+    return _read_services_cached(settings, RetrievalSettings.from_env(), _events_db_if_present())
+
+
+@functools.cache
+def _read_services_cached(
+    settings: Settings,
+    _retrieval: RetrievalSettings,
+    _events_db: Path | None,
+) -> tuple[NotesService, ProjectsService]:
+    """Właściwa budowa, memoizowana po pełnym kluczu konfiguracji (patrz ``_read_services``).
+
+    Argumenty z podkreśleniem wchodzą WYŁĄCZNIE do klucza — same wartości czytają niżej
+    ``build_notes_service`` (z ENV) i ``_events_if_present`` (z dysku), tak jak przed memoizacją.
     """
     notes_repo = MarkdownNotesRepository(settings.notes_dir)
     projects_repo = YamlProjectsRepository(settings.projects_registry)
@@ -156,6 +178,14 @@ def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
         build_notes_service(settings, notes_repo=notes_repo),
         ProjectsService(projects_repo, notes_repo, events=_events_if_present()),
     )
+
+
+def _events_db_if_present() -> Path | None:
+    """Ścieżka ``events.db``, jeśli plik istnieje — składnik klucza cache'u serwisów odczytu."""
+    from workmate.config import EventsSettings
+
+    path = Path(str(EventsSettings.from_env().db_path)).expanduser()
+    return path if path.exists() else None
 
 
 def _events_if_present() -> EventService | None:
@@ -187,7 +217,7 @@ def build_agent_runtime(
 ) -> AgentRuntime:
     """Zbuduj runtime: repozytoria → serwisy → katalog → klient LLM.
 
-    ``enable_write`` steruje profilem zaufania drzwi: ``True`` → ``Notes`` z akcją ``save``
+    ``enable_write`` steruje profilem zaufania drzwi: ``True`` → ``Project`` z akcją ``save``
     (zaufane, np. lokalne CLI); ``False`` → wariant tylko do odczytu (mniej zaufane drzwi,
     np. Teams — ADR 0006). ``extra_catalog`` (ADR 0019/0020) to STATYCZNE narzędzia per drzwi
     (np. odczyt zdarzeń, narzędzia GitHub) doklejane do bazowego katalogu — z definicji poza
@@ -206,10 +236,12 @@ def build_agent_runtime(
     zachowawcze — drzwi, które zapomną o tym parametrze, dostają katalog pełniejszy, a nie
     agenta odciętego od bazy wiedzy.
 
-    ``suppress_notes_read`` zdejmuje trzy narzędzia odczytu z katalogu BAZOWEGO także wtedy, gdy
-    powłoki nie ma — bo przejmuje je PER-TUROWA fabryka bramkowana nadawcą (autoryzacja odczytu,
-    ADR 0062): gdy bramka działa, katalog bazowy nie może oferować tych narzędzi bez tożsamości,
-    inaczej byłaby droga obejścia autoryzacji. Domyślne ``False`` = zachowanie sprzed ADR 0062.
+    ``suppress_notes_read`` zdejmuje z katalogu BAZOWEGO CAŁĄ powierzchnię bazy wiedzy — trzy
+    narzędzia odczytu ORAZ ``Project`` — także wtedy, gdy powłoki nie ma, bo przejmuje ją
+    PER-TUROWA fabryka bramkowana nadawcą (autoryzacja odczytu, ADR 0062). ``Project`` należy
+    do tej powierzchni: jego akcja ``status`` zwraca syntezę projektu z notatek pionu.
+    Zostawiony w katalogu bazowym był drogą OBOK bramki — jedyną, która przeżyła jej wpięcie.
+    Domyślne ``False`` = zachowanie sprzed ADR 0062.
     """
     from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
@@ -223,18 +255,20 @@ def build_agent_runtime(
         else None
     )
     # Powierzchnia agenta jest OSOBNA od powierzchni MCP (ADR 0009, krok 5.4): skonsolidowane
-    # ``Notes`` zamiast ``get_project_status`` i ``save_note``, a trzy narzędzia odczytu bazy
+    # ``Project`` zamiast ``get_project_status`` i ``save_note``, a trzy narzędzia odczytu bazy
     # wiedzy warunkowo — zastępuje je powłoka, której przy wyłączonej bramce po prostu nie ma.
-    catalog = [
-        *build_notes_catalog(
-            projects_service, write_service=write_service, shell_available=shell_available
-        ),
-        *(
-            []
-            if shell_available or suppress_notes_read
-            else build_notes_read_catalog(notes_service, projects_service)
-        ),
-    ]
+    catalog = (
+        []
+        if suppress_notes_read
+        else [
+            *build_project_catalog(projects_service, write_service=write_service),
+            *(
+                []
+                if shell_available
+                else build_agent_notes_read_catalog(notes_service, projects_service)
+            ),
+        ]
+    )
     return AgentRuntime(
         AnthropicLLMClient(agent_settings),
         [*catalog, *extra_catalog],
@@ -278,17 +312,36 @@ def build_agent_runtime_or_exit(
 def _build_notes_read_factory(
     settings: Settings,
     authorizer: NoteReadAuthorizer,
+    *,
+    enable_write: bool = False,
 ) -> Callable[[str], list[ToolSpec]]:
-    """Per-turowa fabryka narzędzi ODCZYTU bazy wiedzy, bramkowana NADAWCĄ (ADR 0062).
+    """Per-turowa fabryka CAŁEJ powierzchni bazy wiedzy, bramkowana NADAWCĄ (ADR 0062).
 
     Wzorzec jak ``user_push_tool_factory``/``my_jira_tasks_factory``: serwisy budujemy RAZ, fabryka
     na turę domyka je autoryzacją TEGO nadawcy. Rozpoznany członek → realne
-    ``search_notes``/``get_note``/``list_projects``; nierozpoznany → te SAME trzy narzędzia (nazwa
-    i schemat zachowane przez ``functools.wraps``), ale ich ``fn`` zwraca czytelną odmowę, którą
-    model relacjonuje — jak płyną błędy narzędzi. W katalogu bazowym te narzędzia są wtedy
-    STŁUMIONE (``suppress_notes_read``), żeby nie było drogi obejścia bramki.
+    ``Project``/``SearchNotes``/``GetNote``/``ListProjects``; nierozpoznany → te SAME narzędzia
+    (nazwa i schemat zachowane przez ``functools.wraps``), ale ich ``fn`` zwraca czytelną odmowę,
+    którą model relacjonuje — jak płyną błędy narzędzi. W katalogu bazowym są wtedy STŁUMIONE
+    (``suppress_notes_read``), żeby nie było drogi obejścia bramki.
+
+    ``Project`` jest tu razem z trójką odczytu, bo ``Project(action='status')`` serwuje treść
+    bazy wiedzy (syntezę z notatek projektu) — zostawiony w katalogu bazowym był jedyną drogą
+    odczytu, która przeżyła wpięcie bramki. ADR 0062 §3 zapowiadał złożenie odczytu do
+    ``build_project_catalog``; robimy to od strony DRZWI, bo ``core/application/tools.py`` jest
+    wspólny z powierzchnią MCP (zamrożoną golden-testem), której bramka nie dotyczy.
+
+    ``enable_write`` przenosi profil zapisu drzwi (ADR 0006) na tę fabrykę — inaczej złożenie
+    ``Project`` tutaj cicho zabrałoby drzwiom zaufanym akcję ``save``.
     """
     notes, projects = _read_services(settings)
+    write_service = (
+        NotesWriteService(
+            MarkdownNotesWriter(settings.notes_dir),
+            YamlProjectsRepository(settings.projects_registry),
+        )
+        if enable_write
+        else None
+    )
 
     def _refusing(
         original: Callable[..., dict[str, Any]], refusal: dict[str, Any]
@@ -300,7 +353,12 @@ def _build_notes_read_factory(
         return refuse
 
     def factory(sender_id: str) -> list[ToolSpec]:
-        catalog = build_notes_read_catalog(notes, projects)
+        # Fabryka wpina się WYŁĄCZNIE bez powłoki (``notes_read_gated``), bo z powłoką agent
+        # czyta montaż ``ro`` i bramka i tak nie sięga.
+        catalog = [
+            *build_project_catalog(projects, write_service=write_service),
+            *build_agent_notes_read_catalog(notes, projects),
+        ]
         try:
             authorizer.authorize(sender_id)
         except NoteAuthorizationError as exc:
@@ -356,8 +414,14 @@ def build_file_support(
     mutations: NoteMutationService | None = None,
     identities: AadIdentityLookup | None = None,
     read_authorizer: NoteReadAuthorizer | None = None,
+    shell_available: bool = False,
 ) -> tuple[
-    Callable[[WorkspaceScope, AttachmentQueue, str, str, bool], list[ToolSpec]],
+    # Ostatni argument fabryki to SKAZA rozmowy podana LENIWIE (``Callable``, nie ``bool``):
+    # sędzia mutacji czyta ją w chwili orzekania, a nie budowy katalogu (ADR 0066).
+    Callable[
+        [WorkspaceScope, AttachmentQueue, str, str, Callable[[], bool]],
+        list[ToolSpec],
+    ],
     Callable[[WorkspaceScope, Sequence[Attachment]], list[str]],
 ]:
     """Zbuduj parę dla ``File`` (ADR 0064): fabrykę narzędzia i odkładanie załączników.
@@ -369,6 +433,10 @@ def build_file_support(
     ``staged_ext`` jest szersza niż lista rozszerzeń, które model wolno mu TWORZYĆ: użytkownik
     przysyła pdf/obrazy/dokumenty, a nie tylko md/txt/csv/json. To rozróżnienie jest celowe —
     odkładamy CUDZY plik do wglądu, nie pozwalamy modelowi pisać binariów.
+
+    ``shell_available`` przenosi się wprost do opisu ``File`` (ADR 0068 §2): to on rozstrzyga,
+    czy opis odsyła po tekst do `cat`-a, czy do ``ReadFile``, i skąd wziąć identyfikator notatki.
+    Bierze się — jak wszędzie w tych drzwiach — z OBECNOŚCI fabryki powłoki, nie z ustawienia.
     """
     repo = FilesystemWorkspaceRepository(workspace_settings.workspace_dir)
     limits = WorkspaceLimits(
@@ -388,7 +456,7 @@ def build_file_support(
         queue: AttachmentQueue,
         sender_id: str,
         trust_class: str = "unknown",
-        tainted: bool = True,
+        tainted: bool | Callable[[], bool] = True,
     ) -> list[ToolSpec]:
         """Zbuduj ``File`` dla tej tury; akcje mutujące TYLKO dla rozpoznanego człowieka.
 
@@ -429,6 +497,7 @@ def build_file_support(
             # jest dokładnie tym, czego potrzebuje punkt kontrolny człowieka — zapowiedź i
             # wykonanie muszą pochodzić z RÓŻNYCH tur.
             uuid.uuid4().hex,
+            shell_available,
         )
 
     def stage(scope: WorkspaceScope, attachments: Sequence[Attachment]) -> list[str]:
@@ -489,7 +558,7 @@ class _ScopedRunner:
     Wykonawca, gdy podany ``cwd`` nie istnieje, degraduje do swojego katalogu domyślnego —
     rozsądnie, bo ``Popen`` z nieistniejącym ``cwd`` rzuca błędem mówiącym o katalogu zamiast
     o poleceniu. Skutkiem ubocznym byłaby jednak UTRATA IZOLACJI: katalog rozmowy powstaje
-    leniwie, przy pierwszym ``create_file``, więc do tego czasu wszystkie rozmowy dzieliłyby
+    leniwie, przy pierwszym ``CreateFile``, więc do tego czasu wszystkie rozmowy dzieliłyby
     wspólny korzeń brudnopisu i widziały nawzajem swoje pliki. Zmierzone: ``pwd`` w świeżej
     rozmowie zwracało ``/home/scratchpad``, nie ``/home/scratchpad/<kanał>/<hash>``.
 
@@ -537,7 +606,7 @@ def _build_shell_factory(
     samego powodu co Claude API.
 
     ``workspace_settings.workspace_dir`` jest korzeniem ścieżek dla OBU stron: aplikacja pisze
-    tam pliki narzędziem ``create_file``, a wykonawca dostaje ten sam katalog jako ``cwd``.
+    tam pliki narzędziem ``CreateFile``, a wykonawca dostaje ten sam katalog jako ``cwd``.
     Rozjazd tych dwóch wartości oznaczałby, że model tworzy plik narzędziem i nie widzi go
     powłoką — dlatego korzeń bierzemy z jednej konfiguracji, a nie z dwóch.
 
@@ -729,13 +798,13 @@ def build_conversational_responder(
         if shell_settings is not None and workspace_settings is not None
         else None
     )
-    # Etap 7 (ADR 0011 paczki): ``reply_with_file`` — szóste narzędzie — schodzi z powierzchni
+    # Etap 7 (ADR 0011 paczki): ``ReplyWithFile`` — szóste narzędzie — schodzi z powierzchni
     # tam, gdzie jest powłoka. Dostawa pliku idzie wtedy skrzynką ``outputs/`` (``outbox_delivery``
     # niżej), a narzędzie byłoby DRUGĄ drogą do tego samego — trzy pozycje budżetu wyboru za
-    # zdolność, którą już mamy. Bez powłoki ``reply_with_file`` zostaje JEDYNĄ drogą dostawy, więc
+    # zdolność, którą już mamy. Bez powłoki ``ReplyWithFile`` zostaje JEDYNĄ drogą dostawy, więc
     # zostaje. Warunek z ``shell_factory``, nie z ``shell_settings.enabled`` — jak przy narzędziach
     # plikowych i skillach: ustawienie mówi, czego chce operator, fabryka — co agent dostanie
-    # (rozjazd na platformie bez wykonawcy zostawiłby agenta bez powłoki I bez ``reply_with_file``).
+    # (rozjazd na platformie bez wykonawcy zostawiłby agenta bez powłoki I bez ``ReplyWithFile``).
     if shell_factory is not None:
         thread_tool_factory = None
     # Autoryzacja ODCZYTU (ADR 0062): bramka działa na TYPOWANYCH ścieżkach. Dla narzędzi agenta
@@ -745,7 +814,7 @@ def build_conversational_responder(
     # niezależnie od powłoki (to osobna ścieżka odczytu). ``None`` → wszystko jak przed ADR 0062.
     notes_read_gated = note_read_authorizer is not None and shell_factory is None
     notes_read_factory = (
-        _build_notes_read_factory(settings, note_read_authorizer)
+        _build_notes_read_factory(settings, note_read_authorizer, enable_write=enable_write)
         if notes_read_gated and note_read_authorizer is not None
         else None
     )
@@ -786,6 +855,9 @@ def build_conversational_responder(
             mutations=mutations,
             identities=identities,
             read_authorizer=note_read_authorizer,
+            # Z FABRYKI, jak `shell_available` runtime'u niżej: ustawienie mówi, czego chciał
+            # operator, fabryka — co agent faktycznie dostanie.
+            shell_available=shell_factory is not None,
         )
     runtime = build_agent_runtime_or_exit(
         settings,
@@ -838,13 +910,12 @@ def build_conversational_responder(
     # paczki, krok 5.5). Z powłoką są czystym opakowaniem prymitywu: `Bash` startuje w TYM SAMYM
     # katalogu, więc `cat`/`ls`/heredoc robią dokładnie to samo, za trzy pozycje w budżecie wyboru.
     #
-    # Warunek, a nie bezwarunkowe cięcie — z tego samego powodu co przy narzędziach odczytu notatek
-    # (`build_notes_read_catalog`): `WORKMATE_ENABLE_SHELL` jest domyślnie WYŁĄCZONA, a [ADR 0010]
-    # dopuszcza powłokę wyłącznie na kanałach z wzajemnie zaufanymi uczestnikami. Bez powłoki
-    # bariera istnieje i jest węższa, niż wygląda: to NIE jest droga do dostawy pliku
-    # (`reply_with_file` bierze treść wprost, a skrzynka nadawcza czyta `outputs/`, dokąd
-    # `create_file` nie umie zapisać), tylko jedyny sposób, w jaki model odzyskuje własny szkic
-    # po kompaktowaniu kontekstu (ADR 0014) — wtedy tura, w której go pisał, już nie wraca.
+    # Warunek, a nie bezwarunkowe cięcie — z tego samego powodu co przy narzędziach odczytu
+    # notatek (`build_agent_notes_read_catalog`): `WORKMATE_ENABLE_SHELL` jest domyślnie
+    # WYŁĄCZONA. Bez powłoki bariera istnieje i jest węższa, niż wygląda: to NIE jest droga do
+    # dostawy pliku (`ReplyWithFile` bierze treść wprost, a skrzynka nadawcza czyta `outputs/`,
+    # dokąd `CreateFile` nie umie zapisać), tylko jedyny sposób, w jaki model odzyskuje własny
+    # szkic po kompaktowaniu kontekstu (ADR 0014) — wtedy tura, w której go pisał, nie wraca.
     #
     # Warunek liczymy z `shell_factory`, nie z `shell_settings.enabled` — z tego samego powodu co
     # `shell_available` niżej: ustawienie mówi, czego chciał operator, fabryka mówi, co agent

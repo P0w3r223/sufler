@@ -20,18 +20,20 @@ class _FakeMyJiraTasksService:
         tasks: list[JiraTask] | None = None,
         history: tuple[list[JiraTask], bool] | None = None,
         error: Exception | None = None,
+        truncated: bool = False,
     ) -> None:
         self._tasks = tasks or []
         self._history = history or ([], False)
         self._error = error
+        self._truncated = truncated
         self.calls = 0
         self.history_calls: list[tuple[str, str]] = []
 
-    def my_open_tasks(self) -> list[JiraTask]:
+    def my_open_tasks(self) -> tuple[list[JiraTask], bool]:
         self.calls += 1
         if self._error:
             raise self._error
-        return self._tasks
+        return self._tasks, self._truncated
 
     def my_history(self, since: str = "", until: str = "") -> tuple[list[JiraTask], bool]:
         self.history_calls.append((since, until))
@@ -70,7 +72,12 @@ def test_get_my_jira_tasks_splits_assigned_and_unassigned() -> None:
 def test_get_my_jira_tasks_empty_result_is_empty_lists_not_error() -> None:
     _, specs = _catalog(tasks=[])
     result = specs["get_my_jira_tasks"].fn()
-    assert result == {"assigned_to_me": [], "reported_by_me_unassigned": [], "count": 0}
+    assert result == {
+        "assigned_to_me": [],
+        "reported_by_me_unassigned": [],
+        "count": 0,
+        "truncated": False,
+    }
 
 
 def test_get_my_jira_tasks_read_error_is_enveloped_not_raised() -> None:

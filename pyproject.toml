@@ -3,7 +3,16 @@ name = "workmate"
 version = "1.6.0"
 description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/CLI, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira 'moje zadania' oraz lokalny retrieval leksykalny notatek."
 readme = "README.md"
-requires-python = ">=3.10"
+# 3.11 to jedyna wersja, na której cokolwiek tu biega: `.python-version` mówi 3.11, a oba etapy
+# obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`. Macierz CI nie ma osi wersji
+# Pythona wcale — jej wpisy to pod-projekty (workmate/powiadomienia-teams/claude-summary), a
+# wersja bierze się z `.python-version` czytanego przez `setup-uv`. CI nie jest więc niezależnym
+# dowodem: czyta ten sam plik. Wiąże je `tests/deploy/test_python_version_floor.py`.
+# Deklarowane wcześniej `>=3.10` nie było testowane NIGDZIE — i kosztowało:
+# `tests/test_version_consistency.py` czytał `pyproject.toml` regexem zamiast `tomllib` (3.11+)
+# tylko po to, żeby nie wywrócić kolekcji na wersji, której nikt nie uruchamiał. Deklaracja
+# nadąża więc za faktami; poszerzenie z powrotem = nowa oś w macierzy CI, nie sama liczba.
+requires-python = ">=3.11"
 license = { text = "Proprietary" }
 dependencies = [
     "mcp[cli]>=1.2.0",
@@ -150,6 +159,11 @@ workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"
 # Raport metryk użycia (Tor A): zwija licznik SQLite do tabeli. `workmate-metrics [--db …]`
 # (domyślnie WORKMATE_METRICS_DB — ta sama ścieżka, która włącza zbieranie).
 workmate-metrics = "workmate.adapters.inbound.metrics_report:main"
+# Odczyt powierzchni diagnostycznych (ADR 0069, R2): dziennik audytu i obie kwarantanny.
+# `workmate-diagnostics inbound --since 24h [--source teams-graph] [--json]`. Ścieżka bazy z
+# `--db` albo ze zmiennej (WORKMATE_EVENTS_DB / WORKMATE_AUDIT_DB) — połączenie tylko do odczytu,
+# bo bazę w tej samej chwili piszą procesy drzwi.
+workmate-diagnostics = "workmate.adapters.inbound.cli.diagnostics:main"
 # Seed korpusu (W0): importuje lokalne dokumenty (md/txt/docx/xlsx/pptx/pdf) do notatek. Domyślnie
 # dry-run; zapis dopiero z `--write` (extra `seed`, ekstrakcja Office/PDF). `workmate-seed-corpus
 # --source <dir> --project <klucz> [--write]`.
@@ -180,14 +194,14 @@ artifacts = ["src/workmate/adapters/outbound/assets/*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = ["src"]
 disallow_untyped_defs = true
 warn_redundant_casts = true

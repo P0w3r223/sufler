@@ -1,7 +1,7 @@
 """Renderowanie treści do pliku jako komenda powłoki:
 ``workmate-render --format pdf --output outputs/raport.pdf``.
 
-Druga strona etapu 7 (ADR 0011 paczki): po zdjęciu narzędzia ``reply_with_file`` agent dostarcza
+Druga strona etapu 7 (ADR 0011 paczki): po zdjęciu narzędzia ``ReplyWithFile`` agent dostarcza
 pliki, pisząc do skrzynki ``outputs/`` w katalogu roboczym rozmowy. ``md``/``txt`` zapisze wprost
 powłoką (``> outputs/raport.md``), ale ``pdf``/``docx`` wymagają renderera (osadzony font Unicode,
 ``fpdf2``/``python-docx``) — tej komendy. Opis narzędzia ``Bash`` kieruje tu przy tych formatach,
@@ -11,7 +11,7 @@ odpowiada „nie umiem zrobić PDF".
 Treść bierze ze STDIN (potok z pliku roboczego albo heredoc), format i cel z flag. Rozdzielenie
 treści (DANE) od polecenia jest celowe — treść nigdy nie trafia jako argument, więc nie ma jak
 zostać zinterpretowana. Ten sam ``DefaultDocumentRenderer`` i ta sama biała lista
-``FILE_REPLY_FORMATS`` co dawne ``reply_with_file`` — jedno źródło formatu i renderowania.
+``FILE_REPLY_FORMATS`` co dawne ``ReplyWithFile`` — jedno źródło formatu i renderowania.
 """
 
 from __future__ import annotations

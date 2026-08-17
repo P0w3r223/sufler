@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from workmate.adapters.inbound.metrics_report import format_summary, main
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
@@ -39,6 +39,6 @@ def test_main_with_missing_db_path_returns_1(tmp_path, capsys):
 def test_main_reports_from_db(tmp_path, capsys):
     db = tmp_path / "metrics.db"
     store = SqliteMetricsStore(db)
-    store.record_call("teams", "u1", "2026-W31", datetime(2026, 7, 29, tzinfo=timezone.utc))
+    store.record_call("teams", "u1", "2026-W31", datetime(2026, 7, 29, tzinfo=UTC))
     assert main(["--db", str(db)]) == 0
     assert "teams" in capsys.readouterr().out

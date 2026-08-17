@@ -11,17 +11,20 @@ ADR 0054 zredukował Jirę do jednej, wyłącznie odczytowej zdolności ("moje z
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from workmate.adapters.outbound.jira_http import request_with_retry
+from workmate.adapters.outbound.jira_http import as_jira_read_error, request_with_retry
 from workmate.core.errors import InvalidRequestError
 
 if TYPE_CHECKING:
     from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
     from workmate.config import JiraSettings
+
+logger = logging.getLogger(__name__)
 
 # Cap stron na jedno pobranie — chroni przed nieograniczoną paginacją dużych projektów.
 _MAX_PAGES = 10
@@ -51,7 +54,8 @@ class HttpxJiraClient:
     ) -> list[dict[str, Any]]:
         issues: list[dict[str, Any]] = []
         start_at = 0
-        for _ in range(_MAX_PAGES):
+        incomplete = False
+        for page_no in range(_MAX_PAGES):
             body = self._get_json(
                 f"{self._base_url}/rest/api/2/search",
                 {
@@ -70,6 +74,18 @@ class HttpxJiraClient:
             start_at += max_results
             if not page or start_at >= total:
                 break
+            incomplete = page_no == _MAX_PAGES - 1
+        if incomplete:
+            # Sufit stron osiągnięty, a Jira ma jeszcze wyniki — odpowiedź jest NIEPEŁNA.
+            # Ucięcie bez śladu wygląda w danych jak „tyle było" (por. ``transcript_sources``,
+            # które podnosi wtedy błąd; tu odczyt ma wrócić, więc zostaje ostrzeżenie z nazwą
+            # zasobu).
+            logger.warning(
+                "Odczyt %s ucięty po %d stronach — oddaję %d pozycji, dalsze pominięte.",
+                "rest/api/2/search",
+                _MAX_PAGES,
+                len(issues),
+            )
         return issues
 
     def get_issue(self, key: str) -> dict[str, Any]:
@@ -94,7 +110,10 @@ class HttpxJiraClient:
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
-        return request_with_retry(self._client, "GET", url, params=params).json()
+        # Tłumaczenie błędu transportu siedzi TU (granica adaptera), nie w rdzeniu — patrz
+        # ``jira_http.as_jira_read_error``.
+        with as_jira_read_error():
+            return request_with_retry(self._client, "GET", url, params=params).json()
 
 
 def _validate_key(key: str) -> str:

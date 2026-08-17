@@ -32,7 +32,9 @@ def make_on_message(responder: Responder) -> Callable[[Any, Any], Awaitable[None
         message = InboundMessage(
             text=getattr(activity, "text", "") or "",
             sender=_sender_of(activity),
+            sender_id=_sender_aad_id(activity),
             conversation_id=_conversation_of(activity),
+            mentions_bot=_mentions_bot(activity),
         )
         reply = await responder.respond(message)
         await context.send_activity(reply)
@@ -41,13 +43,75 @@ def make_on_message(responder: Responder) -> Callable[[Any, Any], Awaitable[None
 
 
 def _sender_of(activity: Any) -> str:
+    """Nazwa nadawcy do ATRYBUCJI (log, klucz zastępczy wątku) — nie do autoryzacji.
+
+    ``name``/``id`` pochodzą z Bot Framework (``29:…``), więc nie mają nic wspólnego z AAD
+    i żadna bramka nie ma prawa ich czytać — od tego jest ``_sender_aad_id`` niżej.
+    """
     sender = getattr(activity, "from_property", None)
-    return getattr(sender, "name", "") or getattr(sender, "id", "") or ""
+    return _text(_attr(sender, "name")) or _text(_attr(sender, "id"))
+
+
+def _sender_aad_id(activity: Any) -> str:
+    """AAD object id nadawcy — JEDYNA tożsamość, którą wolno podać bramkom (ADR 0042/0062/0063).
+
+    Bot Framework niesie go w ``activity.from.aadObjectId`` (SDK: ``from_property.aad_object_id``)
+    i jest to ten sam identyfikator, którym posługuje się mapa tożsamości oraz drzwi delegowane
+    (Graph ``from.user.id``). BEZ fallbacku na ``id``/``name``: identyfikator kanału (``29:…``)
+    nigdy nie rozwiąże się w mapie, więc podstawienie go tutaj dałoby tożsamość FAŁSZYWĄ zamiast
+    braku tożsamości. Gość, konto spoza tenantu i aktywność systemowa nie mają ``aadObjectId`` —
+    zostaje pusty napis, czyli „nadawca nierozpoznany", i wszystkie bramki sender-keyed odmawiają
+    (fail-closed).
+    """
+    return _text(_attr(getattr(activity, "from_property", None), "aad_object_id"))
 
 
 def _conversation_of(activity: Any) -> str:
     conversation = getattr(activity, "conversation", None)
-    return getattr(conversation, "id", "") or ""
+    return _text(_attr(conversation, "id"))
+
+
+def _mentions_bot(activity: Any) -> bool:
+    """Czy wiadomość @wzmiankuje TEGO bota — wyzwalacz dyrektyw (ADR 0048/0051/0052).
+
+    Bot Framework dokłada wzmianki jako encje ``{type: 'mention', mentioned: {id}}``, a własne
+    konto bota w tej rozmowie to ``activity.recipient.id`` (postać ``28:<app-id>``) — porównanie
+    z nim jest jedynym pewnym sygnałem, że wzmianka celuje w nas, a nie w innego uczestnika.
+    Bez ``recipient`` (Emulator bywa oszczędny) zwracamy ``False``: nie ma z czym porównać, więc
+    wyzwalacz ma milczeć, a nie zgadywać.
+    """
+    bot_id = _text(_attr(getattr(activity, "recipient", None), "id"))
+    if not bot_id:
+        return False
+    for entity in getattr(activity, "entities", None) or ():
+        if _text(_attr(entity, "type")).lower() != "mention":
+            continue
+        if _text(_attr(_attr(entity, "mentioned"), "id")) == bot_id:
+            return True
+    return False
+
+
+def _attr(obj: Any, name: str) -> Any:
+    """Pole aktywności niezależnie od tego, czym jest — modelem SDK, słownikiem czy atrapą.
+
+    Encje aktywności bywają deserializowane do generycznego ``Entity`` z nierozpoznanymi polami
+    w ``additional_properties``; wzmianka jest właśnie takim przypadkiem, więc czytamy oba miejsca.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(name)
+    value = getattr(obj, name, None)
+    if value is None:
+        extra = getattr(obj, "additional_properties", None)
+        if isinstance(extra, dict):
+            return extra.get(name)
+    return value
+
+
+def _text(value: Any) -> str:
+    """Napis albo pusty — ``None`` i typy nietekstowe z SDK nie wchodzą do ``InboundMessage``."""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def build_agent_app(settings: TeamsSettings, responder: Responder) -> tuple[Any, Any, Any]:

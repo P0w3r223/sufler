@@ -12,14 +12,14 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 from workmate.core.ports.llm import Attachment
 
 # Watermark „od zawsze" dla wątku bez zapisanej pozycji — starszy niż jakikolwiek Graph.
-_EPOCH_ISO = datetime.min.replace(tzinfo=timezone.utc).isoformat()
+_EPOCH_ISO = datetime.min.replace(tzinfo=UTC).isoformat()
 
 # Inline obrazy w HTML wiadomości: <img src=".../hostedContents/{id}/$value">.
 _HOSTED_RE = re.compile(r"hostedContents/([^/\"'\s]+)/\$value")
@@ -74,11 +74,11 @@ def parse_iso(value: str) -> datetime:
     (``...:00Z`` vs ``...:00.123Z``) — porównanie tekstowe myli wtedy 'Z' z cyframi.
     """
     if not value:
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)
 
 
 def iso_gt(a: str, b: str) -> bool:

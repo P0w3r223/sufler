@@ -5,7 +5,7 @@ Rdzeń zależy tylko od portu ``EventStore``, więc pełną logikę testujemy at
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -13,7 +13,7 @@ from workmate.core.application.events import EventService
 from workmate.core.domain.events import Event, NewEvent
 from workmate.core.errors import WriteError
 
-_WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
 
 
 class _FakeStore:

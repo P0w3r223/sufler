@@ -39,6 +39,25 @@ class PermanentDeliveryError(WorkMateError):
     """
 
 
+class OutboxReadError(WorkMateError):
+    """Pozycji NIE DA SIĘ przeczytać, choć plik w skrzynce nadal jest.
+
+    Osobne od ``None`` z ``read`` i to rozróżnienie jest całą treścią tej klasy. ``None`` znaczy
+    „pliku już nie ma" — wolno je przemilczeć, bo nie ma czego wysyłać ani sprzątać. Odmowa
+    dostępu, błąd I/O albo urośnięcie ponad sufit odczytu to stan PRZECIWNY: plik zostaje na
+    wolumenie. Przemilczany wypadał ze zbioru pozycji zatrzymanych (``_ours``), więc następna
+    tura widziała go jako podłożony z innej rozmowy i kasowała — praca modelu znikała bez
+    jednego zdania w odpowiedzi.
+
+    ``permanent`` rozstrzyga sprzątanie tak samo jak przy wysyłce (``PermanentDeliveryError``):
+    trwałe → pozycja znika z podaniem powodu, przejściowe → zostaje do ponowienia.
+    """
+
+    def __init__(self, message: str, *, permanent: bool = False) -> None:
+        super().__init__(message)
+        self.permanent = permanent
+
+
 @dataclass(frozen=True)
 class OutboxEntry:
     """Metadane pozycji w skrzynce — tyle, ile trzeba, żeby rdzeń rozstrzygnął bez czytania."""
@@ -74,9 +93,20 @@ class OutboxRepository(Protocol):
         ...
 
     def read(self, dirpath: str, name: str) -> Deliverable | None:
-        """Wczytaj pozycję do wysyłki; ``None``, gdy zniknęła między wypisem a odczytem."""
+        """Wczytaj pozycję do wysyłki; ``None``, gdy zniknęła między wypisem a odczytem.
+
+        ``None`` zarezerwowane jest dla ZNIKNIĘCIA i tylko dla niego. Pozycja, która jest,
+        ale nie daje się przeczytać, idzie ``OutboxReadError`` — patrz tam po powód.
+        """
         ...
 
     def discard(self, dirpath: str, name: str) -> None:
-        """Usuń pozycję ze skrzynki. Brak pliku nie jest błędem (idempotencja)."""
+        """Usuń pozycję ze skrzynki. Brak pliku nie jest błędem (idempotencja).
+
+        NIE PODNOSI — także wtedy, gdy usunięcie się nie uda (odmowa dostępu do katalogu,
+        uchwyt na pliku). Rdzeń woła to w środku pętli dostawy, po zdjęciu migawki startowej
+        i przed aktualizacją stanu ponawiania, więc wyjątek stąd zostawiałby rozmowę
+        z rozjechanym stanem, a jedyną szkodą z nieudanego sprzątania jest pozycja, która
+        w następnej turze i tak zostanie rozpoznana jako obca i nie pojedzie drugi raz.
+        """
         ...

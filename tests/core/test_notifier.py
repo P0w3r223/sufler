@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
+from workmate.core.application import notifier as notifier_module
 from workmate.core.application.notifier import (
     EventNotifier,
     NotifyTargets,
@@ -15,7 +16,7 @@ from workmate.core.application.notifier import (
 from workmate.core.domain.events import Event
 from workmate.core.errors import ThreadRootGone
 
-_WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
 
 
 def _event(event_id: int, *, source: str = "github", kind: str = "issue_opened", **kw) -> Event:
@@ -182,6 +183,40 @@ def test_cursor_not_advanced_on_send_failure():
     )
     assert sent == 0
     assert saved == []  # kursor NIE przesunięty → następna runda ponowi (at-least-once)
+
+
+def test_a_failing_cursor_save_leaves_the_event_redeliverable_after_restart():
+    """Utrwalenie kursora też bywa niemożliwe (ENOSPC, wolumen stanu zamontowany read-only).
+
+    Wszystkie dotychczasowe sondy kursora ćwiczą awarię WYSYŁKI; awaria samego ZAPISU kursora to
+    druga strona at-least-once i nie ćwiczył jej nikt. Niezmiennik jest taki: zdarzenie może
+    pójść do Teams DRUGI raz, ale nie ma prawa przepaść — po restarcie kursor wraca z dysku, więc
+    runda rusza od miejsca ostatniego UDANEGO zapisu, a nie od stanu z pamięci procesu.
+    """
+    sender = _FakeSender()
+    targets = NotifyTargets(chat_user_id="u1", enable_chat=True)
+    events = _FakeEvents([_event(1), _event(2)])
+
+    def zapis_ktory_pada(_cursor_id: int) -> None:
+        raise OSError("wolumen stanu tylko do odczytu")
+
+    zablokowany = EventNotifier(
+        events, sender, targets=targets, save_cursor=zapis_ktory_pada, cursor=0
+    )
+    with pytest.raises(OSError, match="tylko do odczytu"):
+        asyncio.run(zablokowany.pump_once())
+    assert len(sender.chats) == 1  # pierwsze zdarzenie POSZŁO, ale kursor nie ma jak przeżyć
+
+    po_restarcie = _FakeSender()
+    utrwalone: list[int] = []
+    asyncio.run(
+        EventNotifier(
+            events, po_restarcie, targets=targets, save_cursor=utrwalone.append, cursor=0
+        ).pump_once()
+    )
+
+    assert utrwalone == [1, 2]  # kursor z DYSKU (0) — oba zdarzenia znów w strumieniu
+    assert len(po_restarcie.chats) == 2
 
 
 def test_default_render_includes_key_fields():
@@ -602,3 +637,74 @@ def test_cursor_stays_when_dead_letter_record_raises():
     with pytest.raises(RuntimeError, match="dysk pełny"):
         asyncio.run(notifier.pump_once())
     assert saved == []  # kursor nietknięty gdy kwarantanna zawiodła — brak utraty zdarzenia
+
+
+# --- Pętla ``pump``: awaria rundy nie kładzie notifiera -------------------------
+# ``pump_once`` ma gęste pokrycie; sama PĘTLA nie miała żadnego. To ona decyduje o tym,
+# czy jeden wyjątek gasi most zdarzeń na resztę życia procesu — a to najdroższa awaria
+# tego komponentu: cicha, bo nikt nie dostaje powiadomień o braku powiadomień.
+
+
+def test_pump_survives_a_failing_round_and_keeps_polling():
+    """Wyjątek W RUNDZIE ma być zalogowany i przełknięty — pętla rusza dalej po interwale."""
+    rundy: list[str] = []
+
+    class _NotifierZAwariami(EventNotifier):
+        async def pump_once(self) -> int:
+            rundy.append("runda")
+            if len(rundy) == 1:
+                raise RuntimeError("Graph zwrócił 503")
+            if len(rundy) >= 3:
+                raise asyncio.CancelledError  # sposób na wyjście z nieskończonej pętli
+            return 0
+
+    notifier = _NotifierZAwariami(
+        _FakeEvents([]),
+        _FakeSender(),
+        targets=_channel_targets(),
+        save_cursor=lambda _cid: None,
+        poll_interval=0,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(notifier.pump())
+
+    # Trzy rundy mimo wyjątku w pierwszej: 503 nie zabił mostu.
+    assert len(rundy) == 3
+
+
+def test_pump_waits_the_configured_interval_between_rounds(monkeypatch):
+    """Bez odczekania pętla zjadałaby procesor i zalewała Graph — interwał jest częścią umowy.
+
+    Zegar podmieniamy (``monkeypatch`` przywraca go sam), zamiast czekać naprawdę: test na
+    realnym ``sleep`` byłby wolny i zależny od obciążenia maszyny.
+    """
+    czekania: list[float] = []
+    rundy: list[int] = []
+    prawdziwy_sleep = asyncio.sleep
+
+    async def _zapisz_sleep(delay, *args, **kwargs):
+        czekania.append(delay)
+        return await prawdziwy_sleep(0)
+
+    monkeypatch.setattr(notifier_module.asyncio, "sleep", _zapisz_sleep)
+
+    class _NotifierZLicznikiem(EventNotifier):
+        async def pump_once(self) -> int:
+            rundy.append(1)
+            if len(rundy) >= 2:
+                raise asyncio.CancelledError
+            return 0
+
+    notifier = _NotifierZLicznikiem(
+        _FakeEvents([]),
+        _FakeSender(),
+        targets=_channel_targets(),
+        save_cursor=lambda _cid: None,
+        poll_interval=37,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(notifier.pump())
+
+    assert czekania == [37]

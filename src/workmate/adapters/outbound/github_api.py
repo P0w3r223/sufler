@@ -9,16 +9,30 @@ paginację po nagłówku ``Link`` (``rel="next"``). PAT to SEKRET — wstrzykiwa
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import time
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from workmate.core.errors import WriteError
+from workmate.core.errors import RepositoryError, WriteError
 from workmate.core.ports.github import MAX_COMMITS_PER_FETCH
+
+logger = logging.getLogger(__name__)
+
+
+class GithubReadError(RepositoryError):
+    """Odczyt z GitHuba się nie udał: auth, 5xx, timeout albo zerwana sieć.
+
+    Podklasa ``RepositoryError`` deklarowana W ADAPTERZE — jak ``NoteParseError`` w repozytorium
+    notatek i ``ProjectsRegistryError`` w rejestrze projektów. Granica (koperta narzędzia MCP
+    i agenta) łapie ją i oddaje modelowi ``{"error": ...}``, zamiast wywracać całą turę surowym
+    ``httpx.HTTPError``.
+    """
+
 
 _API_VERSION = "2022-11-28"
 # Cap stron na jedno pobranie — chroni przed nieskończoną paginacją i wypaleniem limitu.
@@ -170,7 +184,8 @@ class HttpxGithubClient:
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
-        return self._request("GET", url, params=params).json()
+        with _as_read_error(_resource_of(url)):
+            return self._request("GET", url, params=params).json()
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = self._request("POST", url, json=payload).json()
@@ -191,20 +206,32 @@ class HttpxGithubClient:
         ``limit`` i pasujący do niego budżet stron — inaczej dwie niezależne granice rozjeżdżają
         się przy zmianie którejkolwiek stałej.
         """
+        resource = _resource_of(url)
         items: list[dict[str, Any]] = []
         pages = 0
         next_url: str | None = url
         next_params: dict[str, str] | None = params
-        while next_url and pages < max_pages:
-            response = self._request("GET", next_url, params=next_params)
-            body = response.json()
-            if isinstance(body, list):
-                items.extend(x for x in body if isinstance(x, dict))
-            if limit is not None and len(items) >= limit:
-                return items[:limit]
-            next_url = _next_link(response.headers.get("Link"))
-            next_params = None  # nagłówek Link niesie już parametry
-            pages += 1
+        with _as_read_error(resource):
+            while next_url and pages < max_pages:
+                response = self._request("GET", next_url, params=next_params)
+                body = response.json()
+                if isinstance(body, list):
+                    items.extend(x for x in body if isinstance(x, dict))
+                if limit is not None and len(items) >= limit:
+                    return items[:limit]
+                next_url = _next_link(response.headers.get("Link"))
+                next_params = None  # nagłówek Link niesie już parametry
+                pages += 1
+        if next_url:
+            # Sufit stron osiągnięty, a GitHub ma jeszcze ``rel="next"`` — wynik jest NIEPEŁNY.
+            # Ucięcie bez śladu wyglądałoby w danych jak „tyle było" (por. ``transcript_sources``,
+            # które podnosi wtedy błąd — tu poller ma biec dalej, więc zostaje ostrzeżenie z nazwą
+            # zasobu).
+            logger.warning(
+                "Odczyt %s ucięty po %d stronach — dalsze pozycje pominięte w tym pobraniu.",
+                resource,
+                max_pages,
+            )
         return items
 
     def _request(
@@ -227,6 +254,42 @@ class HttpxGithubClient:
 
 
 @contextlib.contextmanager
+def _as_read_error(resource: str) -> Iterator[None]:
+    """Zamień błąd transportu ODCZYTU na ``GithubReadError`` — jak ``MyJiraTasksService`` dla Jiry.
+
+    ``_as_write_error`` obejmował dotąd wyłącznie zapisy, więc 5xx, throttling po wyczerpanych
+    ponowieniach i timeout na ścieżce odczytu wychodziły surowym ``httpx.HTTPError`` i wywracały
+    całą turę agenta zamiast wrócić do modelu jako czytelny błąd narzędzia.
+    """
+    try:
+        yield
+    except httpx.HTTPStatusError as exc:
+        raise GithubReadError(_read_status_message(resource, exc.response.status_code)) from exc
+    except httpx.TimeoutException as exc:
+        raise GithubReadError(
+            f"GitHub nie odpowiedział w wyznaczonym czasie (timeout) przy odczycie {resource} "
+            "— spróbuj ponownie."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise GithubReadError(f"nie udało się połączyć z GitHubem ({resource}): {exc}.") from exc
+
+
+def _read_status_message(resource: str, status_code: int) -> str:
+    if status_code in (401, 403):
+        return "brak dostępu do GitHuba — token jest nieważny albo bez uprawnień odczytu."
+    if status_code == 404:
+        return f"GitHub nie zna zasobu {resource} (404) — sprawdź nazwę repozytorium."
+    if status_code == 429:
+        return "GitHub ogranicza liczbę żądań (429) — spróbuj ponownie za chwilę."
+    return f"GitHub odpowiedział błędem (HTTP {status_code}) przy odczycie {resource}."
+
+
+def _resource_of(url: str) -> str:
+    """Sama ścieżka zasobu do komunikatów i logów — bez query stringa i bez tokenu."""
+    return httpx.URL(url).path
+
+
+@contextlib.contextmanager
 def _as_write_error(action: str) -> Iterator[None]:
     """Zamień błąd HTTP zapisu na ``WriteError`` — granica: narzędzie zwróci ``{"error": ...}``.
 
@@ -245,8 +308,8 @@ def _as_write_error(action: str) -> Iterator[None]:
 def _iso_z(when: datetime) -> str:
     """Znacznik ``since`` GitHuba — ISO 8601 UTC z ``Z`` (naive traktujemy jak UTC)."""
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        when = when.replace(tzinfo=UTC)
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _next_link(link_header: str | None) -> str | None:

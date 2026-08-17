@@ -68,11 +68,17 @@ class NotesWriter(Protocol):
         """
         ...
 
-    def delete(self, note_id: str) -> None:
+    def delete(self, note_id: str, *, expected_sha256: str) -> None:
         """Usuń POJEDYNCZĄ notatkę (ADR 0065). Nigdy katalog, nigdy wzorzec, nigdy rekurencyjnie.
 
         Wołający ma obowiązek zapisać migawkę PRZED wywołaniem — port jej nie robi, bo to
         decyzja polityki, a nie systemu plików.
+
+        ``expected_sha256`` niesie tę samą kontrolę wersji, co ``overwrite``, i z tego samego
+        powodu: usunięcie też dzieli odczyt od zapisu oceną sędziego (a przy werdykcie „confirm" —
+        całą turą), a drzwi obsługują tury równolegle. Różnica skrótu znaczy „ktoś zmienił notatkę
+        po tym, jak ją przeczytaliśmy" i usunięcie ma się wtedy NIE odbyć: migawka zabezpiecza
+        wersję sprzed zmiany, więc bez tej kontroli wersja pośrednia ginęłaby bez kopii.
         """
         ...
 

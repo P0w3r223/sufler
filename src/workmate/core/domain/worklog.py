@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -113,7 +113,14 @@ class DayTotal(BaseModel):
 
 
 class IssueTotal(BaseModel):
-    """Suma estymowanego czasu przypisana do jednego zgłoszenia Jira."""
+    """Suma estymowanego czasu przypisana do jednego zgłoszenia Jira.
+
+    ``minutes`` sesji wspominającej kilka kluczy jest DZIELONE między nie, ale ``commit_count``
+    jest doliczany każdemu w CAŁOŚCI — celowo, bo commit „WT-3 WT-9: fix" dotyczy obu zgłoszeń
+    i „ile commitów tknęło WT-3" to inne pytanie niż „ile godzin przypada na WT-3". Skutek:
+    suma ``commit_count`` po zgłoszeniach bywa WIĘKSZA niż liczba commitów w oknie — to nie jest
+    błąd sumowania i nie wolno tej sumy przedstawiać jako liczby commitów.
+    """
 
     issue_key: str
     minutes: int
@@ -245,7 +252,7 @@ def local_day(moment: datetime, tz: ZoneInfo) -> date:
     Konwersja przez ``astimezone`` uwzględnia zmianę czasu — w odróżnieniu od stałego offsetu,
     który przez pół roku przesuwałby granicę doby o godzinę.
     """
-    aware = moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+    aware = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
     return aware.astimezone(tz).date()
 
 
