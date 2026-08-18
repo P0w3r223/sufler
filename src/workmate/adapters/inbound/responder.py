@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from workmate.core.application.services import NotesWriteService
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
+    from workmate.core.domain.mutation import Verdict
     from workmate.core.ports.llm import TranscriptEntry
 
 # Prefiks wiadomości z podsumowaniem kompaktowania (ADR 0014). Sonnet 5 nie ma systemowych
@@ -228,7 +229,7 @@ class ConversationalResponder:
                     str,
                     str,
                     Callable[[], bool],
-                    Callable[[str, str], None] | None,
+                    Callable[[Verdict, str], None] | None,
                 ],
                 Sequence[ToolSpec],
             ]

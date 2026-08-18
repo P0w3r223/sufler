@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from workmate.core.application.note_mutation import NoteMutationService
     from workmate.core.application.team_schedule import TeamScheduleService
     from workmate.core.application.worklog import WorklogService
-    from workmate.core.domain.mutation import JudgeVerdict
+    from workmate.core.domain.mutation import Verdict
     from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.document import DocumentRenderer
     from workmate.core.ports.file_output import TeamsFileSender
@@ -703,7 +703,7 @@ def build_file_catalog(
     tainted: bool | Callable[[], bool] = True,
     turn_token: str = "",
     shell_available: bool = False,
-    verdict_sink: Callable[[str, str], None] | None = None,
+    verdict_sink: Callable[[Verdict, str], None] | None = None,
 ) -> list[ToolSpec]:
     """Zbuduj narzędzie ``File`` dla danej rozmowy (ADR 0064) — WYŁĄCZNIE dla runtime agenta.
 
@@ -822,17 +822,18 @@ def build_file_catalog(
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
-    def _zglos_werdykt(verdict: JudgeVerdict) -> None:
+    def _ujscie_werdyktu(verdict: Verdict, reason: str) -> None:
         """Odłóż werdykt do wiersza audytu tego wywołania — nigdy kosztem samej mutacji.
 
-        Audyt jest poboczny (ADR 0067 §1.1), więc jego awaria nie może zamienić udanej zmiany
-        w błąd narzędzia ani odmowy — w komunikat o dzienniku. Osłona stoi TU, bo tylko tu widać,
-        co się traci przy jej braku: wynik operacji, którą użytkownik właśnie zlecił.
+        Osłona best-effort stoi TU, a nie w bramce mutacji, i to jest podział odpowiedzialności:
+        bramka woła ujście w chwili orzeczenia (bo tylko ona wie, kiedy werdykt padł), a o tym,
+        że dziennik nie może wywrócić operacji (ADR 0067 §1.1), wie wołający — czyli to miejsce.
+        Bez tej osłony zablokowana baza audytu zamieniałaby udaną zmianę w błąd narzędzia.
         """
         if verdict_sink is None:
             return
         try:
-            verdict_sink(verdict.verdict, verdict.reason)
+            verdict_sink(verdict, reason)
         except Exception:
             logger.warning("Nie udało się odłożyć werdyktu sędziego do audytu — pomijam")
 
@@ -879,10 +880,10 @@ def build_file_catalog(
                     turn_token=turn_token,
                     trust_class=trust_class,
                     tainted=skaza,
+                    verdict_sink=_ujscie_werdyktu,
                 )
-                _zglos_werdykt(wynik.verdict)
                 return {"deleted": True, "id": note_id, "kopia": _skrot_kopii(wynik.snapshot)}
-            wynik = mutations.edit_note(
+            mutations.edit_note(
                 note_id,
                 content,
                 requester=requester,
@@ -890,13 +891,14 @@ def build_file_catalog(
                 turn_token=turn_token,
                 trust_class=trust_class,
                 tainted=skaza,
+                verdict_sink=_ujscie_werdyktu,
             )
-            _zglos_werdykt(wynik.verdict)
             return {"edited": True, "id": note_id}
         except MutationRefused as odmowa:
             # Odmowa NIE jest awarią — to normalny wynik z powodem, który model ma przekazać
             # człowiekowi. Wyjątek zamieniony na wynik, żeby nie wyglądał jak błąd narzędzia.
-            _zglos_werdykt(odmowa.outcome.verdict)
+            # Werdykt zgłosiła już bramka, w chwili orzeczenia — także wtedy, gdy zapis padł
+            # PO zgodzie na kontroli wersji. Ponowne zgłoszenie tutaj dublowałoby wiersz.
             return {
                 "error": odmowa.outcome.verdict.reason,
                 "verdict": odmowa.outcome.verdict.verdict,

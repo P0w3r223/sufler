@@ -6,7 +6,30 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
-_Brak._
+### Naprawione
+
+- **Werdykt sędziego mutacji trafia wreszcie do dziennika audytu** (ADR 0065 §8). Kolumna
+  `judge_verdict` istniała w schemacie od Fazy 0, ale `AuditService` wpisywał tam na stałe `None`,
+  a `NoteMutationService` nie wołał audytu wcale — kryterium odbioru „werdykt sędziego w `audit.db`
+  z uzasadnieniem" było nieosiągalne istniejącym kodem, niezależnie od bramek. Werdykt jedzie teraz
+  gniazdem na rejestratorze tury do wiersza TEGO SAMEGO wywołania `File`, zgłaszany w chwili
+  orzeczenia (nie po udanym zapisie, który może jeszcze paść na kontroli wersji). Uzasadnienie
+  przechodzi redakcję: znaki sterujące zdjęte, białe spłaszczone, sufit 128 znaków jak przy polu
+  z allowlisty. Odmowy techniczne (awaria migawki, niedostępny sędzia) nie zgłaszają werdyktu —
+  nikt przy nich nie orzekał.
+- **`test_filtr_po_okresie_zaweza` przestaje być bombą zegarową.** Chwila odniesienia testów
+  diagnostyki była zaszyta datą, a filtr `--since 1d` liczy okno od realnego teraz — test zaczynał
+  padać sam z siebie dobę po wpisanej dacie, bez żadnej zmiany w kodzie.
+
+### Zmienione
+
+- `NoteMutationService.edit_note` zwraca `MutationOutcome` zamiast zmienionej notatki —
+  symetrycznie do `delete_note`. Bez tego zgoda sędziego nie miała jak dotrzeć do dziennika,
+  a dziennik z samymi odmowami każe wnioskować o zgodach z ich nieobecności. Jedyny wołający
+  zwracanej notatki i tak nie używał.
+- Prompt sędziego prosi o uzasadnienie **własnymi słowami** zamiast cytatu z notatki: to zdanie
+  trafia do dziennika czytanego bez bramki odczytu z ADR 0062. Higiena, nie granica — granicą
+  jest redakcja po stronie zapisu.
 
 ## [1.11.0] — 2026-08-18
 

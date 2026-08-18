@@ -13,7 +13,12 @@ nadawcy/rozmowy w warstwie aplikacji (reużywa ``core.domain.metrics.pseudonymiz
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from workmate.core.domain.sanitize import strip_control_chars
+
+if TYPE_CHECKING:
+    from workmate.core.domain.mutation import Verdict
 
 # Pola STRUKTURALNE bezpieczne do zapisu wprost (akcja / identyfikator / ścieżka / filtr), wspólne
 # dla narzędzi. Wszystko poza tą listą to potencjalna treść → znacznik typu i długości. Świadomie
@@ -86,22 +91,32 @@ def project_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     return {name: _project_value(name, value) for name, value in arguments.items()}
 
 
-def project_verdict(verdict: str, reason: str = "") -> str:
+def project_verdict(verdict: Verdict, reason: str = "") -> str:
     """Złóż wartość kolumny ``judge_verdict``: werdykt + uzasadnienie, obie zredagowane.
 
     Werdykt sędziego mutacji (ADR 0065 §8) ląduje w TYM SAMYM wierszu, co wywołanie narzędzia,
     które go wywołało — dlatego jest projekcją, a nie osobnym zapisem. Sam werdykt to skalar
-    z domeny (``allow``/``deny``/``confirm``), więc idzie wprost.
+    z domeny (``allow``/``refuse``/``confirm``), więc idzie wprost.
 
-    Uzasadnienie jest inne i to jest cała treść tej funkcji: pisze je MODEL, który przed chwilą
-    czytał notatkę, więc może w nie wciągnąć fragment bazy wiedzy. ADR 0065 §8 każe je zapisać
-    („the verdict, the reason") i zarazem trzyma regułę redakcji ADR 0067 („never the note
-    content"). Jedyne, co da się tekstowi swobodnemu dać mechanicznie, to ten sam sufit, co
-    polu z allowlisty: powyżej ``_MAX_FIELD_CHARS`` zostaje znacznik ``<str:długość>``. Poniżej
-    sufitu zapisujemy dosłownie — bo zdanie „notatka opisuje inny projekt niż podany" jest
-    dokładnie tym, po co ta kolumna istnieje, a bez niego wiersz mówi „deny" i nic więcej.
+    Uzasadnienie jest inne i to jest cała treść tej funkcji. Pisze je MODEL, który przed chwilą
+    czytał notatkę — mogącą być wrogą (ADR 0065 R10 zakłada wprost sędziego pod wstrzyknięciem) —
+    więc tekst przechodzi DWIE redakcje, nie jedną:
+
+    1. **Znaki sterujące i złamania wiersza znikają.** To jedyne pole tego dziennika, które
+       trafiałoby do bazy surowo: ``arg_summary`` idzie przez ``json.dumps`` (escapuje ``\n``
+       i ``\x1b``), a powody kwarantanny przez własne spłaszczenie. Czytnik operatora drukuje
+       ``judge_verdict`` wprost, więc powód z ``\n`` rozbijałby listing na wiersze wyglądające
+       jak kolejne wpisy, a sekwencja ANSI szłaby prosto do jego terminala.
+    2. **Sufit długości** — ten sam, co przy polu z allowlisty: powyżej ``_MAX_FIELD_CHARS``
+       zostaje znacznik ``<str:długość>``. To jedyna mechaniczna gwarancja, jaką da się dać
+       tekstowi swobodnemu, że fragment bazy wiedzy nie wjedzie do dziennika w środku zdania.
+
+    Poniżej sufitu zapisujemy dosłownie — bo zdanie „notatka opisuje inny projekt niż podany"
+    jest dokładnie tym, po co ta kolumna istnieje, a bez niego wiersz mówi „refuse" i nic więcej.
     """
-    powod = reason.strip()
+    # Spłaszczenie białych znaków po zdjęciu sterujących: sam ``strip_control_chars`` zostawia
+    # ``\n`` i tabulatory (jest strażnikiem treści notatki, nie formatu wiersza dziennika).
+    powod = " ".join(strip_control_chars(reason).split())
     if not powod:
         return verdict
     if len(powod) > _MAX_FIELD_CHARS:

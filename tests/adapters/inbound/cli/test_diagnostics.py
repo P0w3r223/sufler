@@ -27,7 +27,11 @@ from workmate.adapters.outbound.sqlite_dead_letters import (
     SqliteInboundDeadLetterStore,
 )
 
-_TERAZ = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+# Chwila odniesienia liczona OD TERAZ, nie zaszyta datą. Zaszyta (`2026-08-17 12:00`) czyniła
+# z `test_filtr_po_okresie_zaweza` bombę zegarową: filtr `--since 1d` liczy okno od realnego teraz,
+# więc wpis „świeży" wypadał z niego dokładnie dobę po wpisanej dacie i test zaczynał padać sam
+# z siebie, bez żadnej zmiany w kodzie. Test okna czasowego musi mierzyć okno, a nie kalendarz.
+_TERAZ = datetime.now(tz=UTC)
 
 
 @pytest.fixture(autouse=True)

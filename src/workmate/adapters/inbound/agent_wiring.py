@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.domain.mutation import Verdict
     from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.conversations import ConversationStore
@@ -426,7 +427,7 @@ def build_file_support(
             str,
             str,
             Callable[[], bool],
-            Callable[[str, str], None] | None,
+            Callable[[Verdict, str], None] | None,
         ],
         list[ToolSpec],
     ],
@@ -465,7 +466,7 @@ def build_file_support(
         sender_id: str,
         trust_class: str = "unknown",
         tainted: bool | Callable[[], bool] = True,
-        verdict_sink: Callable[[str, str], None] | None = None,
+        verdict_sink: Callable[[Verdict, str], None] | None = None,
     ) -> list[ToolSpec]:
         """Zbuduj ``File`` dla tej tury; akcje mutujące TYLKO dla rozpoznanego człowieka.
 

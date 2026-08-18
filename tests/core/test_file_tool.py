@@ -262,35 +262,65 @@ class _FakeMutations:
         self.deletes: list[tuple] = []
         self.origin: list[tuple] = []
 
-    def _maybe_refuse(self):
+    def _maybe_refuse(self, verdict_sink=None):  # noqa: ANN001, ANN202
+        """Odmowa sędziego — z werdyktem zgłoszonym PRZED podniesieniem wyjątku.
+
+        Atrapa naśladuje tu kolejność prawdziwej bramki (``NoteMutationService._decide``): werdykt
+        idzie do ujścia w chwili ORZECZENIA, a wyjątek dopiero potem. Atrapa zgłaszająca po
+        wyjątku opisywałaby serwis, w którym werdykt ``allow`` ginie przy nieudanym zapisie —
+        czyli dokładnie ten defekt, przed którym ujście ma bronić.
+        """
         if self.refuse:
             from workmate.core.application.note_mutation import MutationOutcome, MutationRefused
             from workmate.core.domain.mutation import JudgeVerdict
 
+            if verdict_sink is not None:
+                verdict_sink("confirm", self.refuse)
             raise MutationRefused(MutationOutcome(False, JudgeVerdict("confirm", self.refuse)))
 
     def edit_note(  # noqa: ANN001, ANN201
-        self, note_id, body, *, requester, intent, turn_token="", trust_class="", tainted=True
+        self,
+        note_id,
+        body,
+        *,
+        requester,
+        intent,
+        turn_token="",
+        trust_class="",
+        tainted=True,
+        verdict_sink=None,
     ):
         from workmate.core.application.note_mutation import MutationOutcome
         from workmate.core.domain.mutation import JudgeVerdict
 
-        self._maybe_refuse()
+        self._maybe_refuse(verdict_sink)
         self.edits.append((note_id, body, requester, intent))
         # Pochodzenie tury (ADR 0066) i token tury (ADR 0065) notujemy OSOBNO: dopóki atrapa je
         # połykała, narzędzie mogło przestać je przekazywać i żadna sonda by tego nie zauważyła.
         self.origin.append((turn_token, trust_class, tainted))
+        if verdict_sink is not None:
+            verdict_sink("allow", "ok")
         return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
 
     def delete_note(  # noqa: ANN001, ANN201
-        self, note_id, *, requester, intent, turn_token="", trust_class="", tainted=True
+        self,
+        note_id,
+        *,
+        requester,
+        intent,
+        turn_token="",
+        trust_class="",
+        tainted=True,
+        verdict_sink=None,
     ):
         from workmate.core.application.note_mutation import MutationOutcome
         from workmate.core.domain.mutation import JudgeVerdict
 
-        self._maybe_refuse()
+        self._maybe_refuse(verdict_sink)
         self.deletes.append((note_id, requester, intent))
         self.origin.append((turn_token, trust_class, tainted))
+        if verdict_sink is not None:
+            verdict_sink("allow", "ok")
         return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
 
 

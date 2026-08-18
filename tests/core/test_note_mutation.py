@@ -631,3 +631,84 @@ def test_the_gate_never_uses_the_create_only_write_path():
     service.delete_note(_note().id, requester="Anna", intent="x")
 
     assert len(writer.overwritten) == 1 and writer.deleted == [_note().id]
+
+
+# --- Ujście werdyktu do audytu (ADR 0065 §8) -------------------------------------------
+
+
+class _WriterKtoryPadaPoZgodzie(_FakeWriter):
+    """Pisarz odbijający zapis kontrolą wersji — równoległa tura weszła w okno po orzeczeniu."""
+
+    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
+        raise WriteError("notatka zmieniła się od odczytu")
+
+
+def test_the_verdict_is_reported_when_it_is_made_not_when_the_write_succeeds():
+    """Sonda właściwego MOMENTU zgłoszenia.
+
+    Sędzia orzekł `allow`, migawka powstała, a zapis padł na kontroli wersji — okno, które
+    ``_require_mutable`` opisuje jako realne. Zgłoszenie po udanym zapisie gubiłoby ten werdykt
+    i zostawiało wiersz audytu nieodróżnialny od „sędzia w ogóle nie biegł".
+    """
+    zgloszone: list[tuple[str, str]] = []
+    service, _w, _s, _j, _l = _service(writer=_WriterKtoryPadaPoZgodzie())
+
+    with pytest.raises(WriteError):
+        service.edit_note(
+            _note().id,
+            "nowa treść",
+            requester="Anna",
+            intent="x",
+            verdict_sink=lambda v, r: zgloszone.append((v, r)),
+        )
+
+    assert zgloszone == [("allow", "powód")]
+
+
+def test_a_failed_snapshot_reports_no_verdict():
+    """Odmowa TECHNICZNA — nikt nie orzekał. Wiersz „refuse" z tekstem wyjątku udawałby
+    orzeczenie, i to akurat wtedy, gdy dziennik ma wyjaśnić awarię infrastruktury."""
+    zgloszone: list[tuple[str, str]] = []
+    service, _w, _s, _j, _l = _service(snapshots=_FakeSnapshots(fail=True))
+
+    with pytest.raises(WriteError):
+        service.edit_note(
+            _note().id,
+            "nowa treść",
+            requester="Anna",
+            intent="x",
+            verdict_sink=lambda v, r: zgloszone.append((v, r)),
+        )
+
+    assert zgloszone == []
+
+
+def test_an_unavailable_judge_reports_no_verdict():
+    """Ta sama zasada co wyżej: sędzia, który nie odpowiedział, niczego nie orzekł."""
+    zgloszone: list[tuple[str, str]] = []
+    service, _w, _s, _j, _l = _service(judge=_FakeJudge(boom=True))
+
+    with pytest.raises(WriteError):
+        service.edit_note(
+            _note().id,
+            "nowa treść",
+            requester="Anna",
+            intent="x",
+            verdict_sink=lambda v, r: zgloszone.append((v, r)),
+        )
+
+    assert zgloszone == []
+
+
+def test_a_delete_reports_its_verdict_too():
+    zgloszone: list[tuple[str, str]] = []
+    service, _w, _s, _j, _l = _service(allow_delete=True)
+
+    service.delete_note(
+        _note().id,
+        requester="Anna",
+        intent="duplikat",
+        verdict_sink=lambda v, r: zgloszone.append((v, r)),
+    )
+
+    assert zgloszone == [("allow", "powód")]

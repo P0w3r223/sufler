@@ -28,6 +28,7 @@ from workmate.core.domain.audit import project_arguments, project_verdict
 from workmate.core.domain.metrics import pseudonymize
 
 if TYPE_CHECKING:
+    from workmate.core.domain.mutation import Verdict
     from workmate.core.ports.audit import AuditStore
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ class TurnAudit:
         self._trust_class = trust_class
         self._pending_verdict: str | None = None
 
-    def record_verdict(self, verdict: str, reason: str = "") -> None:
+    def record_verdict(self, verdict: Verdict, reason: str = "") -> None:
         """Odłóż werdykt sędziego dla WŁAŚNIE wykonywanego wywołania narzędzia.
 
         Wołane z bramki mutacji (``build_file_catalog``), zanim narzędzie wróci do ``_dispatch``.
