@@ -6,7 +6,15 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
-Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług release'u).
+_Brak._
+
+## [1.7.0] — 2026-08-18
+
+Wydanie domyka dług release'u ciągnący się od 1.6.0: `__version__`, `ARG WERSJA`, compose
+deweloperski i badge w README mówią jedną liczbę, a wszystko poniżej — scalone przez PR #52,
+#55, #56, #58 i #57 — dostaje wreszcie numer. Zakres to minor, nie major: żadne publiczne API
+Pythona nie znika, a przemianowanie narzędzi agenta (ADR 0068) łamie kontrakt powierzchni
+modelu, nie kodu.
 
 ### Added
 - **Autoryzacja odczytu notatek** na drzwiach Teams — fail-closed po mapie tożsamości ([ADR 0062](docs/adr/0062-note-read-authorization.md)).
