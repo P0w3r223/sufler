@@ -8,13 +8,21 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 _Brak._
 
-## [1.7.0] — 2026-08-18
+## [1.11.0] — 2026-08-18
 
 Wydanie domyka dług release'u ciągnący się od 1.6.0: `__version__`, `ARG WERSJA`, compose
 deweloperski i badge w README mówią jedną liczbę, a wszystko poniżej — scalone przez PR #52,
-#55, #56, #58 i #57 — dostaje wreszcie numer. Zakres to minor, nie major: żadne publiczne API
-Pythona nie znika, a przemianowanie narzędzi agenta (ADR 0068) łamie kontrakt powierzchni
-modelu, nie kodu.
+#55, #56, #58 i #57 — dostaje wreszcie numer.
+
+**Dlaczego przeskok z 1.6.0 na 1.11.0, a nie na 1.7.0.** Dług release'u miał dwie strony.
+Pakiet stał na 1.6.0, ale paczka wdrożeniowa podbijała obraz dalej — produkcja chodzi na
+`workmate:1.8.0-deploy`, a gotowy i niewdrożony jest `1.10.0`; oba niosą w środku pakiet 1.6.0.
+Wydanie 1.7.0 (PR #60) cofnęłoby numer obrazu wobec 1.10.0, więc linie zrównano w górę:
+od tego wydania pakiet i obraz mówią jedną liczbę, także w `infra-docker-workmate`.
+Numery 1.7.0–1.10.0 w linii pakietu nie istnieją i nigdy nie zostaną wydane.
+
+Zakres to minor, nie major: żadne publiczne API Pythona nie znika, a przemianowanie narzędzi
+agenta (ADR 0068) łamie kontrakt powierzchni modelu, nie kodu.
 
 ### Added
 - **Autoryzacja odczytu notatek** na drzwiach Teams — fail-closed po mapie tożsamości ([ADR 0062](docs/adr/0062-note-read-authorization.md)).
