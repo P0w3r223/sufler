@@ -78,3 +78,26 @@ def test_cleanup_usuwa_gniazdo_ale_zostawia_brudnopis(tmp_path: Path):
 
     assert not (sock / _SCOPE).exists()
     assert (scratch / _SCOPE / "raport.md").exists()  # brudnopis nietknięty
+
+
+def test_prepare_odswieza_czas_modyfikacji_katalogu_rozmowy(tmp_path: Path):
+    """Sprzątacz TTL mierzy aktywność rozmowy najnowszym mtime w katalogu, a w układzie
+    „powłoka ON, workspace OFF" rozmowa potrafi być żywa i niczego nie zapisywać: `cat`, `ls`
+    i `workmate-search` mtime nie ruszają, `mkdir(exist_ok=True)` też nie.
+
+    Bez tego dotknięcia rozmowa używana codziennie, ale wyłącznie do czytania, traciłaby
+    brudnopis po `retention_days` — kierunek pomyłki: utrata danych użytkownika.
+    """
+    import os
+    import time
+
+    scratch, sock = tmp_path / "scratch", tmp_path / "sock"
+    workspace = FilesystemScopeWorkspace(scratch, sock)
+    scope = "teams_graph/" + "a" * 32
+    workspace.prepare(scope)
+    dawno = time.time() - 60 * 24 * 3600
+    os.utime(scratch / scope, (dawno, dawno))
+
+    workspace.prepare(scope)
+
+    assert (scratch / scope).stat().st_mtime > dawno + 24 * 3600

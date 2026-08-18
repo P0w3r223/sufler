@@ -39,14 +39,25 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   włączone. Zostaje ograniczenie, którego ta zmiana nie zdejmuje — sprzątanie pada raz, przy
   starcie drzwi.
 
+  Bezwarunkowe sprzątanie zmieniło `WORKMATE_WORKSPACE_DIR` z wartości bezczynnej w wartość
+  NISZCZĄCĄ, więc `WorkspaceSettings.validate` dostaje drugi kierunek bramki: korzeń systemu,
+  katalog domowy i ścieżka ZAWIERAJĄCA katalog danych są od teraz twardym błędem startu. Dotąd
+  pilnowaliśmy tylko, żeby brudnopis nie leżał wewnątrz bazy wiedzy.
+
+  `ScopeWorkspace.prepare` odświeża czas modyfikacji katalogu rozmowy. Sprzątacz mierzy aktywność
+  najnowszym mtime, a w układzie docelowym rozmowa potrafi być żywa i niczego nie zapisywać
+  (`cat`, `ls`, `workmate-search` mtime nie ruszają) — bez tego rozmowa używana wyłącznie do
+  czytania traciłaby brudnopis po 30 dniach.
+
 ### Dodane
 
 - **Sonda wycieku nagłówka `Authorization`** (`tests/security/test_http_header_leakage.py`).
   Ostatni punkt Fazy 0 planu stojący dotąd „na słowo grepa": czy transporty Graph i Jira nie
   wciągają tokenu do komunikatu wyjątku, jego `repr` albo tracebacku. Grep tego nie rozstrzygał —
   nikt tego nagłówka nie loguje wprost, pytanie brzmiało, czy zrobi to za nas biblioteka. Sonda
-  idzie prawdziwą ścieżką transportu (błąd połączenia, timeout, `raise_for_status`) i sama umie
-  zawieść. **Wynik: wycieku nie ma.**
+  idzie prawdziwą ścieżką transportu (błąd połączenia, timeout, `raise_for_status`, wariant
+  asynchroniczny) i sama umie zawieść — każdy przebieg najpierw potwierdza, że żądanie NIOSŁO
+  token, więc sonda nie myli „nie wyciekło" z „nie było czego". **Wynik: wycieku nie ma.**
 
 ## [1.11.0] — 2026-08-18
 

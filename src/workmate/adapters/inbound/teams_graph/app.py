@@ -165,8 +165,16 @@ def main() -> None:
         older_than=timedelta(days=workspace_settings.retention_days),
         now=datetime.now(tz=UTC),
     )
-    if removed:
-        logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
+    # Ślad zostaje TAKŻE przy zerze — i to jest wniosek z naprawianego właśnie błędu. Przez ponad
+    # 30 dni nie było żadnego sygnału, bo sprzątacz nie biegł; po tej zmianie „nie usunięto nic"
+    # (korzeń pusty, wolumen niezamontowany, zła ścieżka) wyglądałoby w dzienniku identycznie.
+    # Korzeń w komunikacie, bo to jedyna liczba, która odróżnia te przypadki.
+    logger.info(
+        "Katalog roboczy %s: usunięto %d bezczynnych katalogów rozmów (TTL %d dni).",
+        workspace_settings.workspace_dir,
+        removed,
+        workspace_settings.retention_days,
+    )
     jira_settings = JiraSettings.from_env()
     extra_catalog, github_thread_link = _build_bridge_catalog(
         events_settings, GithubSettings.from_env()

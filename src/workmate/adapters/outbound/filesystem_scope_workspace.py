@@ -42,11 +42,24 @@ class FilesystemScopeWorkspace:
         self._gid = gid
 
     def prepare(self, scope: str) -> None:
-        """Utwórz idempotentnie podkatalogi brudnopisu i gniazda scope'a z uid wykonawcy."""
+        """Utwórz idempotentnie podkatalogi brudnopisu i gniazda scope'a z uid wykonawcy.
+
+        Katalog brudnopisu dostaje przy okazji ODŚWIEŻONY czas modyfikacji i to nie jest kosmetyka.
+        Sprzątacz TTL (``prune_stale``) mierzy „aktywność rozmowy" najnowszym mtime w katalogu,
+        a w układzie docelowym — powłoka ON, workspace OFF — rozmowa potrafi być żywa i niczego
+        nie zapisywać: `cat`, `ls`, `workmate-search` mtime nie ruszają, a `mkdir(exist_ok=True)`
+        na istniejącym katalogu też nie. Bez tego dotknięcia rozmowa używana codziennie, ale
+        wyłącznie do czytania, traciłaby brudnopis po `retention_days` — a kierunek tej pomyłki
+        to utrata danych użytkownika. ``prepare`` jest właściwym miejscem, bo pada dokładnie
+        wtedy, gdy rozmowa sięga po wykonawcę.
+        """
         for root in (self._scratchpad_root, self._sock_root):
             target = root / scope
             target.mkdir(parents=True, exist_ok=True)
             self._chown_tree(root, scope)
+        # Best-effort: nieudane dotknięcie ma kosztować czas retencji, a nie start wykonawcy.
+        with contextlib.suppress(OSError):
+            os.utime(self._scratchpad_root / scope)
 
     def wait_ready(self, scope: str, timeout_s: float) -> bool:
         """Poll na pojawienie się pliku gniazda; ``True`` gdy jest, ``False`` po przekroczeniu okna.

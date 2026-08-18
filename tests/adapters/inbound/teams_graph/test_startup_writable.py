@@ -35,6 +35,11 @@ def _base_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKMATE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("WORKMATE_EVENTS_DB", str(tmp_path / "events.db"))
     monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(tmp_path / "conv.db"))
+    # Brudnopis MUSI wskazywać ``tmp_path``. Odkąd sprzątacz TTL biegnie bezwarunkowo (nie za
+    # bramką narzędzi), jego brak oznaczał wartość domyślną ``~/.workmate/workspace`` — czyli
+    # pakiet testów kasujący katalogi w REALNYM katalogu domowym dewelopera. Kierunek pomyłki
+    # najgorszy z możliwych: cicho, nieodwracalnie i poza ``tmp_path``.
+    monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(tmp_path / "scratchpad"))
     monkeypatch.setattr(app, "build_token_provider", lambda _s: object(), raising=False)
     monkeypatch.setattr(
         "workmate.adapters.inbound.teams_graph.auth.build_token_provider", lambda _s: object()
@@ -184,7 +189,7 @@ def _stary_katalog_rozmowy(brudnopis: Path) -> Path:
     import os
     import time
 
-    rozmowa = brudnopis / "teams_graph" / ("a" * 8)
+    rozmowa = brudnopis / "teams_graph" / ("a" * 32)
     rozmowa.mkdir(parents=True)
     (rozmowa / "notatka.md").write_text("stara treść", encoding="utf-8")
     dawno = time.time() - 60 * 24 * 3600
@@ -224,7 +229,7 @@ def test_a_fresh_conversation_dir_survives_the_prune(
     brudnopis = tmp_path / "scratchpad"
     monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(brudnopis))
     monkeypatch.delenv("WORKMATE_ENABLE_WORKSPACE", raising=False)
-    swieza = brudnopis / "teams_graph" / "bbbbbbbb"
+    swieza = brudnopis / "teams_graph" / ("b" * 32)
     swieza.mkdir(parents=True)
     (swieza / "notatka.md").write_text("świeża treść", encoding="utf-8")
 
