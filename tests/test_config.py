@@ -524,9 +524,33 @@ def test_zerowa_granica_zuzycia_wywala_start_menedzera(pole, zmienna):
         _menedzer(**{pole: 0}).validate()
 
 
-def test_zerowy_limit_cpu_wywala_start_menedzera():
+@pytest.mark.parametrize(
+    ("pole", "zmienna", "za_duzo"),
+    [
+        ("exec_memory_mb", "WORKMATE_EXEC_MEMORY_MB", 99_999),
+        ("exec_pids_limit", "WORKMATE_EXEC_PIDS_LIMIT", 99_999),
+        ("exec_max_file_mb", "WORKMATE_EXEC_MAX_FILE_MB", 99_999),
+        ("exec_max_open_files", "WORKMATE_EXEC_MAX_OPEN_FILES", 9_999_999),
+    ],
+)
+def test_absurdalna_granica_zuzycia_tez_wywala_start(pole, zmienna, za_duzo):
+    """Sama podłoga to za mało: literówka w drugą stronę daje granicę, która niczego nie ogranicza,
+    a wygląda w compose dokładnie tak samo jak działająca."""
+    with pytest.raises(ValueError, match=zmienna):
+        _menedzer(**{pole: za_duzo}).validate()
+
+
+def test_granica_ponizej_minimum_dockera_wywala_start():
+    """1 MB pamięci przechodzi „>= 1", a Docker odbija `create` (minimum 6 MB) — awaria byłaby
+    głośna, ale późna i w INNYM PROCESIE niż literówka, więc operator szukałby jej nie tam."""
+    with pytest.raises(ValueError, match="WORKMATE_EXEC_MEMORY_MB"):
+        _menedzer(exec_memory_mb=1).validate()
+
+
+@pytest.mark.parametrize("wartosc", [0, 0.001, 128])
+def test_limit_cpu_poza_zakresem_wywala_start(wartosc):
     with pytest.raises(ValueError, match="WORKMATE_EXEC_CPU_LIMIT"):
-        _menedzer(exec_cpu_limit=0).validate()
+        _menedzer(exec_cpu_limit=wartosc).validate()
 
 
 def test_domyslne_granice_zuzycia_przechodza_walidacje():

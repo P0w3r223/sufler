@@ -212,6 +212,11 @@ class DockerHttpEngine:
                 # wyczerpuje tablicę procesów HOSTA — kontener nie ma własnej.
                 "PidsLimit": template.pids_limit,
                 "Memory": template.memory_mb * 1024 * 1024,
+                # RÓWNE `Memory` = swap wyłączony dla tego kontenera. Bez tego pola Docker daje
+                # swapowi drugie tyle, więc `Memory: 512M` znaczyłoby 512 MB RAM PLUS 512 MB
+                # swapu — czyli inną granicę, niż mówi liczba. Dziś host swapu nie ma i różnicy
+                # nie widać; pole jest tu po to, żeby jego włączenie nie zmieniło po cichu limitu.
+                "MemorySwap": template.memory_mb * 1024 * 1024,
                 "NanoCpus": int(template.cpu_limit * 1_000_000_000),
                 # Te same sufity, co `ulimit` w `exec_server`, ale niezależne od jego kodu.
                 # `Soft` == `Hard`, żeby proces w kontenerze nie mógł podnieść sobie miękkiego.

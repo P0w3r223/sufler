@@ -1426,16 +1426,22 @@ class ExecManagerSettings:
         # wartość ujemna znaczy dla Docker API „bez limitu", więc literówka w compose zdejmowałaby
         # granicę po cichu, zostawiając wykonawcę wyglądającego na utwardzony. Menedżer jest
         # jedynym miejscem, gdzie ta liczba jest jeszcze konfiguracją, a nie faktem o kontenerze.
-        for nazwa, wartosc in (
-            ("WORKMATE_EXEC_MEMORY_MB", self.exec_memory_mb),
-            ("WORKMATE_EXEC_PIDS_LIMIT", self.exec_pids_limit),
-            ("WORKMATE_EXEC_MAX_FILE_MB", self.exec_max_file_mb),
-            ("WORKMATE_EXEC_MAX_OPEN_FILES", self.exec_max_open_files),
+        # ZAKRESY, nie same podłogi — jak przy bliźniaczej kwocie katalogu roboczego wyżej.
+        # Sama podłoga „>= 1" przepuszcza wartości, które odbije dopiero Docker (minimum 6 MB
+        # pamięci, 0.01 CPU) albo które zabiją kontener na starcie — awaria wtedy jest głośna,
+        # ale późna i w INNYM PROCESIE niż literówka, więc operator szuka jej nie tam.
+        for nazwa, wartosc, dol, gora in (
+            ("WORKMATE_EXEC_MEMORY_MB", self.exec_memory_mb, 16, 8192),
+            ("WORKMATE_EXEC_PIDS_LIMIT", self.exec_pids_limit, 8, 4096),
+            ("WORKMATE_EXEC_MAX_FILE_MB", self.exec_max_file_mb, 1, 1024),
+            ("WORKMATE_EXEC_MAX_OPEN_FILES", self.exec_max_open_files, 32, 65536),
         ):
-            if wartosc < 1:
-                raise ValueError(f"{nazwa} musi być >= 1, jest: {wartosc}")
-        if self.exec_cpu_limit <= 0:
-            raise ValueError(f"WORKMATE_EXEC_CPU_LIMIT musi być > 0, jest: {self.exec_cpu_limit}")
+            if not dol <= wartosc <= gora:
+                raise ValueError(f"{nazwa} musi być w zakresie {dol}..{gora}, jest: {wartosc}")
+        if not 0.01 <= self.exec_cpu_limit <= 64:
+            raise ValueError(
+                f"WORKMATE_EXEC_CPU_LIMIT musi być w zakresie 0.01..64, jest: {self.exec_cpu_limit}"
+            )
 
 
 # Ile procedur trafia do nagłówka sesji. Granica jest po to, żeby lista nie rosła w nieskończoność

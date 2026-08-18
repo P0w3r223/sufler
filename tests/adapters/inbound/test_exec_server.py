@@ -135,3 +135,55 @@ def test_a_direct_command_killed_by_the_ceiling_also_explains_itself(tmp_path):
     )
 
     assert "limit rozmiaru pliku" in str(wynik["stderr"])
+
+
+def test_a_kill_from_outside_is_explained_but_a_timeout_is_not(tmp_path):
+    """Ten sam sygnał, dwa różne fakty — i tylko jeden wymaga zdania.
+
+    `SIGKILL` bez przekroczenia czasu ściennego znaczy „zdjął to ktoś z zewnątrz" (na tej flocie
+    prawie zawsze zabójca OOM cgroupy). `SIGKILL` PO timeoucie to zachowanie zamierzone, które
+    niesie już własne pole w wyniku — drugi komunikat o tym samym kazałby modelowi zgadywać,
+    która przyczyna jest prawdziwa.
+    """
+    po_timeoucie = exec_server.run_command("sleep 30", cwd=str(tmp_path), timeout_s=1)
+
+    assert po_timeoucie["timed_out"] is True
+    assert "zdjęte z zewnątrz" not in str(po_timeoucie["stderr"])
+
+    # Zabicie z zewnątrz odtwarzamy tak, jak robi to jądro: polecenie ubija samo siebie SIGKILL-em,
+    # nie przekraczając limitu czasu. Prawdziwego OOM-a nie da się wywołać bez cgroupy z limitem.
+    zdjete = exec_server.run_command("kill -9 $$", cwd=str(tmp_path), timeout_s=30)
+
+    assert zdjete["timed_out"] is False
+    assert "zdjęte z zewnątrz" in str(zdjete["stderr"])
+
+
+def test_the_explanation_fits_inside_the_output_ceiling(tmp_path):
+    """Sufit wyjścia ma obejmować CAŁE pole, a nie treść sprzed doklejenia zdania.
+
+    Wyjście wraca do kontekstu i jest odsyłane w każdej kolejnej turze, więc przekroczenie sufitu
+    kosztuje do końca rozmowy — a doklejone zdanie jest tą częścią, o której łatwo zapomnieć.
+    """
+    cel = tmp_path / "duzy.bin"
+    # Wyjście generuje POLECENIE, nie test: 200 kB w treści polecenia przekracza limit argv.
+    wynik = exec_server.run_command(
+        "yes x | head -c 200000 >&2; "
+        f"dd if=/dev/zero of={cel} bs=1M count={exec_server._MAX_FILE_MB + 5} 2>/dev/null",
+        cwd=str(tmp_path),
+    )
+
+    assert "limit rozmiaru pliku" in str(wynik["stderr"])
+    assert len(str(wynik["stderr"]).encode("utf-8")) <= exec_server._MAX_OUTPUT_BYTES
+
+
+def test_the_file_ceiling_message_warns_that_the_file_is_truncated_on_disk(tmp_path):
+    """Po SIGXFSZ na dysku zostaje plik o rozmiarze dokładnie sufitu — i wygląda na kompletny.
+    Model, który przeczyta go w następnej turze, dostanie ucięte dane bez śladu obcięcia."""
+    cel = tmp_path / "duzy.bin"
+
+    wynik = exec_server.run_command(
+        f"dd if=/dev/zero of={cel} bs=1M count={exec_server._MAX_FILE_MB + 5}", cwd=str(tmp_path)
+    )
+
+    assert "usuń go" in str(wynik["stderr"])
+    assert cel.exists()

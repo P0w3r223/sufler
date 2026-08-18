@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import math
 import os
 import signal
 import socket
@@ -80,8 +79,16 @@ def _dodatni_z_env(nazwa: str, domyslna: int) -> int:
 # (`WORKMATE_WORKSPACE_MAX_FILE_MB`, domyślnie 5 MB). Powłoka i narzędzia piszą w to samo
 # miejsce; dwa różne sufity na jeden katalog byłyby dwoma źródłami prawdy do rozjechania.
 _MAX_FILE_MB = _dodatni_z_env("WORKMATE_EXEC_MAX_FILE_MB", 5)
-_MAX_PROC = _dodatni_z_env("WORKMATE_EXEC_MAX_PROC", 64)
 _MAX_OPEN_FILES = _dodatni_z_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256)
+# ŚWIADOMIE NIE MA TU `ulimit -u` (RLIMIT_NPROC), choć bomba widłowa jest dokładnie tym, przed
+# czym rlimity mają bronić. Powód: `RLIMIT_NPROC` liczy się per (przestrzeń użytkowników, UID)
+# i obejmuje WĄTKI, a cała flota biegnie na tym samym uid 10001 bez remapowania przestrzeni
+# użytkowników. Budżet byłby więc JEDEN, wspólny dla aplikacji, mostu GitHub i wszystkich
+# wykonawców — a `PidsLimit` (128 per kontener) pozwala JEDNEJ rozmowie go wyczerpać. Skutkiem
+# nie byłaby izolacja, tylko jej odwrotność: polecenia POZOSTAŁYCH rozmów zaczynałyby padać na
+# `fork: Resource temporarily unavailable` z powodu, którego w ich kontenerze nie widać —
+# i to na czas do zabicia grupy, czyli nawet 300 s.
+# Bombę widłową zatrzymuje `PidsLimit` — jedyna z tych dwóch granic, która jest per kontener.
 
 # Limity zakłada BUILTIN `ulimit` powłoki, nie `preexec_fn`. Powód jest wykonawczy, nie
 # estetyczny: `preexec_fn` biegnie w dziecku po `fork` w procesie, który MA WĄTKI (wątek na
@@ -93,7 +100,20 @@ _MAX_OPEN_FILES = _dodatni_z_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256)
 # więc żaden cudzysłów ani `;` nie ma jak zmienić prologu. `&&` sprawia, że nieudany `ulimit`
 # ZATRZYMUJE polecenie zamiast puszczać je bez limitów — kierunek awarii, o który tu chodzi.
 # `exec` zostawia jeden proces zamiast dwóch, więc zabicie grupy działa dokładnie jak dotąd.
-_PROLOG_LIMITOW = 'ulimit -f {fsize_kb} -u {nproc} -n {nofile} -t {cpu_s} && exec /bin/bash -c "$0"'
+#
+# **Sufitu CZASU PROCESORA tu NIE MA i to jest wynik pomiaru, nie przeoczenie.** Pierwsza wersja
+# zakładała `ulimit -t` równy sufitowi czasu ściennego. Nie działało to na dwa sposoby naraz:
+# `ulimit -t N` bez `-S`/`-H` ustawia oba sufity na tę samą wartość, a przy `soft == hard` jądro
+# wysyła od razu `SIGKILL` zamiast `SIGXCPU` (zmierzone: pętla CPU przy `-t 2` wraca z `-9`).
+# Po rozdzieleniu sufitów `SIGXCPU` faktycznie pada — ale w `run_command` i tak nigdy nie dochodzi,
+# bo czas ŚCIENNY wyczerpuje się nie później niż procesora: kontener ma kwotę `NanoCpus` jednego
+# rdzenia, więc sekunda procesora kosztuje co najmniej sekundę zegara. Zmierzone: polecenie
+# wielowątkowe przy `timeout_s=6` wraca `timed_out=True`, nie sygnałem CPU.
+#
+# Granica czasu jest więc jedna i stoi gdzie indziej: `communicate(timeout=...)` plus zabicie
+# grupy, z czytelnym `timed_out` w wyniku. Sufit, który nie może paść, i komunikat, który nie
+# może się pokazać, byłyby gorsze niż ich brak — sugerowałyby pokrycie, którego nie ma.
+_PROLOG_LIMITOW = 'ulimit -f {fsize_kb} -n {nofile} && exec /bin/bash -c "$0"'
 
 # Sygnały, którymi jądro melduje przekroczenie rlimitu. Surowy kod wyjścia `-25` nie mówi modelowi
 # nic — a granica, której model nie rozumie, wygląda jak defekt narzędzia i skłania do obchodzenia
@@ -101,13 +121,19 @@ _PROLOG_LIMITOW = 'ulimit -f {fsize_kb} -u {nproc} -n {nofile} -t {cpu_s} && exe
 _KOMUNIKAT_LIMITU: dict[int, str] = {
     signal.SIGXFSZ: (
         f"Polecenie przekroczyło limit rozmiaru pliku ({_MAX_FILE_MB} MB na plik) i zostało "
-        "zatrzymane. Zapisz mniej albo podziel wynik na części."
-    ),
-    signal.SIGXCPU: (
-        "Polecenie przekroczyło limit czasu procesora i zostało zatrzymane. "
-        "Zawęź zakres pracy albo policz to na mniejszej porcji danych."
+        "zatrzymane. UWAGA: plik na dysku urwał się dokładnie na tym rozmiarze i wygląda na "
+        "kompletny — usuń go, zanim cokolwiek z niego przeczytasz. Zapisz mniej albo podziel "
+        "wynik na części."
     ),
 }
+# Zabicie SIGKILL-em bez przekroczenia czasu ściennego znaczy, że polecenie zdjął ktoś Z ZEWNĄTRZ
+# procesu — na tej flocie prawie zawsze zabójca OOM cgroupy, odkąd wykonawca ma `Memory`
+# (ADR infra 0013). Komunikat jest osobno od tablicy wyżej, bo zależy od `timed_out`: ten sam
+# sygnał po timeoucie jest zachowaniem zamierzonym i niesie już własne pole w wyniku.
+_KOMUNIKAT_ZABICIA = (
+    "Polecenie zostało zdjęte z zewnątrz, bez przekroczenia limitu czasu — najczęściej przez "
+    "limit pamięci kontenera. Policz to na mniejszej porcji danych albo strumieniowo."
+)
 
 
 def _sygnal_z_kodu(kod: int) -> int | None:
@@ -117,12 +143,18 @@ def _sygnal_z_kodu(kod: int) -> int | None:
 
     * **ujemny** — sygnał zabił proces, na który patrzy ``Popen`` (powłoka ``exec``-uje wtedy
       polecenie prosto, więc ginie ta sama pidem);
-    * **``128 + N``** — powłoka polecenie ROZWIDLIŁA (potok, przekierowanie, kilka poleceń)
-      i sama zameldowała śmierć dziecka swoją konwencją wyjścia.
+    * **``128 + N``** — powłoka polecenie ROZWIDLIŁA (przekierowanie, kilka poleceń po średniku)
+      i sama zameldowała śmierć OSTATNIEGO członu swoją konwencją wyjścia.
 
     Pierwsza wersja tej funkcji znała tylko postać ujemną i przez to milczała dokładnie w tych
-    poleceniach, w których model najczęściej pisze duży plik — z przekierowaniem albo w potoku.
-    Ujemny kod złapała sonda, drugą postać dopiero sonda z ``2>/dev/null``.
+    poleceniach, w których model najczęściej pisze duży plik — z przekierowaniem. Ujemny kod
+    złapała sonda, drugą postać dopiero sonda z ``2>/dev/null``.
+
+    **Czego ta funkcja NIE widzi:** POTOKU. Kod wyjścia potoku to kod jego OSTATNIEGO członu, więc
+    ``(pętla) | cat`` po zabiciu pierwszego członu wraca ``0`` — polecenie „się udało", choć
+    granica zadziałała. Nie da się tego naprawić tutaj: informacja ginie w powłoce, zanim
+    wykonawca cokolwiek zobaczy. Domknięcie wymagałoby `set -o pipefail` w prologu, a to zmienia
+    semantykę KAŻDEGO potoku pisanego przez model — cena wyższa niż zysk.
 
     Cena rozpoznawania ``128 + N``: program, który SAM zwróci 153, dostanie zdanie o limicie,
     którego nie przekroczył. To konwencja powłoki, a nie odczyt jądra — biorąc ją, bierze się
@@ -136,16 +168,20 @@ def _sygnal_z_kodu(kod: int) -> int | None:
     return None
 
 
-def _truncate(raw: bytes) -> tuple[str, bool]:
+def _truncate(raw: bytes, budzet: int = _MAX_OUTPUT_BYTES) -> tuple[str, bool]:
     """Przytnij strumień do sufitu i zdekoduj tolerancyjnie.
 
     Dekodujemy z ``errors="replace"``: polecenie może wypisać dowolne bajty (plik binarny,
     zerwane UTF-8), a wywrócenie wykonawcy na ``UnicodeDecodeError`` zamieniłoby zły wynik
     jednego polecenia w awarię całej tury.
+
+    ``budzet`` jest podstawialny, bo do ``stderr`` doklejamy jeszcze zdanie o przekroczonym
+    limicie — a sufit ma obowiązywać CAŁE pole, nie treść przed doklejeniem. Bez tego wyjście
+    ucięte co do bajtu na 64 kB wracało o długość komunikatu dłuższe.
     """
-    if len(raw) <= _MAX_OUTPUT_BYTES:
+    if len(raw) <= budzet:
         return raw.decode("utf-8", errors="replace"), False
-    return raw[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace"), True
+    return raw[:budzet].decode("utf-8", errors="replace"), True
 
 
 def _resolve_cwd(requested: str) -> str | None:
@@ -176,17 +212,7 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
     # Podłoga ORAZ sufit: ``timeout_s`` układa model, a wartość ujemna (albo mikroskopijna)
     # zabijała polecenie natychmiast, dając wynik nieodróżnialny od realnego timeoutu.
     limit = min(max(timeout_s or _DEFAULT_TIMEOUT_S, _MIN_TIMEOUT_S), _MAX_TIMEOUT_S)
-    # Sufit CZASU PROCESORA równy sufitowi czasu ściennego. Nie jest to ta sama wielkość:
-    # `sleep 200` zużywa zero procesora i ma ginąć od timeoutu, a pętla zajmująca rdzeń ma ginąć
-    # od rlimitu — bo proces odłączony od potoków wraca natychmiast, a timeout ścienny go wtedy
-    # nie dosięga. Jedna liczba na oba sufity, bo są to dwie drogi do tej samej obietnicy
-    # („polecenie nie zajmie maszyny dłużej niż tyle"), a druga liczba byłaby drugim źródłem.
-    prolog = _PROLOG_LIMITOW.format(
-        fsize_kb=_MAX_FILE_MB * 1024,
-        nproc=_MAX_PROC,
-        nofile=_MAX_OPEN_FILES,
-        cpu_s=max(1, math.ceil(limit)),
-    )
+    prolog = _PROLOG_LIMITOW.format(fsize_kb=_MAX_FILE_MB * 1024, nofile=_MAX_OPEN_FILES)
 
     proc = subprocess.Popen(  # noqa: S602 — powłoka to CEL tego narzędzia, nie przeoczenie
         ["/bin/bash", "-c", prolog, command],
@@ -217,15 +243,25 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGKILL)
 
-    stdout, cut_out = _truncate(out or b"")
-    stderr, cut_err = _truncate(err or b"")
     kod = proc.returncode if proc.returncode is not None else -1
-    # Przekroczony rlimit wraca jako SYGNAŁ, nie jako komunikat. Zdanie doklejamy do `stderr`,
+    # Przekroczona granica wraca jako SYGNAŁ, nie jako komunikat. Zdanie doklejamy do `stderr`,
     # bo tam model już patrzy, gdy polecenie się nie udało — osobne pole musiałoby wejść do
     # kontraktu protokołu i do opisu narzędzia, żeby ktokolwiek na nie spojrzał.
+    #
+    # Zdanie liczymy PRZED przycięciem: sufit wyjścia ma objąć całe pole, a nie treść sprzed
+    # doklejenia. Zabicie po timeoucie zdania NIE dostaje — `timed_out` już to mówi, a drugi
+    # komunikat o tym samym kazałby modelowi zgadywać, która przyczyna jest prawdziwa.
     sygnal = _sygnal_z_kodu(kod)
-    if sygnal in _KOMUNIKAT_LIMITU:
-        stderr = f"{stderr}\n{_KOMUNIKAT_LIMITU[sygnal]}".lstrip("\n")
+    zdanie = _KOMUNIKAT_LIMITU.get(sygnal) if sygnal is not None else None
+    if zdanie is None and sygnal == signal.SIGKILL and not timed_out:
+        zdanie = _KOMUNIKAT_ZABICIA
+    stdout, cut_out = _truncate(out or b"")
+    stderr, cut_err = _truncate(
+        err or b"",
+        _MAX_OUTPUT_BYTES - (len(zdanie.encode("utf-8")) + 1) if zdanie else _MAX_OUTPUT_BYTES,
+    )
+    if zdanie:
+        stderr = f"{stderr}\n{zdanie}".lstrip("\n")
     return {
         "exit_code": kod,
         "stdout": stdout,
