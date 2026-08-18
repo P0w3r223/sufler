@@ -187,3 +187,24 @@ def test_the_file_ceiling_message_warns_that_the_file_is_truncated_on_disk(tmp_p
 
     assert "usuń go" in str(wynik["stderr"])
     assert cel.exists()
+
+
+def test_the_cpu_backstop_never_gets_in_front_of_the_wall_clock_timeout():
+    """Bezpiecznik czasu procesora ma łapać WYŁĄCZNIE proces, który wyszedł z grupy.
+
+    Gdyby stanął poniżej maksymalnego czasu ściennego, ubijałby poprawne, długie polecenia
+    pierwszoplanowe — i to sygnałem, którego wykonawca świadomie NIE tłumaczy na zdanie, bo
+    z założenia nie powinien padać. Relacja tych dwóch liczb jest więc całą jego poprawnością
+    i jedyną własnością, którą da się tu sprawdzić bez czekania dziesięciu minut.
+    """
+    assert exec_server._CPU_BACKSTOP_S > exec_server._MAX_TIMEOUT_S
+
+
+def test_the_prologue_carries_the_cpu_backstop_with_a_matched_hard_ceiling():
+    """Sufit miękki i twardy MUSZĄ być równe — bezpiecznik ma być nie do podniesienia przez
+    proces, który właśnie próbuje go obejść. (Przy sufitach równych jądro wysyła `SIGKILL`
+    zamiast `SIGXCPU`; tutaj to jest właściwe, bo żadnego komunikatu do tego sygnału nie ma.)"""
+    prolog = exec_server._PROLOG_LIMITOW.format(fsize_kb=1, nofile=1, cpu_s=42)
+
+    assert "ulimit -S -t 42" in prolog
+    assert "ulimit -H -t 42" in prolog

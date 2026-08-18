@@ -80,6 +80,11 @@ def _dodatni_z_env(nazwa: str, domyslna: int) -> int:
 # miejsce; dwa różne sufity na jeden katalog byłyby dwoma źródłami prawdy do rozjechania.
 _MAX_FILE_MB = _dodatni_z_env("WORKMATE_EXEC_MAX_FILE_MB", 5)
 _MAX_OPEN_FILES = _dodatni_z_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256)
+# Bezpiecznik czasu procesora — patrz prolog niżej. DWUKROTNOŚĆ maksymalnego czasu ściennego,
+# żeby nigdy nie wyprzedził timeoutu w poleceniu pierwszoplanowym: ma łapać wyłącznie proces,
+# który wyszedł z grupy i którego nie dosięga już nic innego. Podstawialny, żeby sonda mogła
+# zmierzyć zachowanie bez czekania dziesięciu minut.
+_CPU_BACKSTOP_S = int(2 * _MAX_TIMEOUT_S)
 # ŚWIADOMIE NIE MA TU `ulimit -u` (RLIMIT_NPROC), choć bomba widłowa jest dokładnie tym, przed
 # czym rlimity mają bronić. Powód: `RLIMIT_NPROC` liczy się per (przestrzeń użytkowników, UID)
 # i obejmuje WĄTKI, a cała flota biegnie na tym samym uid 10001 bez remapowania przestrzeni
@@ -101,19 +106,36 @@ _MAX_OPEN_FILES = _dodatni_z_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256)
 # ZATRZYMUJE polecenie zamiast puszczać je bez limitów — kierunek awarii, o który tu chodzi.
 # `exec` zostawia jeden proces zamiast dwóch, więc zabicie grupy działa dokładnie jak dotąd.
 #
-# **Sufitu CZASU PROCESORA tu NIE MA i to jest wynik pomiaru, nie przeoczenie.** Pierwsza wersja
-# zakładała `ulimit -t` równy sufitowi czasu ściennego. Nie działało to na dwa sposoby naraz:
+# **Sufit CZASU PROCESORA jest tu BEZPIECZNIKIEM, nie granicą polecenia — i to rozróżnienie
+# jest całą treścią tej wartości.** Pierwsza wersja ustawiała go równo z sufitem czasu ściennego
+# i tłumaczyła przekroczenie na zdanie dla modelu. Nie działało to na dwa sposoby naraz:
 # `ulimit -t N` bez `-S`/`-H` ustawia oba sufity na tę samą wartość, a przy `soft == hard` jądro
-# wysyła od razu `SIGKILL` zamiast `SIGXCPU` (zmierzone: pętla CPU przy `-t 2` wraca z `-9`).
-# Po rozdzieleniu sufitów `SIGXCPU` faktycznie pada — ale w `run_command` i tak nigdy nie dochodzi,
-# bo czas ŚCIENNY wyczerpuje się nie później niż procesora: kontener ma kwotę `NanoCpus` jednego
-# rdzenia, więc sekunda procesora kosztuje co najmniej sekundę zegara. Zmierzone: polecenie
-# wielowątkowe przy `timeout_s=6` wraca `timed_out=True`, nie sygnałem CPU.
+# wysyła od razu `SIGKILL` zamiast `SIGXCPU` (zmierzone: pętla CPU przy `-t 2` wraca z `-9`);
+# a nawet po rozdzieleniu sufitów sygnał nie dochodzi, bo przy kwocie `NanoCpus` jednego rdzenia
+# sekunda procesora kosztuje co najmniej sekundę zegara — timeout ścienny wyczerpuje się pierwszy.
 #
-# Granica czasu jest więc jedna i stoi gdzie indziej: `communicate(timeout=...)` plus zabicie
-# grupy, z czytelnym `timed_out` w wyniku. Sufit, który nie może paść, i komunikat, który nie
-# może się pokazać, byłyby gorsze niż ich brak — sugerowałyby pokrycie, którego nie ma.
-_PROLOG_LIMITOW = 'ulimit -f {fsize_kb} -n {nofile} && exec /bin/bash -c "$0"'
+# Zdjęcie sufitu w całości byłoby jednak przesadą w drugą stronę, bo zostawia bez granicy
+# JEDYNY przypadek, którego nie łapie nic innego: proces, który sam wyszedł z grupy procesów
+# (`setsid`, wewnętrzna demonizacja). Dla niego `communicate(timeout=…)` nie ma zastosowania
+# (potoki zamknięte, polecenie wraca natychmiast), `killpg` nie sięga — `setsid()` przenosi proces
+# do NOWEJ sesji i nowej grupy, co widać wprost (`ps` pokazuje własne SID i PGID) — a `PidsLimit`
+# liczy procesy, nie cykle. Rlimity dziedziczy się przez `fork`, a `setsid` ich nie zeruje, więc
+# sufit czasu procesora sięga tam, gdzie nie sięga nic innego.
+#
+# Uczciwie o pomiarze: przeżycie takiego procesu odtworzył PRZEGLĄD (pętla CPU wciąż żywa po
+# turze, `ps` z narastającym TIME); w harnessie testowym tego repozytorium uciekinier ginie
+# i nie udało się tego uczynić powtarzalnym, więc sondy ZACHOWANIA tu nie ma — byłaby migotliwa.
+# Sonda pilnuje niezmiennika, który da się sprawdzić: bezpiecznik stoi POWYŻEJ maksymalnego
+# czasu ściennego. Cena utrzymania tego sufitu jest zerowa, a bez niego górnym ograniczeniem
+# szkody byłby dopiero reaper wykonawcy (900 s rdzenia na rozmowę).
+#
+# Stąd wartość: `_CPU_BACKSTOP_S`, WYRAŹNIE POWYŻEJ maksymalnego czasu ściennego, żeby nigdy nie
+# wyprzedziła ścieżki `timed_out` — i bez komunikatu dla modelu, bo w normalnym poleceniu ten
+# sufit z definicji nie pada. Zarzut „martwego kodu" dotyczył KOMUNIKATU, nie limitu.
+_PROLOG_LIMITOW = (
+    "ulimit -S -t {cpu_s} && ulimit -H -t {cpu_s} && "
+    'ulimit -f {fsize_kb} -n {nofile} && exec /bin/bash -c "$0"'
+)
 
 # Sygnały, którymi jądro melduje przekroczenie rlimitu. Surowy kod wyjścia `-25` nie mówi modelowi
 # nic — a granica, której model nie rozumie, wygląda jak defekt narzędzia i skłania do obchodzenia
@@ -212,7 +234,9 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
     # Podłoga ORAZ sufit: ``timeout_s`` układa model, a wartość ujemna (albo mikroskopijna)
     # zabijała polecenie natychmiast, dając wynik nieodróżnialny od realnego timeoutu.
     limit = min(max(timeout_s or _DEFAULT_TIMEOUT_S, _MIN_TIMEOUT_S), _MAX_TIMEOUT_S)
-    prolog = _PROLOG_LIMITOW.format(fsize_kb=_MAX_FILE_MB * 1024, nofile=_MAX_OPEN_FILES)
+    prolog = _PROLOG_LIMITOW.format(
+        fsize_kb=_MAX_FILE_MB * 1024, nofile=_MAX_OPEN_FILES, cpu_s=_CPU_BACKSTOP_S
+    )
 
     proc = subprocess.Popen(  # noqa: S602 — powłoka to CEL tego narzędzia, nie przeoczenie
         ["/bin/bash", "-c", prolog, command],
@@ -253,7 +277,13 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
     # komunikat o tym samym kazałby modelowi zgadywać, która przyczyna jest prawdziwa.
     sygnal = _sygnal_z_kodu(kod)
     zdanie = _KOMUNIKAT_LIMITU.get(sygnal) if sygnal is not None else None
-    if zdanie is None and sygnal == signal.SIGKILL and not timed_out:
+    # Zabicie z zewnątrz rozpoznajemy WYŁĄCZNIE po kodzie UJEMNYM, choć `_sygnal_z_kodu` zna też
+    # konwencję `128 + N`. Powód: `137` w pracy z powłoką znaczy zbyt wiele rzeczy — własny
+    # `timeout -k`, własny `kill -9` na ostatnim członie, program zwracający tę liczbę z siebie —
+    # a to zdanie wskazuje KONKRETNĄ przyczynę. Niejednoznaczność, którą przyjęliśmy przy
+    # `SIGXFSZ`, jest tam znośna, bo `153` nikt normalnie nie zwraca. Zabójca OOM cgroupy trafia
+    # w proces bezpośredni, a prolog robi `exec` — czyli właśnie w postać ujemną.
+    if zdanie is None and kod == -signal.SIGKILL and not timed_out:
         zdanie = _KOMUNIKAT_ZABICIA
     stdout, cut_out = _truncate(out or b"")
     stderr, cut_err = _truncate(

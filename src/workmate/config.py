@@ -1438,9 +1438,12 @@ class ExecManagerSettings:
         ):
             if not dol <= wartosc <= gora:
                 raise ValueError(f"{nazwa} musi być w zakresie {dol}..{gora}, jest: {wartosc}")
-        if not 0.01 <= self.exec_cpu_limit <= 64:
+        # Sufit rzędu liczby rdzeni realnego hosta, nie „dowolnie dużo": kwota ponad liczbę
+        # rdzeni jest fikcją, a uzasadnienie sufitu czasu procesora w wykonawcy (`exec_server`)
+        # wisi na założeniu, że kwota nie przekracza rzędu jednego rdzenia.
+        if not 0.01 <= self.exec_cpu_limit <= 16:
             raise ValueError(
-                f"WORKMATE_EXEC_CPU_LIMIT musi być w zakresie 0.01..64, jest: {self.exec_cpu_limit}"
+                f"WORKMATE_EXEC_CPU_LIMIT musi być w zakresie 0.01..16, jest: {self.exec_cpu_limit}"
             )
 
 

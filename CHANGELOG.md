@@ -13,11 +13,15 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   co polecenie ZOSTAWIA: `dd if=/dev/zero of=x bs=1M count=100000` zapisywał plik do wyczerpania
   wolumenu, a `:(){ :|:& };:` wyczerpywał tablicę procesów **hosta** — kontener własnej nie miał.
   Granice wchodzą na dwóch piętrach:
-  - `exec_server` zakłada rlimity na poleceniu (`fsize` 5 MB, `nofile` 256) builtinem `ulimit`,
+  - `exec_server` zakłada rlimity na poleceniu (`fsize` 5 MB, `nofile` 256 oraz sufit czasu
+    procesora jako BEZPIECZNIK — dwukrotność maksymalnego czasu ściennego, bez komunikatu, na
+    proces, który wyszedł z grupy przez `setsid` i którego nie dosięga ani timeout, ani `killpg`)
+    builtinem `ulimit`,
     nie `preexec_fn` — ten biegnie w dziecku po `fork` w procesie z wątkami i może zawisnąć przed
     `exec`. Polecenie modelu jedzie jako `$0`, więc zewnętrzna powłoka nigdy go nie parsuje
     i żaden cudzysłów nie sięga prologu.
-  - `docker_engine` zakłada `CapDrop: [ALL]`, `PidsLimit`, `Memory`, `NanoCpus` i `Ulimits`
+  - `docker_engine` zakłada `CapDrop: [ALL]`, `PidsLimit`, `Memory` + `MemorySwap` (równe, czyli
+    bez swapu), `NanoCpus` i `Ulimits`
     na kontenerze wykonawcy. Te obowiązują KAŻDY jego proces — także taki, który powstał drogą,
     o której `exec_server` nie wie.
 
@@ -47,8 +51,10 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   odwrotność: polecenia POZOSTAŁYCH rozmów padałyby na `fork: Resource temporarily unavailable`.
   Bombę widłową zatrzymuje `PidsLimit` — jedyna z tych granic, która jest per kontener.
 - `ExecManagerSettings` niesie granice zużycia (`WORKMATE_EXEC_MEMORY_MB`, `…_PIDS_LIMIT`,
-  `…_CPU_LIMIT`, `…_MAX_FILE_MB`, `…_MAX_OPEN_FILES`) z walidacją odrzucającą zero: dla Docker API
-  zero znaczy **bez limitu**, więc literówka w compose zdejmowałaby granicę po cichu.
+  `…_CPU_LIMIT`, `…_MAX_FILE_MB`, `…_MAX_OPEN_FILES`) z walidacją ZAKRESÓW, nie samych podłóg:
+  dla Docker API zero znaczy **bez limitu**, więc literówka w compose zdejmowałaby granicę po
+  cichu, a wartość poniżej minimum Dockera (6 MB pamięci) odbiłaby się dopiero przy `create` —
+  głośno, ale późno i w innym procesie niż literówka.
 
 ### Naprawione
 

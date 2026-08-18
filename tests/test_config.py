@@ -547,7 +547,7 @@ def test_granica_ponizej_minimum_dockera_wywala_start():
         _menedzer(exec_memory_mb=1).validate()
 
 
-@pytest.mark.parametrize("wartosc", [0, 0.001, 128])
+@pytest.mark.parametrize("wartosc", [0, 0.001, 64])
 def test_limit_cpu_poza_zakresem_wywala_start(wartosc):
     with pytest.raises(ValueError, match="WORKMATE_EXEC_CPU_LIMIT"):
         _menedzer(exec_cpu_limit=wartosc).validate()
