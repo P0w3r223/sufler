@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,7 +16,7 @@ from workmate.core.domain.schedule import (
 from workmate.core.errors import InvalidRequestError
 
 _TZ = ZoneInfo("Europe/Warsaw")
-_MONDAY = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)  # poniedziałek
+_MONDAY = datetime(2026, 8, 3, 10, 0, tzinfo=UTC)  # poniedziałek
 
 
 # --- resolve_schedule_range ---------------------------------------------------

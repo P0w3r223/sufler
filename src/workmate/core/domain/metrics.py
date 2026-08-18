@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 # Strefa „tygodnia" spójna z worklogami (ADR 0035) — granica tygodnia znaczy to samo w całym
@@ -30,7 +30,7 @@ def iso_week(occurred_at: datetime, tz: ZoneInfo = REPORT_TZ) -> str:
     wywołanie na granicy tygodnia do sąsiedniego tygodnia (przekłamanie „powracających").
     """
     if occurred_at.tzinfo is None:
-        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+        occurred_at = occurred_at.replace(tzinfo=UTC)
     year, week, _ = occurred_at.astimezone(tz).isocalendar()
     return f"{year:04d}-W{week:02d}"
 

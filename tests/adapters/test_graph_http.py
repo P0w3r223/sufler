@@ -200,3 +200,40 @@ def test_async_transient_exhausted_raises(monkeypatch):
         )
 
     assert len(attempts) == 4
+
+
+def test_retry_after_is_capped_at_the_backoff_ceiling():
+    """``Retry-After`` bez sufitu przy PIĘCIU ponowieniach to sen na godziny.
+
+    W wariancie synchronicznym śpi wątek puli obsługujący turę rozmówcy, więc Graph podający
+    „wróć za 3600 s" zawieszałby rozmowę zamiast oddać błąd. Sufit i podłoga są te same co
+    w ``jira_http`` — jedna polityka czekania na całą rodzinę transportów.
+    """
+    waits: list[float] = []
+    attempts: list[str] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append("x")
+        if len(attempts) < 2:
+            return httpx.Response(429, headers={"Retry-After": "3600"})
+        return httpx.Response(200, json={"ok": True})
+
+    graph_http.request_with_retry(_client(handler), "GET", _URL, sleep=waits.append)
+
+    assert waits == [60.0]  # sufit _MAX_BACKOFF_S, nie surowe 3600
+
+
+def test_negative_retry_after_is_clamped_to_zero_not_passed_to_sleep():
+    """Ujemna wartość nagłówka nie może trafić do ``time.sleep`` (jak w ``jira_http``)."""
+    waits: list[float] = []
+    attempts: list[str] = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        attempts.append("x")
+        if len(attempts) < 2:
+            return httpx.Response(429, headers={"Retry-After": "-5"})
+        return httpx.Response(200, json={"ok": True})
+
+    graph_http.request_with_retry(_client(handler), "GET", _URL, sleep=waits.append)
+
+    assert waits == [0.0]

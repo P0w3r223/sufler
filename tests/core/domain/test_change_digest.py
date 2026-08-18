@@ -7,13 +7,13 @@ nieprzypisanych, przypadek pusty oraz notkę ucięcia.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from workmate.core.domain.change_digest import ChangeDigest, ProjectChanges
 
 
 def _dt(day: int, hour: int = 12) -> datetime:
-    return datetime(2026, 7, day, hour, 0, 0, tzinfo=timezone.utc)
+    return datetime(2026, 7, day, hour, 0, 0, tzinfo=UTC)
 
 
 def test_to_text_renders_header_totals_and_project_sections():

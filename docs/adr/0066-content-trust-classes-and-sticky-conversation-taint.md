@@ -1,7 +1,7 @@
 # 0066 — Content trust classes (T0–T3) and sticky conversation taint
 
 Date: 2026-08-13
-Status: accepted (owner decisions 2026-08-14 — T3 labels default-ON, T1/T2 sender split opt-in behind ADR 0062's flag)
+Status: accepted (owner decisions 2026-08-14; implemented 2026-08-14 with one correction — both halves ship behind gates, see Closed questions)
 Author: P0w3r223
 Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (sender membership gate — the identity primitive),
   [ADR 0056](0056-agent-system-prompt-two-blocks.md) (two system blocks, the `_PRECEDENCE` rule),
@@ -212,9 +212,17 @@ restart-surviving conversation taint that escalates — never blocks — consequ
 
 - **Rollout posture — the question is split by dependency, and so is the answer.** The two halves of
   this ADR do not depend on the same thing, so they do not ship the same way:
-  - **T3 structural labels: default-ON.** Wrapping foreign content (attachments, materialized files,
-    tool results, GitHub event/comment bodies) depends on nothing operational — it demotes no person,
-    needs no map, and costs a delimiter. It ships on.
+  - **T3 structural labels: default-ON** — *corrected to default-OFF at implementation, 2026-08-14.*
+    Wrapping foreign content depends on nothing operational: it demotes no person and needs no map.
+    Two facts found while building it overturned the "ships on" half. First, this repository enforces
+    "every capability ships closed" mechanically (`test_gates_closed_by_default`), and an exception
+    argued case-by-case is how that invariant dies. Second, the label is not free after all: it
+    changes the bytes of every request and adds a sentence to every session header, so an operator
+    who cannot switch it off cannot compare the model's behaviour before and after — and this is
+    precisely the change whose effect on a cooperative model nobody can predict from the code.
+    It therefore ships behind `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS`, default OFF, with the
+    *off* path asserted byte-identical to the previous request. What "default-ON" was reaching for —
+    enabling it must not require a new image — holds: it is one `.env` line and a recreate.
   - **T1/T2 sender split: opt-in, riding ADR 0062's flag** (`WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ`).
     It depends on `identities.yaml` being complete, which today it is not (~2 of the division mapped —
     the same reason 0062's rollout is held). Turning it on early would demote real members' requests to
@@ -238,8 +246,8 @@ restart-surviving conversation taint that escalates — never blocks — consequ
   derived from the content), so wrapped content cannot close its own envelope by emitting the marker.
   The nonce is generated at the door, never at model request.
 - **Judge-tainted-by-default for ADR 0065** → **confirmed.** 0065 ships without waiting for this ADR
-  and treats every turn as tainted until this label exists; with T3 labels default-ON, real provenance
-  for read content arrives immediately, and the T1/T2 refinement follows 0062's flag.
+  and treats every turn as tainted until this label exists; once the operator enables the labels,
+  real provenance for read content arrives, and the T1/T2 refinement follows 0062's flag.
 
 ## Follow-ups
 

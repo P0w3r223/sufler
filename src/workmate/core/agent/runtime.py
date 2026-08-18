@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 from pydantic import TypeAdapter, ValidationError
 
-from workmate.core.agent.prompt import STATIC_PROMPT, system_blocks
+from workmate.core.agent.prompt import STATIC_PROMPT, budget_notice, system_blocks
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
     AgentResult,
@@ -33,18 +34,26 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.domain.trust import TrustClass
     from workmate.core.ports.llm import (
         Attachment,
+        AttachmentQueue,
         LLMClient,
         ToolCall,
         TranscriptEntry,
     )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TOOL_ITERATIONS = 8
 # ``stop_reason`` sygnalizujący UCIĘCIE odpowiedzi (thinking + tekst dzielą max_tokens):
 # tura niepełna, więc niereplayowalna (niepełny thinking/tool_use → API 400).
 _TRUNCATED = "max_tokens"
 _ITERATIONS_EXHAUSTED = "max_tool_iterations"
+# Od ilu pozostałych rund modelowi mówimy, ile ich zostało (ADR 0068 §6). Dwie, bo jedna runda
+# na samo domknięcie odpowiedzi to za późno na zmianę planu: model, który właśnie zaczął serię
+# wywołań, ma zdążyć przejść na „odpowiadam tym, co mam".
+_BUDGET_WARNING_ROUNDS = 2
 
 
 class AgentRuntime:
@@ -91,8 +100,19 @@ class AgentRuntime:
         extra_tools: Sequence[ToolSpec] = (),
         session_header: str = "",
         audit: Callable[[str, Mapping[str, Any], str], None] | None = None,
+        attachment_queue: AttachmentQueue | None = None,
+        trust_nonce: str = "",
+        trust: TrustClass = "T1",
     ) -> AgentResult:
         """Wykonaj turę: wołaj narzędzia w pętli i zwróć odpowiedź + wpisy DO ZAPISU.
+
+        ``trust_nonce`` (ADR 0066) włącza koperty na treści obcej; runtime tylko go PRZENOSI
+        do adaptera — nie generuje go i nie wie, co znaczy. Pusty = etykiety wyłączone.
+
+        ``attachment_queue`` (ADR 0064) to kolejka plików, które narzędzie ``File`` materializuje
+        w trakcie tury. Runtime jej nie wypełnia — tylko OPRÓŻNIA po każdej rundzie wywołań i
+        dokłada zabrane pliki do ``ToolResults``. Drzwi tworzą ją per tura razem z narzędziem
+        (wspólna closure), więc runtime zostaje bezstanowy i nie wie nic o materializacji.
 
         ``audit`` (ADR 0067) to rejestrator per turę: dla KAŻDEGO wywołania narzędzia dostaje
         ``(nazwa, argumenty, status)``. ``None`` → brak audytu (dawne zachowanie). Kontekst tury
@@ -117,10 +137,9 @@ class AgentRuntime:
         # — runtime pozostaje współdzielony i bezstanowy, a izolacja scope jest per tura.
         catalog = (*self._catalog, *extra_tools)
         by_name = {**self._by_name, **{spec.name: spec for spec in extra_tools}}
-        # Bloki systemowe składamy RAZ na turę, nie w pętli: w obrębie jednej tury data i
-        # rozmowa są stałe, a powtórne składanie tylko rozmnażałoby okazje do rozjazdu.
-        system = system_blocks(self._system_prompt, session_header)
-        user_turn = UserText(query, tuple(attachments))
+        # Klasa pochodzenia tury (ADR 0066) nadana przez DRZWI — runtime jej nie wylicza
+        # i nie zna nadawcy; niesie ją dalej, bo to ona ląduje w pamięci i w audycie.
+        user_turn = UserText(query, tuple(attachments), trust)
         transcript: list[TranscriptEntry] = [*history, user_turn]
         new_entries: list[TranscriptEntry] = [user_turn]
         last_text = ""
@@ -128,8 +147,19 @@ class AgentRuntime:
         # ``AgentResult.usage`` = koszt całej tury, a każda ``AssistantTurn`` niesie usage
         # swojego wywołania (Design 2 — do rozliczenia i do bramki rolloveru na ostatniej turze).
         run_usage = TokenUsage()
-        for _ in range(self._max_tool_iterations):
-            response = self._llm.complete(system=system, transcript=transcript, tools=catalog)
+        for iteration in range(self._max_tool_iterations):
+            # Bloki systemowe składamy w pętli, bo zmienia się w nich JEDNO zdanie: budżet
+            # pozostałych rund (ADR 0068 §6). Jedzie ono do DRUGIEGO bloku — nagłówka sesji —
+            # który z definicji leży poza cache'owanym prefiksem ``tools+system``, więc korpus
+            # zostaje bajt w bajt ten sam. Do wyczerpania limitu model dostawał ciszę, a potem
+            # tracił całą turę razem z wiadomością użytkownika (inwariant ADR 0011 bez zmian).
+            system = system_blocks(
+                self._system_prompt,
+                _header_with_budget(session_header, self._max_tool_iterations - iteration),
+            )
+            response = self._llm.complete(
+                system=system, transcript=transcript, tools=catalog, trust_nonce=trust_nonce
+            )
             run_usage = run_usage + response.usage
             last_text = response.text or last_text
 
@@ -159,8 +189,13 @@ class AgentRuntime:
             )
             transcript.append(assistant)
             new_entries.append(assistant)
+            outputs = tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+            # Pliki zmaterializowane przez ``File`` w TEJ rundzie (ADR 0064). Zabieramy je po
+            # dispatchu, więc jadą jako bloki obok wyników narzędzi, w tej samej wiadomości
+            # ``user`` — i model widzi je od razu, w tej samej turze, a nie dopiero gdy odezwie
+            # się człowiek. Bez kolejki: dawne zachowanie co do bajta.
             results = ToolResults(
-                tuple(self._dispatch(c, by_name, audit) for c in response.tool_calls)
+                outputs, attachment_queue.drain() if attachment_queue is not None else ()
             )
             transcript.append(results)
             new_entries.append(results)
@@ -210,15 +245,39 @@ class AgentRuntime:
             return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))
         # Audyt per wywołanie (ADR 0067): rejestrujemy nazwę, ZREDAGOWANE argumenty i status w
         # ``finally``, więc wpis powstaje TAKŻE, gdy narzędzie rzuci defekt (status "error"), a sam
-        # wyjątek propaguje się dalej zgodnie z kontraktem rdzenia. Rejestrator jest best-effort
-        # (łapie własne błędy), więc wołamy go bez osłony — nie może zamaskować wyniku tury.
+        # wyjątek propaguje się dalej zgodnie z kontraktem rdzenia.
         status = "error"
         try:
             result = spec.fn(**arguments)
             status = "error" if isinstance(result, dict) and "error" in result else "ok"
             return ToolOutput(call.id, json.dumps(result, ensure_ascii=False, default=str))
         finally:
-            audit(call.name, arguments, status)
+            # Rejestrator MA być best-effort, ale „best-effort" to własność wołania, nie obietnica
+            # implementacji. Wyjątek stąd padłby w ``finally``, czyli ZASTĄPIŁby wynik narzędzia
+            # (albo jego wyjątek) swoim własnym: udana operacja wracałaby do modelu jako awaria
+            # dziennika, a prawdziwa przyczyna znikała. Osłona jest tu, bo tylko tu widać, co
+            # traci się przy jej braku.
+            try:
+                audit(call.name, arguments, status)
+            except Exception:
+                logger.warning(
+                    "Nie udało się zapisać wpisu audytu dla narzędzia %s — wynik tury zostaje",
+                    call.name,
+                    exc_info=True,
+                )
+
+
+def _header_with_budget(session_header: str, remaining_rounds: int) -> str:
+    """Nagłówek sesji, a przy końcu budżetu — plus zdanie o pozostałych rundach (ADR 0068 §6).
+
+    Poza progiem zwraca nagłówek NIETKNIĘTY (ten sam obiekt), więc typowa tura jedzie dokładnie
+    tak jak dotąd. Sygnał wchodzi do nagłówka, a nie do transkryptu: transkrypt jest zapisywany
+    i odtwarzany, a zdanie o budżecie jest prawdziwe wyłącznie w tej jednej rundzie.
+    """
+    if remaining_rounds > _BUDGET_WARNING_ROUNDS:
+        return session_header
+    notice = budget_notice(remaining_rounds)
+    return f"{session_header}\n\n{notice}" if session_header else notice
 
 
 # ``*args``/``**kwargs`` niosą krotkę/słownik, a adnotacja opisuje POJEDYNCZY element —

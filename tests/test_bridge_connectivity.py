@@ -17,7 +17,7 @@ from workmate.adapters.outbound.sqlite_events import SqliteEventStore
 from workmate.core.application.events import EventService
 from workmate.core.application.github import GithubWriteService
 from workmate.core.application.notifier import EventNotifier, NotifyTargets
-from workmate.core.application.tools import build_github_catalog
+from workmate.core.application.tools import build_activity_catalog
 
 _SELF = "workmate-bot"
 
@@ -122,7 +122,7 @@ def _create_issue_tool(events):
     service = GithubWriteService(
         _FakeGithubWriteClient(), owner="biap", repo="workmate", events=events
     )
-    tool = build_github_catalog(events=events, write_service=service)[0].fn
+    tool = build_activity_catalog(events=events, write_service=service)[0].fn
     return lambda **kw: tool(action="create_issue", **kw)
 
 
@@ -160,7 +160,7 @@ def test_teams_created_issue_echoes_to_eventstore(tmp_path):
     events = EventService(SqliteEventStore(tmp_path / "events.db"))
     writer = _FakeGithubWriteClient()
     service = GithubWriteService(writer, owner="biap", repo="workmate", events=events)
-    tool = build_github_catalog(events=events, write_service=service)[0].fn
+    tool = build_activity_catalog(events=events, write_service=service)[0].fn
 
     result = tool(action="create_issue", title="Prośba z Teams", body="treść")
 
@@ -199,7 +199,7 @@ def test_read_recent_events_sees_both_layers(tmp_path):
     _create_issue_tool(events)(title="Prośba z Teams", body="treść")
 
     # Narzędzie agenta (dostępne na dowolnych drzwiach) widzi OBIE warstwy.
-    tool = build_github_catalog(events=EventService(SqliteEventStore(db)))[0].fn
+    tool = build_activity_catalog(events=EventService(SqliteEventStore(db)))[0].fn
 
     def read(**kw):
         return tool(action="events", **kw)

@@ -40,7 +40,7 @@ def test_count_notes_filters_by_project(sample_notes):
 > | Drzwi | Builder | Styl |
 > |---|---|---|
 > | MCP (sesja Claude Code) | `build_tool_catalog` | 1:1, opis = docstring — **ta instrukcja** |
-> | runtime agenta (Teams) | `build_notes_catalog`, `build_github_catalog`, `build_jira_catalog`, `build_schedule_catalog` | `action=…`, opis w `Field(description=…)` — patrz §3b |
+> | runtime agenta (Teams) | `build_project_catalog`, `build_activity_catalog`, `build_jira_catalog`, `build_schedule_catalog`, `build_shell_catalog` | `action=…`, opis w `Field(description=…)` — patrz §3b |
 >
 > Powierzchnia MCP jest **zamrożona** golden-testem i plikiem
 > `tests/adapters/tool_surface_baseline.json`. Nowe narzędzie MCP wolno dołożyć wyłącznie
@@ -85,6 +85,31 @@ to *bariera*, nie *temat*: narzędzie typowane powstaje tylko tam, gdzie powłok
 wykonawcy **nie może** dosięgnąć — brak sieci (Jira, GitHub, Shifts), brak wolumenu `workmate-state`
 (`events.db`), brak drogi do kontekstu modelu (binaria), skutek poza kontenerem (dostawa, zapis
 notatki). Opakowanie prymitywu kosztuje, a nie dodaje zdolności.
+
+**Dwie rzeczy, które wywrócą nowe narzędzie zanim zacznie działać — sprawdź je PRZED pisaniem opisu.**
+
+1. **Nazwa idzie jedną konwencją: PascalCase, i ma oddawać ZAWARTOŚĆ, nie źródło**
+   ([ADR 0068](../adr/0068-agent-tool-names-and-the-cost-of-a-wrong-one.md) §3). Cała powierzchnia
+   agenta to `Bash`, `Project`, `Activity`, `Jira`, `Schedule`, `File`, `SearchNotes`, `GetNote`,
+   `ListProjects`, `CreateFile`, `ReadFile`, `ListFiles`, `ReplyWithFile`, `SendImage`,
+   `SendDocument` — `snake_case` na tej powierzchni już nie występuje i nie wolno go dokładać.
+   Wielkość liter kodowała modelowi różnicę „skonsolidowane kontra zastane", której nie ma skąd
+   odczytać. Nazwa mówiąca o źródle (`GitHub` nad warstwą, która obsługuje też Teams) kosztuje
+   opis: pierwsze zdanie idzie wtedy na prostowanie własnej nazwy zamiast na treść.
+   Trójka odczytu jest **współdzielona z drzwiami MCP**, gdzie nazwy są zamrożone bajt w bajt —
+   przemianowanie żyje w cienkiej nakładce agenta (`build_agent_notes_read_catalog`), a
+   `tests/core/test_tool_catalog.py` pilnuje, że opisy pozostają identyczne, a różnią się wyłącznie
+   nazwy, wg znanej mapy. **Nie ruszaj wspólnego buildera, żeby zmienić nazwę po stronie agenta.**
+
+2. **Opis wchodzi do zamkniętego budżetu bajtów** (ADR 0068 §13 + amendment).
+   `tests/core/test_tool_descriptions.py` składa katalog z żywych fabryk i mierzy: **2048 B na
+   narzędzie** (twardy fakt o kliencie Claude Code, który dłuższy opis ucina) oraz **8000 B na całą
+   powierzchnię**. Realna powierzchnia to 7366 B z powłoką i 7785 B bez niej — zostaje **~215 B**,
+   czyli zdanie, nie narzędzie. Nowa akcja mieści się **kosztem istniejącej prozy**, nie obok niej;
+   zmierz opis, nie szacuj. Ta sama bramka odrzuca opis, który **nazywa narzędzie nieobecne w danej
+   konfiguracji** (rozpoznaje trzy kształty cytatu: `` `Nazwa` ``, `Nazwa(...)` i gołe słowo dla
+   nazw zastanych) oraz powtórzenie granicy danych — ta stoi raz, w prompcie.
+   Instrukcje PREZENTACJI wyniku nie należą do opisu: idą polem `note` w kopercie wyniku (§5 ADR).
 
 Pięć reguł wzorca — każda pochodzi ze znaleziska w przeglądzie, nie z upodobania:
 

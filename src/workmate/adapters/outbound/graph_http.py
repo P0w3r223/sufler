@@ -34,6 +34,11 @@ import httpx
 
 _MAX_429_RETRIES = 5
 _DEFAULT_RETRY_AFTER_S = 5
+# Sufit POJEDYNCZEGO odczekania — jak w ``jira_http``. Graph potrafi podać w ``Retry-After``
+# wartości rzędu godzin; przy pięciu ponowieniach wariant synchroniczny przespałby to w wątku puli
+# obsługującym turę rozmówcy, więc czekanie jest przycięte, a decyzję „ponowić później" zostawiamy
+# wołającemu.
+_MAX_BACKOFF_S = 60
 _RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
 _MAX_TRANSIENT_RETRIES = 3
 _TRANSIENT_BACKOFF_S = 2
@@ -123,9 +128,16 @@ async def async_request_with_retry(
         return response
 
 
-def _retry_after(response: httpx.Response) -> int:
-    """Sekundy odczekania z nagłówka Retry-After (fallback, gdy brak/niepoprawny)."""
+def _retry_after(response: httpx.Response) -> float:
+    """Sekundy odczekania z ``Retry-After``, przycięte do sufitu (fallback: brak/niepoprawny).
+
+    Przycięcie i podłoga są te same co w ``jira_http._retry_wait`` — jedno miejsce transportu na
+    rodzinę klientów, ta sama polityka czekania.
+    """
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return float(_DEFAULT_RETRY_AFTER_S)
     try:
-        return int(response.headers.get("Retry-After", _DEFAULT_RETRY_AFTER_S))
+        return max(0.0, min(float(raw), _MAX_BACKOFF_S))
     except ValueError:
-        return _DEFAULT_RETRY_AFTER_S
+        return float(_DEFAULT_RETRY_AFTER_S)

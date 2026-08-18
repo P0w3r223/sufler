@@ -9,12 +9,32 @@ różnią się dopiero na pliku spoza białej listy, ponad limitem i na awarii w
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from workmate.core.application.outbox import DeliveryReport, OutboxDelivery, OutboxLimits
-from workmate.core.ports.outbox import Deliverable, OutboxEntry, PermanentDeliveryError
+from workmate.core.ports.outbox import (
+    Deliverable,
+    OutboxEntry,
+    OutboxReadError,
+    PermanentDeliveryError,
+)
 
 _DIR = "teams-graph/abc123"
+
+# Nazwa na drucie niesie skrót TREŚCI (patrz `test_dwa_watki_...`). Sondy o INNYCH własnościach
+# — kolejność, sprzątanie, limity — nie mają powtarzać tej reguły ani zaszytego skrótu, więc
+# zdejmują sufiks i mówią o tym, o czym są.
+_SUFIKS_TRESCI = re.compile(r"-[0-9a-f]{8}(?=\.[^.]+$)")
+
+
+def _bez_skrotu(nazwa: str) -> str:
+    return _SUFIKS_TRESCI.sub("", nazwa)
+
+
+def _bez_skrotow(nazwy: tuple[str, ...]) -> list[str]:
+    return [_bez_skrotu(n) for n in nazwy]
 
 
 class FakeRepo:
@@ -24,6 +44,9 @@ class FakeRepo:
         self.files = dict(files)
         self.discarded: list[str] = []
         self.read_names: list[str] = []
+        # Pozycje, których NIE DA SIĘ przeczytać, choć leżą w skrzynce (odmowa dostępu, błąd
+        # I/O, urośnięcie ponad sufit odczytu). Port oddaje to wyjątkiem, nie ``None``.
+        self.read_errors: dict[str, OutboxReadError] = {}
 
     def list_entries(self, dirpath: str) -> list[OutboxEntry]:
         assert dirpath == _DIR
@@ -31,6 +54,9 @@ class FakeRepo:
 
     def read(self, dirpath: str, name: str) -> Deliverable | None:
         self.read_names.append(name)
+        blad = self.read_errors.get(name)
+        if blad is not None:
+            raise blad
         content = self.files.get(name)
         if content is None:
             return None
@@ -97,10 +123,13 @@ def test_plik_wyslany_znika_ze_skrzynki():
 
     report = _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == ["raport.md"]
-    assert report.delivered == ("raport.md",)
+    assert [_bez_skrotu(n) for n in sent] == ["raport.md"]
     assert repo.discarded == ["raport.md"]
-    assert "W załączniku: raport.md." in report.notice()
+    # Raport ma niesć nazwę WYSŁANĄ, nie źródłową: odbiorcą komunikatu jest człowiek, a pod
+    # wiadomością wisi załącznik ze skrótem treści w nazwie. „W załączniku: raport.md" przy
+    # pliku ``raport-1a2b3c4d.md`` kazałoby mu szukać czegoś, czego tam nie ma.
+    assert report.delivered == tuple(sent)
+    assert f"W załączniku: {sent[0]}." in report.notice()
 
 
 def test_ODRZUCONY_plik_nie_jest_w_ogole_czytany_z_dysku():
@@ -148,9 +177,19 @@ def test_awaria_TRWALA_sprzata_plik_zamiast_zapetlac_ponowienia():
 
 
 def test_awaria_wysylki_nie_wypuszcza_wyjatku():
-    """Dostawa jest dodatkiem do tury, która już się udała — nie może jej zabrać."""
+    """Dostawa jest dodatkiem do tury, która już się udała — nie może jej zabrać.
+
+    Samo „nie rzuciło" nie odróżnia jednak połknięcia awarii od jej PRZEMILCZENIA: sonda
+    sprawdza więc też, że awaria wraca w raporcie i że plik ZOSTAJE w skrzynce. Przejściowy
+    błąd gniazda, po którym plik znika, to cicha utrata wyniku pracy modelu.
+    """
     repo = FakeRepo({"a.md": b"x"})
-    _armed(repo).deliver(_DIR, lambda item: (_ for _ in ()).throw(OSError("gniazdo")))
+
+    raport = _armed(repo).deliver(_DIR, lambda item: (_ for _ in ()).throw(OSError("gniazdo")))
+
+    assert [name for name, _ in raport.failed] == ["a.md"]
+    assert not raport.delivered
+    assert repo.discarded == []  # plik czeka na ponowienie, nie wyparował
 
 
 def test_nazwa_jest_normalizowana_przed_wyslaniem():
@@ -160,8 +199,150 @@ def test_nazwa_jest_normalizowana_przed_wyslaniem():
 
     _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == ["raport-mpwik.md"]
+    assert [_bez_skrotu(n) for n in sent] == ["raport-mpwik.md"]
     assert repo.discarded == ["Raport MPWiK.md"], "sprzątamy po nazwie Z DYSKU, nie po slugu"
+
+
+def test_TA_SAMA_nazwa_z_DWOCH_watkow_nie_daje_jednej_sciezki_na_dysku_kanalu():
+    """Sedno defektu: dostawa wgrywa plik na dysk KANAŁU, wspólny dla wszystkich wątków.
+
+    Sam slug znaczył, że `outputs/raport.md` z wątku B nadpisuje plik wątku A pod tą samą
+    ścieżką — załącznik wiszący pod wiadomością A zaczynał serwować dokument z rozmowy B.
+    Naraz utrata treści wątku A i ujawnienie treści wątku B osobom, które jej nie widziały.
+    """
+    watek_a = FakeRepo({"raport.md": b"ustalenia z MPWiK"})
+    watek_b = FakeRepo({"raport.md": "wynagrodzenia zespołu".encode()})
+    sent: list[str] = []
+
+    _armed(watek_a).deliver(_DIR, lambda item: sent.append(item.name))
+    _armed(watek_b).deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert len(set(sent)) == 2, f"ta sama ścieżka dla różnych treści: {sent}"
+    assert all(_bez_skrotu(n) == "raport.md" for n in sent), sent
+
+
+def test_PONOWIENIE_tej_samej_tresci_trafia_w_TE_SAMA_nazwe():
+    """Idempotencja ponowienia. Gdyby sufiks brał się z czasu albo losowości, każda nieudana
+    próba zostawiałaby na dysku kanału kolejną kopię tego samego dokumentu."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+    sent: list[str] = []
+
+    delivery.snapshot(_DIR)
+    repo.files["raport.md"] = b"ta sama tresc"
+    delivery.deliver(_DIR, lambda item: (_ for _ in ()).throw(RuntimeError("503")))
+
+    delivery.snapshot(_DIR)
+    delivery.deliver(_DIR, lambda item: sent.append(item.name))
+
+    repo2 = FakeRepo({"raport.md": b"ta sama tresc"})
+    _armed(repo2).deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert len(sent) == 2 and sent[0] == sent[1], f"ta sama treść dała dwie nazwy: {sent}"
+
+
+def test_NADMIAR_PONAWIANYCH_ponad_limit_liczby_jest_ODKLADANY_a_nie_kasowany():
+    """Docstring modułu mówi wprost: przy awarii przejściowej pliku nie wolno usuwać.
+
+    Limit liczby plików jest granicą JEDNEJ tury, a nie werdyktem o treści — kasował jednak
+    także pozycje zatrzymane do ponowienia, którym system obiecał „spróbuję ponownie".
+    Ubytek jest realny: treść powstała, odbiorca jej nie zobaczył, a plik zniknął z wolumenu.
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=2)
+
+    delivery.snapshot(_DIR)
+    repo.files.update({"x-stary.md": b"1", "y-stary.md": b"2", "z-stary.md": b"3"})
+    delivery.deliver(_DIR, _fail_always)  # trzy pozycje ponawiane, okno mieści dwie
+
+    delivery.snapshot(_DIR)
+    repo.files["a-nowy.md"] = b"4"  # świeży plik rezerwuje sobie miejsce w oknie
+    report = delivery.deliver(_DIR, _fail_always)
+
+    poza_oknem = set(report.deferred) - set(report.delivered)
+    assert poza_oknem, "trzecia pozycja ponawiana musi zostać odłożona"
+    assert not [n for n, _ in report.rejected], f"ponawiane odrzucone limitem liczby: {report}"
+    assert poza_oknem <= set(repo.files), "odłożona pozycja musi ZOSTAĆ na dysku"
+
+
+def test_pozycja_GLODZONA_przez_rezerwacje_okna_nie_zostaje_na_zawsze():
+    """Odłożenie nie zużywa próby — więc bez sufitu WIEKU zbiór rósłby bez końca.
+
+    ``_okno_tury`` rezerwuje ponowieniom najwyżej ``limit - 1`` miejsc, dopóki jest co świeżego
+    wysłać, więc przy ``|ours| >= limit`` co najmniej jedna ponawiana za każdym razem wypada za
+    okno i nie zużywa NICZEGO: ani próby (bo nikt jej nie wysyłał), ani miejsca w kolejce.
+    Przy utrzymującej się awarii wysyłki napływ przewyższał wtedy drenaż, a rośnie to na
+    wolumenie brudnopisu WSPÓLNYM dla wszystkich rozmów.
+    """
+    from workmate.core.application.outbox import _MAX_CARRIED_TURNS
+
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=2)
+    szczyt = 0
+
+    for tura in range(_MAX_CARRIED_TURNS * 3):
+        delivery.snapshot(_DIR)
+        repo.files[f"swiezy-{tura:02d}.md"] = b"x"  # napływ: jeden nowy plik na turę
+        delivery.deliver(_DIR, _fail_always)
+        szczyt = max(szczyt, len(repo.files))
+
+    # Sufit jest z zapasem: chodzi o OGRANICZONOŚĆ, nie o dokładną liczbę. Przed naprawą zbiór
+    # rósł liniowo z liczbą tur, więc przy trzydziestu turach byłby wielokrotnie większy.
+    assert szczyt <= _MAX_CARRIED_TURNS, (
+        f"skrzynka rośnie z liczbą tur — szczyt {szczyt} przy {_MAX_CARRIED_TURNS * 3} turach"
+    )
+
+
+def test_wiek_nie_wyprzedza_sufitu_prob_w_zwyklej_sciezce():
+    """Pozycja, która NORMALNIE wchodzi do okna, ma dalej odpaść na próbach — z ich powodem.
+
+    Sufit wieku jest ostatnią zaporą dla pozycji głodzonej, nie zamiennikiem sufitu prób:
+    ten drugi mówi dokładniej, co się stało („nie udało się wysłać po 3 próbach").
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    for _ in range(3):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.rejected == (("raport.md", "nie udało się wysłać po 3 próbach"),)
+
+
+def test_pozycja_przeterminowana_NIE_obiecuje_juz_ponowienia():
+    """Komunikat nie może obiecywać ponowienia pliku, którego przed chwilą nie stało."""
+    from workmate.core.application.outbox import _MAX_CARRIED_TURNS
+
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=2, max_seconds=0.0, monotonic=FakeClock(step=1.0))
+
+    for _ in range(_MAX_CARRIED_TURNS):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")  # odkładany budżetem: ani jednej próby
+        report = delivery.deliver(_DIR, _fail_always)
+
+    assert "raport.md" not in repo.files, "pozycja bez ani jednej próby została na zawsze"
+    assert "raport.md" not in report.deferred
+    assert "spróbuję ponownie" not in report.notice()
+    assert [powod for name, powod in report.rejected if name == "raport.md"] == [
+        f"nie udało się dostarczyć przez {_MAX_CARRIED_TURNS} tur"
+    ]
+
+
+def test_swiezy_nadmiar_ponad_limit_liczby_dalej_jest_odrzucany():
+    """Druga strona tej samej granicy — świeże pliki ponad limit dalej znikają z powodem.
+
+    Bez tego skrzynka rosłaby bez końca: model potrafi wygenerować dwadzieścia plików w turze,
+    a materiał źródłowy zostaje piętro wyżej.
+    """
+    repo = FakeRepo({f"{i}.md": b"x" for i in range(5)})
+
+    report = _armed(repo, max_files=2).deliver(_DIR, lambda item: None)
+
+    assert report.deferred == ()
+    assert len(report.rejected) == 3
+    assert repo.files == {}
 
 
 def test_rozszerzenie_spoza_bialej_listy_jest_odrzucane_I_sprzatane():
@@ -216,7 +397,9 @@ def test_nadmiar_ponad_limit_liczby_jest_odrzucany_a_reszta_idzie():
 
     report = _armed(repo, max_files=2).deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == ["0.md", "1.md"], "wysyłamy deterministycznie — po nazwie, nie po kolejności FS"
+    assert [_bez_skrotu(n) for n in sent] == ["0.md", "1.md"], (
+        "wysyłamy deterministycznie — po nazwie, nie po kolejności FS"
+    )
     assert len(report.rejected) == 3
     assert set(repo.discarded) == {"0.md", "1.md", "2.md", "3.md", "4.md"}
 
@@ -227,7 +410,7 @@ def test_jedna_zla_pozycja_nie_blokuje_pozostalych():
 
     report = _armed(repo).deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == ["a.md", "c.txt"]
+    assert [_bez_skrotu(n) for n in sent] == ["a.md", "c.txt"]
     assert [name for name, _ in report.rejected] == ["b.sh"]
 
 
@@ -311,7 +494,7 @@ def test_plik_powstaly_W_TRAKCIE_tury_idzie_normalnie():
 
     delivery.deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == ["raport.md"]
+    assert [_bez_skrotu(n) for n in sent] == ["raport.md"]
 
 
 def test_ponowienie_wlasnej_nieudanej_wysylki_przechodzi_przez_migawke():
@@ -329,7 +512,7 @@ def test_ponowienie_wlasnej_nieudanej_wysylki_przechodzi_przez_migawke():
     delivery.snapshot(_DIR)  # tura druga: plik jest w migawce, ale to NASZ plik
     delivery.deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent == ["raport.md"]
+    assert [_bez_skrotu(n) for n in sent] == ["raport.md"]
 
 
 def test_BEZ_migawki_nie_wysylamy_nic():
@@ -363,7 +546,7 @@ def test_plik_niewysylalny_NIE_blokuje_reszty_kolejki():
     repo.files["m-nowy.md"] = b"x"  # świeży wynik tury drugiej
     delivery.deliver(_DIR, lambda item: sent.append(item.name))
 
-    assert sent[0] == "m-nowy.md", (
+    assert _bez_skrotu(sent[0]) == "m-nowy.md", (
         "pozycja z próbami ma zejść na koniec okna mimo wcześniejszej nazwy alfabetycznie — "
         f"kolejność wysyłki: {sent}"
     )
@@ -421,7 +604,9 @@ def test_ponowione_pozycje_NIE_wypadaja_przez_limit_liczby_plikow():
 
     powody = {name: reason for name, reason in report.rejected}
     assert "z-ponawiany.md" not in powody, f"ponawiana pozycja odrzucona: {powody}"
-    assert "z-ponawiany.md" in report.delivered, f"ponawiana pozycja niewysłana: {report}"
+    assert "z-ponawiany.md" in _bez_skrotow(report.delivered), (
+        f"ponawiana pozycja niewysłana: {report}"
+    )
 
 
 def test_swieza_tresc_dociera_mimo_zaleglych_ponowien():
@@ -442,7 +627,7 @@ def test_swieza_tresc_dociera_mimo_zaleglych_ponowien():
     repo.files["c-nowy.md"] = b"x"
     report = delivery.deliver(_DIR, lambda item: None)
 
-    assert "c-nowy.md" in report.delivered, f"świeży plik nie dojechał: {report}"
+    assert "c-nowy.md" in _bez_skrotow(report.delivered), f"świeży plik nie dojechał: {report}"
 
 
 def test_bez_swiezych_plikow_ponowienia_biora_cale_okno():
@@ -457,7 +642,7 @@ def test_bez_swiezych_plikow_ponowienia_biora_cale_okno():
     delivery.snapshot(_DIR)
     report = delivery.deliver(_DIR, lambda item: None)
 
-    assert sorted(report.delivered) == ["a-stary.md", "b-stary.md"], report
+    assert sorted(_bez_skrotow(report.delivered)) == ["a-stary.md", "b-stary.md"], report
 
 
 def test_licznik_zeruje_sie_po_udanej_wysylce():
@@ -478,3 +663,145 @@ def test_licznik_zeruje_sie_po_udanej_wysylce():
         report = delivery.deliver(_DIR, _fail_always)
 
     assert report.failed, "licznik nie wyzerował się — plik zginął przedwcześnie"
+
+
+# --- pozycja, której NIE DA SIĘ przeczytać (odmowa dostępu, sufit odczytu) --------
+
+
+def test_pozycja_NIECZYTELNA_zostaje_w_raporcie_i_doczekuje_nastepnej_tury():
+    """„Nie ma czego czytać" wolno przemilczeć; „nie da się przeczytać" — nie.
+
+    Adapter oddawał KAŻDĄ awarię odczytu jako ``None``, a rdzeń ma na ``None`` jedną gałąź:
+    „plik zniknął — nie ma czego wysyłać ani sprzątać". Pozycja, która nie zniknęła, nie
+    trafiała więc ani do ``failed``, ani do ``deferred``, ani do ``rejected``: wypadała ze
+    zbioru zatrzymanych, a NASTĘPNA tura widziała ją jako podłożoną z innej rozmowy i kasowała.
+    Praca modelu znikała, rozmówca dostawał ciszę. Sonda pilnuje obu tur.
+    """
+    repo = FakeRepo({"raport.md": b"tresc"})
+    repo.read_errors["raport.md"] = OutboxReadError("nie udało się odczytać pliku: EACCES")
+    delivery = _armed(repo)
+
+    report = delivery.deliver(_DIR, lambda item: None)
+
+    assert [n for n, _ in report.failed] == ["raport.md"]
+    assert repo.discarded == [], "nieczytelny plik ma zostać na wolumenie"
+    assert "spróbuję ponownie" in report.notice()
+
+    repo.read_errors.clear()  # uprawnienia wróciły (albo skończył się błąd I/O)
+    sent: list[str] = []
+    delivery.snapshot(_DIR)
+    delivery.deliver(_DIR, lambda item: sent.append(item.name))
+
+    assert [_bez_skrotu(n) for n in sent] == ["raport.md"], "plik skasowany jako obcy"
+
+
+def test_pozycja_ponad_sufit_odczytu_dostaje_WLASNY_wpis_w_raporcie():
+    """Sufit odczytu jest werdyktem o pliku, więc ma być zdaniem do rozmówcy, nie linią w logu.
+
+    Ostrzeżenie w dzienniku procesu widzi administrator, a nie ten, kto na plik czekał —
+    i dopiero raport odróżnia „za duży, nie wyślę" od cichego zniknięcia.
+    """
+    repo = FakeRepo({"raport.md": b"x"})
+    repo.read_errors["raport.md"] = OutboxReadError(
+        "przekracza sufit odczytu 24 MB", permanent=True
+    )
+
+    report = _armed(repo).deliver(_DIR, lambda item: None)
+
+    assert report.rejected == (("raport.md", "przekracza sufit odczytu 24 MB"),)
+    assert report.failed == ()
+    assert repo.discarded == ["raport.md"], "trwały werdykt sprząta, inaczej zatruwa każdą turę"
+    assert "Nie wysłałem pliku raport.md — przekracza sufit odczytu 24 MB." in report.notice()
+
+
+# --- liczniki rozmowy a skrzynka opróżniona POZA dostawą -------------------------
+
+
+def test_WIEK_pozycji_nie_przezywa_wyczyszczenia_skrzynki():
+    """Wcześniejszy powrót przy pustej skrzynce czyścił ``_ours``, ale nie wiek pozycji.
+
+    Zatrzymane pliki znikają z wolumenu także POZA dostawą (sprzątanie TTL, ``rm`` z powłoki
+    modelu). Wiek zostawał wtedy na zawsze, a klucz to NAZWA OD MODELU — więc przeterminowany
+    ``carried=9`` zabijał świeży plik przy pierwszym odłożeniu, komunikatem o dziesięciu turach
+    dla pliku, który istnieje jedną.
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_seconds=0.0, monotonic=FakeClock(step=1.0))
+
+    for _ in range(9):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        delivery.deliver(_DIR, _fail_always)
+
+    repo.files.clear()  # plik znika z wolumenu poza dostawą
+    delivery.snapshot(_DIR)
+    assert delivery.deliver(_DIR, _fail_always).is_empty()
+
+    delivery.snapshot(_DIR)
+    repo.files["raport.md"] = b"swieza tresc"  # ta sama nazwa, inna zawartość
+    report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.deferred == ("raport.md",)
+    assert not report.rejected, f"świeży plik odziedziczył wiek po poprzedniku: {report}"
+    assert "raport.md" in repo.files
+
+
+def test_LICZNIK_PROB_nie_przezywa_wyczyszczenia_skrzynki():
+    """Ta sama dziura, drugi licznik: próby wysyłki też stały za wcześniejszym powrotem.
+
+    ``test_licznik_zeruje_sie_po_udanej_wysylce`` pilnuje zerowania po SUKCESIE — a plik
+    równie dobrze znika z wolumenu bez żadnej wysyłki i wtedy nikt licznika nie zdejmował.
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    for _ in range(2):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        delivery.deliver(_DIR, _fail_always)
+
+    repo.files.clear()
+    delivery.snapshot(_DIR)
+    assert delivery.deliver(_DIR, _fail_always).is_empty()
+
+    delivery.snapshot(_DIR)
+    repo.files["raport.md"] = b"swieza tresc"
+    report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.failed, f"świeży plik odziedziczył próby po poprzedniku: {report}"
+    assert not report.rejected
+    assert "raport.md" in repo.files
+
+
+def test_sufit_prob_nazywa_KROK_ktory_zawiodl_a_nie_zawsze_wysylke():
+    """Pozycja nieprzeczytana i pozycja niewysłana schodzą tą samą gałęzią — słusznie.
+
+    Reguła sprzątania jest dla nich wspólna, myli tylko zdanie: „nie udało się wysłać po
+    3 próbach" o pliku, którego ani razu nie dało się OTWORZYĆ, każe szukać awarii w kanale,
+    a nie na wolumenie. To jedyna informacja, jaką o tej pozycji dostaje człowiek — plik
+    właśnie został skasowany.
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    for _ in range(3):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        repo.read_errors["raport.md"] = OutboxReadError("błąd odczytu: Permission denied")
+        report = delivery.deliver(_DIR, lambda item: None)
+
+    assert report.rejected == (("raport.md", "nie udało się odczytać po 3 próbach"),)
+    assert "Nie wysłałem pliku raport.md — nie udało się odczytać po 3 próbach." in report.notice()
+
+
+def test_sufit_prob_dla_awarii_WYSYLKI_mowi_dalej_o_wysylce():
+    """Druga strona tej samej sondy — rozróżnienie kroku nie może przepisać zdania o wysyłce."""
+    repo = FakeRepo({})
+    delivery = _delivery(repo)
+
+    for _ in range(3):
+        delivery.snapshot(_DIR)
+        repo.files.setdefault("raport.md", b"x")
+        report = delivery.deliver(_DIR, _fail_always)
+
+    assert report.rejected == (("raport.md", "nie udało się wysłać po 3 próbach"),)

@@ -8,12 +8,11 @@ i bez SDK, atrapując tylko surowe słowniki payloadu Graph.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import (
     AttachmentRef,
     ChannelMessage,
@@ -29,7 +28,7 @@ from workmate.adapters.inbound.teams_graph.selection import (
 _ME = "me-bot-user"
 _ACTIVE_IDLE = timedelta(hours=24)
 # Chwila „teraz" pollingu — dobrana tak, by świeże znaczniki poniżej nie były eksmitowane.
-_NOW = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _raw_message(
@@ -66,11 +65,11 @@ def _raw_message(
 
 
 def test_parse_iso_handles_zulu_suffix():
-    assert parse_iso("2024-01-01T10:00:00Z") == datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    assert parse_iso("2024-01-01T10:00:00Z") == datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC)
 
 
 def test_parse_iso_empty_and_invalid_map_to_epoch():
-    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    epoch = datetime.min.replace(tzinfo=UTC)
     assert parse_iso("") == epoch
     assert parse_iso("not-a-date") == epoch  # nie rzuca — degraduje do epoki
 
@@ -653,9 +652,3 @@ def test_plan_channel_does_not_mutate_input_channel_state():
     )
 
     assert channel_state["threads"]["root-1"]["watermark"] == original_watermark
-
-
-def test_module_exposes_selection_helpers():
-    # Sanity: pętla pollera używa tych symboli po nazwie modułu.
-    assert hasattr(selection, "plan_channel")
-    assert hasattr(selection, "roots_to_poll")

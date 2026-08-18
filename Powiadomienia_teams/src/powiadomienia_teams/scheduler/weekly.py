@@ -1,7 +1,12 @@
-"""Wyznaczanie kolejnego terminu uruchomienia (domyślnie niedziela 16:00 Europe/Warsaw).
+"""Wyznaczanie kolejnego terminu uruchomienia (domyślnie piątek 16:00 Europe/Warsaw).
 
 `next_run` jest czysta (wstrzykiwany `now`) i odporna na zmianę czasu (DST): wall-clock
 budowany jest przez `datetime.combine(..., tzinfo=tz)`, więc 16:00 zawsze oznacza lokalne 16:00.
+
+Domyślne `weekday`/`hour` są tu WYŁĄCZNIE wygodą dla testów kalendarzowych — jedynym źródłem
+prawdy jest `config.Settings` (`run_weekday`/`run_hour`/`run_minute`), które orkiestracja podaje
+jawnie. Trzymamy je zgodne z tamtymi, bo rozjazd był mylący: moduł deklarował niedzielę, której
+walidacja krzyżowa `Settings.validate` nie przepuszcza przy domyślnym oknie wysyłki (pn–pt).
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ def next_run(
     now: datetime,
     *,
     tz: ZoneInfo,
-    weekday: int = 6,
+    weekday: int = 4,
     hour: int = 16,
     minute: int = 0,
 ) -> datetime:
@@ -57,7 +62,7 @@ def previous_run(
     now: datetime,
     *,
     tz: ZoneInfo,
-    weekday: int = 6,
+    weekday: int = 4,
     hour: int = 16,
     minute: int = 0,
 ) -> datetime:

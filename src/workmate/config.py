@@ -18,6 +18,28 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 # (Fazy 1 tyg. 1-3); "streamable-http" to wdrożenie sieciowe (tyg. 4, Bramka 3).
 _ALLOWED_TRANSPORTS = ("stdio", "streamable-http")
 
+# Dozwolone poziomy logowania: PEŁNY zestaw nazw znanych ``logging`` — z aliasami (``WARN``,
+# ``FATAL``) i ``NOTSET`` włącznie. Kontrola ma zamienić niejasny komunikat biblioteki
+# („Unknown level: 'VERBOSE'") na taki, który nazywa zmienną — a NIE zawęzić zbioru wejść, które
+# działały. Instalacja z ``WORKMATE_LOG_LEVEL=WARN`` jest legalna i musi wstać.
+_ALLOWED_LOG_LEVELS = (
+    "CRITICAL",
+    "FATAL",
+    "ERROR",
+    "WARNING",
+    "WARN",
+    "INFO",
+    "DEBUG",
+    "NOTSET",
+)
+
+# ``uvicorn`` (gałąź HTTP) zna WŁASNY, węższy słownik nazw: aliasów ``logging`` w nim nie ma,
+# a nieznana nazwa to ``KeyError`` w środku konfiguracji serwera. Tłumaczymy więc na najbliższy
+# poziom uvicorna, zamiast odrzucać wejście, które ``logging`` przyjmuje bez zastrzeżeń.
+# ``NOTSET`` (0) znaczy „nie filtruj" — po stronie uvicorna odpowiada mu ``trace`` (5),
+# najniższy poziom, jaki ten serwer zna.
+_UVICORN_LOG_LEVEL_ALIASES = {"WARN": "WARNING", "FATAL": "CRITICAL", "NOTSET": "TRACE"}
+
 # Domyślny magazyn tokenów drzwi HTTP (ADR 0007): POZA repo i poza data/, żeby sekrety były poza
 # zasięgiem narzędzi. Domyślna ZALEŻNA OD PLATFORMY (L1): na Windows katalog systemowy ProgramData,
 # na POSIX wolumen stanu floty (/var/lib/workmate — spójne z docker-compose). Bez tego windowsowa
@@ -186,6 +208,10 @@ class Settings:
     # (brak WORKMATE_AUDIT_DB) = audyt wyłączony (drzwi nie zapisują nic). Osobny plik, retencja
     # dłuższa niż rozmów (Faza 7); rejestruje akcje/ścieżki i pseudonim, NIGDY treść.
     audit_db: Path | None
+    # Migawki notatek przed mutacją (ADR 0065). POZA ``notes_dir`` rozmyślnie: agent czyta
+    # katalog notatek zachłannie, więc kopie w środku wracałyby jako wyniki wyszukiwania,
+    # a wykonawca montuje bazę wiedzy ``ro`` i stanu nie widzi wcale.
+    note_snapshots_dir: Path
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -206,6 +232,9 @@ class Settings:
         return cls(
             data_dir=data_dir,
             notes_dir=notes_dir,
+            note_snapshots_dir=_path_from_env(
+                "WORKMATE_NOTE_SNAPSHOTS_DIR", data_dir / "snapshots" / "notes"
+            ),
             projects_registry=projects_registry,
             transport=transport,
             log_level=os.environ.get("WORKMATE_LOG_LEVEL", "INFO"),
@@ -220,6 +249,67 @@ class Settings:
             metrics_db=_optional_path_from_env("WORKMATE_METRICS_DB"),
             audit_db=_optional_path_from_env("WORKMATE_AUDIT_DB"),
         )
+
+    def validate(self) -> None:
+        """Twardy błąd startu przy wartości, której żadne drzwi nie obsłużą (wołaj w ``main``).
+
+        ``Settings`` była JEDYNĄ klasą ustawień bez ``validate`` — a przecież niesie te same
+        klasy pomyłek co sąsiedzi. ``WORKMATE_LOG_LEVEL=verbose`` wywracał start dopiero
+        w ``logging.basicConfig``/``uvicorn``, komunikatem biblioteki („Unknown level: 'VERBOSE'"),
+        który nie mówi, KTÓRĄ zmienną poprawić. ``transport`` sprawdza już ``from_env`` (rzuca
+        przy budowie); tu domykamy resztę, żeby ``replace(settings, ...)`` w wiringu też przeszedł
+        przez kontrolę.
+        """
+        if self.transport not in _ALLOWED_TRANSPORTS:
+            raise ValueError(
+                f"Nieobsługiwany WORKMATE_TRANSPORT: {self.transport!r}. "
+                f"Dozwolone: {', '.join(_ALLOWED_TRANSPORTS)}"
+            )
+        if self.log_level.strip().upper() not in _ALLOWED_LOG_LEVELS:
+            raise ValueError(
+                f"Nieobsługiwany WORKMATE_LOG_LEVEL: {self.log_level!r}. "
+                f"Dozwolone: {', '.join(_ALLOWED_LOG_LEVELS)}"
+            )
+        if not 1 <= self.bind_port <= 65535:
+            raise ValueError(
+                f"WORKMATE_BIND_PORT musi być w zakresie 1..65535, jest: {self.bind_port}."
+            )
+
+    @property
+    def uvicorn_log_level(self) -> str:
+        """Poziom logowania w nazewnictwie ``uvicorn`` (małymi), z aliasami przetłumaczonymi.
+
+        ``logging`` i ``uvicorn`` mają RÓŻNE słowniki nazw: ``WARN``/``FATAL``/``NOTSET`` są
+        legalne dla pierwszego i nieznane drugiemu (``KeyError`` w środku ``uvicorn.Config``).
+        Konfiguracja jest jedna, więc tłumaczenie stoi tutaj — drzwi HTTP biorą gotową wartość
+        zamiast powtarzać mapowanie.
+        """
+        poziom = self.log_level.strip().upper()
+        return _UVICORN_LOG_LEVEL_ALIASES.get(poziom, poziom).lower()
+
+    def persistent_paths(self) -> tuple[tuple[Path, str, bool], ...]:
+        """Trwałe ścieżki (ścieżka, zmienna, ``is_directory``) do sprawdzenia ``require_writable``.
+
+        Jedno miejsce, w którym drzwi pytają „co tu w ogóle jest pisane" — bez tego lista żyła
+        rozsypana po ``adapters/inbound/*/app.py`` i trzy ścieżki z niej wypadły: migawki notatek
+        (``note_snapshots_dir``, ADR 0065) oraz obie bazy opcjonalne (metryki ADR 0049, audyt
+        ADR 0067). Wszystkie trzy domyślnie lądują pod montażem read-only floty, a rejestrator
+        audytu łyka błędy per wywołanie — operator miał więc „dziennik" z zerem wierszy zamiast
+        twardego błędu startu.
+
+        Ścieżki opcjonalne (``None`` = zdolność wyłączona) nie wchodzą na listę: nie ma czego
+        sprawdzać, dopóki operator nie wskaże pliku. Wywołanie ``require_writable`` zostaje po
+        stronie DRZWI (efekt uboczny ``mkdir`` nie może wejść do ``validate`` — patrz docstring
+        ``require_writable``).
+        """
+        paths: list[tuple[Path, str, bool]] = [
+            (self.note_snapshots_dir, "WORKMATE_NOTE_SNAPSHOTS_DIR", True),
+        ]
+        if self.metrics_db is not None:
+            paths.append((self.metrics_db, "WORKMATE_METRICS_DB", False))
+        if self.audit_db is not None:
+            paths.append((self.audit_db, "WORKMATE_AUDIT_DB", False))
+        return tuple(paths)
 
 
 @dataclass(frozen=True)
@@ -239,6 +329,16 @@ class TeamsSettings:
     bind_host: str = "localhost"
     bind_port: int = 3978
     anonymous_auth: bool = False
+    # Mapa tożsamości (AAD id → członek pionu) — TEN SAM format co
+    # ``WORKMATE_TEAMS_GRAPH_IDENTITIES`` i zwykle ten sam plik: obie pary drzwi Teams rozpoznają
+    # tego samego człowieka po tym samym ``aad_user_id``, bo Bot Framework niesie go w
+    # ``activity.from.aadObjectId``, a Graph w ``from.user.id``. Osobna zmienna, nie współdzielona
+    # z tamtymi drzwiami, bo procesy bywają wdrażane osobno (flota wozi dziś tylko `teams-graph`).
+    identities: Path = Path()
+    # Bramka członkostwa ODCZYTU bazy wiedzy (ADR 0062), bliźniacza do
+    # ``WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ``. Domyślnie OFF (bezpieczny rollout: włączenie
+    # przy niekompletnej mapie odcina realnych członków pionu), włączona WYMAGA mapy tożsamości.
+    enable_note_read_authz: bool = False
 
     @classmethod
     def from_env(cls) -> TeamsSettings:
@@ -249,6 +349,10 @@ class TeamsSettings:
             bind_host=os.environ.get("WORKMATE_TEAMS_BIND_HOST", "localhost"),
             bind_port=_int_from_env("WORKMATE_TEAMS_PORT", 3978),
             anonymous_auth=_bool_from_env("WORKMATE_TEAMS_ANONYMOUS", default=False),
+            identities=_path_from_env("WORKMATE_TEAMS_IDENTITIES", Path()),
+            enable_note_read_authz=_bool_from_env(
+                "WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ", default=False
+            ),
         )
 
     def validate(self) -> None:
@@ -258,6 +362,15 @@ class TeamsSettings:
         lokalnego testu w Emulatorze użyj ``WORKMATE_TEAMS_ANONYMOUS=true`` — ale
         tylko na loopbacku, żeby nie wystawić nieuwierzytelnionego bota na sieć.
         """
+        if self.enable_note_read_authz and not self.identities.is_file():
+            # Bramka odczytu (ADR 0062) bez mapy tożsamości nie ma po czym rozpoznać nadawcy —
+            # fail-fast, jak na drzwiach delegowanych. Sprawdzane PRZED gałęzią anonimową, bo
+            # Emulator też nadaje ``aadObjectId`` i bramka ma tam działać tak samo.
+            raise ValueError(
+                "WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ=true wymaga WORKMATE_TEAMS_IDENTITIES "
+                "= ścieżka do mapy tożsamości (członkostwo autoryzuje odczyt, ADR 0062); "
+                f"brak pliku: {self.identities}."
+            )
         loopback = ("localhost", "127.0.0.1", "::1")
         if self.anonymous_auth:
             if self.bind_host not in loopback:
@@ -716,6 +829,27 @@ class TeamsGraphSettings:
     # z warstwy spajającej), więc NIE bramka zapisu — flaga staged rolloutu, domyślnie OFF. Bez
     # wymogu tożsamości/RW-montażu. Dostawa PDF ``| pdf`` reużywa kanał file-reply (jak brief).
     enable_change_digest: bool = False
+    # Narzędzie ``File(read)`` + odkładanie załączników użytkownika na dysk katalogu rozmowy
+    # (ADR 0064). Domyślnie OFF jak KAŻDA bramka w tym projekcie (twarda reguła CLAUDE.md,
+    # egzekwowana przez ``test_gates_closed_by_default``) — i zasłużenie, bo ta zdolność zapisuje
+    # CUDZY plik na dysk floty i wstrzykuje jego treść do kontekstu modelu. Operator włącza ją
+    # świadomie: jedna linia `.env` + recreate, tak samo jak powłokę. Wyłącznik ma też drugie
+    # zastosowanie — ADR zapowiada ponowny pomiar użycia i USUNIĘCIE narzędzia, jeśli okaże się
+    # martwe; bez flagi „wyłączenie" znaczyłoby wydanie nowego obrazu.
+    enable_file_tool: bool = False
+    # MUTACJA bazy wiedzy przez `File(edit)` (ADR 0065). Odwraca dotychczasową postawę
+    # „create-only": do 0065 nie dało się zepsuć notatki, bo nie było czym. Domyślnie OFF.
+    enable_note_mutation: bool = False
+    # KASOWANIE notatek — osobno od edycji, bo ADR 0065 wiąże je z DZIAŁAJĄCĄ nocną kopią
+    # wolumenu: migawka cofa jedną pomyłkę, przed złym dniem ratuje dopiero kopia poza
+    # hostem. Włączenie bez sprawdzenia kopii jest tym, przed czym ta flaga ma chronić.
+    enable_note_delete: bool = False
+    # Strukturalne koperty T3 na treści OBCEJ (ADR 0066): plik, wynik narzędzia, tura
+    # nadawcy spoza mapy. Domyślnie OFF jak każda bramka — włączona zmienia PROMPT każdej
+    # tury (nagłówek tłumaczy znacznik) i kształt treści wysyłanej do modelu, więc operator
+    # ma to włączyć świadomie i móc porównać zachowanie przed/po. Rozszczepienie nadawcy na
+    # T1/T2 jedzie OSOBNO, za bramką odczytu notatek — zależy od kompletności identities.yaml.
+    enable_trust_labels: bool = False
     # Polityka „czy w ogóle odpowiadać" (SZKIELET pod wielokanałowe wdrożenie WorkMate).
     # ``all`` (domyślnie) = zachowanie sprzed tej zmiany: odpowiedź na każdą wiadomość od
     # innego człowieka w kanałach z ``watch``. ``mention`` odpowiada tylko po @wzmiance bota
@@ -786,6 +920,16 @@ class TeamsGraphSettings:
             ),
             enable_note_read_authz=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", default=False
+            ),
+            enable_file_tool=_bool_from_env("WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL", default=False),
+            enable_note_mutation=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION", default=False
+            ),
+            enable_note_delete=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_DELETE", default=False
+            ),
+            enable_trust_labels=_bool_from_env(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS", default=False
             ),
             enable_project_brief=_bool_from_env(
                 "WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", default=False
@@ -974,6 +1118,31 @@ class TeamsGraphSettings:
                 "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
                 f"autoryzuje odczyt, ADR 0062); brak pliku: {self.meeting_note_identities}."
             )
+        if self.enable_note_mutation and not self.meeting_note_identities.is_file():
+            # MUTACJA bazy wiedzy (ADR 0065) autoryzowana tak samo jak zapis (B2 / ADR 0042):
+            # bez mapy tożsamości nie ma komu przypisać zmiany ani kogo zapytać o potwierdzenie.
+            # Do tej pory jedynym sygnałem był ``logger.error`` w wiringu, a narzędzie po prostu
+            # nie powstawało — bramka wyglądała na włączoną i nic nie robiła.
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION=true wymaga "
+                "WORKMATE_TEAMS_GRAPH_IDENTITIES = ścieżka do mapy tożsamości (członkostwo "
+                f"autoryzuje mutację, ADR 0042/0065); brak pliku: {self.meeting_note_identities}."
+            )
+        if self.enable_note_delete and not self.enable_note_mutation:
+            # Kasowanie ma WŁASNĄ bramkę, ale jedzie tą samą ścieżką (``NoteMutationService``,
+            # parametr ``allow_delete``) — bez mutacji jest flagą bez efektu. Fail-fast zamiast
+            # cichej, sprzecznej konfiguracji (jak ``ENABLE_CHANNEL_THREADING`` bez kanału).
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_DELETE=true wymaga też "
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION=true (kasowanie idzie tą samą ścieżką)."
+            )
+        if self.enable_note_mutation and not self.enable_file_tool:
+            # ``File(edit)`` to AKCJA narzędzia plikowego (ADR 0064/0065) — bez ``ENABLE_FILE_TOOL``
+            # narzędzie nie wchodzi na listę modelu wcale, więc mutacja jest martwa. Fail-fast.
+            raise ValueError(
+                "WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION=true wymaga też "
+                "WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL=true (mutacja to akcja narzędzia File)."
+            )
         if self.reply_policy not in ("all", "mention"):
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_REPLY_POLICY musi być 'all' albo 'mention', jest: "
@@ -1138,6 +1307,13 @@ class ShellSettings:
 # Domyślne punkty montażu i nazwy wolumenów menedżera — spójne z compose (infra 0012). Menedżer
 # montuje wolumen brudnopisu i gniazd pod TYMI SAMYMI ścieżkami co aplikacja, żeby ścieżka gniazda
 # oddawana w ``ensure`` była ważna po obu stronach bez tłumaczenia układów.
+# Te trzy (i ``_DEFAULT_MANAGER_SOCKET`` wyżej) zostają literałami POSIX BEZ rozgałęzienia po
+# ``os.name`` — inaczej niż ``_DEFAULT_TOKENS_FILE`` i ``_DEFAULT_SCHEDULE_CACHE``. Różnica jest
+# rzeczowa, nie z niedopatrzenia: to gniazda uniksowe i punkty montażu kontenera-wykonawcy
+# (ADR 0057 / infra 0012), a ta zdolność na Windows nie działa w ogóle — nie ma ani gniazd
+# AF_UNIX w tym układzie, ani `docker.sock`. Windowsowy wariant byłby fikcją wskazującą na nic.
+# Pilnuje tego jawny rejestr w ``tests/test_config.py`` (ścieżki zwolnione z kontroli
+# „absolutna na TEJ platformie" muszą być wymienione z nazwy).
 _DEFAULT_SCRATCHPAD_ROOT = Path("/home/scratchpad")
 _DEFAULT_EXEC_SOCK_ROOT = Path("/var/run/workmate-exec")
 _DEFAULT_DOCKER_SOCKET = Path("/var/run/docker.sock")
@@ -1644,7 +1820,16 @@ class TeamsPushSettings:
 # Zespół „BIAP – Pion Inteligentnych Technologii" — jedyny w tenancie z działającym grafikiem.
 _DEFAULT_SCHEDULE_TEAM_ID = "c0ffee00-0000-4000-8000-000000000007"
 # Cudzy cache MSAL bota powiadomienia-teams — montowany RO, czytany po cichu, NIGDY pisany.
-_DEFAULT_SCHEDULE_CACHE = Path("/var/lib/powiadomienia-teams/teams_token_cache.bin")
+# Domyślna ZALEŻNA OD PLATFORMY, dokładnie jak ``_DEFAULT_TOKENS_FILE`` i z tego samego powodu:
+# literał "/var/lib/…" na Windows nie jest ścieżką absolutną (brak dysku), więc stawał się
+# ścieżką WZGLĘDNĄ wobec katalogu roboczego procesu. Ten konkretny plik jest sondowany na KAŻDEJ
+# platformie (``ScheduleSettings.is_enabled()`` w trybie "auto" woła ``is_file()``), więc ścieżka
+# musi mieć sens także lokalnie. Nadpisywalna przez WORKMATE_SCHEDULE_TOKEN_CACHE.
+_DEFAULT_SCHEDULE_CACHE = (
+    Path("C:/ProgramData/powiadomienia-teams/teams_token_cache.bin")
+    if os.name == "nt"
+    else Path("/var/lib/powiadomienia-teams/teams_token_cache.bin")
+)
 _DEFAULT_SCHEDULE_TZ = "Europe/Warsaw"
 # Zakresy delegowane grafiku: odczyt grafiku + lista członków zespołu (translacja userId→nazwisko).
 # Ta sama rejestracja aplikacji co push/powiadomienia-teams (TeamMember.Read.All skonsentowany).

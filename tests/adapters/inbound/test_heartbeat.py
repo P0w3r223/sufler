@@ -40,6 +40,17 @@ def test_is_fresh_false_when_missing(tmp_path: Path):
     assert is_fresh(tmp_path / "nie-ma.heartbeat", 60) is False
 
 
+def test_is_fresh_false_when_the_file_cannot_be_read(tmp_path: Path, monkeypatch):
+    """Healthcheck ma wydać WERDYKT, nie traceback — nieczytelny puls to brak dowodu życia."""
+
+    def _odmowa(_self: Path) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "stat", _odmowa)
+
+    assert is_fresh(tmp_path / "d.heartbeat", 60) is False
+
+
 def test_write_is_atomic_no_tmp_left(tmp_path: Path):
     """Po zapisie nie zostaje plik tymczasowy — healthcheck nie trafi na obcięty plik."""
     hb = tmp_path / "d.heartbeat"

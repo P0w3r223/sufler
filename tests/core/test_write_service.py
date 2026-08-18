@@ -165,6 +165,83 @@ def test_require_project_ok_for_known():
     service.require_project("scada-integration")  # nie rzuca
 
 
+# --- Strażnik znaków sterujących na WSZYSTKICH trzech drogach tworzenia (reguła twarda #4) ---
+# Sam strażnik ma testy jednostkowe (``tests/core/domain/test_sanitize.py``); tu chodzi o coś
+# innego: że KAŻDA droga tworzenia notatki go faktycznie woła i robi to PRZED dotknięciem
+# writera. Dotąd sprawdzała to wyłącznie ścieżka mutacji (ADR 0065), czyli ta, która powstała
+# ostatnia — a reguła dotyczy przede wszystkim tych trzech, starszych.
+
+
+@pytest.mark.parametrize(
+    ("pole", "meta_kwargs", "body"),
+    [
+        ("tytuł", {"title": "Przeglad\x00API"}, "Treść."),
+        ("treść", {}, "Treść z\x07dzwonkiem."),
+    ],
+    ids=["tytul", "tresc"],
+)
+def test_save_note_rejects_control_characters_before_touching_the_writer(pole, meta_kwargs, body):
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+
+    with pytest.raises(WriteError, match="sterując"):
+        service.save_note(_metadata(**meta_kwargs), body=body)
+
+    assert writer.saved == {}, f"zapis {pole} przeszedł mimo znaku sterującego"
+
+
+def test_save_note_checks_the_list_fields_too_not_only_title_and_body():
+    """Uczestnicy, decyzje, tagi też lądują w PLIKU bazy — strażnik bierze je wszystkie razem."""
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+    meta = NoteMetadata(
+        title="Przeglad",
+        project="scada-integration",
+        date=date(2025, 6, 12),
+        participants=["Anna Kowalska"],
+        decisions=["wdrożenie\x1b[31m"],
+    )
+
+    with pytest.raises(WriteError, match="sterując"):
+        service.save_note(meta, body="Treść.")
+
+    assert writer.saved == {}
+
+
+def test_save_meeting_note_rejects_control_characters():
+    """Notatka ze spotkania powstaje z transkryptu Teams — treści NIE kontrolujemy."""
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+
+    with pytest.raises(WriteError, match="sterując"):
+        service.save_meeting_note(_metadata(), body="Streszczenie\x00", meeting_ref="join-abc")
+
+    assert writer.saved == {}
+
+
+def test_save_thread_note_rejects_control_characters():
+    """Notatka z wątku powstaje z cudzych wiadomości — ta sama sytuacja, ta sama bramka."""
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+
+    with pytest.raises(WriteError, match="sterując"):
+        service.save_thread_note(_metadata(), body="Ustalenia\x9f", source_message_id="msg-abc")
+
+    assert writer.saved == {}
+
+
+@pytest.mark.parametrize("bialy", ["\n", "\t", "\r"], ids=["nowa-linia", "tab", "powrot-karetki"])
+def test_ordinary_whitespace_is_not_mistaken_for_an_attack(bialy: str):
+    """Przeciwwaga: gdyby strażnik ciął też białe znaki, akapity notatki zlepiłyby się w linię."""
+    writer = FakeNotesWriter()
+    service = NotesWriteService(writer, _projects_repo())
+
+    note = service.save_note(_metadata(), body=f"pierwszy{bialy}drugi")
+
+    assert bialy in note.body
+    assert writer.saved[note.id] is note
+
+
 # --- notatka z wątku „zapisz to": id deterministyczny + idempotencja (ADR 0048) ---
 
 

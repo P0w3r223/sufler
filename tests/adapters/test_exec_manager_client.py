@@ -22,7 +22,10 @@ import pytest
 pytest.importorskip("fcntl", reason="menedżer wykonawców jest POSIX-only (gniazda unix)")
 
 from workmate.adapters.inbound import exec_server  # noqa: E402
-from workmate.adapters.outbound.exec_client import ManagedCommandRunner  # noqa: E402
+from workmate.adapters.outbound.exec_client import (  # noqa: E402
+    ManagedCommandRunner,
+    SocketCommandRunner,
+)
 from workmate.adapters.outbound.exec_manager_client import SocketExecManagerClient  # noqa: E402
 from workmate.core.errors import ExecManagerError  # noqa: E402
 
@@ -129,6 +132,45 @@ def test_niedostepny_menedzer_degraduje_do_wyniku_nie_wyjatku():
     manager = _FakeManager(boom=True)
 
     result = ManagedCommandRunner(manager, "teams-graph/scope").run("echo x")
+
+    assert result.exit_code == -1
+    assert "niedostępny" in result.stderr
+
+
+def _serve_endless_line(sock_path: Path) -> threading.Thread:
+    """Wykonawca, który sączy odpowiedź BEZ końca linii — zerwane/wrogie połączenie."""
+
+    def loop() -> None:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(sock_path))
+        server.listen(1)
+        conn, _ = server.accept()
+        with conn, conn.makefile("rwb") as stream:
+            stream.readline()
+            try:
+                while True:
+                    stream.write(b"x" * 65536)
+                    stream.flush()
+            except OSError:
+                return
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_odpowiedz_bez_konca_linii_nie_rosnie_bez_granicy(tmp_path: Path):
+    """``readline()`` bez limitu bajtów czyta do końca linii ALBO do końca świata.
+
+    ``settimeout`` obowiązuje per ``recv``, więc strumień sączony w kawałkach nigdy nie przerwie
+    odczytu — pamięć procesu aplikacji rośnie za każdym kawałkiem. Sufit linii (jak
+    ``_MAX_REQUEST_BYTES`` po stronie wykonawcy) zamienia to w zwykłą porażkę polecenia.
+    """
+    exec_sock = tmp_path / "exec.sock"
+    _serve_endless_line(exec_sock)
+    _wait_connectable(exec_sock)
+
+    result = SocketCommandRunner(exec_sock).run("echo x", timeout_s=5)
 
     assert result.exit_code == -1
     assert "niedostępny" in result.stderr

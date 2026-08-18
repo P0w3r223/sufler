@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,11 @@ class SqliteEventStore:
 
     def __init__(self, db_path: Path | str) -> None:
         if str(db_path) != ":memory:":
-            Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            # ``expanduser`` musi objąć TAKŻE ``connect``: policzony wyłącznie na potrzeby
+            # ``mkdir`` zakładał katalog rozwinięty (``/home/x/.workmate``), a bazę otwierał pod
+            # literalnym ``~`` w katalogu roboczym procesu — dwa różne pliki pod jedną nazwą.
+            db_path = Path(db_path).expanduser()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # busy_timeout: gdy inny PROCES (np. drzwi GitHub) trzyma zapis, poczekaj zamiast
@@ -174,7 +178,7 @@ def _parse_ts(value: Any) -> datetime:
     ``TypeError`` naive-vs-aware).
     """
     parsed = datetime.fromisoformat(str(value).replace(" ", "T"))
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _event(row: Any) -> Event:

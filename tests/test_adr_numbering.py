@@ -98,7 +98,10 @@ def test_numer_w_naglowku_zgadza_sie_z_nazwa_pliku() -> None:
     rozjazdy: list[str] = []
     for plik in _pliki_adr():
         z_nazwy = _NAZWA_PLIKU.match(plik.name)
-        pierwsza_linia = plik.read_text(encoding="utf-8").splitlines()[0]
+        # Pusty plik daje pustą listę linii — bez tego domyślnego bramka wywalała się
+        # ``IndexError`` zamiast wskazać dokument, który jest pusty.
+        linie = plik.read_text(encoding="utf-8").splitlines()
+        pierwsza_linia = linie[0] if linie else ""
         z_naglowka = _NAGLOWEK.match(pierwsza_linia)
         if z_nazwy is None or z_naglowka is None:
             rozjazdy.append(f"{plik.name}: nagłówek {pierwsza_linia!r} bez numeru")

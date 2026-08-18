@@ -6,7 +6,7 @@ przyklejenie wątku, nowy wątek), `always_reply` oraz `policy=None` (stara ści
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from workmate.adapters.inbound.teams_graph.selection import ReplyPolicy, plan_channel
 from workmate.config import TeamsGraphSettings
@@ -14,7 +14,7 @@ from workmate.config import TeamsGraphSettings
 ME_ID = "bot-aad-id"
 OTHER_ID = "user-aad-id"
 CHANNEL = ("team-1", "channel-1")
-NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 ACTIVE_IDLE = timedelta(hours=24)
 
 

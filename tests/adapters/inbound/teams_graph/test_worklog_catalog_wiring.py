@@ -20,7 +20,7 @@ import pytest
 
 from workmate.adapters.inbound.teams_graph.app import _worklog_service
 from workmate.config import GithubSettings
-from workmate.core.application.tools import build_github_catalog
+from workmate.core.application.tools import build_activity_catalog
 
 
 class _FakeGithubClient:
@@ -49,13 +49,13 @@ def _build(settings: GithubSettings, client: _FakeGithubClient | None = None):
 
 
 def _katalog(settings: GithubSettings, client: _FakeGithubClient | None = None):
-    return build_github_catalog(worklog=_build(settings, client))
+    return build_activity_catalog(worklog=_build(settings, client))
 
 
-def test_zdolnosc_jest_akcja_narzedzia_github() -> None:
+def test_zdolnosc_jest_akcja_narzedzia_activity() -> None:
     """Po kroku 5.2 propozycja czasu nie ma własnej pozycji w powierzchni narzędziowej."""
     katalog = _katalog(_github())
-    assert {spec.name for spec in katalog} == {"GitHub"}
+    assert {spec.name for spec in katalog} == {"Activity"}
     schema = katalog[0].fn.__annotations__["action"]
     assert "worklog" in str(schema)
 

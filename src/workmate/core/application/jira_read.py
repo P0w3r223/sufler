@@ -6,17 +6,16 @@ dlatego wartości sterowane przez wołającego są escapowane/whitelistowane w d
 zanim trafią do JQL/URL. ``member_open_tasks`` bierze ``jira_user`` z ZAUFANEJ mapy tożsamości
 (rozwiązanej w adapterze wejściowym), nie z surowego tekstu — nie da się nim wpisać cudzego konta.
 
-Błędy transportu (401/403/429/timeout) tłumaczymy na ``JiraReadError`` na granicy, żeby narzędzie
-zwróciło czytelny komunikat zamiast surowego ``httpx.HTTPError`` (jak w ``MyJiraTasksService``).
+Błędy transportu (401/403/429/timeout) tłumaczy ADAPTER, na swojej granicy
+(``adapters/outbound/jira_http.as_jira_read_error``) — tak samo jak dla „moich zadań". Ta warstwa
+nie zna ``httpx``: z portu wychodzi już ``JiraReadError`` z gotowym komunikatem.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-import httpx
-
-from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS, _status_message
+from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS, _MAX_RESULTS
 from workmate.core.domain.jira_tasks import (
     JiraTask,
     JiraTaskDetails,
@@ -26,7 +25,6 @@ from workmate.core.domain.jira_tasks import (
     map_my_tasks,
     map_task_details,
 )
-from workmate.core.errors import JiraReadError
 
 if TYPE_CHECKING:
     from workmate.core.ports.jira import JiraReadPort
@@ -46,9 +44,8 @@ class JiraReadService:
 
     def task_details(self, key: str) -> JiraTaskDetails:
         """Szczegóły JEDNEGO zgłoszenia po kluczu + do 5 ostatnich komentarzy."""
-        with _translated_errors():
-            issue = self._client.get_issue(key)
-            comments = self._client.list_comments(key, max_results=_MAX_COMMENTS)
+        issue = self._client.get_issue(key)
+        comments = self._client.list_comments(key, max_results=_MAX_COMMENTS)
         return map_task_details(issue, comments, base_url=self._base_url)
 
     def search_tasks(
@@ -62,19 +59,26 @@ class JiraReadService:
         'done')."""
         jql = build_search_jql(text=text, project=project, status_category=status_category)
         capped = max(1, min(limit, _MAX_SEARCH_RESULTS))
-        with _translated_errors():
-            raw = self._client.search_issues(jql, max_results=capped, expand="")
+        raw = self._client.search_issues(jql, max_results=capped, expand="")
         return map_my_tasks(raw[:capped], base_url=self._base_url)
 
-    def member_open_tasks(self, jira_user: str) -> list[JiraTask]:
+    def member_open_tasks(self, jira_user: str) -> tuple[list[JiraTask], bool]:
         """Otwarte zadania JEDNEGO członka zespołu — ``jira_user`` z zaufanej mapy tożsamości.
 
-        Ta sama semantyka „moich zadań" (przypisane albo zgłoszone-nieprzypisane, nierozwiązane).
+        Ta sama semantyka „moich zadań" (przypisane albo zgłoszone-nieprzypisane, nierozwiązane),
+        ten sam kształt wyniku ``(lista, czy_ucięto)`` i ten SAM sufit — ``_MAX_RESULTS`` z „moich
+        zadań", nie ``_MAX_SEARCH_RESULTS``. Opis narzędzia obiecuje modelowi „to samo dla INNEJ
+        osoby", więc dwa różne sufity znaczyłyby, że ktoś z 30 zadaniami widzi u siebie 30, a
+        u kolegi 20 i ``truncated`` — różnica bez powodu, którego dałoby się bronić. Sufit
+        wyszukiwania jest węższy rozmyślnie (``search`` przegląda całą Jirę) i tu nie pasuje.
+
+        ``max_results`` jest rozmiarem STRONY, a adapter paginuje do dziesięciu stron, więc bez
+        przycięcia po zmapowaniu wynik nie miał żadnego sufitu — sam parametr portu go nie daje.
         """
         jql = build_my_tasks_jql(jira_user)
-        with _translated_errors():
-            raw = self._client.search_issues(jql, max_results=_MAX_SEARCH_RESULTS, expand="")
-        return map_my_tasks(raw, base_url=self._base_url)
+        raw = self._client.search_issues(jql, max_results=_MAX_RESULTS, expand="")
+        tasks = map_my_tasks(raw, base_url=self._base_url)
+        return tasks[:_MAX_RESULTS], len(tasks) > _MAX_RESULTS
 
     def member_history(
         self, jira_user: str, since: str = "", until: str = ""
@@ -85,27 +89,6 @@ class JiraReadService:
         (lista, czy_ucięto), najnowsze pierwsze — jak ``MyJiraTasksService.my_history``.
         """
         jql = build_history_jql(jira_user, since, until)
-        with _translated_errors():
-            raw = self._client.search_issues(jql, max_results=_MAX_HISTORY_RESULTS, expand="")
+        raw = self._client.search_issues(jql, max_results=_MAX_HISTORY_RESULTS, expand="")
         tasks = map_my_tasks(raw, base_url=self._base_url)
         return tasks[:_MAX_HISTORY_RESULTS], len(tasks) > _MAX_HISTORY_RESULTS
-
-
-class _translated_errors:
-    """Kontekst tłumaczący błędy transportu httpx na ``JiraReadError`` (jak w „moich zadaniach")."""
-
-    def __enter__(self) -> _translated_errors:
-        return self
-
-    def __exit__(self, exc_type: object, exc: BaseException | None, tb: object) -> Literal[False]:
-        if exc is None:
-            return False
-        if isinstance(exc, httpx.HTTPStatusError):
-            raise JiraReadError(_status_message(exc.response.status_code)) from exc
-        if isinstance(exc, httpx.TimeoutException):
-            raise JiraReadError(
-                "Jira nie odpowiedziała w wyznaczonym czasie (timeout) — spróbuj ponownie."
-            ) from exc
-        if isinstance(exc, httpx.HTTPError):
-            raise JiraReadError(f"nie udało się połączyć z Jirą: {exc}.") from exc
-        return False

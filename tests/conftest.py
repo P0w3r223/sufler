@@ -1,12 +1,20 @@
-"""Wspólne atrapy i dane dla testów.
+"""Wspólne atrapy, dane i IZOLACJA ŚRODOWISKA dla testów.
 
 Atrapy implementują porty (``NotesRepository`` / ``ProjectsRepository``)
 strukturalnie — bez dziedziczenia — dzięki czemu serwisy testujemy w pełni
 w pamięci, bez dotykania dysku.
+
+Izolacja środowiska (``_srodowisko_bez_konfiguracji_maszyny``) jest tu, bo wynik pakietu nie
+może zależeć od maszyny. ``config.py`` czyta WYŁĄCZNIE ``os.environ`` (``.env`` wczytują dopiero
+wejścia drzwi przez ``env.load_dotenv``), więc pod pytestem plik ``.env`` z repo nie działa —
+ale realna powłoka operatora działa. Empirycznie: z ``WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true``
+w środowisku ``test_enable_ci_auto_comment_defaults_false`` przewracał się na maszynie, na której
+nikt nie tknął kodu. Testy, które chcą zmiennej, ustawiają ją same przez ``monkeypatch``.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import pytest
@@ -17,6 +25,30 @@ from workmate.core.domain.models import (
     Project,
     ProjectStatusRecord,
 )
+
+# Zmienne spoza przestrzeni ``WORKMATE_*``, które i tak sterują naszym kodem: klucz SDK czytany
+# awaryjnie przez ``AgentSettings.from_env`` (obecny na maszynie dewelopera) oraz zmienne, przez
+# które SDK/biblioteki wychodzą do sieci — pakiet ma biegać bez sieci, także gdy ktoś je ustawił.
+_OBCE_ZMIENNE = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+)
+
+
+@pytest.fixture(autouse=True)
+def _srodowisko_bez_konfiguracji_maszyny(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zdejmij KAŻDĄ zmienną ``WORKMATE_*`` (i klucze SDK) na czas testu.
+
+    ``monkeypatch`` przywraca stan po teście, więc uruchomienie pakietu nie zmienia środowiska
+    powłoki. Fixture jest ``autouse`` i funkcyjny: biegnie PRZED ciałem testu, a ustawienia
+    robione w teście (``monkeypatch.setenv``) mają pierwszeństwo, bo są późniejsze.
+    """
+    for name in list(os.environ):
+        if name.startswith("WORKMATE_"):
+            monkeypatch.delenv(name, raising=False)
+    for name in _OBCE_ZMIENNE:
+        monkeypatch.delenv(name, raising=False)
 
 
 def make_note(

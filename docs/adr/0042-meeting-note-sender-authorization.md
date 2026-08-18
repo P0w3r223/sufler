@@ -6,7 +6,7 @@ Author: P0w3r223
 Related to: [ADR 0041](0041-production-m3-meeting-note-write-from-teams-door.md) (production `/notatka`),
 [ADR 0009](0009-meeting-note-flow-and-write-surface.md) (M3, §3 caller-controls-location),
 [ADR 0006](0006-write-capability-gate-2.md) (write gate),
-[ADR 0035](0035-weekly-timesheets.md) / [ADR 0036](0036-timesheet-issue-attribution.md) (identity directory),
+[ADR 0035](0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md) / [ADR 0036](0036-shift-worklog-integration-identity-and-week-contract.md) (identity directory),
 `roadmap-v1-gap-analysis.md` (B2)
 
 ---

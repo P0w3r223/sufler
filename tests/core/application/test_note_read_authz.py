@@ -61,3 +61,40 @@ def test_empty_sender_is_refused_without_resolve():
 
     with pytest.raises(NoteAuthorizationError, match="odczyt bazy wiedzy odrzucony"):
         authz.authorize("")
+
+
+# --- Klasa pochodzenia tury (ADR 0066) -----------------------------------------
+
+
+def test_trust_class_is_t1_for_a_mapped_sender():
+    """Ta sama rozdzielczość tożsamości zasila OBIE osie — zdolności i pochodzenie treści.
+
+    Gdyby klasę liczył ktoś inny, odpowiedzi mogłyby się rozjechać: bot odmawiałby komuś
+    zdolności, a jego słowa dalej traktował jak instrukcje.
+    """
+    authorizer = NoteReadAuthorizer(_FakeLookup({"aad-1": _ANNA}))
+
+    assert authorizer.trust_class("aad-1") == "T1"
+
+
+def test_trust_class_is_t2_for_an_unmapped_sender():
+    authorizer = NoteReadAuthorizer(_FakeLookup({}))
+
+    assert authorizer.trust_class("aad-obcy") == "T2"
+
+
+def test_empty_sender_id_is_t2():
+    """Pusty ``sender_id`` (bot, zdarzenie systemowe) to nie jest osoba — jego tekst to dane."""
+    authorizer = NoteReadAuthorizer(_FakeLookup({"aad-1": _ANNA}))
+
+    assert authorizer.trust_class("") == "T2"
+
+
+def test_labelling_returns_a_class_instead_of_refusing():
+    """Etykietowanie nie jest bramką: gość dostaje KLASĘ, a nie wyjątek — odmowy zostają
+    w ``authorize``, żeby jedna zmiana nie zabrała botowi możliwości odpowiadania gościom."""
+    authorizer = NoteReadAuthorizer(_FakeLookup({}))
+
+    assert authorizer.trust_class("ktokolwiek") == "T2"
+    with pytest.raises(NoteAuthorizationError):
+        authorizer.authorize("ktokolwiek")  # ta sama osoba, druga oś: zdolność ODMÓWIONA

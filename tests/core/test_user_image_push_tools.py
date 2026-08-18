@@ -10,16 +10,13 @@ pollera. Testy na STRUKTURALNEJ atrapie portu w pamięci — bez httpx/Graph.
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 
 import pytest
 
 from workmate.core.application.tools import build_user_image_push_catalog
-from workmate.core.ports.user_push import (
-    IMAGE_CONTENT_TYPES,
-    UserImageSender,
-    sniff_image_format,
-)
+from workmate.core.ports.user_push import IMAGE_CONTENT_TYPES, sniff_image_format
 
 _TARGET = "u-anna-aad-id"
 
@@ -56,14 +53,8 @@ def _b64(raw: bytes) -> str:
 
 def _tool(sender: _FakeSender, *, max_bytes: int = 4096, target: str = _TARGET):
     catalog = build_user_image_push_catalog(sender, target, max_bytes=max_bytes)
-    assert [spec.name for spec in catalog] == ["send_image_to_user"]
+    assert [spec.name for spec in catalog] == ["SendImage"]
     return catalog[0].fn
-
-
-def test_fake_satisfies_the_port():
-    """Atrapa MUSI pasować strukturalnie do portu (mypy) — dowód testowalności bez Graph."""
-    sender: UserImageSender = _FakeSender()
-    sender.send_image_to_user("u1", b"bytes", "image/png")
 
 
 def test_valid_image_is_sent_to_prebound_target():
@@ -198,16 +189,21 @@ def test_sniff_image_format_recognizes_signatures(raw: bytes, expected):
 
 
 def test_model_cannot_choose_recipient():
-    """Cel wiąże fabryka, nie model — sygnatura narzędzia nie ma pola odbiorcy/target_user_id."""
+    """Cel wiąże fabryka, nie model — sygnatura narzędzia nie ma pola odbiorcy/target_user_id.
+
+    Sondujemy przez ``inspect.signature``, nie przez ``__code__.co_varnames[:co_argcount]``:
+    ``co_argcount`` NIE liczy parametrów keyword-only, więc dołożenie ``*, target_user_id``
+    przeszłoby tamtą asercję bez śladu — model wybierałby odbiorcę, a sonda bezpieczeństwa
+    dalej byłaby zielona.
+    """
     fn = _tool(_FakeSender())
-    assert set(fn.__code__.co_varnames[: fn.__code__.co_argcount]) == {
-        "image_base64",
-        "image_format",
-    }
+
+    assert set(inspect.signature(fn).parameters) == {"image_base64", "image_format"}
 
 
-def test_result_is_json_serializable():
+def test_result_is_json_serializable_round_trip():
+    """Runtime serializuje wynik narzędzia — musi przejść tam i z powrotem bez straty."""
     sender = _FakeSender()
     out = _tool(sender)(image_base64=_b64(_VALID_BYTES["gif"]), image_format="gif")
 
-    json.dumps(out)  # runtime serializuje wynik narzędzia — nie może rzucić
+    assert json.loads(json.dumps(out)) == out

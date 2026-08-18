@@ -10,6 +10,7 @@ from powiadomienia_teams.graph.client import (
     _MAX_PAGES,
     GraphClient,
     GraphPermissionError,
+    GraphResponseError,
     GraphTruncatedReadError,
 )
 
@@ -267,8 +268,20 @@ def test_read_time_off_uses_overlap_not_start():
 
 
 def _graph_z_zapisem_snu(handler, spane: list):
+    """Klient z atrapą snu ORAZ zegara: sen nie usypia, tylko przesuwa zegar monotoniczny.
+
+    Budżet dławienia jest deadline'em zegara ściennego, więc atrapa `sleep`, która nie rusza
+    czasu, dawałaby budżet nie do wyczerpania — testy przechodziłyby dla kodu, który w produkcji
+    czeka bez końca.
+    """
+    zegar = {"t": 0.0}
+
+    def spij(sekundy):
+        spane.append(sekundy)
+        zegar["t"] += sekundy
+
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    gc = GraphClient(http, lambda: "tok", sleep=spane.append)
+    gc = GraphClient(http, lambda: "tok", sleep=spij, monotonic=lambda: zegar["t"])
     gc.refresh_auth()
     return gc
 
@@ -329,3 +342,58 @@ def test_przekroczony_limit_stron_konczy_sie_bledem_zamiast_niepelnej_listy():
     with pytest.raises(GraphTruncatedReadError, match="NIEPEŁNY"):
         _graph(handler).list_members("T")
     assert zadania["n"] == _MAX_PAGES  # limit nadal chroni przed czytaniem w nieskończoność
+
+
+def test_budzet_dlawienia_obejmuje_CALE_stronicowanie_nie_pojedyncza_strone():
+    """Jeden deadline na całą operację — inaczej limit stron zamieniał się w limit godzin.
+
+    Budżet liczony per ŻĄDANIE startował od nowa dla każdej strony, a `_get_all` dopuszcza 50
+    stron: jeden odczyt kolekcji mógł czekać 50 × 900 s ≈ 12,5 h. Przez cały ten czas puls bił
+    (klient śpi przez `_spij_z_pulsem`), więc healthcheck orzekał „zdrowy" dla usługi, która od
+    godzin nic nie robiła.
+    """
+    spane: list = []
+    dlawione: set[str] = set()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url not in dlawione:
+            dlawione.add(url)  # KAŻDA strona jest raz dławiona długim Retry-After
+            return httpx.Response(429, headers={"Retry-After": "300"}, json={})
+        strona = len(dlawione)
+        return httpx.Response(
+            200,
+            json={
+                "value": [{"userId": f"u{strona}", "displayName": "Ala"}],
+                "@odata.nextLink": f"https://graph.microsoft.com/v1.0/teams/T/members?p={strona}",
+            },
+        )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _graph_z_zapisem_snu(handler, spane).list_members("T")
+    assert sum(spane) <= 900, spane  # cała operacja, nie każda strona z osobna
+
+
+def test_get_me_bez_id_jest_bledem_a_nie_pustym_napisem():
+    """Puste `me_id` rozbrajało DWA zabezpieczenia naraz i było zupełnie ciche.
+
+    Bez tożsamości bota `run_once` nie odsieje konta bota z listy kandydatów (bot zagaduje sam
+    siebie), a `newest_incoming` nie rozpozna własnych wiadomości — czyli bierze własny nudge za
+    odpowiedź pracownika i wchodzi w rozmowę ze sobą.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"displayName": "Virtual WorkMate"})  # bez `id`
+
+    with pytest.raises(GraphResponseError, match="id"):
+        _graph(handler).get_me()
+
+
+def test_create_or_get_chat_bez_id_jest_bledem():
+    """Bez id czatu w stanie ląduje pending, którego nie da się już nigdy odczytać ani zagadać."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"chatType": "oneOnOne"})  # bez `id`
+
+    with pytest.raises(GraphResponseError):
+        _graph(handler).create_or_get_chat("me", "u1")

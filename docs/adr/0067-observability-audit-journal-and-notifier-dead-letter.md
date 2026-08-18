@@ -6,7 +6,7 @@ Author: P0w3r223
 Related to: [ADR 0049](0049-usage-metrics-pseudonymized-counter.md) (pseudonymized-store pattern — copied 1:1),
   [ADR 0022](0022-proactive-dual-target-teams-push.md) (the at-least-once cursor invariant this must not break),
   [ADR 0040](0040-eventstore-to-mcp-session-cursor-read.md) (id-cursor as the only "since last look" mechanism),
-  [ADR 0045](0045-poller-state-durability-and-graceful-shutdown.md) (atomic-write durability + "beat only after a good round"),
+  [ADR 0045](0045-state-durability-and-graceful-shutdown.md) (atomic-write durability + "beat only after a good round"),
   [ADR 0066](0066-content-trust-classes-and-sticky-conversation-taint.md) (the trust-class field this journal records);
   upstream: `infra-docker-workmate/plan-workmate-2.0.md` §Faza 0
 

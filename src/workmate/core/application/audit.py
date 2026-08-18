@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.domain.audit import project_arguments
@@ -38,7 +38,7 @@ ToolCallRecorder = Callable[[str, Mapping[str, Any], str], None]
 
 def _utcnow() -> datetime:
     """Chwila zdarzenia (UTC, tz-aware) — wstrzykiwalna w testach przez ``clock``."""
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 class AuditService:
@@ -59,8 +59,9 @@ class AuditService:
         """Domknij kontekst tury i zwróć rejestrator pojedynczego wywołania narzędzia.
 
         Pseudonim nadawcy i rozmowy liczymy RAZ na turę (nieodwracalny ``sha256[:16]``), nie przy
-        każdym tool-callu. ``trust_class`` jest dziś jednolite ("unknown") — realną klasę T0–T3
-        dowiąże ADR 0066 (to jest jego pole-szew, ADR 0066 §5). Rejestrator jest best-effort.
+        każdym tool-callu. ``trust_class`` niesie realną klasę pochodzenia tury (T1/T2, ADR 0066
+        §5); "unknown" zostaje dla drzwi bez rozszczepienia nadawcy — tam nie ma tożsamości do
+        rozwiązania, więc udawanie klasy byłoby gorsze niż jej brak. Rejestrator jest best-effort.
         """
         actor_key = pseudonymize(raw_user)
         conversation_key = pseudonymize(conversation_id)

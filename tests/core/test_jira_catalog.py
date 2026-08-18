@@ -36,6 +36,7 @@ class _FakeMyJiraTasks:
         tasks: list[JiraTask] | None = None,
         history: tuple[list[JiraTask], bool] | None = None,
         error: Exception | None = None,
+        truncated: bool = False,
     ) -> None:
         self._tasks = (
             tasks
@@ -44,12 +45,13 @@ class _FakeMyJiraTasks:
         )
         self._history = history or ([], False)
         self._error = error
+        self._truncated = truncated
         self.history_calls: list[tuple[str, str]] = []
 
-    def my_open_tasks(self) -> list[JiraTask]:
+    def my_open_tasks(self) -> tuple[list[JiraTask], bool]:
         if self._error:
             raise self._error
-        return self._tasks
+        return self._tasks, self._truncated
 
     def my_history(self, since: str = "", until: str = "") -> tuple[list[JiraTask], bool]:
         self.history_calls.append((since, until))
@@ -65,11 +67,13 @@ class _FakeJiraRead:
         tasks: list[JiraTask] | None = None,
         history: tuple[list[JiraTask], bool] | None = None,
         error: Exception | None = None,
+        truncated: bool = False,
     ) -> None:
         self._details = details or JiraTaskDetails(key="WT-1", summary="x")
         self._tasks = tasks if tasks is not None else []
         self._history = history or ([], False)
         self._error = error
+        self._truncated = truncated
         self.member_open_calls: list[str] = []
         self.member_history_calls: list[tuple[str, str, str]] = []
         self.search_calls: list[dict[str, Any]] = []
@@ -89,11 +93,11 @@ class _FakeJiraRead:
             raise self._error
         return self._tasks
 
-    def member_open_tasks(self, jira_user: str) -> list[JiraTask]:
+    def member_open_tasks(self, jira_user: str) -> tuple[list[JiraTask], bool]:
         self.member_open_calls.append(jira_user)
         if self._error:
             raise self._error
-        return self._tasks
+        return self._tasks, self._truncated
 
     def member_history(
         self, jira_user: str, since: str = "", until: str = ""
@@ -338,3 +342,59 @@ def test_nieznana_akcja_nie_wykonuje_po_cichu_wyszukiwania() -> None:
     assert wynik["status"] == "invalid_request"
     assert "my_tasks" in wynik["allowed"] and "search" in wynik["allowed"]
     assert "wymaga pól" not in wynik["error"]
+
+
+# ── Instrukcje prezentacji w KOPERCIE, nie w opisie (ADR 0068 §5) ───────────────────────
+
+
+def test_wynik_zadan_otwartych_niesie_regule_prezentacji_grup() -> None:
+    """Reguly formatowania placi sie w KAZDYM zadaniu, gdy stoja w opisie narzedzia.
+
+    W kopercie jada tylko wtedy, gdy model faktycznie patrzy na dane, ktorych dotycza — i stoja
+    obok nich, a nie kilka tysiecy tokenow wczesniej.
+    """
+    wynik = _fn(action="my_tasks")
+
+    assert "OSOBNO" in wynik["note"]
+    assert "assigned" in wynik["note"]
+
+
+def test_opis_narzedzia_juz_nie_niesie_regul_prezentacji() -> None:
+    """Dwa miejsca na te sama regule to dwa miejsca do rozjechania — zostaje jedno."""
+    opis = _zbuduj()[2].description
+
+    assert "PRZEDSTAW" not in opis
+    assert "OSOBNO" not in opis
+
+
+def test_skrocona_historia_mowi_o_skroceniu_w_wyniku() -> None:
+    mine = _FakeMyJiraTasks(history=([], True))
+
+    wynik = _zbuduj(mine=mine)[2].fn(action="my_history")
+
+    assert wynik["truncated"] is True
+    assert "wiecej" in wynik["note"].replace("ę", "e")
+
+
+def test_pelna_historia_nie_dostaje_notki_o_skroceniu() -> None:
+    """Notka o skroceniu przy pelnym wyniku kazalaby modelowi ostrzegac bez powodu."""
+    wynik = _fn(action="my_history")
+
+    assert wynik["truncated"] is False
+    assert "note" not in wynik
+
+
+# ── Ksztalt "nie znaleziono" (ADR 0068 §9) ─────────────────────────────────────────────
+
+
+def test_nieznana_osoba_wraca_kopertą_z_podpowiedzia() -> None:
+    """Odmowa merytoryczna niesie tyle samo pol co blad wywolania — model poprawia sie tak samo."""
+    brak = _fn(action="member_tasks")
+    nieznana = _zbuduj(known={"Jerzy Zastepski": "jzastepski"})[2].fn(
+        action="member_tasks", member="Ktos Obcy"
+    )
+
+    assert nieznana["status"] == "not_found"
+    assert nieznana["tool"] == brak["tool"] == "Jira"
+    assert nieznana["action"] == brak["action"] == "member_tasks"
+    assert nieznana["hint"] == brak["hint"]

@@ -17,7 +17,6 @@ go nie wymagają; ``app_factory`` jest wstrzykiwalny, więc testy podają atrap�
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -39,6 +38,15 @@ class AuthExpiredError(RuntimeError):
     terminala nie zawisł na cichej próbie odświeżenia tokenu.
     """
 
+    @property
+    def publiczny(self) -> str:
+        """Treść nadająca się na kanał ZEWNĘTRZNY (webhook alertów) — bez danych osobowych.
+
+        Domyślnie równa pełnemu komunikatowi; podklasy niosące dane osobowe nadpisują ją węższą
+        wersją. Log usługi zostaje pełny — to kanał wewnętrzny, czytany przez operatora.
+        """
+        return str(self)
+
 
 class AmbiguousAccountError(AuthExpiredError):
     """Cache MSAL zawiera kilka kont — nie wiadomo, którą tożsamością bot ma pisać.
@@ -46,7 +54,29 @@ class AmbiguousAccountError(AuthExpiredError):
     Wydzielony z ``AuthExpiredError``, bo naprawa jest INNA: ponowne logowanie nie pomaga,
     tylko dokłada kolejne konto do cache. Jedyne wyjście to usunięcie pliku cache przez
     człowieka, dlatego ścieżka startowa nie może na to odpowiedzieć device-flow.
+
+    Pełny komunikat wymienia ADRESY E-MAIL kont — to dane osobowe pracowników. Trafiają do logu
+    usługi (kanał wewnętrzny), ale NIE na webhook alertów: ten bywa poza organizacją (Power
+    Automate, Slack, dowolny endpoint operatora), więc ``publiczny`` podaje samą liczbę kont.
     """
+
+    def __init__(
+        self, message: str, *, liczba_kont: int = 0, cache_path: Path | None = None
+    ) -> None:
+        super().__init__(message)
+        self._liczba_kont = liczba_kont
+        self._cache_path = cache_path
+
+    @property
+    def publiczny(self) -> str:
+        # Wersja publiczna jest budowana OD ZERA, nie przez wycinanie z pełnego komunikatu:
+        # redakcja przez usuwanie zawodzi po cichu, gdy tekst źródłowy się zmieni.
+        ile = f"{self._liczba_kont} kont" if self._liczba_kont else "kilka kont"
+        gdzie = f" Usuń plik {self._cache_path}." if self._cache_path else ""
+        return (
+            f"Cache tokenu zawiera {ile} — nie wiadomo, którą tożsamością pisać "
+            f"(adresy kont są w logu usługi).{gdzie} Potem zaloguj się ponownie: --login"
+        )
 
 
 def _jedyne_konto(accounts: list[Any], cache_path: Path) -> None:
@@ -61,7 +91,9 @@ def _jedyne_konto(accounts: list[Any], cache_path: Path) -> None:
     nazwy = ", ".join(sorted(str(a.get("username", "?")) for a in accounts))
     raise AmbiguousAccountError(
         f"Cache tokenu zawiera {len(accounts)} kont ({nazwy}) — nie wiadomo, którą tożsamością "
-        f"pisać. Usuń plik {cache_path}, a potem zaloguj się ponownie: --login"
+        f"pisać. Usuń plik {cache_path}, a potem zaloguj się ponownie: --login",
+        liczba_kont=len(accounts),
+        cache_path=cache_path,
     )
 
 
@@ -87,8 +119,38 @@ def _load_cache(cache_path: Path) -> Any:
     return cache
 
 
+def _otworz_wylacznie(tmp: Path) -> int:
+    """Utwórz plik tymczasowy z prawami 600, sprzątając resztkę po ubitym procesie.
+
+    ``O_EXCL`` gwarantuje, że prawa pochodzą z TEGO utworzenia, a nie z cudzego pliku zostawionego
+    pod innym umask. Ale sam ``O_EXCL`` na gorącej ścieżce odświeżania tokenu jest pułapką: jedna
+    resztka po SIGKILL wywracałaby KAŻDĄ kolejną rotację refresh-tokenu, czyli po ~90 dniach
+    usługę nie do odzyskania bez ręcznego kasowania pliku w wolumenie. Dlatego kolizję traktujemy
+    jako sytuację do posprzątania — a nie do przemilczenia (``suppress`` zamieniłby ją z powrotem
+    w cichy ``FileExistsError`` z drugiej próby).
+    """
+    flagi = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        return os.open(tmp, flagi, 0o600)
+    except FileExistsError:
+        logger.warning("Usuwam resztkę po przerwanym zapisie cache tokenu: %s", tmp)
+        tmp.unlink()  # nieudane sprzątanie MA być głośne — inaczej wracamy do pułapki wyżej
+        return os.open(tmp, flagi, 0o600)
+
+
 def _save_cache(cache: Any, cache_path: Path) -> None:
-    """Zapisz cache tylko gdy MSAL zmienił stan (np. rotacja refresh-tokenu). chmod 600 (POSIX)."""
+    """Zapisz cache tylko gdy MSAL zmienił stan (np. rotacja refresh-tokenu). Prawa 600 (POSIX).
+
+    Plik zawiera REFRESH-TOKEN, czyli sekret o czasie życia liczonym w tygodniach. Powstaje przez
+    ``os.open(..., 0o600)``, a nie ``write_text`` + ``chmod``: ta druga kolejność tworzyła plik pod
+    domyślnym umask (zwykle 0o022, czyli czytelny dla grupy i świata), zapisywała do niego token
+    i dopiero POTEM zamykała prawa. Okno było krótkie, ale otwierało się przy każdej rotacji
+    tokenu, a wystarczy jeden odczyt, żeby przejąć tożsamość bota.
+
+    ``fsync`` przed podmianą: bez niego zapis mógł siedzieć w buforze, a nagła utrata zasilania
+    zostawiała pusty cache mimo udanego ``os.replace`` — czyli usługę wymagającą ręcznego
+    ``--login`` przy najbliższym starcie (jak w ``state.save_state``).
+    """
     if not getattr(cache, "has_state_changed", False):
         return
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,11 +158,10 @@ def _save_cache(cache: Any, cache_path: Path) -> None:
     # po karencji `docker compose down` albo OOM w trakcie rotacji refresh-tokenu zostawiał ucięty
     # cache — a ten wywracał następny start jeszcze przed pierwszym logiem.
     tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
-    tmp.write_text(cache.serialize(), encoding="utf-8")
-    # Prawa ustawiane PRZED podmianą — inaczej token istnieje przez moment z prawami domyślnymi
-    # (Linux/macOS; na Windows ignorowane).
-    with contextlib.suppress(OSError):
-        os.chmod(tmp, 0o600)
+    with os.fdopen(_otworz_wylacznie(tmp), "w", encoding="utf-8") as plik:
+        plik.write(cache.serialize())
+        plik.flush()
+        os.fsync(plik.fileno())
     os.replace(tmp, cache_path)
 
 

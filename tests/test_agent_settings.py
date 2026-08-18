@@ -2,6 +2,10 @@
 
 ``validate`` to granica startu runtime'u (klucz + sensowne limity), a ``from_env``
 ma poprawnie wybierać źródło klucza. Oba czyste — testujemy bez SDK i bez sieci.
+
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``
+i klucze SDK), więc ręczna lista zmiennych do wyczyszczenia jest tu zbędna — test ustawia
+tylko to, co faktycznie bada.
 """
 
 from __future__ import annotations
@@ -11,19 +15,6 @@ import dataclasses
 import pytest
 
 from workmate.config import AgentSettings
-
-_AGENT_VARS = (
-    "WORKMATE_AGENT_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "WORKMATE_AGENT_MODEL",
-    "WORKMATE_AGENT_MAX_TOKENS",
-    "WORKMATE_AGENT_MAX_TOOL_ITERATIONS",
-    "WORKMATE_AGENT_THINKING",
-    "WORKMATE_CONTEXT_EDITING_ENABLED",
-    "WORKMATE_CONTEXT_EDITING_TRIGGER_TOKENS",
-    "WORKMATE_CONTEXT_EDITING_KEEP_TOOL_USES",
-    "WORKMATE_CONTEXT_EDITING_CLEAR_AT_LEAST_TOKENS",
-)
 
 
 def test_validate_rejects_empty_key():
@@ -55,16 +46,12 @@ def test_validate_accepts_disabled_thinking():
 
 
 def test_from_env_reads_thinking_type(monkeypatch):
-    for var in _AGENT_VARS:
-        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("WORKMATE_AGENT_THINKING", "disabled")
 
     assert AgentSettings.from_env().thinking_type == "disabled"
 
 
 def test_from_env_prefers_workmate_key_then_anthropic(monkeypatch):
-    for var in _AGENT_VARS:
-        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
 
     assert AgentSettings.from_env().api_key == "a-key"
@@ -73,10 +60,7 @@ def test_from_env_prefers_workmate_key_then_anthropic(monkeypatch):
     assert AgentSettings.from_env().api_key == "w-key"  # WORKMATE ma priorytet
 
 
-def test_from_env_defaults_to_sonnet_model(monkeypatch):
-    for var in _AGENT_VARS:
-        monkeypatch.delenv(var, raising=False)
-
+def test_from_env_defaults_to_sonnet_model():
     settings = AgentSettings.from_env()
 
     assert settings.model == "claude-sonnet-5"
@@ -84,16 +68,13 @@ def test_from_env_defaults_to_sonnet_model(monkeypatch):
     assert settings.thinking_type == "adaptive"
 
 
-def test_from_env_defaults_match_field_defaults(monkeypatch):
+def test_from_env_defaults_match_field_defaults():
     """Domyślne z ``from_env`` i z pól dataclass MUSZĄ być te same (ADR 0058).
 
     Wartości są zapisane w dwóch miejscach, więc rozjeżdżają się po cichu — a przy
     ``context_editing_keep_tool_uses`` rozjazd w dół oznacza czyszczenie wyników z bieżącej
     tury. Porównujemy wszystkie pola poza kluczem (ten pochodzi ze środowiska z definicji).
     """
-    for var in _AGENT_VARS:
-        monkeypatch.delenv(var, raising=False)
-
     from_env = AgentSettings.from_env()
     defaults = AgentSettings()
 

@@ -54,12 +54,19 @@ def _created_at(message: dict[str, Any]) -> datetime | None:
 
 
 def newest_incoming(
-    messages: list[dict[str, Any]], me_id: str, after_iso: str = ""
+    messages: list[dict[str, Any]], me_id: str, member_id: str, after_iso: str = ""
 ) -> dict[str, Any] | None:
-    """Najnowsza wiadomość nie od nas i nowsza niż `after_iso`; inaczej None.
+    """Najnowsza wiadomość OD ``member_id``, nie od nas, nowsza niż ``after_iso``; inaczej None.
 
     Porównanie po sparsowanym czasie (nie leksykograficznie po napisie), żeby różnice
     w precyzji ułamka sekundy z Graph nie przestawiały kolejności.
+
+    Nadawca musi być DOKŁADNIE tą osobą, o której grafik pytamy. Warunek „ktokolwiek poza botem"
+    wyglądał równoważnie tylko dopóki czat jest 1:1: Graph wstawia do wątku także wiadomości
+    systemowe i wpisy innych tożsamości (aplikacje, konto dodane do rozmowy, migracja czatu na
+    grupowy). Każda z nich stawała się „odpowiedzią pracownika" — szła do modelu, przesuwała
+    watermark i mogła doprowadzić do zapisu W GRAFIKU PRACOWNIKA na podstawie cudzej treści,
+    a prawdziwa odpowiedź pracownika (starsza niż przesunięty watermark) nie była już czytana.
     """
     after: datetime | None = None
     if after_iso:
@@ -68,10 +75,19 @@ def newest_incoming(
         except ValueError:
             after = None
 
+    # GUID-y z Graph bywają zapisane różną wielkością liter (inny endpoint, inna wersja API, ręcznie
+    # wpisane `ONLY_USER_IDS`). Porównanie wrażliwe na wielkość liter przy takim rozjeździe odsiewa
+    # KAŻDĄ odpowiedź pracownika — cicho i na zawsze. `casefold` po obu stronach kosztuje tyle co
+    # nic.
+    nasze = me_id.casefold()
+    pracownik = member_id.casefold()
     incoming: list[tuple[datetime, dict[str, Any]]] = []
     for message in messages:
         sender = ((message.get("from") or {}).get("user") or {}).get("id")
-        if sender is None or sender == me_id:
+        if sender is None:
+            continue
+        nadawca = str(sender).casefold()
+        if nadawca == nasze or nadawca != pracownik:
             continue
         created = _created_at(message)
         if created is None or (after is not None and created <= after):

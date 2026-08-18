@@ -94,11 +94,19 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 
 6. **`confirm` is a human checkpoint in the Teams thread** (owner decision 2026-08-14). On a `confirm`
    verdict the bot does not mutate: it states plainly what the operation would change and waits. The
-   confirmation counts **only** if it arrives as a new turn from a sender whose `sender_id` resolves
-   to the *same* `Person` who requested the mutation (ADR 0042/0054 resolution, T1 in ADR 0066 terms) —
-   so a confirmation can never be satisfied by content the model read, by another participant, or by
-   the model quoting itself. It expires with the request (no standing consent), and an expired or
-   absent confirmation is a refusal. This is the Rule-of-Two checkpoint: when the flow reaches
+   request is *announced* and refused; it succeeds only when the identical request (same resolved
+   person, same note, same content) returns **from a different turn**.
+
+   *Implementation note, 2026-08-14 — the mechanism needs a turn identity, and the first
+   implementation lacked one.* Checking merely "has this request been seen before" is not a human
+   checkpoint at all: the agent loop runs up to eight rounds per turn and each round may carry
+   several tool calls, so the model announced and executed the same deletion by itself, without a
+   human writing a word. The gate therefore carries a per-turn token minted where the tool catalogue
+   is built (once per turn), and consent requires the announcement and the execution to come from
+   **different** tokens. What this proves is that a person spoke after seeing what would change —
+   **not** that they agreed. A stronger proof needs a channel outside the model (a button, a distinct
+   command), which this deployment does not have; the announcement narrows the window rather than
+   closing it. Consent is single-use and expires with the request. This is the Rule-of-Two checkpoint: when the flow reaches
    untrusted content, sensitive data and a mutating effect at once, a person decides.
 
 7. **How `edit`/`delete` name their target.** The model addresses a note by the **note id it already

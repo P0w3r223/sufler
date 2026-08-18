@@ -34,6 +34,9 @@ class ConversationMessage(BaseModel):
     created_at: datetime
     blocks: list[dict[str, Any]] | None = None
     stop_reason: str | None = None
+    # Klasa POCHODZENIA tury użytkownika (ADR 0066): ``T1`` instrukcja / ``T2`` dane. ``None``
+    # dla tur asystenta/narzędzi i wierszy sprzed 0066 — odczyt degraduje wtedy do T1.
+    trust: str | None = None
     # Realne użycie tokenów tej tury (Design 2) — z pola ``usage`` odpowiedzi API. Na
     # wierszu ``assistant``; ``None`` dla user/tool oraz wierszy legacy (brak usage).
     usage: TokenUsage | None = None
@@ -65,6 +68,13 @@ class Conversation(BaseModel):
     message_count: int = 0
     created_at: datetime
     updated_at: datetime
+    # Lepka skaza rozmowy (ADR 0066): czy do TEJ rozmowy weszła treść obca (plik, wynik
+    # narzędzia, tura nadawcy spoza mapy). Raz zapalona nie gaśnie — skażona treść zostaje
+    # w kontekście do końca wątku, a rollover i tak otwiera NOWY wiersz, czyli czysty.
+    # Skaza nie BLOKUJE niczego; eskaluje: operacja konsekwentna idzie wtedy przez sędziego
+    # (ADR 0065) i ląduje w audycie z klasą zaufania tury.
+    tainted: bool = False
+    taint_source: str = ""
 
 
 class ConversationSummary(BaseModel):

@@ -9,6 +9,7 @@ degradację uszkodzonego pliku do ``DocumentExtractionError`` (a nie wywrócenie
 from __future__ import annotations
 
 import io
+import zipfile
 
 import pytest
 
@@ -292,6 +293,104 @@ def test_extract_html_caps_its_output_like_the_other_extractors():
     assert len(out) < 210_000
 
 
+# --- cap wyjścia i bomba dekompresji: WSZYSTKIE ekstraktory --------------------
+
+
+def _oversized(ext: str) -> bytes:
+    """Dokument danego formatu z treścią grubo ponad ``_MAX_TEXT_CHARS``."""
+    duzo = "x" * 30_000
+    if ext == "docx":
+        return _docx_bytes(paragraph=duzo, table_cells=[[duzo] * 3] * 3)
+    if ext == "xlsx":
+        # Wiele ARKUSZY, każdy poniżej ``_MAX_SHEET_ROWS`` — dokładnie luka, którą tamten limit
+        # zostawiał otwartą.
+        return _xlsx_multi_sheet_bytes(sheets=9, rows_per_sheet=1, cell=duzo)
+    if ext == "pptx":
+        return _pptx_bytes(texts=[duzo] * 9)
+    return b"<p>" + (b"x" * 300_000) + b"</p>"
+
+
+def _xlsx_multi_sheet_bytes(*, sheets: int, rows_per_sheet: int, cell: str) -> bytes:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for index in range(sheets):
+        ws = workbook.create_sheet(f"Arkusz{index}")
+        for _ in range(rows_per_sheet):
+            ws.append([cell])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("ext", ["docx", "xlsx", "pptx", "html"])
+def test_every_extractor_caps_its_output(ext: str):
+    """Cap WYJŚCIA obowiązuje każdy format, nie tylko HTML.
+
+    Regresja: ``extract_xlsx`` był jedynym ekstraktorem bez capa całości (``_MAX_SHEET_ROWS``
+    ogranicza wiersze w arkuszu, nie liczbę arkuszy), a sonda capa sprawdzała wyłącznie HTML.
+    """
+    out = extract_text_from_bytes(_oversized(ext), ext)
+
+    assert "(obcięto)" in out
+    assert len(out) < 210_000
+
+
+def _sane_package(ext: str) -> bytes:
+    """Poprawny, mały pakiet danego formatu — baza, do której doklejamy bombę."""
+    if ext == "docx":
+        return _docx_bytes(paragraph="tresc", table_cells=[["a", "b"]])
+    if ext == "xlsx":
+        return _xlsx_bytes(sheet="A", rows=[["a", "b"]])
+    return _pptx_bytes(texts=["tresc"])
+
+
+def _zip_bomb(base: bytes, *, part: str, declared_mb: int = 160) -> bytes:
+    """PRAWDZIWY pakiet OOXML z doklejoną olbrzymią częścią — bomba, nie atrapa.
+
+    Baza jest poprawna, więc biblioteka parsująca otworzy pakiet i zmaterializuje wszystkie
+    jego części; dopiero sprawdzenie katalogu archiwum zatrzymuje to wcześniej. Zapisujemy
+    strumieniowo (``ZipFile.open(..., "w")``), żeby SAM TEST nie trzymał w pamięci tego,
+    przed czym broni ekstraktor.
+    """
+    buffer = io.BytesIO()
+    chunk = b"\0" * (1024 * 1024)
+    with (
+        zipfile.ZipFile(io.BytesIO(base)) as source,
+        zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as target,
+    ):
+        for info in source.infolist():
+            target.writestr(info.filename, source.read(info.filename))
+        with target.open(part, "w") as entry:
+            for _ in range(declared_mb):
+                entry.write(chunk)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("ext", "part"),
+    [("docx", "word/media/bomba.bin"), ("xlsx", "xl/media/bomba.bin"), ("pptx", "ppt/media/b.bin")],
+)
+def test_zip_bomb_is_rejected_before_parsing(ext: str, part: str):
+    """Bomba dekompresji ginie na katalogu archiwum, a nie na OOM procesu drzwi.
+
+    Regresja: cap działał na GOTOWYM stringu, więc pakiet OOXML materializował dowolnie dużą
+    treść w pamięci, zanim cokolwiek zdążyło ją przyciąć — a proces ubity przez OOM wracał po
+    restarcie po tę samą wiadomość i ginął ponownie.
+    """
+    bomba = _zip_bomb(_sane_package(ext), part=part)
+
+    with pytest.raises(DocumentExtractionError, match="ponad sufit"):
+        extract_text_from_bytes(bomba, ext)
+
+
+def test_corrupt_ooxml_package_degrades_to_extraction_error():
+    """Nie-ZIP w miejscu pakietu OOXML wraca JEDNYM typem błędu, nie ``BadZipFile``."""
+    with pytest.raises(DocumentExtractionError, match="uszkodzony pakiet"):
+        extract_xlsx(b"to nie jest zip")
+
+
 def test_html_declaring_windows_1250_keeps_polish_letters():
     """„Zapisz jako stronę WWW" z Worda produkuje cp1250 — UTF-8 na sztywno zjadałby ogonki."""
     strona = "<html><head><meta charset=windows-1250></head><body><p>zażółć gęślą</p></body></html>"
@@ -344,3 +443,29 @@ def test_noscript_and_template_bodies_are_skipped_like_script():
     out = extract_html(b"<noscript>zapasowe</noscript><template>wzorzec</template><p>tresc</p>")
 
     assert out == "tresc"
+
+
+def test_chunk_that_fills_the_budget_exactly_still_marks_the_truncation():
+    """Regresja: znacznik stawiało DOCIĘCIE fragmentu, nie wyczerpanie budżetu.
+
+    Fragment mieszczący się co do znaku zamykał budżet bez znacznika, a wołający przerywał
+    wtedy pętlę na ``full`` i nigdy nie wracał po kolejny ``add`` — reszta dokumentu znikała
+    po cichu, czyli w trybie awarii nieodróżnialnym od dokumentu, który naprawdę się skończył.
+    """
+    from workmate.adapters.inbound.document_text import _TextBudget
+
+    budzet = _TextBudget(limit=10)
+    budzet.add("x" * 10)  # co do znaku, ani bajtu za dużo
+
+    assert budzet.full is True
+    assert "(obcięto)" in budzet.text()
+
+
+def test_a_document_below_the_budget_is_not_marked_as_truncated():
+    """Znacznik nie może pojawiać się na dokumentach, którym niczego nie zabrano."""
+    from workmate.adapters.inbound.document_text import _TextBudget
+
+    budzet = _TextBudget(limit=10)
+    budzet.add("krotki")
+
+    assert "(obcięto)" not in budzet.text()

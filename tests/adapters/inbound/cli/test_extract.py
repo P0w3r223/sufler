@@ -22,6 +22,26 @@ from workmate.adapters.inbound.document_text import extract_html
 _HTML = b"<html><body><p>Kwota: 12 300 zl</p><img src='b.png' alt='wykres'></body></html>"
 
 
+@pytest.fixture(autouse=True)
+def _sigpipe_nie_wycieka_z_main():
+    """``main()`` przestawia SIGPIPE na ``SIG_DFL`` dla CAŁEGO procesu — słusznie, bo komenda ma
+    umierać cicho w potoku jak zwykły filtr uniksowy. W pakiecie testów to jednak przeciek stanu
+    globalnego: od pierwszego wywołania ``main()`` każdy zapis do zamkniętego gniazda w DOWOLNYM
+    późniejszym teście dostaje sygnał zamiast ``BrokenPipeError`` i zabija cały przebieg, zanim
+    jakikolwiek ``except`` zdąży zadziałać (tak padło CI na ``test_exec_manager_client``: exit 141,
+    bez ani jednej porażki asercji). Windows nie ma tego sygnału, więc lokalnie było zielono.
+    """
+    sigpipe = getattr(signal, "SIGPIPE", None)
+    if sigpipe is None:  # nie-POSIX — nie ma czego przywracać
+        yield
+        return
+    poprzedni = signal.getsignal(sigpipe)
+    try:
+        yield
+    finally:
+        signal.signal(sigpipe, poprzedni)
+
+
 def _run(monkeypatch, path: str) -> None:
     monkeypatch.setattr("sys.argv", ["workmate-extract", path])
     main()

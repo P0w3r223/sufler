@@ -34,6 +34,9 @@ class _RecordingRuntime:
         extra_tools: object = (),
         session_header: str = "",
         audit: object = None,
+        attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         self.extra_tools_per_call.append([spec.name for spec in extra_tools])  # type: ignore[attr-defined]
         return AgentResult(

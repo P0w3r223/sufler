@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -168,3 +169,40 @@ def test_verify_rejects_store_inside_data_dir(
     rc = mt.main(["verify", "--store", str(inside), "--data-dir", str(data)])
 
     assert rc == 1
+
+
+# --- domyślny magazyn: JEDNO źródło prawdy z serwerem ------------------------
+
+
+def test_default_store_is_the_server_constant_not_a_copy() -> None:
+    """Narzędzie i serwer MUSZĄ szukać magazynu w tym samym miejscu.
+
+    ``config._DEFAULT_TOKENS_FILE`` dostał rozgałęzienie po ``os.name`` (windowsowy literał
+    "C:/…" na Linuksie stawał się ścieżką WZGLĘDNĄ pod CWD), ale kopia literału w tym skrypcie
+    poprawki nie zobaczyła: na Linuksie ``manage_tokens issue`` pisał do
+    ``./C:/ProgramData/WorkMate/tokens.json`` i meldował sukces, a serwer szukał magazynu
+    w ``/var/lib/workmate/tokens.json`` i nie wpuszczał nikogo.
+    """
+    from workmate import config
+
+    assert mt.DEFAULT_STORE == config._DEFAULT_TOKENS_FILE
+    assert mt.DEFAULT_STORE.is_absolute(), "domyślny magazyn nie może być względny wobec CWD"
+
+
+def test_default_store_is_not_written_as_a_path_literal() -> None:
+    """Sama równość nie wystarczy: na Windows kopia i oryginał mają tę samą wartość, więc milczy.
+
+    Sondujemy więc ZAPIS: prawa strona przypisania ``DEFAULT_STORE`` nie może być literałem
+    tekstowym. Dopóki nim była, poprawka po stronie ``config.py`` nie miała jak tu dojechać —
+    a rozjazd ujawniał się wyłącznie na Linuksie, czyli na jedynej platformie produkcyjnej.
+    """
+    przypisanie = re.search(
+        r"^DEFAULT_STORE\s*=\s*(.+)$", _SCRIPT.read_text(encoding="utf-8"), re.M
+    )
+    assert przypisanie is not None, "brak przypisania DEFAULT_STORE w manage_tokens.py"
+
+    prawa_strona = przypisanie.group(1)
+    assert '"' not in prawa_strona and "'" not in prawa_strona, (
+        f"DEFAULT_STORE = {prawa_strona} powiela literał ścieżki zamiast brać stałą "
+        "z workmate.config (_DEFAULT_TOKENS_FILE)."
+    )

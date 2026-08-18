@@ -110,7 +110,9 @@ def test_every_prompt_artifact_is_positively_framed():
     Komplet nie jest ozdobą. ``github_thread`` doszło po zniesieniu ``reply_on_thread``,
     fikstura została przy czterech polach, a nowe zdanie weszło z dwoma „never" i przeszło.
     Sonda, która nie umie zawieść, wygląda identycznie jak działająca — każde nowe pole
-    nagłówka dopisujemy tu razem z nim.
+    nagłówka dopisujemy tu razem z nim. Powtórka historii: pola z ADR 0064/0066
+    (odłożone pliki, koperta treści obcej) doszły później, a pierwsza wersja zdania
+    o kopercie znowu weszła z dwoma przeczeniami.
     """
     header = build_session_header(
         datetime(2026, 8, 5),
@@ -118,6 +120,8 @@ def test_every_prompt_artifact_is_positively_framed():
         thread="t/c/r",
         skills=(("brief", "opis"),),
         github_thread=("issue", 7),
+        staged_files=("umowa.pdf",),
+        trust_nonce="abcd1234",
     )
     artifacts = {
         "STATIC_PROMPT": STATIC_PROMPT,
@@ -256,7 +260,10 @@ def test_naglowek_niesie_numer_rodzaj_i_regule_jawnej_prosby() -> None:
     assert "pull request" in naglowek
     assert "explicitly" in naglowek
     # Nazwa i argument akcji, którą model ma wywołać — inaczej podpowiedź nie ma adresata.
-    assert "GitHub(action='comment', number=12)" in naglowek
+    # Nazwa MUSI odpowiadać katalogowi: po ADR 0068 ta asercja przez chwilę pinowała martwy
+    # napis `GitHub(...)`, na który runtime odpowiada „Nieznane narzędzie". Zgodność z realnym
+    # katalogiem pilnuje osobno `test_tool_descriptions.py` — tutaj zamrożony jest KSZTAŁT.
+    assert "Activity(action='comment', number=12)" in naglowek
 
 
 def test_naglowek_uzywa_rzeczownika_issue_dla_issue() -> None:
@@ -268,9 +275,113 @@ def test_naglowek_uzywa_rzeczownika_issue_dla_issue() -> None:
 def test_naglowek_zabrania_komentowania_na_inny_numer_w_tym_watku() -> None:
     """Pre-wiązanie numeru zniknęło ze schematu, więc reguła musi stać w treści.
 
-    Ochrona nie jest przez to słabsza, niż była: ``GitHub(action='comment')`` przyjmował numer
+    Ochrona nie jest przez to słabsza, niż była: ``Activity(action='comment')`` przyjmował numer
     wprost już wtedy, gdy ``reply_on_thread`` istniało, i stał w tym samym katalogu za tą samą
     bramką. Dawne narzędzie nie zawężało niczego — wypełniało argument.
     """
     naglowek = build_session_header(datetime(2026, 8, 6, 10, 0), github_thread=("issue", 7))
     assert "only on this number" in naglowek
+
+
+def test_session_header_explains_the_envelope_when_a_nonce_is_given():
+    """Znacznik bez zdania, które go tłumaczy, to sam szum — a wycięcie tego warunku
+    przechodziło przez cały pakiet, bo nikt nie sprawdzał nagłówka pod tym kątem."""
+    header = build_session_header(datetime(2026, 8, 5), trust_nonce="abcd1234")
+
+    assert "abcd1234" in header
+    assert "data you are reading" in header
+
+
+def test_session_header_without_a_nonce_says_nothing_about_envelopes():
+    """Bramka OFF = nagłówek dokładnie jak dotąd; inaczej model dostawałby instrukcję
+    o znacznikach, których w treści nie ma."""
+    header = build_session_header(datetime(2026, 8, 5))
+
+    assert "dane-obce" not in header
+
+
+def test_prompt_stops_forbidding_note_changes_when_mutation_is_on():
+    """Zamrożony prefiks nie może mówić „nie zmieniaj notatek" obok narzędzia, które to umie.
+
+    Wariant podmienia ZNANE zdanie, więc gdyby korpus je przeredagował bez zmiany stałej,
+    podmiana stałaby się cichym no-opem — ta sonda właśnie to łapie.
+    """
+    bez = static_prompt_for(attachments=False)
+    z_mutacja = static_prompt_for(attachments=False, mutation=True)
+
+    assert "leave existing ones as their authors" in bez
+    assert "leave existing ones as their authors" not in z_mutacja
+    assert "only when someone asks you to" in z_mutacja
+    assert "independent reviewer" in z_mutacja
+
+
+def test_mutation_variant_is_still_positively_framed():
+    """Nowe zdanie podlega tej samej bramce redakcyjnej co reszta promptu (ADR 0056)."""
+    hits = [
+        line.strip()
+        for line in static_prompt_for(attachments=True, shell=True, mutation=True).splitlines()
+        if _NEGATIONS.search(line)
+    ]
+
+    assert not hits, f"linie przeczące: {hits}"
+
+
+# --- Sprostowanie sekcji ENVIRONMENT dla tury bez powloki (ADR 0068 §2) ---------------
+
+
+def test_naglowek_bez_flagi_milczy_o_powloce():
+    """Typowa tura ma jechac dokladnie tak jak dotad — sprostowanie jest wyjatkiem."""
+    naglowek = build_session_header(datetime(2026, 8, 17))
+
+    assert "shell" not in naglowek.lower()
+
+
+def test_naglowek_prostuje_swiat_gdy_tura_nie_ma_powloki():
+    """Korpus statyczny wybiera sie RAZ, przy skladaniu drzwi, a powloka znika PER TURE.
+
+    Fabryka oddaje pusta liste nierozpoznanemu nadawcy (ADR 0063), a blad budowy degraduje do
+    „brak powloki" zamiast klasc ture. Gosc czytal wtedy o `/mnt/system/notes/`, majac katalog
+    bez `Bash`. Sprostowanie mieszka tutaj, bo tylko naglowek sklada sie per ture.
+    """
+    naglowek = build_session_header(datetime(2026, 8, 17), shell_unavailable=True)
+
+    assert "shell is unavailable" in naglowek
+    assert "knowledge base" in naglowek
+
+
+def test_sprostowanie_o_powloce_podlega_bramce_redakcyjnej():
+    """Nagłówek ma tę samą bramkę co korpus (ADR 0056) — nowe zdanie nie jest wyjątkiem."""
+    naglowek = build_session_header(
+        datetime(2026, 8, 17),
+        channel="teams_graph",
+        thread="t/c/r",
+        skills=(("brief", "opis"),),
+        github_thread=("issue", 7),
+        staged_files=("umowa.pdf",),
+        trust_nonce="abcd1234",
+        shell_unavailable=True,
+    )
+
+    hits = [line.strip() for line in naglowek.splitlines() if _NEGATIONS.search(line)]
+    assert not hits, f"linie przeczące: {hits}"
+    assert not [word for word in _PUSHY if word in naglowek]
+
+
+# --- Sygnal budzetu iteracji (ADR 0068 §6) -------------------------------------------
+
+
+def test_ostatnia_runda_jest_nazwana_wprost():
+    from workmate.core.agent.prompt import budget_notice
+
+    assert "last round" in budget_notice(1)
+    assert "2 rounds" in budget_notice(2)
+
+
+def test_zdanie_o_budzecie_podlega_bramce_redakcyjnej():
+    """Sygnal jedzie w naglowku sesji, wiec obowiazuja go te same reguly co reszcie."""
+    from workmate.core.agent.prompt import budget_notice
+
+    for rounds in (1, 2, 3):
+        tekst = budget_notice(rounds)
+        assert not _NEGATIONS.search(tekst), tekst
+        assert not [word for word in _PUSHY if word in tekst]
