@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from workmate.core.domain.metrics import REPORT_TZ, iso_week, pseudonymize
@@ -24,7 +24,7 @@ def test_iso_week_treats_naive_as_utc():
 
 def test_iso_week_uses_local_date_not_utc():
     """23:30 UTC 2026-01-04 (ndz) to już 00:30 pon. 2026-01-05 w Warszawie → inny tydzień ISO."""
-    utc_late_sunday = datetime(2026, 1, 4, 23, 30, tzinfo=timezone.utc)
+    utc_late_sunday = datetime(2026, 1, 4, 23, 30, tzinfo=UTC)
     assert iso_week(utc_late_sunday, ZoneInfo("Europe/Warsaw")) == "2026-W02"
     # Ta sama chwila w UTC to wciąż niedziela 1. tygodnia — potwierdza, że strefa decyduje.
     assert iso_week(utc_late_sunday, ZoneInfo("UTC")) == "2026-W01"

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -29,11 +29,17 @@ logger = logging.getLogger(__name__)
 # Cap PR-ów odpytywanych o recenzje na rundę — endpoint recenzji jest per-PR i bez ``since``,
 # więc bez capa koszt API rósłby liniowo z liczbą otwartych PR (ochrona limitu 5000/h).
 _MAX_REVIEW_PRS = 20
+# Budżet stron paginacji klienta GitHub (``github_api._MAX_PAGES``). ODWZOROWANIE, nie import —
+# to prywatna stała adaptera WYJŚCIOWEGO, a port ``GithubReadPort`` nie niesie dziś informacji
+# o ucięciu. Dopóki jej nie niesie, wnioskujemy o ucięciu z LICZBY pozycji: pełne wiadro
+# (``per_page × strony``) znaczy „mogło być więcej". Docelowo sygnał ma płynąć z klienta —
+# wtedy ta stała i ``_branches_truncated`` znikają razem.
+_CLIENT_MAX_PAGES = 10
 
 
 def _utcnow() -> datetime:
     """Bieżąca chwila jako aware UTC — do watermarku startowego (ignoruj backlog sprzed startu)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class GithubPoller:
@@ -123,7 +129,7 @@ class GithubPoller:
             return False
         try:
             await asyncio.wait_for(self._stop.wait(), timeout=self._poll_interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
         return True
 
@@ -194,15 +200,17 @@ class GithubPoller:
             repo=f"{self._owner}/{self._repo}",
             project=self._project,
         )
+        new_branch_heads: dict[str, str] | None = None
         if "branches" in self._watch_kinds:
             # Push/usunięcie gałęzi to różnica HEAD SHA między rundami (ADR 0029): stan
             # ``branch_heads`` w state pollera; pierwsza runda seeduje bez zdarzeń.
-            branch_events, self._state["branch_heads"] = selection.diff_branches(
+            branch_events, new_branch_heads = selection.diff_branches(
                 raw_branches,
                 self._state.get("branch_heads"),
                 repo=f"{self._owner}/{self._repo}",
                 project=self._project,
                 occurred_at=self._clock(),
+                truncated=self._branches_truncated(raw_branches),
             )
             events = [*events, *branch_events]
         # Ingest (SQLite, synchroniczny) offloadujemy do puli wątków — nie blokujemy pętli, więc
@@ -211,7 +219,13 @@ class GithubPoller:
         ingested = await loop.run_in_executor(None, self._ingest_batch, events)
 
         # Watermark przesuwamy DOPIERO po ingest (at-least-once): gdyby proces padł wcześniej,
-        # następna runda ponowi, a dedup magazynu pominie już przyjęte.
+        # następna runda ponowi, a dedup magazynu pominie już przyjęte. Dotyczy TAK SAMO mapy
+        # ``branch_heads``, która jest watermarkiem gałęzi — a była przesuwana PRZED ingest.
+        # Różnica ma tu skutek trwały: push/usunięcie gałęzi wykrywamy RÓŻNICĄ wobec poprzedniej
+        # rundy, więc mapa zapisana bez przyjętych zdarzeń kasuje je bezpowrotnie (nie ma czego
+        # ponowić — następna runda widzi już „bez zmian").
+        if new_branch_heads is not None:
+            self._state["branch_heads"] = new_branch_heads
         self._state["issues_since"] = selection.next_since(
             raw_issues, self._state.get("issues_since", "")
         )
@@ -228,6 +242,16 @@ class GithubPoller:
         if ingested:
             logger.info("Przyjęto %d zdarzeń z GitHub %s/%s", ingested, self._owner, self._repo)
         return ingested
+
+    def _branches_truncated(self, raw_branches: list[dict[str, Any]]) -> bool:
+        """Czy lista gałęzi mogła zostać UCIĘTA przez sufit stron klienta (zachowawczo).
+
+        Ucięcie paginacji jest po stronie klienta CICHE (zostaje ostrzeżenie w logu), a dla
+        ``diff_branches`` brak gałęzi w wyniku jest nieodróżnialny od jej usunięcia. Ponieważ
+        ``events.db`` jest append-only, zmyślone ``branch_deleted`` zostaje w nim na zawsze —
+        więc przy pełnym wiadrze wolimy NIE orzekać o usunięciach.
+        """
+        return len(raw_branches) >= self._per_page * _CLIENT_MAX_PAGES
 
     def _ingest_batch(self, events: list[NewEvent]) -> int:
         """Przyjmij zdarzenia do magazynu, IZOLUJĄC błąd per zdarzenie; zwróć liczbę nowych.
@@ -259,13 +283,18 @@ class GithubPoller:
         w bieżącym oknie ``/issues`` (te są w ``raw_issues``) i twardym capem. Watermark
         ``reviews_since`` (w selection) odsiewa już widziane, a dedup magazynu domyka poprawność.
         """
+        # Cap tnie z KOŃCA listy, bo ``/issues`` jedzie ``sort=updated&direction=asc`` — na
+        # początku stoją PR-y najdawniej ruszane. Cięcie z przodu (``[:cap]``) odrzucało więc
+        # najświeższe, a ``reviews_since`` awansowało tak czy tak; dla recenzji watermark jest
+        # filtrem KLIENCKIM i WYKLUCZAJĄCYM (``selection._after_watermark``), więc odrzucone
+        # recenzje nie wracały nigdy — dedup magazynu ich nie odzyskuje, bo nigdy tam nie trafiły.
         numbers = [
             raw["number"]
             for raw in raw_issues
             if raw.get("pull_request")
             and raw.get("state") == "open"
             and raw.get("number") is not None
-        ][:_MAX_REVIEW_PRS]
+        ][-_MAX_REVIEW_PRS:]
         reviews: list[dict[str, Any]] = []
         for number in numbers:
             batch = await loop.run_in_executor(
@@ -316,5 +345,5 @@ def _iso_z(when: datetime) -> str:
     znacznikami GitHuba (``…Z``), więc seed w tym samym formacie eliminuje ryzyko rozjazdu.
     """
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        when = when.replace(tzinfo=UTC)
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

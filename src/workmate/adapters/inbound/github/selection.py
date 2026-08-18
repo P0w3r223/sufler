@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from workmate.core.domain.events import NewEvent
@@ -218,6 +218,7 @@ def diff_branches(
     repo: str = "",
     project: str = "",
     occurred_at: datetime,
+    truncated: bool = False,
 ) -> tuple[list[NewEvent], dict[str, str]]:
     """Wykryj pushy/usunięcia gałęzi różnicą HEAD SHA między rundami (ADR 0029, zgrubne).
 
@@ -227,6 +228,11 @@ def diff_branches(
     force-push = nowy SHA = nowe zdarzenie). BIAŁA LISTA PÓL: nazwa gałęzi i SHA — nic więcej.
     ``actor`` pusty (obserwacja, nie wektor pętli). ``occurred_at`` podaje wołający (detekcja jest
     KLIENCKA, bez znacznika GitHuba), więc rdzeń nie woła zegara.
+
+    ``truncated`` mówi, że lista gałęzi mogła być NIEPEŁNA (sufit stron klienta). Wtedy „nie ma
+    jej w wyniku" nie znaczy „została usunięta", więc: żadnych ``branch_deleted``, a mapa jest
+    ZŁĄCZENIEM poprzedniej z bieżącą — inaczej gałąź wypadła z mapy i przy następnej pełnej
+    rundzie wróciłaby jako świeży push. Domyślne ``False`` = zachowanie dotychczasowe.
     """
     current = {
         str(b.get("name") or ""): str((b.get("commit") or {}).get("sha") or "")
@@ -239,6 +245,11 @@ def diff_branches(
     for name, sha in current.items():
         if sha and previous.get(name) != sha:
             events.append(_branch_event("branch_pushed", name, sha, occurred_at, repo, project))
+    if truncated:
+        # Ucięcie jest CICHE po stronie klienta, a ``events.db`` jest append-only — zmyślone
+        # „usunięto gałąź" zostaje w nim (i w digestach) na zawsze. Milczenie o usunięciach jest
+        # tu jedynym odwracalnym błędem: gałąź naprawdę usunięta zgłosi się w pełnej rundzie.
+        return events, {**previous, **current}
     for name, sha in previous.items():
         if name not in current:
             events.append(_branch_event("branch_deleted", name, sha, occurred_at, repo, project))
@@ -405,4 +416,4 @@ def _parse(value: str) -> datetime:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)

@@ -16,8 +16,20 @@ jobs:
         include:
           - name: workmate
             dir: "."
-            sync_args: "--extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply"
-            lint_paths: "src tests eval"
+            # `seed` jest tu, bo `tests/adapters/inbound/test_document_text.py` ekstrahuje tekst
+            # z PDF — a `pypdf` mieszka w TYM extra, nie w `file-reply` (tam jest sam `fpdf2`,
+            # renderer). Bez niego jeden test padał od 2026-07-30, przykrywając wszystkie kroki
+            # po sobie: lint, format, mypy i granice nie wykonywały się wcale. Ta sama lista
+            # extras co w etapie `test` obrazu (`deploy/docker/Dockerfile`) — jedno źródło prawdy
+            # o tym, czego wymaga pełny przebieg testów.
+            sync_args: "--extra agent --extra github --extra jira --extra teams-graph --extra retrieval --extra file-reply --extra seed"
+            # `deploy` i `scripts` doszły 2026-08-06. Wcześniej lista obejmowała `src tests eval`,
+            # więc trzy pliki narzędziowe stały niezgodne z `ruff format` przy ZIELONYM CI —
+            # wychodziło to dopiero, gdy ktoś uruchomił `ruff format .` lokalnie i zobaczył
+            # w diffie pliki, których nie dotykał. Korzeń wymienia katalogi JAWNIE, a nie `.`,
+            # bo podprojekty mają własne wpisy z własnym `dir` — inaczej lintowalibyśmy je
+            # dwa razy. Nowy katalog z kodem to nowy wpis na tej liście.
+            lint_paths: "src tests eval deploy scripts"
           - name: powiadomienia-teams
             dir: "Powiadomienia_teams"
             sync_args: ""
@@ -41,23 +53,34 @@ jobs:
       - name: Synchronizacja zależności
         run: uv sync ${{ matrix.sync_args }}
 
-      - name: Testy
-        run: uv run pytest
-
+      # Bramki statyczne PRZED testami, a każda dodatkowo z `!cancelled()` — kolejność sama
+      # nie wystarcza. Incydent z 2026-07-30 (komentarz wyżej): jeden czerwony test przykrył
+      # lint, format, mypy i granice na tyle długo, że trzy pliki stały niezgodne z `ruff
+      # format` przy „zielonym" CI. Krok, który padł, ma zabrać ze sobą TYLKO swoją informację,
+      # a nie wynik wszystkich pozostałych. `!cancelled()` (nie `always()`) przerywa przy
+      # anulowaniu przebiegu; przy padniętym `uv sync` wszystkie bramki zapalą się czerwono —
+      # to świadomy koszt czytelności, bo pierwszą przyczynę widać w kroku synchronizacji.
       - name: Lint (ruff)
+        if: ${{ !cancelled() }}
         run: uv run ruff check ${{ matrix.lint_paths }}
 
       - name: Format (ruff)
+        if: ${{ !cancelled() }}
         run: uv run ruff format --check ${{ matrix.lint_paths }}
 
       - name: Typy (mypy)
+        if: ${{ !cancelled() }}
         run: uv run mypy
 
       # import-linter (pyproject.toml [tool.importlinter]) egzekwuje granice tylko rdzenia
       # workmate (core ↛ adapters, outbound ↛ inbound) — pod-projekty go nie mają.
       - name: Granice architektoniczne (import-linter)
-        if: matrix.name == 'workmate'
+        if: ${{ !cancelled() && matrix.name == 'workmate' }}
         run: uv run lint-imports
+
+      - name: Testy
+        if: ${{ !cancelled() }}
+        run: uv run pytest
 
   docker-build:
     name: Budowa obrazu floty

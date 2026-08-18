@@ -11,18 +11,27 @@ ADR 0054 zredukował Jirę do jednej, wyłącznie odczytowej zdolności ("moje z
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from workmate.adapters.outbound.jira_http import request_with_retry
+from workmate.adapters.outbound.jira_http import as_jira_read_error, request_with_retry
+from workmate.core.errors import InvalidRequestError
 
 if TYPE_CHECKING:
     from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
     from workmate.config import JiraSettings
 
+logger = logging.getLogger(__name__)
+
 # Cap stron na jedno pobranie — chroni przed nieograniczoną paginacją dużych projektów.
 _MAX_PAGES = 10
+# Kanoniczny klucz issue Jira (PROJEKT-NUMER) — walidacja przed wstawieniem do ścieżki URL.
+_ISSUE_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-\d+$")
+# Pola dobierane dla szczegółów pojedynczego issue (parzystość z klientem Cloud).
+_DETAIL_FIELDS = "summary,description,status,priority,duedate,created,updated,reporter,assignee"
 
 
 class HttpxJiraClient:
@@ -45,7 +54,8 @@ class HttpxJiraClient:
     ) -> list[dict[str, Any]]:
         issues: list[dict[str, Any]] = []
         start_at = 0
-        for _ in range(_MAX_PAGES):
+        incomplete = False
+        for page_no in range(_MAX_PAGES):
             body = self._get_json(
                 f"{self._base_url}/rest/api/2/search",
                 {
@@ -64,12 +74,56 @@ class HttpxJiraClient:
             start_at += max_results
             if not page or start_at >= total:
                 break
+            incomplete = page_no == _MAX_PAGES - 1
+        if incomplete:
+            # Sufit stron osiągnięty, a Jira ma jeszcze wyniki — odpowiedź jest NIEPEŁNA.
+            # Ucięcie bez śladu wygląda w danych jak „tyle było" (por. ``transcript_sources``,
+            # które podnosi wtedy błąd; tu odczyt ma wrócić, więc zostaje ostrzeżenie z nazwą
+            # zasobu).
+            logger.warning(
+                "Odczyt %s ucięty po %d stronach — oddaję %d pozycji, dalsze pominięte.",
+                "rest/api/2/search",
+                _MAX_PAGES,
+                len(issues),
+            )
         return issues
+
+    def get_issue(self, key: str) -> dict[str, Any]:
+        """Jedno issue po kluczu (REST v2, Server/DC). Treść opisu to zwykły tekst (nie ADF)."""
+        safe = _validate_key(key)
+        data = self._get_json(
+            f"{self._base_url}/rest/api/2/issue/{safe}", {"fields": _DETAIL_FIELDS}
+        )
+        return data if isinstance(data, dict) else {}
+
+    def list_comments(self, key: str, *, max_results: int = 5) -> list[dict[str, Any]]:
+        """Najnowsze komentarze issue (REST v2). Server/DC zwraca je rosnąco — bierzemy ogon."""
+        safe = _validate_key(key)
+        data = self._get_json(
+            f"{self._base_url}/rest/api/2/issue/{safe}/comment",
+            {"maxResults": str(max_results), "orderBy": "-created"},
+        )
+        raw = data.get("comments") if isinstance(data, dict) else None
+        comments = [c for c in raw if isinstance(c, dict)] if isinstance(raw, list) else []
+        return comments[-max_results:] if len(comments) > max_results else comments
 
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
-        return request_with_retry(self._client, "GET", url, params=params).json()
+        # Tłumaczenie błędu transportu siedzi TU (granica adaptera), nie w rdzeniu — patrz
+        # ``jira_http.as_jira_read_error``.
+        with as_jira_read_error():
+            return request_with_retry(self._client, "GET", url, params=params).json()
+
+
+def _validate_key(key: str) -> str:
+    """Zwaliduj klucz issue przed wstawieniem do ścieżki URL (ochrona przed traversalem)."""
+    safe = key.strip()
+    if not _ISSUE_KEY_RE.match(safe):
+        raise InvalidRequestError(
+            f"Niepoprawny klucz zgłoszenia {key!r} — oczekuję postaci 'WT-5'."
+        )
+    return safe
 
 
 def build_jira_client(

@@ -10,14 +10,14 @@ WYŁĄCZNIE nowe zdarzenia (paginacja aż do ``count`` = 0).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from workmate.core.application.events import EventService
 from workmate.core.application.tools import build_events_since_catalog
 from workmate.core.domain.events import NewEvent
 from workmate.core.errors import RepositoryError
 
-_WHEN = datetime(2026, 7, 27, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 27, tzinfo=UTC)
 
 
 def _tool(catalog):

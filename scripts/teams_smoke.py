@@ -10,6 +10,7 @@ Wymaga: działającego bota anonimowego (``scripts/run-teams-anon.ps1``) oraz ex
 
     uv run --no-sync python scripts/teams_smoke.py [BOT_PORT]
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -85,7 +86,7 @@ async def main() -> int:
 
     try:
         await asyncio.wait_for(reply_event.wait(), timeout=10)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("[WYNIK] TIMEOUT — bot nie odesłał odpowiedzi na serviceUrl w 10 s.")
         print(f"[sink] ostatni odebrany body: {captured.get('body')}")
         await runner.cleanup()

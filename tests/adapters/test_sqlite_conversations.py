@@ -238,6 +238,35 @@ def test_list_conversations_filters_by_channel():
     assert [c.id for c in result] == [teams.id]
 
 
+def test_list_conversations_filters_by_external_id_in_SQL():
+    """Zawężenie do JEDNEGO wątku idzie do WHERE — ``/historia`` nie ma filtrować po fakcie."""
+    store = _store()
+    moja = store.open_conversation("teams_graph", "moj-watek")
+    store.open_conversation("teams_graph", "cudzy-watek")
+    store.open_conversation("telegram", "moj-watek")  # ta sama nazwa, inne drzwi
+
+    result = store.list_conversations(channel="teams_graph", external_id="moj-watek")
+
+    assert [c.id for c in result] == [moja.id]
+
+
+def test_list_conversations_limit_applies_AFTER_the_thread_filter():
+    """Sufit liczony na już zawężonym zbiorze — inaczej stara rozmowa wątku ginie za oknem.
+
+    To jest cały powód, dla którego filtr musi stać w zapytaniu: przy filtrowaniu po zwróceniu
+    okna wątek z jedną, starszą rozmową dostawał wynik PUSTY, nieodróżnialny od „nie ma
+    historii", a magazyn i tak liczył usage/tury dla każdego wiersza okna.
+    """
+    store = _store()
+    moja = store.open_conversation("teams_graph", "moj-watek")
+    for i in range(30):  # nowsze rozmowy innych wątków tego samego kanału
+        store.open_conversation("teams_graph", f"cudzy-{i}")
+
+    result = store.list_conversations(channel="teams_graph", external_id="moj-watek", limit=10)
+
+    assert [c.id for c in result] == [moja.id]
+
+
 def test_list_conversations_orders_by_updated_at_newest_first():
     """Sortuje po ``updated_at`` malejąco — nawet gdy przeczy to kolejności zapisu."""
     store = _store()
@@ -602,3 +631,66 @@ def test_pre_0014_db_migrates_archived_column_and_summaries_table(tmp_path: Path
     assert old.archived is False
     rec = store.save_summary("c1", "skrót", old.id)
     assert store.active_summary("c1").id == rec.id
+
+
+def test_pre_0066_db_gains_taint_columns_on_the_conversations_table(tmp_path):
+    """Baza sprzed 0066 dostaje kolumny skazy i klasy zaufania migracją ADDYTYWNĄ.
+
+    Skaza musi żyć NA DYSKU, nie w pamięci procesu: recreate kontenera (a ten w tej flocie
+    zdarza się przy każdym wdrożeniu) nie może zgubić stanu eskalacji.
+    """
+    import sqlite3
+
+    db = tmp_path / "stara.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE conversations (
+            id TEXT PRIMARY KEY, channel TEXT NOT NULL, external_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+        );
+        INSERT INTO conversations(id, channel, external_id, status)
+        VALUES ('c1', 'teams_graph', 'thr-1', 'active');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = SqliteConversationStore(db)
+
+    conv = store.active_conversation("teams_graph", "thr-1")
+    assert conv is not None
+    assert conv.tainted is False  # istniejące rozmowy startują CZYSTE
+    store.mark_tainted("c1", "attachment")
+    odczyt = store.active_conversation("teams_graph", "thr-1")
+    assert odczyt is not None and odczyt.tainted is True
+    assert odczyt.taint_source == "attachment"
+
+
+def test_mark_tainted_is_idempotent_and_keeps_the_first_source(tmp_path):
+    store = SqliteConversationStore(":memory:")
+    conv = store.open_conversation("teams_graph", "thr-2")
+
+    store.mark_tainted(conv.id, "attachment")
+    store.mark_tainted(conv.id, "tool")
+
+    odczyt = store.active_conversation("teams_graph", "thr-2")
+    assert odczyt is not None and odczyt.taint_source == "attachment"
+
+
+def test_rollover_opens_a_clean_conversation(tmp_path):
+    """Rollover otwiera NOWY wiersz, więc skaza nie przechodzi — i tak ma być (ADR 0066).
+
+    Skażona treść znika razem ze starą rozmową; przenoszenie skazy „na wszelki wypadek"
+    skaziłoby z czasem każdą rozmowę i uczyniło sygnał bezużytecznym.
+    """
+    store = SqliteConversationStore(":memory:")
+    stara = store.open_conversation("teams_graph", "thr-3")
+    store.mark_tainted(stara.id, "attachment")
+    store.close_conversation(stara.id)
+
+    nowa = store.open_conversation("teams_graph", "thr-3")
+
+    assert nowa.tainted is False

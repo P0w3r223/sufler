@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,20 @@ class _FakeLlm:
         self._response = response
 
     def complete(self, system: str, user: str) -> str:
+        return self._response
+
+
+class _RecordingLlm:
+    """Atrapa, która zapamiętuje ostatnie wywołanie — do sprawdzania, co trafia w payloadzie."""
+
+    def __init__(self, response: str) -> None:
+        self._response = response
+        self.last_system: str | None = None
+        self.last_user: str | None = None
+
+    def complete(self, system: str, user: str) -> str:
+        self.last_system = system
+        self.last_user = user
         return self._response
 
 
@@ -361,3 +376,139 @@ def test_bad_entries_are_skipped_not_whole_answer():
     assert decision.action == "modify"
     assert decision.schedule is not None
     assert len(decision.schedule.shifts) == 1  # poprawny wpis przeżył
+
+
+# --- Pamięć rozmowy: `history` w payloadzie ---------------------------------------------------
+
+
+def test_history_omitted_from_payload_when_none():
+    """Bez historii payload jest bajt-w-bajt jak dotąd — zgodność wsteczna z istniejącymi
+    testami."""
+    llm = _RecordingLlm('{"action":"decline"}')
+    interpret_reply(_proposal(), "nie", tz=WAW, group_id=None, llm=llm)
+    assert llm.last_user is not None
+    assert "historia_pracownika" not in llm.last_user
+
+
+def test_history_omitted_from_payload_when_empty_list():
+    llm = _RecordingLlm('{"action":"decline"}')
+    interpret_reply(_proposal(), "nie", tz=WAW, group_id=None, llm=llm, history=[])
+    assert llm.last_user is not None
+    assert "historia_pracownika" not in llm.last_user
+
+
+def test_history_included_in_payload_oldest_to_newest():
+    llm = _RecordingLlm('{"action":"decline"}')
+    interpret_reply(
+        _proposal(),
+        "i tyle",
+        tz=WAW,
+        group_id=None,
+        llm=llm,
+        history=["pon-pt 8-16", "a piątek zdalnie"],
+    )
+    assert llm.last_user is not None
+    assert "historia_pracownika" in llm.last_user
+    # Kolejność zachowana (najstarsza→najnowsza) i treść obu wiadomości obecna.
+    idx_pon = llm.last_user.index("pon-pt 8-16")
+    idx_piatek = llm.last_user.index("a piątek zdalnie")
+    assert idx_pon < idx_piatek
+
+
+def test_system_prompt_mentions_history_and_memory_limits():
+    llm = _RecordingLlm('{"action":"decline"}')
+    interpret_reply(_proposal(), "nie", tz=WAW, group_id=None, llm=llm, history=["x"])
+    assert llm.last_system is not None
+    assert "historia_pracownika" in llm.last_system
+    assert "10" in llm.last_system  # limit liczby zapamiętanych wiadomości
+
+
+# --- Tryb pracy podany kolorem/emotką, nie tylko słowem ----------------------------------------
+
+
+def test_reply_sets_mode_from_green_emoji():
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
+        theme="blue",
+    )
+    proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[{"weekday":0,"start":"09:00","end":"17:00","tryb":"🟢"}]}'
+    )
+    decision = interpret_reply(proposal, "w pon 🟢", tz=WAW, group_id=None, llm=llm)
+    assert decision.schedule is not None
+    assert decision.schedule.shifts[0].theme == "green"
+
+
+def test_reply_sets_mode_from_blue_emoji():
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
+        theme="green",
+    )
+    proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[{"weekday":0,"start":"09:00","end":"17:00","tryb":"🔵"}]}'
+    )
+    decision = interpret_reply(proposal, "w pon 🔵", tz=WAW, group_id=None, llm=llm)
+    assert decision.schedule is not None
+    assert decision.schedule.shifts[0].theme == "blue"
+
+
+def test_reply_sets_mode_from_color_word_niebieski():
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
+        theme="green",
+    )
+    proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[{"weekday":0,"start":"09:00","end":"17:00",'
+        '"tryb":"niebieski"}]}'
+    )
+    decision = interpret_reply(proposal, "w pon niebieski", tz=WAW, group_id=None, llm=llm)
+    assert decision.schedule is not None
+    assert decision.schedule.shifts[0].theme == "blue"
+
+
+def test_reply_sets_mode_from_color_word_zielono():
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 6, tzinfo=UTC),
+        datetime(2026, 7, 20, 14, tzinfo=UTC),
+        theme="blue",
+    )
+    proposal = WeekSchedule("u1", date(2026, 7, 20), (shift,))
+    llm = _FakeLlm(
+        '{"action":"modify","shifts":[{"weekday":0,"start":"09:00","end":"17:00",'
+        '"tryb":"zielono"}]}'
+    )
+    decision = interpret_reply(proposal, "w pon na zielono", tz=WAW, group_id=None, llm=llm)
+    assert decision.schedule is not None
+    assert decision.schedule.shifts[0].theme == "green"
+
+
+def test_zly_json_nie_wypuszcza_calego_wyjscia_modelu_do_logu(caplog):
+    """Wyjście modelu to przetworzona WIADOMOŚĆ PRACOWNIKA — log dostaje skrót, nie całość.
+
+    Powód urlopu, sprawa rodzinna czy stan zdrowia potrafią przejść przez model i wrócić w jego
+    odpowiedzi. Log usługi bywa zbierany centralnie i czytany przez ludzi spoza zespołu, więc
+    trafia tam tyle, ile trzeba do rozpoznania „model systematycznie psuje JSON": powód, długość
+    i krótki początek. Wcześniej szło 200 znaków w treści wyjątku PLUS pełny ślad stosu
+    (`exc_info=True`), którego `JSONDecodeError` ciągnie razem z całym dokumentem.
+    """
+    wrazliwe = "leczenie onkologiczne w klinice w Gliwicach"
+    surowe = "Nie mogę zwrócić JSON. " + ("x" * 300) + " " + wrazliwe
+    with caplog.at_level(logging.WARNING):
+        decision = interpret_reply(
+            _proposal(), "cokolwiek", tz=WAW, group_id="TAG", llm=_FakeLlm(surowe)
+        )
+    assert decision.action == "unclear"
+    zapis = caplog.text
+    assert wrazliwe not in zapis
+    assert "x" * 200 not in zapis  # skrót, nie 200-znakowy wycinek jak dotąd
+    assert str(len(surowe)) in zapis  # długość zostaje — po niej poznaje się awarię modelu

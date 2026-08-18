@@ -16,6 +16,7 @@ napisu powłoki jest zawodne, a bezpieczeństwo bierze się tu z tego, czego w k
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -41,8 +42,16 @@ logger = logging.getLogger(__name__)
 _MAX_OUTPUT_BYTES = 64 * 1024
 _DEFAULT_TIMEOUT_S = 60.0
 _MAX_TIMEOUT_S = 300.0
+# DOLNA granica limitu polecenia. ``timeout_s`` przychodzi od modelu, a ``min(t, _MAX)`` bez podłogi
+# przepuszczał wartość UJEMNĄ: ``communicate(timeout=-5)`` zgłasza ``TimeoutExpired`` natychmiast,
+# więc każde polecenie ginęło od razu, z wynikiem nieodróżnialnym od realnego przekroczenia czasu.
+_MIN_TIMEOUT_S = 1.0
 # Sufit linii żądania — zabezpiecza przed wyczerpaniem pamięci przez zepsutego klienta.
 _MAX_REQUEST_BYTES = 1024 * 1024
+# Sufit oczekiwania w JEDNYM połączeniu (jak ``exec_manager_server``). Gniazdo zaakceptowane NIE
+# dziedziczy timeoutu nasłuchu, więc bez tego klient, który się łączy i milczy, wieszał WĄTEK
+# i deskryptor bez końca — a wątków tu przybywa po jednym na połączenie.
+_CONN_TIMEOUT_S = 60.0
 _SOCKET_PATH = Path(os.environ.get("WORKMATE_EXEC_SOCKET", "/var/run/workmate/exec.sock"))
 _DEFAULT_CWD = Path(os.environ.get("WORKMATE_EXEC_CWD", "/home/scratchpad"))
 
@@ -76,13 +85,17 @@ def _resolve_cwd(requested: str) -> str | None:
 def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[str, object]:
     """Uruchom polecenie w powłoce i zwróć wynik w postaci słownika protokołu.
 
-    Proces potomny dostaje WŁASNĄ grupę procesów (``start_new_session``), żeby przy timeoucie
-    zabić także jego potomków — bez tego ``sleep 999 &`` przeżywa zabicie powłoki i wykonawca
-    zbiera sieroty. Po ``TimeoutExpired`` wysyłamy sygnał do całej grupy i dopiero wtedy
-    czytamy to, co proces zdążył wypisać.
+    Proces potomny dostaje WŁASNĄ grupę procesów (``start_new_session``), żeby dało się zabić
+    także jego potomków — bez tego ``sleep 999 &`` przeżywa zabicie powłoki. Po ``TimeoutExpired``
+    wysyłamy sygnał do całej grupy i dopiero wtedy czytamy to, co proces zdążył wypisać.
+
+    Grupa ginie ZAWSZE, nie tylko po timeoucie: proces odłączony od potoków wraca natychmiast
+    i przeżywa turę, a wtedy obchodzi migawkę skrzynki nadawczej. Szczegóły przy samym ``finally``.
     """
     workdir = _resolve_cwd(cwd)
-    limit = min(timeout_s or _DEFAULT_TIMEOUT_S, _MAX_TIMEOUT_S)
+    # Podłoga ORAZ sufit: ``timeout_s`` układa model, a wartość ujemna (albo mikroskopijna)
+    # zabijała polecenie natychmiast, dając wynik nieodróżnialny od realnego timeoutu.
+    limit = min(max(timeout_s or _DEFAULT_TIMEOUT_S, _MIN_TIMEOUT_S), _MAX_TIMEOUT_S)
 
     proc = subprocess.Popen(  # noqa: S602 — powłoka to CEL tego narzędzia, nie przeoczenie
         ["/bin/bash", "-c", command],
@@ -93,11 +106,25 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
     )
     timed_out = False
     try:
-        out, err = proc.communicate(timeout=limit)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        os.killpg(proc.pid, signal.SIGKILL)
-        out, err = proc.communicate()
+        try:
+            out, err = proc.communicate(timeout=limit)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            os.killpg(proc.pid, signal.SIGKILL)
+            out, err = proc.communicate()
+    finally:
+        # Grupę zabijamy ZAWSZE, nie tylko po timeoucie — i to jest granica bezpieczeństwa.
+        # `nohup … >/dev/null 2>&1 &` przekierowuje strumienie, więc potoki zamykają się razem
+        # z powłoką: ``communicate`` widzi EOF i wraca NATYCHMIAST z kodem 0, a potomek żyje
+        # dalej. Zmierzone w obrazie: polecenie wróciło po 0,01 s, a proces w tle zapisał plik
+        # trzy sekundy później. Osierocony proces jednej rozmowy mógł tak zapisać do katalogu
+        # innej PO jej migawce skrzynki (``OutboxDelivery.snapshot``) — czyli obejść jedyną
+        # kontrolę pochodzenia plików i opublikować treść w cudzym wątku.
+        #
+        # Nic się przy tym nie traci: polecenie jest synchroniczne, a cokolwiek przeżyje jego
+        # zwrot, jest dla modelu i tak nieobserwowalne — wyjście zebrano, tura idzie dalej.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
 
     stdout, cut_out = _truncate(out or b"")
     stderr, cut_err = _truncate(err or b"")
@@ -116,7 +143,12 @@ def _handle(conn: socket.socket) -> None:
     Każdy błąd zamieniamy na ODPOWIEDŹ z niezerowym kodem, zamiast pozwolić mu zerwać
     połączenie: klient po drugiej stronie czeka na linię, a cisza po zerwaniu wygląda dla
     niego jak zawieszenie, nie jak porażka polecenia.
+
+    Milczącego klienta odcina ``_CONN_TIMEOUT_S`` (``TimeoutError`` jest podklasą ``OSError``,
+    więc łapiemy go razem z zerwaniem) — jak w bliźniaczym ``exec_manager_server``. Bez tego
+    połączenie bez ani jednej linii trzymało wątek i deskryptor do końca życia procesu.
     """
+    conn.settimeout(_CONN_TIMEOUT_S)
     try:
         with conn, conn.makefile("rwb") as stream:
             line = stream.readline(_MAX_REQUEST_BYTES)

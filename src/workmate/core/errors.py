@@ -75,10 +75,32 @@ class JiraReadError(WorkMateError):
     """
 
 
+class ScheduleReadError(WorkMateError):
+    """Odczyt grafiku Shifts (ADR 0059) się nie udał: brak/wygaśnięcie cichego tokenu, brak zgody
+    (Schedule.Read.All), throttling, timeout albo sieć.
+
+    Adapter tłumaczy tu błąd cichego uwierzytelnienia (cudzy cache MSAL powiadomienia-teams) i
+    transportu Graph, żeby narzędzie zwróciło czytelny komunikat zamiast surowego wyjątku. Osobny od
+    ``JiraReadError`` (inne źródło i inna podpowiedź naprawcza) — degraduje łagodnie na granicy.
+    """
+
+
 class ThreadRootGone(WorkMateError):
     """Root wątku na kanale Teams już nie istnieje (odpowiedź na usunięty post, ADR 0024).
 
     Adapter ``TeamsNotifier`` podnosi to, gdy ``reply_channel`` dostaje 404 (człowiek/retencja
     usunęły root). Notifier łapie i degraduje: tworzy NOWY root i przełącza link — dzięki temu
     usunięty wątek nie blokuje na trwałe całego strumienia zdarzeń (zamiast wywracać kursor).
+    """
+
+
+class ExecManagerError(WorkMateError):
+    """Menedżer wykonawców (ADR infra 0012) nie zdołał zapewnić wykonawcy scope'a.
+
+    Podnoszony przez ``ExecManagerService`` i klienta gniazda kontrolnego, gdy: scope nie przechodzi
+    ścisłej walidacji (próba wstrzyknięcia montażu), silnik kontenerów odmawia startu, albo
+    wykonawca nie wystawił gniazda w oknie gotowości. Osobny od ``RepositoryError``/``WriteError`` —
+    to nie jest ani magazyn, ani zapis, tylko cykl życia kontenera. Klient ``Bash`` degraduje go do
+    ``CommandResult`` z niezerowym kodem (jak każdą inną niedostępność wykonawcy, ADR 0057), więc
+    tura agenta się nie wywraca — model poprawia się w następnej.
     """

@@ -46,6 +46,15 @@ def test_summarize_day_uses_llm_and_passes_data() -> None:
     assert "feat: filtr" in user
 
 
+def test_llm_payload_carries_label_not_email() -> None:
+    """REGRESJA: adres e-mail osoby szedł wprost do zapytania LLM."""
+    llm = FakeLlm()
+    summarize_day(_day(), person="jan.kowalski@firma.pl", llm=llm)
+    _system, user = llm.calls[0]
+    assert "jan.kowalski@firma.pl" not in user
+    assert "Jan Kowalski" in user
+
+
 def test_summarize_empty_day_skips_llm() -> None:
     llm = FakeLlm()
     empty = DaySummary(day=date(2026, 7, 17), prompts=(), commits=())

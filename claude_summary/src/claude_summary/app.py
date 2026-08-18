@@ -19,11 +19,15 @@ from claude_summary.adapters import env, git_log, transcript_files
 from claude_summary.adapters.anthropic_summarizer import AnthropicClient, summarize_day
 from claude_summary.config import Settings
 from claude_summary.core import render
+from claude_summary.core.consent import grant_consent
 from claude_summary.core.grouping import group_by_day
 from claude_summary.core.models import Commit, DaySummary, SummaryReport
 from claude_summary.core.ports import LlmClient
 
 _FORMATS = ("md", "json", "both")
+# Rozszerzenia, które sami dokładamy — tylko te wolno zdjąć z ``--out`` (``raport.2026-07-17``
+# to nazwa pliku, nie sufiks formatu).
+_OWN_SUFFIXES = (".md", ".json")
 
 _USAGE = (
     "claude-summary — dzienne zestawienie pracy z historii promptów Claude Code i commitów.\n"
@@ -156,11 +160,12 @@ def _with_prose(days: list[DaySummary], *, settings: Settings, person: str) -> l
     return result
 
 
-def _write_files(report: SummaryReport, *, md: str | None, js: str | None, out: Path | None,
-                 settings: Settings) -> None:
+def _write_files(
+    report: SummaryReport, *, md: str | None, js: str | None, out: Path | None, settings: Settings
+) -> None:
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
-        stem = out.with_suffix("")
+        stem = out.with_suffix("") if out.suffix.lower() in _OWN_SUFFIXES else out
     else:
         settings.output_dir.mkdir(parents=True, exist_ok=True)
         name = f"summary_{report.since.isoformat()}_{report.until.isoformat()}"
@@ -168,13 +173,15 @@ def _write_files(report: SummaryReport, *, md: str | None, js: str | None, out: 
     for content, suffix in ((md, ".md"), (js, ".json")):
         if content is None:
             continue
-        path = stem.with_suffix(suffix)
+        # Doklejamy sufiks tekstowo — ``with_suffix`` zjadłoby datę z ``raport.2026-07-17``.
+        path = stem.with_name(stem.name + suffix)
         path.write_text(content, encoding="utf-8")
         print(f"Zapisano: {path}", file=sys.stderr)
 
 
-def _emit(report: SummaryReport, *, tz: ZoneInfo, fmt: str, out: Path | None,
-          settings: Settings) -> None:
+def _emit(
+    report: SummaryReport, *, tz: ZoneInfo, fmt: str, out: Path | None, settings: Settings
+) -> None:
     md = render.to_markdown(report, tz=tz) if fmt in ("md", "both") else None
     js = render.to_json(report, tz=tz) if fmt in ("json", "both") else None
     print(js if fmt == "json" else md)
@@ -184,7 +191,8 @@ def _emit(report: SummaryReport, *, tz: ZoneInfo, fmt: str, out: Path | None,
 
 def run(args: _Args, settings: Settings) -> int:
     """Wykonaj bieg; zwróć kod wyjścia (0 sukces, 1 błąd walidacji/zgody)."""
-    if not (args.consent or settings.consent):
+    consent = grant_consent(flag=args.consent, env_consent=settings.consent)
+    if consent is None:
         print(_CONSENT_MSG, file=sys.stderr)
         return 1
 
@@ -196,14 +204,16 @@ def run(args: _Args, settings: Settings) -> int:
         return 1
 
     repo = args.repo.resolve() if args.repo else None
-    prompts = list(
-        transcript_files.iter_prompts(
-            settings.projects_dir,
-            repo=repo,
-            all_projects=args.all_projects,
-            only_project=args.only_project,
-        )
+    scan = transcript_files.scan_prompts(
+        settings.projects_dir,
+        consent=consent,
+        repo=repo,
+        all_projects=args.all_projects,
+        only_project=args.only_project,
     )
+    for warning in scan.warnings:  # pusty raport ma powiedzieć, dlaczego jest pusty
+        print(f"Uwaga: {warning}", file=sys.stderr)
+    prompts = list(scan.prompts)
 
     commits: list[Commit] = []
     person = (args.author or settings.author).strip()
@@ -239,13 +249,23 @@ def run(args: _Args, settings: Settings) -> int:
     return 0
 
 
+def _settings_or_exit() -> Settings:
+    """Wczytaj konfigurację; błąd zmiennych ``CLAUDE_SUMMARY_*`` to komunikat, nie traceback."""
+    try:
+        settings = Settings.from_env()
+        settings.validate()
+    except ValueError as exc:
+        raise SystemExit(f"Błąd konfiguracji: {exc}") from exc
+    return settings
+
+
 def main() -> None:
     _force_utf8_io()
-    env.load_dotenv()
-    settings = Settings.from_env()
-    settings.validate()
+    # Argumenty PRZED konfiguracją: --help i błędna flaga mają działać także wtedy, gdy
+    # zmienne środowiskowe są popsute (wcześniej wywalały się wcześniej, tracebackiem).
     args = _parse_args(sys.argv[1:])
-    raise SystemExit(run(args, settings))
+    env.load_dotenv()
+    raise SystemExit(run(args, _settings_or_exit()))
 
 
 if __name__ == "__main__":

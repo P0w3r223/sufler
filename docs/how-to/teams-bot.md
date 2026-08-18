@@ -22,7 +22,7 @@ potem Azure + Teams (Etapy B–F). Każdy etap ma punkt „gotowe, gdy".
 
 ## Wymagania
 
-- Python 3.10+ i `uv`; instalacja drzwi Teams: **`uv sync --extra teams`**
+- Python 3.11+ i `uv`; instalacja drzwi Teams: **`uv sync --extra teams`**
   (serwer MCP zostaje lekki bez tego extra).
 - Do Etapów B–F: subskrypcja Azure (prawo tworzenia App Registration + Azure Bot)
   oraz — do sideloadu — włączony „custom app upload" w Teams (uprawnienie admina;
@@ -173,6 +173,44 @@ line spike'u M2.
 
 ---
 
+## Etap G — bramka odczytu bazy wiedzy (ADR 0062)
+
+Do audytu 2026-08-17 te drzwi stały **poza każdą bramką nadawcy**: `InboundMessage` nie niosło
+`sender_id`, a `app.py` budowało responder bez `NoteReadAuthorizer`, więc `/szukaj`, `/projekty`,
+`/status` i narzędzia odczytu agenta odpowiadały **każdemu**, kto dosięgnął endpointu — podczas gdy
+bliźniacze drzwi delegowane (`teams-graph`) odmawiały. Dziś obie pary drzwi mają tę samą bramkę.
+
+Tożsamość nadawcy to **`activity.from.aadObjectId`** — ten sam AAD id, którym posługuje się mapa
+tożsamości (`identities.yaml`) i drzwi delegowane (`from.user.id` z Graph). Identyfikator Bot
+Framework (`29:…`, pole `from.id`) **nie jest** tożsamością i nigdy nie jest w to miejsce
+podstawiany: gość, konto spoza tenantu i aktywność systemowa nie mają `aadObjectId`, więc zostają
+nadawcą **nierozpoznanym** i bramka odmawia (fail-closed).
+
+```powershell
+$env:WORKMATE_TEAMS_IDENTITIES = "C:\workmate\identities.yaml"
+$env:WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ = "true"
+uv run workmate-teams
+```
+
+Plik mapy ma **ten sam format** co `WORKMATE_TEAMS_GRAPH_IDENTITIES` i zwykle jest tym samym
+plikiem. Włączona bramka bez istniejącego pliku → proces świadomie nie wystartuje.
+
+**Gotowe, gdy:** w logu jest `Autoryzacja ODCZYTU bazy wiedzy WŁĄCZONA (ADR 0062)`, nadawca z mapy
+dostaje wyniki `/szukaj`, a nadawca spoza mapy — odmowę zamiast treści notatek.
+
+> **Poza zakresem bramki** (tak samo jak na drzwiach delegowanych): powłoka i drzwi MCP — nie niosą
+> tożsamości nadawcy (ADR 0062 §Decision 4). Na tych drzwiach powłoki i tak nie ma.
+
+### @wzmianki
+
+Handler wypełnia też `mentions_bot` — wzmiankę rozpoznaje po encji `{type: 'mention', mentioned:
+{id}}` porównanej z `activity.recipient.id` (czyli `28:<App ID>`). Routery dyrektyw („ogarnij mnie
+na …", „co się zmieniło od …", „zapisz to") **nie są** na tych drzwiach składane — sygnał jest
+poprawny i gotowy, ale konsumenta dostanie dopiero razem z nimi. Na drzwiach delegowanych te
+dyrektywy działają dziś ([`teams-graph.md`](teams-graph.md)).
+
+---
+
 ## Rozwiązywanie problemów
 
 | Objaw | Najczęstsza przyczyna | Co zrobić |
@@ -182,6 +220,8 @@ line spike'u M2.
 | **Endpoint nie dostaje requestów** | Kanał Teams niewłączony; `http` zamiast `https` | Włącz kanał Teams (Etap B.5); użyj URL tunelu (HTTPS). |
 | **„Upload a custom app" wyszarzone** | Sideload wyłączony w tenancie | Admin włącza custom app upload albo użyj tenanta M365 Developer Program (Etap E). |
 | **Proces nie startuje, „brakuje WORKMATE_TEAMS_…"** | Tryb uwierzytelniony bez pełnej tożsamości | Uzupełnij App ID + secret + Tenant ID, albo do testu lokalnego ustaw `WORKMATE_TEAMS_ANONYMOUS=true`. |
+| **Proces nie startuje, „wymaga WORKMATE_TEAMS_IDENTITIES"** | Bramka odczytu włączona bez mapy tożsamości | Wskaż istniejący plik mapy (może być ten sam co `WORKMATE_TEAMS_GRAPH_IDENTITIES`) albo wyłącz `WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ`. |
+| **Bot odmawia odczytu notatek znanemu koledze** | Kanał nie podał `aadObjectId` albo brak wpisu w mapie | Sprawdź, czy nadawca ma wpis `aad_user_id` w mapie; goście i konta spoza tenantu nie mają AAD id i są nierozpoznani z założenia (fail-closed, ADR 0062). |
 
 ---
 
@@ -189,10 +229,15 @@ line spike'u M2.
 
 Wpięcie rdzenia jest **zrobione**:
 [`app.py`](../../src/workmate/adapters/inbound/teams/app.py) buduje runtime agenta
-na katalogu READ-ONLY (`build_agent_runtime(..., enable_write=False)`) i podaje go
-jako `RuntimeResponder` — handler i `bot.py` bez zmian. Profil uprawnień per drzwi
-(Teams = mniej zaufane, ADR 0006) wchodzi przez `enable_write=False`. Powrót do echa
-to nadal jedna linia (`EchoResponder()`).
+na katalogu READ-ONLY (`build_responder`, `enable_write=False`) i podaje go jako responder —
+handler i `bot.py` bez zmian. Profil uprawnień per drzwi (Teams = mniej zaufane, ADR 0006)
+wchodzi przez `enable_write=False`, a bramka odczytu (ADR 0062) przez `note_read_authorizer`
+(Etap G). Powrót do echa to nadal jedna linia (`EchoResponder()`).
+
+Te drzwi **nie jeżdżą we flocie** (`deploy/docker/docker-compose.yml` wozi
+`workmate-teams-graph`) i nie mają CI na żywym Bot Framework — testy stoją na atrapach
+aktywności. Zdolności, które drzwi delegowane mają, a te nie: załączniki, wątki kanału,
+zapis notatek (`/notatka`, „zapisz to"), brief, digest, powłoka, `File`.
 
 Dalej (Faza 2, M3–M4): przepływ „nowa notatka" przez Microsoft Graph (transkrypt →
 streszczenie wg zamrożonego schematu → zapis przez bramkowany `save_note`) oraz

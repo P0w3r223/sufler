@@ -1,35 +1,17 @@
-"""Testy konfiguracji drzwi GitHub (GithubSettings, ADR 0020) — from_env + walidacja."""
+"""Testy konfiguracji drzwi GitHub (GithubSettings, ADR 0020) — from_env + walidacja.
+
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``).
+Wcześniej stała tu ręczna lista siedemnastu zmiennych i pomocnik ``_clear`` — dwa testy
+zapomniały go zawołać i ``test_enable_ci_auto_comment_defaults_false`` przewracał się na maszynie
+z ``WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true`` w powłoce. Lista, którą trzeba pamiętać
+o uzupełnieniu przy każdej nowej zmiennej, jest gorszą izolacją niż brak listy.
+"""
 
 from __future__ import annotations
 
 import pytest
 
 from workmate.config import GithubSettings
-
-_GITHUB_VARS = (
-    "WORKMATE_GITHUB_TOKEN",
-    "WORKMATE_GITHUB_OWNER",
-    "WORKMATE_GITHUB_REPO",
-    "WORKMATE_GITHUB_API_BASE",
-    "WORKMATE_GITHUB_POLL_INTERVAL",
-    "WORKMATE_GITHUB_PER_PAGE",
-    "WORKMATE_GITHUB_WATCH_KINDS",
-    "WORKMATE_GITHUB_ENABLE_WRITE",
-    "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT",
-    "WORKMATE_GITHUB_STATE",
-    "WORKMATE_GITHUB_SELF_LOGIN",
-    "WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES",
-    "WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES",
-    "WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES",
-    "WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS",
-    "WORKMATE_GITHUB_WORKLOG_MAX_RANGE_DAYS",
-    "WORKMATE_GITHUB_WORKLOG_TZ",
-)
-
-
-def _clear(monkeypatch):
-    for var in _GITHUB_VARS:
-        monkeypatch.delenv(var, raising=False)
 
 
 def _valid(**kw) -> GithubSettings:
@@ -38,8 +20,7 @@ def _valid(**kw) -> GithubSettings:
     return GithubSettings(**base)
 
 
-def test_from_env_defaults(monkeypatch):
-    _clear(monkeypatch)
+def test_from_env_defaults():
     settings = GithubSettings.from_env()
     assert settings.token == ""
     assert settings.poll_interval_s == 60
@@ -49,7 +30,6 @@ def test_from_env_defaults(monkeypatch):
 
 
 def test_from_env_reads_values(monkeypatch):
-    _clear(monkeypatch)
     monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "secret")
     monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "biap")
     monkeypatch.setenv("WORKMATE_GITHUB_REPO", "workmate")
@@ -124,7 +104,6 @@ def test_enable_ci_auto_comment_defaults_false():
 
 
 def test_from_env_reads_ci_auto_comment(monkeypatch):
-    _clear(monkeypatch)
     monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "secret")
     monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "biap")
     monkeypatch.setenv("WORKMATE_GITHUB_REPO", "workmate")
@@ -201,7 +180,6 @@ def test_validate_worklog_limits_needs_no_token_or_repo():
 
 
 def test_from_env_reads_worklog_tuning(monkeypatch):
-    _clear(monkeypatch)
     monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES", "45")
     monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES", "30")
     monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS", "6.5")
@@ -213,8 +191,7 @@ def test_from_env_reads_worklog_tuning(monkeypatch):
     assert settings.worklog_tz == "Europe/London"  # przycięte
 
 
-def test_from_env_worklog_defaults(monkeypatch):
-    _clear(monkeypatch)
+def test_from_env_worklog_defaults():
     settings = GithubSettings.from_env()
     assert settings.worklog_idle_gap_minutes == 90
     assert settings.worklog_ramp_up_minutes == 30

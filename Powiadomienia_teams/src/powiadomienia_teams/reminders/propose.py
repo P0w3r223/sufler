@@ -26,15 +26,24 @@ def proposal_from_last_week(
     target_week_start: date,
     *,
     tz: ZoneInfo,
+    skip_weekdays: frozenset[int] = frozenset(),
 ) -> WeekSchedule:
     """Przesuń zmiany pracownika z zeszłego tygodnia o 7 dni na `target_week_start`.
 
     Zachowuje lokalną porę dnia (patrz `_plus_one_week_local` — DST), długość i grupę grafiku.
     Bierze pod uwagę wyłącznie zmiany danego `member_id`. Brak zmian w zeszłym tygodniu →
     pusty WeekSchedule (nie ma z czego zaproponować »jak ostatnio«).
+
+    `skip_weekdays` to dni (0=pon…6=nd), w których osoba ma urlop w docelowym tygodniu — nie
+    proponujemy w nie pracy. Przesunięcie o 7 dni zachowuje weekday, więc filtrujemy po weekdayu
+    zmiany źródłowej (w strefie `tz`), co jest równoważne dniowi docelowemu.
     """
     own = sorted(
-        (s for s in last_week_shifts if s.user_id == member_id),
+        (
+            s
+            for s in last_week_shifts
+            if s.user_id == member_id and s.start.astimezone(tz).weekday() not in skip_weekdays
+        ),
         key=lambda s: s.start,
     )
     shifted = tuple(

@@ -17,10 +17,7 @@ from workmate.adapters.outbound.sqlite_events import SqliteEventStore
 from workmate.core.application.events import EventService
 from workmate.core.application.github import GithubWriteService
 from workmate.core.application.notifier import EventNotifier, NotifyTargets
-from workmate.core.application.tools import (
-    build_events_catalog,
-    build_github_write_catalog,
-)
+from workmate.core.application.tools import build_activity_catalog
 
 _SELF = "workmate-bot"
 
@@ -116,13 +113,17 @@ def _notifier(events, sender, *, cursor=0):
 
 
 def _create_issue_tool(events):
-    """Narzędzie create_github_issue nad realnym serwisem zapisu (atrapa klienta GitHub)."""
+    """Zapis issue przez ``GitHub(action='create_issue')`` nad REALNYM serwisem zapisu.
+
+    Krok 5.2 (ADR 0009 paczki) zniósł ``build_github_write_catalog``; zdolność żyje jako akcja.
+    Sonda łączności celowo idzie przez narzędzie, a nie prosto przez serwis — sprawdzamy drogę,
+    którą faktycznie chodzi agent.
+    """
     service = GithubWriteService(
         _FakeGithubWriteClient(), owner="biap", repo="workmate", events=events
     )
-    return next(
-        s.fn for s in build_github_write_catalog(service) if s.name == "create_github_issue"
-    )
+    tool = build_activity_catalog(events=events, write_service=service)[0].fn
+    return lambda **kw: tool(action="create_issue", **kw)
 
 
 # --- ŁĄCZNOŚĆ 1: GitHub → EventStore → Teams (oba cele), przez OSOBNE połączenia -------
@@ -159,10 +160,9 @@ def test_teams_created_issue_echoes_to_eventstore(tmp_path):
     events = EventService(SqliteEventStore(tmp_path / "events.db"))
     writer = _FakeGithubWriteClient()
     service = GithubWriteService(writer, owner="biap", repo="workmate", events=events)
-    catalog = build_github_write_catalog(service)
-    create = next(s.fn for s in catalog if s.name == "create_github_issue")
+    tool = build_activity_catalog(events=events, write_service=service)[0].fn
 
-    result = create(title="Prośba z Teams", body="treść")
+    result = tool(action="create_issue", title="Prośba z Teams", body="treść")
 
     assert result == {
         "created": True,
@@ -199,11 +199,11 @@ def test_read_recent_events_sees_both_layers(tmp_path):
     _create_issue_tool(events)(title="Prośba z Teams", body="treść")
 
     # Narzędzie agenta (dostępne na dowolnych drzwiach) widzi OBIE warstwy.
-    read = next(
-        s.fn
-        for s in build_events_catalog(EventService(SqliteEventStore(db)))
-        if s.name == "read_recent_events"
-    )
+    tool = build_activity_catalog(events=EventService(SqliteEventStore(db)))[0].fn
+
+    def read(**kw):
+        return tool(action="events", **kw)
+
     sources = {e["source"] for e in read()["events"]}
     assert sources == {"github", "teams"}
     assert read(source="github")["count"] == 1

@@ -36,6 +36,20 @@ class YamlIdentityDirectory:
         """Osoba adresowana danym kontem Teams albo ``None`` (fail-closed)."""
         return self._by_aad.get(aad_user_id)
 
+    def resolve_by_display_name(self, name: str) -> Person | None:
+        """Osoba o podanym imieniu i nazwisku albo ``None`` (fail-closed przy niejednoznaczności).
+
+        Dopasowanie po nazwisku jest tu BEZPIECZNE, bo zbiór kandydatów to zaufana mapa tożsamości
+        (nie zgadywanie konta w Jirze): docelowe ``jira_user`` i tak pochodzi z pliku. Używane przez
+        „zadania członka zespołu" na Teams. Osoby bez ``display_name`` są pomijane; brak dokładnego
+        albo jednoznacznego trafienia → ``None`` (wołający degraduje do czytelnej odmowy).
+        """
+        from workmate.core.domain.names import match_name
+
+        candidates = [(p.display_name, p) for p in self._people.values() if p.display_name]
+        person, _ambiguous = match_name(candidates, name)
+        return person
+
 
 def _load_map(path: Path) -> dict[str, Person]:
     """Wczytaj mapę tożsamości; brak pliku albo brak wymaganego pola = TWARDY błąd startu.

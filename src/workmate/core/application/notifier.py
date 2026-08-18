@@ -24,6 +24,7 @@ from workmate.core.errors import ThreadRootGone
 if TYPE_CHECKING:
     from workmate.core.application.events import EventService
     from workmate.core.domain.events import Event
+    from workmate.core.ports.dead_letters import DeadLetterStore
     from workmate.core.ports.notifications import TeamsNotifier
     from workmate.core.ports.thread_links import ThreadLinkStore
 
@@ -106,6 +107,9 @@ class EventNotifier:
         poll_interval: int = 60,
         render: Callable[[Event], str] = default_event_render,
         thread_links: ThreadLinkStore | None = None,
+        dead_letters: DeadLetterStore | None = None,
+        heartbeat: Callable[[], None] | None = None,
+        max_attempts: int = 5,
     ) -> None:
         self._events = events
         self._sender = sender
@@ -118,6 +122,15 @@ class EventNotifier:
         # Gdy podano ``thread_links`` (ADR 0024, flaga wątkowania ON), zdarzenia tego samego
         # issue/PR lecą do JEDNEGO wątku na kanale; gdy ``None`` — każde jako nowy root (jak dziś).
         self._thread_links = thread_links
+        # Kwarantanna zdarzeń niewysyłalnych (ADR 0067 §2); ``None`` → dawne zachowanie (ponawiaj
+        # w nieskończoność, zdarzenie blokuje strumień). Puls notifiera (odrębny od pulsu pollera);
+        # ``None`` → brak pulsu. ``max_attempts`` prób na zdarzenie przed dead-letter (rek. 2: 5).
+        self._dead_letters = dead_letters
+        self._heartbeat = heartbeat
+        self._max_attempts = max_attempts
+        # Licznik prób per zdarzenie — W PAMIĘCI: po restarcie rusza od zera (świadomie ograniczone
+        # dodatkowe ponowienia zamiast persystencji licznika, ADR 0067 R2).
+        self._attempts: dict[int, int] = {}
 
     async def pump(self) -> None:
         """Pętla: co ``poll_interval`` wypchnij nowe zdarzenia; błąd rundy nie kładzie pętli."""
@@ -129,17 +142,77 @@ class EventNotifier:
             await asyncio.sleep(self._poll_interval)
 
     async def pump_once(self) -> int:
-        """Wyślij zdarzenia nowsze niż kursor; zwróć liczbę wypchniętych. Kursor po sukcesie."""
+        """Wyślij zdarzenia nowsze niż kursor; zwróć liczbę zdarzeń, które RUSZYŁY kursor
+        (dostarczone lub przeniesione do kwarantanny).
+
+        Kursor przesuwamy DOPIERO po udanej wysyłce (at-least-once, ADR 0022). Zdarzenia, którego
+        nie da się wysłać, ponawiamy w kolejnych rundach; po ``max_attempts`` próbach przenosimy je
+        do ``dead_letters`` i DOPIERO POTEM ruszamy kursor — poison message nie blokuje strumienia,
+        a zapis-przed-przesunięciem zachowuje at-least-once (crash pomiędzy = ponowienie).
+        Puls notifiera bijemy po rundzie PRODUKTYWNEJ: dostarczono ≥1, przeniesiono do dead-letter,
+        albo pusta kolejka. Runda przerwana ponowieniem poniżej progu bije TYLKO gdy wcześniej
+        ruszyła kursor (``sent > 0`` — realny postęp mimo zatoru na dalszym zdarzeniu); runda bez
+        żadnego postępu (zator już na pierwszym zdarzeniu) NIE bije — to sygnał zatoru dla
+        healthchecku.
+        """
         batch = self._events.read_since(self._cursor, source=self._source, limit=50)
         sent = 0
         for event in batch:
-            await self._deliver(event)
-            # Kursor przesuwamy DOPIERO po udanej wysyłce (at-least-once): błąd transportu
-            # zostawia kursor, więc następna runda ponowi zamiast zgubić zdarzenie.
+            try:
+                await self._deliver(event)
+            except Exception as exc:
+                if self._dead_letters is None:
+                    # Brak magazynu kwarantanny → dawne zachowanie: zostaw kursor i PRZERWIJ rundę,
+                    # zdarzenie ponowi się w następnej (at-least-once). Bez licznika prób — poison
+                    # message blokuje strumień jak przed ADR 0067 (produkcja zawsze wpina magazyn).
+                    logger.warning("Nie udało się wysłać zdarzenia %s — ponowię", event.id)
+                    self._beat_if_progress(sent)
+                    return sent
+                attempts = self._attempts.get(event.id, 0) + 1
+                self._attempts[event.id] = attempts
+                if attempts < self._max_attempts:
+                    # Poniżej progu → zostaw kursor i PRZERWIJ rundę; kolejne czekają za tym
+                    # zdarzeniem. Brak pulsu w tej rundzie jest zamierzony (sygnał zatoru, §2).
+                    logger.warning(
+                        "Nie udało się wysłać zdarzenia %s (próba %d/%d) — ponowię",
+                        event.id,
+                        attempts,
+                        self._max_attempts,
+                    )
+                    self._beat_if_progress(sent)
+                    return sent
+                # Próg osiągnięty: kwarantanna PRZED przesunięciem kursora (zapis-przed-ruchem).
+                self._dead_letters.record(
+                    source=self._source,
+                    event_id=event.id,
+                    reason=repr(exc),
+                    attempts=attempts,
+                )
+                logger.error(
+                    "Zdarzenie %s trwale niewysyłalne po %d próbach — dead-letter, kursor dalej",
+                    event.id,
+                    attempts,
+                )
+                self._attempts.pop(event.id, None)
+            else:
+                self._attempts.pop(event.id, None)  # sukces — wyczyść licznik prób tego zdarzenia
             self._cursor = event.id
             self._save_cursor(event.id)
             sent += 1
+        if self._heartbeat is not None:
+            self._heartbeat()
         return sent
+
+    def _beat_if_progress(self, sent: int) -> None:
+        """Puls przy wczesnym wyjściu z rundy TYLKO gdy ruszyliśmy kursor (``sent > 0``).
+
+        Runda przerwana ponowieniem poniżej progu wciąż jest PRODUKTYWNA, jeśli wcześniej
+        dostarczyła/zdead-letterowała choć jedno zdarzenie — inaczej healthcheck raportowałby
+        ``unhealthy`` przy nadrabianiu zaległości mimo realnego postępu. Zator (``sent == 0``,
+        pierwsze zdarzenie się nie udaje) świadomie NIE bije — to sygnał braku postępu.
+        """
+        if sent and self._heartbeat is not None:
+            self._heartbeat()
 
     async def _deliver(self, event: Event) -> None:
         """Wyślij zdarzenie do WŁĄCZONYCH celów (czat 1:1 i/lub kanał)."""

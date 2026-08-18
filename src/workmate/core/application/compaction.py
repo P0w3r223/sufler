@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.agent.prompt import SUMMARY_SYSTEM_PROMPT
+from workmate.core.domain.trust import wrap_untrusted
 from workmate.core.ports.llm import UserText, attachment_from_row
 
 if TYPE_CHECKING:
@@ -30,6 +31,14 @@ if TYPE_CHECKING:
 
 # Etykiety ról w spłaszczonym transkrypcie podawanym modelowi podsumowującemu.
 _ROLE_LABELS = {"user": "Użytkownik", "assistant": "Asystent", "tool": "Narzędzie"}
+
+# Ile znaków wyniku narzędzia wchodzi do streszczacza (ADR 0068 §7). Wyniki bywają ogromne
+# (setki zdarzeń, pełna treść notatki), więc verbatim nie wchodzą — ale całkowite pominięcie
+# znaczyło, że klucz Jiry i identyfikator notatki przeżywały kompaktowanie WYŁĄCZNIE wtedy, gdy
+# model powtórzył je własnymi słowami. Prompt streszczacza prosi o identyfikatory (sekcja
+# „Kluczowe fakty i encje"), a materiału do ich odczytania nie dostawał. Prefiks, bo wyniki
+# narzędzi są JSON-em i identyfikatory stoją w pierwszych polach rekordu.
+_MAX_TOOL_RESULT_CHARS = 500
 
 
 class CompactionService:
@@ -52,7 +61,9 @@ class CompactionService:
         self._threshold = threshold_tokens
         self._keep_turns = keep_turns
 
-    def maybe_compact(self, conversation_id: str) -> ConversationSummary | None:
+    def maybe_compact(
+        self, conversation_id: str, *, trust_nonce: str = ""
+    ) -> ConversationSummary | None:
         """Skompaktuj wątek, jeśli trzeba; zwróć nowe podsumowanie albo ``None``.
 
         Trigger: ``last_input_tokens`` (wejście + cache ostatniej tury) > próg. Zachowuje
@@ -78,10 +89,20 @@ class CompactionService:
 
         to_summarize = messages[:boundary]
         previous = self._store.active_summary(conversation_id)
+        # Historia idąca do streszczacza jest z jego punktu widzenia treścią OBCĄ w całości
+        # (ADR 0066): siedzą w niej wyniki narzędzi i tury nadawców spoza mapy, spłaszczone do
+        # jednego tekstu. Bez koperty streszczacz czytał to jako instrukcje — a jego wynik wraca
+        # potem do rozmowy doklejony do PIERWSZEJ tury, więc zatruta treść awansowała do rangi
+        # prozy instrukcyjnej dokładnie tam, gdzie nikt by jej nie szukał. Nonce podają drzwi,
+        # bo to one nim zarządzają; puste = dawne zachowanie.
+        historia = self._flatten(previous, to_summarize)
+        if trust_nonce:
+            historia = wrap_untrusted(historia, origin="historia", nonce=trust_nonce)
         response = self._llm.complete(
             system=SUMMARY_SYSTEM_PROMPT,
-            transcript=[UserText(self._flatten(previous, to_summarize))],
+            transcript=[UserText(historia)],
             tools=[],
+            trust_nonce=trust_nonce,
         )
         summary_text = response.text.strip()
         if not summary_text:
@@ -115,9 +136,10 @@ class CompactionService:
         messages: Sequence[ConversationMessage],
     ) -> str:
         """Złóż streszczaną część w jeden tekst dla modelu: poprzednie podsumowanie (jeśli
-        jest) + tury z etykietą roli. Tury narzędziowe (bez tekstu i bez załączników)
-        pomijamy. Załączniki użytkownika opisujemy TEKSTOWO — base64 obrazu/PDF NIGDY nie
-        wchodzi do streszczacza (tylko nazwa+typ; dla .docx pełny wyekstrahowany tekst)."""
+        jest) + tury z etykietą roli. Wyniki narzędzi wchodzą PRZYCIĘTE do
+        ``_MAX_TOOL_RESULT_CHARS`` — tyle, by identyfikatory z ich początku miały szansę
+        wejść do podsumowania. Załączniki użytkownika opisujemy TEKSTOWO — base64 obrazu/PDF
+        NIGDY nie wchodzi do streszczacza (tylko nazwa+typ; dla .docx pełny tekst)."""
         lines: list[str] = []
         if previous is not None:
             lines.append("[Dotychczasowe podsumowanie]")
@@ -129,7 +151,28 @@ class CompactionService:
                 lines.append(f"{label}: {m.text}")
             if m.role == "user" and m.blocks:
                 lines.extend(_describe_attachment(b) for b in m.blocks)
+            elif m.role == "tool" and m.blocks:
+                # Wiersz tury narzędziowej niesie DWA rodzaje bloków (ADR 0064): wyniki narzędzi
+                # (mają ``call_id``) oraz PLIKI podane przez ``File``. Oba wchodzą — wyniki
+                # przycięte. Do ADR 0068 wyniki były pomijane w całości, więc do streszczacza
+                # nie docierał ANI JEDEN identyfikator zwrócony przez narzędzie: klucze Jiry
+                # i identyfikatory notatek przeżywały kompaktowanie tylko wtedy, gdy model
+                # powtórzył je w swojej odpowiedzi. Wiersz tury narzędziowej ma pusty ``text``
+                # z definicji (``conversations._row_of``), więc gałąź ``if m.text`` wyżej
+                # nigdy go nie widziała.
+                for block in m.blocks:
+                    if "call_id" in block:
+                        lines.append(f"{label}: {_przytnij(str(block.get('content', '')))}")
+                    else:
+                        lines.append(_describe_attachment(block))
         return "\n".join(lines)
+
+
+def _przytnij(content: str) -> str:
+    """Prefiks wyniku narzędzia z jawnym znacznikiem ucięcia — cisza po ucięciu myliłaby."""
+    if len(content) <= _MAX_TOOL_RESULT_CHARS:
+        return content
+    return f"{content[:_MAX_TOOL_RESULT_CHARS]}… [wynik przycięty]"
 
 
 def _describe_attachment(block: dict[str, Any]) -> str:

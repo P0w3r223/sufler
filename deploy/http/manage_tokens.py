@@ -37,10 +37,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from workmate.adapters.inbound.mcp.auth import TokenStoreError, TokenVerifier
+from workmate.config import _DEFAULT_TOKENS_FILE
 
-# Domyślny magazyn — lustro ``config._DEFAULT_TOKENS_FILE`` (poza data/, poza repo).
+# Domyślny magazyn — TA SAMA stała co u serwera (poza data/, poza repo), nie jej kopia.
+# Powielony literał windowsowy przeżył tu poprawkę ``config.py`` (rozgałęzienie po ``os.name``),
+# więc na Linuksie narzędzie pisało do WZGLĘDNEGO ``./C:/ProgramData/WorkMate/tokens.json``
+# i meldowało sukces, a serwer szukał magazynu w ``/var/lib/workmate/tokens.json``.
 # Nadpisywalny przez ``--store`` albo ``WORKMATE_TOKENS_FILE`` (jak serwer przy starcie).
-DEFAULT_STORE = Path("C:/ProgramData/WorkMate/tokens.json")
+DEFAULT_STORE = _DEFAULT_TOKENS_FILE
 
 Entry = dict[str, object]
 

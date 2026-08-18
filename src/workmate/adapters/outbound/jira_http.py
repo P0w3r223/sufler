@@ -7,11 +7,14 @@ miejsce transportu, żeby nie duplikować logiki retry w dwóch adapterach (Serv
 
 from __future__ import annotations
 
+import contextlib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
+
+from workmate.core.errors import JiraReadError
 
 _MAX_RETRIES = 3
 _DEFAULT_RETRY_AFTER_S = 5
@@ -43,6 +46,36 @@ def request_with_retry(
             continue
         response.raise_for_status()
         return response
+
+
+@contextlib.contextmanager
+def as_jira_read_error() -> Iterator[None]:
+    """Zamień błąd transportu na ``JiraReadError`` — TU, na granicy adaptera, nie w rdzeniu.
+
+    Słownik sieci (``httpx``) kończy się na adapterze: rdzeń dostaje wyłącznie błąd domenowy
+    z gotowym komunikatem dla pytającego. Wcześniej to samo tłumaczenie stało w warstwie
+    aplikacji (``my_jira_tasks``/``jira_read``) i wciągało ``import httpx`` do heksagonu —
+    czego ``lint-imports`` nie widzi, bo reguła zabrania tylko importów z ``workmate.adapters``.
+    """
+    try:
+        yield
+    except httpx.HTTPStatusError as exc:
+        raise JiraReadError(_status_message(exc.response.status_code)) from exc
+    except httpx.TimeoutException as exc:
+        raise JiraReadError(
+            "Jira nie odpowiedziała w wyznaczonym czasie (timeout) — spróbuj ponownie."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise JiraReadError(f"nie udało się połączyć z Jirą: {exc}.") from exc
+
+
+def _status_message(status_code: int) -> str:
+    """Komunikat dla pytającego wg statusu HTTP — jedno brzmienie dla Server/DC i Cloud."""
+    if status_code in (401, 403):
+        return "brak dostępu do Jiry — token jest nieważny albo bez uprawnień odczytu."
+    if status_code == 429:
+        return "Jira ogranicza liczbę żądań (429) — spróbuj ponownie za chwilę."
+    return f"Jira odpowiedziała błędem (HTTP {status_code})."
 
 
 def _is_retryable(status_code: int, method: str) -> bool:

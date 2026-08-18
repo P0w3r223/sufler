@@ -9,13 +9,13 @@ bajtami. Awarie przewidywalne (zły format, pusta lub za duża treść) degraduj
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import pytest
 
 from workmate.core.application.tools import build_user_doc_push_catalog
 from workmate.core.ports.document import FILE_REPLY_FORMATS, RenderedDocument
-from workmate.core.ports.user_doc_push import UserDocSender
 
 _TARGET = "u-anna-aad-id"
 
@@ -44,14 +44,8 @@ class _FakeSender:
 
 def _tool(sender: _FakeSender, *, max_bytes: int = 4096, target: str = _TARGET):
     catalog = build_user_doc_push_catalog(sender, _FakeRenderer(), target, max_bytes=max_bytes)
-    assert [spec.name for spec in catalog] == ["send_document_to_user"]
+    assert [spec.name for spec in catalog] == ["SendDocument"]
     return catalog[0].fn
-
-
-def test_fake_satisfies_the_port():
-    """Atrapa MUSI pasować strukturalnie do portu (mypy) — dowód testowalności bez Graph."""
-    sender: UserDocSender = _FakeSender()
-    sender.send_document_to_user("u1", "f.md", b"bytes", "text/markdown; charset=utf-8")
 
 
 def test_valid_document_is_rendered_and_sent_to_prebound_target():
@@ -146,17 +140,21 @@ def test_same_content_gives_same_name_different_content_differs():
 
 
 def test_model_cannot_choose_recipient():
-    """Cel wiąże fabryka, nie model — sygnatura narzędzia nie ma pola odbiorcy/target_user_id."""
+    """Cel wiąże fabryka, nie model — sygnatura narzędzia nie ma pola odbiorcy/target_user_id.
+
+    Sondujemy przez ``inspect.signature``, nie przez ``__code__.co_varnames[:co_argcount]``:
+    ``co_argcount`` NIE liczy parametrów keyword-only, więc dołożenie ``*, target_user_id``
+    przeszłoby tamtą asercję bez śladu — model wybierałby odbiorcę, a sonda bezpieczeństwa
+    dalej byłaby zielona.
+    """
     fn = _tool(_FakeSender())
-    assert set(fn.__code__.co_varnames[: fn.__code__.co_argcount]) == {
-        "content",
-        "file_format",
-        "filename",
-    }
+
+    assert set(inspect.signature(fn).parameters) == {"content", "file_format", "filename"}
 
 
-def test_result_is_json_serializable():
+def test_result_is_json_serializable_round_trip():
+    """Runtime serializuje wynik narzędzia — musi przejść tam i z powrotem bez straty."""
     sender = _FakeSender()
     out = _tool(sender)(content="x", file_format="txt")
 
-    json.dumps(out)  # runtime serializuje wynik narzędzia — nie może rzucić
+    assert json.loads(json.dumps(out)) == out

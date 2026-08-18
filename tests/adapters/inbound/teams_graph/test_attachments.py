@@ -24,6 +24,7 @@ from pptx.util import Inches
 from workmate.adapters.inbound.teams_graph.attachments import (
     AttachmentLimits,
     AttachmentMaterializer,
+    FileBytesMaterializer,
 )
 from workmate.adapters.inbound.teams_graph.selection import AttachmentRef, ChannelMessage
 
@@ -347,6 +348,50 @@ def test_file_pdf_becomes_document():
     assert att.media_type == "application/pdf"
     assert att.name == "umowa.pdf"
     assert att.data_base64
+
+
+def test_file_html_is_extracted_to_text_not_handed_over_as_markup():
+    """HTML przechodzi ekstraktorem (ADR 0064), a nie gałęzią tekstową.
+
+    Do 1.10.0 plik .html odbijał się notką „nieobsługiwany typ pliku" — użytkownik dostawał
+    odmowę na format, który w tym pionie krąży najczęściej (zapisana strona, wyeksportowany
+    raport). Gałąź tekstowa byłaby gorsza niż odmowa: model dostałby znaczniki i skrypty.
+    """
+    html = b"<html><body><script>var x=1;</script><p>Kwota: 12 300 zl</p></body></html>"
+    client = _FakeGraphClient(files={"u://raport": html})
+    ref = AttachmentRef(kind="file", name="raport.html", url="u://raport")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert (att.kind, att.media_type) == ("text", "text/plain")
+    assert att.text == "Kwota: 12 300 zl"
+    assert "<p>" not in att.text and "var x" not in att.text
+    assert not att.data_base64  # tekst nie zjada budżetu bajtów API
+
+
+def test_file_htm_alias_goes_through_the_same_dispatcher_as_html():
+    """Alias ``.htm`` nie może zależeć od osobnej listy w drzwiach — to droga cichego rozjazdu."""
+    client = _FakeGraphClient(files={"u://r": b"<p>tresc strony</p>"})
+    ref = AttachmentRef(kind="file", name="raport.htm", url="u://r")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.text == "tresc strony"
+
+
+def test_readable_file_without_text_yields_a_note_instead_of_an_empty_label():
+    """Pusty wynik ekstrakcji ma być NAZWANY — inaczej model dostaje samą etykietę pliku.
+
+    Uwaga: strona z samą grafiką NIE jest tym przypadkiem — ekstraktor policzy obrazy bez opisu
+    i to JEST treść (o tym mówi anty-maskowanie). Chodzi o plik faktycznie bez czego czytać.
+    """
+    client = _FakeGraphClient(files={"u://r": b"<html><body><div></div></body></html>"})
+    ref = AttachmentRef(kind="file", name="pusta.html", url="u://r")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.name == "status załącznika"
+    assert "nie zawiera tekstu" in att.text
 
 
 def test_file_image_media_type_from_content_overrides_extension():
@@ -674,3 +719,26 @@ def test_mixed_refs_materialize_independently():
     assert img.kind == "image"
     assert good.kind == "document"
     assert bad.kind == "text" and "nie udało się pobrać" in bad.text
+
+
+def test_file_materializer_degrades_a_broken_document_instead_of_raising():
+    """Uszkodzony plik NIE MOŻE wyjść wyjątkiem — rdzeń woła narzędzie poza ``try``.
+
+    ``DocumentExtractionError`` nie dziedziczy z ``WorkMateError``, więc bez osłony TUTAJ
+    przelatywał kopertę narzędzia i zabijał całą turę: użytkownik dostawał „chwilowy błąd",
+    a tura nie trafiała do pamięci rozmowy. ADR 0064 obiecuje degradację do notki, nigdy crash.
+    """
+    materializer = FileBytesMaterializer(max_image_edge=2048)
+
+    assert materializer.materialize("umowa.docx", b"to nie jest zip") is None
+
+
+def test_file_materializer_builds_the_same_attachment_as_the_door():
+    """Model i drzwi mają widzieć ten sam plik tak samo — stąd wspólny ``_build``, nie kopia."""
+    materializer = FileBytesMaterializer(max_image_edge=2048)
+
+    built = materializer.materialize("raport.html", b"<p>tresc strony</p>")
+
+    assert built is not None
+    attachment, sent = built
+    assert (attachment.kind, attachment.text, sent) == ("text", "tresc strony", 0)

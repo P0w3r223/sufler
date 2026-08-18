@@ -8,6 +8,8 @@ cache (re-embedding tylko przy zmianie treści). numpy jest jednak potrzebne do 
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
+from contextlib import closing
 from datetime import date
 
 import pytest
@@ -39,9 +41,14 @@ class _FakeEmbedder:
 
 
 def _ranker(tmp_path, **kw):
-    return OnnxSemanticRanker(
-        model="fake", index_path=tmp_path / "idx.db", embedder=_FakeEmbedder(_VECTORS), **kw
+    return _ranker_with_embedder(tmp_path, _FakeEmbedder(_VECTORS), **kw)[0]
+
+
+def _ranker_with_embedder(tmp_path, embedder, **kw):
+    ranker = OnnxSemanticRanker(
+        model="fake", index_path=tmp_path / "idx.db", embedder=embedder, **kw
     )
+    return ranker, embedder
 
 
 def _notes():
@@ -64,11 +71,90 @@ def test_min_similarity_floor_trims_tail(tmp_path):
 
 
 def test_cache_reuses_then_only_reembeds_query(tmp_path):
-    ranker = _ranker(tmp_path)
+    """Druga runda osadza WYŁĄCZNIE zapytanie — pasaże wracają z indeksu po ``content_hash``.
+
+    Sonda trzyma atrapę wprost, zamiast sięgać po ``ranker._embedder``: pole prywatne mogłoby
+    zniknąć przy refaktorze, który niczego nie psuje, i test padłby bez powodu.
+    """
+    ranker, embedder = _ranker_with_embedder(tmp_path, _FakeEmbedder(_VECTORS))
+    notes = _notes()
+
+    ranker.rank("query", notes)
+    first = list(embedder.embedded)
+    assert sum(1 for t in first if "aaa" in t) == 1  # pasaż A osadzony raz
+
+    ranker.rank("query", notes)
+    assert embedder.embedded[len(first) :] == ["query"]  # model 'fake' → brak prefiksu
+
+
+def test_changed_note_body_is_reembedded_but_untouched_ones_are_not(tmp_path):
+    """Cache jest INKREMENTALNY: zmieniona notatka wraca do modelu, reszta nie.
+
+    Sonda odwrotna do powyższej — bez niej „cache zwraca wszystko z indeksu, nigdy nie odświeża"
+    przechodzi obie asercje tamtej, a objawem byłby ranking liczony po nieaktualnej treści.
+    """
+    ranker, embedder = _ranker_with_embedder(tmp_path, _FakeEmbedder(_VECTORS))
     notes = _notes()
     ranker.rank("query", notes)
-    first = list(ranker._embedder.embedded)
-    assert sum(1 for t in first if "aaa" in t) == 1  # pasaż A osadzony raz
-    # Druga runda: pasaże z cache (content_hash bez zmian) → osadzamy tylko zapytanie.
-    ranker.rank("query", notes)
-    assert ranker._embedder.embedded[len(first) :] == ["query"]  # model 'fake' → brak prefiksu
+    embedder.embedded.clear()
+
+    zmienione = [
+        make_note(
+            "x/y/2025-01-01-aaa",
+            project="p",
+            title="aaa",
+            on=date(2025, 1, 1),
+            body="aaa — treść po zmianie",
+        ),
+        *notes[1:],
+    ]
+    ranker.rank("query", zmienione)
+
+    osadzone = [t for t in embedder.embedded if t != "query"]
+    assert osadzone and all("po zmianie" in t for t in osadzone)  # tylko zmieniona notatka
+
+
+def test_index_file_uses_wal_like_the_other_sqlite_stores(tmp_path):
+    """Indeks osadzeń to magazyn operacyjny jak ``events.db`` — WAL jest częścią jego wzorca.
+
+    Bez WAL czytelnik i zapisujący blokują się nawzajem na PLIKU dzielonym przez drzwi (osobne
+    procesy), a ``journal_mode`` jest zapisany w nagłówku, więc widać go z każdego połączenia.
+    """
+    _ranker(tmp_path).rank("query", _notes())
+
+    with closing(sqlite3.connect(tmp_path / "idx.db")) as inne_polaczenie:
+        assert inne_polaczenie.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+
+
+def test_failed_embedding_leaves_no_write_transaction_hanging_on_the_index(tmp_path):
+    """Transakcja stała otwarta przez CAŁĄ budowę macierzy i nikt jej nie cofał.
+
+    Pierwszy ``INSERT`` otwierał ją niejawnie, ``commit`` przychodził dopiero po policzeniu
+    wszystkich osadzeń, a wyjątek w połowie (model padł, plik modelu zniknął) zostawiał ją otwartą
+    razem z blokadą zapisu pliku indeksu — kolejne drzwi dostawały „database is locked" do końca
+    życia procesu.
+    """
+
+    class EmbedderPadajacyNaDrugiej:
+        def __init__(self) -> None:
+            self.wywolania = 0
+
+        def embed(self, texts):
+            for _text in texts:
+                self.wywolania += 1
+                if self.wywolania == 2:
+                    raise RuntimeError("model padł w połowie budowy macierzy")
+                yield [1.0, 0.0]
+
+    ranker, _ = _ranker_with_embedder(tmp_path, EmbedderPadajacyNaDrugiej())
+
+    with pytest.raises(RuntimeError):
+        ranker.rank("query", _notes())
+
+    with closing(sqlite3.connect(tmp_path / "idx.db", timeout=0.2)) as inne_polaczenie:
+        inne_polaczenie.execute(
+            "INSERT INTO note_vectors "
+            "(note_id, model, dim, vector, content_hash, updated_at) VALUES (?,?,?,?,?,?)",
+            ("inny/wpis", "fake", 2, b"\x00" * 8, "hash", "2026-08-17T00:00:00+00:00"),
+        )
+        inne_polaczenie.commit()

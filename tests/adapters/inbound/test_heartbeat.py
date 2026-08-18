@@ -8,6 +8,7 @@ from workmate.adapters.inbound.heartbeat import (
     heartbeat_path,
     is_fresh,
     main,
+    notifier_heartbeat_path,
     write_heartbeat,
 )
 
@@ -39,6 +40,17 @@ def test_is_fresh_false_when_missing(tmp_path: Path):
     assert is_fresh(tmp_path / "nie-ma.heartbeat", 60) is False
 
 
+def test_is_fresh_false_when_the_file_cannot_be_read(tmp_path: Path, monkeypatch):
+    """Healthcheck ma wydać WERDYKT, nie traceback — nieczytelny puls to brak dowodu życia."""
+
+    def _odmowa(_self: Path) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "stat", _odmowa)
+
+    assert is_fresh(tmp_path / "d.heartbeat", 60) is False
+
+
 def test_write_is_atomic_no_tmp_left(tmp_path: Path):
     """Po zapisie nie zostaje plik tymczasowy — healthcheck nie trafi na obcięty plik."""
     hb = tmp_path / "d.heartbeat"
@@ -57,3 +69,29 @@ def test_main_returns_0_for_fresh(tmp_path: Path):
 def test_main_returns_1_for_missing(tmp_path: Path):
     """Entrypoint healthchecku: brak pulsu ⇒ kod 1 (unhealthy)."""
     assert main(["--file", str(tmp_path / "nie-ma.heartbeat"), "--max-age", "60"]) == 1
+
+
+def test_notifier_heartbeat_path_is_distinct_notify_sibling():
+    """Puls notifiera to odrębny plik obok pulsu pollera (ADR 0067 §2)."""
+    state = Path("/var/lib/workmate/github_state.json")
+    assert notifier_heartbeat_path(state) == Path("/var/lib/workmate/github_state.notify.heartbeat")
+    assert notifier_heartbeat_path(state) != heartbeat_path(state)
+
+
+def test_main_multiple_files_healthy_only_when_all_fresh(tmp_path: Path):
+    """Healthcheck z dwoma pulsami (poller + notifier): zdrowy tylko, gdy OBA świeże."""
+    poller = tmp_path / "github_state.heartbeat"
+    notify = tmp_path / "github_state.notify.heartbeat"
+    write_heartbeat(poller)
+    write_heartbeat(notify)
+    both = ["--file", str(poller), "--file", str(notify), "--max-age", "3600"]
+    assert main(both) == 0
+
+
+def test_main_multiple_files_one_stale_is_unhealthy(tmp_path: Path):
+    """Zablokowany notifier (brak jego pulsu) ⇒ kod 1, mimo świeżego pulsu pollera."""
+    poller = tmp_path / "github_state.heartbeat"
+    write_heartbeat(poller)  # poller żyje
+    missing_notify = tmp_path / "github_state.notify.heartbeat"  # notifier zatkany — brak pliku
+    args = ["--file", str(poller), "--file", str(missing_notify), "--max-age", "3600"]
+    assert main(args) == 1

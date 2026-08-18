@@ -26,7 +26,7 @@ from workmate.adapters.inbound.responder import (
 )
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.compaction import CompactionService
-from workmate.core.application.conversations import ConversationService
+from workmate.core.application.conversations import ConversationService, _row_of
 from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
@@ -35,6 +35,8 @@ from workmate.core.ports.llm import (
     Attachment,
     LLMResponse,
     RawTurn,
+    ToolCall,
+    ToolOutput,
     ToolResults,
     UserText,
     attachment_to_row,
@@ -72,7 +74,11 @@ class _FakeRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
-        session_header: str = ""
+        session_header: str = "",
+        audit: object = None,
+        attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         self.calls.append((query, list(history)))  # type: ignore[arg-type]
         entries = (UserText(query), AssistantTurn(self.reply, (), (), usage=self.usage))
@@ -91,7 +97,11 @@ class _FailingRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
-        session_header: str = ""
+        session_header: str = "",
+        audit: object = None,
+        attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         raise RuntimeError("runtime padł")
 
@@ -119,7 +129,11 @@ class _ThinkingRuntime:
         attachments: object = (),
         history: object = (),
         extra_tools: object = (),
-        session_header: str = ""
+        session_header: str = "",
+        audit: object = None,
+        attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
     ) -> AgentResult:
         return AgentResult(
             reply="odpowiedz",
@@ -127,6 +141,105 @@ class _ThinkingRuntime:
             stop_reason="end_turn",
             thinking="Analizuję pytanie.",
         )
+
+
+class _AuditCapturingRuntime(_FakeRuntime):
+    """Runtime notujący rejestrator audytu przekazany do ``run_turn`` (szew ADR 0067)."""
+
+    def __init__(self, reply: str = "ok") -> None:
+        super().__init__(reply)
+        self.audit_arg: object = "UNSET"
+
+    def run_turn(
+        self,
+        query: str,
+        *,
+        attachments: object = (),
+        history: object = (),
+        extra_tools: object = (),
+        session_header: str = "",
+        audit: object = None,
+        attachment_queue: object = None,
+        trust_nonce: str = "",
+        trust: str = "T1",
+    ) -> AgentResult:
+        self.audit_arg = audit
+        return super().run_turn(
+            query,
+            attachments=attachments,
+            history=history,
+            extra_tools=extra_tools,
+            session_header=session_header,
+            audit=audit,
+        )
+
+
+class _FakeAudit:
+    """Atrapa ``AuditService`` — notuje kontekst tury i zwraca sentinel rejestrator."""
+
+    def __init__(self) -> None:
+        self.turn_calls: list[dict[str, str]] = []
+        self.recorder = object()
+
+    def turn_recorder(
+        self, *, door: str, raw_user: str, conversation_id: str, trust_class: str = "unknown"
+    ) -> object:
+        self.turn_calls.append(
+            {
+                "door": door,
+                "raw_user": raw_user,
+                "conversation_id": conversation_id,
+                "trust_class": trust_class,
+            }
+        )
+        return self.recorder
+
+
+def test_audit_recorder_built_per_turn_and_passed_to_runtime():
+    """Szew responder→runtime: rejestrator audytu domknięty na (kanał, nadawca, rozmowa) i wpięty.
+
+    Jedyne miejsce, gdzie audyt się w ogóle włącza — usunięcie ``audit=audit_recorder`` albo pomyłka
+    w ``door``/``raw_user``/``conversation_id`` przeszłaby bramkę bez śladu bez tego testu (luka
+    pokrycia z review Fazy 0).
+    """
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    runtime = _AuditCapturingRuntime()
+    audit = _FakeAudit()
+    responder = ConversationalResponder(
+        runtime,
+        service,
+        channel="teams",
+        audit=audit,  # type: ignore[arg-type]
+    )
+
+    asyncio.run(
+        responder.respond(
+            InboundMessage(text="pytanie", conversation_id="thr-9", sender_id="aad-123")
+        )
+    )
+
+    assert audit.turn_calls == [
+        {
+            "door": "teams",
+            "raw_user": "aad-123",  # sender_id (AAD id), nie nazwa
+            "conversation_id": "thr-9",
+            "trust_class": "unknown",  # T0–T3 dowiąże ADR 0066
+        }
+    ]
+    assert runtime.audit_arg is audit.recorder  # dokładnie ten rejestrator wpięty do run_turn
+
+
+def test_audit_absent_passes_none_recorder():
+    """Bez ``audit`` (drzwi bez dziennika) runtime dostaje ``audit=None`` — audyt niewłączony."""
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    runtime = _AuditCapturingRuntime()
+    responder = ConversationalResponder(runtime, service, channel="cli")
+
+    asyncio.run(responder.respond(InboundMessage(text="x", conversation_id="c1")))
+
+    assert runtime.audit_arg is None
 
 
 def test_second_turn_receives_prior_history_and_reply_is_recorded():
@@ -233,6 +346,35 @@ def test_to_transcript_rebuilds_tool_row_as_tool_results():
     assert isinstance(results, ToolResults)
     out = results.outputs[0]
     assert (out.call_id, out.content, out.is_error) == ("t1", '{"count": 1}', False)
+
+
+def test_tool_row_round_trips_materialized_files_through_storage():
+    """Plik podany przez ``File`` (ADR 0064) musi przeżyć zapis i odtworzenie z pamięci.
+
+    Bez tego replay oddawał modelowi turę, w której MÓWI o pliku, ale samego pliku już nie ma —
+    czyli najgorszy wariant: model tłumaczy treść, której nie widzi. Sonda idzie przez OBA
+    końce szwu (zapis ``_row_of`` i odczyt ``_to_transcript``), bo rozjazd między nimi jest
+    dokładnie tym, co ten test ma łapać.
+    """
+    original = ToolResults(
+        (ToolOutput("t1", '{"materialized": true}'),),
+        (Attachment("document", "application/pdf", "umowa.pdf", data_base64="QkFTRTY0"),),
+    )
+
+    role, text, blocks, _usage = _row_of(original)
+    (restored,) = _to_transcript([_msg(role, text, blocks=blocks)])
+
+    assert isinstance(restored, ToolResults)
+    assert restored.outputs == original.outputs  # wyniki nie pomieszały się z plikami
+    assert restored.attachments == original.attachments
+
+
+def test_tool_row_without_files_restores_exactly_as_before():
+    role, text, blocks, _usage = _row_of(ToolResults((ToolOutput("t1", "ok"),)))
+    (restored,) = _to_transcript([_msg(role, text, blocks=blocks)])
+
+    assert isinstance(restored, ToolResults)
+    assert restored.attachments == ()
 
 
 def test_to_transcript_degrades_legacy_row_without_blocks_to_text_only():
@@ -426,7 +568,7 @@ class _FakeSummarizer:
     def __init__(self, text: str = "SKRÓT") -> None:
         self.text = text
 
-    def complete(self, *, system, transcript, tools):  # noqa: ANN001, ANN201
+    def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
         return LLMResponse(text=self.text, usage=TokenUsage(input_tokens=10, output_tokens=5))
 
 
@@ -502,8 +644,375 @@ def test_metrics_failure_does_not_break_turn():
 
     convs = ConversationService(SqliteConversationStore(":memory:"), max_context_tokens=1000)
     responder = ConversationalResponder(
-        _FakeRuntime("ok"), convs, channel="teams", metrics=_BoomMetrics()  # type: ignore[arg-type]
+        _FakeRuntime("ok"),
+        convs,
+        channel="teams",
+        metrics=_BoomMetrics(),  # type: ignore[arg-type]
     )
 
     reply = asyncio.run(responder.respond(InboundMessage(text="czesc", conversation_id="c")))
     assert reply == "ok"
+
+
+# --- Klasy zaufania i lepka skaza (ADR 0066) -----------------------------------
+
+
+class _ToolCallingRuntime(_FakeRuntime):
+    """Runtime, który udaje turę z wywołaniem WSKAZANEGO narzędzia (do wyzwalaczy skazy)."""
+
+    def __init__(self, tool_name: str) -> None:
+        super().__init__("ok")
+        self._tool = tool_name
+        self.trust_seen: list[str] = []
+        self.nonce_seen: list[str] = []
+
+    def run_turn(self, query, **kwargs) -> AgentResult:  # type: ignore[override]
+        self.calls.append((query, list(kwargs.get("history", []))))
+        self.trust_seen.append(str(kwargs.get("trust")))
+        self.nonce_seen.append(str(kwargs.get("trust_nonce")))
+        return AgentResult(
+            reply="ok",
+            entries=(
+                UserText(query, (), kwargs.get("trust", "T1")),
+                AssistantTurn("ok", (ToolCall("t1", self._tool, {}),)),
+                AssistantTurn("ok", ()),
+            ),
+            stop_reason="end_turn",
+        )
+
+
+def _responder_z_zaufaniem(runtime, **kwargs):
+    store = SqliteConversationStore(":memory:")
+    service = ConversationService(store, max_context_tokens=1000)
+    responder = ConversationalResponder(runtime, service, channel="teams_graph", **kwargs)
+    return responder, service, store
+
+
+def test_attachment_taints_the_conversation():
+    """Załącznik to treść obca — od tej chwili rozmowa jest skażona do końca wątku."""
+    responder, service, _ = _responder_z_zaufaniem(_FakeRuntime("ok"))
+    plik = Attachment("document", "application/pdf", "u.pdf", data_base64="QQ==")
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="zobacz", conversation_id="t", attachments=(plik,)))
+    )
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+    assert conv.taint_source == "attachment"
+
+
+def test_reading_own_notes_does_not_taint():
+    """Gdyby skaziło wszystko, sygnał nie znaczyłby nic (ADR 0066 R2).
+
+    Notatki własnego pionu są zza bramek zdolności — czytanie ich to praca, nie kontakt
+    z treścią obcą.
+    """
+    responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("Project"))
+
+    asyncio.run(responder.respond(InboundMessage(text="co wiemy?", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is False
+
+
+def test_activity_content_taints_the_conversation():
+    """Komentarz na GitHubie pisze ktokolwiek, a mapa tożsamości nie zna loginów GitHuba."""
+    responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("Activity"))
+
+    asyncio.run(responder.respond(InboundMessage(text="co w PR?", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+    assert conv.taint_source == "tool"
+
+
+def test_first_taint_source_wins():
+    """Skaza mówi „od kiedy i przez co", nie „co ostatnio wpadło" — inaczej ślad audytowy
+    zamienia się w migawkę ostatniej tury."""
+    responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("Activity"))
+    plik = Attachment("document", "application/pdf", "u.pdf", data_base64="QQ==")
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="a", conversation_id="t", attachments=(plik,)))
+    )
+    asyncio.run(responder.respond(InboundMessage(text="b", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.taint_source == "attachment"  # pierwszy zapłon, nie ostatni
+
+
+def test_a_clean_turn_leaves_the_conversation_clean():
+    responder, service, _ = _responder_z_zaufaniem(_FakeRuntime("ok"))
+
+    asyncio.run(responder.respond(InboundMessage(text="dzień dobry", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is False
+
+
+def test_unmapped_sender_turn_is_data_and_taints():
+    """Rozszczepienie T1/T2: gość dostaje odpowiedź, ale jego słowa schodzą do danych."""
+    runtime = _ToolCallingRuntime("Project")
+    responder, service, _ = _responder_z_zaufaniem(
+        runtime, sender_trust=lambda sender_id: "T1" if sender_id == "aad-znany" else "T2"
+    )
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="cześć", conversation_id="t", sender_id="obcy"))
+    )
+
+    assert runtime.trust_seen == ["T2"]
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.taint_source == "guest"
+
+
+def test_mapped_sender_stays_an_instruction_and_does_not_taint():
+    runtime = _ToolCallingRuntime("Project")
+    responder, service, _ = _responder_z_zaufaniem(
+        runtime, sender_trust=lambda sender_id: "T1" if sender_id == "aad-znany" else "T2"
+    )
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="cześć", conversation_id="t", sender_id="aad-znany"))
+    )
+
+    assert runtime.trust_seen == ["T1"]
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is False
+
+
+def test_failure_to_resolve_the_sender_is_fail_closed():
+    """Nie wiemy, kto pisze → traktujemy słowa jak dane. Odwrotny domysł byłby awansem
+    nieznajomego do rangi operatora."""
+
+    def wybuchowy(sender_id: str) -> str:
+        raise RuntimeError("mapa tożsamości nieczytelna")
+
+    runtime = _ToolCallingRuntime("Project")
+    responder, _service, _ = _responder_z_zaufaniem(runtime, sender_trust=wybuchowy)
+
+    asyncio.run(responder.respond(InboundMessage(text="cześć", conversation_id="t", sender_id="x")))
+
+    assert runtime.trust_seen == ["T2"]
+
+
+def test_trust_class_survives_storage_and_replay():
+    """Bez trwałości granica trzymałaby JEDNĄ turę: przy następnej wiadomości tekst gościa
+    wracałby z pamięci jako zwykła instrukcja."""
+    runtime = _ToolCallingRuntime("Project")
+    responder, _service, _ = _responder_z_zaufaniem(runtime, sender_trust=lambda _s: "T2")
+
+    asyncio.run(
+        responder.respond(InboundMessage(text="pierwsza", conversation_id="t", sender_id="x"))
+    )
+    asyncio.run(responder.respond(InboundMessage(text="druga", conversation_id="t", sender_id="x")))
+
+    historia = [e for e in runtime.calls[-1][1] if isinstance(e, UserText)]
+    assert historia and all(e.trust == "T2" for e in historia)
+
+
+def test_nonce_is_absent_when_labels_are_off():
+    """Bramka OFF = żądanie bajt w bajt jak dotąd; to warunek porównania zachowania przed/po."""
+    runtime = _ToolCallingRuntime("Project")
+    responder, _service, _ = _responder_z_zaufaniem(runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="a", conversation_id="t")))
+
+    assert runtime.nonce_seen == [""]
+
+
+def test_nonce_is_stable_within_a_conversation_but_differs_between_them():
+    """Stały w rozmowie — inaczej każda tura zmieniałaby bajty CAŁEJ historii w żądaniu i cache
+    prefiksu urywałby się na pierwszym opakowanym wyniku narzędzia.
+
+    Różny między rozmowami, bo nonce jednej nie ma prawa nic znaczyć w drugiej.
+    """
+    runtime = _ToolCallingRuntime("Project")
+    responder, _service, _ = _responder_z_zaufaniem(runtime, trust_labels=True)
+
+    asyncio.run(responder.respond(InboundMessage(text="a", conversation_id="t")))
+    asyncio.run(responder.respond(InboundMessage(text="b", conversation_id="t")))
+    asyncio.run(responder.respond(InboundMessage(text="c", conversation_id="inny-watek")))
+
+    w_tej_samej = runtime.nonce_seen[:2]
+    assert len(set(w_tej_samej)) == 1 and all(w_tej_samej)
+    assert runtime.nonce_seen[2] != runtime.nonce_seen[0]
+
+
+def test_nonce_is_not_derivable_from_the_conversation_id_alone():
+    """Nonce wywodzi się z sekretu procesu, nie z samego identyfikatora rozmowy — inaczej
+    znałby go każdy, kto zna nazwę wątku (a ta jedzie w nagłówku sesji)."""
+    runtime_a = _ToolCallingRuntime("Project")
+    runtime_b = _ToolCallingRuntime("Project")
+    a, _s1, _st1 = _responder_z_zaufaniem(runtime_a, trust_labels=True)
+    b, _s2, _st2 = _responder_z_zaufaniem(runtime_b, trust_labels=True)
+
+    asyncio.run(a.respond(InboundMessage(text="x", conversation_id="ten-sam")))
+    asyncio.run(b.respond(InboundMessage(text="x", conversation_id="ten-sam")))
+
+    assert runtime_a.nonce_seen[0] != runtime_b.nonce_seen[0]
+
+
+def test_tainting_tool_names_match_the_real_catalog():
+    """Zbiór wyzwalaczy to NAPISY — bez wiązania z rejestrem zmiana nazwy narzędzia gasi
+    wyzwalacz po cichu, a objawem jest wyłącznie skaza, która nigdy się nie zapala."""
+    from workmate.adapters.inbound.responder import _TAINTING_TOOLS
+    from workmate.core.application.tools import (
+        build_activity_catalog,
+        build_file_catalog,
+        build_shell_catalog,
+        build_workspace_catalog,
+    )
+    from workmate.core.application.workspace import (
+        WorkspaceLimits,
+        WorkspaceService,
+        WorkspaceWriteService,
+    )
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+    from workmate.core.ports.materialization import MaterializationLimits
+
+    class _PustyWorkspace:
+        def list(self, scope_dir):
+            return []
+
+        def read(self, scope_dir, name):
+            return None
+
+        def read_bytes(self, scope_dir, name):
+            return None
+
+        def exists(self, relpath):
+            return False
+
+        def create(self, relpath, content):
+            raise AssertionError
+
+        def create_bytes(self, relpath, data):
+            raise AssertionError
+
+    class _PustyMaterializer:
+        def materialize(self, name, data):
+            return None
+
+    class _PustyRunner:
+        def run(self, command, *, cwd="", timeout_s=0):
+            raise AssertionError("sonda czyta NAZWY z buildera, nie uruchamia poleceń")
+
+    class _PusteZdarzenia:
+        def read_since(self, after_id, *, source=None, limit=50):
+            return []
+
+        def recent(self, *, source=None, limit=20):
+            return []
+
+    repo = _PustyWorkspace()
+    scope = WorkspaceScope("teams_graph", "t/c/r")
+    limity = WorkspaceLimits(1, 1, 1, frozenset({"md"}))
+    workspace = [
+        s.name
+        for s in build_workspace_catalog(
+            scope, WorkspaceService(repo), WorkspaceWriteService(repo, repo, limity)
+        )
+    ]
+    plikowe = [
+        s.name
+        for s in build_file_catalog(
+            scope,
+            WorkspaceService(repo),
+            _PustyMaterializer(),
+            AttachmentQueue(budget_bytes=1),
+            MaterializationLimits(1, 1),
+        )
+    ]
+
+    powloka = [s.name for s in build_shell_catalog(scope, _PustyRunner(), workspace_root="/tmp/ws")]
+    aktywnosc = [s.name for s in build_activity_catalog(events=_PusteZdarzenia())]
+
+    # Narzędzia CZYTAJĄCE katalog roboczy muszą być wyzwalaczami — trzymają odłożone załączniki.
+    assert {"ReadFile", "ListFiles"} <= set(workspace)
+    assert {"ReadFile", "ListFiles"} <= _TAINTING_TOOLS
+    assert set(plikowe) <= _TAINTING_TOOLS
+    # Powłoka i warstwa zdarzeń wciągają treść spoza bramek — też muszą być z REJESTRU, nie
+    # z napisu. Ta runda przemianowała `GitHub` na `Activity`; gołe napisy przeżyłyby rename
+    # zielone, a jedynym objawem byłaby skaza, która nigdy się nie zapala.
+    assert set(powloka) <= _TAINTING_TOOLS
+    assert set(aktywnosc) <= _TAINTING_TOOLS
+    # Komplet w drugą stronę: KAŻDY wyzwalacz musi pochodzić z któregoś realnego buildera,
+    # inaczej zbiór cicho obrasta nazwami nieistniejących narzędzi.
+    z_builderow = set(powloka) | set(aktywnosc) | set(plikowe) | {"ReadFile", "ListFiles"}
+    assert z_builderow == _TAINTING_TOOLS
+    # ``CreateFile`` NIE skaża: model zapisuje własną treść, nie wciąga cudzej.
+    assert "CreateFile" in workspace and "CreateFile" not in _TAINTING_TOOLS
+
+
+# --- Powloka nieobecna w TEJ turze: sprostowanie w naglowku sesji (ADR 0068 §2) -------
+
+
+class _NaglowkoweRuntime(_FakeRuntime):
+    """Atrapa notujaca naglowek sesji — tam jedzie sprostowanie o powloce."""
+
+    def __init__(self) -> None:
+        super().__init__("ok")
+        self.headers: list[str] = []
+
+    def run_turn(self, query, **kwargs):  # type: ignore[override]
+        self.headers.append(kwargs.get("session_header", ""))
+        return super().run_turn(query, **kwargs)
+
+
+def _stub_bash():
+    from workmate.core.application.tools import ToolSpec
+
+    return [ToolSpec("Bash", "opis", lambda command="", timeout_s=0: {})]
+
+
+def test_gosc_bez_powloki_dostaje_sprostowanie_swiata():
+    """Fabryka oddaje pusta liste nierozpoznanemu nadawcy (ADR 0063), a korpus statyczny mowi
+    o montazach — bo drzwi powloke MAJA. Bez sprostowania gosc czyta o `/mnt/system/notes/`,
+    majac katalog bez `Bash` i bez narzedzi odczytu."""
+    runtime = _NaglowkoweRuntime()
+    responder, _, _ = _responder_z_zaufaniem(
+        runtime, shell_catalog_factory=lambda scope, sender: []
+    )
+
+    asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="t", sender_id="obcy")))
+
+    assert "shell is unavailable" in runtime.headers[0]
+
+
+def test_czlonek_z_powloka_nie_dostaje_sprostowania():
+    runtime = _NaglowkoweRuntime()
+    responder, _, _ = _responder_z_zaufaniem(
+        runtime, shell_catalog_factory=lambda scope, sender: _stub_bash()
+    )
+
+    asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="t", sender_id="ok")))
+
+    assert "shell is unavailable" not in runtime.headers[0]
+
+
+def test_drzwi_bez_powloki_w_ogole_nie_prostuja_swiata():
+    """Bez fabryki korpus statyczny opisuje swiat NARZEDZIOWY — nie ma czego prostowac."""
+    runtime = _NaglowkoweRuntime()
+    responder, _, _ = _responder_z_zaufaniem(runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="t", sender_id="ok")))
+
+    assert "shell is unavailable" not in runtime.headers[0]
+
+
+def test_blad_budowy_powloki_tez_prostuje_swiat():
+    """Blad budowy degraduje do „brak powloki" i loguje — tura ma sie odbyc, ale opis swiata
+    musi za tym nadazyc, inaczej degradacja jest cicha i mylaca."""
+    runtime = _NaglowkoweRuntime()
+
+    def wybucha(scope, sender):
+        raise RuntimeError("menedzer wykonawcy nieosiagalny")
+
+    responder, _, _ = _responder_z_zaufaniem(runtime, shell_catalog_factory=wybucha)
+
+    asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="t", sender_id="ok")))
+
+    assert "shell is unavailable" in runtime.headers[0]

@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -6,9 +7,11 @@ from typing import Any
 import pytest
 
 from powiadomienia_teams.app import (
+    _MAX_CYKLI_UNKNOWN,
     _MAX_PENDING_FAILURES,
     CrossUserWriteError,
     StanPulsu,
+    WynikPrzebiegu,
     _catchup_due,
     _ensure_authenticated,
     _handle_auth_loss,
@@ -32,8 +35,12 @@ from powiadomienia_teams.reminders.timeoff import TeamReasons
 from powiadomienia_teams.state import (
     APPLIED,
     AWAITING_CONFIRM,
+    AWAITING_REPLY,
     DECLINED,
+    EXPIRED,
+    SELF_FILLED,
     PendingReminder,
+    StateWriteError,
     load_state,
     save_state,
 )
@@ -127,6 +134,21 @@ def _settings(state_path: Path) -> Settings:
         scheduling_group_id="TAG",
         state_path=state_path,
         dry_run=False,
+    )
+
+
+def _settings_calodobowe(state_path: Path) -> Settings:
+    """Ustawienia z oknem wysyłki otwartym cały tydzień, całą dobę.
+
+    Dla testów, które mierzą CO bot wysyła, a nie KIEDY: ich scenariusze stoją na konkretnych
+    datach (np. niedzielny tick 51 h po nudge'u), więc domyślne godziny ciszy odłożyłyby wysyłkę
+    i zamazały badaną własność. Samo okno ma własne testy niżej.
+    """
+    return replace(
+        _settings(state_path),
+        send_window_start_hour=0,
+        send_window_end_hour=24,
+        send_window_weekdays=(0, 1, 2, 3, 4, 5, 6),
     )
 
 
@@ -302,10 +324,10 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     assert pending.watermark == "2026-07-15T10:00:00Z"
     # Stara wiadomość SPRZED nudge'a jest ignorowana dzięki watermarkowi.
     stale = [_msg("u1", "2026-07-15T09:30:00Z", "OK, rozumiem")]
-    assert newest_incoming(stale, "me", pending.watermark) is None
+    assert newest_incoming(stale, "me", "u1", pending.watermark) is None
     # Nowa wiadomość PO nudge'u jest brana pod uwagę.
     fresh = [_msg("u1", "2026-07-15T10:05:00Z", "ok")]
-    assert newest_incoming(fresh, "me", pending.watermark) is not None
+    assert newest_incoming(fresh, "me", "u1", pending.watermark) is not None
 
 
 def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):
@@ -874,7 +896,9 @@ def test_genuine_silence_still_expires_after_successful_read(tmp_path: Path):
     _po_przestoju(state_path)
     client = _FakeClient({"chat1": []})  # odczyt się udał, czat pusty
 
-    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+    poll_replies(  # type: ignore[arg-type]
+        _settings_calodobowe(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU
+    )
 
     assert load_state(state_path)["u1"].status == "expired"
     assert len(client.sent) == 1
@@ -903,7 +927,9 @@ def test_no_confirm_gets_its_own_message_not_no_reply(tmp_path: Path):
     )
     client = _FakeClient({"chat1": []})  # udany odczyt, cisza po prośbie o potwierdzenie
 
-    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+    poll_replies(  # type: ignore[arg-type]
+        _settings_calodobowe(state_path), client, _FakeLlm("{}"), now=_PO_PRZESTOJU
+    )
 
     assert load_state(state_path)["u1"].status == "expired"
     assert client.created == []  # brak „tak" → ŻADNEGO zapisu
@@ -1202,7 +1228,9 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
     assert saved["u1"].watermark == "2026-07-17T16:00:00Z"
     assert saved["u1"].status == "awaiting_reply"
     # Dowód, że odpowiedź jest wciąż widoczna dla listenera.
-    assert newest_incoming(client.messages["chat-u1"], "me", saved["u1"].watermark) is not None
+    assert (
+        newest_incoming(client.messages["chat-u1"], "me", "u1", saved["u1"].watermark) is not None
+    )
 
 
 class _RaisingLlm:
@@ -1324,7 +1352,11 @@ def test_wiele_kont_nie_uruchamia_logowania_device_code(tmp_path: Path, monkeypa
 
     def fabryka(_settings_arg):
         def provider() -> str:
-            raise AmbiguousAccountError("dwa konta w cache — usuń plik i zaloguj się ponownie")
+            raise AmbiguousAccountError(
+                "dwa konta w cache — usuń plik i zaloguj się ponownie",
+                liczba_kont=2,
+                cache_path=tmp_path / "c.bin",
+            )
 
         return provider
 
@@ -1642,9 +1674,13 @@ def test_podsumowanie_idzie_takze_po_przebiegu_nadrobionym(tmp_path: Path):
     settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
     client = _FakeClient({})
 
-    udany = _przebieg_i_podsumowanie(settings, client, datetime.now(timezone.utc), lambda _s: None)
+    # `teraz` JAWNIE (środa 11:00 lokalnie): bez tego wynik testu zależałby od pory uruchomienia
+    # pakietu — po 18:00 albo w weekend bramka godzin ciszy odłożyłaby przebieg.
+    wynik = _przebieg_i_podsumowanie(
+        settings, client, _SRODA_W_OKNIE, lambda _s: None, teraz=_SRODA_W_OKNIE
+    )
 
-    assert udany is True
+    assert wynik is WynikPrzebiegu.UDANY
     assert [chat for chat, _ in client.sent] == ["chat-admin-1"]
 
 
@@ -1658,9 +1694,11 @@ def test_podsumowanie_idzie_takze_po_NIEUDANYM_przebiegu(tmp_path: Path):
     settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_id="admin-1")
     client = _Zepsuty({})
 
-    udany = _przebieg_i_podsumowanie(settings, client, datetime.now(timezone.utc), lambda _s: None)
+    wynik = _przebieg_i_podsumowanie(
+        settings, client, _SRODA_W_OKNIE, lambda _s: None, teraz=_SRODA_W_OKNIE
+    )
 
-    assert udany is False
+    assert wynik is WynikPrzebiegu.NIEUDANY
     assert [chat for chat, _ in client.sent] == ["chat-admin-1"]
 
 
@@ -1821,7 +1859,7 @@ def test_utrata_sesji_w_trybie_uslugi_konczy_proces_czysto(tmp_path: Path, monke
     monkeypatch.setenv("POWIADOMIENIA_STATE_PATH", str(tmp_path / "state.json"))
     monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "true")
     monkeypatch.setattr(sys, "argv", ["powiadomienia-teams"])  # tryb usługi (bez --once/--login)
-    monkeypatch.setattr(modul, "_ensure_authenticated", lambda settings: lambda: "tok")
+    monkeypatch.setattr(modul, "_ensure_authenticated", lambda settings, **_k: lambda: "tok")
 
     def _padnij(settings, client, llm):
         raise AuthExpiredError("AADSTS50173: token unieważniony")
@@ -1833,3 +1871,1165 @@ def test_utrata_sesji_w_trybie_uslugi_konczy_proces_czysto(tmp_path: Path, monke
 
     assert wyjscie.value.code == 1  # 1 = „padło w trakcie pracy" (2 zarezerwowane dla konfiguracji)
     assert wyjscie.value.__cause__ is None  # bez łańcucha wyjątków = bez traceback w logu usługi
+
+
+# --- Self-fill detection (krok 1.5 w poll_replies) -------------------------------------------
+
+
+def _settings_self_fill(state_path: Path, *, min_idle_s: int = 3600) -> Settings:
+    return Settings(
+        client_id="c",
+        tenant_id="t",
+        team_id="T",
+        scheduling_group_id="TAG",
+        state_path=state_path,
+        dry_run=False,
+        self_fill_check_min_idle_s=min_idle_s,
+    )
+
+
+def test_self_fill_detected_closes_reminder_and_thanks(tmp_path: Path):
+    """Pracownik uzupełnił Shifts SAM, bez odpowiedzi na czacie — bot dziękuje i kończy temat."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient({"chat1": []}, shifts=(shift,))
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)  # 3h ciszy > 3600s próg
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == SELF_FILLED
+    assert len(client.sent) == 1
+    assert "uzupełniony" in client.sent[0][1]
+
+
+def test_self_fill_not_checked_before_idle_threshold(tmp_path: Path):
+    """Zbyt świeża cisza (poniżej progu) NIE zagląda jeszcze do Shifts — pending zostaje otwarty."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T11:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient({"chat1": []}, shifts=(shift,))
+    now = datetime(2026, 7, 16, 11, 30, 0, tzinfo=timezone.utc)  # 30 min ciszy < 3600s próg
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "awaiting_reply"  # wciąż otwarty, mimo że grafik już jest w Shifts
+    assert client.sent == []
+
+
+def test_self_fill_check_disabled_by_negative_min_idle(tmp_path: Path):
+    """`self_fill_check_min_idle_s=-1` wyłącza sprawdzanie — nawet po bardzo długiej ciszy."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-14T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path, min_idle_s=-1)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient({"chat1": []}, shifts=(shift,))
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)  # ~51h — długo, ale wyłączone
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "expired"  # zwykłe wygaśnięcie, nie self-fill
+    assert not client.sent or "uzupełniony" not in client.sent[0][1]
+
+
+def test_self_fill_not_triggered_without_matching_shift(tmp_path: Path):
+    """Cisza + próg przekroczony, ale grafiku w Shifts NADAL nie ma → zwykłe wygaśnięcie."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-14T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    client = _FakeClient({"chat1": []})  # brak zmian w Shifts
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)  # ~51h — po oknie 48h
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == "expired"
+
+
+def test_self_fill_check_skipped_when_reply_arrived_first(tmp_path: Path):
+    """Odpowiedź na czacie ma pierwszeństwo: nawet jeśli grafik też jest w Shifts, obsługujemy
+    czat, nie zamykamy jako self-fill (kolejność: odpowiedź > self-fill > wygaśnięcie)."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    shift = Shift(
+        "u1",
+        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+    )
+    client = _FakeClient(
+        {"chat1": [_msg("u1", "2026-07-16T12:00:00Z", "nie chcę nic zmieniać")]}, shifts=(shift,)
+    )
+    llm = _FakeLlm('{"action":"decline"}')
+    now = datetime(2026, 7, 16, 12, 5, tzinfo=timezone.utc)
+
+    poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.status == DECLINED  # odpowiedź wygrywa, nie self-fill
+
+
+# --- Znane dni urlopowe: nudge/propozycja pomijają dni z częściowego urlopu ------------------
+
+
+def test_run_once_partial_time_off_still_nudges_and_excludes_that_day(tmp_path: Path):
+    """Urlop CZĘŚCIOWY (tylko piątek) NIE wycisza prośby — bot pyta o pozostałe dni i wspomina
+    o dniu wolnym, a propozycja z zeszłego tygodnia pomija piątek."""
+    from zoneinfo import ZoneInfo
+
+    waw = ZoneInfo("Europe/Warsaw")  # zgodne z domyślną strefą Settings — granice dni LOKALNE
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)  # dry_run=False
+    member = Member("u1", "Ala")
+    friday_off = TimeOff(
+        "u1",
+        datetime(2026, 7, 24, tzinfo=waw).astimezone(timezone.utc),  # piątek docelowego tygodnia
+        datetime(2026, 7, 25, tzinfo=waw).astimezone(timezone.utc),
+        reason_id="TOR_URLOP",
+    )
+    last_week_shifts = (
+        Shift(
+            "u1",
+            datetime(2026, 7, 13, 8, tzinfo=timezone.utc),
+            datetime(2026, 7, 13, 16, tzinfo=timezone.utc),
+        ),
+        Shift(
+            "u1",
+            datetime(2026, 7, 17, 8, tzinfo=timezone.utc),
+            datetime(2026, 7, 17, 16, tzinfo=timezone.utc),
+        ),
+    )
+    client = _FakeClient({}, members=(member,), shifts=last_week_shifts, time_offs=(friday_off,))
+    now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+
+    missing = run_once(settings, client, now=now)  # type: ignore[arg-type]
+
+    assert [m.user_id for m in missing] == ["u1"]  # nadal na liście — urlop tylko częściowy
+    pending = load_state(state_path)["u1"]
+    assert pending.known_time_off_weekdays == [4]  # piątek
+    assert len(client.sent) == 1
+    text = client.sent[0][1]
+    assert "piątek" in text  # wspomniany jako dzień wolny
+    assert "wolne" in text.lower()
+
+
+# --- Pamięć rozmowy: wpięcie advance_memory/history_for_llm w app.py -------------------------
+
+
+def test_employee_memory_recorded_after_reply(tmp_path: Path):
+    """Treść obsłużonej wiadomości trafia do `employee_memory` z kotwicą czasu pierwszej."""
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tylko piątek 10-20")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":4,"start":"10:00","end":"20:00"}]}')
+
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    after = load_state(state_path)["u1"]
+    assert after.employee_memory == ["tylko piątek 10-20"]
+    assert after.memory_started_at == "2026-07-19T18:00:00Z"
+
+
+def test_second_turn_receives_history_of_first_reply(tmp_path: Path):
+    """W drugiej turze rozmowy interpreter dostaje treść PIERWSZEJ wiadomości jako historię."""
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "pon 8-16")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    class _RecordingLlm:
+        def __init__(self, response: str) -> None:
+            self._response = response
+            self.last_user: str | None = None
+
+        def complete(self, system: str, user: str) -> str:
+            self.last_user = user
+            return self._response
+
+    recorder = _RecordingLlm(
+        '{"action":"modify","shifts":[{"weekday":1,"start":"08:00","end":"16:00"}]}'
+    )
+    client.messages["chat1"].append(_msg("u1", "2026-07-19T18:05:00Z", "i wtorek też"))
+    poll_replies(settings, client, recorder, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert recorder.last_user is not None
+    assert "historia_pracownika" in recorder.last_user
+    assert "pon 8-16" in recorder.last_user
+
+
+# --- Regresja: awaria utrwalania stanu nie może mnożyć wiadomości -------------
+
+# Środa 11:00 czasu lokalnego — w oknie wysyłki, więc te testy mierzą zapis stanu, nie porę doby.
+_SRODA_W_OKNIE = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+
+
+def _sciezka_bez_zapisu(tmp_path: Path) -> Path:
+    """Ścieżka stanu, której NIE DA SIĘ zapisać: rodzic jest zwykłym plikiem, nie katalogiem.
+
+    Przenośny odpowiednik pełnego wolumenu (ENOSPC) i montowania tylko-do-odczytu — na Windows
+    prawa POSIX nie działają, a `chmod` nic nie blokuje.
+    """
+    przeszkoda = tmp_path / "nie-katalog"
+    przeszkoda.write_text("x", encoding="utf-8")
+    return przeszkoda / "state.json"
+
+
+def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path: Path):
+    """Kolejność „wyślij, potem utrwal" jest bezpieczna tylko wtedy, gdy utrwalanie działa.
+
+    Przy pełnym wolumenie wiadomość wychodziła, `save_state` padał, a `_run_once_with_retry`
+    ponawiał CAŁY przebieg — ta sama osoba dostawała prośbę przy każdej próbie. Sprawdzenie
+    zapisywalności przed pierwszą wysyłką zamienia serię wiadomości w jeden czytelny błąd.
+    """
+    settings = _settings(_sciezka_bez_zapisu(tmp_path))
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    with pytest.raises(StateWriteError):
+        run_once(settings, client, now=_SRODA_W_OKNIE)  # type: ignore[arg-type]
+
+    assert client.sent == []  # ANI JEDNEJ wiadomości
+
+
+def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: Path, monkeypatch):
+    """Ponowienie przy zepsutym zapisie stanu NIE naprawia — mnoży wiadomości.
+
+    Symulujemy dysk, który zapełnia się PO próbnym zapisie (bramka przepuszcza, właściwy zapis
+    pada) — czyli dokładnie to, czego bramka nie jest w stanie złapać. Awaria utrwalania ma wtedy
+    wyjść jednym błędem, a nie trzema prośbami do tej samej osoby (a przez okno łaski — kilkoma
+    dziesiątkami).
+    """
+    import powiadomienia_teams.state as modul_stanu
+
+    settings = _settings(_sciezka_bez_zapisu(tmp_path))
+    monkeypatch.setattr(modul_stanu, "ensure_writable", lambda _p: None)
+    client = _FakeClient({}, members=(Member("u1", "Ala"), Member("u2", "Bok")), shifts=())
+    spane: list[float] = []
+
+    with pytest.raises(StateWriteError):
+        _run_once_with_retry(
+            settings,
+            client,  # type: ignore[arg-type]
+            now=_SRODA_W_OKNIE,
+            sleep=spane.append,
+        )
+
+    assert len(client.sent) == 1  # jedna wysyłka, potem stop — bez ponowień
+    assert spane == []  # backoff ponowień w ogóle nie wszedł
+
+
+# --- Regresja: utrata sesji przy zapisie grafiku -----------------------------
+
+
+def test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge(tmp_path: Path):
+    """`AuthExpiredError` w gałęzi ogólnej dawał zły log i nieprawdziwą wiadomość.
+
+    Log mówił „Zapis grafiku nie powiódł się" (nikt nie szukał wtedy `--login`), a zaraz po nim
+    szła prośba „uzupełnij ręcznie" — wysyłana tym samym, martwym już tokenem. Utrata sesji
+    dotyczy CAŁEJ usługi i musi ją zatrzymać.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _SesjaPadaPrzyZapisie(_FakeClient):
+        def create_shift(self, team_id: str, shift: Any) -> str:
+            raise AuthExpiredError("AADSTS50173: grant cofnięty")
+
+    client = _SesjaPadaPrzyZapisie({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
+    with pytest.raises(AuthExpiredError):
+        poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert client.sent == []  # żadnego „uzupełnij ręcznie" martwym tokenem
+
+
+# --- Regresja: nieudana prośba o potwierdzenie ------------------------------
+
+
+def test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm(tmp_path: Path):
+    """Bez cofnięcia commitu pracownik dostawał po 48 h zarzut o milczenie, którego nie było.
+
+    Wpis zostawał w AWAITING_CONFIRM mimo że pytanie NIGDY do niego nie doszło, a watermark był
+    już przesunięty — więc jego odpowiedź nie była czytana ponownie. Cofnięcie stanu sprawia, że
+    kolejny cykl podejmuje tę samą wiadomość jeszcze raz.
+    """
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == AWAITING_REPLY  # NIE „czeka na potwierdzenie", bo nie zapytaliśmy
+    assert po.watermark == nudge  # ta sama odpowiedź wróci w kolejnym cyklu
+    assert po.employee_memory == []  # pamięć rozmowy też cofnięta — bez duplikatu przy ponowieniu
+    assert po.fail_count == 1  # próba policzona, więc pętla ma sufit
+
+
+def test_powtarzajaca_sie_awaria_prosby_konczy_sie_prosba_o_doprecyzowanie(tmp_path: Path):
+    """Cofnięcie commitu nie może dać pętli w nieskończoność — `_record_failure` ją domyka."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            self.sent.append((chat_id, html))
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    settings = _settings(state_path)
+
+    for _ in range(_MAX_PENDING_FAILURES):
+        poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == "2026-07-19T18:00:00Z"  # po suficie prób wiadomość odpuszczona
+    assert po.fail_count == 0
+
+
+# --- Regresja: wpis nie do odczytania nie może żyć wiecznie ------------------
+
+
+def _pending_bez_odczytu(state_path: Path, nudge: str = "2026-07-17T09:00:00Z") -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+
+
+class _OdczytPadaZawsze(_FakeClient):
+    def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
+        raise RuntimeError("Graph 500")
+
+
+def test_nierozstrzygniete_cykle_sa_liczone_i_alarmuja_po_progu(tmp_path: Path, monkeypatch):
+    """Awaria `list_chat_messages` była zupełnie niewidoczna dla eksploatacji.
+
+    Leci PRZED obsługą wiadomości, więc `fail_count` nie rósł, a `should_expire` słusznie odmawiał
+    wygaszenia bez dowodu. Wpis wisiał otwarty w nieskończoność, co tydzień blokując ponowny nudge
+    dla tej osoby — i nikt się o tym nie dowiadywał.
+    """
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings(state_path), alert_webhook_url="https://hook")
+    client = _OdczytPadaZawsze({})
+
+    for _ in range(_MAX_CYKLI_UNKNOWN + 5):
+        poll_replies(settings, client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].unknown_count == _MAX_CYKLI_UNKNOWN + 5
+    assert wyslane == ["Nie da się odczytać czatu przypomnienia"]  # DOKŁADNIE raz
+
+
+def test_udany_odczyt_zeruje_licznik_nierozstrzygnietych(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = _settings_calodobowe(state_path)
+    tick = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)  # jeszcze w oknie odpowiedzi
+
+    poll_replies(settings, _OdczytPadaZawsze({}), _FakeLlm("{}"), now=tick)  # type: ignore[arg-type]
+    assert load_state(state_path)["u1"].unknown_count == 1
+
+    poll_replies(settings, _FakeClient({"chat1": []}), _FakeLlm("{}"), now=tick)  # type: ignore[arg-type]
+    assert load_state(state_path)["u1"].unknown_count == 0
+
+
+def test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem(tmp_path: Path, monkeypatch):
+    """Zamknięcie z sufitu nie może wysłać „nie dostałem odpowiedzi" — dowodu nadal nie ma."""
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings_calodobowe(state_path), alert_webhook_url="https://hook")
+    client = _OdczytPadaZawsze({})
+    # 3 × okno odpowiedzi (48 h) po nudge'u — sufit przekroczony.
+    po_suficie = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=po_suficie)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == EXPIRED  # wpis zszedł z obiegu
+    assert client.sent == []  # ale pracownik NIE dostał zarzutu o milczenie
+    assert wyslane == ["Przypomnienia zablokowane na odczycie czatu"]
+
+
+# --- Regresja: opóźnienie przed wyjściem tylko dla usługi --------------------
+
+
+def test_polecenie_jednorazowe_nie_czeka_przed_wyjsciem(tmp_path: Path):
+    """`auth_failure_exit_delay_s` hamuje pętlę restartów `unless-stopped`, a nie operatora.
+
+    `--once`/`--poll-once` uruchamia człowiek i czeka na wynik w terminalu — dziesięć minut ciszy
+    wyglądało tam jak zawieszony proces, mimo że komunikat padł już w pierwszej sekundzie.
+    """
+    settings = _settings_bezobslugowe(tmp_path / "s.json", auth_failure_exit_delay_s=600)
+    spane: list[float] = []
+    _handle_auth_loss(settings, AuthExpiredError("AADSTS50173"), spane.append, zwloka=False)
+    assert spane == []
+
+
+def test_start_uslugi_nadal_czeka_przed_wyjsciem(tmp_path: Path, monkeypatch):
+    """Kontrola w drugą stronę: bez terminala i bez `--once` opóźnienie MUSI zostać."""
+    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
+    settings = _settings_bezobslugowe(tmp_path / "s.json", auth_failure_exit_delay_s=600)
+    spane: list[float] = []
+
+    def fabryka(_s):
+        def provider() -> str:
+            raise AuthExpiredError("AADSTS50173")
+
+        return provider
+
+    with pytest.raises(SystemExit):
+        _ensure_authenticated(settings, fabryka, sleep=spane.append)
+    assert spane == [600.0]
+
+
+def test_alert_o_utracie_sesji_nie_wypuszcza_adresow_kont(tmp_path: Path, monkeypatch):
+    """Webhook alertów bywa POZA organizacją — nie wolno mu podawać adresów pracowników."""
+    tresci: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: tresci.append(tresc) or True,
+    )
+    settings = _settings_bezobslugowe(
+        tmp_path / "s.json", alert_webhook_url="https://hook", auth_failure_exit_delay_s=0
+    )
+    blad = AmbiguousAccountError(
+        "Cache tokenu zawiera 2 kont (ala@firma.pl, bot@firma.pl) — usuń plik",
+        liczba_kont=2,
+        cache_path=tmp_path / "c.bin",
+    )
+
+    _handle_auth_loss(settings, blad, lambda _s: None)
+
+    assert tresci and "ala@firma.pl" not in tresci[0] and "bot@firma.pl" not in tresci[0]
+    assert "2 kont" in tresci[0]
+
+
+# --- Godziny ciszy: wiadomości inicjowane przez bota -------------------------
+
+# Sobota 12:00 lokalnie — poza oknem (dni robocze 8:00–18:00).
+_SOBOTA_POZA_OKNEM = datetime(2026, 7, 25, 10, 0, tzinfo=timezone.utc)
+# Poniedziałek 10:00 lokalnie — w oknie.
+_PONIEDZIALEK_W_OKNIE = datetime(2026, 7, 27, 8, 0, tzinfo=timezone.utc)
+
+
+def _do_wygaszenia(state_path: Path) -> None:
+    """Wpis, któremu właśnie minęło okno odpowiedzi (nudge w czwartek, cisza pracownika)."""
+    nudge = "2026-07-23T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-27",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+
+
+def test_domkniecie_poza_oknem_czeka_ale_status_jest_utrwalony(tmp_path: Path):
+    """Cisza przesuwa WYSYŁKĘ, nie obieg: status terminalny musi zejść na dysk od razu."""
+    state_path = tmp_path / "state.json"
+    _do_wygaszenia(state_path)
+    client = _FakeClient({"chat1": []})  # udany odczyt, nic nowego
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_SOBOTA_POZA_OKNEM)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == EXPIRED  # utrwalone niezależnie od pory
+    assert client.sent == []  # ale nikt nie dostaje wiadomości w sobotę
+    assert "Nie dostałem odpowiedzi" in po.odlozona_wiadomosc  # odłożona, NIE porzucona
+
+
+def test_domkniecie_w_oknie_wychodzi_od_razu(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    _do_wygaszenia(state_path)
+    client = _FakeClient({"chat1": []})
+
+    poll_replies(_settings(state_path), client, _FakeLlm("{}"), now=_PONIEDZIALEK_W_OKNIE)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == EXPIRED
+    assert len(client.sent) == 1
+    assert po.odlozona_wiadomosc == ""  # nic nie czeka
+
+
+def test_odlozona_wiadomosc_wychodzi_przy_otwarciu_okna(tmp_path: Path):
+    """Kolejny cykl, już w oknie, musi dosłać to, co czekało od soboty."""
+    state_path = tmp_path / "state.json"
+    _do_wygaszenia(state_path)
+    settings = _settings(state_path)
+
+    client = _FakeClient({"chat1": []})
+    poll_replies(settings, client, _FakeLlm("{}"), now=_SOBOTA_POZA_OKNEM)  # type: ignore[arg-type]
+    assert client.sent == []
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_PONIEDZIALEK_W_OKNIE)  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1
+    assert "Nie dostałem odpowiedzi" in client.sent[0][1]
+    assert load_state(state_path)["u1"].odlozona_wiadomosc == ""
+
+
+def test_odpowiedz_pracownikowi_ignoruje_godziny_ciszy(tmp_path: Path):
+    """Rozmowę zaczął pracownik — cisza po jego wiadomości byłaby gorsza niż odpowiedź w sobotę."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-25T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-27",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-25T09:30:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings(state_path), client, llm, now=_SOBOTA_POZA_OKNEM)  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1  # prośba o potwierdzenie wychodzi mimo soboty
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+
+
+def test_cotygodniowy_przebieg_poza_oknem_nie_wysyla_i_nie_odhacza_terminu(tmp_path: Path):
+    """Prośba tygodniowa też jest inicjowana przez bota — poza oknem czeka na nadrobienie."""
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    udany = _przebieg_i_podsumowanie(
+        settings,
+        client,  # type: ignore[arg-type]
+        _SOBOTA_POZA_OKNEM,
+        lambda _s: None,
+        teraz=_SOBOTA_POZA_OKNEM,
+    )
+
+    # ODLOZONY, nie NIEUDANY: ten termin ma przeżyć do OTWARCIA okna, a nie do wygaśnięcia
+    # okna łaski (piątek 16:00 + 6 h = 22:00, czyli w środku ciszy).
+    assert udany is WynikPrzebiegu.ODLOZONY
+    assert client.sent == []
+    assert load_state(state_path) == {}  # żadnego pendingu bez wysłanej prośby
+
+
+def test_cotygodniowy_przebieg_w_oknie_wysyla_normalnie(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    udany = _przebieg_i_podsumowanie(
+        settings,
+        client,  # type: ignore[arg-type]
+        _SRODA_W_OKNIE,
+        lambda _s: None,
+        teraz=_SRODA_W_OKNIE,
+    )
+
+    assert udany is WynikPrzebiegu.UDANY
+    assert len(client.sent) == 1
+
+
+# --- Regresja II: odłożona wiadomość nie może się mnożyć przy awarii zapisu ---
+
+
+def _z_odlozona_wiadomoscia(state_path: Path) -> None:
+    """Wpis TERMINALNY z domknięciem czekającym na otwarcie okna wysyłki."""
+    nudge = "2026-07-23T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-27",
+                status=EXPIRED,
+                watermark=nudge,
+                nudged_at=nudge,
+                odlozona_wiadomosc="<p>Nie dostałem odpowiedzi</p>",
+            )
+        },
+    )
+
+
+def test_niezapisywalny_stan_wstrzymuje_doslanie_zamiast_je_mnozyc(tmp_path: Path, monkeypatch):
+    """Lustro defektu z `run_once`: bez bramki kolejka wysyła w kółko to samo.
+
+    Flaga `odlozona_wiadomosc` była kasowana w PAMIĘCI, a `save_state` stał raz, na końcu pętli.
+    `StateWriteError` z tego zapisu leciał przez `poll_replies` do pętli nasłuchu, `outcome`
+    zostawał `None` (czyli odstęp bazowy 10 s), a następny cykl czytał flagę Z DYSKU — czyli
+    nienaruszoną. Przy ENOSPC dawało to ~360 wiadomości na godzinę do jednej osoby, bez ucieczki:
+    `past_hard_ceiling` też kasował flagę tylko w pamięci.
+    """
+    import powiadomienia_teams.state as modul_stanu
+
+    state_path = tmp_path / "state.json"
+    _z_odlozona_wiadomoscia(state_path)
+    monkeypatch.setattr(
+        modul_stanu,
+        "ensure_writable",
+        lambda _p: (_ for _ in ()).throw(StateWriteError("brak miejsca na urządzeniu")),
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({})
+
+    for _ in range(5):  # pięć pobudek pętli nasłuchu przy trwale pełnym dysku
+        with pytest.raises(StateWriteError):
+            poll_replies(settings, client, _FakeLlm("{}"), now=_PONIEDZIALEK_W_OKNIE)  # type: ignore[arg-type]
+
+    assert client.sent == []  # ANI JEDNEJ wiadomości, nie pięć
+    assert load_state(state_path)["u1"].odlozona_wiadomosc != ""  # kolejka nietknięta
+
+
+def test_awaria_zapisu_po_bramce_nie_wysyla_bo_commit_jest_pierwszy(tmp_path: Path, monkeypatch):
+    """Dysk zapełniony MIĘDZY próbnym zapisem a właściwym — czyli to, czego bramka nie złapie.
+
+    Kolejka schodzi ze stanu PRZED wysyłką, więc nieudany commit oznacza „nic nie poszło",
+    a nie „poszło i pójdzie znowu". Utrata uprzejmego domknięcia jest tańsza niż jego seria.
+    """
+    import powiadomienia_teams.state as modul_stanu
+
+    state_path = tmp_path / "state.json"
+    _z_odlozona_wiadomoscia(state_path)
+    monkeypatch.setattr(modul_stanu, "ensure_writable", lambda _p: None)
+    monkeypatch.setattr(
+        modul_stanu,
+        "save_state",
+        lambda _p, _s: (_ for _ in ()).throw(StateWriteError("brak miejsca na urządzeniu")),
+    )
+    settings = _settings(state_path)
+    client = _FakeClient({})
+
+    for _ in range(5):
+        with pytest.raises(StateWriteError):
+            poll_replies(settings, client, _FakeLlm("{}"), now=_PONIEDZIALEK_W_OKNIE)  # type: ignore[arg-type]
+
+    assert client.sent == []
+
+
+def test_udane_doslanie_zdejmuje_kolejke_dokladnie_raz(tmp_path: Path):
+    """Kontrola w drugą stronę: sprawny zapis → jedna wysyłka i pusta kolejka."""
+    state_path = tmp_path / "state.json"
+    _z_odlozona_wiadomoscia(state_path)
+    settings = _settings(state_path)
+    client = _FakeClient({})
+
+    for _ in range(3):
+        poll_replies(settings, client, _FakeLlm("{}"), now=_PONIEDZIALEK_W_OKNIE)  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1
+    assert load_state(state_path)["u1"].odlozona_wiadomosc == ""
+
+
+def test_nieudana_wysylka_odlozonej_wiadomosci_nie_wraca_w_kolejnym_cyklu(tmp_path: Path):
+    """Odłożone domknięcie to uprzejmość, nie zapis — ponawianie groziłoby serią."""
+    state_path = tmp_path / "state.json"
+    _z_odlozona_wiadomoscia(state_path)
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            self.sent.append((chat_id, html))
+            raise RuntimeError("Graph 503")
+
+    settings = _settings(state_path)
+    client = _WysylkaPada({})
+
+    for _ in range(4):
+        poll_replies(settings, client, _FakeLlm("{}"), now=_PONIEDZIALEK_W_OKNIE)  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1  # jedna próba, bez nawrotów
+    assert load_state(state_path)["u1"].odlozona_wiadomosc == ""
+
+
+# --- Regresja II: okno wysyłki nie może zjeść okna łaski ---------------------
+
+
+def test_odlozony_przebieg_dociaga_do_otwarcia_okna_mimo_wygaslej_laski(
+    tmp_path: Path, monkeypatch
+):
+    """Zaległy przebieg ma przeżyć do OTWARCIA okna, a nie do wygaśnięcia okna łaski.
+
+    Domyślnie termin to piątek 16:00, łaska 6 h (do 22:00), a okno wysyłki kończy się o 18:00 —
+    więc efektywna łaska spadła z 6 h do 2 h. Między 18:00 a 22:00 każda próba odbijała się od
+    bramki godzin ciszy, po 22:00 nadrobienie wygasało i w sobotę zaległy przebieg już nie wracał.
+    Skutek: dławienie Graph albo restart hosta w piątek wieczorem = nikt nie dostaje prośby
+    o grafik, a jedynym śladem jest INFO w logu.
+    """
+    import powiadomienia_teams.app as modul
+
+    # Piątek 2026-08-14, 19:00 czasu lokalnego (17:00 UTC): po terminie 16:00, wciąż w oknie łaski
+    # (do 22:00), ale JUŻ po zamknięciu okna wysyłki o 18:00.
+    zegar = {"t": datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc)}
+    koniec_testu = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)  # poniedziałek 14:00 lokalnie
+
+    class _Zegar:
+        @staticmethod
+        def now(tz=None):
+            return zegar["t"]
+
+        fromisoformat = staticmethod(datetime.fromisoformat)
+
+    class _Koniec(Exception):
+        pass
+
+    def spij(sekundy: float) -> None:
+        zegar["t"] += timedelta(seconds=max(sekundy, 1.0))
+        if zegar["t"] >= koniec_testu:
+            raise _Koniec
+
+    wyslane_o: list[datetime] = []
+
+    class _Klient(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            wyslane_o.append(zegar["t"])
+            super().send_chat_message(chat_id, html)
+            # Znacznik z ZEGARA TESTU, nie stały: watermark z przeszłości sprawiłby, że świeży
+            # pending wygasa w tym samym cyklu, w którym powstał.
+            return zegar["t"].strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    monkeypatch.setattr(modul, "datetime", _Zegar)
+    settings = _settings(tmp_path / "state.json")
+    client = _Klient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    with pytest.raises(_Koniec):
+        modul.run_forever(settings, client, _FakeLlm("{}"), sleep=spij)  # type: ignore[arg-type]
+
+    assert len(wyslane_o) == 1, wyslane_o  # prośba WYSZŁA, mimo że łaska dawno wygasła
+    otwarcie = datetime(2026, 8, 17, 6, 0, tzinfo=timezone.utc)  # poniedziałek 8:00 lokalnie
+    assert wyslane_o[0] >= otwarcie  # i to dopiero po otwarciu okna, nie w nocy
+
+
+def test_odlozony_przebieg_liczy_tydzien_od_TERMINU_nie_od_doreczenia(tmp_path: Path, monkeypatch):
+    """Odłożenie przez weekend nie może przesunąć planowanego tygodnia o siedem dni."""
+    import powiadomienia_teams.app as modul
+
+    zegar = {"t": datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc)}
+    koniec_testu = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+
+    class _Zegar:
+        @staticmethod
+        def now(tz=None):
+            return zegar["t"]
+
+        fromisoformat = staticmethod(datetime.fromisoformat)
+
+    class _Koniec(Exception):
+        pass
+
+    def spij(sekundy: float) -> None:
+        zegar["t"] += timedelta(seconds=max(sekundy, 1.0))
+        if zegar["t"] >= koniec_testu:
+            raise _Koniec
+
+    class _Klient(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            super().send_chat_message(chat_id, html)
+            return zegar["t"].strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    monkeypatch.setattr(modul, "datetime", _Zegar)
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)
+    client = _Klient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    with pytest.raises(_Koniec):
+        modul.run_forever(settings, client, _FakeLlm("{}"), sleep=spij)  # type: ignore[arg-type]
+
+    # Termin z piątku 14.08 planuje tydzień od poniedziałku 17.08 — a nie od 24.08, mimo że
+    # wiadomość wyszła dopiero 17.08 rano.
+    assert load_state(state_path)["u1"].week_start == "2026-08-17"
+
+
+# --- Regresja II: błąd konfiguracji z from_env() ------------------------------
+
+
+def test_literowka_w_dry_run_konczy_sie_kodem_2_bez_sladu_stosu(tmp_path: Path, monkeypatch):
+    """`Settings.from_env()` też rzuca `ConfigError` — musi być w tej samej obsłudze co `validate`.
+
+    Poza `try` operator dostawał ślad stosu i kod 1, więc „źle skonfigurowane" było nieodróżnialne
+    od „padło w trakcie pracy", a pod `restart: unless-stopped` kontener wirował zamiast czekać
+    na poprawkę.
+    """
+    import sys
+
+    import powiadomienia_teams.app as modul
+
+    for zmienna in [k for k in os.environ if k.startswith("POWIADOMIENIA_")]:
+        monkeypatch.delenv(zmienna, raising=False)
+    monkeypatch.setenv("POWIADOMIENIA_CLIENT_ID", "c")
+    monkeypatch.setenv("POWIADOMIENIA_TENANT_ID", "t")
+    monkeypatch.setenv("POWIADOMIENIA_TEAM_ID", "T")
+    monkeypatch.setenv("POWIADOMIENIA_STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "fasle")  # literówka: ani prawda, ani fałsz
+    monkeypatch.setattr(sys, "argv", ["powiadomienia-teams"])
+
+    with pytest.raises(SystemExit) as wyjscie:
+        modul.main()
+
+    assert wyjscie.value.code == 2  # „źle skonfigurowane", nie „padło w trakcie pracy"
+
+
+# --- Regresja III: odłożony przebieg ma tę samą ochronę co zwykły -------------
+
+
+class _SterowanyZegar:
+    """Atrapa `app.datetime`: `now()` z pola, reszta jak w oryginale."""
+
+    def __init__(self, start: datetime) -> None:
+        self.t = start
+
+    def now(self, tz=None) -> datetime:  # noqa: ARG002 — podpis jak w `datetime.now`
+        return self.t
+
+    fromisoformat = staticmethod(datetime.fromisoformat)
+
+
+def _petla_ze_sterowanym_zegarem(monkeypatch, start: datetime, koniec: datetime):
+    """Zwróć (zegar, spij, _Koniec) — sen przesuwa zegar, a limit przerywa `run_forever`."""
+    import powiadomienia_teams.app as modul
+
+    zegar = _SterowanyZegar(start)
+
+    class _Koniec(Exception):
+        pass
+
+    def spij(sekundy: float) -> None:
+        zegar.t += timedelta(seconds=max(sekundy, 1.0))
+        if zegar.t >= koniec:
+            raise _Koniec
+
+    monkeypatch.setattr(modul, "datetime", zegar)
+    return zegar, spij, _Koniec
+
+
+# Piątek 2026-08-14, 19:00 lokalnie: po terminie 16:00, w oknie łaski (do 22:00), ale po zamknięciu
+# okna wysyłki (18:00). Poniedziałek 08:00 lokalnie = 06:00 UTC to najbliższe otwarcie.
+_PIATEK_PO_OKNIE = datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc)
+_PONIEDZIALEK_OTWARCIE = datetime(2026, 8, 17, 6, 0, tzinfo=timezone.utc)
+
+
+def test_odlozony_przebieg_dostaje_PELNY_budzet_ponowien_po_otwarciu_okna(
+    tmp_path: Path, monkeypatch
+):
+    """Ścieżka odłożona nie może być SŁABIEJ chroniona niż zwykła.
+
+    Okno łaski liczyło się od PIERWOTNEGO terminu, więc w chwili wykonania odłożonego przebiegu
+    dawno wygasło: awaria w poniedziałek rano dawała trzy próby (wewnętrzne ponowienia jednej
+    rundy) i ciszę do wtorku, a `_catchup_due` zwracał już `None`, więc pobudka celowała
+    w następny piątek. Ta sama awaria w piątek 16:01 dostawała dwanaście rund przez całe okno
+    łaski. Dwuminutowe dławienie Graph w poniedziałek kosztowało cały tydzień.
+    """
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+    import powiadomienia_teams.app as modul
+
+    koniec = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)  # poniedziałek 15:00 lokalnie
+    zegar, spij, _Koniec = _petla_ze_sterowanym_zegarem(monkeypatch, _PIATEK_PO_OKNIE, koniec)
+    proby: list[datetime] = []
+
+    class _ZawszePada(_FakeClient):
+        def list_members(self, team_id: str):
+            proby.append(zegar.t)
+            raise RuntimeError("Graph dławi")
+
+    settings = _settings(tmp_path / "state.json")
+    with pytest.raises(_Koniec):
+        modul.run_forever(settings, _ZawszePada({}), _FakeLlm("{}"), sleep=spij)  # type: ignore[arg-type]
+
+    w_oknie = [t for t in proby if t >= _PONIEDZIALEK_OTWARCIE]
+    assert len(w_oknie) >= 10, w_oknie  # rundy przez CAŁE okno łaski, nie jedna
+    # Budżet liczony od OTWARCIA okna, więc ostatnia próba wypada blisko jego końca (06:00+6 h).
+    assert max(w_oknie) >= _PONIEDZIALEK_OTWARCIE + timedelta(hours=5)
+    # …a gdy budżet się wyczerpie, operator DOWIADUJE SIĘ, że tydzień przepadł.
+    assert "Zaległy przebieg powiadomień przepadł" in alerty
+
+
+def test_odlozenie_jest_zglaszane_operatorowi_dokladnie_raz(tmp_path: Path, monkeypatch):
+    """Odłożenie wstrzymuje też podsumowanie („dead man's switch") — cisza musi mieć wyjaśnienie.
+
+    Bez tego alertu weekendowa cisza wyglądała identycznie jak awaria: brak podsumowania i ani
+    słowa więcej. Alert idzie webhookiem, czyli kanałem niezależnym od Graph.
+    """
+    alerty: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append((tytul, kw.get("waga", ""))) or True,
+    )
+    import powiadomienia_teams.app as modul
+
+    koniec = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    zegar, spij, _Koniec = _petla_ze_sterowanym_zegarem(monkeypatch, _PIATEK_PO_OKNIE, koniec)
+
+    class _Klient(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            super().send_chat_message(chat_id, html)
+            return zegar.t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    settings = _settings(tmp_path / "state.json")
+    client = _Klient({}, members=(Member("u1", "Ala"),), shifts=())
+    with pytest.raises(_Koniec):
+        modul.run_forever(settings, client, _FakeLlm("{}"), sleep=spij)  # type: ignore[arg-type]
+
+    odlozenia = [t for t, _ in alerty if t == "Przebieg powiadomień odłożony do okna wysyłki"]
+    assert odlozenia == ["Przebieg powiadomień odłożony do okna wysyłki"]  # DOKŁADNIE raz
+    assert ("Przebieg powiadomień odłożony do okna wysyłki", "info") in alerty
+    assert len(client.sent) == 1  # a sam przebieg i tak doszedł do skutku po otwarciu okna
+
+
+# --- Regresja III: okno sprawdzane przed KAŻDĄ wysyłką ----------------------
+
+
+def test_zamkniecie_okna_w_TRAKCIE_przebiegu_przerywa_wysylke(tmp_path: Path, monkeypatch):
+    """Przebieg z dławieniem Graph trwa kilkadziesiąt minut — sprawdzenie okna raz nie wystarcza.
+
+    Przy terminie blisko zamknięcia wiadomości wychodziły długo po godzinach ciszy, czyli dokładnie
+    to, przed czym okno ma chronić. Przerwanie jest bezpieczne dzięki idempotencji `run_once`.
+    """
+    import powiadomienia_teams.app as modul
+
+    zegar = _SterowanyZegar(datetime(2026, 8, 12, 15, 50, tzinfo=timezone.utc))  # środa 17:50
+    monkeypatch.setattr(modul, "datetime", zegar)
+
+    class _Powolny(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            super().send_chat_message(chat_id, html)
+            zegar.t += timedelta(minutes=30)  # dławienie Graph między wysyłkami
+            return zegar.t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)
+    zespol = (Member("u1", "Ala"), Member("u2", "Bok"), Member("u3", "Cyd"))
+    client = _Powolny({}, members=zespol, shifts=())
+
+    with pytest.raises(modul.OknoWysylkiZamknieteError):
+        run_once(settings, client, now=zegar.t)  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1  # tylko ta jedna, sprzed zamknięcia okna
+    assert set(load_state(state_path)) == {"u1"}  # i tylko ona ma pending
+
+
+def test_przerwany_przebieg_wraca_jako_ODLOZONY_i_dosyla_reszte(tmp_path: Path, monkeypatch):
+    """Przerwanie nie może odhaczyć terminu — reszta zespołu czeka na kolejne otwarcie okna."""
+    import powiadomienia_teams.app as modul
+
+    zegar = _SterowanyZegar(datetime(2026, 8, 12, 15, 50, tzinfo=timezone.utc))  # środa 17:50
+    monkeypatch.setattr(modul, "datetime", zegar)
+
+    class _Powolny(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            super().send_chat_message(chat_id, html)
+            zegar.t += timedelta(minutes=30)
+            return zegar.t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    state_path = tmp_path / "state.json"
+    settings = _settings(state_path)
+    zespol = (Member("u1", "Ala"), Member("u2", "Bok"), Member("u3", "Cyd"))
+    client = _Powolny({}, members=zespol, shifts=())
+
+    wynik = _przebieg_i_podsumowanie(settings, client, zegar.t, lambda _s: None, teraz=zegar.t)
+    assert wynik is WynikPrzebiegu.ODLOZONY  # nie NIEUDANY — nic się nie zepsuło
+
+    # Nazajutrz, już w oknie: reszta dostaje prośbę, a zagadnięta wczoraj NIE dostaje drugiej.
+    zegar.t = datetime(2026, 8, 13, 7, 0, tzinfo=timezone.utc)  # czwartek 09:00 lokalnie
+    client.sent.clear()
+    wynik = _przebieg_i_podsumowanie(settings, client, zegar.t, lambda _s: None, teraz=zegar.t)
+
+    assert wynik is WynikPrzebiegu.UDANY
+    assert len(client.sent) == 2
+    assert set(load_state(state_path)) == {"u1", "u2", "u3"}

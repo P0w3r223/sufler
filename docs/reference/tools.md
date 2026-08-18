@@ -3,10 +3,17 @@
 WorkMate ma **jednoźródłowy katalog narzędzi** (`core/application/tools.py`) — te same definicje
 (funkcja + docstring + schemat) napędzają drzwi MCP oraz runtime agenta ([ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
 
-- **Powierzchnia MCP** to zamrożone **4 + 1** narzędzi (`build_tool_catalog`), pilnowane
-  golden-testem `tests/adapters/test_mcp_tool_surface.py`.
-- **Runtime agenta** (drzwi Teams/Telegram/CLI) widzi dodatkowo narzędzia warstwy roboczej i
-  mostu, wstrzykiwane **per drzwi** przez `extra_catalog` — nie ruszają powierzchni MCP.
+- **Powierzchnia MCP** jest zamrożona golden-testem `tests/adapters/test_mcp_tool_surface.py`
+  w **czterech** konfiguracjach naraz. Trzon to `search_notes`, `get_note`, `list_projects`,
+  `get_project_status` i `save_note` (bramka zapisu); przy działającym moście dochodzi
+  `read_events_since`, a przy skonfigurowanej Jirze — `get_my_jira_tasks` i `get_my_jira_history`.
+  Daje to **5 do 8 nazw** zależnie od konfiguracji. Poprzedni zapis mówił „zamrożone 4 + 1"
+  i był o trzy nazwy w tyle.
+- **Powierzchnia MCP nie została skonsolidowana i to jest decyzja, nie zaległość.** Sesja Claude
+  Code nie ma dostępu do naszego kontenera-wykonawcy, więc `Bash` i `workmate-search` są dla niej
+  nieosiągalne: zdjęcie tych narzędzi nie PRZENIOSŁOBY zdolności, tylko ją SKASOWAŁO.
+- **Runtime agenta** (drzwi Teams/CLI) widzi zupełnie inną powierzchnię — pięć narzędzi
+  skonsolidowanych, wstrzykiwanych **per drzwi** przez `extra_catalog`. Sekcja niżej.
 
 Logika stoi w `core/application/` (`services.py`, `github.py`, `jira.py`, `events.py`, `workspace.py`).
 
@@ -71,55 +78,94 @@ traversal). Zwraca `{ saved: true, id, path }` lub `{ error }`.
 
 ---
 
-## Narzędzia runtime agenta (przez `extra_catalog`)
+## Narzędzia runtime agenta — powierzchnia po konsolidacji (1.6.0)
 
-Wstrzykiwane per drzwi zależnie od włączonych zdolności; **nie** wchodzą na powierzchnię MCP.
+**Ta sekcja opisywała do 1.6.0 świat sprzed konsolidacji** — osobne `create_file`,
+`read_recent_events`, `create_github_issue`, `get_my_jira_tasks`, `reply_on_thread`. Wydanie 1.6.0
+sprowadziło runtime agenta do **pięciu** narzędzi. Kryterium jest **bariera, nie temat**:
+narzędzie typowane powstaje wyłącznie tam, gdzie powłoka w kontenerze-wykonawcy nie może dosięgnąć.
 
-### Katalog roboczy agenta ([ADR 0018](../adr/0018-agent-working-directory.md), bramka `WORKMATE_ENABLE_WORKSPACE`)
+> **Sama decyzja mieszka w paczce wdrożeniowej** (`docs/decyzje/0009-konsolidacja-powierzchni-narzedziowej.md`
+> w repozytorium `infra-docker-workmate`), bo jej kryterium — którą barierę powłoka w wykonawcy
+> przechodzi, a której nie — jest własnością wdrożenia, nie aplikacji. Po tej stronie stoi
+> [ADR 0061](../adr/0061-consolidated-tool-surface-upstream-pointer.md): wskazuje upstream i niesie
+> to, czego upstream mieć nie może — kryterium cytowane w kodzie, bramkę wchodzącą do `Literal`
+> oraz cenę, którą płaci [ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)
+> (gwarancja strukturalna zamieniona na proceduralną).
 
-| Narzędzie | Parametry | Zwraca |
-|-----------|-----------|--------|
-| `create_file` | `name: str`, `content: str` | `{ created, name, path }` — tylko tekst (`md/txt/csv/json`). |
-| `read_file` | `name: str` | `{ name, content }` lub `{ error }`. |
-| `list_files` | — | `{ count, files: [{name, size}] }`. |
+| Narzędzie | Parametry | Kiedy wchodzi do katalogu |
+|-----------|-----------|---------------------------|
+| `Bash` | `command: str`, `timeout_s: int = 0` | `WORKMATE_ENABLE_SHELL=true` **i** działająca usługa `exec` (gniazdo `WORKMATE_EXEC_SOCKET`) |
+| `Project` | `action: status \| save`, pola akcji | zawsze; `save` **tylko** na drzwiach z `enable_write=True` (na Teams i MCP jest `False`) |
+| `Activity` | `action: events \| summary \| worklog \| create_issue \| comment`, pola akcji | zawsze; `create_issue`/`comment` wchodzą **do `Literal`** dopiero przy `WORKMATE_GITHUB_ENABLE_WRITE=true` |
+| `Jira` | `action: my_tasks \| my_history \| member_tasks \| member_history \| task \| search`, pola akcji | tylko gdy nadawcę da się związać z kontem Jira (fail-closed w fabryce — bez konta narzędzia NIE MA) |
+| `Schedule` | `week: current \| previous \| next` albo `date_from`/`date_to` | `WORKMATE_SCHEDULE_ENABLED` (`auto` = gdy grafik jest skonfigurowany) |
 
-### Most / EventStore ([ADR 0019](../adr/0019-shared-event-store.md))
+**Bramka zapisu wchodzi do `Literal`, nie do ciała funkcji.** Przy wyłączonym zapisie akcja nie
+istnieje w schemacie, więc model jej nie widzi i nie ma czego odmawiać. Sonda negatywna w
+`tests/core/test_activity_catalog.py` sprawdza dokładnie to — bramka przepuszczająca wszystko
+wygląda identycznie jak działająca.
 
-| Narzędzie | Parametry | Zwraca |
-|-----------|-----------|--------|
-| `read_recent_events` | `source: str \| None = None`, `project: str \| None = None`, `limit: int = 20` | `{ count, events: [...] }` — okno read-only na zdarzenia (filtr źródła: `github`/`jira`/`teams`, i projektu, ADR 0028). |
-| `get_project_activity` | `project: str`, `limit: int = 50` | `{ project, event_count, by_kind, latest_activity_at, recent }` — fold aktywności projektu: liczniki wg typu + ostatnia aktywność ([ADR 0029](../adr/0029-branch-pr-state-transitions-and-project-activity.md)). |
+**Czego tu nie ma i dlaczego.** `Skill(name)` nie powstaje: procedury leżą w `/mnt/skills`, więc
+`ls` i `cat` przez `Bash` załatwiają je bez nowego narzędzia. Pliki robocze (`CreateFile`,
+`ListFiles`) też są przypadkiem użycia `Bash` — brudnopis rozmowy jest w wykonawcy zapisywalny.
+Odczyt notatek przez powłokę robi komenda `workmate-search` (ranker BM25 nad lematami PL).
 
-### Zapis GitHub (Bramka 4, [ADR 0021](../adr/0021-github-write-capability-gate-4.md), bramka `WORKMATE_GITHUB_ENABLE_WRITE`)
+### `File` — jedyne narzędzie mutujące bazę wiedzy
 
-Create-only; `owner`/`repo` pochodzą z **konfiguracji**, nie z treści prośby.
+Nie ma go w tabeli piątki, bo nie jest jej częścią: wchodzi **wyłącznie na drzwiach Teams**, za
+własną bramką, i jest agent-only (golden powierzchni MCP pilnuje tego wprost — na FastMCP nigdy nie
+jest rejestrowane). Trzy akcje, każda za innym warunkiem:
 
-| Narzędzie | Parametry | Zwraca |
-|-----------|-----------|--------|
-| `create_github_issue` | `title: str`, `body: str`, `labels: list[str] \| None = None` | `{ created, number, url }`. |
-| `comment_github_issue` | `issue_number: int`, `body: str` | `{ created, url }`. |
+| Akcja | Co robi | Wchodzi do `Literal`, gdy |
+|-------|---------|---------------------------|
+| `read` | Podaje plik `name` z katalogu roboczego rozmowy **do wglądu modelu** — obraz jako obraz, PDF jako dokument, resztę jako wyciągnięty tekst. Wynik narzędzia to sama notka potwierdzająca; plik jedzie OSOBNYM blokiem w tej samej turze, bo `tool_result` nie unosi bloku `document` i bywa czyszczony przez edycję kontekstu ([ADR 0064](../adr/0064-file-tool-and-model-initiated-materialization.md)). | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL=true` |
+| `edit` | Podmienia treść **notatki** `name` (IDENTYFIKATOR notatki, nie nazwa pliku) na `content`; `reason` to powód zmiany. Pierwsza w historii tego systemu droga NADPISANIA notatki ([ADR 0065](../adr/0065-mutable-knowledge-base-and-model-judged-writes.md)). | dodatkowo `_ENABLE_NOTE_MUTATION=true` |
+| `delete` | Usuwa notatkę `name`; `reason` to powód. | dodatkowo `_ENABLE_NOTE_DELETE=true` |
 
-### Moje zadania Jira ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md), bez bramki — czysty odczyt)
+Parametry: `action`, `name: str`, `content: str = ""`, `reason: str = ""`. Zestaw `action` jest
+**budowany z bramek**, nie stały — trzy warianty sygnatury: `read` · `read|edit` · `read|edit|delete`.
+Kolumna „wchodzi do `Literal`" wyżej opisuje więc schemat, a nie tylko intencję: przy
+`_ENABLE_NOTE_MUTATION=true` i `_ENABLE_NOTE_DELETE=false` model **nie widzi** `delete` w enumie
+i nie traci rundy na odmowę z ciała (ADR 0068, runda 4). Opis narzędzia idzie tą samą bramką —
+akapit o `delete` doklejany jest dokładnie wtedy, gdy akcja istnieje.
+Zakres rozmowy (`scope`) jest **domknięty w closurze** — model nie ma jak wskazać cudzej rozmowy.
 
-Jira jest zredukowana do JEDNEJ, wyłącznie odczytowej zdolności: zero parametrów, zero możliwości
-podejrzenia cudzych zadań. Tożsamość pytającego (nie treść prośby) wyznacza, czyje zadania wracają —
-mapowanie AAD→Jira z `WORKMATE_TEAMS_GRAPH_IDENTITIES` (Teams) lub jeden z góry skonfigurowany
-principal `WORKMATE_JIRA_MY_ACCOUNT` (MCP stdio, Claude Code/CLI — nie nadaje się na współdzielony
-serwer HTTP z wieloma osobami).
+**Czego `File` nie ma i dlaczego.** `write` i `list` nie powstają: brudnopis rozmowy jest w
+wykonawcy zapisywalny, więc to przypadki użycia `Bash` (kryterium bariery, ADR 0061). Opis wybiera
+wariant flagą `shell_available` — bez powłoki odsyła po tekst do `ReadFile`, z powłoką do `cat` —
+żeby nie wskazywać narzędzia nieobecnego w danej konfiguracji (ADR 0068 §2).
 
-| Narzędzie | Parametry | Zwraca |
-|-----------|-----------|--------|
-| `get_my_jira_tasks` | — (brak) | `{ tasks: [ {key, summary, status, priority, due_date, url} ] }` — TYLKO otwarte zadania przypisane pytającemu. |
+**Ścieżka mutacji jest obwarowana poza samym narzędziem.** Autoryzacja nadawcy po AAD pada PRZED
+sędzią; ścieżka i schemat są poza nim; nad zmianą stoi **niezależny sędzia** (osobne wywołanie
+modelu z wymuszonym schematem werdyktu), który potrafi wyłącznie zawęzić — każda awaria kończy się
+odmową. Werdykt `confirm` wymaga powrotu tej samej prośby z INNEJ tury (token tury). Przed operacją
+powstaje **migawka**, a jej niepowodzenie ODMAWIA zmiany. Notatki ze spotkań i wątków
+(`-mtg-`/`-thr-`) zostają niezmienne — ich niezmienność jest mechanizmem idempotencji, nie
+ostrożnością.
 
-Całe pisanie do Jiry (tworzenie/komentowanie zgłoszeń, tranzycja statusu) zostało usunięte
-([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md), supersedes 0031/0032) — nie ma już
-narzędzi `create_jira_issue`, `comment_jira_issue`, `transition_jira_issue`.
+### Narzędzia warunkowe — wchodzą tylko z własną bramką
 
-### Odpowiedź w wątku ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md))
+| Narzędzie | Bramka | Uwaga |
+|-----------|--------|-------|
+| `File` | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL` (+ `_ENABLE_NOTE_MUTATION` / `_ENABLE_NOTE_DELETE` na akcje mutujące) | sekcja wyżej; ta sama bramka włącza odkładanie załączników użytkownika na dysk rozmowy |
+| `ReplyWithFile` | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY` | ta sama bramka włącza skrzynkę `outputs/` w katalogu roboczym rozmowy |
+| `SendImage` | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH` | push 1:1, wymaga zakresów czatu |
+| `SendDocument` | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH` | jw. + zapis na własnym dysku bota |
+| `CreateFile` / `ReadFile` / `ListFiles` | `WORKMATE_ENABLE_WORKSPACE` | katalog roboczy **w procesie drzwi**; przy włączonej powłoce zbędne (ADR 0018) |
+| `SearchNotes` / `GetNote` / `ListProjects` | brak powłoki | wchodzą **zastępczo**, gdy `Bash` nie istnieje — inaczej baza wiedzy byłaby nieosiągalna |
 
-| Narzędzie | Parametry | Zwraca |
-|-----------|-----------|--------|
-| `reply_on_thread` | `body: str` | `{ created, url }` — komentuje issue/PR **pre-związany** z wątkiem Teams (numer z zaufanej mapy `ThreadLinkStore`, nie od modelu). |
+Ostatni wiersz jest powodem, dla którego produkcja bez powłoki widzi **siedem** narzędzi, a nie
+pięć: trzy narzędzia odczytu notatek nie mają czym zostać zastąpione. Piątka jest własnością
+architektury docelowej, w której powłoka jest.
+
+**Nazwy powierzchni agenta idą jedną konwencją (PascalCase) od [ADR 0068](../adr/0068-agent-tool-names-and-the-cost-of-a-wrong-one.md).**
+Dwie konwencje w jednym katalogu kodowały modelowi różnicę „skonsolidowane kontra zastane”,
+której nie ma skąd odczytać. Ten sam ADR przemianował `Notes` → `Project` i `GitHub` → `Activity`:
+pierwsze miało na drzwiach produkcyjnych jedną akcję (`status`) i 44% opisu zużywało na prostowanie
+własnej nazwy, drugie nazywało jedno z **dwóch** źródeł warstwy zdarzeń (`EventStore` przyjmuje
+`source="github"` i `source="teams"` — Jira nie ma mostu), którą w całości obsługuje.
+**Powierzchnia MCP została nietknięta** — tam nazwy są zamrożone golden-testem.
 
 ---
 

@@ -17,10 +17,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from workmate.core.errors import NoteAuthorizationError
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.conversations import ConversationService
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.tools import ToolSpec
     from workmate.core.domain.conversation import Conversation
 
@@ -28,7 +31,8 @@ if TYPE_CHECKING:
 _NEW_THREAD_ACK = "Zaczynam nową rozmowę. Poprzednia została zapisana w archiwum."
 _NEW_THREAD_ALREADY_FRESH = "Jesteś już w nowej, pustej rozmowie — nie ma czego rozdzielać."
 
-# Ile ostatnich rozmów pokazać w ``/historia``.
+# Ile ostatnich rozmów pokazać w ``/historia``. Idzie wprost do magazynu jako ``limit``, bo
+# zawężenie po wątku robi już zapytanie — nie ma czego odsiewać po fakcie.
 _HISTORY_LIMIT = 10
 
 
@@ -82,6 +86,7 @@ class CommandRouter:
         *,
         supports_attachments: bool = False,
         my_jira_tasks: Callable[[str], Sequence[ToolSpec]] | None = None,
+        note_read_authorizer: NoteReadAuthorizer | None = None,
     ) -> None:
         self._conversations = conversations
         self._tools = read_tools
@@ -93,6 +98,11 @@ class CommandRouter:
         # czytelną odmową zamiast crashować). Zwraca gotowy ``ToolSpec``, którego ``fn()`` router
         # woła bezpośrednio — ta sama fabryka zasila per-turowy katalog agenta.
         self._my_jira_tasks = my_jira_tasks
+        # Autoryzacja ODCZYTU bazy wiedzy (ADR 0062), bramka członkostwa nadawcy — ``None`` gdy
+        # bramka wyłączona / inne drzwi (wtedy komendy odczytu jak dawniej). Egzekwowana w
+        # ``/szukaj`` i ``/projekty`` (czytają katalog notatek pionu); ``/status`` idzie przez
+        # ``get_project_status`` (poza katalogiem ODCZYTU z ADR 0062 — kandydat na kolejny etap).
+        self._note_read_authorizer = note_read_authorizer
         handlers = {
             "/pomoc": self._help,
             "/nowa": self._new_thread,
@@ -146,26 +156,64 @@ class CommandRouter:
         started = self._conversations.start_new_thread(ctx.channel, ctx.external_id)
         return _NEW_THREAD_ACK if started else _NEW_THREAD_ALREADY_FRESH
 
+    def _read_authz_refusal(self, ctx: CommandContext) -> str | None:
+        """Odmowa odczytu bazy wiedzy (bramka członkostwa, ADR 0062) albo ``None``.
+
+        ``None`` znaczy „wolno" — także gdy authorizera nie ma (bramka wyłączona / inne drzwi),
+        więc komendy odczytu zachowują się jak przed ADR 0062. Fail-closed: nierozpoznany nadawca
+        (w tym pusty ``sender_id``) → czytelna odmowa zamiast wyniku.
+        """
+        if self._note_read_authorizer is None:
+            return None
+        try:
+            self._note_read_authorizer.authorize(ctx.sender_id)
+        except NoteAuthorizationError as exc:
+            return f"Brak uprawnień do odczytu bazy wiedzy: {exc}"
+        return None
+
     def _search(self, args: str, ctx: CommandContext) -> str:
         if not args:
             return "Użycie: /szukaj <fraza> — np. /szukaj integracja SCADA"
+        refusal = self._read_authz_refusal(ctx)
+        if refusal is not None:
+            return refusal
         return _format_search(self._tools["search_notes"](query=args))
 
     def _projects(self, args: str, ctx: CommandContext) -> str:
+        refusal = self._read_authz_refusal(ctx)
+        if refusal is not None:
+            return refusal
         return _format_projects(self._tools["list_projects"]())
 
     def _status(self, args: str, ctx: CommandContext) -> str:
         if args:
+            # Bramka odczytu (ADR 0062) także TUTAJ: ``get_project_status`` zwraca syntezę stanu
+            # projektu złożoną z notatek pionu (streszczenie, liczba notatek, otwarte action items),
+            # więc jest tą samą treścią co ``/szukaj``. ``_status`` był jedynym handlerem odczytu
+            # bez tego sprawdzenia — czyli drogą OBOK bramki, na tych samych drzwiach.
+            refusal = self._read_authz_refusal(ctx)
+            if refusal is not None:
+                return refusal
             return _format_project_status(self._tools["get_project_status"](project=args))
         conv = self._conversations.active_conversation(ctx.channel, ctx.external_id)
         return self._thread_status(conv)
 
     def _history(self, args: str, ctx: CommandContext) -> str:
-        conversations = self._conversations.list_conversations(channel=ctx.channel)
+        # Zawężone do TEGO wątku, nie do całego kanału, i zawężone W ZAPYTANIU. Bez ``external_id``
+        # magazyn zwracał rozmowy WSZYSTKICH wątków kanału, więc ``/historia`` w wątku A pokazywała
+        # metadane wątku B (kiedy, ile tur, ile tokenów) — treści nie, ale sam fakt i rozmiar
+        # cudzej rozmowy to informacja, której uczestnik tego wątku nie miał prawa dostać.
+        #
+        # Filtr MUSI iść do magazynu, a nie za nim: ``limit`` przycina PO filtrach, więc odsiewanie
+        # w Pythonie kazałoby policzyć koszt rozmów, które zaraz odpadną, a przy okazji myliło
+        # „wątek bez historii" z „historia wypadła poza okno". Puste znaczy tu jedno.
+        conversations = self._conversations.list_conversations(
+            channel=ctx.channel, external_id=ctx.external_id, limit=_HISTORY_LIMIT
+        )
         if not conversations:
             return "Brak zapisanych rozmów."
         lines = ["Ostatnie rozmowy:"]
-        for c in conversations[:_HISTORY_LIMIT]:
+        for c in conversations:
             when = c.updated_at.strftime("%Y-%m-%d %H:%M")
             lines.append(
                 f"• {when} · {c.status} · {c.message_count} tur · {c.usage.total_tokens} tok"
@@ -181,7 +229,16 @@ class CommandRouter:
                 "Nie udało się ustalić Twojego konta Jira — zgłoś się do administratora "
                 "(fail-closed, ADR 0054)."
             )
-        return _format_my_tasks(tools[0].fn())
+        # Router jest DRUGIM konsumentem tej fabryki, obok runtime'u agenta — i konsumentem
+        # NIE-modelowym, więc żadna sonda na `input_schema` ani golden-test powierzchni go nie
+        # widzi. Krok 5.3 (ADR 0009 paczki) zmienił tu trzy rzeczy naraz: nazwę narzędzia
+        # (`get_my_jira_tasks` → `Jira`), sposób wywołania (doszła wymagana `action`) i klucze
+        # wyniku. Sonda kontraktowa na ten szew, zbudowana z PRAWDZIWEGO `build_jira_catalog`,
+        # jest w `test_commands.py` — atrapy po obu stronach przepuściły tę regresję w całości.
+        tool = next((t for t in tools if t.name == "Jira"), None)
+        if tool is None:
+            return "Ta komenda nie jest skonfigurowana na tych drzwiach."
+        return _format_my_tasks(tool.fn(action="my_tasks"))
 
     def _thread_status(self, conv: Conversation | None) -> str:
         if conv is None or conv.message_count == 0:
@@ -222,19 +279,37 @@ def _format_projects(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_my_tasks(data: dict[str, Any]) -> str:
-    if "error" in data:
-        return f"Błąd: {data['error']}"
-    tasks = data.get("tasks", [])
-    if not tasks:
-        return "Nie masz otwartych zadań w Jirze."
-    lines = [f"Twoje otwarte zadania ({len(tasks)}):"]
+def _task_lines(tasks: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
     for t in tasks:
         priority = f" [{t['priority']}]" if t.get("priority") else ""
         due = f" · termin {t['due_date']}" if t.get("due_date") else ""
         lines.append(f"• {t['key']}{priority} — {t['summary']} ({t['status']}){due}")
         if t.get("url"):
             lines.append(f"  {t['url']}")
+    return lines
+
+
+def _format_my_tasks(data: dict[str, Any]) -> str:
+    if "error" in data:
+        return f"Błąd: {data['error']}"
+    # Klucze wspólne dla „moich" i „cudzych" zadań (krok 5.3 ADR 0009 paczki je ujednolicił).
+    # Pomyłka w nazwie klucza NIE daje tu błędu, tylko ciche „nie masz otwartych zadań" —
+    # najgorszy możliwy tryb awarii, bo wygląda jak poprawna odpowiedź. Stąd sonda na realnym
+    # builderze zamiast atrapy zwracającej wymyślony kształt.
+    assigned = data.get("assigned", [])
+    unassigned = data.get("reported_unassigned", [])
+    if not assigned and not unassigned:
+        return "Nie masz otwartych zadań w Jirze."
+    lines: list[str] = []
+    if assigned:
+        lines.append(f"Twoje otwarte zadania ({len(assigned)}):")
+        lines.extend(_task_lines(assigned))
+    if unassigned:
+        if lines:
+            lines.append("")
+        lines.append(f"Zgłoszone przez Ciebie, nieprzypisane do nikogo ({len(unassigned)}):")
+        lines.extend(_task_lines(unassigned))
     return "\n".join(lines)
 
 

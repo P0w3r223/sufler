@@ -47,7 +47,11 @@ class SqliteMetricsStore:
 
     def __init__(self, db_path: Path | str) -> None:
         if str(db_path) != ":memory:":
-            Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            # ``expanduser`` musi objąć TAKŻE ``connect``: policzony wyłącznie na potrzeby
+            # ``mkdir`` zakładał katalog rozwinięty (``/home/x/.workmate``), a bazę otwierał pod
+            # literalnym ``~`` w katalogu roboczym procesu — dwa różne pliki pod jedną nazwą.
+            db_path = Path(db_path).expanduser()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout = 5000")

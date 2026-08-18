@@ -79,3 +79,23 @@ Adopt **A1**. Concretely:
   considered decision, not a placeholder.
 - Tests exercising the poller/write/transition paths are removed together with the code; tests for
   `search_issues`/`authenticated_account` and the new "my tasks" service remain and grow.
+
+---
+
+## Amendment (2026-08-09, release 1.6.0): the guarantee changed kind
+
+The sentence in this ADR that says *no parameter can express "whose tasks"* was true
+**structurally** while `get_my_jira_tasks` had no parameters at all. Consolidation replaced it
+with `Jira(action=…)`, whose schema carries a `member` field alongside the `my_*` actions; only a
+dispatcher branch separates them. Reading this ADR against today's code without this note leaves
+a reader with an invariant the code appears to break.
+
+What did **not** change is the invariant worth citing: the Jira account is never taken from the
+model. `my_*` closes over the account resolved at build time, and `member_*` accepts a *name*
+which is translated through the trusted identity map — an unknown name is a refusal, not a query.
+`tests/core/test_jira_catalog.py` probes both halves, including that the member-read service is
+not called for `my_*`.
+
+The general lesson, recorded in
+[ADR 0061](0061-consolidated-tool-surface-upstream-pointer.md): **consolidation can quietly
+exchange a structural guarantee for a procedural one**, and nothing fails when it does.

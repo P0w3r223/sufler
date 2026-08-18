@@ -6,12 +6,428 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+Scalone od 1.6.0, jeszcze bez podbicia `__version__` (nadal 1.6.0 — dług release'u).
+
+### Added
+- **Autoryzacja odczytu notatek** na drzwiach Teams — fail-closed po mapie tożsamości ([ADR 0062](docs/adr/0062-note-read-authorization.md)).
+- **Bramka członkostwa na powłoce** (`Bash`) — nie-członek pionu dostaje pustą listę narzędzi powłoki, symetrycznie do odczytu notatek ([ADR 0063](docs/adr/0063-shell-membership-gate-and-conversation-isolation.md)).
+- **Wykonawca powłoki per rozmowa** — menedżer `exec-manager` (entrypoint `workmate-exec-manager`) stawia wykonawcę on-demand z montażem TYLKO podkatalogu brudnopisu, domykając cross-read między członkami (ADR infra 0012).
+- **Dziennik audytu wywołań narzędzi + dead-letter notifiera** — obserwowalność Fazy 0, OFF-by-default (`WORKMATE_AUDIT_DB`); audyt rejestruje akcje/ścieżki, nigdy treści; dead-letter zachowuje at-least-once ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)).
+- **Kwarantanna porzuconych wiadomości na drzwiach Teams** ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md)): drzwi podchodzą do wiadomości **najwyżej dwa razy** — to gwarancja, która weszła z licznikiem prób (zamyka pętlę restartów na wiadomości ubijającej proces), a teraz jest zapisana jako decyzja, a nie komentarz przy stałej. Porzucona wiadomość trafia do tabeli `inbound_dead_letters` w `events.db`, siostry `dead_letters` notifiera: wpis NAJPIERW trwały, potem zniknięcie ze strumienia (kolejność z ADR 0067 §2), idempotentny po `(drzwi, id wiadomości)`. Wpis niesie to, czym wiadomość da się ODNALEŹĆ w Teams (kanał, wątek, id, nadawca po AAD id) i powód porażki — **nigdy treści**. Osobna tabela, bo `dead_letters` klucz ma całkowity (`event_id` z `events.db`), a id wiadomości Graph jest nieprzezroczystym tekstem bez sensu poza kanałem i wątkiem.
+
+- **Czytelnik powierzchni diagnostycznych** — `workmate-diagnostics {audit|dead-letters|inbound}`
+  ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md), R2). Trzy
+  magazyny obserwowalności (dziennik audytu z ADR 0067 §1, kwarantanna notifiera z ADR 0067 §2,
+  kwarantanna wiadomości przychodzących) były PISANE i nigdy czytane — `recent()` nie miało
+  wołającego w `src/`, a jedyną drogą do wpisów był `sqlite3` na wolumenie produkcyjnym. Jedno
+  polecenie na trzy powierzchnie, bo operator pyta o nie w jednym przebiegu i z tego samego
+  powodu: ktoś nie dostał odpowiedzi. Wpis niesie identyfikatory, powód i czas; `--source` zawęża
+  do drzwi (albo źródła zdarzenia), `--since`/`--until` biorą okres względny (`24h`, `7d`, `30m`)
+  albo znacznik ISO, `--json` oddaje te same pola skryptom. Bazę czytamy połączeniem **tylko do
+  odczytu** (`mode=ro` + dyscyplina współbieżności magazynów), więc narzędzie nie ZAKŁADA bazy ani
+  tabel: zła ścieżka wraca jako pomyłka operatora, a nie jako „brak wpisów" nad świeżo utworzonym
+  pustym plikiem. Ścieżka nigdy nie jest zaszyta — `--db` albo zmienna, która włącza zapis
+  (`WORKMATE_EVENTS_DB` / `WORKMATE_AUDIT_DB`). Treści nadal nie ma i nie będzie: kwarantanna
+  wejściowa jej nie przechowuje, a wydruk ma pomóc wiadomość ODNALEŹĆ w Teams, nie odtworzyć.
+- **Mutowalna baza wiedzy pod sędzią** (ADR 0065): agent może POPRAWIĆ istniejącą notatkę
+  (`File(edit)`), a przy osobnej bramce także ją usunąć (`File(delete)`). To **świadome
+  odwrócenie** dotychczasowej postawy: do teraz bazy nie dało się zepsuć, bo jedyny pisarz był
+  create-only, więc odwracalność była strukturalna. Teraz jest proceduralna — migawka przed każdą
+  operacją (jej niepowodzenie ODMAWIA zmiany) plus nocna kopia wolumenu. Nad tym stoi **niezależny
+  sędzia** (osobne wywołanie modelu z wymuszonym schematem werdyktu), który potrafi tylko zawęzić:
+  autoryzacja nadawcy po AAD pada przed nim, ścieżka i schemat poza nim, a każda awaria — sieci,
+  ucięcie odpowiedzi, nieznany werdykt — kończy się odmową. Werdykt `confirm` wymaga **powrotu tej
+  samej prośby z INNEJ tury** (token tury pilnuje, że model nie zaliczy potwierdzenia sam —
+  pętla narzędzi ma osiem rund w jednej turze). Notatki ze
+  spotkań i wątków zostają niezmienne — ich niezmienność to mechanizm idempotencji, nie ostrożność.
+  Trzy bramki, wszystkie domyślnie OFF: `..._ENABLE_NOTE_MUTATION`, `..._ENABLE_NOTE_DELETE`
+  (osobna, bo ADR wiąże kasowanie z DZIAŁAJĄCĄ kopią zapasową) oraz wymagana mapa tożsamości.
+  Prompt i twarda reguła 2 w `CLAUDE.md` zaktualizowane — bez tego zamrożony prefiks instruowałby
+  model przeciwko narzędziu, które właśnie dostał.
+- **Klasy zaufania T0–T3 + lepka skaza rozmowy** (ADR 0066): treść OBCA — plik, wynik narzędzia,
+  tura nadawcy spoza mapy tożsamości — jedzie do modelu w kopercie z etykietą pochodzenia i
+  granicą znaczoną **nonce'em losowanym na turę** (stały znacznik dałoby się podrobić treścią,
+  która sama go zawiera). Rozszczepienie nadawcy na T1/T2 liczy TEN SAM autoryzator co bramka
+  odczytu notatek — jedno rozwiązanie tożsamości na turę zasila obie osie. Rozmowa, do której
+  weszła treść obca, dostaje **trwałą skazę** (kolumny na wierszu rozmowy, przeżywa recreate
+  kontenera); skaza niczego nie blokuje — będzie kierować operacje mutujące przez sędziego
+  (ADR 0065). Rollover otwiera nową rozmowę, czyli czystą. Dwie bramki, obie domyślnie OFF:
+  `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS` (koperty; wyłączone = żądanie bajt w bajt jak dotąd)
+  oraz rozszczepienie T1/T2, które jedzie za istniejącą `..._ENABLE_NOTE_READ_AUTHZ`, bo obie
+  zależą od kompletności `identities.yaml`. **To nie jest obrona przed wstrzyknięciem promptu** —
+  granicą zostają bramki zdolności, montaż `ro`, wykonawca bez sieci i odwracalność.
+- **Narzędzie `File(action='read')` + odkładanie załączników na dysk rozmowy** (ADR 0064, druga
+  część): model może podać sobie plik z katalogu roboczego DO WGLĄDU — obraz jako obraz, PDF jako
+  dokument, resztę jako wyciągnięty tekst. Plik jedzie osobnym blokiem obok wyniku narzędzia (bo
+  `tool_result` nie unosi bloku `document`, a jego treść bywa czyszczona przez edycję kontekstu),
+  w tej samej turze, i przeżywa zapis do pamięci rozmowy. Załączniki użytkownika są od teraz
+  ODKŁADANE na dysk katalogu rozmowy — dotąd żyły wyłącznie w blokach rozmowy, na wolumenie,
+  którego wykonawca świadomie nie montuje, więc ani powłoka, ani model nie miały jak do nich
+  wrócić po kompaktowaniu. Nazwy odłożonych plików trafiają do nagłówka sesji (na dysku są
+  slugiem oryginalnej nazwy). Budżet materiałów tury jest WSPÓLNY z materializerem drzwi — jedno
+  żądanie API, jeden sufit. Narzędzie jest agent-only (golden powierzchni MCP pilnuje tego wprost)
+  i **domyślnie WYŁĄCZONE** (`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL`) — jak każda bramka w tym
+  projekcie; wyłączona gasi obie strony naraz (narzędzie i odkładanie plików).
+- **Ekstrakcja HTML + komenda `workmate-extract`** (ADR 0064, pierwsza część): plik `.html`/`.htm`
+  przestaje odbijać się od drzwi jako „nieobsługiwany typ" — idzie ekstraktorem (`html.parser` ze
+  stdlib, bez nowej zależności), który pomija skrypty i style, wciąga `alt` obrazów i raportuje
+  liczbę grafik bez opisu, więc strona zdominowana przez baner nadal oddaje swoją treść. Powłoka
+  dostaje `workmate-extract plik.pdf` na pdf/docx/xlsx/pptx/html — ten sam `document_text` co drzwi.
+  `pypdf` dołożony do extra `teams-graph`, bo obraz floty nie instaluje `seed`, w którym mieszkał.
+
+### Changed
+
+- **ZMIANA PUBLICZNEGO KONTRAKTU PAKIETU: `requires-python` idzie z `>=3.10` na `>=3.11`.**
+  Deklarowana dolna granica nie była testowana NIGDZIE: `.python-version` mówi 3.11, oba etapy
+  obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`, a CI biega na jednej wersji —
+  macierz nie ma osi wersji Pythona wcale, `setup-uv` bierze ją z `.python-version`. Deklaracja
+  szersza od pokrycia nie jest neutralna — kosztowała obejście
+  w `tests/test_version_consistency.py`, gdzie `pyproject.toml` czytany był regexem zamiast
+  `tomllib` (3.11+) „żeby nie wywrócić kolekcji na najniższej wspieranej wersji". Obejście zdjęte
+  razem z jego powodem. Nowa bramka `tests/deploy/test_python_version_floor.py` wiąże
+  `requires-python` z `.python-version` i z obrazem bazowym — rozjazd w którąkolwiek stronę zapala
+  się teraz w CI. Dokumentacja (README, CONTRIBUTING, tutorial, how-to Teams, SYSTEM-SPEC oraz
+  kopia README w paczce wdrożeniowej) mówi 3.11+ w siedmiu miejscach, w których mówiła 3.10+.
+- **CI przeorganizowane: bramki statyczne PRZED testami i każda z `!cancelled()`.** Sama kolejność
+  nie wystarczała — jeden czerwony test przykrywał lint, format, mypy i granice na tyle długo, że
+  trzy pliki stały niezgodne z `ruff format` przy „zielonym" CI. Krok, który padł, zabiera teraz
+  ze sobą WYŁĄCZNIE swoją informację. Lista katalogów lintowanych rozszerzona do
+  `src tests eval deploy scripts` (`deploy` i `scripts` wypadały wcześniej z pokrycia) i wymieniona
+  JAWNIE, bo pod-projekty mają własne wpisy macierzy z własnym `dir`. `ruff format --check` jest
+  osobnym krokiem od `ruff check` — `CLAUDE.md` uzupełniony, bo lokalna bramka bez niego dawała
+  czerwone CI.
+- **`Settings` dostaje `validate()`** — była JEDYNĄ klasą ustawień bez niego, choć niesie te same
+  klasy pomyłek co sąsiedzi. `WORKMATE_LOG_LEVEL=verbose` wywracał start dopiero w
+  `logging.basicConfig`/`uvicorn`, komunikatem biblioteki („Unknown level: 'VERBOSE'"), który nie
+  mówi, KTÓRĄ zmienną poprawić. Sprawdzane są transport, poziom logowania i zakres
+  `WORKMATE_BIND_PORT`, także po `replace(settings, ...)` w wiringu.
+- **Bramki mutacji notatek padają na starcie zamiast w runtime.** `TeamsGraphSettings.validate()`
+  wymaga teraz: `_ENABLE_NOTE_MUTATION` → istniejąca mapa tożsamości ORAZ `_ENABLE_FILE_TOOL=true`
+  (mutacja jest akcją narzędzia `File`, nie osobnym narzędziem), `_ENABLE_NOTE_DELETE` →
+  `_ENABLE_NOTE_MUTATION=true` (kasowanie idzie tą samą ścieżką). Trwałe ścieżki zapisu zebrane
+  w jedno miejsce (`Settings.persistent_paths()`) i sondowane `require_writable` na starcie drzwi —
+  wcześniej lista żyła rozsypana po `adapters/inbound/*/app.py` i wypadły z niej trzy pozycje
+  (migawki notatek, baza metryk, baza audytu). Migawki mają przy tym WARUNEK: sonda bada je
+  wyłącznie przy włączonej mutacji, bo domyślna ścieżka leży pod montażem `:ro` floty.
+- **Dokumentacja nadgania kod po dwóch rundach audytu.** Pięć bramek zdolności ADR 0062–0066
+  (`_ENABLE_NOTE_READ_AUTHZ`, `_ENABLE_FILE_TOOL`, `_ENABLE_NOTE_MUTATION`, `_ENABLE_NOTE_DELETE`,
+  `_ENABLE_TRUST_LABELS`) dostaje wiersze w macierzy bramek, w `reference/config.md` i w
+  `deploy/docker/env.example` — do tej pory bramka ADR 0062 była **niewłączalna z dokumentacji**.
+  `reference/tools.md` zyskuje sekcję o `File` — jedynym narzędziu mutującym bazę wiedzy, którego
+  referencja katalogu narzędzi w ogóle nie znała. `how-to/add-a-tool.md` (instrukcja dla następnej
+  osoby) dostaje konwencję PascalCase z ADR 0068 §3 i bramkę budżetu opisów — dwie rzeczy, które
+  nowe narzędzie wywracają natychmiast — i przestaje wskazywać nieistniejące buildery
+  (`build_notes_catalog`/`build_github_catalog` → `build_project_catalog`/`build_activity_catalog`).
+  Macierz bramek odnotowuje też jedyny znany wyjątek od reguły „bramka ON bez celu to twardy błąd
+  startu": `_ENABLE_TRUST_LABELS` przechodzi bez `_ENABLE_NOTE_READ_AUTHZ` i daje wtedy połowę
+  ADR 0066.
+- **Sufit 60 s na `Retry-After`** w trzech transportach (`github_api`, `graph_http`, `jira_http`).
+  Serwer może podać w tym nagłówku wartość dowolnie dużą; bez sufitu jedna odpowiedź 429 potrafiła
+  uśpić pollera na czas nieznany operatorowi. Podłoga i przycięcie są te same we wszystkich trzech —
+  jedna reguła transportu, nie trzy warianty.
+- **Nazwy narzędzi agenta oddają zawartość** ([ADR 0068](docs/adr/0068-agent-tool-names-and-the-cost-of-a-wrong-one.md)):
+  `Notes` → `Project` (akcja `project_status` → `status`) i `GitHub` → `Activity` (akcja
+  `activity` → `summary`). Pierwsze na drzwiach produkcyjnych miało JEDNĄ akcję i 44% opisu
+  zużywało na prostowanie własnej nazwy; drugie nazywało jedno z **dwóch** źródeł warstwy zdarzeń
+  (`EventStore` przyjmuje `source="github"` i `source="teams"`; Jira nie ma mostu), którą w całości
+  obsługuje. Powierzchnia agenta idzie jedną konwencją nazw (PascalCase):
+  `SearchNotes`/`GetNote`/`ListProjects`, `CreateFile`/`ReadFile`/`ListFiles`, `ReplyWithFile`,
+  `SendImage`, `SendDocument`. **Powierzchnia MCP nietknięta** — tam nazwy są zamrożone.
+- **Opisy narzędzi chudsze o ~1,9 KB na żądanie**: instrukcje prezentacji wyniku przeniesione do
+  koperty (pole `note`, wzorzec z `File`), granica danych zostawiona samemu promptowi, opis `Jira`
+  skrócony z 2308 B do 1226 B. Nowa bramka `tests/core/test_tool_descriptions.py` mierzy sufit
+  bajtów per narzędzie (2048 B) i na całą powierzchnię (**8000 B** — pierwsza wersja progu miała
+  7000 B, ale mierzyła katalog bez narzędzi dostawy, więc realnych 7785 B bez powłoki w ogóle nie
+  widziała; próg podniesiony świadomie, zapasu zostaje ~215 B).
+- **Opisy przestały odsyłać do narzędzi nieobecnych w danej konfiguracji**: `File` wybiera wariant
+  flagą `shell_available` (bez powłoki `ReadFile`, z powłoką `cat`), a nagłówek sesji prostuje
+  świat w turze, w której powłoka nie powstała (nierozpoznany nadawca — ADR 0063 — albo błąd
+  budowy). Do tej pory gość czytał prompt o montażach `/mnt/system/…`, mając katalog bez `Bash`.
+- **Model widzi budżet rund narzędziowych**: od dwóch pozostałych nagłówek sesji mówi, ile ich
+  zostało. Inwariant zapisu (ADR 0011) bez zmian — zmienia się to, że model może zdążyć
+  odpowiedzieć tym, co ma, zamiast stracić turę razem z wiadomością użytkownika.
+- **Wyniki narzędzi docierają do streszczacza** (przycięte do 500 znaków): dotąd `_flatten` brał
+  wyłącznie bloki bez `call_id`, więc klucz Jiry ani identyfikator notatki nie przeżywały
+  kompaktowania, o ile model nie powtórzył ich własnymi słowami.
+- **`Bash` nazywa ciszę po udanym poleceniu**, a gałęzie „nie znaleziono" niosą ten sam kształt
+  (`tool`/`action`/`hint`) co błąd wywołania.
+- **Bramka kasowania notatek siedzi w `Literal`, nie w ciele**: `File` ma trzy warianty sygnatury
+  (`read` · `read|edit` · `read|edit|delete`). Przy `ENABLE_NOTE_MUTATION=true` +
+  `ENABLE_NOTE_DELETE=false` model nie widzi już `delete` w schemacie i nie traci rundy
+  narzędziowej na odmowę z ciała serwisu; opis narzędzia i lista dozwolonych akcji w odmowie idą
+  tą samą bramką. Budowniczy czyta ją z `NoteMutationService.allow_delete` — jedno źródło, bez
+  drugiej flagi obok.
+- **Dwie świadome zmiany zamrożonej powierzchni MCP, każda z baseline'em zaktualizowanym dla
+  JEDNEGO wpisu** (zmiana albo usunięcie pozostałych to złamanie kontraktu, nie aktualizacja):
+  opis `get_my_jira_tasks` wspomina o `truncated`, a opis `read_events_since` przestaje obiecywać
+  filtr `source='jira'`. Ten drugi zawsze zwracał pustkę — do `EventStore` trafiają wyłącznie
+  `github` i `teams` (Jira nie ma mostu, twarda reguła 8) — więc opis reklamował modelowi wartość,
+  której magazyn nie zna. To ta sama usterka, którą ADR 0068 naprawił po stronie agenta w opisie
+  `Activity`; powierzchnia MCP została wtedy pominięta.
+
+### Naprawione
+
+- **Drzwi Bot Framework (`workmate-teams`) wracają pod bramkę nadawcy** (audyt 2026-08-17,
+  [ADR 0062](docs/adr/0062-note-read-authorization.md)). Były **strukturalnie poza każdą bramką
+  sender-keyed**: handler składał `InboundMessage` bez `sender_id`, a wiring budował responder bez
+  `NoteReadAuthorizer` — więc `/szukaj`, `/projekty`, `/status` i narzędzia odczytu agenta
+  odpowiadały każdemu, kto dosięgnął endpointu, podczas gdy bliźniacze drzwi delegowane odmawiały.
+  Reszta zdolności sender-keyed degradowała cicho do „nierozpoznany" (fail-closed), więc dziura
+  była JEDNA, ale akurat na treści notatek. Teraz `sender_id` niesie `activity.from.aadObjectId` —
+  ten sam AAD id, którym posługuje się mapa tożsamości i drzwi delegowane (Graph `from.user.id`) —
+  a bramka wpina się przez nowe `WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ` + `WORKMATE_TEAMS_IDENTITIES`
+  (domyślnie OFF, włączona wymaga istniejącej mapy: fail-fast). **Bez fallbacku** na identyfikator
+  Bot Framework (`29:…`): gość, konto spoza tenantu i aktywność systemowa nie mają `aadObjectId`,
+  więc zostają nadawcą nierozpoznanym — podstawienie id kanałowego dałoby tożsamość fałszywą
+  zamiast braku tożsamości.
+- **`mentions_bot` na tych drzwiach przestaje być zawsze fałszywe**: wzmianka rozpoznawana jest po
+  encji `{type: 'mention', mentioned: {id}}` porównanej z `activity.recipient.id`. Routery dyrektyw
+  (brief, digest, „zapisz to") **nie są** na tych drzwiach składane, więc sygnał nie ma jeszcze
+  konsumenta — ale przestał być strukturalną blokadą dla wpięcia ich w przyszłości.
+- **Awaria zapisu stanu przestaje kasować wiadomości** (drzwi Teams, ADR 0069). Licznik prób
+  utrwalał się POZA blokiem `try` obsługi, a `require_writable` sonduje wolumen stanu wyłącznie
+  przy starcie — gdy wolumen przestawał przyjmować zapis w trakcie pracy (pełny dysk, remount
+  `ro`), licznik rósł w PAMIĘCI, wyjątek łapał `except` per kanał, a po dwóch rundach wiadomość
+  była oznaczana jako odpisana i znikała na stałe. Log mówił wtedy „po 2 nieudanych próbach
+  obsługi" — a prób obsługi było ZERO. Od teraz próba liczy się dopiero po POTWIERDZONYM zapisie:
+  nieudany zapis cofa podniesienie licznika i kończy rundę jak każda inna awaria infrastruktury.
+- **Backstop licznika prób obcinał nie ten koniec**: wstawienie na istniejący klucz nie przesuwa go
+  na koniec słownika, więc pod sufitem przycięty zostałby wpis wiadomości aktualnie w obiegu, a nie
+  ten porzucony najdawniej.
+- **Stan z gałęzią `null` (np. `"attempts": null`) nie kładzie już każdej rundy**: `setdefault`
+  łapał brak klucza, ale nie `null` pod kluczem, a wyjściem z `AttributeError` w kółko było ręczne
+  skasowanie pliku stanu. Seed sprawdza teraz TYP każdej gałęzi.
+- **Odmowa zapisu kwarantanny nie zatrzymuje kanału**: wyjątek z magazynu wychodził poza pętlę
+  wiadomości, więc trwała awaria (`SQLITE_CORRUPT`, `disk I/O error`, `SQLITE_BUSY` ponad
+  `busy_timeout`) sprawiała, że zdrowa wiadomość stojąca za trującą nie wchodziła do handlera ani
+  razu — kanał przestawał odpowiadać komukolwiek. Teraz błąd magazynu jest łapany, logowany jako
+  ERROR z KOMPLETEM wpisu (log jest wtedy zapasowym rejestrem), a runda idzie dalej. Treść
+  wiadomości i tak zostaje w Teams — wpis w kwarantannie jest wskaźnikiem, nie kopią.
+- **Pętla drzwi Teams przeżywa wolumen stanu, który przestał przyjmować zapis**: zapis po rundzie
+  stał poza jakimkolwiek `try` i kładł całą pętlę, a nadzorca wznawiał proces prosto w
+  `require_writable`. Puls w takiej rundzie **nie jest bity** — bez tego kontener bywał ZDROWY,
+  choć żadna wiadomość nie mogła przejść (licznik prób nie utrwala się, więc obsługa nie rusza).
+- **Powód w kwarantannie to typ wyjątku i pierwsza linia komunikatu**, nie `repr(exc)`: potok
+  respondera potrafi podnieść wyjątek niosący wartość wejściową, a magazyn deklaruje, że treści nie
+  trzyma. Redukcja ekspozycji, nie granica (twarda reguła 4).
+- **Stan z licznikiem spoza liczb** (`{"attempts": {"root-1": "abc"}}`) też jest naprawiany przy
+  seedzie — to ta sama trwała awaria co `null` pod kluczem, o poziom głębiej.
+- **`is_fresh` traktuje każdy błąd odczytu pulsu jak „niezdrowy"** (był tylko brak pliku):
+  healthcheck ma wydawać werdykt, nie traceback.
+- **Docstring pulsu żywotności zgadza się z kodem**: poller Teams bije po każdej wiadomości, po
+  każdym kanale (także tym, którego polling rzucił) i po rundzie, ale NIE po rundzie bez
+  utrwalonego stanu; poller GitHub — nadal wyłącznie po udanej rundzie. Plik opisywał wcześniej
+  wyłącznie tę drugą regułę.
+
+### Uwaga wdrożeniowa
+
+ADR-y 0064/0065/0066 są zaimplementowane, ale **wszystkie ich bramki są domyślnie WYŁĄCZONE** —
+włączenie każdej to świadoma decyzja operatora (`.env` + recreate), nie skutek wdrożenia obrazu.
+Kasowanie notatek (`..._ENABLE_NOTE_DELETE`) ma dodatkowy warunek spoza kodu: **działającą nocną
+kopię wolumenu** (`systemd/workmate-backup.timer` z infry). ADR 0065 opiera na niej całą
+odwracalność, więc włączenie kasowania bez sprawdzenia kopii jest dokładnie tym, przed czym ta
+bramka ma chronić.
+
+## [1.6.0] — 2026-08-07
+
+Wydanie konsolidacji: powierzchnia narzędziowa schodzi z **22 rejestracji w 13 builderach do
+pięciu narzędzi** — `Bash` · `Notes` · `GitHub` · `Jira` · `Schedule` — a model dostaje drogę
+dostarczenia pliku rozmówcy i katalog procedur do powtarzalnej pracy. Prompt przestaje opisywać
+świat sprzed tej zmiany.
+
+Kryterium konsolidacji jest **bariera, nie temat**: narzędzie typowane powstaje wyłącznie tam,
+gdzie powłoka w wykonawcy nie może dosięgnąć — brak sieci (Jira, GitHub, Shifts), brak wolumenu
+stanu (`events.db`), brak drogi do kontekstu, skutek poza kontenerem (dostawa pliku, zapis
+notatki). `Skill(name)` i `File(write/list)` z tego powodu **nie powstają**: to przypadki użycia
+`Bash`. Zysk przychodzi z wchłaniania narzędzi o WSPÓLNEJ prozie (`Jira` −1803 znaki przy
+sześciu), a nie z przekształcania pojedynczych — te powierzchnię powiększają.
+
+Zmierzone składaniem katalogu z żywych builderów, w układach uruchamianych naprawdę (bramki wg
+`config/env.example`): **7 narzędzi** dziś na produkcji (wszystko wyłączone), **5** w architekturze
+docelowej (powłoka ON, GitHub write ON), **6** z dostawą plikiem, **8** przy wszystkim włączonym.
+
+### Dodane
+
+- **Skrzynka nadawcza rozmowy — dostawa plików przez `outputs/`.** Plik zapisany przez powłokę
+  w podkatalogu `outputs/` katalogu roboczego rozmowy jedzie do rozmówcy po zakończeniu tury
+  i znika ze skrzynki. Ścieżka jest WZGLĘDNA celowo: opis narzędzia siedzi w cache'owanym
+  prefiksie promptu, więc ścieżka bezwzględna per rozmowa unieważniałaby go przy każdej nowej
+  rozmowie. Limity per tura: `WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_FILES` (5),
+  `WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_SECONDS` (20), `MAX_FILE_REPLY_KB`; pozycje `*.tmp` są
+  pomijane, więc plik w budowie nie wyjedzie. Okno limitu przy trwającej awarii wysyłki oddaje
+  ponowieniom najwyżej `limit − 1` miejsc, dopóki jest co świeżego wysłać — bezwzględny priorytet
+  ponowień zamieniał jedną stratę na drugą.
+- **Katalog procedur `/mnt/skills`** (ADR 0005 paczki wdrożeniowej). Układ `<korzeń>/<nazwa>/SKILL.md`;
+  nazwa procedury to nazwa katalogu, opis to pierwsza niepusta linia spoza nagłówków. **Bez parsera
+  frontmattera i to jest decyzja**: najcięższe udokumentowane ataki na katalogi procedur są
+  własnością preprocesora, nie czytania plików — dopóki treść trafia do kontekstu zwykłym `cat`-em,
+  cała ta klasa nas nie dotyczy. Znaki niewidoczne (zero-width, znaczniki kierunku pisma) są
+  odsiewane na wejściu. Lista wchodzi do nagłówka sesji, `WORKMATE_SKILLS_DIR` i
+  `WORKMATE_SKILLS_MAX_IN_HEADER` sterują źródłem i długością; ucięcie listy jest GŁOŚNE.
+- **`Schedule()`** zamiast `get_team_schedule` — nic nie wchłania, ale cztery pola dostały opisy.
+
+### Zmienione
+
+- **`GitHub(action=…)`, `Jira(action=…)`, `Notes(action=…)`** wchłaniają odpowiednio pięć, sześć
+  i dwa narzędzia. Wzorzec opiera się na `Annotated[Literal[…], Field(description=…)]`, bo pomiar
+  pokazał, że `func_metadata` przenosi opisy pól, a `Literal` staje się `enum`. **Bramka zapisu
+  wchodzi do `Literal`, nie do ciała funkcji**: przy wyłączonej bramce wartość akcji NIE ISTNIEJE
+  w schemacie, więc model jej nie zaproponuje — bramka sprawdzana dopiero w ciele wyglądałaby
+  w schemacie identycznie jak jej brak.
+- **Powierzchnia MCP zostaje osobna i zamrożona.** Sesja Claude Code nie ma dostępu do naszego
+  wykonawcy, więc `workmate-search` jest dla niej nieosiągalny — konsolidacja tam nie przeniosłaby
+  zdolności, tylko ją skasowała. Agent dostał WŁASNE buildery; baseline objął całą powierzchnię
+  (dotąd zamrażał 6 nazw z 8), a golden biega w czterech konfiguracjach.
+- **Trzy narzędzia odczytu notatek i trzy narzędzia plikowe wchodzą tylko BEZ powłoki.** Cięcie
+  jest warunkowe, nie bezwarunkowe: `WORKMATE_ENABLE_SHELL` jest domyślnie wyłączona, a bez
+  powłoki te narzędzia są jedyną drogą do bazy wiedzy i jedynym sposobem, w jaki model odzyskuje
+  własny szkic po kompaktowaniu kontekstu. Warunek liczy się z FABRYKI powłoki, nie z ustawienia
+  operatora — ustawienie mówi, czego operator chciał, fabryka mówi, co agent dostanie.
+- **`reply_on_thread` zniesione, powiązanie wątku idzie do nagłówka sesji.** Wołało tę samą metodę
+  serwisu co `GitHub(action='comment')`, za tą samą bramką i obok niej — nie zawężało niczego,
+  wypełniało jeden argument. Wypełnienie argumentu należy do treści promptu, a nie do katalogu
+  narzędzi; nagłówek składa się per turę, więc leży POZA cache'owanym prefiksem.
+- **Sekcja `ENVIRONMENT` promptu opisuje montaże, a nie świat narzędzi.** Warianty są dwa i wybiera
+  je ta sama flaga co katalog narzędzi: bez powłoki baza wiedzy nadal „lives behind tools",
+  z powłoką korpus wymienia `/mnt/system/notes/`, `/mnt/system/projects/`, `/mnt/skills/`
+  i `/home/scratchpad/` wraz z granicą zapisu. Do tej zmiany blok STATYCZNY — najbardziej
+  autorytatywny i cache'owany — zaprzeczał zdolności, którą agent z powłoką ma, a sprostowanie
+  żyło niżej w hierarchii. Mapa montaży wyprowadziła się przy okazji z opisu narzędzia `Bash`:
+  układ świata jest własnością promptu, a trzymany w obu miejscach dawałby dwa źródła do
+  synchronizacji przy następnym montażu.
+- **`build_agent_runtime` wyprowadza korpus z `shell_available`**, gdy `system_prompt` jest `None`.
+  Stała jako domyślna wiązała drzwi z powłoką z opisem świata BEZ powłoki, cicho i przez
+  przeoczenie jednego argumentu.
+
+### Naprawione
+
+- **Lista procedur wchodzi do nagłówka sesji dopiero razem z powłoką.** Nagłówek mówi „read the
+  one that fits before starting", a jedyną drogą do TREŚCI procedury jest `cat` w wykonawcy:
+  narzędzia plikowe są domknięte w scope'ie rozmowy i `/mnt/skills` nie widzą. Martwa obietnica
+  tej samej klasy co dawne `/mnt/user/outputs`.
+- **Bramka spójności wersji obejmuje badge w `README.md`.** Badge mówił **1.3.2**, czyli trzy
+  wydania wstecz — porównanie szło pakiet ↔ `__version__` ↔ Dockerfile ↔ compose deweloperski,
+  więc badge nie miał gdzie się zapalić, a paczka wdrożeniowa sprawdza WŁASNĄ kopię README.
+- **Dispatcher `GitHub` ma jawną ostatnią gałąź** — dotąd domyślną był ZAPIS, więc przyszła akcja
+  bez własnej gałęzi wpadłaby w zapis.
+- **Migawka skrzynki zamyka wstrzykiwanie załączników między rozmowami**, `killpg` jest
+  bezwarunkowy, wysyłka ma sufit prób, a retry HTTP przestało się dublować.
+- **Komenda `/moje-zadania` odzyskana** po konsolidacji Jiry.
+
+### Uwaga wdrożeniowa
+
+Nowe zdolności stoją za bramkami domyślnie WYŁĄCZONYMI (`WORKMATE_ENABLE_SHELL`,
+`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY`), więc bez zmiany `.env` wdrożenie 1.6.0 nie zmienia
+powierzchni widzianej przez użytkowników. Powłoki nie wolno włączać na kanałach, których
+uczestnicy nie ufają sobie wzajemnie — rozmowy dzielą wolumen brudnopisu, a izolacja jest dziś
+zakresowa, nie techniczna (ADR 0010 paczki wdrożeniowej). `preflight.sh` paczki odmawia startu
+przy włączonej powłoce na obrazie starszym niż 1.6.0.
+
+## [1.5.0] — 2026-08-05
+
+Wydanie harnessu agenta: model dostaje powłokę w kontenerze bez sieci, wyszukiwarkę notatek
+jako komendę tej powłoki, prompt systemowy rozdzielony na część cache'owaną i część per turę
+oraz gospodarkę kontekstem, która zdejmuje stare wyniki narzędzi, zanim rozmowa urośnie do
+kompaktowania. Wersja pakietu i wersja obrazu, rozjechane od 1.3.x, są tu z powrotem tą samą
+liczbą.
+
+### Dodane
+- **Prompt systemowy jako DWA bloki** (ADR 0056). Statyczny korpus (niezmienny między turami,
+  na nim siada breakpoint cache'u prefiksu `tools+system`) i nagłówek sesji składany PER TURĘ —
+  data i tożsamość rozmowy. Dotąd agent nie znał bieżącej daty, więc „w zeszłym tygodniu"
+  nie miało punktu odniesienia. Korpus przepisany po angielsku, bez negacji i nacisku
+  wersalikami; reguły redakcyjne są bramką w `tests/core/test_prompt.py`, sprawdzaną na
+  wszystkich czterech artefaktach promptu (korpus, wariant multimodalny, prompt kompaktowania,
+  nagłówek sesji).
+- **Kontener-wykonawca bez sieci i narzędzie `Bash`** (ADR 0057). Kod napisany przez model biegnie
+  w OSOBNYM kontenerze (`network_mode: none`, `read_only`, nie-root), rozmawiającym z aplikacją
+  przez gniazdo unix — uprawnienia pliku gniazda są jedyną kontrolą dostępu do powłoki.
+  Bezpieczeństwo bierze się z tego, czego w tamtym kontenerze NIE MA, a nie z oceniania treści
+  polecenia: baza wiedzy zamontowana `ro`, brak trasy do sieci, `curl` poza obrazem. Każde
+  polecenie startuje w katalogu TEJ rozmowy pod `/home/scratchpad`, zakładanym przez aplikację
+  (leniwe zakładanie dawało wszystkim rozmowom wspólny katalog). Limity: `WORKMATE_SHELL_TIMEOUT_S`
+  (domyślnie 60 s, sufit 300 s po stronie wykonawcy), wyjście przycinane do 64 KiB ze
+  znacznikiem `truncated`. Bramka `WORKMATE_ENABLE_SHELL` (domyślnie `false`) jest OSOBNA od
+  `WORKMATE_ENABLE_WORKSPACE` — tam model tworzy pliki narzędziem typowanym, tu uruchamia
+  dowolny kod, więc wspólna bramka włączałaby powłokę po cichu.
+- **`workmate-search` — wyszukiwarka notatek dla powłoki agenta.** Ten sam ranker BM25 nad
+  lematami polskimi, co narzędzie agenta i komenda `/szukaj` (jedno źródło budowy w
+  `build_notes_service`). Dopasowanie wzorca po polskim korpusie fleksyjnym gubi trafienia —
+  `grep -rl "migracji"` nie znajduje notatki o „migracja" — więc powłoka dostaje ranker, nie grep.
+  Flagi: `--project`, `--participant`, `--limit`, `--paths` (same ścieżki, do `xargs cat`),
+  `--json`. Wymaga `WORKMATE_NOTES_DIR`; przy braku katalogu kończy kodem 1 i komunikatem,
+  zamiast udawać brak wyników.
+- **Opcjonalna polityka odpowiadania na kanale — `reply_policy`** (ADR 0060, SZKIELET pod
+  wielokanałowe wdrożenie WorkMate). Nowa bramka „czy w ogóle odpowiadać", niezależna od
+  dotychczasowej logiki wyboru wiadomości: `WORKMATE_TEAMS_GRAPH_REPLY_POLICY` = `all` (domyślnie —
+  zachowanie identyczne jak przed tą zmianą, odpowiedź na każdą wiadomość od innego człowieka) albo
+  `mention` (odpowiedź tylko po @wzmiance bota ALBO gdy bot już wcześniej odezwał się w danym
+  wątku — „wątek przyklejony"). `WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY` (format jak `WATCH`) dokłada
+  kanały, które ZAWSZE zachowują się jak `all`, niezależnie od globalnej polityki. Nowa klasa
+  `selection.ReplyPolicy` (`mode`, `always_reply`, `from_settings`, `should_engage`) i
+  `_thread_engaged` (sygnał przyklejenia liczony z historii odpowiedzi Graph, przeżywa restart);
+  `plan_channel`/`ChannelPoller` dostają opcjonalne `policy`/`channel`, domyślnie `None` — bez
+  podania bramki zachowanie jest BITOWO identyczne jak przed ADR 0060 (zero zmiany dla obecnej
+  produkcji, opt-in per wdrożenie). **Uwaga wdrożeniowa**: ta funkcja i rozszerzony odczyt
+  Jiry/grafik Shifts (ADR 0059, patrz sekcja `[1.3.2]` poniżej) powstawały na dwóch różnych,
+  równolegle uruchomionych kontenerach i do tej pory nie jechały razem w żadnym pojedynczym
+  obrazie. **To wydanie jest pierwszym, które wysyła obie zdolności naraz** — a że obie ruszały
+  `adapters/inbound/teams_graph/app.py` i `config.py`, zachowanie złożenia jest tu weryfikowane
+  po raz pierwszy (patrz ADR 0060 §Consequences).
+
+### Zmienione
+- **Gospodarka kontekstem rozmowy** (ADR 0058). Stare wyniki narzędzi czyści Claude API
+  (`clear_tool_uses_20250919`, beta `context-management-2025-06-27`) — czyszczony jest sam
+  wynik, `tool_use` zostaje, więc model wie, że już pytał. Nowe zmienne:
+  `WORKMATE_CONTEXT_EDITING_ENABLED` (domyślnie `true`), `..._TRIGGER_TOKENS` (100 000),
+  `..._KEEP_TOOL_USES` (8) i `..._CLEAR_AT_LEAST_TOKENS` (40 000). `KEEP_TOOL_USES` musi być
+  >= `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` — start jest odrzucany przy mniejszej wartości, bo
+  czyszczenie potrafi odpalić w środku tury i sięgnąć wyników zamówionych przed chwilą.
+  Równolegle próg kompaktowania spada z efektywnych 700 000 (0,70 × okna 1M) do 150 000: dotąd
+  mechanizm praktycznie nie odpalał, teraz będzie wołał model podsumowujący. Wyłączenie
+  `WORKMATE_CONTEXT_EDITING_ENABLED=false` przywraca dawny kształt żądania co do bajtu.
+  Wymaga `anthropic>=0.116` (extra `agent`) — na starszym SDK tura wywala się `TypeError`.
+  Progi 100 000/150 000 pochodzą z literatury, nie z pomiaru na naszym ruchu — pierwsze
+  strojenie po tym wydaniu, na podstawie logu `_log_applied_edits`.
+- **Wersja pakietu i wersja obrazu z powrotem tą samą liczbą.** Rozjazd narósł do trzech
+  wartości w sześciu miejscach (pakiet 1.3.2, obraz 1.4.0, compose deweloperski 1.3.0),
+  bo podbicia były osobnymi czynnościami bez wspólnej bramki.
+
 ### Usunięte
 - **`WORKMATE_CONTEXT_WINDOW_TOKENS` i `WORKMATE_COMPACTION_THRESHOLD_FRACTION`** (ADR 0058,
   amends ADR 0014). Próg kompaktowania przestał być ułamkiem okna modelu; zastępuje je
   `WORKMATE_COMPACTION_THRESHOLD_TOKENS`. **Uwaga wdrożeniowa:** nieznana zmienna nie jest
   błędem, więc wdrożenie, które którąkolwiek z usuniętych ustawiało, straci nadpisanie po
   cichu — sprawdzić `.env` na serwerze przed rolloutem.
+
+## [1.3.2] — 2026-08-04
+
+### Dodane
+- **Rozszerzony ODCZYT Jiry** (ADR 0059, kontynuacja ADR 0054): oprócz „moich zadań" dochodzą
+  `get_my_jira_history` (moja historia zakończonych zadań, opcjonalne okno dat), `get_jira_task`
+  (szczegóły JEDNEGO zgłoszenia po kluczu + do 5 ostatnich komentarzy), `search_jira_tasks`
+  (wyszukiwanie po tekście/projekcie/kategorii statusu) oraz `get_member_jira_tasks`/
+  `get_member_jira_history` (otwarte/zakończone zadania INNEGO członka pionu — konto Jira
+  rozwiązywane WYŁĄCZNIE przez zaufaną mapę tożsamości, `resolve_by_display_name`; nieznana albo
+  niejednoznaczna osoba dostaje czytelną odmowę, nie zgadywanie). Zero nowej mutacji — wszystko
+  nadal czysty odczyt (gwarancja fail-closed z ADR 0054 zachowana: tożsamość wołającego nigdy nie
+  jest parametrem narzędzia). Nowe `core/application/jira_read.py` (`JiraReadService`),
+  `core/domain/names.py` (`normalize_name`/`match_name` — dopasowanie WYŁĄCZNIE na zaufanym
+  zbiorze kandydatów), rozszerzenia `core/domain/jira_tasks.py` (`JiraComment`, `JiraTaskDetails`,
+  `escape_jql_string`, `build_search_jql`, `build_history_jql`, `split_by_assignment`).
+- **Grafik Teams Shifts — odczyt zmian i nieobecności zespołu** (ADR 0059). Nowe narzędzie
+  `get_team_schedule` (tydzień bieżący/poprzedni/następny albo jawny zakres dat, opcjonalnie
+  zawężone do jednej osoby po nazwisku; forma pracy stacjonarnie/zdalnie wywnioskowana z koloru
+  zmiany). Autoryzacja jest cichym tokenem MSAL POŻYCZONYM z cudzego, tylko-do-odczytu cache
+  tokenu bota powiadomienia-teams (`adapters/outbound/msal_silent_token.py`) — workmate nie loguje
+  się osobno i nigdy nie zapisuje tego cache. Nowe `core/domain/schedule.py`,
+  `core/application/team_schedule.py`, `core/ports/schedule.py`,
+  `adapters/outbound/graph_schedule_api.py`, `config.ScheduleSettings` (`enabled="auto"` — cichy
+  no-op tam, gdzie cudzy cache tokenu nie jest zamontowany).
+
+## [1.3.1] — 2026-08-03
+
+### Usunięte
 - **Jira zredukowana do jednej, wyłącznie odczytowej zdolności „moje zadania"** (ADR 0054,
   supersedes ADR 0031 [zapis], ADR 0032 [tranzycja]; amends ADR 0028, ADR 0030). Usunięte w
   całości: poller Jira→`EventStore` (proces `workmate-jira`), push zdarzeń Jira→Teams, most
@@ -43,17 +459,6 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   współdzielony serwer HTTP z wieloma osobami.
 
 ### Zmienione
-- **Gospodarka kontekstem rozmowy** (ADR 0058). Stare wyniki narzędzi czyści Claude API
-  (`clear_tool_uses_20250919`, beta `context-management-2025-06-27`) — czyszczony jest sam
-  wynik, `tool_use` zostaje, więc model wie, że już pytał. Nowe zmienne:
-  `WORKMATE_CONTEXT_EDITING_ENABLED` (domyślnie `true`), `..._TRIGGER_TOKENS` (100 000),
-  `..._KEEP_TOOL_USES` (8) i `..._CLEAR_AT_LEAST_TOKENS` (40 000). `KEEP_TOOL_USES` musi być
-  >= `WORKMATE_AGENT_MAX_TOOL_ITERATIONS` — start jest odrzucany przy mniejszej wartości, bo
-  czyszczenie potrafi odpalić w środku tury i sięgnąć wyników zamówionych przed chwilą.
-  Równolegle próg kompaktowania spada z efektywnych 700 000 (0,70 × okna 1M) do 150 000: dotąd
-  mechanizm praktycznie nie odpalał, teraz będzie wołał model podsumowujący. Wyłączenie
-  `WORKMATE_CONTEXT_EDITING_ENABLED=false` przywraca dawny kształt żądania co do bajtu.
-  Wymaga `anthropic>=0.116` (extra `agent`) — na starszym SDK tura wywala się `TypeError`.
 - **BREAKING: `WORKMATE_ENABLE_WRITE` domyślnie `false` wszędzie** (amendment ADR 0006,
   2026-07-31) — dotąd lokalne drzwi stdio (Claude Code/`workmate-agent`) miały to domyślnie
   `true`, jedyny udokumentowany wyjątek od „każda zdolność mutująca domyślnie OFF". Po pullu
@@ -312,7 +717,9 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
-[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.2
+[1.3.1]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.1
 [1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0
 [1.2.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.2.0
 [1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0

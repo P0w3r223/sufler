@@ -6,7 +6,7 @@ losowości. Znaczniki podajemy w UTC, a dobę kalendarzową liczymy w strefie z 
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from workmate.core.domain.worklog import (
@@ -30,7 +30,7 @@ _SINCE, _UNTIL = date(2026, 7, 13), date(2026, 7, 19)
 
 def _at(day: int, hour: int, minute: int = 0) -> datetime:
     """Znacznik UTC w lipcu 2026 — skrót, żeby testy czytało się jak oś czasu."""
-    return datetime(2026, 7, day, hour, minute, tzinfo=timezone.utc)
+    return datetime(2026, 7, day, hour, minute, tzinfo=UTC)
 
 
 def _commit(sha: str, moment: datetime, message: str = "") -> Commit:
@@ -136,11 +136,9 @@ def test_local_day_follows_dst_instead_of_a_fixed_offset() -> None:
     Regresja wobec stałego offsetu +120 min (pierwotny ADR 0034): tamten przez pół roku
     przesuwał granicę doby o godzinę, więc commity z okolic północy lądowały w złym dniu.
     """
-    winter = datetime(2026, 1, 15, 23, 30, tzinfo=timezone.utc)
+    winter = datetime(2026, 1, 15, 23, 30, tzinfo=UTC)
     assert local_day(winter, ZoneInfo("Europe/Warsaw")) == date(2026, 1, 16)
-    assert local_day(datetime(2026, 1, 15, 22, 30, tzinfo=timezone.utc), _WARSAW) == date(
-        2026, 1, 15
-    )
+    assert local_day(datetime(2026, 1, 15, 22, 30, tzinfo=UTC), _WARSAW) == date(2026, 1, 15)
 
 
 def test_local_day_treats_naive_as_utc() -> None:
@@ -343,7 +341,7 @@ def test_map_whitelists_every_field_and_normalizes_the_message() -> None:
     (commit,) = map_github_commits([_raw(message="WT-7 robota\n\ndługi opis")])
     assert commit.sha == "abc"
     assert commit.message == "WT-7 robota"  # pierwsza linia, znormalizowana
-    assert commit.authored_at == datetime(2026, 7, 15, 9, 12, tzinfo=timezone.utc)
+    assert commit.authored_at == datetime(2026, 7, 15, 9, 12, tzinfo=UTC)
     assert commit.author_login == "P0w3r223"  # z item.author.login (konto GitHub)
     assert commit.author_email == "piotr@example.com"  # z item.commit.author.email (autor git)
     assert commit.url == "https://github.com/x/y/commit/abc"

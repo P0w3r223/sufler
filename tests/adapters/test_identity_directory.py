@@ -74,3 +74,72 @@ def test_two_people_sharing_a_teams_account_fail_at_startup(tmp_path: Path) -> N
     )
     with pytest.raises(ValueError, match="aad_user_id"):
         YamlIdentityDirectory(_identities(tmp_path, duplikat))
+
+
+# --- resolve_by_display_name (ADR 0059, "zadania członka" pionu) -----------------
+
+
+def test_resolve_by_display_name_matches_known_person(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_display_name("Mikołaj Anonimowicz")
+    assert person is not None
+    assert person.jira_user == "mikolaj@example.org"
+
+
+def test_resolve_by_display_name_is_case_and_diacritics_insensitive(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    person = directory.resolve_by_display_name("mikolaj ANONIMOWICZ")
+    assert person is not None
+    assert person.source_id == "EMP-042"
+
+
+def test_resolve_by_display_name_unknown_name_returns_none(tmp_path: Path) -> None:
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    assert directory.resolve_by_display_name("Ktoś Inny") is None
+
+
+def test_resolve_by_display_name_skips_people_without_display_name(tmp_path: Path) -> None:
+    """EMP-017 (piotr) w fixture nie ma ``display_name`` — nie wolno go dopasować po pustym polu."""
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    assert directory.resolve_by_display_name("") is None
+
+
+def test_resolve_by_display_name_refuses_when_two_people_share_the_name(tmp_path: Path) -> None:
+    """Reguła ADR 0059 („odmawiają przy niejednoznaczności") żyła dotąd wyłącznie w docstringu.
+
+    Imiennicy w pionie to nie hipoteza. Katalog RÓŻNI się tu od duplikatów identyfikatorów wyżej:
+    współdzielony ``jira_user`` kładzie start, a współdzielone NAZWISKO jest legalne — więc jedyną
+    obroną jest odmowa przy zapytaniu. Zwrócenie „pierwszego z brzegu" pokazałoby zadania jednego
+    Kowalskiego pod imieniem drugiego, i to bez śladu, że wybrano.
+    """
+    imiennicy = (
+        "EMP-1:\n  aad_user_id: aad-1\n  jira_user: jan1@example.com\n"
+        "  display_name: Jan Kowalski\n"
+        "EMP-2:\n  aad_user_id: aad-2\n  jira_user: jan2@example.com\n"
+        "  display_name: Jan Kowalski\n"
+    )
+    directory = YamlIdentityDirectory(_identities(tmp_path, imiennicy))
+
+    assert directory.resolve_by_display_name("Jan Kowalski") is None
+
+
+def test_resolve_by_display_name_accepts_a_surname_only_while_it_stays_unique(
+    tmp_path: Path,
+) -> None:
+    """Ludzie piszą „zadania Anonimowicza", nie pełne imię i nazwisko — samo nazwisko ma trafić.
+
+    Ale wolno mu trafić TYLKO póki jest jedno: dopisanie drugiego Anonimowicza zamienia to samo
+    zapytanie w odmowę. Ta para asercji trzyma OBIE strony progu; sama pierwsza przechodziłaby też
+    dla implementacji „bierz pierwszego pasującego".
+    """
+    directory = YamlIdentityDirectory(_identities(tmp_path))
+    assert directory.resolve_by_display_name("Anonimowicz") is not None
+
+    z_imiennikiem = YamlIdentityDirectory(
+        _identities(
+            tmp_path,
+            _YAML + "EMP-099:\n  aad_user_id: aad-x\n  jira_user: x@e.com\n"
+            "  display_name: Robert Anonimowicz\n",
+        )
+    )
+    assert z_imiennikiem.resolve_by_display_name("Anonimowicz") is None

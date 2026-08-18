@@ -24,6 +24,15 @@ class WorkspaceRepository(Protocol):
         """Zwróć treść pliku ``name`` w katalogu rozmowy albo ``None``, gdy nie istnieje."""
         ...
 
+    def read_bytes(self, scope_dir: str, name: str) -> bytes | None:
+        """Zwróć SUROWE bajty pliku albo ``None``, gdy nie istnieje (ADR 0064).
+
+        Osobno od ``read``: tamten dekoduje UTF-8, więc na PDF-ie czy obrazie zwracałby
+        śmieci albo się wywracał. ``File(action='read')`` potrzebuje bajtów, bo dopiero
+        materializacja rozstrzyga, czy plik pojedzie jako obraz, dokument, czy tekst.
+        """
+        ...
+
 
 class WorkspaceWriter(Protocol):
     """Dostęp *do zapisu* plików roboczych (create-only, ADR 0018).
@@ -38,4 +47,13 @@ class WorkspaceWriter(Protocol):
 
     def create(self, relpath: str, content: str) -> WorkspaceFile:
         """Utwórz plik atomowo i create-only pod ścieżką względną; zwróć jego opis."""
+        ...
+
+    def create_bytes(self, relpath: str, data: bytes) -> WorkspaceFile:
+        """Jak ``create``, ale dla SUROWYCH bajtów (ADR 0064 — odkładanie załącznika).
+
+        Drzwi zapisują tu oryginalny plik użytkownika, żeby powłoka i ``File(read)`` miały
+        co czytać: dotąd załącznik żył wyłącznie w blokach rozmowy, na wolumenie, którego
+        wykonawca świadomie nie montuje (ADR 0057).
+        """
         ...

@@ -13,9 +13,9 @@ from enum import Enum
 from typing import Protocol, TypeVar
 
 from powiadomienia_teams.graph.mapping import parse_graph_datetime
-from powiadomienia_teams.state import APPLIED, DECLINED, EXPIRED, PendingReminder
+from powiadomienia_teams.state import APPLIED, DECLINED, EXPIRED, SELF_FILLED, PendingReminder
 
-_TERMINAL = frozenset({APPLIED, DECLINED, EXPIRED})
+_TERMINAL = frozenset({APPLIED, DECLINED, EXPIRED, SELF_FILLED})
 
 
 class ReadOutcome(Enum):
@@ -79,6 +79,50 @@ def should_expire(
     return is_expired(pending, now, window_hours)
 
 
+# Ile OKIEN ODPOWIEDZI może przeżyć wpis nieterminalny, zanim zamkniemy go bez dowodu.
+# Wielokrotność,
+# a nie osobna liczba godzin: sufit ma być jawnie LUŹNIEJSZY niż zwykłe wygaśnięcie, żeby zadziałał
+# wyłącznie tam, gdzie normalna droga (`should_expire`) jest trwale zablokowana.
+HARD_CEILING_MULTIPLIER = 3
+
+
+def past_hard_ceiling(
+    pending: PendingReminder,
+    now: datetime,
+    window_hours: int,
+    *,
+    multiplier: int = HARD_CEILING_MULTIPLIER,
+) -> bool:
+    """Czy wpis nieterminalny przekroczył TWARDY sufit wieku — zamykamy go bez dowodu odczytu.
+
+    ``should_expire`` słusznie odmawia wygaszenia bez udanego odczytu czatu („brak dowodu ≠ dowód
+    braku"). Ale gdy odczyt pada TRWALE (czat usunięty, pracownik wyłączony z tenanta, `chat_id`
+    z czasów innej instalacji), ta odmowa jest wieczna: wpis nigdy nie staje się terminalny, nigdy
+    nie podlega ``prune_terminal`` i nigdy nie znika ze stanu — a `run_once` co tydzień omija tę
+    osobę, bo jej wpis „istnieje". Sufit domyka ten przypadek od góry.
+
+    Zamknięcie z sufitu jest CICHE (patrz ``app._close_bez_dowodu``): nie wolno wysłać „nie
+    dostałem odpowiedzi" komuś, o kim nadal nic nie wiemy. Operator dostaje alert, pracownik nie
+    dostaje nieprawdziwego zarzutu.
+    """
+    anchor = _anchor(pending)
+    return anchor is not None and now >= anchor + timedelta(hours=window_hours * multiplier)
+
+
+def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_s: int) -> bool:
+    """Czy wolno zajrzeć do Shifts, bo pracownik MILCZY od dłuższej chwili (nie odpisuje na czacie).
+
+    Ciszę mierzymy tą samą kotwicą co wygaśnięcie (``_anchor``: ostatnia aktywność, potem czas
+    nudge'a) — sprawdzamy grafik dopiero, gdy bot NAPRAWDĘ już czeka, a nie zaraz po nudge'u.
+    ``min_idle_s < 0`` wyłącza funkcję; ``0`` sprawdza przy każdym cichym cyklu. Bez kotwicy →
+    False.
+    """
+    if min_idle_s < 0:
+        return False
+    anchor = _anchor(pending)
+    return anchor is not None and now >= anchor + timedelta(seconds=min_idle_s)
+
+
 class _MaZakonczenie(Protocol):
     """Cokolwiek, co ma koniec w czasie — ``Shift`` i ``TimeOff`` spełniają to strukturalnie."""
 
@@ -108,15 +152,19 @@ def still_writable(items: Iterable[_T], now: datetime) -> tuple[_T, ...]:
 def prune_terminal(
     state: dict[str, PendingReminder], now: datetime, retain_hours: int
 ) -> dict[str, PendingReminder]:
-    """Usuń wpisy TERMINALNE (applied/declined/expired) starsze niż ``retain_hours`` od kotwicy.
+    """Usuń wpisy TERMINALNE (applied/declined/expired/self_filled) starsze niż ``retain_hours``.
 
     Wpisy otwarte oraz świeże terminalne zostają. ``retain_hours`` powinno być ≥ oknu odpowiedzi,
     żeby nie ruszać idempotencji zapisu w aktywnym oknie. Wpis terminalny bez kotwicy zostawiamy
     (nie znamy jego wieku). Zwraca NOWY słownik (niemutujący wejścia).
+
+    Wpis z NIEWYSŁANĄ wiadomością odłożoną na okno wysyłki zostaje niezależnie od wieku: godziny
+    ciszy przesuwają wysyłkę, nie kasują jej, a domknięcie odłożone w piątek wieczorem czeka do
+    poniedziałku rana — czyli dłużej niż typowe ``retain_hours``.
     """
     kept: dict[str, PendingReminder] = {}
     for key, pending in state.items():
-        if pending.status in _TERMINAL:
+        if pending.status in _TERMINAL and not pending.odlozona_wiadomosc:
             anchor = _anchor(pending)
             if anchor is not None and now >= anchor + timedelta(hours=retain_hours):
                 continue  # dość stary wpis terminalny — wyrzuć

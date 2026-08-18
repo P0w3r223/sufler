@@ -8,13 +8,18 @@ przelotki dostają ``SpeakerRoster`` (deterministyczny allowlist mówców z ``co
 (anty-halucynacja tożsamości, ADR 0047). Import ``anthropic`` leniwy (extra ``agent``).
 
 Treść transkryptu to DANE, nie polecenia — egzekwuje to prompt systemowy. UWAGA: realną jakość
-(brak halucynacji, poprawność JSON) weryfikuje się dopiero wobec Claude; logika rdzenia
+(brak halucynacji) weryfikuje się dopiero wobec Claude; logika rdzenia
 (``MeetingNoteService``) jest testowana na atrapach summarizera/weryfikatora.
+
+Wynik bierzemy jako STRUCTURED OUTPUT przez Anthropic tool-use: model MUSI zwrócić notatkę
+przez WYWOŁANIE narzędzia o schemacie ``MeetingSummary`` (``tool_choice`` wymusza to narzędzie).
+Blok ``tool_use.input`` jest już zwalidowanym przez SDK słownikiem, więc ``model_validate``
+nie może się rozbić o składnię JSON (dawny kruchy ``json.loads`` na surowym tekście modelu
+losowo wywracał zapis notatki: „Expecting ',' delimiter"). To likwiduje całą klasę błędu.
 """
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.domain.models import MeetingSummary
@@ -30,10 +35,33 @@ if TYPE_CHECKING:
 # w trybie nie-strumieniowym.
 _SUMMARY_MAX_TOKENS = 8000
 
+# Nazwa narzędzia structured-output: model zwraca notatkę przez JEGO wywołanie (``tool_choice``
+# wymusza właśnie to narzędzie). Schemat wejścia narzędzia to JSON Schema wyprowadzony z pydantic
+# ``MeetingSummary`` — SDK waliduje ``tool_use.input`` do słownika, więc nie ma już parsowania
+# surowego tekstu modelu (i całej klasy błędów „niepoprawny JSON").
+_SUMMARY_TOOL_NAME = "zapisz_notatke_ze_spotkania"
+
 
 def _summary_max_tokens(agent_max_tokens: int) -> int:
     """Sufit tokenów wyjścia streszczenia; respektuje mniejszą konfigurację agenta."""
     return min(agent_max_tokens, _SUMMARY_MAX_TOKENS)
+
+
+def _summary_tool() -> dict[str, Any]:
+    """Definicja narzędzia Anthropic; ``input_schema`` = JSON Schema z pydantic ``MeetingSummary``.
+
+    Wyprowadzenie schematu z jednego źródła (samego modelu) gwarantuje, że kształt wymuszony na
+    modelu jest tym samym, który potem waliduje ``MeetingSummary.model_validate`` — bez ręcznego
+    duplikowania pól.
+    """
+    return {
+        "name": _SUMMARY_TOOL_NAME,
+        "description": (
+            "Zapisz wierną notatkę ze spotkania wyprowadzoną WYŁĄCZNIE z transkryptu. "
+            "Wypełnij pola zgodnie z regułami wierności z promptu systemowego."
+        ),
+        "input_schema": MeetingSummary.model_json_schema(),
+    }
 
 
 def _allowlist(roster: SpeakerRoster) -> str:
@@ -47,8 +75,8 @@ def _allowlist(roster: SpeakerRoster) -> str:
 def _draft_system(roster: SpeakerRoster) -> str:
     """Prompt pass 1: bogata, ale WIERNA ekstrakcja; nazwiska tylko z allowlisty."""
     return (
-        "Streszczasz transkrypt spotkania firmowego do zwięzłej, WIERNEJ notatki. Zwróć WYŁĄCZNIE "
-        "obiekt JSON, bez tekstu wokół.\n\n"
+        "Streszczasz transkrypt spotkania firmowego do zwięzłej, WIERNEJ notatki. Notatkę zwróć "
+        f"przez WYWOŁANIE narzędzia „{_SUMMARY_TOOL_NAME}” — nie pisz nic poza tym wywołaniem.\n\n"
         "ZASADY WIERNOŚCI (bezwzględne, ważniejsze niż kompletność):\n"
         "- Każde twierdzenie MUSI wynikać wprost z transkryptu. Nie dodawaj wiedzy spoza niego.\n"
         "- NIE zgaduj ani nie wywnioskowuj tożsamości. Pole participants ZOSTAW PUSTĄ LISTĄ — "
@@ -76,8 +104,8 @@ def _verify_system(roster: SpeakerRoster) -> str:
     """Prompt pass 2: krytyk usuwa/koryguje twierdzenia bez pokrycia; nie wzbogaca."""
     return (
         "Jesteś krytykiem-weryfikatorem notatki ze spotkania. Dostajesz DRAFT (JSON) oraz "
-        "transkrypt źródłowy. Zwróć POPRAWIONY obiekt JSON o tych samych polach, "
-        "bez tekstu wokół.\n\n"
+        "transkrypt źródłowy. POPRAWIONĄ notatkę o tych samych polach zwróć przez WYWOŁANIE "
+        f"narzędzia „{_SUMMARY_TOOL_NAME}” — nie pisz nic poza tym wywołaniem.\n\n"
         "ZADANIE: usuń lub skoryguj KAŻDE twierdzenie draftu, które nie ma bezpośredniego pokrycia "
         "w transkrypcie. NIE dodawaj nowych faktów, NIE wzbogacaj — "
         "tylko usuwaj/koryguj niepoparte.\n\n"
@@ -122,7 +150,12 @@ class AnthropicMeetingSummarizer:
         return self._complete(_verify_system(roster), user)
 
     def _complete(self, system: str, user: str) -> MeetingSummary:
-        """Jedno wywołanie Claude → ``MeetingSummary``; wspólne dla obu passów (nie-stream)."""
+        """Jedno wywołanie Claude → ``MeetingSummary``; wspólne dla obu passów (nie-stream).
+
+        Structured output przez tool-use: ``tool_choice`` WYMUSZA narzędzie o schemacie
+        ``MeetingSummary``, a wynik bierzemy z bloku ``tool_use.input`` (zwalidowany przez SDK
+        słownik) — dzięki temu ``model_validate`` nie może się rozbić o składnię JSON.
+        """
         import anthropic
 
         try:
@@ -131,47 +164,43 @@ class AnthropicMeetingSummarizer:
                 max_tokens=_summary_max_tokens(self._settings.max_tokens),
                 system=system,
                 # Myślenie CELOWO wyłączone (nie dziedziczymy agent_settings.thinking_type): przy
-                # suficie 8000 tok adaptacyjne myślenie zjadłoby budżet i ucięło JSON → LLMError.
+                # suficie 8000 tok adaptacyjne myślenie zjadłoby budżet, a wymuszone ``tool_choice``
+                # i tak nie współgra z adaptacyjnym myśleniem.
                 thinking={"type": "disabled"},
+                tools=[_summary_tool()],
+                tool_choice={"type": "tool", "name": _SUMMARY_TOOL_NAME},
                 messages=[{"role": "user", "content": user}],
             )
         except anthropic.APIError as exc:
             raise LLMError(f"Błąd Claude API (streszczenie spotkania): {exc}") from exc
 
-        text = _extract_json(
-            "".join(block.text for block in message.content if block.type == "text")
+        # Ucięcie na suficie tokenów: tool-use może wtedy zwrócić CZĘŚCIOWY ``input`` (``title``
+        # to jedyne pole wymagane, pada wcześnie — walidacja by przeszła), więc notatka wyszłaby
+        # po cichu z urwanym ``body``. Sygnalizujemy głośno, spójnie z konwencją rdzenia
+        # (``runtime.py`` traktuje ``stop_reason == "max_tokens"`` jako ucięcie tury).
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            raise LLMError(
+                "Model uciął notatkę na limicie tokenów (max_tokens) — byłaby niekompletna. "
+                "Skróć źródło (transkrypt/wątek) albo podnieś sufit streszczenia."
+            )
+
+        block = next(
+            (
+                b
+                for b in message.content
+                if getattr(b, "type", None) == "tool_use" and b.name == _SUMMARY_TOOL_NAME
+            ),
+            None,
         )
+        if block is None:
+            raise LLMError(
+                "Model nie zwrócił notatki przez narzędzie structured-output "
+                f"„{_SUMMARY_TOOL_NAME}” (brak bloku tool_use)."
+            )
         try:
-            return MeetingSummary.model_validate(_loads_lenient(text))
+            # ``block.input`` jest już zwalidowanym przez SDK słownikiem — walidujemy tylko schemat
+            # domenowy (kompletność/typy pól), nie składnię JSON.
+            return MeetingSummary.model_validate(block.input)
         except ValueError as exc:
-            # Pydantic ValidationError i JSONDecodeError dziedziczą po ValueError.
-            raise LLMError(f"Model nie zwrócił poprawnego JSON notatki: {exc}") from exc
-
-
-def _loads_lenient(text: str) -> Any:
-    """Parsuj JSON modelu tolerancyjnie — dopuść surowe znaki sterujące w stringach.
-
-    ``model_validate_json`` (strict) odrzuca niezescape'owany ``\\n``/``\\t`` w wartości,
-    a model bywa nieszczelny (np. surowy newline w polu ``body``) — losowo wywracało to
-    przepływ M3. ``json.loads(strict=False)`` je toleruje; walidację schematu robi potem
-    ``model_validate`` na słowniku. Docelowo structured outputs (patrz ``_extract_json``).
-    """
-    return json.loads(text, strict=False)
-
-
-def _extract_json(text: str) -> str:
-    """Zdejmij otok ``` ```json … ``` ``` / ``` ``` … ``` ```, jeśli model go dodał.
-
-    Robustness (uwaga z przeglądu): modele często owijają JSON w blok markdown, co
-    wywracałoby ``model_validate_json``. Docelowo warto przejść na structured outputs
-    (``output_config.format``) — to zostawiamy jako świadomy follow-up.
-    """
-    stripped = text.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    lines = stripped.splitlines()
-    if lines and lines[0].startswith("```"):
-        lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    return "\n".join(lines).strip()
+            # Pydantic ValidationError dziedziczy po ValueError.
+            raise LLMError(f"Model nie zwrócił poprawnej notatki: {exc}") from exc

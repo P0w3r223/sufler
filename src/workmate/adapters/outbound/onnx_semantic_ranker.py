@@ -19,8 +19,10 @@ anty-skorelowane; podniesienie przycina ogon mało trafnych, gdy dense zasila dr
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
-from datetime import datetime, timezone
+import threading
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
 # Ich POMINIĘCIE mierzalnie psuje jakość (ADR 0039). Dobierane po nazwie modelu; inne bez prefiksu.
 _E5_QUERY, _E5_PASSAGE = "query: ", "passage: "
 _MMLW_QUERY = "zapytanie: "
+
+logger = logging.getLogger(__name__)
 
 
 class OnnxSemanticRanker:
@@ -61,7 +65,14 @@ class OnnxSemanticRanker:
         index_path.parent.mkdir(parents=True, exist_ok=True)
         # Jedno trwałe połączenie (jak sqlite_events) — drzwi są długożyjące, unikamy connect/turę.
         self._conn = sqlite3.connect(index_path, check_same_thread=False)
-        self._init_db()
+        # Ten sam wzorzec współbieżności co ``sqlite_events``: ``Lock`` (jedno połączenie dzielone
+        # przez pulę wątków), ``busy_timeout`` (inny PROCES — drugie drzwi na tym samym pliku
+        # indeksu — może trzymać zapis) i ``WAL`` (czytelnik nie blokuje zapisującego).
+        self._conn.execute("PRAGMA busy_timeout = 5000")
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._lock = threading.Lock()
+        with self._lock:
+            self._init_db()
 
     def warmup(self) -> None:
         """Wymuś załadowanie modelu (pobranie/rozpakowanie) — do fail-fast w wiringu."""
@@ -106,38 +117,76 @@ class OnnxSemanticRanker:
         )
         self._conn.commit()
 
-    def _vector_for(self, note: Note) -> Any:
-        """Wektor notatki z cache (gdy aktualny) albo policzony i zapisany na bieżąco."""
-        text = self._passage_text(note)
-        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        row = self._conn.execute(
-            "SELECT model, content_hash, vector FROM note_vectors WHERE note_id = ?", (note.id,)
-        ).fetchone()
+    def _cached_vector(self, note_id: str, content_hash: str) -> Any | None:
+        """Wektor z indeksu, gdy zgadza się model i hash treści; ``None`` = trzeba policzyć."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT model, content_hash, vector FROM note_vectors WHERE note_id = ?",
+                (note_id,),
+            ).fetchone()
         if row and row[0] == self._model_name and row[1] == content_hash:
             return self._np.frombuffer(row[2], dtype=self._np.float32)
-        arr = self._embed(self._passage_prefix() + text)
-        self._conn.execute(
-            "INSERT INTO note_vectors (note_id, model, dim, vector, content_hash, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(note_id) DO UPDATE SET "
-            "model=excluded.model, dim=excluded.dim, vector=excluded.vector, "
-            "content_hash=excluded.content_hash, updated_at=excluded.updated_at",
-            (
-                note.id,
-                self._model_name,
-                int(arr.shape[0]),
-                arr.tobytes(),
-                content_hash,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        return arr
+        return None
+
+    def _store_vectors(self, rows: list[tuple[str, str, int, bytes, str, str]]) -> None:
+        """Utrwal świeżo policzone wektory JEDNĄ krótką transakcją; porażkę cofnij ``rollback``.
+
+        Transakcja otwiera się dopiero PO policzeniu osadzeń. Wcześniej pierwszy ``INSERT``
+        otwierał ją niejawnie i trzymała się przez całą budowę macierzy (sekundy pracy modelu),
+        blokując zapis pliku indeksu innym wątkom i procesom — a wyjątek w połowie zostawiał ją
+        otwartą, bo nikt nie robił ``rollback``.
+
+        Cache osadzeń to dane POCHODNE: nieudany zapis cofamy i logujemy, bo ranking jest już
+        policzony, a wywrócenie tury kosztowałoby więcej niż ponowne osadzenie przy następnym
+        pytaniu.
+        """
+        if not rows:
+            return
+        with self._lock:
+            try:
+                self._conn.executemany(
+                    "INSERT INTO note_vectors "
+                    "(note_id, model, dim, vector, content_hash, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(note_id) DO UPDATE SET "
+                    "model=excluded.model, dim=excluded.dim, vector=excluded.vector, "
+                    "content_hash=excluded.content_hash, updated_at=excluded.updated_at",
+                    rows,
+                )
+                self._conn.commit()
+            except sqlite3.Error as exc:
+                self._conn.rollback()
+                logger.warning(
+                    "Nie udało się utrwalić cache osadzeń (%s): %s", self._index_path, exc
+                )
 
     def rank(self, query: str, candidates: Sequence[Note]) -> list[str]:
         """Zwróć id kandydatów malejąco po cosinusie osadzeń; odetnij poniżej ``min_similarity``."""
         if not candidates:
             return []
-        matrix = self._np.vstack([self._vector_for(note) for note in candidates])
-        self._conn.commit()  # utrwal nowe/odświeżone wektory policzone wyżej
+        vectors: list[Any] = []
+        pending: list[tuple[str, str, int, bytes, str, str]] = []
+        updated_at = datetime.now(UTC).isoformat()
+        for note in candidates:
+            text = self._passage_text(note)
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            cached = self._cached_vector(note.id, content_hash)
+            if cached is not None:
+                vectors.append(cached)
+                continue
+            arr = self._embed(self._passage_prefix() + text)
+            vectors.append(arr)
+            pending.append(
+                (
+                    note.id,
+                    self._model_name,
+                    int(arr.shape[0]),
+                    arr.tobytes(),
+                    content_hash,
+                    updated_at,
+                )
+            )
+        self._store_vectors(pending)
+        matrix = self._np.vstack(vectors)
         q = self._embed(self._query_prefix() + query)
         sims = matrix @ q  # wektory znormalizowane L2 → iloczyn skalarny = cosinus
         order = self._np.argsort(-sims)  # malejąco po podobieństwie

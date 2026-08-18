@@ -1,9 +1,18 @@
 [project]
 name = "workmate"
-version = "1.3.0"
+version = "1.6.0"
 description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/CLI, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira 'moje zadania' oraz lokalny retrieval leksykalny notatek."
 readme = "README.md"
-requires-python = ">=3.10"
+# 3.11 to jedyna wersja, na której cokolwiek tu biega: `.python-version` mówi 3.11, a oba etapy
+# obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`. Macierz CI nie ma osi wersji
+# Pythona wcale — jej wpisy to pod-projekty (workmate/powiadomienia-teams/claude-summary), a
+# wersja bierze się z `.python-version` czytanego przez `setup-uv`. CI nie jest więc niezależnym
+# dowodem: czyta ten sam plik. Wiąże je `tests/deploy/test_python_version_floor.py`.
+# Deklarowane wcześniej `>=3.10` nie było testowane NIGDZIE — i kosztowało:
+# `tests/test_version_consistency.py` czytał `pyproject.toml` regexem zamiast `tomllib` (3.11+)
+# tylko po to, żeby nie wywrócić kolekcji na wersji, której nikt nie uruchamiał. Deklaracja
+# nadąża więc za faktami; poszerzenie z powrotem = nowa oś w macierzy CI, nie sama liczba.
+requires-python = ">=3.11"
 license = { text = "Proprietary" }
 dependencies = [
     "mcp[cli]>=1.2.0",
@@ -54,6 +63,12 @@ teams-graph = [
     "openpyxl>=3.1",
     "python-pptx>=1.0",
     "pillow>=10",
+    # Ekstrakcja tekstu z PDF dla komendy `workmate-extract` w POWŁOCE (ADR 0064). Materializer
+    # drzwi PDF-a nie ekstrahuje (leci base64 jako blok `document`), ale wykonawca dostaje ten
+    # sam obraz floty co drzwi — a `seed`, gdzie pypdf mieszkał dotąd, obraz świadomie POMIJA
+    # (Dockerfile instaluje agent/github/jira/teams-graph/file-reply/retrieval). Bez tej linii
+    # `workmate-extract umowa.pdf` odbijałby się w wykonawcy o brak biblioteki.
+    "pypdf>=4.0",
     # Dekoder HEIC/HEIF (domyślny format zdjęć iPhone) — Pillow sam nie czyta HEIF; wtyczka
     # rejestruje opener (register_heif_opener), a materializer konwertuje HEIC→JPEG. Wheel'e
     # pakują libheif — bez systemowej zależności. Import/rejestracja LENIWE w adapterze. ADR 0016.
@@ -116,6 +131,14 @@ workmate-meeting = "workmate.adapters.inbound.cli.meeting:main"
 # Ten sam ranker co narzędzie agenta — dopasowanie wzorca po polskim korpusie fleksyjnym gubi
 # trafienia („migracja" nie trafia „migracji"), więc powłoka dostaje ranker, nie grep.
 workmate-search = "workmate.adapters.inbound.cli.search:main"
+# Renderer pliku dla POWŁOKI agenta (etap 7, ADR 0011 paczki): po zdjęciu `reply_with_file`
+# `pdf`/`docx` do skrzynki `outputs/` powstają tą komendą (md/txt agent zapisze wprost):
+# `workmate-render --format pdf --output outputs/raport.pdf < raport.md`.
+workmate-render = "workmate.adapters.inbound.cli.render:main"
+# Ekstraktor tekstu dla POWŁOKI agenta (ADR 0064): `workmate-extract umowa.pdf`. Powłoka czyta
+# pliki `cat`-em i staje na PDF/docx/xlsx/pptx/HTML — ta komenda domyka lukę bez powiększania
+# typowanej powierzchni (kryterium ADR 0061). Ten sam `document_text` co drzwi i importer.
+workmate-extract = "workmate.adapters.inbound.cli.extract:main"
 # Proces drzwi Teams w trybie delegowanym (ADR 0015): `uv run workmate-teams-graph`.
 workmate-teams-graph = "workmate.adapters.inbound.teams_graph.app:main"
 # Proces drzwi GitHub w trybie delegowanym (ADR 0020), polling PAT: `uv run workmate-github`.
@@ -123,14 +146,24 @@ workmate-github = "workmate.adapters.inbound.github.app:main"
 # Proces proaktywnego digestu zmian (ADR 0053, F6), cotygodniowy: `uv run workmate-teams-digest`.
 workmate-teams-digest = "workmate.adapters.inbound.teams_digest.app:main"
 # Kontener-wykonawca poleceń powłoki (ADR 0057): `uv run workmate-exec`. Osobny proces bez
-# sieci — uruchamia kod ułożony przez model, mając wyłącznie montaże workspace'u.
+# sieci — uruchamia kod ułożony przez model, mając wyłącznie montaże workspace'u. Od ADR infra 0012
+# stawiany PER ROZMOWA przez menedżera (niżej), z podkatalogiem brudnopisu jako jedynym montażem.
 workmate-exec = "workmate.adapters.inbound.exec_server:main"
+# Menedżer wykonawców per rozmowa (ADR infra 0012): `uv run workmate-exec-manager`. Jedyny proces
+# z `docker.sock` — stawia/gasi wykonawców na żądanie aplikacji (gniazdo kontrolne `ensure`/`reap`),
+# montując każdemu wyłącznie jego podkatalog brudnopisu. Domyka izolację rozmów w powłoce.
+workmate-exec-manager = "workmate.adapters.inbound.exec_manager_server:main"
 # Healthcheck pulsu pollera (R5): sprawdza wiek pliku pulsu na wolumenie stanu. Wołany przez
 # compose (`docker compose ps` → healthy/unhealthy), nie ręcznie: `workmate-heartbeat-check --file … --max-age …`.
 workmate-heartbeat-check = "workmate.adapters.inbound.heartbeat:main"
 # Raport metryk użycia (Tor A): zwija licznik SQLite do tabeli. `workmate-metrics [--db …]`
 # (domyślnie WORKMATE_METRICS_DB — ta sama ścieżka, która włącza zbieranie).
 workmate-metrics = "workmate.adapters.inbound.metrics_report:main"
+# Odczyt powierzchni diagnostycznych (ADR 0069, R2): dziennik audytu i obie kwarantanny.
+# `workmate-diagnostics inbound --since 24h [--source teams-graph] [--json]`. Ścieżka bazy z
+# `--db` albo ze zmiennej (WORKMATE_EVENTS_DB / WORKMATE_AUDIT_DB) — połączenie tylko do odczytu,
+# bo bazę w tej samej chwili piszą procesy drzwi.
+workmate-diagnostics = "workmate.adapters.inbound.cli.diagnostics:main"
 # Seed korpusu (W0): importuje lokalne dokumenty (md/txt/docx/xlsx/pptx/pdf) do notatek. Domyślnie
 # dry-run; zapis dopiero z `--write` (extra `seed`, ekstrakcja Office/PDF). `workmate-seed-corpus
 # --source <dir> --project <klucz> [--write]`.
@@ -161,14 +194,14 @@ artifacts = ["src/workmate/adapters/outbound/assets/*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = ["src"]
 disallow_untyped_defs = true
 warn_redundant_casts = true
@@ -217,6 +250,12 @@ ignore_missing_imports = true
 # mypy rdzenia nie może się o niego wywrócić (moduł importowy nazywa się `fpdf`).
 [[tool.mypy.overrides]]
 module = ["fpdf.*"]
+ignore_missing_imports = true
+
+# msal (extra `teams-graph`, ADR 0059) — brak stubów/py.typed; cichy odczyt tokenu z cudzego
+# cache MSAL (adapter outbound), więc mypy rdzenia nie może się o to wywrócić.
+[[tool.mypy.overrides]]
+module = ["msal.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

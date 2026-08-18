@@ -12,7 +12,9 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
-.testmondata
+# Gwiazdka obejmuje `-shm` i `-wal`: baza testmona chodzi w WAL, więc obok właściwego pliku
+# leżą dwa towarzyszące, których sam `.testmondata` nie łapał.
+.testmondata*
 
 # Sekrety i stan lokalny — nie commitować, nawet jako artefakt roboczy.
 tokens.json

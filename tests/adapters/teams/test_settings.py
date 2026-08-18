@@ -7,6 +7,8 @@ Oba są czyste, więc testujemy je bez SDK i bez Azure.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from workmate.config import TeamsSettings
@@ -18,6 +20,8 @@ _TEAMS_VARS = (
     "WORKMATE_TEAMS_BIND_HOST",
     "WORKMATE_TEAMS_PORT",
     "WORKMATE_TEAMS_ANONYMOUS",
+    "WORKMATE_TEAMS_IDENTITIES",
+    "WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ",
 )
 
 
@@ -57,6 +61,39 @@ def test_validate_names_only_the_missing_tenant_id():
     assert "WORKMATE_TEAMS_APP_ID" not in msg
 
 
+# --- bramka odczytu bazy wiedzy (ADR 0062) ----------------------------------
+
+
+def test_validate_rejects_read_authz_without_identity_map():
+    """Bramka bez mapy tożsamości nie ma po czym rozpoznać nadawcy — fail-fast na starcie."""
+    with pytest.raises(ValueError) as exc:
+        TeamsSettings(
+            anonymous_auth=True, bind_host="localhost", enable_note_read_authz=True
+        ).validate()
+
+    assert "WORKMATE_TEAMS_IDENTITIES" in str(exc.value)
+
+
+def test_validate_rejects_read_authz_also_in_authenticated_mode():
+    """Sprawdzenie stoi PRZED gałęzią anonimową, więc obowiązuje w obu trybach transportu."""
+    with pytest.raises(ValueError, match="WORKMATE_TEAMS_IDENTITIES"):
+        TeamsSettings(
+            app_id="a", app_password="p", tenant_id="t", enable_note_read_authz=True
+        ).validate()
+
+
+def test_validate_passes_with_read_authz_and_existing_map(tmp_path: Path):
+    identities = tmp_path / "identities.yaml"
+    identities.write_text("EMP-1:\n  aad_user_id: aad-anna\n  jira_user: anna@example.org\n", "utf-8")
+
+    TeamsSettings(
+        anonymous_auth=True,
+        bind_host="localhost",
+        enable_note_read_authz=True,
+        identities=identities,
+    ).validate()  # nie rzuca
+
+
 # --- from_env ---------------------------------------------------------------
 
 
@@ -69,6 +106,9 @@ def test_from_env_is_fail_closed_by_default(monkeypatch):
     assert settings.anonymous_auth is False  # secure-by-default
     assert (settings.app_id, settings.app_password, settings.tenant_id) == ("", "", "")
     assert (settings.bind_host, settings.bind_port) == ("localhost", 3978)
+    # Bramka odczytu (ADR 0062) domyślnie OFF — jak bliźniacza na drzwiach delegowanych.
+    assert settings.enable_note_read_authz is False
+    assert settings.identities == Path()
 
 
 def test_from_env_applies_overrides(monkeypatch):
@@ -76,6 +116,8 @@ def test_from_env_applies_overrides(monkeypatch):
     monkeypatch.setenv("WORKMATE_TEAMS_TENANT_ID", "tenant-9")
     monkeypatch.setenv("WORKMATE_TEAMS_PORT", "4000")
     monkeypatch.setenv("WORKMATE_TEAMS_ANONYMOUS", "true")
+    monkeypatch.setenv("WORKMATE_TEAMS_IDENTITIES", "/etc/workmate/identities.yaml")
+    monkeypatch.setenv("WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ", "true")
 
     settings = TeamsSettings.from_env()
 
@@ -83,6 +125,8 @@ def test_from_env_applies_overrides(monkeypatch):
     assert settings.tenant_id == "tenant-9"
     assert settings.bind_port == 4000
     assert settings.anonymous_auth is True
+    assert settings.identities == Path("/etc/workmate/identities.yaml")
+    assert settings.enable_note_read_authz is True
 
 
 def test_from_env_then_validate_accepts_anonymous(monkeypatch):

@@ -3,6 +3,11 @@
 JSON to stabilny kontrakt dla większego agenta (Jira); Markdown to czytelny digest dla człowieka.
 Oba są czyste i tzależne: godziny wyświetlamy w strefie ``tz`` (znaczniki w modelach są w strefie
 źródła), więc render jest jedynym miejscem prezentacji czasu obok grupowania po dniu.
+
+Redakcja obejmuje także METADANE raportu, nie tylko treść promptów (ADR 0003, poprawka
+2026-08-17): ``repo`` przechodzi przez ``redact_text`` (ścieżka niesie nazwę użytkownika),
+``person``/``author`` przez ``person_label`` (na zewnątrz idzie imię, nigdy adres e-mail),
+a ``session_id`` skracamy do prefiksu — pełny identyfikator wskazywał plik prywatnego transkryptu.
 """
 
 from __future__ import annotations
@@ -12,6 +17,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from claude_summary.core.models import DaySummary, Prompt, SummaryReport
+from claude_summary.core.redaction import person_label, redact_text
+
+# Ile znaków identyfikatora sesji zostaje w wyniku: tyle, by rozróżnić sesje w obrębie dnia,
+# za mało, by wskazać plik transkryptu.
+_SESSION_ID_KEEP = 8
 
 _WEEKDAY_PL = (
     "poniedziałek",
@@ -51,7 +61,7 @@ def _day_to_dict(day: DaySummary, *, tz: ZoneInfo) -> dict[str, Any]:
                 "time": prompt.timestamp.astimezone(tz).strftime("%H:%M"),
                 "timestamp": prompt.timestamp.astimezone(tz).isoformat(),
                 "project": prompt.project,
-                "session_id": prompt.session_id,
+                "session_id": prompt.session_id[:_SESSION_ID_KEEP],
                 "text": prompt.text,
                 "redactions": list(prompt.redactions),
             }
@@ -63,7 +73,7 @@ def _day_to_dict(day: DaySummary, *, tz: ZoneInfo) -> dict[str, Any]:
                 "timestamp": commit.timestamp.astimezone(tz).isoformat(),
                 "sha": commit.sha,
                 "short_sha": commit.sha[:7],
-                "author": commit.author,
+                "author": person_label(commit.author),
                 "message": commit.message,
             }
             for commit in day.commits
@@ -74,10 +84,10 @@ def _day_to_dict(day: DaySummary, *, tz: ZoneInfo) -> dict[str, Any]:
 def to_dict(report: SummaryReport, *, tz: ZoneInfo) -> dict[str, Any]:
     """Zbuduj JSON-owalny słownik raportu (stabilny kontrakt dla agenta Jira)."""
     return {
-        "person": report.person,
+        "person": person_label(report.person),
         "since": report.since.isoformat(),
         "until": report.until.isoformat(),
-        "repo": report.repo,
+        "repo": redact_text(report.repo) if report.repo else report.repo,
         "timezone": str(tz),
         "days": [_day_to_dict(day, tz=tz) for day in report.days],
     }
@@ -102,9 +112,9 @@ def _day_heading(day: DaySummary) -> str:
 
 def to_markdown(report: SummaryReport, *, tz: ZoneInfo) -> str:
     """Zbuduj czytelny dzienny digest w Markdown."""
-    repo = report.repo or "—"
+    repo = redact_text(report.repo) if report.repo else "—"
     lines: list[str] = [
-        f"# Podsumowanie aktywności — {report.person}",
+        f"# Podsumowanie aktywności — {person_label(report.person)}",
         "",
         f"Zakres: {report.since.isoformat()} – {report.until.isoformat()} · "
         f"Repo: {repo} · Strefa: {tz}",

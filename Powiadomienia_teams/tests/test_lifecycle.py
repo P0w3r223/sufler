@@ -4,11 +4,19 @@ from powiadomienia_teams.domain.models import TimeOff
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     is_expired,
+    past_hard_ceiling,
     prune_terminal,
+    ready_for_self_fill_check,
     should_expire,
     still_writable,
 )
-from powiadomienia_teams.state import APPLIED, AWAITING_REPLY, EXPIRED, PendingReminder
+from powiadomienia_teams.state import (
+    APPLIED,
+    AWAITING_REPLY,
+    EXPIRED,
+    SELF_FILLED,
+    PendingReminder,
+)
 
 UTC = timezone.utc
 NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -149,3 +157,123 @@ def test_partially_past_week_keeps_only_the_rest():
 def test_empty_input_gives_empty_result():
     # Pusty wynik jest sygnałem „nie ma czego zapisać" dla wołającego — nie może rzucać.
     assert still_writable([], NOW) == ()
+
+
+# --- SELF_FILLED: nowy status terminalny --------------------------------------------------
+
+
+def test_self_filled_is_terminal_and_pruned_like_others():
+    state = {
+        "old": _pending(status=SELF_FILLED, watermark=_iso(NOW - timedelta(hours=200))),
+        "open": _pending(status=AWAITING_REPLY, watermark=_iso(NOW - timedelta(hours=500))),
+    }
+    kept = prune_terminal(state, NOW, retain_hours=48)
+    assert set(kept) == {"open"}
+
+
+def test_self_filled_kept_when_fresh():
+    state = {"fresh": _pending(status=SELF_FILLED, watermark=_iso(NOW - timedelta(hours=10)))}
+    assert prune_terminal(state, NOW, retain_hours=48) == state
+
+
+# --- ready_for_self_fill_check --------------------------------------------------------------
+
+
+def test_ready_for_self_fill_check_true_after_idle_threshold():
+    p = _pending(nudged_at=_iso(NOW - timedelta(seconds=3601)))
+    assert ready_for_self_fill_check(p, NOW, 3600) is True
+
+
+def test_ready_for_self_fill_check_false_before_idle_threshold():
+    p = _pending(nudged_at=_iso(NOW - timedelta(seconds=1000)))
+    assert ready_for_self_fill_check(p, NOW, 3600) is False
+
+
+def test_ready_for_self_fill_check_negative_min_idle_disables():
+    p = _pending(nudged_at=_iso(NOW - timedelta(hours=1000)))
+    assert ready_for_self_fill_check(p, NOW, -1) is False
+
+
+def test_ready_for_self_fill_check_zero_checks_every_silent_cycle():
+    p = _pending(nudged_at=_iso(NOW - timedelta(seconds=1)))
+    assert ready_for_self_fill_check(p, NOW, 0) is True
+
+
+def test_ready_for_self_fill_check_false_without_anchor():
+    assert ready_for_self_fill_check(_pending(), NOW, 3600) is False
+
+
+def test_ready_for_self_fill_check_watermark_extends_like_expiry():
+    # Rozmowa w toku: nudge dawno, ostatnia aktywność świeża → liczone od aktywności (jak _anchor).
+    p = _pending(
+        watermark=_iso(NOW - timedelta(seconds=100)),
+        nudged_at=_iso(NOW - timedelta(hours=100)),
+    )
+    assert ready_for_self_fill_check(p, NOW, 3600) is False
+
+
+def test_twardy_sufit_domyka_wpis_ktory_nigdy_nie_dostal_dowodu():
+    """Wpis, którego czatu trwale nie da się odczytać, musi kiedyś zejść ze stanu.
+
+    `should_expire` słusznie odmawia wygaszenia bez udanego odczytu („brak dowodu ≠ dowód
+    braku"). Gdy odczyt pada TRWALE, ta odmowa jest wieczna: wpis nigdy nie jest terminalny,
+    nigdy nie podlega `prune_terminal`, a `run_once` co tydzień omija tę osobę, bo jej wpis
+    „istnieje". Sufit domyka to od góry.
+    """
+    nudge = "2026-07-17T09:00:00Z"
+    pending = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-20",
+        status="awaiting_reply",
+        watermark=nudge,
+        nudged_at=nudge,
+    )
+    kotwica = datetime(2026, 7, 17, 9, 0, tzinfo=timezone.utc)
+    # Zwykłe okno (48 h) już minęło, ale sufit (3 × 48 h) jeszcze nie.
+    assert not past_hard_ceiling(pending, kotwica + timedelta(hours=100), 48)
+    assert past_hard_ceiling(pending, kotwica + timedelta(hours=145), 48)
+
+
+def test_twardy_sufit_nie_dziala_bez_kotwicy():
+    """Bez znacznika czasu nie znamy wieku wpisu — zgadywanie byłoby gorsze od czekania."""
+    pending = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-20",
+        status="awaiting_reply",
+    )
+    assert not past_hard_ceiling(pending, datetime(2030, 1, 1, tzinfo=timezone.utc), 48)
+
+
+def test_prune_zostawia_wpis_z_niewyslana_wiadomoscia():
+    """Godziny ciszy PRZESUWAJĄ wysyłkę, nie kasują jej — GC nie może zjeść wpisu z kolejki.
+
+    Domknięcie odłożone w piątek wieczorem czeka do poniedziałku rana, czyli dłużej niż typowe
+    `retain_hours`. Bez tego wyjątku tygodniowe GC kasowałoby wpis razem z niewysłaną wiadomością.
+    """
+    stary = "2026-07-01T09:00:00Z"
+    z_kolejka = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c1",
+        week_start="2026-07-06",
+        status=EXPIRED,
+        watermark=stary,
+        nudged_at=stary,
+        odlozona_wiadomosc="<p>domknięcie</p>",
+    )
+    bez_kolejki = PendingReminder(
+        member_id="u2",
+        member_name="Bok",
+        chat_id="c2",
+        week_start="2026-07-06",
+        status=EXPIRED,
+        watermark=stary,
+        nudged_at=stary,
+    )
+    stan = {"u1": z_kolejka, "u2": bez_kolejki}
+    zostalo = prune_terminal(stan, datetime(2026, 8, 1, tzinfo=timezone.utc), 48)
+    assert set(zostalo) == {"u1"}

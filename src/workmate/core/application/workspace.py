@@ -33,6 +33,17 @@ class WorkspaceLimits:
     allowed_ext: frozenset[str]  # biała lista rozszerzeń (tekstowe)
 
 
+def _reject_traversal(name: str) -> None:
+    """Odrzuć nazwę pliku z separatorem albo ``..`` — nazwa bywa od modelu (obrona w głąb).
+
+    Adapter i tak pilnuje ``resolve().relative_to(root)``; ta kontrola stoi piętro wyżej, żeby
+    KAŻDA droga odczytu (tekst i bajty) miała ją tak samo — jedna funkcja zamiast dwóch kopii
+    warunku, które przy trzeciej drodze rozjechałyby się po cichu.
+    """
+    if "/" in name or "\\" in name or ".." in name:
+        raise WriteError(f"niedozwolona nazwa pliku do odczytu: {name!r}")
+
+
 class WorkspaceService:
     """Odczyt katalogu roboczego rozmowy: lista plików i treść pojedynczego pliku."""
 
@@ -48,9 +59,16 @@ class WorkspaceService:
         ``name`` pochodzi od modelu — odrzucamy separatory/``..`` (obrona w głąb; adapter i tak
         pilnuje ``resolve().relative_to``), żeby odczyt nie wyszedł poza katalog rozmowy.
         """
-        if "/" in name or "\\" in name or ".." in name:
-            raise WriteError(f"niedozwolona nazwa pliku do odczytu: {name!r}")
+        _reject_traversal(name)
         return self._repo.read(str(scope.dirpath()), name)
+
+    def read_bytes(self, scope: WorkspaceScope, name: str) -> bytes | None:
+        """Zwróć SUROWE bajty pliku rozmowy albo ``None`` (ADR 0064 — materializacja).
+
+        Ta sama kontrola nazwy co ``read_file``: nazwa przychodzi od modelu.
+        """
+        _reject_traversal(name)
+        return self._repo.read_bytes(str(scope.dirpath()), name)
 
 
 class WorkspaceWriteService:
@@ -83,6 +101,40 @@ class WorkspaceWriteService:
             )
         relpath = self._unique_relpath(scope, filename)
         return self._writer.create(relpath, content)
+
+    def stage_attachment(
+        self, scope: WorkspaceScope, name: str, data: bytes, *, allowed_ext: frozenset[str]
+    ) -> WorkspaceFile:
+        """Odłóż załącznik użytkownika na dysk katalogu rozmowy (ADR 0064).
+
+        Osobno od ``create_file``, bo to INNA czynność z innymi regułami: treść nie pochodzi od
+        modelu (więc ``reject_dangerous_content`` nad bajtami binarnymi nie ma sensu — PDF czy
+        JPEG z natury zawiera bajty sterujące), a biała lista rozszerzeń jest szersza niż lista
+        formatów, które model wolno mu TWORZYĆ. Wspólne zostaje to, co pilnuje dysku: limity
+        rozmiaru/liczby/sumy per rozmowa i unikalna nazwa (nigdy nadpisania).
+
+        Po co w ogóle: dotąd załącznik żył wyłącznie w blokach rozmowy, czyli na wolumenie stanu,
+        którego wykonawca świadomie nie montuje (ADR 0057). Plik na dysku rozmowy jest jedyną
+        formą, którą widzi ZARAZEM powłoka (`workmate-extract`) i ``File(read)`` — i jedyną, która
+        przeżywa kompaktowanie kontekstu (ADR 0014), po którym załącznik zostaje samym opisem.
+        """
+        filename = safe_filename(name, allowed_ext=allowed_ext)
+        size = len(data)
+        if size > self._limits.max_file_bytes:
+            raise WriteError(
+                f"załącznik przekracza limit rozmiaru ({self._limits.max_file_bytes} B): {filename}"
+            )
+        existing = self._repo.list(str(scope.dirpath()))
+        if len(existing) >= self._limits.max_files_per_scope:
+            raise WriteError(
+                f"osiągnięto limit liczby plików w rozmowie ({self._limits.max_files_per_scope})."
+            )
+        if sum(f.size for f in existing) + size > self._limits.max_total_bytes:
+            raise WriteError(
+                f"przekroczony łączny limit plików rozmowy ({self._limits.max_total_bytes} B)."
+            )
+        relpath = self._unique_relpath(scope, filename)
+        return self._writer.create_bytes(relpath, data)
 
     def _unique_relpath(self, scope: WorkspaceScope, filename: str) -> str:
         """Zwróć ścieżkę pliku; przy kolizji dołóż sufiks przed rozszerzeniem (``-2``, ``-3``…)."""

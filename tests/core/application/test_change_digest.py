@@ -8,7 +8,7 @@ pusty digest.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from workmate.core.application.change_digest import ChangeDigestService
 from workmate.core.domain.events import Event
@@ -22,7 +22,7 @@ def _event(
     project: str = "workmate",
     ident: int = 1,
 ) -> Event:
-    ts = datetime(2026, 7, day, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2026, 7, day, 12, 0, 0, tzinfo=UTC)
     return Event(
         id=ident,
         source=source,

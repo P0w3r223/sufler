@@ -1,3 +1,5 @@
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,7 @@ from powiadomienia_teams.config import Settings
 from powiadomienia_teams.graph.auth import (
     AmbiguousAccountError,
     AuthExpiredError,
+    _jedyne_konto,
     _load_cache,
     _save_cache,
     build_token_provider,
@@ -160,13 +163,12 @@ def test_interrupted_write_does_not_destroy_previous_cache(tmp_path: Path, monke
     """
     path = tmp_path / "c.bin"
     path.write_text("stary-ale-dzialajacy", encoding="utf-8")
-    prawdziwy_zapis = Path.write_text
 
-    def zapis_przerwany(self, data, **kwargs):
-        prawdziwy_zapis(self, "", **kwargs)  # obcięcie — tak wygląda zapis ubity w połowie
+    def zapis_przerwany(_fd):
         raise OSError("proces ubity w trakcie zapisu")
 
-    monkeypatch.setattr(Path, "write_text", zapis_przerwany)
+    # Awaria PO zapisaniu pliku tymczasowego, a przed `os.replace` — najgorszy możliwy moment.
+    monkeypatch.setattr(os, "fsync", zapis_przerwany)
     with pytest.raises(OSError):
         _save_cache(_ChangedCache(), path)
     monkeypatch.undo()
@@ -248,3 +250,75 @@ def test_logowanie_odmawia_przy_wielu_kontach_zamiast_dolozyc_trzecie(tmp_path: 
     with pytest.raises(AmbiguousAccountError, match="--login"):
         login_interactive(_settings(tmp_path / "c.bin"), app_factory=_factory(app))
     assert not app.device_flow_initiated  # zatrzymani PRZED rozpoczęciem logowania
+
+
+def test_cache_tokenu_powstaje_od_razu_z_prawami_600(tmp_path: Path, monkeypatch):
+    """Refresh-token nie może istnieć nawet przez chwilę z prawami domyślnymi.
+
+    `write_text` + `chmod` tworzyło plik pod umask (zwykle 0o022, czyli czytelny dla grupy
+    i świata), zapisywało do niego token i dopiero POTEM zamykało prawa. Okno było krótkie, ale
+    otwierało się przy każdej rotacji refresh-tokenu, a wystarczy jeden odczyt, żeby przejąć
+    tożsamość bota. Sprawdzamy TRYB PRZEKAZANY DO `os.open` (nie prawa pliku), bo na Windows
+    uprawnienia POSIX są ignorowane, a błąd dotyczy właśnie kolejności operacji.
+    """
+    path = tmp_path / "c.bin"
+    otwarcia: list[tuple[int, int]] = []
+    prawdziwy_open = os.open
+
+    def zapamietaj(sciezka, flagi, tryb=0o777, **kwargs):
+        otwarcia.append((flagi, tryb))
+        return prawdziwy_open(sciezka, flagi, tryb, **kwargs)
+
+    monkeypatch.setattr(os, "open", zapamietaj)
+    _save_cache(_ChangedCache(), path)
+    monkeypatch.undo()
+
+    assert otwarcia, "cache tokenu nie powstał przez os.open — prawa zależą od umask"
+    flagi, tryb = otwarcia[0]
+    assert tryb == 0o600
+    assert flagi & os.O_CREAT and flagi & os.O_EXCL  # plik z TEGO utworzenia, nie cudza resztka
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_niejednoznaczne_konto_nie_wypuszcza_adresow_na_kanal_zewnetrzny():
+    """Adresy kont to dane osobowe — log usługi tak, webhook alertów nie.
+
+    `_handle_auth_loss` wysyła treść wyjątku na `alert_webhook_url`, a ten bywa poza organizacją
+    (Power Automate, Slack, dowolny endpoint operatora). Pełny komunikat wymienia adresy e-mail
+    wszystkich kont z cache tokenu.
+    """
+    with pytest.raises(AmbiguousAccountError) as zlapany:
+        _jedyne_konto(
+            [{"username": "ala@firma.pl"}, {"username": "bot@firma.pl"}],
+            Path("/dane/cache.bin"),
+        )
+    blad = zlapany.value
+    assert "ala@firma.pl" in str(blad)  # pełna treść (log) nadal diagnostyczna
+    assert "ala@firma.pl" not in blad.publiczny
+    assert "bot@firma.pl" not in blad.publiczny
+    assert "2 kont" in blad.publiczny  # operator wie, CO się stało
+    assert "--login" in blad.publiczny
+
+
+def test_zwykla_utrata_sesji_nie_jest_redagowana():
+    """Redakcja dotyczy tylko wyjątków niosących dane osobowe — reszta ma iść w całości."""
+    blad = AuthExpiredError("AADSTS50173: grant cofnięty")
+    assert blad.publiczny == "AADSTS50173: grant cofnięty"
+
+
+def test_resztka_po_ubitym_procesie_nie_blokuje_rotacji_tokenu(tmp_path: Path):
+    """`O_EXCL` chroni prawa pliku, ale sam w sobie jest pułapką na gorącej ścieżce.
+
+    Jedna resztka `.tmp` po SIGKILL wywracałaby KAŻDĄ kolejną rotację refresh-tokenu
+    (`FileExistsError`), czyli po ~90 dniach usługę nie do odzyskania bez ręcznego kasowania
+    pliku w wolumenie.
+    """
+    path = tmp_path / "c.bin"
+    resztka = path.with_suffix(path.suffix + ".tmp")
+    resztka.write_text("ucięty zapis sprzed awarii", encoding="utf-8")
+
+    _save_cache(_ChangedCache(), path)
+
+    assert path.read_text(encoding="utf-8")  # cache zapisany mimo resztki
+    assert not resztka.exists()  # i posprzątany po sobie

@@ -6,7 +6,7 @@ sprawdzamy JAWNIE: to one decydują, do którego dnia trafi czyjaś godzina prac
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,7 +29,7 @@ def _warsaw(year: int, month: int, day: int, hour: int = 12, minute: int = 0) ->
 
 def _elapsed(start: datetime, end: datetime) -> timedelta:
     """Realnie upłynięty czas — przez UTC, bo odejmowanie w tej samej strefie pomija DST."""
-    return end.astimezone(timezone.utc) - start.astimezone(timezone.utc)
+    return end.astimezone(UTC) - start.astimezone(UTC)
 
 
 # --- poniedziałek tygodnia -------------------------------------------------------
@@ -46,7 +46,7 @@ def test_week_monday_on_monday_is_the_same_day() -> None:
 
 def test_week_monday_accepts_now_in_another_timezone() -> None:
     """23:30 UTC w niedzielę to już poniedziałek w Warszawie — liczy się strefa docelowa."""
-    utc_sunday = datetime(2026, 7, 12, 23, 30, tzinfo=timezone.utc)
+    utc_sunday = datetime(2026, 7, 12, 23, 30, tzinfo=UTC)
     assert week_monday(utc_sunday, _TZ) == _warsaw(2026, 7, 13, 0, 0)
 
 

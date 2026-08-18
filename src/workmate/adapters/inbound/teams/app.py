@@ -5,6 +5,9 @@ ale Teams to drzwi MNIEJ ZAUFANE (ADR 0006), więc katalog jest READ-ONLY (agent
 czyta notatki i status, nie zapisuje). Wymaga: ``uv sync --extra teams --extra agent``
 oraz ``ANTHROPIC_API_KEY`` w środowisku (brak → twardy błąd startu).
 
+Odczyt bazy wiedzy stoi za bramką członkostwa (ADR 0062, ``WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ``,
+domyślnie OFF) — tożsamość nadawcy niesie ``aadObjectId`` aktywności, patrz ``bot._sender_aad_id``.
+
 Uruchomienie: ``uv run workmate-teams``. Lokalny test bez Azure:
 ``WORKMATE_TEAMS_ANONYMOUS=true`` + Bot Framework Emulator na porcie 3978.
 Realny test w Teams: pełne ``WORKMATE_TEAMS_*`` (single-tenant) + dev tunnel.
@@ -29,6 +32,7 @@ from workmate.config import (
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.responder import Responder
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,56 @@ def build_web_app(settings: TeamsSettings, responder: Responder) -> Any:
     return app
 
 
+def build_note_read_authorizer(settings: TeamsSettings) -> NoteReadAuthorizer | None:
+    """Bramka członkostwa ODCZYTU bazy wiedzy (ADR 0062) albo ``None``.
+
+    Bliźniak ``teams_graph.app._build_note_read_authorizer`` — te drzwi mają go od audytu
+    2026-08-17, bo dotąd nie miały go WCALE: ``/szukaj``, ``/projekty``, ``/status`` i narzędzia
+    odczytu agenta jechały tu bez sprawdzenia nadawcy, podczas gdy bliźniacze drzwi odmawiały.
+    ``None``, gdy ``enable_note_read_authz`` wyłączona (domyślnie) — zachowanie jak przed 0062.
+    Włączona: config wymusił istnienie mapy tożsamości, więc składamy authorizer nad
+    ``YamlIdentityDirectory`` (fail-closed). Nadawca bez ``aadObjectId`` (gość, konto spoza
+    tenantu) jest tu nierozpoznany i odczytu nie dostaje — patrz ``bot._sender_aad_id``.
+    """
+    if not settings.enable_note_read_authz:
+        return None
+    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
+
+    logger.info(
+        "Autoryzacja ODCZYTU bazy wiedzy WŁĄCZONA (ADR 0062) — narzędzia agenta oraz komendy "
+        "/szukaj, /projekty i /status wymagają rozpoznanego członka pionu przez mapę tożsamości "
+        "%s (fail-closed). Nadawca bez AAD id (gość) odczytu nie dostaje.",
+        settings.identities,
+    )
+    return NoteReadAuthorizer(YamlIdentityDirectory(settings.identities))
+
+
+def build_responder(settings: TeamsSettings) -> Responder:
+    """Złóż responder drzwi: runtime agenta read-only + bramka odczytu bazy wiedzy.
+
+    Teams = drzwi MNIEJ ZAUFANE (ADR 0006): katalog READ-ONLY (``enable_write=False``) — agent
+    czyta notatki i status, nie zapisuje. Wymaga ANTHROPIC_API_KEY (brak → czytelny SystemExit
+    z buildera). Recepta pamięci + komend read-only ze wspólnego buildera.
+    """
+    core_settings = Settings.from_env()
+    agent_settings = AgentSettings.from_env()
+    agent_settings.validate()
+    conversation_settings = ConversationSettings.from_env()
+    conversation_settings.validate()
+    return build_conversational_responder(
+        core_settings,
+        agent_settings,
+        conversation_settings,
+        channel="teams",
+        enable_write=False,
+        safe=True,
+        # ADR 0062: bez tego argumentu bramka odczytu NIE ISTNIEJE na tych drzwiach — narzędzia
+        # odczytu zostają w katalogu bazowym runtime'u, a router komend nie ma kogo zapytać.
+        note_read_authorizer=build_note_read_authorizer(settings),
+    )
+
+
 def main() -> None:
     """Uruchom proces drzwi Teams z runtime agenta (katalog read-only)."""
     env.load_dotenv()
@@ -67,22 +121,7 @@ def main() -> None:
     settings = TeamsSettings.from_env()
     settings.validate()
 
-    # Teams = drzwi MNIEJ ZAUFANE (ADR 0006): katalog READ-ONLY (``enable_write=False``) —
-    # agent czyta notatki i status, nie zapisuje. Wymaga ANTHROPIC_API_KEY (brak → czytelny
-    # SystemExit z buildera). Recepta pamięci + komend read-only ze wspólnego buildera.
-    core_settings = Settings.from_env()
-    agent_settings = AgentSettings.from_env()
-    agent_settings.validate()
-    conversation_settings = ConversationSettings.from_env()
-    conversation_settings.validate()
-    responder: Responder = build_conversational_responder(
-        core_settings,
-        agent_settings,
-        conversation_settings,
-        channel="teams",
-        enable_write=False,
-        safe=True,
-    )
+    responder: Responder = build_responder(settings)
 
     try:
         from aiohttp import web

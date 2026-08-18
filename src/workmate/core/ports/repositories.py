@@ -37,7 +37,49 @@ class NotesWriter(Protocol):
         ...
 
     def write(self, note: Note) -> None:
-        """Zapisz notatkę atomowo pod ścieżką wynikającą z ``note.id``."""
+        """Zapisz notatkę atomowo pod ścieżką z ``note.id`` — CREATE-ONLY.
+
+        Kolizja to błąd, nigdy ciche nadpisanie: na tej własności stoi idempotencja notatek
+        ze spotkania i wątku (ADR 0043/0048), więc ``write`` zostaje nietknięte przez ADR 0065.
+        Mutacja ma WŁASNE czasowniki niżej.
+        """
+        ...
+
+    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
+        """Podmień treść ISTNIEJĄCEJ notatki (ADR 0065) — osobny czasownik, nie tryb ``write``.
+
+        Osobny rozmyślnie: gdyby ``write`` dostał flagę „nadpisuj", każdy dotychczasowy wołający
+        (trzy ścieżki ``save_*``, seed korpusu, atrapy w testach) niósłby domyślnie zdolność,
+        której nie potrzebuje — a jedna pomyłka cicho zamieniłaby zapis idempotentny w niszczący.
+        Zapis jest atomowy (nowy plik + podmiana), nigdy w miejscu.
+
+        ``expected_sha256`` to skrót pliku z chwili ODCZYTU. Między odczytem a zapisem leży
+        wywołanie sędziego — sekundy — a drzwi obsługują tury równolegle. Bez tej kontroli dwie
+        równoległe zmiany tej samej notatki nadpisywały się wzajemnie i wersja pośrednia ginęła
+        BEZ MIGAWKI, czyli w jedynym stanie, którego ta warstwa ma nie dopuszczać.
+        """
+        ...
+
+    def digest(self, note_id: str) -> str:
+        """Skrót pliku notatki — znacznik wersji do optymistycznej kontroli współbieżności.
+
+        Wołający bierze go PRZED długą operacją (ocena zmiany) i podaje przy zapisie; różnica
+        znaczy „ktoś zmienił notatkę w międzyczasie" i zapis ma się wtedy nie odbyć.
+        """
+        ...
+
+    def delete(self, note_id: str, *, expected_sha256: str) -> None:
+        """Usuń POJEDYNCZĄ notatkę (ADR 0065). Nigdy katalog, nigdy wzorzec, nigdy rekurencyjnie.
+
+        Wołający ma obowiązek zapisać migawkę PRZED wywołaniem — port jej nie robi, bo to
+        decyzja polityki, a nie systemu plików.
+
+        ``expected_sha256`` niesie tę samą kontrolę wersji, co ``overwrite``, i z tego samego
+        powodu: usunięcie też dzieli odczyt od zapisu oceną sędziego (a przy werdykcie „confirm" —
+        całą turą), a drzwi obsługują tury równolegle. Różnica skrótu znaczy „ktoś zmienił notatkę
+        po tym, jak ją przeczytaliśmy" i usunięcie ma się wtedy NIE odbyć: migawka zabezpiecza
+        wersję sprzed zmiany, więc bez tej kontroli wersja pośrednia ginęłaby bez kopii.
+        """
         ...
 
 

@@ -30,8 +30,13 @@ logger = logging.getLogger(__name__)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 _DEFAULT_RETRY_AFTER_S = 5
-# ŁĄCZNY budżet czekania na dławienie w obrębie jednego żądania. Sufit per-próba zamieniał
-# przejściowe dławienie w porzucony przebieg tygodniowy (patrz `_retry_after`).
+# ŁĄCZNY budżet czekania na dławienie w obrębie jednej OPERACJI (nie żądania!). Sufit per-próba
+# zamieniał przejściowe dławienie w porzucony przebieg tygodniowy (patrz `_retry_after`), ale
+# budżet per-ŻĄDANIE był drugą skrajnością: `_get_all` dopuszcza 50 stron, więc jeden odczyt
+# kolekcji mógł czekać 50 × 900 s ≈ 12,5 h, a healthcheck (`health_max_age_s`, domyślnie 900 s)
+# przez cały ten czas orzekał „zdrowy", bo puls bije w środku snu na dławienie. Jeden deadline
+# zegara ściennego przekazywany w dół domyka to od góry: cała operacja mieści się w budżecie,
+# więc najdłuższa możliwa cisza usługi jest równa progowi healthchecku, a nie jego wielokrotności.
 _MAX_RETRY_BUDGET_S = 900
 _MAX_429_RETRIES = 5
 _MAX_PAGES = 50
@@ -46,6 +51,16 @@ class GraphTruncatedReadError(RuntimeError):
     pracuje na tym, co wróciło, więc niepełny odczyt oznacza prośby do osób, które grafik MAJĄ,
     a po ich »tak« DRUGI komplet wpisów w Shifts. Skutkiem jest nieodwracalny zapis u klienta,
     dlatego przebieg ma paść i zostać ponowiony, a nie „udać się" na połowie danych.
+    """
+
+
+class GraphResponseError(RuntimeError):
+    """Graph odpowiedział 2xx, ale bez pola, na którym stoi bezpieczeństwo obiegu.
+
+    Dotyczy identyfikatorów: własnego ``id`` (``/me``) i ``id`` czatu. Zwracanie pustego napisu
+    było ciche i groźne — puste ``me_id`` zdejmowało JEDNOCZEŚNIE filtr „nie pisz do siebie"
+    i rozpoznawanie własnych wiadomości, czyli bot zagadywał sam siebie i brał własne wiadomości
+    za odpowiedź pracownika. Puste ``chat_id`` kierowało wysyłkę pod adres, którego nie ma.
     """
 
 
@@ -115,25 +130,40 @@ class GraphClient:
         token_provider: Callable[[], str],
         *,
         sleep: Callable[[int], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client = client
         self._token = token_provider
         self._sleep = sleep
+        # Zegar MONOTONICZNY, nie systemowy: budżet dławienia mierzy upływ czasu, a skok zegara
+        # (NTP, zmiana czasu) nie może ani skrócić, ani wydłużyć oczekiwania. Wstrzykiwalny,
+        # bo testy podmieniają `sleep` na atrapę i bez tego czas w nich nigdy by nie płynął.
+        self._monotonic = monotonic
 
     def refresh_auth(self) -> None:
         """Ustaw nagłówek Authorization świeżym tokenem (MSAL zwykle odświeża po cichu)."""
         self._client.headers["Authorization"] = f"Bearer {self._token()}"
 
-    def _get(self, url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+    def _nowy_deadline(self) -> float:
+        """Koniec budżetu dławienia dla CAŁEJ operacji (monotonicznie, w sekundach)."""
+        return self._monotonic() + _MAX_RETRY_BUDGET_S
+
+    def _pozostaly_budzet(self, deadline: float) -> int:
+        return max(0, int(deadline - self._monotonic()))
+
+    def _get(
+        self, url: str, params: dict[str, str] | None = None, *, deadline: float | None = None
+    ) -> dict[str, Any]:
+        """Jedno GET z ponowieniami 429. ``deadline`` wspólny dla całej operacji (stronicowanie)."""
+        if deadline is None:
+            deadline = self._nowy_deadline()
         attempts = 0
-        budzet = _MAX_RETRY_BUDGET_S
         while True:
             response = self._client.get(url, params=params)
+            budzet = self._pozostaly_budzet(deadline)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES and budzet > 0:
                 attempts += 1
-                czekaj = _retry_after(response, budzet)
-                budzet -= czekaj
-                self._sleep(czekaj)
+                self._sleep(_retry_after(response, budzet))
                 continue
             _raise_for_status(response)
             data: dict[str, Any] = response.json()
@@ -143,8 +173,11 @@ class GraphClient:
         items: list[dict[str, Any]] = []
         pages = 0
         next_url: str | None = url
+        # JEDEN deadline na cały odczyt kolekcji — bez tego każda ze stron dostawała własny
+        # budżet 900 s i limit stron zamieniał się w limit godzin.
+        deadline = self._nowy_deadline()
         while next_url and pages < _MAX_PAGES:
-            data = self._get(next_url, params=params if pages == 0 else None)
+            data = self._get(next_url, params=params if pages == 0 else None, deadline=deadline)
             items.extend(data.get("value", []))
             next_url = data.get("@odata.nextLink")
             pages += 1
@@ -160,23 +193,31 @@ class GraphClient:
         return items
 
     def _post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        deadline = self._nowy_deadline()
         attempts = 0
-        budzet = _MAX_RETRY_BUDGET_S
         while True:
             response = self._client.post(url, json=body)
+            budzet = self._pozostaly_budzet(deadline)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES and budzet > 0:
                 attempts += 1
-                czekaj = _retry_after(response, budzet)
-                budzet -= czekaj
-                self._sleep(czekaj)
+                self._sleep(_retry_after(response, budzet))
                 continue
             _raise_for_status(response)
             data: dict[str, Any] = response.json() if response.content else {}
             return data
 
     def get_me(self) -> str:
-        """Id zalogowanego użytkownika (tożsamość »głosu« bota)."""
-        return str(self._get(f"{GRAPH}/me").get("id", ""))
+        """Id zalogowanego użytkownika (tożsamość »głosu« bota). Brak ``id`` = błąd, nie ``""``.
+
+        Puste ``me_id`` przechodziło dalej po cichu i rozbrajało DWA zabezpieczenia naraz:
+        odsianie konta bota z listy kandydatów (`run_once` — bot zagaduje sam siebie) oraz
+        rozpoznanie własnych wiadomości w czacie (`newest_incoming` — bot bierze własny nudge
+        za odpowiedź pracownika i wchodzi w rozmowę ze sobą).
+        """
+        me_id = str(self._get(f"{GRAPH}/me").get("id") or "")
+        if not me_id:
+            raise GraphResponseError("Graph zwrócił /me bez pola `id` — nie znam tożsamości bota")
+        return me_id
 
     def list_members(self, team_id: str) -> tuple[Member, ...]:
         """Aktualni członkowie zespołu (roster do porównania). Pomija wpisy bez userId/nazwy."""
@@ -232,7 +273,14 @@ class GraphClient:
             }
 
         body = {"chatType": "oneOnOne", "members": [_member(me_id), _member(target_user_id)]}
-        return str(self._post(f"{GRAPH}/chats", body).get("id", ""))
+        chat_id = str(self._post(f"{GRAPH}/chats", body).get("id") or "")
+        if not chat_id:
+            # Bez id czatu każda kolejna operacja idzie pod adres, którego nie ma: wysyłka pada,
+            # a w stanie ląduje pending z pustym `chat_id`, czyli wpis nie do odczytania już nigdy.
+            raise GraphResponseError(
+                f"Graph zwrócił czat 1:1 z {target_user_id} bez pola `id` — nie ma dokąd pisać"
+            )
+        return chat_id
 
     def send_chat_message(self, chat_id: str, html: str) -> str:
         """Wyślij wiadomość HTML do czatu; zwróć ``createdDateTime`` (czas SERWERA) wiadomości.

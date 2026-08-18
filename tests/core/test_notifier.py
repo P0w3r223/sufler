@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
+from workmate.core.application import notifier as notifier_module
 from workmate.core.application.notifier import (
     EventNotifier,
     NotifyTargets,
@@ -15,7 +16,7 @@ from workmate.core.application.notifier import (
 from workmate.core.domain.events import Event
 from workmate.core.errors import ThreadRootGone
 
-_WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
 
 
 def _event(event_id: int, *, source: str = "github", kind: str = "issue_opened", **kw) -> Event:
@@ -99,7 +100,18 @@ class _FakeThreadLinks:
         self.links[(team_id, channel_id, target_kind, target_number)] = root_id
 
 
-def _notifier(events, sender, *, targets, cursor=0, saved=None, thread_links=None):
+def _notifier(
+    events,
+    sender,
+    *,
+    targets,
+    cursor=0,
+    saved=None,
+    thread_links=None,
+    dead_letters=None,
+    heartbeat=None,
+    max_attempts=5,
+):
     return EventNotifier(
         events,
         sender,
@@ -107,6 +119,9 @@ def _notifier(events, sender, *, targets, cursor=0, saved=None, thread_links=Non
         save_cursor=(saved.append if saved is not None else lambda _cid: None),
         cursor=cursor,
         thread_links=thread_links,
+        dead_letters=dead_letters,
+        heartbeat=heartbeat,
+        max_attempts=max_attempts,
     )
 
 
@@ -152,6 +167,8 @@ def test_cursor_advances_after_send():
 
 
 def test_cursor_not_advanced_on_send_failure():
+    # Bez magazynu kwarantanny (dawne zachowanie, ADR 0067): porażka wysyłki NIE przesuwa kursora
+    # i NIE rzuca — runda przerywa się, następna ponowi (at-least-once). Poison message blokuje.
     sender = _FakeSender(fail_channel=True)
     saved: list[int] = []
     targets = NotifyTargets(
@@ -161,11 +178,45 @@ def test_cursor_not_advanced_on_send_failure():
         enable_chat=True,
         enable_channel=True,
     )
-    with pytest.raises(RuntimeError):
-        asyncio.run(
-            _notifier(_FakeEvents([_event(1)]), sender, targets=targets, saved=saved).pump_once()
-        )
+    sent = asyncio.run(
+        _notifier(_FakeEvents([_event(1)]), sender, targets=targets, saved=saved).pump_once()
+    )
+    assert sent == 0
     assert saved == []  # kursor NIE przesunięty → następna runda ponowi (at-least-once)
+
+
+def test_a_failing_cursor_save_leaves_the_event_redeliverable_after_restart():
+    """Utrwalenie kursora też bywa niemożliwe (ENOSPC, wolumen stanu zamontowany read-only).
+
+    Wszystkie dotychczasowe sondy kursora ćwiczą awarię WYSYŁKI; awaria samego ZAPISU kursora to
+    druga strona at-least-once i nie ćwiczył jej nikt. Niezmiennik jest taki: zdarzenie może
+    pójść do Teams DRUGI raz, ale nie ma prawa przepaść — po restarcie kursor wraca z dysku, więc
+    runda rusza od miejsca ostatniego UDANEGO zapisu, a nie od stanu z pamięci procesu.
+    """
+    sender = _FakeSender()
+    targets = NotifyTargets(chat_user_id="u1", enable_chat=True)
+    events = _FakeEvents([_event(1), _event(2)])
+
+    def zapis_ktory_pada(_cursor_id: int) -> None:
+        raise OSError("wolumen stanu tylko do odczytu")
+
+    zablokowany = EventNotifier(
+        events, sender, targets=targets, save_cursor=zapis_ktory_pada, cursor=0
+    )
+    with pytest.raises(OSError, match="tylko do odczytu"):
+        asyncio.run(zablokowany.pump_once())
+    assert len(sender.chats) == 1  # pierwsze zdarzenie POSZŁO, ale kursor nie ma jak przeżyć
+
+    po_restarcie = _FakeSender()
+    utrwalone: list[int] = []
+    asyncio.run(
+        EventNotifier(
+            events, po_restarcie, targets=targets, save_cursor=utrwalone.append, cursor=0
+        ).pump_once()
+    )
+
+    assert utrwalone == [1, 2]  # kursor z DYSKU (0) — oba zdarzenia znów w strumieniu
+    assert len(po_restarcie.chats) == 2
 
 
 def test_default_render_includes_key_fields():
@@ -400,3 +451,260 @@ def test_jira_threading_different_issue_starts_new_root():
     assert sender.replies == []
     assert links.get_root("t1", "c1", "jira", "WM-5") == "root-1"
     assert links.get_root("t1", "c1", "jira", "OPS-9") == "root-2"
+
+
+# --- Dead-letter + puls notifiera (ADR 0067 §2) -------------------------------------------------
+
+
+class _FakeDeadLetters:
+    """Atrapa ``DeadLetterStore`` w pamięci — notuje przeniesienia do kwarantanny."""
+
+    def __init__(self) -> None:
+        self.records: list[dict] = []
+
+    def record(self, *, source, event_id, reason, attempts):
+        self.records.append(
+            {"source": source, "event_id": event_id, "reason": reason, "attempts": attempts}
+        )
+
+    def recent(self, limit=200):
+        return list(reversed(self.records))[:limit]
+
+
+def _channel_targets() -> NotifyTargets:
+    return NotifyTargets(team_id="t1", channel_id="c1", enable_channel=True)
+
+
+def test_dead_letter_after_max_attempts_advances_cursor_and_beats():
+    sender = _FakeSender(fail_channel=True)
+    dl = _FakeDeadLetters()
+    beats: list[int] = []
+    saved: list[int] = []
+    notifier = _notifier(
+        _FakeEvents([_event(1)]),
+        sender,
+        targets=_channel_targets(),
+        saved=saved,
+        dead_letters=dl,
+        heartbeat=lambda: beats.append(1),
+        max_attempts=3,
+    )
+    # Rundy 1 i 2: poniżej progu — kursor stoi, brak dead-letter, brak pulsu (sygnał zatoru).
+    for _ in range(2):
+        assert asyncio.run(notifier.pump_once()) == 0
+    assert saved == [] and dl.records == [] and beats == []
+    # Runda 3: próg osiągnięty — zdarzenie do kwarantanny, DOPIERO POTEM kursor rusza, puls bije.
+    assert asyncio.run(notifier.pump_once()) == 1
+    assert [r["event_id"] for r in dl.records] == [1]
+    assert saved == [1]  # kursor przesunięty PO dead-letter (zapis-przed-ruchem)
+    assert beats == [1]  # runda produktywna
+
+
+def test_below_threshold_leaves_cursor_and_does_not_beat():
+    sender = _FakeSender(fail_channel=True)
+    dl = _FakeDeadLetters()
+    beats: list[int] = []
+    saved: list[int] = []
+    notifier = _notifier(
+        _FakeEvents([_event(1)]),
+        sender,
+        targets=_channel_targets(),
+        saved=saved,
+        dead_letters=dl,
+        heartbeat=lambda: beats.append(1),
+        max_attempts=5,
+    )
+    assert asyncio.run(notifier.pump_once()) == 0
+    assert saved == [] and dl.records == [] and beats == []
+
+
+def test_successful_round_beats_and_advances():
+    sender = _FakeSender()  # post_channel zwraca root (sukces)
+    beats: list[int] = []
+    saved: list[int] = []
+    notifier = _notifier(
+        _FakeEvents([_event(1)]),
+        sender,
+        targets=_channel_targets(),
+        saved=saved,
+        dead_letters=_FakeDeadLetters(),
+        heartbeat=lambda: beats.append(1),
+    )
+    assert asyncio.run(notifier.pump_once()) == 1
+    assert saved == [1] and beats == [1]
+
+
+def test_empty_batch_still_beats():
+    beats: list[int] = []
+    notifier = _notifier(
+        _FakeEvents([]),
+        _FakeSender(),
+        targets=_channel_targets(),
+        dead_letters=_FakeDeadLetters(),
+        heartbeat=lambda: beats.append(1),
+    )
+    assert asyncio.run(notifier.pump_once()) == 0
+    assert beats == [1]  # pusta kolejka = zdrowo, puls bije
+
+
+def test_dead_letter_records_source_and_reason():
+    sender = _FakeSender(fail_channel=True)
+    dl = _FakeDeadLetters()
+    notifier = _notifier(
+        _FakeEvents([_event(1)]),
+        sender,
+        targets=_channel_targets(),
+        dead_letters=dl,
+        max_attempts=1,  # pierwsza porażka od razu dead-letteruje
+    )
+    asyncio.run(notifier.pump_once())
+    assert dl.records[0]["source"] == "github"
+    assert "Graph 503" in dl.records[0]["reason"]
+    assert dl.records[0]["attempts"] == 1
+
+
+def test_partial_progress_round_beats_despite_later_retry():
+    """Runda dostarcza zdarzenie 1, a 2 pada poniżej progu → puls MIMO wczesnego wyjścia.
+
+    Regresja review Fazy 0: wczesny ``return`` omijał puls nawet gdy runda RUSZYŁA kursor —
+    healthcheck raportował ``unhealthy`` przy nadrabianiu zaległości mimo realnego postępu
+    (sprzeczne z docstringiem i ADR 0067 §2.2 „delivered ≥1").
+    """
+
+    class _FailSecond(_FakeSender):
+        async def post_channel(self, team_id, channel_id, text) -> str:
+            if "Issue 2" in text:
+                raise RuntimeError("Graph 503")
+            return await super().post_channel(team_id, channel_id, text)
+
+    beats: list[int] = []
+    saved: list[int] = []
+    notifier = _notifier(
+        _FakeEvents([_event(1), _event(2)]),
+        _FailSecond(),
+        targets=_channel_targets(),
+        saved=saved,
+        dead_letters=_FakeDeadLetters(),
+        heartbeat=lambda: beats.append(1),
+        max_attempts=5,
+    )
+    assert asyncio.run(notifier.pump_once()) == 1  # tylko zdarzenie 1 ruszyło kursor
+    assert saved == [1]  # kursor stoi na 1 — zdarzenie 2 ponowi się w następnej rundzie
+    assert beats == [1]  # POSTĘP (dostarczono 1) → puls bije mimo zatoru na zdarzeniu 2
+
+
+def test_dead_letter_recorded_before_cursor_moves():
+    """Kolejność zapis-przed-ruchem: dead-letter TRWAŁY zanim kursor je minie (ADR 0022).
+
+    Sonda KOLEJNOŚCI, nie stanu końcowego: zamiana ``record()`` ↔ ``save_cursor`` przeszłaby test
+    stanu (``test_dead_letter_after_max_attempts_...``), a inwariant at-least-once padłby po cichu.
+    """
+    seq: list[str] = []
+
+    class _SeqDeadLetters(_FakeDeadLetters):
+        def record(self, *, source, event_id, reason, attempts):
+            seq.append("dead_letter")
+            super().record(source=source, event_id=event_id, reason=reason, attempts=attempts)
+
+    notifier = EventNotifier(
+        _FakeEvents([_event(1)]),
+        _FakeSender(fail_channel=True),
+        targets=_channel_targets(),
+        save_cursor=lambda _cid: seq.append("cursor"),
+        dead_letters=_SeqDeadLetters(),
+        max_attempts=1,
+    )
+    asyncio.run(notifier.pump_once())
+    assert seq == ["dead_letter", "cursor"]  # trwałość PRZED przesunięciem kursora
+
+
+def test_cursor_stays_when_dead_letter_record_raises():
+    """Gdy zapis do kwarantanny rzuci, kursor NIE rusza — zdarzenie ponowi się (at-least-once)."""
+    saved: list[int] = []
+
+    class _BrokenDeadLetters(_FakeDeadLetters):
+        def record(self, *, source, event_id, reason, attempts):
+            raise RuntimeError("dysk pełny")
+
+    notifier = EventNotifier(
+        _FakeEvents([_event(1)]),
+        _FakeSender(fail_channel=True),
+        targets=_channel_targets(),
+        save_cursor=saved.append,
+        dead_letters=_BrokenDeadLetters(),
+        max_attempts=1,
+    )
+    with pytest.raises(RuntimeError, match="dysk pełny"):
+        asyncio.run(notifier.pump_once())
+    assert saved == []  # kursor nietknięty gdy kwarantanna zawiodła — brak utraty zdarzenia
+
+
+# --- Pętla ``pump``: awaria rundy nie kładzie notifiera -------------------------
+# ``pump_once`` ma gęste pokrycie; sama PĘTLA nie miała żadnego. To ona decyduje o tym,
+# czy jeden wyjątek gasi most zdarzeń na resztę życia procesu — a to najdroższa awaria
+# tego komponentu: cicha, bo nikt nie dostaje powiadomień o braku powiadomień.
+
+
+def test_pump_survives_a_failing_round_and_keeps_polling():
+    """Wyjątek W RUNDZIE ma być zalogowany i przełknięty — pętla rusza dalej po interwale."""
+    rundy: list[str] = []
+
+    class _NotifierZAwariami(EventNotifier):
+        async def pump_once(self) -> int:
+            rundy.append("runda")
+            if len(rundy) == 1:
+                raise RuntimeError("Graph zwrócił 503")
+            if len(rundy) >= 3:
+                raise asyncio.CancelledError  # sposób na wyjście z nieskończonej pętli
+            return 0
+
+    notifier = _NotifierZAwariami(
+        _FakeEvents([]),
+        _FakeSender(),
+        targets=_channel_targets(),
+        save_cursor=lambda _cid: None,
+        poll_interval=0,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(notifier.pump())
+
+    # Trzy rundy mimo wyjątku w pierwszej: 503 nie zabił mostu.
+    assert len(rundy) == 3
+
+
+def test_pump_waits_the_configured_interval_between_rounds(monkeypatch):
+    """Bez odczekania pętla zjadałaby procesor i zalewała Graph — interwał jest częścią umowy.
+
+    Zegar podmieniamy (``monkeypatch`` przywraca go sam), zamiast czekać naprawdę: test na
+    realnym ``sleep`` byłby wolny i zależny od obciążenia maszyny.
+    """
+    czekania: list[float] = []
+    rundy: list[int] = []
+    prawdziwy_sleep = asyncio.sleep
+
+    async def _zapisz_sleep(delay, *args, **kwargs):
+        czekania.append(delay)
+        return await prawdziwy_sleep(0)
+
+    monkeypatch.setattr(notifier_module.asyncio, "sleep", _zapisz_sleep)
+
+    class _NotifierZLicznikiem(EventNotifier):
+        async def pump_once(self) -> int:
+            rundy.append(1)
+            if len(rundy) >= 2:
+                raise asyncio.CancelledError
+            return 0
+
+    notifier = _NotifierZLicznikiem(
+        _FakeEvents([]),
+        _FakeSender(),
+        targets=_channel_targets(),
+        save_cursor=lambda _cid: None,
+        poll_interval=37,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(notifier.pump())
+
+    assert czekania == [37]

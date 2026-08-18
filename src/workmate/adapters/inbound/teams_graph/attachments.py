@@ -20,22 +20,20 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.document_text import (
-    TEXT_EXTS as _TEXT_EXTS,
+    SUPPORTED_EXTS as _SUPPORTED_EXTS,
 )
 from workmate.adapters.inbound.document_text import (
-    extract_docx,
-    extract_pptx,
-    extract_text,
-    extract_xlsx,
+    extract_text_from_bytes,
 )
+
+# ``AttachmentRef`` jest tu potrzebny W CZASIE WYKONANIA (``FileBytesMaterializer`` składa
+# referencję syntetyczną), więc import jest zwykły, nie pod ``TYPE_CHECKING``.
+from workmate.adapters.inbound.teams_graph.selection import AttachmentRef
 from workmate.core.ports.llm import Attachment
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.teams_graph.poller import GraphChannelClient
-    from workmate.adapters.inbound.teams_graph.selection import (
-        AttachmentRef,
-        ChannelMessage,
-    )
+    from workmate.adapters.inbound.teams_graph.selection import ChannelMessage
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +164,12 @@ class AttachmentMaterializer:
                 f"Załącznika „{ref.name}” nie udało się odczytać: nieobsługiwany typ pliku."
             ), 0
         built, sent = result
+        if built.kind == "text" and not built.text.strip():
+            # Plik czytelny, ale bez tekstu (strona wyłącznie graficzna, pusty dokument).
+            # Bez tej gałęzi model dostawał samą etykietę „[Plik: raport.html]" i nic dalej —
+            # nieodróżnialne od pliku, którego treść po prostu przemilczano. Komenda powłoki
+            # rozróżnia ten stan od dawna; drzwi milczały.
+            return _note(f"Załącznik „{ref.name}” nie zawiera tekstu do odczytania."), 0
         if sent > self._limits.max_bytes:
             return _note(
                 f"Załącznika „{ref.name}” nie udało się odczytać: przekracza limit rozmiaru."
@@ -188,6 +192,12 @@ def _build(
     bajtów). Kolejność: najpierw OBRAZ po ZAWARTOŚCI (nie po rozszerzeniu) — łapie png/jpg/gif/
     webp wklejone inline ORAZ załączone jako plik, niezależnie od nazwy. Dopiero potem plik po
     rozszerzeniu (dokumenty/tekst). Obrazy inline (hosted) mogą być WYŁĄCZNIE obrazem.
+
+    Poza obrazem i PDF-em (jedyne dwa formaty, które Claude API przyjmuje NATYWNIE) o obsłudze
+    rozstrzyga ``SUPPORTED_EXTS`` i wspólny dyspozytor ``extract_text_from_bytes`` — nie własna
+    lista ``if``-ów. Wcześniej były dwie tablice na to samo pytanie i rozjeżdżały się cicho:
+    format dołożony do dyspozytora nie docierał do drzwi, a alias (``.htm``) nie był tu niczym
+    zabezpieczony.
     """
     image = _process_image(data, max_image_edge)
     if image is not None:
@@ -199,15 +209,40 @@ def _build(
     if ext == "pdf":
         pdf = Attachment("document", "application/pdf", ref.name, data_base64=_b64(data))
         return pdf, len(data)
-    if ext == "docx":
-        return Attachment("text", "text/plain", ref.name, text=extract_docx(data)), 0
-    if ext == "xlsx":
-        return Attachment("text", "text/plain", ref.name, text=extract_xlsx(data)), 0
-    if ext == "pptx":
-        return Attachment("text", "text/plain", ref.name, text=extract_pptx(data)), 0
-    if ext in _TEXT_EXTS:
-        return Attachment("text", "text/plain", ref.name, text=extract_text(data)), 0
-    return None
+    if ext not in _SUPPORTED_EXTS:
+        return None
+    return Attachment("text", "text/plain", ref.name, text=extract_text_from_bytes(data, ext)), 0
+
+
+class FileBytesMaterializer:
+    """Port ``FileMaterializer`` (ADR 0064): bajty pliku → blok treści dla modelu.
+
+    Cały mechanizm to ``_build`` — TEN SAM, którym drzwi materializują załącznik użytkownika
+    (ADR 0016). Osobna implementacja rozpoznawania formatów dla ``File(read)`` znaczyłaby, że
+    model i drzwi widzą ten sam plik inaczej; to jest dokładnie ta klasa błędu, której nie widać
+    aż do rozmowy. ``AttachmentRef`` składamy syntetycznie, bo tu nie ma referencji z Graph —
+    plik leży już na dysku, w katalogu roboczym rozmowy.
+    """
+
+    def __init__(self, *, max_image_edge: int = 2048) -> None:
+        self._max_image_edge = max_image_edge
+
+    def materialize(self, name: str, data: bytes) -> tuple[Attachment, int] | None:
+        """Zbuduj załącznik z bajtów; ``None`` gdy formatu nie umiemy podać modelowi.
+
+        Błąd ekstraktora (uszkodzony/zaszyfrowany dokument, brak biblioteki) degraduje TU do
+        ``None``, tak samo jak w ścieżce drzwi. Bez tego wyjątek uciekał kopertą narzędzia —
+        ``DocumentExtractionError`` nie dziedziczy z ``WorkMateError``, a rdzeń woła narzędzie
+        poza ``try`` (nieznany wyjątek = defekt kodu) — więc jeden uszkodzony plik zabijał CAŁĄ
+        turę: użytkownik dostawał „chwilowy błąd", a tura nie trafiała do pamięci. ADR 0064
+        obiecuje wprost „degraduje do notki, nigdy crash".
+        """
+        ref = AttachmentRef(kind="file", name=name, url="")
+        try:
+            return _build(ref, data, max_image_edge=self._max_image_edge)
+        except Exception:
+            logger.exception("Nie udało się zmaterializować pliku %s", name)
+            return None
 
 
 _heif_state: bool | None = None  # None=nie próbowano; True=zarejestrowano; False=brak wtyczki

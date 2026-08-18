@@ -6,9 +6,13 @@ backoff na wyczerpanym limicie (403 + Retry-After), odczyt loginu oraz zapis (is
 
 from __future__ import annotations
 
-import httpx
+from datetime import UTC
 
-from workmate.adapters.outbound.github_api import HttpxGithubClient
+import httpx
+import pytest
+
+from workmate.adapters.outbound.github_api import GithubReadError, HttpxGithubClient
+from workmate.core.errors import WorkMateError
 
 _BASE = "https://api.github.com"
 
@@ -46,7 +50,7 @@ def test_list_issues_follows_link_pagination():
 
 
 def test_list_issues_sends_since_param():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     seen: dict = {}
 
@@ -54,7 +58,7 @@ def test_list_issues_sends_since_param():
         seen["since"] = request.url.params.get("since")
         return httpx.Response(200, json=[])
 
-    _client(handler).list_issues("o", "r", since=datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc))
+    _client(handler).list_issues("o", "r", since=datetime(2026, 7, 15, 10, 0, tzinfo=UTC))
     assert seen["since"] == "2026-07-15T10:00:00Z"
 
 
@@ -127,3 +131,44 @@ def test_create_comment_posts_to_issue():
     result = _client(handler).create_comment("o", "r", 42, "cześć")
     assert seen["path"] == "/repos/o/r/issues/42/comments"
     assert result["html_url"] == "http://gh/c/1"
+
+
+def test_server_error_on_the_read_path_comes_back_as_a_domain_error():
+    """5xx na ODCZYCIE wracał surowym ``httpx.HTTPStatusError`` i kasował całą turę agenta.
+
+    Koperta narzędzia łapie ``WorkMateError`` — dopiero wtedy model dostaje ``{"error": ...}``
+    i może spróbować inaczej. ``_as_write_error`` obejmował wyłącznie zapisy, więc odczyt (a to
+    on jest domyślną drogą) nie miał żadnego opakowania. Wzorzec: ``MyJiraTasksService``.
+    """
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(GithubReadError) as exc:
+        _client(handler).list_issues("o", "r")
+
+    assert isinstance(exc.value, WorkMateError)
+    assert "500" in str(exc.value)
+
+
+def test_timeout_on_the_read_path_comes_back_as_a_domain_error():
+    """Timeout to najczęstsza awaria odczytu i też nie miał opakowania."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("cisza", request=request)
+
+    with pytest.raises(GithubReadError, match="timeout"):
+        _client(handler).list_workflow_runs("o", "r")
+
+
+def test_pagination_ceiling_leaves_a_warning_with_the_resource_name(caplog):
+    """Ucięcie na suficie stron było CICHE — brakujące pozycje wyglądały jak „tyle było"."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers = {"Link": f'<{_BASE}/repos/o/r/issues?page=99>; rel="next"'}
+        return httpx.Response(200, json=[{"number": 1}], headers=headers)
+
+    with caplog.at_level("WARNING"):
+        _client(handler).list_issues("o", "r")
+
+    assert any("/repos/o/r/issues" in rec.getMessage() for rec in caplog.records)

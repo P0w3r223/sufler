@@ -13,9 +13,11 @@ import base64
 import json
 
 import httpx
+import pytest
 
 from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
 from workmate.core.domain.adf import text_to_adf
+from workmate.core.errors import JiraReadError
 
 _BASE = "https://acme.atlassian.net"
 
@@ -65,7 +67,7 @@ def test_search_uses_post_search_jql_with_body():
 
 
 def test_search_omits_expand_when_empty():
-    """"Moje zadania" (ADR 0054) nie potrzebuje changelogu — puste ``expand`` nic nie wysyła."""
+    """ "Moje zadania" (ADR 0054) nie potrzebuje changelogu — puste ``expand`` nic nie wysyła."""
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -164,9 +166,7 @@ def test_search_flattens_adf_description():
             200,
             json={
                 "isLast": True,
-                "issues": [
-                    {"key": "WM-1", "fields": {"description": text_to_adf("Opis w ADF")}}
-                ],
+                "issues": [{"key": "WM-1", "fields": {"description": text_to_adf("Opis w ADF")}}],
             },
         )
 
@@ -194,3 +194,45 @@ def test_myself_warns_when_account_timezone_differs_from_host(caplog):
     _client(handler).authenticated_account()
 
     assert "Pacific/Kiritimati" in caplog.text
+
+
+def test_page_ceiling_leaves_a_warning_with_the_resource_name(caplog):
+    """Ucięcie na suficie stron kursorowych też było CICHE — a Cloud nie podaje ``total``,
+    więc wołający nie ma jak zauważyć, że dostał wycinek."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        token = payload.get("nextPageToken", "0")
+        return httpx.Response(
+            200,
+            json={
+                "issues": [{"key": f"WM-{token}", "fields": {}}],
+                "nextPageToken": f"{int(token) + 1}",
+                "isLast": False,
+            },
+        )
+
+    with caplog.at_level("WARNING"):
+        issues = _client(handler).search_issues("project=WM", max_results=1)
+
+    assert len(issues) == 10  # sufit stron
+    assert any("rest/api/3/search/jql" in rec.getMessage() for rec in caplog.records)
+
+
+def test_auth_error_is_translated_to_a_domain_error_at_the_adapter_boundary():
+    """Bliźniak sondy z Server/DC: także bulk ``POST /search/jql`` jest ODCZYTEM, więc jego błąd
+    transportu ma wyjść jako ``JiraReadError``, a nie surowy ``httpx``."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"errorMessages": ["forbidden"]})
+
+    with pytest.raises(JiraReadError, match="brak dostępu"):
+        _client(handler).search_issues("project=WM")
+
+
+def test_timeout_is_translated_to_a_domain_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("cisza", request=request)
+
+    with pytest.raises(JiraReadError, match="timeout"):
+        _client(handler).get_issue("WM-1")

@@ -1,4 +1,4 @@
-"""Ekstrakcja tekstu z dokumentów (docx/xlsx/pptx/pdf/tekst) — jedno źródło dla adapterów.
+"""Ekstrakcja tekstu z dokumentów (docx/xlsx/pptx/pdf/html/tekst) — jedno źródło dla adapterów.
 
 Powstało z materializera załączników teams-graph (ADR 0016), gdzie te same funkcje bytes→str
 żyły prywatnie. Importer korpusu (W0, ``seed_corpus``) potrzebuje dokładnie tego samego —
@@ -12,13 +12,19 @@ serwer MCP zostają lekkie. Treść dokumentu to DANE — kopiujemy ją wiernie,
 
 from __future__ import annotations
 
+import codecs
 import io
+import re
+import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 
 # Rozszerzenia traktowane jako czysty tekst (dekodowanie UTF-8, bez ekstraktora binarnego).
 TEXT_EXTS = frozenset({"txt", "md", "csv", "log", "json", "xml", "yaml", "yml"})
-# Rozszerzenia dokumentów binarnych z dedykowanym ekstraktorem tekstu.
-BINARY_EXTS = frozenset({"docx", "xlsx", "pptx", "pdf"})
+# Rozszerzenia dokumentów z dedykowanym ekstraktorem tekstu. HTML jest TUTAJ, a nie w
+# ``TEXT_EXTS`` (ADR 0064): zdekodowany jako zwykły tekst oddałby modelowi surowy znacznik —
+# treść utopioną w atrybutach i stylach zamiast tego, co człowiek na tej stronie widzi.
+BINARY_EXTS = frozenset({"docx", "xlsx", "pptx", "pdf", "html", "htm"})
 # Wszystkie rozszerzenia, które importer/materializer umie zamienić na tekst.
 SUPPORTED_EXTS = TEXT_EXTS | BINARY_EXTS
 
@@ -26,6 +32,16 @@ SUPPORTED_EXTS = TEXT_EXTS | BINARY_EXTS
 # turę; importer trzyma go w jednej notatce). Wspólne dla obu konsumentów.
 _MAX_TEXT_CHARS = 200_000
 _MAX_SHEET_ROWS = 2000
+# Sufit WEJŚCIA dla HTML (znaki po dekodowaniu). Osobny od ``_MAX_TEXT_CHARS``, bo znaczniki
+# ważą wielokrotnie więcej niż treść: 4 MB źródła to z zapasem realna zapisana strona, a
+# jednocześnie ułamek sekundy parsowania zamiast dziesiątek sekund na pliku-bombie.
+_MAX_HTML_CHARS = 4_000_000
+# Sufit ROZPAKOWANEJ zawartości pakietu OOXML (.docx/.xlsx/.pptx to ZIP-y). Deklarowane rozmiary
+# czytamy z katalogu archiwum PRZED parsowaniem, bo python-docx/openpyxl/python-pptx materializują
+# części dokumentu w pamięci: kilkusetkilobajtowy załącznik potrafi zadeklarować gigabajty
+# (klasyczna bomba dekompresji), a proces drzwi ginie na OOM, zanim jakikolwiek cap wyjścia
+# zdąży zadziałać. 128 MB mieści z zapasem realny dokument z grafiką, a odrzuca bombę.
+_MAX_ZIP_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 
 
 class DocumentExtractionError(Exception):
@@ -39,40 +55,123 @@ def _cap(text: str) -> str:
     return text
 
 
+class _TextBudget:
+    """Akumulator fragmentów z twardym hamulcem NA AKUMULACJI (nie na gotowym wyniku).
+
+    Bliźniak ``_HtmlTextExtractor._emit``: przycinanie po fakcie znaczy, że cała treść jest
+    najpierw zmaterializowana w pamięci, a proces drzwi w tym czasie stoi. Tu dochodzi drugi
+    powód — dokumenty OOXML są ZIP-ami, więc „gotowy string" bywa o rzędy wielkości większy od
+    pliku, który go wyprodukował. Wołający sprawdza ``full`` i przerywa PĘTLĘ, żeby nie płacić
+    nawet za wytworzenie fragmentów, których i tak nie przyjmiemy.
+    """
+
+    def __init__(self, limit: int = _MAX_TEXT_CHARS) -> None:
+        self._parts: list[str] = []
+        self._collected = 0
+        self._limit = limit
+        self._truncated = False
+
+    @property
+    def full(self) -> bool:
+        """Czy budżet jest wyczerpany — sygnał do przerwania pętli u wołającego."""
+        return self._collected >= self._limit
+
+    def add(self, chunk: str) -> None:
+        """Dopisz fragment, docinając go do reszty budżetu; wyczerpanie odnotuj jako ucięcie."""
+        if self.full:
+            self._truncated = True
+            return
+        room = self._limit - self._collected
+        if len(chunk) > room:
+            chunk = chunk[:room]
+        self._parts.append(chunk)
+        self._collected += len(chunk)
+        # Znacznik stawia WYCZERPANIE budżetu, nie samo docięcie fragmentu. Fragment mieszczący
+        # się co do znaku zamykał budżet bez znacznika, a wołający przerywał wtedy pętlę na
+        # ``full`` i nigdy nie wracał tu po drugi ``add`` — reszta dokumentu znikała po cichu.
+        # Fałszywy alarm (dokument równy budżetowi co do znaku) jest tu tańszy niż cisza.
+        self._truncated = self._truncated or self.full
+
+    def text(self) -> str:
+        """Złóż fragmenty (jak dotąd: pojedynczy ``\\n``) i dopisz jawną notkę o ucięciu."""
+        joined = "\n".join(self._parts).strip()
+        return f"{joined}\n… (obcięto)" if self._truncated else joined
+
+
+def _reject_zip_bomb(data: bytes, ext: str) -> None:
+    """Odrzuć pakiet OOXML, którego SUMA zadeklarowanych rozmiarów przekracza sufit.
+
+    Czytamy sam katalog archiwum (``ZipInfo.file_size``) — bez dekompresji jednego bajtu — więc
+    koszt sprawdzenia jest stały, a decyzja zapada PRZED oddaniem pliku bibliotece parsującej.
+    Uszkodzony/nie-ZIP-owy plik dostaje ten sam typ błędu co reszta ekstrakcji, żeby konsument
+    nie musiał rozróżniać ``BadZipFile`` od ``DocumentExtractionError``.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            declared = sum(info.file_size for info in archive.infolist())
+    except zipfile.BadZipFile as exc:
+        raise DocumentExtractionError(f"uszkodzony pakiet .{ext}: {exc}") from exc
+    if declared > _MAX_ZIP_UNCOMPRESSED_BYTES:
+        raise DocumentExtractionError(
+            f"pakiet .{ext} deklaruje {declared} B po rozpakowaniu — ponad sufit "
+            f"{_MAX_ZIP_UNCOMPRESSED_BYTES} B (odrzucone bez parsowania)"
+        )
+
+
 def extract_docx(data: bytes) -> str:
     """Wyciągnij tekst z .docx: akapity + komórki tabel (``python-docx``, import leniwy)."""
     from docx import Document
 
+    _reject_zip_bomb(data, "docx")
     doc = Document(io.BytesIO(data))
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    budget = _TextBudget()
+    for paragraph in doc.paragraphs:
+        if budget.full:
+            break
+        if paragraph.text.strip():
+            budget.add(paragraph.text)
     for table in doc.tables:
+        if budget.full:
+            break
         for row in table.rows:
+            if budget.full:
+                break
             cells = [cell.text.strip() for cell in row.cells]
             if any(cells):
-                parts.append(" | ".join(cells))
-    return _cap("\n".join(parts).strip())
+                budget.add(" | ".join(cells))
+    return budget.text()
 
 
 def extract_xlsx(data: bytes) -> str:
-    """Wyciągnij tekst z .xlsx: per arkusz nagłówek + wiersze (``openpyxl``, import leniwy)."""
+    """Wyciągnij tekst z .xlsx: per arkusz nagłówek + wiersze (``openpyxl``, import leniwy).
+
+    ``_MAX_SHEET_ROWS`` ogranicza wiersze W ARKUSZU, a nie liczbę arkuszy — sam nie jest więc
+    capem WYJŚCIA (skoroszyt z tysiącem arkuszy mieści się w nim bez trudu). Sufit całości
+    pilnuje ``_TextBudget``, jak w pozostałych ekstraktorach.
+    """
     from openpyxl import load_workbook
 
+    _reject_zip_bomb(data, "xlsx")
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
-        parts: list[str] = []
+        budget = _TextBudget()
         for sheet in workbook.worksheets:
-            parts.append(f"# Arkusz: {sheet.title}")
+            if budget.full:
+                break
+            budget.add(f"# Arkusz: {sheet.title}")
             rows = 0
             for row in sheet.iter_rows(values_only=True):
+                if budget.full:
+                    break
                 cells = [str(value) for value in row if value is not None]
                 if not cells:
                     continue
-                parts.append(" | ".join(cells))
+                budget.add(" | ".join(cells))
                 rows += 1
                 if rows >= _MAX_SHEET_ROWS:
-                    parts.append("… (obcięto wiersze)")
+                    budget.add("… (obcięto wiersze)")
                     break
-        return "\n".join(parts).strip()
+        return budget.text()
     finally:
         workbook.close()
 
@@ -81,16 +180,21 @@ def extract_pptx(data: bytes) -> str:
     """Wyciągnij tekst z .pptx: per slajd tekst z kształtów (``python-pptx``, import leniwy)."""
     from pptx import Presentation
 
+    _reject_zip_bomb(data, "pptx")
     prs = Presentation(io.BytesIO(data))
-    parts: list[str] = []
+    budget = _TextBudget()
     for index, slide in enumerate(prs.slides, start=1):
-        parts.append(f"# Slajd {index}")
+        if budget.full:
+            break
+        budget.add(f"# Slajd {index}")
         for shape in slide.shapes:
+            if budget.full:
+                break
             if shape.has_text_frame:
                 text = shape.text_frame.text.strip()
                 if text:
-                    parts.append(text)
-    return _cap("\n".join(parts).strip())
+                    budget.add(text)
+    return budget.text()
 
 
 def extract_pdf(data: bytes) -> str:
@@ -102,18 +206,19 @@ def extract_pdf(data: bytes) -> str:
     from pypdf import PdfReader
     from pypdf.errors import PyPdfError
 
+    budget = _TextBudget()
     try:
         reader = PdfReader(io.BytesIO(data))
-        parts: list[str] = []
         for index, page in enumerate(reader.pages, start=1):
+            if budget.full:
+                break
             text = (page.extract_text() or "").strip()
             if text:
-                parts.append(f"# Strona {index}")
-                parts.append(text)
-        joined = "\n".join(parts).strip()
+                budget.add(f"# Strona {index}")
+                budget.add(text)
     except PyPdfError as exc:
         raise DocumentExtractionError(f"nieczytelny PDF: {exc}") from exc
-    return _cap(joined)
+    return budget.text()
 
 
 def extract_text(data: bytes) -> str:
@@ -121,11 +226,215 @@ def extract_text(data: bytes) -> str:
     return _cap(data.decode("utf-8", errors="replace").strip())
 
 
+# Znaczniki, których ZAWARTOŚĆ nie jest treścią strony — kod, nie tekst. ``svg`` tu NIE należy:
+# jego ``<text>`` bywa jedyną etykietą wykresu wyeksportowanego do HTML, a dane ścieżek i tak
+# siedzą w atrybutach, więc pominięcie poddrzewa kosztowałoby widoczną treść i nie oszczędzało nic.
+_HTML_SKIP_TAGS = frozenset({"script", "style", "noscript", "template"})
+# Znaczniki blokowe — kończą linię, żeby akapity i wiersze tabel nie skleiły się w jeden ciąg.
+# ``td``/``th`` NIE są tu celowo: komórki jednego wiersza łączymy ``" | "`` (jak ``extract_docx``),
+# bo rozbicie ich na osobne linie gubi przynależność kwoty do pozycji — a to na fakturze czy
+# wyeksportowanym raporcie jest całą treścią.
+_HTML_BLOCK_TAGS = frozenset(
+    {
+        "p",
+        "div",
+        "br",
+        "hr",
+        "li",
+        "tr",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "nav",
+        "aside",
+        "main",
+        "table",
+        "ul",
+        "ol",
+        "dl",
+        "dt",
+        "dd",
+        "blockquote",
+        "pre",
+        "figure",
+        "figcaption",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    }
+)
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Zbiera widoczny tekst strony; treść to DANE — przepisujemy ją, nie interpretujemy.
+
+    Sedno anty-maskowania (ADR 0064): strona, której ~95% powierzchni zajmuje obraz, ma realną
+    treść w resztce. Parser tekstowy jest na to z natury odporny — grafiki nie widzi wcale —
+    ale gubiłby to, co obraz NIESIE. Dlatego ``alt`` wchodzi do tekstu, a obrazy bez opisu są
+    LICZONE i raportowane jedną linią na końcu: model dowiaduje się, że strona jest graficzna,
+    nie dostając setki pustych znaczników.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._collected = 0  # długość zebranego tekstu — twardy hamulec pamięci
+        # STOS otwartych znaczników pomijanych, nie licznik: przy niedomkniętym ``<template>``
+        # licznik zostawał > 0 do końca dokumentu i wyciszał CAŁĄ dalszą treść — pięć bajtów
+        # na początku pliku ukrywało stronę przed modelem, a objawem była cisza. Stos pozwala
+        # to wykryć (``unclosed``) i powiedzieć o tym wprost.
+        self._skip_stack: list[str] = []
+        self._images_without_alt = 0
+        self._cells_in_row = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _HTML_SKIP_TAGS:
+            self._skip_stack.append(tag)
+            return
+        if self._skip_stack:
+            return
+        if tag == "img":
+            alt = (dict(attrs).get("alt") or "").strip()
+            if alt:
+                self._emit(f"\n[obraz: {alt}]\n")
+            else:
+                self._images_without_alt += 1
+            return
+        if tag == "tr":
+            self._cells_in_row = 0
+            self._emit("\n")
+            return
+        if tag in ("td", "th"):
+            # Separator bez wiodącej spacji: tekst komórki kończy się już spacją z ``handle_data``,
+            # więc " | " dawałoby podwójną. Wynik: „Pozycja A | 1200 zł", jak w ``extract_docx``.
+            if self._cells_in_row:
+                self._emit("| ")
+            self._cells_in_row += 1
+            return
+        if tag in _HTML_BLOCK_TAGS:
+            self._emit("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _HTML_SKIP_TAGS:
+            if tag in self._skip_stack:  # zdejmij do NAJBLIŻSZEGO pasującego otwarcia
+                while self._skip_stack and self._skip_stack.pop() != tag:
+                    pass
+            return
+        if self._skip_stack:
+            return
+        if tag in _HTML_BLOCK_TAGS:
+            self._emit("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_stack:
+            return
+        collapsed = " ".join(data.split())
+        if collapsed:
+            self._emit(collapsed + " ")
+
+    def _emit(self, chunk: str) -> None:
+        """Dopisz fragment, dopóki mieścimy się w budżecie tekstu.
+
+        Hamulec stoi TU, a nie na gotowym wyniku: przycinanie po fakcie oznaczało, że cała
+        strona jest najpierw zmaterializowana w pamięci (zmierzone: 50 MB wejścia ≈ 1 GB RSS),
+        a proces drzwi w tym czasie stoi. Tak samo pilnuje granicy ``extract_xlsx`` — w pętli,
+        nie po niej.
+        """
+        if self._collected >= _MAX_TEXT_CHARS:
+            return
+        self._parts.append(chunk)
+        self._collected += len(chunk)
+
+    def unclosed(self) -> str | None:
+        """Nazwa niedomkniętego znacznika pomijanego (albo ``None``) — patrz ``__init__``."""
+        return self._skip_stack[0] if self._skip_stack else None
+
+    def result(self) -> str:
+        """Złóż fragmenty w linie + dopisz podsumowanie obrazów bez opisu.
+
+        Puste linie znikają: znacznik blokowy zamyka i otwiera linię, więc ``</p><p>`` dałoby
+        pustkę przy każdym akapicie, a tabela podwoiłaby swoją długość. Tak samo składają tekst
+        pozostałe ekstraktory (docx/pptx łączą niepuste akapity pojedynczym ``\\n``) — jedna
+        konwencja dla wszystkich formatów.
+        """
+        text = "".join(self._parts)
+        lines = [line.strip() for line in text.split("\n")]
+        joined = "\n".join(line for line in lines if line)
+        if self._images_without_alt:
+            joined += f"\n\n[{self._images_without_alt} obraz(ów) bez opisu tekstowego]"
+        return joined.strip()
+
+
+def _decode_html(data: bytes) -> str:
+    """Zdekoduj stronę, ustalając kodowanie: BOM → deklaracja ``charset`` → UTF-8 → CP1250.
+
+    W odróżnieniu od zwykłego pliku tekstowego HTML NIESIE swoje kodowanie w paśmie, więc
+    zgadywanie UTF-8 jest tu stratą, której da się uniknąć: „zapisz jako stronę WWW" z Worda
+    czy Excela w polskiej firmie produkuje rutynowo ``windows-1250``, a wtedy każda polska
+    litera wracała jako znak zastępczy — i to nie tylko do kontekstu modelu, ale przez importer
+    korpusu również do trwałej notatki.
+    """
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig", errors="replace")
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return data.decode("utf-16", errors="replace")
+    # Deklaracja siedzi w ``<head>``; szukamy w bezpiecznie ograniczonym prefiksie.
+    declared = re.search(rb"""charset\s*=\s*["']?\s*([a-zA-Z0-9_-]+)""", data[:2048], re.IGNORECASE)
+    if declared is not None:
+        try:
+            return data.decode(declared.group(1).decode("ascii", "replace"), errors="replace")
+        except LookupError:
+            pass  # nieznana nazwa kodowania → lecimy dalej, jak bez deklaracji
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp1250", errors="replace")
+
+
+def extract_html(data: bytes) -> str:
+    """Wyciągnij widoczny tekst ze strony HTML (``html.parser`` ze stdlib — bez zależności).
+
+    Nie renderujemy i nie liczymy powierzchni — o „maskowaniu" rozstrzyga tu sam fakt, że
+    ekstraktor czyta strukturę, a nie wygląd: tekst zajmujący 5% ekranu waży tyle samo, co
+    baner na całą stronę. Uzupełnia to budżet materializacji, który pilnuje, żeby bajty obrazu
+    nie wyparły tego tekstu z kontekstu. Granica tej odporności jest warta nazwania: tekst
+    ukryty stylem (``display:none``, zerowy rozmiar) też wraca — struktura o tym nie wie —
+    więc treść zostaje DANYMI i nigdy nie jest instrukcją, a nie „zweryfikowaną treścią strony".
+
+    Wejście jest twardo ograniczone (``_MAX_HTML_CHARS``): parsowanie jest liniowe, ale
+    kilkudziesięciomegabajtowy plik generuje się jedną linijką i potrafiłby zająć proces drzwi
+    na dziesiątki sekund. Ucięcie jest jawne — model widzi notkę, nie ciszę.
+    """
+    text = _decode_html(data)
+    truncated_input = len(text) > _MAX_HTML_CHARS
+    parser = _HtmlTextExtractor()
+    parser.feed(text[:_MAX_HTML_CHARS])
+    parser.close()
+    # Cap NAJPIERW, notki POTEM: odwrotna kolejność ucinała właśnie tę notkę, która tłumaczy
+    # ucięcie — im dłuższa strona, tym pewniej ginął komunikat o niej.
+    out = _cap(parser.result())
+    unclosed = parser.unclosed()
+    if unclosed is not None:
+        # Bez tej linii niedomknięty ``<script>`` znaczyłby „strona nie ma treści" — a to
+        # nieodróżnialne od strony faktycznie pustej. Cisza jest tu najgorszym wyjściem.
+        out += f"\n\n[uwaga: niedomknięty <{unclosed}> — dalsza treść strony została pominięta]"
+    if truncated_input:
+        out += "\n\n[uwaga: strona była za duża — przetworzono jej początek]"
+    return out.strip()
+
+
 _BINARY_EXTRACTORS = {
     "docx": extract_docx,
     "xlsx": extract_xlsx,
     "pptx": extract_pptx,
     "pdf": extract_pdf,
+    "html": extract_html,
+    "htm": extract_html,
 }
 
 

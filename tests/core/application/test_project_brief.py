@@ -81,11 +81,11 @@ def test_brief_respects_notes_limit(sample_notes):
     assert len(brief.recent_notes) == 1
 
 
-def test_brief_project_without_notes_has_empty_list(sample_notes):
-    # 'workmate' w sample_notes ma jedną notatkę; usuńmy notatki, zostawiając rejestr/status.
-    service = ProjectBriefService(
-        NotesService(FakeNotesRepository([])), _projects_service([])
-    )
+def test_brief_project_without_notes_has_empty_list():
+    # Projekt jest w rejestrze i ma status, ale bazę notatek zostawiamy PUSTĄ. Fixture
+    # ``sample_notes`` był tu wcześniej w sygnaturze i nieużywany — sugerował, że test coś
+    # z tych notatek bierze, podczas gdy budował repozytorium od zera.
+    service = ProjectBriefService(NotesService(FakeNotesRepository([])), _projects_service([]))
 
     brief = service.brief("workmate")
 
