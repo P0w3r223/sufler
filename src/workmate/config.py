@@ -1222,6 +1222,22 @@ class WorkspaceSettings:
                 f"WORKMATE_WORKSPACE_DIR nie może leżeć wewnątrz katalogu danych ({resolved_data}) "
                 f"— katalog roboczy to scratch poza bazą wiedzy, jest: {resolved_ws}."
             )
+        # DRUGI kierunek, dopisany razem z bezwarunkowym sprzątaczem TTL. Dopóki sprzątanie
+        # wisiało na bramce narzędzi, wskazanie tu korzenia systemu, katalogu domowego albo
+        # wolumenu stanu było bezobjawową pomyłką konfiguracji. Od chwili, w której sprzątacz
+        # biegnie przy KAŻDYM starcie drzwi, ta sama pomyłka kasuje wszystko na drugim poziomie
+        # tej ścieżki, czego nikt nie tknął od `retention_days`. Kierunek pomyłki jest
+        # nieodwracalny, więc bramka stoi tam, gdzie wartość jest jeszcze konfiguracją.
+        if resolved_ws in (Path(resolved_ws.anchor), Path.home().resolve()):
+            raise ValueError(
+                "WORKMATE_WORKSPACE_DIR nie może być korzeniem systemu ani katalogiem domowym "
+                f"— sprzątanie TTL kasuje w nim katalogi rozmów, jest: {resolved_ws}."
+            )
+        if resolved_ws in resolved_data.parents:
+            raise ValueError(
+                f"WORKMATE_WORKSPACE_DIR ({resolved_ws}) zawiera katalog danych ({resolved_data}) "
+                "— sprzątanie TTL sięgnęłoby bazy wiedzy."
+            )
         dangerous = set(self.allowed_ext) & _DANGEROUS_WORKSPACE_EXT
         if dangerous:
             raise ValueError(

@@ -80,6 +80,34 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 - Prompt sędziego prosi o uzasadnienie **własnymi słowami** zamiast cytatu z notatki: to zdanie
   trafia do dziennika czytanego bez bramki odczytu z ADR 0062. Higiena, nie granica — granicą
   jest redakcja po stronie zapisu.
+- **Sprzątacz brudnopisu przestaje wisieć na bramce NARZĘDZI.** `prune_stale` (TTL 30 dni,
+  ADR 0018) biegł wyłącznie przy `WORKMATE_ENABLE_WORKSPACE`, czyli przy fladze decydującej
+  o *narzędziach* katalogu roboczego. W układzie docelowym („powłoka ON, workspace OFF") do
+  brudnopisu pisze WYKONAWCA, a ta flaga jest zamknięta — więc sprzątacz nie zadziałał ani razu
+  (zmierzone na produkcji 2026-08-18: katalogi rozmów z 11–12.08 leżały nietknięte). Warunkiem
+  jest teraz ISTNIENIE katalogu: retencja jest własnością danych, nie tego, które narzędzia są
+  włączone. Zostaje ograniczenie, którego ta zmiana nie zdejmuje — sprzątanie pada raz, przy
+  starcie drzwi.
+
+  Bezwarunkowe sprzątanie zmieniło `WORKMATE_WORKSPACE_DIR` z wartości bezczynnej w wartość
+  NISZCZĄCĄ, więc `WorkspaceSettings.validate` dostaje drugi kierunek bramki: korzeń systemu,
+  katalog domowy i ścieżka ZAWIERAJĄCA katalog danych są od teraz twardym błędem startu. Dotąd
+  pilnowaliśmy tylko, żeby brudnopis nie leżał wewnątrz bazy wiedzy.
+
+  `ScopeWorkspace.prepare` odświeża czas modyfikacji katalogu rozmowy. Sprzątacz mierzy aktywność
+  najnowszym mtime, a w układzie docelowym rozmowa potrafi być żywa i niczego nie zapisywać
+  (`cat`, `ls`, `workmate-search` mtime nie ruszają) — bez tego rozmowa używana wyłącznie do
+  czytania traciłaby brudnopis po 30 dniach.
+
+### Dodane
+
+- **Sonda wycieku nagłówka `Authorization`** (`tests/security/test_http_header_leakage.py`).
+  Ostatni punkt Fazy 0 planu stojący dotąd „na słowo grepa": czy transporty Graph i Jira nie
+  wciągają tokenu do komunikatu wyjątku, jego `repr` albo tracebacku. Grep tego nie rozstrzygał —
+  nikt tego nagłówka nie loguje wprost, pytanie brzmiało, czy zrobi to za nas biblioteka. Sonda
+  idzie prawdziwą ścieżką transportu (błąd połączenia, timeout, `raise_for_status`, wariant
+  asynchroniczny) i sama umie zawieść — każdy przebieg najpierw potwierdza, że żądanie NIOSŁO
+  token, więc sonda nie myli „nie wyciekło" z „nie było czego". **Wynik: wycieku nie ma.**
 
 ## [1.11.0] — 2026-08-18
 
