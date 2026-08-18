@@ -10,19 +10,27 @@ tu wiedzą.
 
 Reguła sprzątania rozróżnia dwa rodzaje niepowodzenia, bo mają przeciwne właściwe zachowania:
 
-- **odrzucenie trwałe** — rozszerzenie spoza białej listy, plik ponad limit, ponad limit liczby,
-  a także wysyłka odrzucona trwale (``PermanentDeliveryError``: 4xx z Graph, zniknięty root
-  wątku). Plik ZNIKA ze skrzynki wraz z podaniem powodu. Zostawienie go zrobiłoby zatrutą
+- **odrzucenie trwałe** — rozszerzenie spoza białej listy, plik ponad limit, ponad limit liczby
+  (ale tylko dla plików ŚWIEŻYCH: nadmiar pozycji już ponawianych jest odkładany, nie kasowany —
+  limit liczby jest granicą jednej tury, nie werdyktem o treści), a także wysyłka odrzucona
+  trwale (``PermanentDeliveryError``: 4xx z Graph, zniknięty root wątku).
+  Plik ZNIKA ze skrzynki wraz z podaniem powodu. Zostawienie go zrobiłoby zatrutą
   wiadomość: ten sam komunikat doklejałby się do każdej kolejnej odpowiedzi w tej rozmowie, aż
   ktoś ręcznie wejdzie na wolumen. Nic się przy tym nie traci — skrzynka jest katalogiem
   PRZESYŁKOWYM, a materiał źródłowy leży w katalogu roboczym piętro wyżej;
 - **awaria przejściowa** — sieć, 5xx, limit żądań. Plik ZOSTAJE, więc następna tura ponowi.
-  Tu ubytek byłby realny: treść powstała, a odbiorca jej nie zobaczył. **Z sufitem prób**:
-  po trzeciej nieudanej próbie pozycja przechodzi w odrzucenie trwałe. Ta reguła świadomie łamie
-  zdanie powyżej, bo bez sufitu plik trwale niewysyłalny kosztowałby dwa żądania Graph w KAŻDEJ
-  turze tej rozmowy, bez końca, doklejając „spróbuję ponownie" do każdej odpowiedzi. Uzasadnienie
-  „materiał źródłowy leży piętro wyżej" jest przy tym założeniem o zachowaniu modelu, nie
-  własnością systemu — nikt nie wymusza, że kopia została w katalogu roboczym.
+  Tu ubytek byłby realny: treść powstała, a odbiorca jej nie zobaczył. **Z dwoma sufitami**:
+  po trzeciej nieudanej PRÓBIE oraz po dziesiątej TURZE przetrzymywania pozycja przechodzi
+  w odrzucenie trwałe. Ta reguła świadomie łamie zdanie powyżej, bo bez sufitu plik trwale
+  niewysyłalny kosztowałby dwa żądania Graph w KAŻDEJ turze tej rozmowy, bez końca, doklejając
+  „spróbuję ponownie" do każdej odpowiedzi. Uzasadnienie „materiał źródłowy leży piętro wyżej"
+  jest przy tym założeniem o zachowaniu modelu, nie własnością systemu — nikt nie wymusza,
+  że kopia została w katalogu roboczym.
+
+  Sufity są DWA, bo pozycja może zostać zatrzymana, nie zużywając próby: wypada za okno tury
+  (limit liczby plików) albo za budżet czasu, a wtedy nikt jej nie wysyłał i naliczenie próby
+  byłoby kłamstwem. Sam sufit prób zostawiał więc taką pozycję na wolumenie w nieskończoność —
+  patrz ``_MAX_CARRIED_TURNS``.
 
 Odczyt z dysku dotyka WYŁĄCZNIE pozycji, które przeszły kontrolę metadanych — zawartość skrzynki
 dyktuje model z powłoką, a proces drzwi obsługuje wszystkie kanały naraz.
@@ -38,6 +46,7 @@ dopiero po powrocie z respondera. Odwrócenie tego wymaga zmiany kontraktu ``Res
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -49,6 +58,7 @@ from workmate.core.ports.document import FILE_REPLY_FORMATS
 from workmate.core.ports.outbox import (
     Deliverable,
     OutboxEntry,
+    OutboxReadError,
     OutboxRepository,
     PermanentDeliveryError,
 )
@@ -68,7 +78,41 @@ _MAX_NAMED_REJECTIONS = 3
 # na koniec okna, ale bez sufitu i tak wracałyby przy każdej turze.
 _MAX_SEND_ATTEMPTS = 3
 
+# Po ilu TURACH przetrzymywania pozycja przechodzi w odrzucenie trwałe — niezależnie od tego,
+# czy kiedykolwiek doszło do próby wysyłki.
+#
+# To osobny licznik od ``_MAX_SEND_ATTEMPTS``, bo mierzy inną rzecz i sam sufit prób tej dziury
+# nie zamyka: próbę zużywa WYŁĄCZNIE pozycja, która weszła do okna tury. ``_okno_tury`` rezerwuje
+# ponowieniom najwyżej ``limit - 1`` miejsc, dopóki jest co świeżego wysłać, więc przy
+# ``|ours| >= limit`` co najmniej jedna ponawiana za każdym razem wypada za okno i nie zużywa
+# NICZEGO. Przy utrzymującej się awarii wysyłki napływ (jeden plik na turę) przewyższa wtedy
+# drenaż i zbiór rośnie bez końca — na wolumenie brudnopisu WSPÓLNYM dla wszystkich rozmów.
+# To samo dotyczy pozycji odkładanych budżetem czasu, którym sufit prób świadomie nie nalicza.
+#
+# Wyżej niż sufit prób, żeby w zwykłej ścieżce (pozycja wchodzi do okna i zawodzi) to dalej ten
+# sufit orzekał i dawał swój dokładniejszy powód. Ten działa jako ostatnia zapora dla pozycji,
+# która nigdy nie dostała szansy.
+_MAX_CARRIED_TURNS = 10
+
 logger = logging.getLogger(__name__)
+
+
+def _nazwa_na_drucie(item: Deliverable) -> str:
+    """Nazwa wysyłkowa ``<slug>-<skrót treści>.<ext>``; ``WriteError`` gdy nazwa jest nie do sluga.
+
+    Sam slug NIE wystarcza, bo dostawa wgrywa plik na dysk KANAŁU — wspólny dla wszystkich wątków
+    — a upload jest nadpisujący-po-ścieżce (ADR 0026). ``outputs/raport.md`` z wątku B nadpisywał
+    plik wątku A, więc załącznik wiszący pod wiadomością A zaczynał serwować dokument z rozmowy B:
+    naraz utrata treści i ujawnienie jej między wątkami.
+
+    Sufiks to 8 znaków ``sha256`` TREŚCI, dokładnie jak w ``tools._safe_doc_name`` (jeden wzorzec
+    dla obu dróg załącznika). Skrót treści, a nie losowość ani czas, bo ponowienie po awarii
+    przejściowej wysyła TE SAME bajty i ma trafić w tę samą ścieżkę — inaczej każda nieudana próba
+    zostawiałaby na dysku kanału kolejną kopię.
+    """
+    slug = safe_filename(item.name, allowed_ext=_ALLOWED_EXT)
+    stem, _, ext = slug.rpartition(".")
+    return f"{stem}-{hashlib.sha256(item.content).hexdigest()[:8]}.{ext}"
 
 
 def _okno_tury(
@@ -106,6 +150,22 @@ def _okno_tury(
 
 
 @dataclass(frozen=True)
+class _Niepowodzenie:
+    """Dlaczego pozycja nie pojechała: czy trwale, z jakim powodem i NA KTÓRYM kroku.
+
+    ``krok`` (bezokolicznik, „odczytać" albo „wysłać") istnieje wyłącznie dla komunikatu
+    sufitu prób. Pozycja niewysłana i pozycja nieprzeczytana schodzą tą samą gałęzią —
+    reguła sprzątania jest dla nich wspólna i słusznie — ale zdanie „nie udało się wysłać
+    po 3 próbach" o pliku, którego ani razu nie dało się otworzyć, kieruje szukającego
+    w stronę kanału zamiast wolumenu. To jedyna informacja, jaką dostaje człowiek.
+    """
+
+    trwale: bool
+    powod: str
+    krok: str
+
+
+@dataclass(frozen=True)
 class OutboxLimits:
     """Granice jednej tury: rozmiar pliku, liczba plików i budżet czasu na całą dostawę."""
 
@@ -116,7 +176,12 @@ class OutboxLimits:
 
 @dataclass(frozen=True)
 class DeliveryReport:
-    """Co poszło, czego nie i dlaczego. ``rejected``/``failed`` niosą pary (nazwa, powód)."""
+    """Co poszło, czego nie i dlaczego. ``rejected``/``failed`` niosą pary (nazwa, powód).
+
+    ``delivered`` niesie nazwy NA DRUCIE (ze skrótem treści) — te, które rozmówca widzi pod
+    wiadomością. Pozostałe trzy pola niosą nazwy ŹRÓDŁOWE: pliki zostały w skrzynce albo z niej
+    zniknęły, więc nazwa wysyłkowa nigdy nie powstała i nie ma jej gdzie zobaczyć.
+    """
 
     delivered: tuple[str, ...] = ()
     rejected: tuple[tuple[str, str], ...] = ()
@@ -171,6 +236,11 @@ class OutboxDelivery:
         # i sufitem, po którym pozycja przechodzi w odrzucenie trwałe. Pamięć procesu wystarcza:
         # stan ponawiania (``_ours``) i tak nie przeżywa restartu, więc czasy życia się pokrywają.
         self._attempts: dict[str, dict[str, int]] = {}
+        # Ile TUR trzymamy pozycję, licząc także te, w których nie doszło do próby wysyłki
+        # (wypadła za okno przez limit liczby albo za budżet czasu). Patrz ``_MAX_CARRIED_TURNS``:
+        # bez tego pozycja głodzona przez rezerwację okna nie zużywała niczego i zostawała na
+        # wolumenie w nieskończoność. Ten sam czas życia co ``_ours`` — pamięć procesu wystarcza.
+        self._carried: dict[str, dict[str, int]] = {}
         # Zegar wstrzykiwany jak w responderze — testy mierzą budżet bez czekania realnego czasu.
         # MONOTONICZNY, bo mierzymy upływ, a nie porę: przestawienie zegara systemowego w środku
         # dostawy nie ma prawa jej urwać ani przedłużyć.
@@ -198,7 +268,9 @@ class OutboxDelivery:
 
         Wyjątek z ``send`` jest ŁAPANY i zamieniany w pozycję raportu: dostawa jest dodatkiem
         do tury, która już się udała, więc jej awaria nie może zabrać rozmówcy odpowiedzi
-        tekstowej. Błąd odczytu samej skrzynki propaguje — to defekt montażu, nie treści.
+        tekstowej. Tak samo ``OutboxReadError`` — pozycji nie da się przeczytać, ale jest, więc
+        ma trafić do raportu (i, przy powodzie przejściowym, zostać do ponowienia), a nie zniknąć
+        po cichu. Wyjątek z WYPISU skrzynki propaguje: to defekt montażu, nie treści.
         """
         if dirpath not in self._at_start:
             # FAIL-CLOSED. Bez migawki nie umiemy odróżnić pliku od modelu tej rozmowy od
@@ -225,7 +297,15 @@ class OutboxDelivery:
                 self._repo.discard(dirpath, entry.name)
         entries = [e for e in entries if e not in foreign]
         if not entries:
+            # Skrzynka pusta = nie ma czego przetrzymywać. Zdejmujemy TU wszystkie trzy stany
+            # rozmowy, bo zawężanie ``_attempts``/``_carried`` do zatrzymanych leży za tym
+            # powrotem: pozycje znikające POZA dostawą (sprzątanie TTL, ``rm`` z powłoki modelu)
+            # zostawiały wiek i próby na zawsze, a przeterminowany ``carried=9`` zabijał świeży
+            # plik przy pierwszym odłożeniu — komunikatem o dziesięciu turach dla pliku, który
+            # istnieje jedną.
             self._ours.pop(dirpath, None)
+            self._attempts.pop(dirpath, None)
+            self._carried.pop(dirpath, None)
             return DeliveryReport()
 
         delivered: list[str] = []
@@ -235,6 +315,14 @@ class OutboxDelivery:
 
         kolejnosc = _okno_tury(entries, ours, self._limits.max_files_per_turn)
         for entry in kolejnosc[self._limits.max_files_per_turn :]:
+            if entry.name in ours:
+                # Pozycja ZOSTAWIONA przez nas po awarii przejściowej (albo odłożona budżetem).
+                # Limit liczby plików jest granicą JEDNEJ tury, nie werdyktem o treści, więc
+                # nadmiar ponawianych ODKŁADAMY — kasowanie łamałoby regułę z docstringu modułu
+                # („przy awarii przejściowej pliku nie wolno usuwać") i zamieniało obietnicę
+                # „spróbuję ponownie" w cichą utratę pracy modelu.
+                deferred.append(entry.name)
+                continue
             rejected.append(
                 (entry.name, f"na turę wysyłam najwyżej {self._limits.max_files_per_turn} plików")
             )
@@ -262,16 +350,15 @@ class OutboxDelivery:
             if self._monotonic() >= deadline:
                 deferred.append(entry.name)
                 continue
-            item = self._repo.read(dirpath, entry.name)
-            if item is None:
+            outcome = self._fetch_and_send(dirpath, entry, send)
+            if outcome is None:
                 # Plik zniknął między wypisem a odczytem — nie ma czego wysyłać ani sprzątać.
                 continue
-            outcome = self._send_one(item, send)
-            if outcome is None:
-                delivered.append(item.name)
+            if isinstance(outcome, str):
+                delivered.append(outcome)
                 self._repo.discard(dirpath, entry.name)
-            elif outcome[0]:
-                rejected.append((entry.name, outcome[1]))
+            elif outcome.trwale:
+                rejected.append((entry.name, outcome.powod))
                 self._repo.discard(dirpath, entry.name)
             else:
                 tries = attempts.get(entry.name, 0) + 1
@@ -279,11 +366,31 @@ class OutboxDelivery:
                     # Sufit prób ŁAMIE regułę „awaria przejściowa zostawia plik" — świadomie,
                     # patrz docstring modułu. Powód idzie do ``rejected``, nie ``failed``, żeby
                     # komunikat przestał obiecywać ponowienie, którego już nie będzie.
-                    rejected.append((entry.name, f"nie udało się wysłać po {tries} próbach"))
+                    #
+                    # Krok bierzemy z niepowodzenia, bo to jedyne zdanie, jakie o tej pozycji
+                    # usłyszy człowiek: „nie udało się wysłać" dla pliku, którego ani razu nie
+                    # dało się PRZECZYTAĆ, wskazywałoby na kanał zamiast na wolumen.
+                    rejected.append(
+                        (entry.name, f"nie udało się {outcome.krok} po {tries} próbach")
+                    )
                     self._repo.discard(dirpath, entry.name)
                 else:
                     attempts[entry.name] = tries
-                    failed.append((entry.name, outcome[1]))
+                    failed.append((entry.name, outcome.powod))
+
+        # WIEK pozycji: ile tur ją przetrzymujemy, bez względu na to, czy doszło do próby wysyłki.
+        # Naliczany PO pętli, dla wszystkiego, co miałoby zostać — także dla pozycji, która przez
+        # cały swój żywot ani razu nie weszła do okna. To jedyna zapora dla tej pozycji.
+        carried = self._carried.setdefault(dirpath, {})
+        wiek = {name: carried.get(name, 0) + 1 for name in [n for n, _ in failed] + deferred}
+        przeterminowane = {name for name, tur in wiek.items() if tur >= _MAX_CARRIED_TURNS}
+        for name in sorted(przeterminowane):
+            rejected.append((name, f"nie udało się dostarczyć przez {wiek[name]} tur"))
+            self._repo.discard(dirpath, name)
+        # Pozycję przeterminowaną zdejmujemy też z ``failed``/``deferred`` — inaczej komunikat
+        # obiecywałby ponowienie pliku, którego przed chwilą nie stało.
+        failed = [(name, powod) for name, powod in failed if name not in przeterminowane]
+        deferred = [name for name in deferred if name not in przeterminowane]
 
         # Zapamiętaj, co ZOSTAWILIŚMY — tylko te nazwy wolno wysłać w kolejnej turze mimo
         # obecności w migawce. Pusty zbiór usuwamy, żeby słownik nie rósł z liczbą rozmów.
@@ -292,9 +399,14 @@ class OutboxDelivery:
             self._ours[dirpath] = retained
         else:
             self._ours.pop(dirpath, None)
-        # Licznik prób jest jedyną strukturą kluczowaną NAZWĄ OD MODELU, a poller chodzi dobami —
-        # zawężamy go do pozycji faktycznie zatrzymanych. Bez tego świeży `raport.md` dziedziczyłby
-        # próby po swoim poprzedniku i ginął przy pierwszym spojrzeniu.
+        # Oba liczniki są kluczowane NAZWĄ OD MODELU, a poller chodzi dobami — zawężamy je do
+        # pozycji faktycznie zatrzymanych. Bez tego świeży `raport.md` dziedziczyłby próby i wiek
+        # po swoim poprzedniku i ginął przy pierwszym spojrzeniu.
+        ocalale_wieki = {name: tur for name, tur in wiek.items() if name in retained}
+        if ocalale_wieki:
+            self._carried[dirpath] = ocalale_wieki
+        else:
+            self._carried.pop(dirpath, None)
         surviving = {name: tries for name, tries in attempts.items() if name in retained}
         if surviving:
             self._attempts[dirpath] = surviving
@@ -302,17 +414,40 @@ class OutboxDelivery:
             self._attempts.pop(dirpath, None)
         return DeliveryReport(tuple(delivered), tuple(rejected), tuple(failed), tuple(deferred))
 
+    def _fetch_and_send(
+        self, dirpath: str, entry: OutboxEntry, send: Callable[[Deliverable], None]
+    ) -> str | _Niepowodzenie | None:
+        """Wczytaj pozycję i wyślij ją.
+
+        Zwraca nazwę NA DRUCIE przy powodzeniu, ``_Niepowodzenie`` przy porażce i ``None``
+        wyłącznie wtedy, gdy pliku już nie ma. Odczyt i wysyłka stoją razem, bo obie kończą
+        się tym samym: albo pozycja pojechała, albo mamy powód do raportu.
+        """
+        try:
+            item = self._repo.read(dirpath, entry.name)
+        except OutboxReadError as exc:
+            return _Niepowodzenie(exc.permanent, str(exc), krok="odczytać")
+        if item is None:
+            return None
+        return self._send_one(item, send)
+
     def _send_one(
         self, item: Deliverable, send: Callable[[Deliverable], None]
-    ) -> tuple[bool, str] | None:
-        """Wyślij pozycję; ``None`` przy sukcesie, inaczej (czy trwałe, powód)."""
+    ) -> str | _Niepowodzenie:
+        """Wyślij pozycję; nazwa NA DRUCIE przy sukcesie, inaczej ``_Niepowodzenie``.
+
+        Zwracamy nazwę wysyłkową, nie źródłową: to ją rozmówca zobaczy pod wiadomością, więc
+        „W załączniku: raport.md" przy załączniku ``raport-1a2b3c4d.md`` kazałoby mu szukać
+        pliku, którego tam nie ma.
+        """
         try:
-            send(replace(item, name=safe_filename(item.name, allowed_ext=_ALLOWED_EXT)))
+            na_drucie = _nazwa_na_drucie(item)
+            send(replace(item, name=na_drucie))
         except PermanentDeliveryError as exc:
-            return (True, str(exc) or "odbiorca odrzucił plik")
+            return _Niepowodzenie(True, str(exc) or "odbiorca odrzucił plik", krok="wysłać")
         except Exception as exc:  # noqa: BLE001 — patrz docstring: raport zamiast wyjątku
-            return (False, type(exc).__name__)
-        return None
+            return _Niepowodzenie(False, type(exc).__name__, krok="wysłać")
+        return na_drucie
 
     def _rejection(self, entry: OutboxEntry) -> str | None:
         """Powód odrzucenia trwałego albo ``None``, gdy pozycja nadaje się do wysłania.

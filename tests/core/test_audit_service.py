@@ -5,7 +5,7 @@ Serwis zależy tylko od portu ``AuditStore`` — sprawdzamy na atrapie w pamięc
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from workmate.core.application.audit import AuditService
@@ -27,7 +27,7 @@ class _FakeStore:
 
 
 def _clock() -> datetime:
-    return datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
+    return datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
 
 def test_turn_recorder_pseudonymizes_sender_and_conversation_once():
@@ -57,12 +57,23 @@ def test_arguments_are_redacted_before_storage():
 
 
 def test_recorder_is_best_effort_on_store_failure():
+    """Awaria magazynu NIE może wypłynąć — audyt jest poboczny (ADR 0067 §1.1).
+
+    Sonda sprawdza też, że rejestrator NIE zostaje po awarii zepsuty: „przełknąłem wyjątek"
+    i „przestałem cokolwiek zapisywać po pierwszym błędzie" wyglądają z zewnątrz identycznie,
+    a drugie znaczy dziurę w dzienniku od pierwszego zacięcia bazy do restartu procesu.
+    """
     store = _FakeStore(fail=True)
     recorder = AuditService(store, clock=_clock).turn_recorder(
         door="teams", raw_user="u", conversation_id="c"
     )
-    # Awaria magazynu NIE może wypłynąć — audyt jest poboczny (ADR 0067 §1.1).
+
+    recorder("Notes", {"action": "save"}, "ok")  # nie rzuca
+
+    assert store.rows == []  # zapis faktycznie nie doszedł — nie połknęliśmy sukcesu
+    store._fail = False
     recorder("Notes", {"action": "save"}, "ok")
+    assert len(store.rows) == 1  # kolejne wołanie znów zapisuje
 
 
 def test_trust_class_passes_through():

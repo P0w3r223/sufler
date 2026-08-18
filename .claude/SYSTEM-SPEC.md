@@ -57,9 +57,9 @@ tamtej stronie nie ma. Dokłada **most GitHub ↔ EventStore ↔ Teams**, odczyt
 **lokalny retrieval leksykalny (BM25)** notatek. Realizuje zasadę Roadmapy: **jeden rdzeń, wiele
 drzwi**.
 
-- **Wersja:** 1.5.0 · **Status:** kod produkcyjny (Fazy 1–3 + M1–M4 domknięte kodowo) · **Licencja:** proprietary (BIAP).
-- **Stack:** Python 3.11 (flota; kod działa od 3.10+), `uv`, MCP SDK (`mcp` 1.28.x, FastMCP), Pydantic v2, Anthropic SDK (Claude API), SQLite (WAL), httpx, MSAL/Microsoft Graph.
-- **60 ADR-ów** (`docs/adr/0001–0060`) — źródło prawdy o decyzjach. Pełny pakiet **1843 passed / 7 skipped**, mypy 158 plików czysto, `lint-imports` 2 kontrakty. CI na `ubuntu-latest` — ZIELONE. Liczby starzeją się szybciej niż reszta dokumentu; przy rozjeździe rządzi wynik `pytest`, nie ten wiersz.
+- **Wersja:** 1.6.0 · **Status:** kod produkcyjny (Fazy 1–3 + M1–M4 domknięte kodowo) · **Licencja:** proprietary (BIAP).
+- **Stack:** Python **3.11 — dolna granica, nie tylko wersja floty** (`requires-python = ">=3.11"`, `.python-version` i oba etapy obrazu mówią jedno; wiąże je `tests/deploy/test_python_version_floor.py`. CI nie jest osobną osią — `setup-uv` bierze wersję z `.python-version`), `uv`, MCP SDK (`mcp` 1.28.x, FastMCP), Pydantic v2, Anthropic SDK (Claude API), SQLite (WAL), httpx, MSAL/Microsoft Graph.
+- **69 ADR-ów** (`docs/adr/0001–0069`) — źródło prawdy o decyzjach. Liczby przebiegów (pakiet testów, pliki mypy) starzeją się szybciej niż reszta dokumentu; przy rozjeździe rządzi wynik `pytest`, nie ten wiersz. CI na `ubuntu-latest`.
 
 ## 2. Architektura — „jeden rdzeń, wiele drzwi" (heksagonalna)
 **Żelazna reguła zależności:** `core/` **NIGDY** nie importuje z `workmate.adapters` (tylko adaptery → rdzeń).
@@ -99,7 +99,7 @@ także sesji Claude Code, która naszej powłoki nie ma.
 |---|---|---|
 | **MCP** (zamrożona ósemka) | `build_tool_catalog`, `build_events_since_catalog`, `build_my_jira_tasks_catalog` | `search_notes`, `get_note`, `list_projects`, `get_project_status`, `save_note`, `read_events_since` + para Jiry przy `WORKMATE_JIRA_MY_ACCOUNT` |
 | **Router komend** (`/szukaj`, `/moje-zadania`) | `build_read_catalog` → `build_tool_catalog(write_service=None)` | te same odczyty, strukturalnie bez zapisu |
-| **Agent** (skonsolidowana) | `build_notes_catalog`, `build_github_catalog`, `build_jira_catalog`, `build_schedule_catalog`, `build_shell_catalog` + `extra_catalog` per drzwi | `Bash` · `Notes` · `GitHub` · `Jira` · `Schedule`; bez powłoki dochodzą trzy narzędzia odczytu bazy wiedzy |
+| **Agent** (skonsolidowana) | `build_project_catalog`, `build_activity_catalog`, `build_jira_catalog`, `build_schedule_catalog`, `build_shell_catalog` + `extra_catalog` per drzwi | `Bash` · `Project` · `Activity` · `Jira` · `Schedule` (nazwy z ADR 0068); bez powłoki dochodzą trzy narzędzia odczytu bazy wiedzy |
 
 **Zamrożona powierzchnia MCP pilnowana golden-testem** `tests/adapters/test_mcp_tool_surface.py` —
 baseline obejmuje wszystkie osiem nazw, a test biega w czterech konfiguracjach (most × Jira).
@@ -134,9 +134,9 @@ pisze do `EventStore`, nie ma pollera, nie pcha do Teams.
 ## 6. Konfiguracja i uruchamianie
 - Instalacja: `uv sync`; extras: `agent`, `teams`, `teams-graph`, `github`, `jira` (odczyt Jira, ADR 0054), `retrieval` (BM25/simplemma), `retrieval-dense` (ADR 0039, **OFF** za bramką mikro-evalu), `file-reply` (fpdf2). Extra `worklogi` USUNIĘTY (ADR 0055).
 - **Serwer MCP lokalnie (stdio) NIE wymaga sekretów** — działa na plikach z `data/`. `.mcp.json` (scope project) auto-podpina go w Claude Code.
-- Procesy drzwi (console-scripts): `workmate` (MCP), `workmate-agent` (CLI), `workmate-teams-graph`, `workmate-github`, `workmate-meeting`, `workmate-heartbeat-check`, `workmate-metrics` (raport licznika użycia), `workmate-teams-digest`. `workmate-jira`/`workmate-worklogi`/`workmate-worklog-selfservice` USUNIĘTE (ADR 0054/0055) — Jira "moje zadania" nie ma osobnego procesu.
+- Procesy drzwi (console-scripts): `workmate` (MCP), `workmate-agent` (CLI), `workmate-teams-graph`, `workmate-github`, `workmate-meeting`, `workmate-heartbeat-check`, `workmate-metrics` (raport licznika użycia), `workmate-diagnostics` (odczyt audytu i obu kwarantann), `workmate-teams-digest`. `workmate-jira`/`workmate-worklogi`/`workmate-worklog-selfservice` USUNIĘTE (ADR 0054/0055) — Jira "moje zadania" nie ma osobnego procesu.
 - **Metryki użycia (ADR 0049, OFF domyślnie):** włącza je wyłącznie obecność `WORKMATE_METRICS_DB` (ścieżka poza `data/` i repo). Lekki licznik SQLite w jednym chokepoincie respondera zlicza użycia per drzwi/tydzień; `sender_id` NIGDY nie trafia do bazy — tylko nieodwracalny hash (pseudonimizacja), treści nie zapisujemy. Odczyt: `workmate-metrics [--db …]`.
-- **Dziennik audytu narzędzi (ADR 0067, OFF domyślnie):** włącza go wyłącznie obecność `WORKMATE_AUDIT_DB` (osobny plik, wzorzec 1:1 z metrykami). Rejestruje per-wywołanie: pseudonim nadawcy, drzwi, nazwę narzędzia, ZREDAGOWANE argumenty (akcje/ścieżki po allowliście), status i klasę zaufania — **nigdy treści** (body notatki, komenda Bash, bajty pliku redagowane do `type+length`). Best-effort (błąd audytu nie wywraca tury). Retencja dłuższa niż rozmów — Faza 7.
+- **Dziennik audytu narzędzi (ADR 0067, OFF domyślnie):** włącza go wyłącznie obecność `WORKMATE_AUDIT_DB` (osobny plik, wzorzec 1:1 z metrykami). Rejestruje per-wywołanie: pseudonim nadawcy, drzwi, nazwę narzędzia, ZREDAGOWANE argumenty (akcje/ścieżki po allowliście), status i klasę zaufania — **nigdy treści** (body notatki, komenda Bash, bajty pliku redagowane do `type+length`). Best-effort (błąd audytu nie wywraca tury). Retencja dłuższa niż rozmów — Faza 7. Odczyt: `workmate-diagnostics audit [--db …] [--source …] [--since 24h] [--json]` — ta sama komenda czyta obie kwarantanny (`dead-letters`, `inbound`) w `events.db`, połączeniem tylko do odczytu (ADR 0069 R2).
 - **Narzędzia deweloperskie:** graf kodu przez `code-review-graph` (crg) — MCP `code-review-graph` w `.mcp.json` (indeks `.code-review-graph/`, gitignorowany, chmura OFF) lub CLI `uvx code-review-graph {search,query,impact,architecture,dead-code}`.
 - **Testy — iteracja:** `uv run --no-sync pytest --testmon`; **bramka przed commitem:** `uv run --no-sync pytest` (pełny). `--no-sync` omija blokadę `workmate.exe` na Windows. Lint/typy: `uv run ruff check .` · `uv run mypy` (limit linii 100).
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 import pytest
 
 from workmate.core.application.jira_read import JiraReadService
@@ -69,12 +68,30 @@ def test_task_details_maps_issue_and_comments() -> None:
     assert client.get_issue_calls == ["WT-5"]
 
 
-def test_task_details_translates_auth_error() -> None:
-    response = httpx.Response(403, request=httpx.Request("GET", "https://jira.example"))
-    error = httpx.HTTPStatusError("boom", request=response.request, response=response)
-    service = JiraReadService(_FakeJiraRead(error=error))
-    with pytest.raises(JiraReadError, match="brak dostępu"):
-        service.task_details("WT-5")
+@pytest.mark.parametrize(
+    ("metoda", "argumenty"),
+    [
+        ("task_details", ("WT-5",)),
+        ("search_tasks", ("scada",)),  # filtr wymagany PRZED odczytem — inaczej odmowa domeny
+        ("member_open_tasks", ("kolega@example.org",)),
+        ("member_history", ("kolega@example.org",)),
+    ],
+)
+def test_a_port_error_reaches_the_caller_untouched(metoda: str, argumenty: tuple) -> None:
+    """Tłumaczenie httpx → ``JiraReadError`` mieszka na granicy adaptera; tu pilnujemy PRZEPŁYWU.
+
+    Każda z tych czterech metod robi po odczycie coś jeszcze (mapowanie, przycięcie do sufitu),
+    więc połknięcie awarii dałoby PUSTĄ listę — „nic nie znalazłem" zamiast „nie udało się
+    zapytać". Brzmienia komunikatów sprawdzają sondy adaptera
+    (``tests/adapters/test_jira_api.py``).
+    """
+    awaria = JiraReadError("brak dostępu do Jiry — token jest nieważny albo bez uprawnień odczytu.")
+    service = JiraReadService(_FakeJiraRead(error=awaria))
+
+    with pytest.raises(JiraReadError) as exc:
+        getattr(service, metoda)(*argumenty)
+
+    assert exc.value is awaria, "rdzeń nie ma opakowywać błędu portu w drugi, własny"
 
 
 # --- search_tasks ------------------------------------------------------------------
@@ -107,6 +124,47 @@ def test_member_open_tasks_scopes_jql_to_given_account() -> None:
     assert "kolega@example.org" in client.jql_calls[0]
 
 
+def test_member_open_tasks_caps_the_result_and_reports_truncation() -> None:
+    """Bliźniaczo do historii: ``max_results`` jest rozmiarem STRONY, a adapter paginuje.
+
+    Bez przycięcia po zmapowaniu `member_tasks` mogło zwrócić do kontekstu modelu wielokrotność
+    sufitu, w dodatku milcząco — bez flagi, którą model miałby przekazać człowiekowi.
+    """
+    from workmate.core.application.my_jira_tasks import _MAX_RESULTS
+
+    ile = _MAX_RESULTS * 4
+    issues = [{"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(ile)]
+    service = JiraReadService(_FakeJiraRead(issues=issues))
+
+    tasks, truncated = service.member_open_tasks("kolega@example.org")
+
+    assert len(tasks) == _MAX_RESULTS
+    assert truncated is True
+
+
+def test_member_open_tasks_shares_the_cap_with_MY_open_tasks() -> None:
+    """Opis narzędzia mówi „to samo dla INNEJ osoby" — sufit też ma być ten sam.
+
+    ``member_open_tasks`` ciął do ``_MAX_SEARCH_RESULTS`` (20), a ``my_open_tasks`` do
+    ``_MAX_RESULTS`` (50) — stała wyszukiwania użyta tu chyba tylko dlatego, że leżała w tym
+    samym pliku. Skutek: osoba z 30 zadaniami widziała u siebie 30, a u kolegi 20 i
+    ``truncated=true``, choć narzędzie obiecuje tę samą listę dla obu.
+    """
+    from workmate.core.application.my_jira_tasks import _MAX_RESULTS, MyJiraTasksService
+
+    ile = _MAX_RESULTS - 20  # mieści się u „mnie", nie mieściło się u „członka"
+    issues = [{"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(ile)]
+
+    moje, moje_uciete = MyJiraTasksService(
+        _FakeJiraRead(issues=issues), assignee="ja@example.org"
+    ).my_open_tasks()
+    czyjes, czyjes_uciete = JiraReadService(_FakeJiraRead(issues=issues)).member_open_tasks(
+        "kolega@example.org"
+    )
+
+    assert (len(moje), moje_uciete) == (len(czyjes), czyjes_uciete) == (ile, False)
+
+
 def test_member_history_scopes_jql_and_reports_truncation() -> None:
     from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
 
@@ -119,10 +177,3 @@ def test_member_history_scopes_jql_and_reports_truncation() -> None:
     assert len(tasks) == _MAX_HISTORY_RESULTS
     assert truncated is True
     assert "kolega@example.org" in client.jql_calls[0]
-
-
-def test_member_history_translates_timeout_error() -> None:
-    error = httpx.ConnectTimeout("timed out")
-    service = JiraReadService(_FakeJiraRead(error=error))
-    with pytest.raises(JiraReadError, match="timeout"):
-        service.member_history("kolega@example.org")

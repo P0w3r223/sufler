@@ -7,9 +7,17 @@ Ten dokument zbiera bramki w jedną macierz „funkcja → co włączyć": każd
 [`deploy/docker/env.example`](../../deploy/docker/env.example) (flota) lub `.env` (dev); pełny wykaz:
 [`reference/config.md`](../reference/config.md).
 
-**Zasada wspólna dla wszystkich bramek:** bramka `ON` bez kompletnego celu to **twardy błąd startu**
+**Zasada wspólna dla większości bramek:** bramka `ON` bez kompletnego celu to **twardy błąd startu**
 (fail-fast), a nie cicha, „włączona-ale-martwa" konfiguracja. Jeśli włączysz zapis bez projektu/konta/
 zakresu, drzwi nie wstaną i powiedzą czego brakuje.
+
+**Jeden znany wyjątek — `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS`.** `validate()` nie wiąże go
+z niczym, więc `ENABLE_TRUST_LABELS=true` bez `ENABLE_NOTE_READ_AUTHZ=true` **przechodzi start**
+i daje połowę [ADR 0066](../adr/0066-content-trust-classes-and-sticky-conversation-taint.md):
+koperty pochodzenia wchodzą, ale rozszczepienie nadawcy na T1/T2 nie — bo liczy je ten sam
+autoryzator co bramka odczytu notatek, a bez niej każdy nadawca jest nierozpoznany. Konfiguracja
+jest legalna (koperty same w sobie mają sens), ale **nie jest tym, co ADR 0066 opisuje** — włączaj
+obie naraz, chyba że świadomie chcesz same koperty.
 
 ---
 
@@ -22,19 +30,25 @@ zakresu, drzwi nie wstaną i powiedzą czego brakuje.
 | **Agent odpowiadał na kanale Teams** | profil `bridge` z `teams-graph`; `WORKMATE_TEAMS_GRAPH_WATCH` = pary `team:channel`; `_CLIENT_ID`/`_TENANT_ID`; `ANTHROPIC_API_KEY` | `TeamsGraphSettings.validate` (odczyt zawsze ON) |
 | **Auto-komentarz CI na GitHub** | `WORKMATE_GITHUB_ENABLE_WRITE=true` + `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true` + `ci` w `WORKMATE_GITHUB_WATCH_KINDS` (poller i zapis dzielą ten sam PAT; `_SELF_LOGIN`) | `GithubSettings.validate` |
 | **Agent tworzył issue/komentarze GitHub** | `WORKMATE_GITHUB_ENABLE_WRITE=true` na drzwiach `teams-graph` (wspólny `events.db`) | `_build_bridge_catalog` (teams_graph) |
-| **Agent odpowiadał na GitHub Z WĄTKU Teams** (`GitHub(action='comment')` bez podawania numeru) | jak wyżej **oraz** `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` na drzwiach `github` (to notifier zapełnia mapę wątków) | `ThreadLinkStore` + dispatcher `GitHub` |
+| **Agent odpowiadał na GitHub Z WĄTKU Teams** (`Activity(action='comment')` bez podawania numeru) | jak wyżej **oraz** `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` na drzwiach `github` (to notifier zapełnia mapę wątków) | `ThreadLinkStore` + dispatcher `Activity` |
 | **Agent/komenda pokazywały "moje zadania" z Jiry** | `WORKMATE_JIRA_BASE_URL` + `_TOKEN` (+ Cloud: `_EMAIL`); tożsamość: mapa `WORKMATE_TEAMS_GRAPH_IDENTITIES` (Teams, pole `jira_user`) albo `WORKMATE_JIRA_MY_ACCOUNT` (serwer MCP stdio). **Bez bramki** — czysty odczyt, zawężony server-side do jednego konta (ADR 0054) | `_build_my_jira_tasks_factory` / `_my_jira_tasks_service_if_present` |
 | **Komenda `/notatka` z Teams (zapis notatki ze spotkania)** | `WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true` + `WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true` + `WORKMATE_TEAMS_GRAPH_IDENTITIES` (istniejący plik) + zakresy transkryptu w `_SCOPES` + **RW-montaż `data/`** | `TeamsGraphSettings.validate` |
-| **Odpowiedź plikiem w wątku (`reply_with_file`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY=true` + `Files.ReadWrite.All` w `_SCOPES` | `TeamsGraphSettings.validate` |
-| **Push obrazu 1:1 (`send_image_to_user`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH=true` + zakresy czatu (`Chat.Create`, `ChatMessage.Send`) w `_SCOPES` | `TeamsGraphSettings.validate` |
-| **Push dokumentu 1:1 (`send_document_to_user`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH=true` + zakresy czatu + `Files.ReadWrite` (lub `Files.ReadWrite.All`) w `_SCOPES` | `TeamsGraphSettings.validate` |
+| **Odczyt notatek tylko dla rozpoznanych nadawców (fail-closed)** | `WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ=true` + `WORKMATE_TEAMS_GRAPH_IDENTITIES` (istniejący plik) ([ADR 0062](../adr/0062-note-read-authorization.md)) | `TeamsGraphSettings.validate` |
+| **To samo na drzwiach Bot Framework** (`workmate-teams`, poza flotą) | `WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ=true` + `WORKMATE_TEAMS_IDENTITIES` (istniejący plik; ten sam format i zwykle ten sam plik co wyżej). Tożsamość z `activity.from.aadObjectId` — gość bez AAD id jest nierozpoznany | `TeamsSettings.validate` |
+| **Model podawał sobie plik do wglądu (`File(action='read')`) + odkładanie załączników na dysk rozmowy** | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL=true` ([ADR 0064](../adr/0064-file-tool-and-model-initiated-materialization.md)); wyłączona gasi OBIE strony naraz | `TeamsGraphSettings.validate` |
+| **Agent POPRAWIAŁ istniejącą notatkę (`File(action='edit')`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION=true` + `_ENABLE_FILE_TOOL=true` (mutacja to akcja narzędzia `File`) + `WORKMATE_TEAMS_GRAPH_IDENTITIES` (istniejący plik) + **RW-montaż `data/`** + zapisywalny `WORKMATE_NOTE_SNAPSHOTS_DIR` poza `data/` ([ADR 0065](../adr/0065-mutable-knowledge-base-and-model-judged-writes.md)) | `TeamsGraphSettings.validate` + `Settings.persistent_paths` (`require_writable` na drzwiach) |
+| **Agent USUWAŁ notatkę (`File(action='delete')`)** | jak wyżej **oraz** `WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_DELETE=true` — osobna bramka, bo ADR wiąże kasowanie z **działającą** nocną kopią wolumenu (`systemd/workmate-backup.timer` z infry); tego warunku kod nie sprawdzi | `TeamsGraphSettings.validate` (zależność od `_ENABLE_NOTE_MUTATION`) + procedura kopii |
+| **Treść obca jechała w kopercie z etykietą pochodzenia (klasy zaufania T0–T3)** | `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS=true` ([ADR 0066](../adr/0066-content-trust-classes-and-sticky-conversation-taint.md)); rozszczepienie T1/T2 wymaga **dodatkowo** `_ENABLE_NOTE_READ_AUTHZ=true` — patrz wyjątek nad macierzą | `TeamsGraphSettings.validate` (samego `_TRUST_LABELS` nie waliduje) |
+| **Odpowiedź plikiem w wątku (`ReplyWithFile`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY=true` + `Files.ReadWrite.All` w `_SCOPES` | `TeamsGraphSettings.validate` |
+| **Push obrazu 1:1 (`SendImage`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH=true` + zakresy czatu (`Chat.Create`, `ChatMessage.Send`) w `_SCOPES` | `TeamsGraphSettings.validate` |
+| **Push dokumentu 1:1 (`SendDocument`)** | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH=true` + zakresy czatu + `Files.ReadWrite` (lub `Files.ReadWrite.All`) w `_SCOPES` | `TeamsGraphSettings.validate` |
 | **Brief projektu na @wzmiankę** (F4, "ogarnij mnie na \<projekt\>") | `WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF=true` | `TeamsGraphSettings.validate` |
 | **Digest "co się zmieniło od \<data\>" na @wzmiankę** (F5) | `WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST=true` | `TeamsGraphSettings.validate` |
 | **Proaktywny cotygodniowy DM z digestem** (F6) | `WORKMATE_TEAMS_DIGEST_ENABLED=true` (+ lista odbiorców + mechanizm opt-out — WARUNEK KONIECZNY, patrz uwaga niżej); zacznij od `_DRY_RUN=true` | `TeamsDigestSettings.validate` |
 | **Agent uruchamiał polecenia powłoki (`Bash`)** | `WORKMATE_ENABLE_SHELL=true` + podniesiony `exec-manager` (profil `shell`, gniazdo kontrolne `WORKMATE_EXEC_MANAGER_SOCKET`) + obraz **zawierający entrypoint `workmate-exec-manager`** (Main po §2, ADR infra 0012 — sam tag „1.6.0 lub nowszy" NIE wystarcza: powłoka na 1.6.0 nie ma menedżera wykonawców). Bramka członkostwa (ADR 0063): nie-członek pionu → pusta lista narzędzi powłoki. Wykonawca per rozmowa montuje TYLKO podkatalog brudnopisu (ADR 0012 znosi wymóg wzajemnego zaufania z ADR 0010) | `ShellSettings`/`ExecManagerSettings` (`config.py`) + `ShellAuthorizer` (`shell_authz.py`) + `_build_shell_factory` (`agent_wiring.py`) |
 | **Agent widział grafik zespołu (`Schedule`)** | `WORKMATE_SCHEDULE_ENABLED` (`auto` = wchodzi, gdy grafik Shifts jest skonfigurowany; `false` chowa mimo konfiguracji, `true` wymusza) | `ScheduleSettings` (`config.py`) |
 | **Model widział procedury powtarzalnej pracy** | montaż `/mnt/skills` (paczka) + `WORKMATE_SKILLS_DIR`; `WORKMATE_SKILLS_MAX_IN_HEADER` ogranicza, ile wchodzi do nagłówka sesji | `SkillsSettings` (`config.py`) |
-| **Skrzynka nadawcza `outputs/`** (model kładzie plik, drzwi go wysyłają) | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY=true` — **ta sama bramka co `reply_with_file`**; przy powłoce skrzynka pokrywa dostawę, przy jej braku zostaje narzędzie | `TeamsGraphSettings.validate` |
+| **Skrzynka nadawcza `outputs/`** (model kładzie plik, drzwi go wysyłają) | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY=true` — **ta sama bramka co `ReplyWithFile`**; przy powłoce skrzynka pokrywa dostawę, przy jej braku zostaje narzędzie | `TeamsGraphSettings.validate` |
 | **Katalog roboczy agenta (workspace)** | `WORKMATE_ENABLE_WORKSPACE=true` + `WORKMATE_WORKSPACE_DIR` na wolumenie | `WorkspaceSettings.validate` |
 | **Zapis notatki lokalnie (`save_note`, stdio — Claude Code/`workmate-agent`)** | `WORKMATE_ENABLE_WRITE=true` (amendment ADR 0006, 2026-07-31 — domyślnie OFF bez wyjątku, także na stdio) | `Settings` / `server.py` |
 
@@ -75,6 +89,17 @@ zakresu, drzwi nie wstaną i powiedzą czego brakuje.
   (osobny override compose) — inaczej zapis padnie w runtime na „Read-only file system"
   (patrz [`env.example`](../../deploy/docker/env.example), sekcja teams-graph;
   [ADR 0041](../adr/0041-production-m3-meeting-note-write-from-teams-door.md)).
+- **Mutacja notatek zamienia odwracalność strukturalną na proceduralną.** Do ADR 0065 bazy nie dało
+  się zepsuć, bo jedyny pisarz był create-only. Po włączeniu `_ENABLE_NOTE_MUTATION` odwracalność
+  stoi na dwóch rzeczach spoza kodu: **migawce przed operacją** (`WORKMATE_NOTE_SNAPSHOTS_DIR` musi
+  być zapisywalny i leżeć POZA `data/` — bo agent czyta katalog notatek zachłannie, więc kopie
+  w środku wracałyby jako wyniki wyszukiwania; do tego dochodzi powód zależny od wdrożenia:
+  w tym repo `data/` jest `:ro`, a na flocie wdrożeniowej jest RW, ale `restore-notes.sh` czyści ten
+  wolumen w całości — patrz [`reference/config.md`](../reference/config.md)) i **nocnej kopii
+  wolumenu**. Kasowanie ma
+  osobną bramkę właśnie dlatego, że tej drugiej kod nie zweryfikuje — włączenie `_ENABLE_NOTE_DELETE`
+  bez sprawdzenia kopii jest dokładnie tym, przed czym ta bramka ma chronić. Notatki ze spotkań
+  i wątków (`-mtg-`/`-thr-`) zostają niezmienne — ich niezmienność jest mechanizmem idempotencji.
 - **Nowe zakresy Graph = zgoda admina + reset cache.** Po dodaniu zakresu do `_SCOPES` i nadaniu go
   przez admina **usuń cache tokenu MSAL** z wolumenu, by wymusić ponowną zgodę device-code — inaczej
   token nadal nie ma zakresu i bramka jest martwa.

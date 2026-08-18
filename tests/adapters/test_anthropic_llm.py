@@ -492,9 +492,17 @@ def test_log_applied_edits_reports_what_was_cleared(caplog):
     assert "50000" in caplog.text
 
 
-def test_log_applied_edits_survives_response_without_context_management():
-    """Odpowiedź bez pola ``context_management`` (ścieżka bez bety) nie może wywrócić tury."""
-    _log_applied_edits(types.SimpleNamespace(content=[]))  # nie rzuca
+def test_log_applied_edits_stays_silent_on_a_response_without_context_management(caplog):
+    """Odpowiedź bez pola ``context_management`` (ścieżka bez bety) nie może wywrócić tury —
+    ani udawać, że coś wyczyszczono.
+
+    Sam brak wyjątku to za mało: log „wyczyszczono 0" na KAŻDEJ turze bez bety zaszumiłby
+    jedyny sygnał, po którym poznajemy, że czyszczenie w ogóle działa.
+    """
+    with caplog.at_level(logging.INFO):
+        _log_applied_edits(types.SimpleNamespace(content=[]))
+
+    assert caplog.records == []
 
 
 # --- wybór ścieżki wywołania: beta vs zwykła -----------------------------------

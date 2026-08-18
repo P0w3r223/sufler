@@ -1,4 +1,9 @@
-"""Testy konfiguracji proaktywnego push do Teams (TeamsPushSettings, ADR 0022)."""
+"""Testy konfiguracji proaktywnego push do Teams (TeamsPushSettings, ADR 0022).
+
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``),
+więc ręczna lista zmiennych do wyczyszczenia — i ryzyko, że ktoś zapomni jej uzupełnić przy
+nowym polu — są tu zbędne. Test ustawia tylko to, co faktycznie bada.
+"""
 
 from __future__ import annotations
 
@@ -6,27 +11,8 @@ import pytest
 
 from workmate.config import TeamsPushSettings
 
-_PUSH_VARS = (
-    "WORKMATE_TEAMS_PUSH_CLIENT_ID",
-    "WORKMATE_TEAMS_PUSH_TENANT_ID",
-    "WORKMATE_TEAMS_PUSH_SCOPES",
-    "WORKMATE_TEAMS_PUSH_TOKEN_CACHE",
-    "WORKMATE_TEAMS_PUSH_CHAT_USER_ID",
-    "WORKMATE_TEAMS_PUSH_TEAM_ID",
-    "WORKMATE_TEAMS_PUSH_CHANNEL_ID",
-    "WORKMATE_TEAMS_PUSH_ENABLE_CHAT",
-    "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL",
-    "WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING",
-)
 
-
-def _clear(monkeypatch):
-    for var in _PUSH_VARS:
-        monkeypatch.delenv(var, raising=False)
-
-
-def test_defaults_disabled(monkeypatch):
-    _clear(monkeypatch)
+def test_defaults_disabled():
     settings = TeamsPushSettings.from_env()
     assert settings.enabled is False
     assert "Chat.Create" in settings.scopes
@@ -74,14 +60,12 @@ def test_authority_uses_tenant():
 # --- ADR 0024 Faza 3a: wątkowanie kanału --------------------------------------
 
 
-def test_channel_threading_defaults_false(monkeypatch):
-    _clear(monkeypatch)
+def test_channel_threading_defaults_false():
     assert TeamsPushSettings().enable_channel_threading is False
     assert TeamsPushSettings.from_env().enable_channel_threading is False
 
 
 def test_from_env_reads_channel_threading(monkeypatch):
-    _clear(monkeypatch)
     monkeypatch.setenv("WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING", "true")
     assert TeamsPushSettings.from_env().enable_channel_threading is True
 

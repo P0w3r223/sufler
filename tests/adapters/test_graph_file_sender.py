@@ -90,6 +90,34 @@ def test_upload_sends_raw_bytes_content_type_and_auth_header():
     assert seen["auth"] == "Bearer access-token"
 
 
+def test_token_is_carried_by_the_request_not_stored_on_the_shared_client():
+    """Token doklejamy PER ŻĄDANIE (wzorzec ``graph_thread_source``), nie do ``client.headers``.
+
+    Sonda wyżej (``…auth_header``) tego NIE rozstrzyga: ``httpx`` scala nagłówki klienta
+    z nagłówkami żądania, więc ``request.headers["Authorization"]`` wygląda tak samo przy obu
+    implementacjach — asercja przechodziła również przed naprawą. Rozstrzyga dopiero token
+    ZMIENNY: przy tokenie wstrzykniętym raz w obiekt klienta drugie żądanie tej samej wysyłki
+    jedzie jeszcze pierwszym, a nagłówek zostaje na dzielonym kliencie i wycieka do cudzych
+    żądań z puli wątków. Bliźniaczy ``graph_user_push`` ma tę sondę; ten adapter jej nie miał.
+    """
+    tokeny = iter(["token-1", "token-2", "token-3"])
+    autoryzacje: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        autoryzacje.append(request.headers.get("Authorization"))
+        if request.url.path.endswith("/filesFolder"):
+            return httpx.Response(200, json={"id": "f", "parentReference": {"driveId": "d"}})
+        return httpx.Response(201, json={"id": "i", "webUrl": "u", "eTag": _ETAG})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    sender = HttpxGraphFileSender(client, lambda: next(tokeny), sleep=lambda _s: None)
+
+    sender.upload_channel_file("t", "c", "raport.pdf", b"x", "application/pdf")
+
+    assert autoryzacje == ["Bearer token-1", "Bearer token-2"]
+    assert "Authorization" not in client.headers  # nic nie zostaje na dzielonym kliencie
+
+
 def test_upload_url_encodes_filename():
     raw_paths: list[str] = []
 

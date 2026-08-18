@@ -28,13 +28,13 @@ def test_newest_incoming_ignores_own_and_old():
         _msg("u1", "2026-07-19T17:00:00Z", "stara"),  # przed watermarkiem
         _msg("u1", "2026-07-19T18:00:00Z", "nowa"),
     ]
-    picked = newest_incoming(messages, me, after_iso="2026-07-19T17:30:00Z")
+    picked = newest_incoming(messages, me, "u1", after_iso="2026-07-19T17:30:00Z")
     assert picked is not None
     assert message_text(picked) == "nowa"
 
 
 def test_newest_incoming_none_when_only_own():
-    picked = newest_incoming([_msg("me", "2026-07-19T18:00:00Z")], "me")
+    picked = newest_incoming([_msg("me", "2026-07-19T18:00:00Z")], "me", "u1")
     assert picked is None
 
 
@@ -44,7 +44,7 @@ def test_newest_incoming_compares_parsed_time_not_string():
         _msg("u1", "2026-07-19T18:00:00Z", "starsza"),
         _msg("u1", "2026-07-19T18:00:00.500Z", "nowsza"),
     ]
-    picked = newest_incoming(msgs, "me", after_iso="2026-07-19T18:00:00Z")
+    picked = newest_incoming(msgs, "me", "u1", after_iso="2026-07-19T18:00:00Z")
     assert picked is not None
     assert message_text(picked) == "nowsza"
 
@@ -123,3 +123,46 @@ def test_memory_window_is_one_hour():
     from datetime import timedelta
 
     assert timedelta(hours=1) == MEMORY_WINDOW
+
+
+def test_newest_incoming_odrzuca_nadawce_spoza_pendingu():
+    """Nadawcą MUSI być ta osoba, o której grafik pytamy — nie „ktokolwiek poza botem".
+
+    Warunek „nie bot" wygląda równoważnie tylko dopóki czat jest 1:1. Graph wstawia do wątku
+    wiadomości systemowe i wpisy innych tożsamości (aplikacje, konto dodane do rozmowy, migracja
+    czatu na grupowy). Każda z nich stawała się „odpowiedzią pracownika": szła do modelu,
+    przesuwała watermark i mogła skończyć ZAPISEM W GRAFIKU pracownika na podstawie cudzej
+    treści, a jego prawdziwa odpowiedź (starsza od przesuniętego watermarku) znikała na zawsze.
+    """
+    messages = [_msg("obcy", "2026-07-19T18:00:00Z", "w piątek 10-20")]
+    assert newest_incoming(messages, "me", "u1") is None
+
+
+def test_newest_incoming_bierze_najnowsza_od_wlasciwej_osoby_mimo_szumu():
+    messages = [
+        _msg("obcy", "2026-07-19T18:30:00Z", "cudza i nowsza"),
+        _msg("u1", "2026-07-19T18:00:00Z", "moja"),
+    ]
+    picked = newest_incoming(messages, "me", "u1")
+    assert picked is not None
+    assert message_text(picked) == "moja"
+
+
+def test_newest_incoming_porownuje_guid_bez_wzgledu_na_wielkosc_liter():
+    """GUID-y z Graph bywają w różnej wielkości liter — rozjazd uciszałby pracownika na zawsze.
+
+    Ten sam identyfikator zapisany wielkimi literami w stanie (albo w `ONLY_USER_IDS`) i małymi
+    w wiadomości odsiewałby KAŻDĄ jego odpowiedź, cicho, aż do nieprawdziwego „nie dostałem
+    odpowiedzi" po 48 h.
+    """
+    guid = "3F2504E0-4F89-11D3-9A0C-0305E82C3301"
+    messages = [_msg(guid.lower(), "2026-07-19T18:00:00Z", "w piątek 10-20")]
+    picked = newest_incoming(messages, "me", guid)
+    assert picked is not None
+    assert message_text(picked) == "w piątek 10-20"
+
+
+def test_newest_incoming_rozpoznaje_wlasna_wiadomosc_bez_wzgledu_na_wielkosc_liter():
+    guid = "AAAA1111-BBBB-2222-CCCC-333344445555"
+    messages = [_msg(guid.lower(), "2026-07-19T18:00:00Z", "nasza")]
+    assert newest_incoming(messages, guid, guid) is None

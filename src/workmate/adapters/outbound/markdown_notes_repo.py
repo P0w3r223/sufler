@@ -23,6 +23,7 @@ danymi, więc błędny plik = błąd danych: podnosimy ``NoteParseError`` z kont
 
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,8 @@ from pydantic import ValidationError
 
 from workmate.core.domain.models import Note, NoteMetadata
 from workmate.core.errors import RepositoryError
+
+logger = logging.getLogger(__name__)
 
 _FRONTMATTER_FENCE = "---"
 
@@ -62,11 +65,27 @@ class MarkdownNotesRepository:
         fresh: dict[Path, tuple[tuple[int, int], Note]] = {}
         with self._lock:
             for path in sorted(self._notes_dir.rglob("*.md")):
-                stat = path.stat()
-                fingerprint = (stat.st_mtime_ns, stat.st_size)
-                cached = self._cache.get(path)
-                # Plik wadliwy rzuca w ``_load`` PRZED zapisem cache — jak dziś rzuca co wywołanie.
-                note = cached[1] if cached and cached[0] == fingerprint else self._load(path)
+                try:
+                    stat = path.stat()
+                    fingerprint = (stat.st_mtime_ns, stat.st_size)
+                    cached = self._cache.get(path)
+                    # Plik wadliwy rzuca w ``_load`` PRZED zapisem cache — jak dziś rzuca co
+                    # wywołanie (``NoteParseError`` to nie ``OSError``, więc osłona go nie tłumi).
+                    note = cached[1] if cached and cached[0] == fingerprint else self._load(path)
+                except FileNotFoundError:
+                    # Notatka zniknęła MIĘDZY spacerem a odczytem — od ADR 0065 kasowanie jest
+                    # realną drogą, a wyścig z nim nie może wywracać całego odczytu bazy wiedzy
+                    # surowym ``FileNotFoundError``. Pomijamy plik: następne ``all()`` zobaczy
+                    # stan po zmianie.
+                    continue
+                except OSError as exc:
+                    # Plik JEST, tylko nie da się go przeczytać (odmowa dostępu na notatce albo
+                    # na katalogu firmy, błąd I/O). Pominięty po cichu wypada z korpusu, więc
+                    # ``search_notes`` i ranking milcząco zwracają mniej — wynik nieodróżnialny
+                    # od „nie ma takiej wiedzy". Wywracać całego odczytu nie ma po co, ale ślad
+                    # ma zostać, jak w siostrzanym ``filesystem_workspace._entries_or_empty``.
+                    logger.warning("Pomijam notatkę %s — nie udało się jej odczytać: %s", path, exc)
+                    continue
                 fresh[path] = (fingerprint, note)
                 notes.append(note)
             self._cache = fresh  # tylko aktualne ścieżki → usunięte pliki eksmitowane
@@ -83,7 +102,19 @@ class MarkdownNotesRepository:
             return None
         if not path.is_file():
             return None
-        return self._load(path)
+        # ``is_file()`` i ``read_text()`` to DWA podejścia do dysku, a od ADR 0065 kasowanie
+        # notatki jest realną drogą i biegnie OBOK bramki mutacji — która sama woła ``get``
+        # (``note_mutation._require_mutable``) w tej samej turze, w której pisarz liczy
+        # ``digest``. Tam osłona jest, tutaj jej nie było, choć wyścig ten sam.
+        try:
+            return self._load(path)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            # Notatka JEST, tylko nie da się jej przeczytać. ``None`` znaczyłoby „nie ma takiej
+            # notatki" — a bramka mutacji odmawia wtedy słowami „notatka nie istnieje", czyli
+            # kłamie o stanie bazy wiedzy dokładnie tam, gdzie ktoś pyta o jej zawartość.
+            raise RepositoryError(f"nie udało się odczytać notatki {note_id}: {exc}") from exc
 
     def _load(self, path: Path) -> Note:
         raw = path.read_text(encoding="utf-8")

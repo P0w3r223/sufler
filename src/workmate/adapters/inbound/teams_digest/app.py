@@ -19,8 +19,7 @@ import contextlib
 import logging
 import signal
 import threading
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -128,7 +127,11 @@ def _run_forever(
         logger.info("Następny digest: %s.", target)
         while _now() < target and not stop.is_set():
             write_heartbeat(hb)  # luka między pulsami ≤ _MAX_SLEEP_S
-            time.sleep(min(_MAX_SLEEP_S, max(1.0, (target - _now()).total_seconds())))
+            # ``stop.wait`` zamiast ``time.sleep``: po PEP 475 ``sleep`` WZNAWIA się po obsłudze
+            # sygnału, więc handler SIGTERM ustawiał flagę, a pętla i tak dospała do końca
+            # drzemki — do 15 minut, przy ``stop_grace_period`` 45 s. Log mówił „zatrzymanie na
+            # sygnał", a proces szedł pod SIGKILL. ``Event.wait`` wraca NATYCHMIAST po ``set``.
+            stop.wait(min(_MAX_SLEEP_S, max(1.0, (target - _now()).total_seconds())))
         if stop.is_set():
             break
         _safe_run_once(settings, token, as_of=target)
@@ -290,7 +293,7 @@ def _build_token_provider(push: TeamsPushSettings) -> Any:
 
 
 def _now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 if __name__ == "__main__":  # pragma: no cover

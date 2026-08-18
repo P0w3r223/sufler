@@ -49,17 +49,31 @@ class YamlProjectsRepository:
         self._cache: tuple[tuple[int, int], list[dict[str, Any]]] | None = None
 
     def all(self) -> list[Project]:
-        return [
-            Project(
-                key=entry["key"],
-                company=entry.get("company", ""),
-                name=entry["name"],
-                description=entry.get("description", ""),
-                github_repos=list(entry.get("github_repos") or []),
-                jira_project_key=entry.get("jira_project_key"),
+        return [self._project(entry) for entry in self._entries()]
+
+    def _project(self, entry: dict[str, Any]) -> Project:
+        """Zbuduj ``Project`` z wpisu rejestru; uszkodzony wpis → ``ProjectsRegistryError``.
+
+        Rejestr jest edytowany ręcznie, więc brakujący ``key``/``name`` albo pole złego typu to
+        realny stan pliku, nie defekt kodu. Bez tłumaczenia wychodziłby surowy ``KeyError``
+        („'key'") — komunikat, z którego nie da się odczytać, że chodzi o rejestr projektów.
+        Tłumaczymy tak samo jak ``status_record`` robi to przez pydantic.
+        """
+        try:
+            return Project.model_validate(
+                {
+                    "key": entry["key"],
+                    "company": entry.get("company", ""),
+                    "name": entry["name"],
+                    "description": entry.get("description", ""),
+                    "github_repos": list(entry.get("github_repos") or []),
+                    "jira_project_key": entry.get("jira_project_key"),
+                }
             )
-            for entry in self._entries()
-        ]
+        except (KeyError, TypeError, ValidationError) as exc:
+            raise ProjectsRegistryError(
+                f"{self._registry_path}: niepoprawny wpis projektu: {exc}"
+            ) from exc
 
     def get(self, key: str) -> Project | None:
         for project in self.all():
@@ -97,6 +111,14 @@ class YamlProjectsRepository:
                 raise ProjectsRegistryError(
                     f"{self._registry_path}: oczekiwano mapy z listą pod kluczem 'projects'"
                 )
-            entries: list[dict[str, Any]] = data["projects"]
+            raw = data["projects"]
+            # Wpis inny niż mapa (np. goły napis w liście) wywracał się dopiero u wołającego
+            # surowym ``AttributeError`` na ``entry.get`` — czyli jak defekt kodu, a nie jak
+            # uszkodzone dane, którymi jest.
+            entries: list[dict[str, Any]] = [item for item in raw if isinstance(item, dict)]
+            if len(entries) != len(raw):
+                raise ProjectsRegistryError(
+                    f"{self._registry_path}: każda pozycja 'projects' musi być mapą klucz-wartość"
+                )
             self._cache = (fingerprint, entries)
             return entries

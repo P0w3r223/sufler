@@ -17,10 +17,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
 
+from workmate.core.errors import NoteAuthorizationError
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from workmate.core.application.change_digest import ChangeDigestService
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +42,13 @@ class ChangeDigestContext:
     """Kontekst wywołania digestu z respondera.
 
     ``external_id`` (``team/channel/root``) — cel ewentualnej dostawy PDF w wątku. ``mentions_bot``
-    — czy wiadomość @wzmiankuje bota (warunek wyzwalacza).
+    — czy wiadomość @wzmiankuje bota (warunek wyzwalacza). ``sender_id`` (AAD id nadawcy,
+    addytywne) niesie TOŻSAMOŚĆ do bramki członkostwa (ADR 0062) — patrz ``ChangeDigestRouter``.
     """
 
     external_id: str
     mentions_bot: bool
+    sender_id: str = ""
 
 
 class ChangeDigestRouter:
@@ -59,11 +64,19 @@ class ChangeDigestRouter:
         service: ChangeDigestService,
         *,
         deliver_pdf: Callable[[str, str, str], None] | None = None,
+        read_authorizer: NoteReadAuthorizer | None = None,
     ) -> None:
         self._service = service
         # Dostawa PDF (external_id, BAZA nazwy bez rozszerzenia, treść Markdown); ``None`` → tryb
         # PDF niedostępny (file-reply off), ``| pdf`` degraduje do tekstu.
         self._deliver_pdf = deliver_pdf
+        # Bramka członkostwa ODCZYTU (ADR 0062); ``None`` → wyłączona. Digest składa się ze zdarzeń,
+        # nie z notatek — a mimo to jest bramkowany, w odróżnieniu od ``GitHub(action='events')``.
+        # Różnica jest w POZIOMIE: `GitHub(events)` to kursorowy odczyt mostu W TURZE, której
+        # narzędzia bazy wiedzy i tak odmawiają nierozpoznanemu nadawcy; ta dyrektywa jest
+        # ODPOWIEDZIĄ DRZWI składaną przed jakąkolwiek autoryzacją i streszcza aktywność
+        # WSZYSTKICH projektów pionu. Decyzja właściciela, zapisana w ADR 0062 (amendment).
+        self._read_authorizer = read_authorizer
 
     def dispatch(self, text: str, ctx: ChangeDigestContext) -> str | None:
         # Wyzwalacz wymaga @wzmianki bota: bez niej to zwykła wiadomość (bot odpowie normalną turą).
@@ -72,11 +85,25 @@ class ChangeDigestRouter:
         parsed = _parse_directive(text)
         if parsed is None:
             return None  # wzmianka bez „co się zmieniło od" → normalna tura agenta
+        # Autoryzacja PO rozpoznaniu dyrektywy, PRZED foldem zdarzeń — jak w ``BriefRouter``.
+        refusal = self._read_authz_refusal(ctx.sender_id)
+        if refusal is not None:
+            return refusal
         raw_date, want_pdf = parsed
         day = _parse_date(raw_date)
         if day is None:
             return _USAGE  # brak/zła data → podpowiedz składnię
         return self._handle(day, want_pdf, ctx)
+
+    def _read_authz_refusal(self, sender_id: str) -> str | None:
+        """Odmowa odczytu (ADR 0062) albo ``None`` (wolno / bramka wyłączona) — lustro briefu."""
+        if self._read_authorizer is None:
+            return None
+        try:
+            self._read_authorizer.authorize(sender_id)
+        except NoteAuthorizationError as exc:
+            return f"Brak uprawnień do odczytu bazy wiedzy: {exc}"
+        return None
 
     def _handle(self, day: date, want_pdf: bool, ctx: ChangeDigestContext) -> str:
         digest = self._service.since(day)

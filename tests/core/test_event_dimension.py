@@ -8,7 +8,7 @@ append-only i schemat magazynu pozostają nienaruszone, a stare bazy migrują pr
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from workmate.adapters.outbound.sqlite_events import SqliteEventStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
@@ -16,7 +16,7 @@ from workmate.core.application.services import ProjectsService
 from workmate.core.domain.events import NewEvent, composite_external_id
 from workmate.core.domain.models import Project
 
-_WHEN = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
+_WHEN = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
 
 
 def _ev(
@@ -209,10 +209,10 @@ def test_select_events_maps_pull_state_transitions() -> None:
     assert [e.kind for e in events] == ["pr_merged"]
 
 
-def test_akcja_activity_zwija_zdarzenia_po_rodzaju(tmp_path) -> None:
+def test_akcja_summary_zwija_zdarzenia_po_rodzaju(tmp_path) -> None:
     """Krok 5.2 (ADR 0009 paczki): ``get_project_activity`` to ``GitHub(action='activity')``."""
     from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_github_catalog
+    from workmate.core.application.tools import build_activity_catalog
 
     store = SqliteEventStore(tmp_path / "events.db")
     for e in [
@@ -222,9 +222,9 @@ def test_akcja_activity_zwija_zdarzenia_po_rodzaju(tmp_path) -> None:
     ]:
         store.append(e)
 
-    spec = build_github_catalog(events=EventService(store))[0]
-    assert spec.name == "GitHub"
-    result = spec.fn(action="activity", project="wm")
+    spec = build_activity_catalog(events=EventService(store))[0]
+    assert spec.name == "Activity"
+    result = spec.fn(action="summary", project="wm")
     assert result["project"] == "wm"
     assert result["event_count"] == 2
     assert result["by_kind"] == {"pr_opened": 1, "pr_merged": 1}

@@ -4,7 +4,7 @@ Date: 2026-07-29
 Status: accepted
 Author: P0w3r223
 Related to: [ADR 0019](0019-shared-event-store.md) (separate SQLite store pattern),
-[ADR 0035](0035-weekly-timesheets.md) (Europe/Warsaw week semantics),
+[ADR 0035](0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md) (Europe/Warsaw week semantics),
 [ADR 0006](0006-write-capability-gate-2.md) (write posture / data boundary)
 
 ---

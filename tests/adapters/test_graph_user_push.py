@@ -248,3 +248,26 @@ def test_in_memory_fake_satisfies_the_port():
     sender.send_image_to_user("u1", b"data", "image/png")
 
     assert sender.sent[0] == ("u1", b"data", "image/png")
+
+
+def test_token_is_carried_by_the_request_not_stored_on_the_shared_client():
+    """Token doklejamy PER ŻĄDANIE (wzorzec ``graph_thread_source``), nie do ``client.headers``.
+
+    ``httpx.Client`` bywa dzielony (jedna instancja na proces, wiele adapterów) i wołany z puli
+    wątków — token wstrzyknięty w obiekt klienta jest wtedy stanem widocznym dla cudzych żądań,
+    a jego świeżość zależy od kolejności wywołań. Każde żądanie ma nieść SWÓJ token.
+    """
+    tokens = iter(["token-1", "token-2", "token-3"])
+    autoryzacje: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        autoryzacje.append(request.headers.get("Authorization"))
+        return _happy(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    push = HttpxGraphUserImagePush(client, lambda: next(tokens), sleep=lambda _s: None)
+
+    push.send_image_to_user(_TARGET, b"PNGDATA", "image/png")
+
+    assert autoryzacje == ["Bearer token-1", "Bearer token-2", "Bearer token-3"]
+    assert "Authorization" not in client.headers  # nic nie zostaje na kliencie

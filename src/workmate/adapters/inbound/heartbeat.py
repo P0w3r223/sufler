@@ -1,9 +1,25 @@
 """Puls żywotności pollerów mostu (R5) — plik na wolumenie stanu + checker dla healthchecku.
 
-Poller woła ``write_heartbeat`` PO każdym UDANYM cyklu (nie po każdej iteracji pętli). Dzięki
-temu jałowa pętla — poller, który w kółko dostaje ``AuthExpiredError`` albo zawiesił się na
-I/O — NIE odświeża pliku, a checker wykryje go po wieku pliku. To odróżnia „poller żyje i
-pracuje" od „proces stoi, ale nic nie robi", czego samo ``docker ps`` (kontener „up") nie widzi.
+Pulsu nie bije sama pętla — bije go ten, kto uznał rundę za PRODUKTYWNĄ, a każde drzwi mają na to
+własną regułę i własny plik:
+
+* **Poller GitHub** — po UDANEJ rundzie (``poller.py`` gałąź ``else``). Runda zakończona wyjątkiem
+  NIE odświeża pliku, więc jałowa pętla („w kółko ten sam błąd") starzeje puls.
+* **Poller Teams** — po każdej obsłużonej wiadomości, po każdym kanale i po domkniętej rundzie,
+  także po kanale, którego polling rzucił wyjątkiem (błąd jednego kanału nie kładzie pętli, więc
+  proces nadal żyje i pracuje na pozostałych). Ta częstotliwość jest celowa: runda zawiera pełne
+  tury agenta na każdym kanale, więc jej długość mierzy RUCH, nie żywotność — przy ``--max-age
+  180`` kontener bywał ``unhealthy`` na ścieżce SZCZĘŚLIWEJ, a wtedy sygnał przestaje być czytany.
+  Dwa wyjątki bijące w drugą stronę: jałowa pętla odświeżania tokenu (``refresh_auth`` pada →
+  pętla wraca na początek) pulsu NIE bije, i nie bije go też runda, w której nie dało się utrwalić
+  stanu — wolumen odmawiający zapisu zatrzymuje obsługę wiadomości, więc „proces żyje" byłoby
+  wtedy prawdą bezużyteczną.
+* **Notifier** — po rundzie z postępem, własnym plikiem; patrz ``notifier_heartbeat_path``.
+
+Wspólny mianownik: puls świadczy o ŻYCIU procesu i o tym, że pętla się kręci, a nie o tym, że praca
+się udaje. Powtarzalny błąd JEDNEGO kanału Teams starzeje puls tylko wtedy, gdy zabierze cały
+proces; inaczej widać go w logu i — od ADR 0069 — w kwarantannie porzuconych wiadomości. Tego,
+czego ``docker ps`` (kontener „up") nie widzi, puls dopełnia: proces stoi albo zawiesił się na I/O.
 
 Ścieżka pulsu jest SIOSTRĄ pliku stanu drzwi (``github_state.json`` → ``github_state.heartbeat``),
 więc leży na tym samym wolumenie ``state`` i wskazuje ją ta sama zmienna ``WORKMATE_*_STATE``, którą
@@ -41,7 +57,7 @@ def notifier_heartbeat_path(state_path: Path | str) -> Path:
 
 
 def write_heartbeat(path: Path | str, *, now: float | None = None) -> None:
-    """Zapisz znacznik udanego cyklu, aktualizując ``mtime`` (zapis atomowy: tmp + ``os.replace``).
+    """Zapisz znacznik żywotności, aktualizując ``mtime`` (zapis atomowy: tmp + ``os.replace``).
 
     Treść (epoch) jest tylko dla człowieka czytającego plik — checker patrzy na ``mtime``. Zapis
     przez plik tymczasowy i ``os.replace`` sprawia, że healthcheck nigdy nie trafi na obcięty plik.
@@ -56,12 +72,14 @@ def write_heartbeat(path: Path | str, *, now: float | None = None) -> None:
 def is_fresh(path: Path | str, max_age_s: float, *, now: float | None = None) -> bool:
     """True, gdy plik istnieje i jego ``mtime`` jest młodszy niż ``max_age_s`` sekund.
 
-    Brak pliku → False (poller nigdy nie domknął cyklu albo skasowano stan). ``now`` jest
-    wstrzykiwalny, żeby test sterował upływem czasu bez czekania.
+    Nieczytelny plik → False: brak (poller nigdy nie domknął cyklu albo skasowano stan), ale też
+    ``PermissionError`` czy błąd I/O na wolumenie. To ma być WERDYKT healthchecku, nie traceback —
+    a każda z tych sytuacji znaczy „nie mam dowodu, że pętla żyje", czyli dokładnie „niezdrowy".
+    ``now`` jest wstrzykiwalny, żeby test sterował upływem czasu bez czekania.
     """
     try:
         mtime = Path(path).stat().st_mtime
-    except FileNotFoundError:
+    except OSError:
         return False
     current = time.time() if now is None else now
     return (current - mtime) < max_age_s

@@ -3,12 +3,23 @@
 Protokół jest bliźniaczy do wykonawcy: żądanie → czasownik → odpowiedź, a KAŻDY błąd wraca jako
 ``{"error": ...}``, nie zerwanie (cisza wyglądałaby dla aplikacji jak zawieszenie). Tu sprawdzamy
 sam dyspozytor na atrapie serwisu; transport gniazda ma pokrycie w teście klienta.
+
+POSIX-only: moduł menedżera podnosi ``ImportError`` na Windows (gniazda unix, ``docker.sock``),
+więc jego import wywróciłby ZBIERANIE całego pakietu testów. Bramka stoi PRZED importem i pyta
+o ``fcntl`` — moduł, którego na Windows fizycznie nie ma — bo tylko brak modułu daje czysty skip
+(od pytest 9.1 ``importorskip`` domyślnie łapie ``ModuleNotFoundError``, nie każdy ``ImportError``).
+Ten sam strażnik i z tego samego powodu stoi w ``tests/adapters/test_exec_manager_client.py``
+i ``test_exec_runner.py``; na Linuksie (obraz floty, CI) nie zmienia niczego.
 """
 
 from __future__ import annotations
 
-from workmate.adapters.inbound.exec_manager_server import _dispatch
-from workmate.core.errors import ExecManagerError
+import pytest
+
+pytest.importorskip("fcntl", reason="menedżer wykonawców jest POSIX-only (gniazda unix)")
+
+from workmate.adapters.inbound.exec_manager_server import _dispatch  # noqa: E402
+from workmate.core.errors import ExecManagerError  # noqa: E402
 
 _SCOPE = f"teams-graph/{'a' * 32}"
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from claude_summary.core.redaction import redact_text, sanitize_prompt
+import time
+
+from claude_summary.core.redaction import person_label, redact_text, sanitize_prompt
 
 
 def test_redacts_ip_and_account_keeps_instruction() -> None:
@@ -66,6 +68,100 @@ def test_redacts_bearer_and_private_key() -> None:
 def test_redacts_windows_user_path() -> None:
     assert "[UŻYTKOWNIK]" in redact_text("plik w C:\\Users\\jdoe\\BIAP")
     assert "jdoe" not in redact_text("C:\\Users\\jdoe\\x")
+
+
+def test_user_path_covers_whole_segment_with_space_or_dash() -> None:
+    # REGRESJA: segment kończył się na spacji/myślniku, więc nazwisko przechodziło dalej.
+    with_space = redact_text("plik w C:\\Users\\Jan Kowalski\\app\\log.txt")
+    assert "Kowalski" not in with_space
+    assert "\\app\\log.txt" in with_space  # reszta ścieżki zachowana
+
+    with_dash = redact_text("plik w /home/jan-kowalski/app")
+    assert "kowalski" not in with_dash
+    assert "/app" in with_dash
+
+
+def test_user_path_in_dash_encoded_folder_name() -> None:
+    # Nazwa folderu ~/.claude/projects: TU myślnik jest separatorem, spacja zostaje w nazwie.
+    redacted = redact_text("C--Users-Jan Kowalski-BIAP-PROJEKT")
+    assert "Kowalski" not in redacted
+    assert redacted == "C--Users-[UŻYTKOWNIK]-BIAP-PROJEKT"
+
+
+def test_user_path_does_not_swallow_prose_after_path() -> None:
+    # Bez separatora domykającego segment bierzemy sam token — proza za ścieżką zostaje.
+    redacted = redact_text("sprawdź C:\\Users\\jdoe i powiedz co dalej")
+    assert "jdoe" not in redacted
+    assert "i powiedz co dalej" in redacted
+
+
+def test_redacts_ipv6_full_and_compressed() -> None:
+    # REGRESJA: kategoria "ip" obejmowała wyłącznie IPv4.
+    full = sanitize_prompt("serwer 2001:0db8:85a3:0000:0000:8a2e:0370:7334 nie odpowiada")
+    assert "2001" not in full.text
+    assert "[IP]" in full.text
+    assert "ip" in full.categories
+
+    short = sanitize_prompt("ping fe80::1c2d:3e4f i sprawdź trasę")
+    assert "fe80" not in short.text
+    assert "ip" in short.categories
+
+    mixed = redact_text("adres 2001:db8::8a2e:370:7334 w konfiguracji")
+    assert "8a2e" not in mixed
+
+
+def test_ipv6_pattern_leaves_ordinary_text_alone() -> None:
+    for text in ("spotkanie o 09:00:00", "użyj std::vector w tym miejscu", "wycinek x[::2]"):
+        assert redact_text(text) == text
+
+
+def test_unquoted_secret_value_is_redacted_to_end_of_line() -> None:
+    # REGRESJA: bez cudzysłowów redagowany był tylko pierwszy token wartości.
+    redacted = redact_text("haslo: moje tajne haslo")
+    assert "[SEKRET]" in redacted
+    assert "tajne" not in redacted
+
+    two_lines = redact_text("password: moje tajne haslo\nzrób deploy")
+    assert "tajne" not in two_lines
+    assert "zrób deploy" in two_lines  # redakcja kończy się na końcu linii
+
+
+def test_long_single_token_paste_is_scanned_in_bounded_time() -> None:
+    """REGRESJA: nieograniczony prefiks + brak okna dawały kwadratowe skanowanie (dziesiątki s)."""
+    blob = "napraw to: " + ("a1b2c3d4e5f6" * 5_000)  # 60 kB jednego tokenu
+    start = time.perf_counter()
+    result = sanitize_prompt(blob)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 2.0, f"redakcja zajęła {elapsed:.1f}s — wzorce skanują całą wklejkę"
+    assert result.dropped is False
+    assert len(result.text) <= 300  # i tak zostaje samo okno wyniku
+
+    identifiers = "opisz: " + ("nazwa_zmiennej_" * 3_000)  # 45 kB znaków słownych
+    start = time.perf_counter()
+    sanitize_prompt(identifiers)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_scan_window_does_not_leak_half_a_secret() -> None:
+    """REGRESJA: okno cięło w środku tokenu, a redakcja skraca tekst — urwany ogon sekretu
+    wjeżdżał w zachowywane znaki wyniku (dopasowanie nie łapie fragmentu)."""
+    # Dziesięć długich kluczy skraca się do dziesięciu etykiet, więc to, co stoi na granicy
+    # okna, ląduje w wyniku daleko przed limitem _MAX_KEEP.
+    prefix = ("sk-ant-" + "a" * 180 + " ") * 10
+    filler = "x" * (1910 - len(prefix) - 1) + " "
+    aws_key = "AKIAABCDEFGHIJKLMNOP"  # granica okna (1920) wypada w środku tego tokenu
+    result = sanitize_prompt(prefix + filler + aws_key + " reszta wklejki")
+
+    assert "AKIA" not in result.text
+    assert "[SEKRET]" in result.text
+
+
+def test_person_label_never_carries_email() -> None:
+    assert person_label("jan.kowalski@firma.pl") == "Jan Kowalski"
+    assert person_label("P0w3r223@users.noreply.github.com") == "P0w3r223"
+    assert person_label("team.bot+tag@example.org") == "Team Bot"
+    assert person_label("Jan Kowalski") == "Jan Kowalski"  # nie-adres zostaje
+    assert person_label("") == ""
 
 
 def test_pasted_shell_output_is_dropped() -> None:

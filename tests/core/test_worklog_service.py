@@ -9,7 +9,7 @@ razem z nią — ich przedmiotem był ``log_jira_worklog``, wycięty w całości
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -24,7 +24,7 @@ _WARSAW = ZoneInfo("Europe/Warsaw")
 
 
 def _now() -> datetime:
-    return datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc)
+    return datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
 
 
 class _FakeGithub:

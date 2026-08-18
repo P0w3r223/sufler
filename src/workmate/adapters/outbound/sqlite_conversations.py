@@ -152,7 +152,11 @@ class SqliteConversationStore:
 
     def __init__(self, db_path: Path | str) -> None:
         if str(db_path) != ":memory:":
-            Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            # ``expanduser`` musi objąć TAKŻE ``connect``: policzony wyłącznie na potrzeby
+            # ``mkdir`` zakładał katalog rozwinięty (``/home/x/.workmate``), a bazę otwierał pod
+            # literalnym ``~`` w katalogu roboczym procesu — dwa różne pliki pod jedną nazwą.
+            db_path = Path(db_path).expanduser()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # busy_timeout: gdy inny PROCES (drugie drzwi) trzyma zapis, poczekaj zamiast
@@ -428,14 +432,26 @@ class SqliteConversationStore:
         return _summary(row)
 
     def list_conversations(
-        self, *, channel: str | None = None, limit: int = 50
+        self, *, channel: str | None = None, external_id: str | None = None, limit: int = 50
     ) -> list[Conversation]:
         # Realne usage + kontekst ostatniej tury liczymy per rozmowa (Design 2), pod jednym
         # zamkiem; ``updated_at`` (TEXT ISO) sortuje leksykograficznie = chronologicznie,
         # ``rowid`` rozstrzyga remisy przy równym znaczniku. ``limit`` chroni przed
         # nieograniczonym wypisem, więc pętla po (≤limit) rozmowach jest tania.
-        clause = " WHERE channel=?" if channel is not None else ""
-        params: list[Any] = [channel] if channel is not None else []
+        #
+        # Oba filtry idą do WHERE, nie do wołającego, i to jest tu rzecz nieoczywista: pętla
+        # niżej robi trzy zapytania na wiersz, więc filtrowanie po zwróceniu okna kazałoby
+        # policzyć koszt rozmów, które zaraz odpadną (okno 200 = 600 zapytań na 10 pozycji),
+        # a przy okazji myliło „wątek bez historii" z „historia poza oknem".
+        warunki = []
+        params: list[Any] = []
+        if channel is not None:
+            warunki.append("channel=?")
+            params.append(channel)
+        if external_id is not None:
+            warunki.append("external_id=?")
+            params.append(external_id)
+        clause = (" WHERE " + " AND ".join(warunki)) if warunki else ""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM conversations" + clause + " "

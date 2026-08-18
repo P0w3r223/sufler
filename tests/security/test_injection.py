@@ -1,9 +1,13 @@
-"""Bezpieczeństwo: wstrzyknięcia do „bazy" (pliki notatek) są neutralizowane.
+"""Bezpieczeństwo: wstrzyknięcia do „bazy" (pliki notatek) i z zewnętrznych API są neutralizowane.
 
-Trzy wektory: (1) treść notatki udająca frontmatter nie może podmienić metadanych;
-(2) tytuł z ładunkiem YAML round-trypuje jako zwykły string (``safe_dump`` cytuje);
-(3) strażnik ``reject_dangerous_content`` odrzuca NUL i znaki sterujące. Round-tripy
-idą przez PRAWDZIWE adaptery zapisu/odczytu na ``tmp_path`` (nie ruszają ``data/``).
+Trzy wektory: (1) treść notatki udająca frontmatter nie może podmienić metadanych; (2) tytuł
+z ładunkiem YAML round-trypuje jako zwykły string (``safe_dump`` cytuje); (3) strażnik ZAPISU
+``reject_dangerous_content`` odrzuca NUL i znaki sterujące. Round-tripy idą przez PRAWDZIWE
+adaptery zapisu/odczytu na ``tmp_path`` (nie ruszają ``data/``).
+
+Klasy znaków i równoważność z ODCZYTOWYM ``strip_control_chars`` (reguła twarda #4) mieszkają
+w ``tests/core/domain/test_sanitize.py`` — tu sprawdzamy to, co widać dopiero z tej strony:
+czy strażnik obejmuje KAŻDE pole notatki i czy jego komunikat nadaje się do diagnozy.
 """
 
 from __future__ import annotations
@@ -65,3 +69,25 @@ def test_reject_dangerous_content_blocks_nul_and_control_chars():
 def test_reject_dangerous_content_allows_normal_whitespace():
     # Nowa linia / tab / CR są dozwolone — nie rzuca.
     reject_dangerous_content("linia1\nlinia2\ttab", "tresc\r\nOK")
+
+
+def test_reject_dangerous_content_sprawdza_kazde_pole_nie_tylko_pierwsze():
+    """Ładunek w OSTATNIM argumencie (np. element listy zadań) musi odrzucić zapis tak samo."""
+    with pytest.raises(WriteError):
+        reject_dangerous_content("tytul", "tresc", "zadanie 1", "zadanie\x00 2")
+
+
+def test_reject_dangerous_content_wskazuje_kod_znaku_w_komunikacie():
+    """Operator ma zobaczyć KTÓRY znak — inaczej „zapis odrzucony" jest nie do zdiagnozowania."""
+    with pytest.raises(WriteError, match="U\\+0007"):
+        reject_dangerous_content("ty\x07tul")
+
+
+def test_tytul_zlozony_z_samych_znakow_sterujacych_nie_przechodzi_jako_pusty():
+    """Ładunek zbudowany WYŁĄCznie ze znaków sterujących ma paść na strażniku, nie „zniknąć".
+
+    Gdyby zapis szedł ścieżką wycinającą (jak odczyt), taki tytuł zwęziłby się do pustego
+    napisu i notatka trafiłaby do bazy bez tytułu — cicha strata zamiast głośnej odmowy.
+    """
+    with pytest.raises(WriteError):
+        reject_dangerous_content("\x00\x07\x1b")

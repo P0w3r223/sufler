@@ -7,7 +7,7 @@ oraz przypadki brzegowe (brak notatek, brak dat).
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from workmate.core.domain.models import NoteSummary, ProjectStatus
 from workmate.core.domain.project_brief import ProjectBrief
@@ -27,7 +27,7 @@ def _status(**over: object) -> ProjectStatus:
         latest_note_date=date(2026, 7, 18),
         open_action_items=2,
         recent_activity_count=5,
-        latest_activity_at=datetime(2026, 7, 19, 14, 30, 0, tzinfo=timezone.utc),
+        latest_activity_at=datetime(2026, 7, 19, 14, 30, 0, tzinfo=UTC),
         failing_ci_count=1,
     )
     base.update(over)

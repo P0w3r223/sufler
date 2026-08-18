@@ -69,7 +69,6 @@ class HttpxGraphFileSender:
         content_type: str,
     ) -> UploadedFile:
         """Wgraj bajty na dysk kanału (SharePoint) i zwróć referencję do załączenia."""
-        self._refresh_auth()
         folder = self._get(f"{GRAPH}/teams/{team_id}/channels/{channel_id}/filesFolder")
         drive_id = _require(folder.get("parentReference", {}).get("driveId"), "filesFolder.driveId")
         folder_id = _require(folder.get("id"), "filesFolder.id")
@@ -102,7 +101,6 @@ class HttpxGraphFileSender:
         attachment: UploadedFile,
     ) -> None:
         """Wyślij odpowiedź w wątku z załączonym plikiem; 404 na root → ``ThreadRootGone``."""
-        self._refresh_auth()
         att_id = attachment.attachment_id  # GUID zwalidowany już przy wgraniu (patrz upload)
         payload: dict[str, Any] = {
             "body": {
@@ -128,9 +126,12 @@ class HttpxGraphFileSender:
                 raise ThreadRootGone(f"root wątku {root_id} nie istnieje") from exc
             raise
 
-    def _refresh_auth(self) -> None:
-        """Ustaw nagłówek Authorization świeżym tokenem (sync MSAL, cichy refresh z cache)."""
-        self._client.headers["Authorization"] = f"Bearer {self._token()}"
+    def _auth_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """Świeży ``Authorization`` (+ ewentualne nagłówki wołającego) na JEDNO żądanie."""
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        if extra:
+            headers.update(extra)
+        return headers
 
     def _get(self, url: str) -> dict[str, Any]:
         # GET nic nie zmienia → powtórzenie zawsze bezpieczne (o ile wołający go chce).
@@ -164,14 +165,20 @@ class HttpxGraphFileSender:
         headers: dict[str, str] | None = None,
         retry_transient: bool = False,
     ) -> httpx.Response:
-        """Wykonaj żądanie ze wspólną polityką ponawiania — patrz ``graph_http``."""
+        """Wykonaj żądanie ze wspólną polityką ponawiania — patrz ``graph_http``.
+
+        Nagłówek ``Authorization`` składamy PER ŻĄDANIE (wzorzec ``graph_thread_source``), zamiast
+        wstrzykiwać go w ``client.headers``: klient bywa dzielony między adapterami i wołany z puli
+        wątków, więc token w obiekcie klienta jest stanem, którego czas życia zależy od kolejności
+        wywołań — a nagłówek doklejony do żądania jest zawsze świeży i niczyj poza tym żądaniem.
+        """
         return graph_http.request_with_retry(
             self._client,
             method,
             url,
             json=json,
             content=content,
-            headers=headers,
+            headers=self._auth_headers(headers),
             retry_transient=retry_transient,
             sleep=self._sleep,
         )

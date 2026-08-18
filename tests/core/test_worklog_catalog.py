@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from workmate.core.application.tools import build_github_catalog
+from workmate.core.application.tools import build_activity_catalog
 from workmate.core.domain.worklog import SessionPolicy, build_proposal
 from workmate.core.errors import InvalidRequestError
 
@@ -40,13 +40,13 @@ class _FakeWorklogService:
 
 def _zbuduj(error: Exception | None = None):
     service = _FakeWorklogService(error)
-    spec = build_github_catalog(events=_FakeEvents(), worklog=service)[0]  # type: ignore[arg-type]
+    spec = build_activity_catalog(events=_FakeEvents(), worklog=service)[0]  # type: ignore[arg-type]
     return service, spec
 
 
 def test_worklog_jest_akcja_dopiero_z_serwisem() -> None:
     """Bez serwisu propozycji akcja nie istnieje — obietnica bez pokrycia byłaby regresją."""
-    bez = build_github_catalog(events=_FakeEvents())[0]  # type: ignore[arg-type]
+    bez = build_activity_catalog(events=_FakeEvents())[0]  # type: ignore[arg-type]
     assert "worklog" not in bez.description
     assert "`worklog`" in _zbuduj()[1].description
 
@@ -75,3 +75,21 @@ def test_argumenty_dochodza_do_serwisu() -> None:
     service, spec = _zbuduj()
     spec.fn(action="worklog", since=date(2026, 7, 13), until=date(2026, 7, 19), author="P0w3r223")
     assert service.calls[0] == (date(2026, 7, 13), date(2026, 7, 19), "P0w3r223")
+
+
+# --- Instrukcja prezentacji w kopercie, nie w opisie (ADR 0068 §5) ---------------------
+
+
+def test_zastrzezenie_o_estymacji_wraca_z_wynikiem() -> None:
+    """Zdanie „to estymacja, pokaz disclaimer" jechalo w KAZDYM zadaniu, w opisie narzedzia.
+
+    Potrzebne jest dokladnie raz: wtedy, gdy model patrzy na propozycje. Wzorzec pola `note`
+    z `File` — koperta niesie instrukcje obok danych, ktorych dotyczy.
+    """
+    _, spec = _zbuduj()
+
+    wynik = spec.fn(action="worklog", since=date(2026, 8, 1), until=date(2026, 8, 7))
+
+    assert "ESTYMACJA" in wynik["note"]
+    assert "disclaimer" in wynik["note"]
+    assert "ESTYMACJA" not in spec.description

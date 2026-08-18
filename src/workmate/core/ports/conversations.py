@@ -119,13 +119,20 @@ class ConversationStore(Protocol):
         ...
 
     def list_conversations(
-        self, *, channel: str | None = None, limit: int = 50
+        self, *, channel: str | None = None, external_id: str | None = None, limit: int = 50
     ) -> list[Conversation]:
-        """Zwróć rozmowy (najnowsze pierwsze) do podglądu historii, opcjonalnie po kanale.
+        """Zwróć rozmowy (najnowsze pierwsze) do podglądu historii, opcjonalnie po kanale i wątku.
 
         Odczyt niezależny od aktywnego wątku i od treści (inaczej niż ``search``):
         listuje CAŁE archiwum — aktywne i domknięte — z sumą tokenów per rozmowa.
         ``limit`` chroni podgląd przed nieograniczonym wypisem długiej historii.
+
+        ``external_id`` zawęża do JEDNEGO wątku i musi filtrować w zapytaniu, nie u wołającego.
+        Filtr w Pythonie nad oknem ``limit`` daje dwie szkody naraz: wątek, którego rozmowy
+        z okna wypadły, dostaje wynik nieodróżnialny od „nie ma historii", a implementacja
+        dolicza koszt per WIERSZ OKNA (usage, ostatnia tura, liczba tur), czyli płaci za rozmowy,
+        które i tak zaraz odpadną. Oba znikają, gdy ``limit`` obowiązuje na już zawężonym
+        zbiorze. Ten sam parametr i to samo znaczenie co w ``search``.
         """
         ...
 

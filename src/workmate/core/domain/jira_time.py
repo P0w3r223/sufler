@@ -9,7 +9,7 @@ autorstwa commita ma ten sam kształt). Czyste funkcje, bez zegara.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 # Kolejność ma znaczenie: wariant z milisekundami jest u Jiry domyślny, więc próbujemy go pierwszy.
@@ -21,6 +21,13 @@ def parse_jira_timestamp(value: Any) -> datetime | None:
 
     Zwracamy ``None`` zamiast rzucać, bo wołający (echo zdarzenia, strażnik duplikatów) mają
     sensowne zachowanie awaryjne — nieudany zapis echa nie może wywrócić udanej mutacji.
+
+    Wynik jest ZAWSZE świadomy strefy. Wejście bez offsetu (sama data, ISO bez strefy) dostaje
+    UTC, bo mieszana partia — jeden commit ze znacznikiem ``Z``, drugi bez strefy — wywracała
+    ``worklog.group_sessions`` na ``TypeError: can't compare offset-naive and offset-aware
+    datetimes``, czyli dokładnie na tym, czemu ``map_github_commits`` miał zapobiegać („jeden
+    dziwny commit nie może wywrócić raportu"). UTC, a nie strefa pionu: oba API deklarują czas
+    uniwersalny, a zgadywanie strefy lokalnej przesuwałoby wpisy o godzinę lub dwie.
     """
     if not value:
         return None
@@ -31,6 +38,7 @@ def parse_jira_timestamp(value: Any) -> datetime | None:
         except ValueError:
             continue
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)

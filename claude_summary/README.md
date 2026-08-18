@@ -25,13 +25,29 @@ logi). Redakcja działa **na granicy parsowania** — surowa treść nie wchodzi
 do zapytania LLM — i ma trzy poziomy:
 
 1. **Redakcja w miejscu** — wartości są zastępowane etykietami: `[SEKRET]`, `[KONTO]` (e-mail /
-   `user@host`), `[IP]`, `[ID]` (UUID/GUID), `[UŻYTKOWNIK]` (nazwa użytkownika w ścieżce).
+   `user@host`), `[IP]` (IPv4 i IPv6), `[ID]` (UUID/GUID), `[UŻYTKOWNIK]` (nazwa użytkownika
+   w ścieżce — cały segment, także ze spacją i myślnikiem).
 2. **Przycięcie wklejek** — prompt wyglądający na wklejony log/zrzut redukujemy do wiodącej
    instrukcji + znacznik `[…wklejona treść pominięta]`.
 3. **Pełne pominięcie** — prompt będący samym zrzutem terminala jest ignorowany w całości.
 
 Kategorie, które zadziałały, są widoczne w JSON (pole `redactions`) i jako dyskretny znacznik
 `(zredagowano: …)` w Markdown. Szczegóły: `docs/adr/0003`.
+
+**Metadane raportu też są redagowane** (poprawka ADR 0003 z 2026-08-17) — deklaracja „nic
+wrażliwego nie trafia do JSON-a ani do zapytania LLM" obejmuje nie tylko treść promptów:
+
+| Pole | Co wychodzi na zewnątrz |
+|------|-------------------------|
+| `repo` | ścieżka po `redact_text` — `C:\Users\[UŻYTKOWNIK]\projekt` |
+| `session_id` | pierwsze 8 znaków (rozróżnia sesje dnia, nie wskazuje pliku transkryptu) |
+| `person`, `author` commita | etykieta osoby, nigdy adres: `jan.kowalski@firma.pl` → `Jan Kowalski` |
+
+`--author` (i `git config user.email`) pozostają adresem — tym filtruje `git log`; redakcja
+dotyczy tego, co opuszcza narzędzie.
+
+Zgoda na odczyt jest **typem, nie konwencją**: adapter czytający `~/.claude/projects` przyjmuje
+`ConsentProof`, którego nie da się zbudować z pominięciem bramki (`core/consent.py`).
 
 ## Instalacja
 
@@ -67,9 +83,18 @@ uv run claude-summary --consent --repo "C:\Users\Ja\projekt" --llm
 | `--since` / `--until` | Zakres dat `RRRR-MM-DD` (domyślnie ostatnie 7 dni). |
 | `--llm` | Dołóż opis prozą per dzień (Claude API). |
 | `--format md\|json\|both` | Format wyjścia (domyślnie `md`). |
-| `--out PLIK` | Zapisz wynik do pliku (dla `both` powstają `.md` i `.json`). |
+| `--out PLIK` | Zapisz wynik do pliku (dla `both` powstają `.md` i `.json`). Sufiks zdejmujemy wyłącznie, gdy jest nim `.md`/`.json` — `raport.2026-07-17` zostaje nazwą pliku. |
 | `--all-projects` | Wszystkie foldery `~/.claude/projects`, bez filtra po repo. |
 | `--project NAZWA` | Tylko wskazany folder projektu. |
+
+### Pusty raport zawsze mówi, dlaczego jest pusty
+
+Zero promptów to zwykle błąd konfiguracji, nie brak pracy. Na `stderr` trafia ostrzeżenie, gdy
+katalog historii nie istnieje albo jest nieczytelny, gdy nie ma w nim żadnego folderu projektu,
+gdy `--project` nie pasuje do niczego, gdy linie `type:"user"` są, ale żadna nie przechodzi
+dyskryminatora (dryf formatu transkryptu), gdy żaden prompt nie pochodzi ze wskazanego `--repo`
+oraz gdy pominięto uszkodzone linie JSON lub nieczytelne pliki. Kod wyjścia zostaje `0` — to
+ostrzeżenia, nie błędy.
 
 ## Jak odróżniamy realny prompt człowieka
 

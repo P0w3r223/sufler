@@ -87,9 +87,19 @@ class DockerHttpEngine:
         """
         self._remove_by_name(spec.name)
         body = self._create_body(spec)
-        created = self._request("POST", f"/containers/create?name={spec.name}", body)
-        container_id = str(created["Id"])
-        self._request("POST", f"/containers/{container_id}/start", None)
+        try:
+            created = self._request("POST", f"/containers/create?name={spec.name}", body)
+            container_id = str(created["Id"])
+            self._request("POST", f"/containers/{container_id}/start", None)
+        except _DockerApiError as exc:
+            # Jak w ``remove``: odmowa Docker API ma wyjść jako ``ExecManagerError``, bo TO jest
+            # błąd, który ``ManagedCommandRunner`` umie zamienić w wynik polecenia. Surowy
+            # ``_DockerApiError`` przelatywał przez menedżera i wywracał turę agenta.
+            raise ExecManagerError(f"nie udało się postawić wykonawcy {spec.name}: {exc}") from exc
+        except (KeyError, TypeError) as exc:
+            raise ExecManagerError(
+                f"Docker API nie zwróciło id kontenera dla {spec.name}: {exc}"
+            ) from exc
         return container_id
 
     def remove(self, container_id: str) -> None:
@@ -108,9 +118,14 @@ class DockerHttpEngine:
         from workmate.core.ports.exec_manager import RunningExecutor
 
         filters = json.dumps({"label": [f"{_LABEL_MANAGED}=1"]})
-        raw = self._request("GET", f"/containers/json?filters={filters}", None)
+        try:
+            raw = self._request("GET", f"/containers/json?filters={filters}", None)
+        except _DockerApiError as exc:
+            raise ExecManagerError(f"nie udało się wypisać wykonawców: {exc}") from exc
         result: list[RunningExecutor] = []
         for item in raw if isinstance(raw, list) else []:
+            if not isinstance(item, dict) or "Id" not in item:
+                continue
             labels = item.get("Labels") or {}
             result.append(
                 RunningExecutor(
@@ -209,7 +224,11 @@ class DockerHttpEngine:
             if not raw:
                 return None
             return json.loads(raw)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
+            # ``http.client`` sygnalizuje uciętą/niezrozumiałą odpowiedź WŁASNYMI wyjątkami
+            # (``BadStatusLine``, ``IncompleteRead``), a zepsuty JSON — ``JSONDecodeError``;
+            # żaden z nich nie jest ``OSError``, więc dotąd przelatywały obok ``ExecManagerError``
+            # i wywracały turę zamiast wrócić jako niedostępność wykonawcy (``CommandResult`` -1).
             raise ExecManagerError(f"docker.sock niedostępny ({self._socket_path}): {exc}") from exc
         finally:
             conn.close()

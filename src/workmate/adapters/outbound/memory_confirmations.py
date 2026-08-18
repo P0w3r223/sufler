@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 # Ile żyje zapowiedź. Dość, żeby człowiek zdążył przeczytać i odpowiedzieć; za mało, żeby
 # zapomniana rozmowa autoryzowała cokolwiek po przerwie na obiad.
@@ -21,7 +21,7 @@ _DEFAULT_TTL = timedelta(minutes=15)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class InMemoryConfirmations:

@@ -5,7 +5,7 @@ Czas: ~10 minut.
 
 ## Krok 0 — wymagania
 
-- Python 3.10+
+- Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
 - (opcjonalnie) Claude Code
 

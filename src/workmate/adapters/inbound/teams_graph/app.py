@@ -21,7 +21,7 @@ import contextlib
 import logging
 import signal
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from workmate.adapters.inbound.change_command import ChangeDigestRouter
     from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
     from workmate.adapters.inbound.responder import Responder
-    from workmate.adapters.inbound.teams_graph.poller import HandleMessage
+    from workmate.adapters.inbound.teams_graph.poller import HandleMessage, MessageDeadLetterStore
     from workmate.adapters.inbound.thread_note_command import ThreadNoteRouter
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.core.application.events import EventService
@@ -129,12 +129,29 @@ def main() -> None:
     # (ADR 0008 tej paczki wdrożeniowej).
     if settings.enable_meeting_note_write or settings.enable_thread_note_capture:
         require_writable(core_settings.notes_dir, "WORKMATE_NOTES_DIR", is_directory=True)
+    # R/L1 dla ścieżek, które ustawienia rdzenia piszą, a drzwi dotąd sondowały wyrywkowo:
+    # migawki notatek (ADR 0065) oraz opcjonalne bazy metryk i audytu. Lista pochodzi z JEDNEGO
+    # miejsca (``Settings.persistent_paths``), bo rozsypana po drzwiach gubiła pozycje: migawka
+    # domyślnie ląduje pod montażem read-only floty, a rejestrator audytu łyka błędy per
+    # wywołanie — operator dostawał „dziennik" z zerem wierszy zamiast błędu startu.
+    #
+    # Migawki mają WARUNEK, dokładnie jak baza wiedzy trzy linie wyżej i z tego samego powodu:
+    # domyślna ścieżka to ``data_dir/snapshots/notes``, a ``data`` jest na flocie montowane ``:ro``
+    # (``deploy/docker/docker-compose.yml``), przy czym ``env.example`` nie przekierowuje jej
+    # nigdzie indziej. Bezwarunkowa sonda kładłaby więc drzwi na szablonie domyślnym — przy
+    # WYŁĄCZONEJ mutacji notatek, czyli na katalogu, którego proces nigdy nie tknie.
+    # Bazy metryk i audytu warunku nie mają i mieć nie powinny: wchodzą na listę WYŁĄCZNIE wtedy,
+    # gdy operator jawnie wskazał plik, a to jest już deklaracja „chcę tu pisać".
+    for path, env_var, is_dir in core_settings.persistent_paths():
+        if path == core_settings.note_snapshots_dir and not settings.enable_note_mutation:
+            continue
+        require_writable(path, env_var, is_directory=is_dir)
     if workspace_settings.enabled:
         # TTL sprzątanie katalogu roboczego (ADR 0018) — raz na starcie, backstop przeciw rośnięciu.
         removed = prune_stale(
             workspace_settings.workspace_dir,
             older_than=timedelta(days=workspace_settings.retention_days),
-            now=datetime.now(tz=timezone.utc),
+            now=datetime.now(tz=UTC),
         )
         if removed:
             logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
@@ -148,10 +165,10 @@ def main() -> None:
     schedule_settings = ScheduleSettings.from_env()
     schedule_settings.validate()
     extra_catalog.extend(_build_team_schedule_catalog(schedule_settings))
-    # ADR 0026 (A′2): dokładamy fabrykę `reply_with_file`, niezależnie bramkowaną od zapisu GitHub.
+    # ADR 0026 (A′2): dokładamy fabrykę `ReplyWithFile`, niezależnie bramkowaną od zapisu GitHub.
     thread_factory = _build_file_reply_factory(settings, token_provider)
     # ADR 0027 (A′3): OSOBNE fabryki push-u 1:1 — klucz = nadawca, nie wątek. Obraz inline
-    # (`send_image_to_user`) i dokument (`send_document_to_user`) są niezależnie bramkowane
+    # (`SendImage`) i dokument (`SendDocument`) są niezależnie bramkowane
     # (dokument wymaga szerszego zakresu Files.ReadWrite.All), więc składamy je w jedną fabrykę.
     user_push_factory = _compose_user_push_factories(
         _build_user_push_factory(settings, token_provider),
@@ -177,10 +194,16 @@ def main() -> None:
     )
     # One-pager „ogarnij mnie na <projekt>" (ADR 0051, F4) i digest „co się zmieniło od <data>"
     # (ADR 0052, F5): @wzmianka bota → read-only jednostronicówka, każda osobno bramkowana.
-    brief_router = _build_brief_router(settings, core_settings, events_settings, thread_pdf)
-    change_router = _build_change_digest_router(settings, events_settings, thread_pdf)
     # Autoryzacja ODCZYTU bazy wiedzy (ADR 0062), osobno bramkowana — ``None`` gdy wyłączona.
+    # Rozstrzygana PRZED routerami dyrektyw, bo obie (brief, digest) jadą za tą samą bramką:
+    # odpalały się przed jakąkolwiek autoryzacją, więc @wzmianka była drogą OBOK niej.
     note_read_authorizer = _build_note_read_authorizer(settings)
+    brief_router = _build_brief_router(
+        settings, core_settings, events_settings, thread_pdf, note_read_authorizer
+    )
+    change_router = _build_change_digest_router(
+        settings, events_settings, thread_pdf, note_read_authorizer
+    )
     responder = _build_responder(
         core_settings,
         agent_settings,
@@ -196,7 +219,7 @@ def main() -> None:
         thread_router,
         brief_router,
         change_router,
-        # Skrzynka nadawcza rozmowy (ADR 0009 paczki) — dzieli bramkę i limit z `reply_with_file`.
+        # Skrzynka nadawcza rozmowy (ADR 0009 paczki) — dzieli bramkę i limit z `ReplyWithFile`.
         _build_outbox_send_factory(settings, token_provider),
         settings.max_file_reply_kb * 1024,
         settings.outbox_max_files_per_turn,
@@ -219,7 +242,19 @@ def main() -> None:
         trust_labels=settings.enable_trust_labels,
     )
     handle = make_handle_message(responder)
-    asyncio.run(_run(settings, token_provider, handle))
+    # Kwarantanna wiadomości porzuconych po wyczerpaniu prób (ADR 0069) — ta sama baza i ten sam
+    # wolumen co dead-letter notifiera (ADR 0067 §2), bo to metadane dostawy po drugiej stronie
+    # mostu. Zapisywalność ``events.db`` jest sprawdzona wyżej (``require_writable``).
+    from workmate.adapters.outbound.sqlite_dead_letters import SqliteInboundDeadLetterStore
+
+    asyncio.run(
+        _run(
+            settings,
+            token_provider,
+            handle,
+            dead_letters=SqliteInboundDeadLetterStore(events_settings.db_path),
+        )
+    )
 
 
 def _build_bridge_catalog(
@@ -228,7 +263,7 @@ def _build_bridge_catalog(
 ) -> tuple[list[ToolSpec], Callable[[str], tuple[str, int] | None] | None]:
     """Narzędzia warstwy SPAJAJĄCEJ dla agenta Teams (ADR 0019/0021/0024): zdarzenia + zapis GitHub.
 
-    Zwraca ``(katalog, odczyt_powiązania_wątku)``. ``GitHub(action='events')`` jest ZAWSZE (agent
+    Zwraca ``(katalog, odczyt_powiązania_wątku)``. ``Activity(action='events')`` jest ZAWSZE (agent
     widzi, co zdarzyło się w innych warstwach). Zapis do GitHub (issue/komentarz) dokładamy TYLKO
     przy włączonej bramce i skonfigurowanym celu — profil per drzwi (ADR 0006/0021). Zdarzenia
     z zapisu idą jako ``source=teams`` (strażnik pętli — notifier ich nie odeśle). Gdy zapis jest
@@ -242,12 +277,12 @@ def _build_bridge_catalog(
     """
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
     from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_github_catalog
+    from workmate.core.application.tools import build_activity_catalog
 
     events = EventService(SqliteEventStore(events_settings.db_path))
 
     if not (github_settings.token and github_settings.owner and github_settings.repo):
-        return build_github_catalog(events=events), None
+        return build_activity_catalog(events=events), None
 
     from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
     from workmate.core.application.github import GithubWriteService
@@ -257,7 +292,7 @@ def _build_bridge_catalog(
     client = _github_client(github_settings)
     worklog = _worklog_service(client, github_settings)
     if not github_settings.enable_github_write:
-        return build_github_catalog(events=events, worklog=worklog), None
+        return build_activity_catalog(events=events, worklog=worklog), None
 
     write_service = GithubWriteService(
         client, owner=github_settings.owner, repo=github_settings.repo, events=events
@@ -273,7 +308,7 @@ def _build_bridge_catalog(
         github_settings.repo,
     )
     return (
-        build_github_catalog(events=events, worklog=worklog, write_service=write_service),
+        build_activity_catalog(events=events, worklog=worklog, write_service=write_service),
         _make_thread_link_lookup(thread_links),
     )
 
@@ -306,7 +341,7 @@ def _worklog_service(client: GithubReadPort, github_settings: GithubSettings) ->
     (``workmate-github``), a to te drzwi liczą propozycję (ta sama asymetria co przy Jirze).
 
     Zwraca SERWIS, nie katalog: od kroku 5.2 (ADR 0009) propozycja czasu jest akcją
-    ``GitHub(action='worklog')``, a nie własnym narzędziem.
+    ``Activity(action='worklog')``, a nie własnym narzędziem.
     """
     from workmate.core.application.worklog import WorklogService
     from workmate.core.domain.worklog import SessionPolicy
@@ -346,7 +381,7 @@ def _make_thread_link_lookup(
 
     Do kroku 5.5 (ADR 0009 paczki) ta sama informacja jechała jako OSOBNE narzędzie
     ``reply_on_thread`` z numerem domkniętym w closurze. Narzędzie zniesiono, bo wołało tę samą
-    metodę (``GithubWriteService.create_comment``) co ``GitHub(action='comment')``, za tą samą
+    metodę (``GithubWriteService.create_comment``) co ``Activity(action='comment')``, za tą samą
     bramką ``enable_github_write`` i obok niej w tym samym katalogu. Nie zawężało więc niczego:
     model, który chciałby skomentować inne issue, miał to drugie narzędzie pod ręką z numerem
     przyjmowanym wprost. Jedyną wartością było wypełnienie argumentu — czyli zastosowanie
@@ -370,7 +405,7 @@ def _make_thread_link_lookup(
 def _build_file_reply_factory(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> Callable[[str], list[ToolSpec]] | None:
-    """Fabryka ``reply_with_file`` per turę (ADR 0026, A′2) — odpowiedź plikiem w wątku Teams.
+    """Fabryka ``ReplyWithFile`` per turę (ADR 0026, A′2) — odpowiedź plikiem w wątku Teams.
 
     ``None``, gdy bramka ``enable_file_reply`` wyłączona (domyślnie, ADR 0006). Włączona: buduje
     SYNCHRONICZNY ``HttpxGraphFileSender`` (jak zapis GitHub Gate-4 — narzędzia agenta biegną
@@ -420,7 +455,7 @@ def _build_outbox_send_factory(
 ) -> Callable[[str], Callable[[Deliverable], None] | None] | None:
     """Fabryka WYSYŁACZA skrzynki nadawczej rozmowy (ADR 0009 paczki) — plik z ``outputs/`` w wątek.
 
-    ``None``, gdy bramka ``enable_file_reply`` wyłączona: to ta sama zdolność co ``reply_with_file``
+    ``None``, gdy bramka ``enable_file_reply`` wyłączona: to ta sama zdolność co ``ReplyWithFile``
     (ADR 0026) — załącznik w wątku Teams — więc dzieli z nią bramkę i limit rozmiaru. Osobna byłaby
     obietnicą, że operator włączył jedno, a dostał dwa.
 
@@ -499,7 +534,7 @@ def _outbox_html(filename: str) -> str:
 def _build_user_push_factory(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> Callable[[str], list[ToolSpec]] | None:
-    """Fabryka ``send_image_to_user`` per turę (ADR 0027, A′3) — push obrazu do rozmówcy 1:1.
+    """Fabryka ``SendImage`` per turę (ADR 0027, A′3) — push obrazu do rozmówcy 1:1.
 
     ``None``, gdy bramka ``enable_user_file_push`` wyłączona (domyślnie, ADR 0006). Włączona: buduje
     SYNCHRONICZNY ``HttpxGraphUserImagePush`` (jak plik ADR 0026 — narzędzia agenta biegną
@@ -542,7 +577,7 @@ def _build_user_push_factory(
 def _build_user_doc_push_factory(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> Callable[[str], list[ToolSpec]] | None:
-    """Fabryka ``send_document_to_user`` per turę (ADR 0027, wariant plikowy) — push pliku 1:1.
+    """Fabryka ``SendDocument`` per turę (ADR 0027, wariant plikowy) — push pliku 1:1.
 
     ``None``, gdy bramka ``enable_user_doc_push`` wyłączona (domyślnie, ADR 0006). Włączona: buduje
     SYNCHRONICZNY ``HttpxGraphUserDocPush`` (jak plik ADR 0026 — narzędzia agenta biegną
@@ -696,8 +731,8 @@ def _build_note_read_authorizer(settings: TeamsGraphSettings) -> NoteReadAuthori
     ``None``, gdy ``enable_note_read_authz`` wyłączona (domyślnie) — odczyt zachowuje się jak przed
     ADR 0062. Włączona: config wymusił istnienie mapy tożsamości (ten sam plik co zapis, ADR
     0042/0062), więc składamy authorizer nad ``YamlIdentityDirectory`` (fail-closed). Wpinany w
-    ``_build_responder``: bramkuje per-turowe narzędzia odczytu agenta (search_notes/get_note/
-    list_projects) ORAZ komendy ``/szukaj``/``/projekty``. Powłoka i drzwi MCP są POZA zakresem —
+    ``_build_responder``: bramkuje per-turowe narzędzia odczytu agenta (``SearchNotes``/``GetNote``/
+    ``ListProjects``) ORAZ komendy ``/szukaj``/``/projekty``. Powłoka i drzwi MCP są POZA zakresem —
     nie niosą tożsamości nadawcy (ADR 0062 §Decision 4 i addendum).
     """
     if not settings.enable_note_read_authz:
@@ -744,8 +779,9 @@ def _build_shell_authorizer(
 
     logger.info(
         "Bramka członkostwa POWŁOKI WŁĄCZONA (ADR 0063) — narzędzie Bash tylko dla rozpoznanego "
-        "członka pionu przez mapę tożsamości %s (fail-closed). Cross-read MIĘDZY członkami ścieżką "
-        "bezwzględną zostaje — domyka go montaż per-rozmowa (ADR 0063 §2 / infra ADR 0010).",
+        "członka pionu przez mapę tożsamości %s (fail-closed). Cross-read MIĘDZY członkami domyka "
+        "montaż per-rozmowa: wykonawca stoi na każdą rozmowę osobno i widzi wyłącznie jej "
+        "podkatalog brudnopisu (infra ADR 0012).",
         settings.meeting_note_identities,
     )
     return ShellAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
@@ -896,14 +932,17 @@ def _build_brief_router(
     core_settings: Settings,
     events_settings: EventsSettings,
     deliver_pdf: Callable[[str, str, str], None] | None,
+    read_authorizer: NoteReadAuthorizer | None = None,
 ) -> BriefRouter | None:
     """Router one-pagera „ogarnij mnie na <projekt>" (ADR 0051, F4) albo ``None``.
 
     ``None``, gdy bramka ``enable_project_brief`` wyłączona (domyślnie). Włączona: składa READ-ONLY
     ``ProjectBriefService`` nad tymi samymi repo notatek/projektów co runtime — status (pełna
-    synteza, aktywność GitHub gdy most zdarzeń istnieje) + ostatnie notatki. Bez zapisu, bez
-    autoryzacji nadawcy, bez nowego narzędzia MCP (golden surface nietknięty). ``deliver_pdf``
-    (współdzielony, ADR 0026) wysyła ``| pdf`` plikiem; ``None`` → ``| pdf`` degraduje do tekstu.
+    synteza, aktywność GitHub gdy most zdarzeń istnieje) + ostatnie notatki. Bez zapisu i bez
+    nowego narzędzia MCP (golden surface nietknięty), ale Z bramką członkostwa ODCZYTU
+    (``read_authorizer``, ADR 0062): brief serwuje treść notatek, więc „read-only" go z niej nie
+    zwalnia. ``deliver_pdf`` (współdzielony, ADR 0026) wysyła ``| pdf`` plikiem; ``None`` →
+    ``| pdf`` degraduje do tekstu.
     """
     if not settings.enable_project_brief:
         return None
@@ -926,13 +965,14 @@ def _build_brief_router(
         "projektu (status + ostatnie notatki), READ-ONLY. Dostawa PDF: %s.",
         "włączona (reuse file-reply)" if deliver_pdf else "wyłączona (| pdf → tekst)",
     )
-    return BriefRouter(service, deliver_pdf=deliver_pdf)
+    return BriefRouter(service, deliver_pdf=deliver_pdf, read_authorizer=read_authorizer)
 
 
 def _build_change_digest_router(
     settings: TeamsGraphSettings,
     events_settings: EventsSettings,
     deliver_pdf: Callable[[str, str, str], None] | None,
+    read_authorizer: NoteReadAuthorizer | None = None,
 ) -> ChangeDigestRouter | None:
     """Router digestu „co się zmieniło od <data>" (ADR 0052, F5) albo ``None``.
 
@@ -952,7 +992,7 @@ def _build_change_digest_router(
         "zmian od daty (fold zdarzeń per projekt), READ-ONLY. Dostawa PDF: %s.",
         "włączona (reuse file-reply)" if deliver_pdf else "wyłączona (| pdf → tekst)",
     )
-    return ChangeDigestRouter(service, deliver_pdf=deliver_pdf)
+    return ChangeDigestRouter(service, deliver_pdf=deliver_pdf, read_authorizer=read_authorizer)
 
 
 def _build_thread_pdf_delivery(
@@ -1119,11 +1159,11 @@ def _build_responder(
     niezależna od zapisu notatek; powłokę (ADR 0057) — jeszcze inna, ``WORKMATE_ENABLE_SHELL``,
     bo tam model uruchamia dowolny kod, a nie tworzy plik narzędziem typowanym.
     ``extra_catalog`` (ADR 0019/0021) dokłada narzędzia warstwy
-    spajającej, ``thread_factory`` (ADR 0026) — per-turowe ``reply_with_file``,
+    spajającej, ``thread_factory`` (ADR 0026) — per-turowe ``ReplyWithFile``,
     ``github_thread_link`` (ADR 0024, Faza 3b) — powiązanie wątku z issue/PR do NAGŁÓWKA SESJI
     (dawniej osobne narzędzie ``reply_on_thread``, zniesione w kroku 5.5), a
-    ``user_push_factory`` (ADR 0027, A′3) — per-turowe ``send_image_to_user`` (obraz inline) oraz
-    ``send_document_to_user`` (plik-załącznik) wiązane z nadawcą, niezależnie bramkowane.
+    ``user_push_factory`` (ADR 0027, A′3) — per-turowe ``SendImage`` (obraz inline) oraz
+    ``SendDocument`` (plik-załącznik) wiązane z nadawcą, niezależnie bramkowane.
     ``my_jira_tasks_factory`` (ADR 0054) — per-turowe ``Jira(action=…)`` wiązane z nadawcą,
     zasila też komendę ``/moje-zadania``. ``channel="teams_graph"`` trzyma pamięć/workspace tych
     drzwi osobno od bota."""
@@ -1181,6 +1221,8 @@ async def _run(
     settings: TeamsGraphSettings,
     token_provider: Callable[[], str],
     handle: HandleMessage,
+    *,
+    dead_letters: MessageDeadLetterStore | None = None,
 ) -> None:
     try:
         import httpx
@@ -1235,6 +1277,7 @@ async def _run(
             stop=stop,
             heartbeat=lambda: write_heartbeat(hb_path),
             policy=ReplyPolicy.from_settings(settings),
+            dead_letters=dead_letters,
         )
         await poller.run()
 

@@ -15,8 +15,11 @@ Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonyc
   tokenu Jira, ale bez pollera ani mostu do Teams ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)).
 
 Sekrety trzymamy **wyłącznie poza repo** (env / plik poza `data/`). Wszystkie bramki zapisu
-(`*_ENABLE_WRITE`, `*_ENABLE_TRANSITION`, `*_ENABLE_CHANNEL*`, `*_CI_AUTO_COMMENT`, `ENABLE_WORKSPACE`)
-są **domyślnie wyłączone** i włączane świadomie per drzwi.
+(`*_ENABLE_WRITE`, `*_ENABLE_CHANNEL*`, `*_CI_AUTO_COMMENT`, `ENABLE_WORKSPACE`, a od ADR 0064/0065
+także `*_ENABLE_FILE_TOOL`, `*_ENABLE_NOTE_MUTATION`, `*_ENABLE_NOTE_DELETE`) są **domyślnie
+wyłączone** i włączane świadomie per drzwi. Bramki zdolności czysto obronnych
+(`*_ENABLE_NOTE_READ_AUTHZ`, `*_ENABLE_TRUST_LABELS`) też startują wyłączone — domyślną wartością
+jest zachowanie sprzed decyzji, nie „bezpieczniejsze".
 
 ---
 
@@ -30,6 +33,38 @@ są **domyślnie wyłączone** i włączane świadomie per drzwi.
 | `WORKMATE_TRANSPORT` | `stdio` | Transport MCP: `stdio` lub `streamable-http`. |
 | `WORKMATE_LOG_LEVEL` | `INFO` | Poziom logowania. |
 | `WORKMATE_ENABLE_WRITE` | `false` | Czy wystawić narzędzie zapisu `save_note` ([ADR 0006](../adr/0006-write-capability-gate-2.md), amendment 2026-07-31 — domyślnie OFF wszędzie, bez wyjątku dla lokalnego stdio). Drzwi HTTP dodatkowo wymuszają `false` niezależnie od env. |
+| `WORKMATE_NOTE_SNAPSHOTS_DIR` | `<data_dir>/snapshots/notes` | Migawki notatek sprzed mutacji ([ADR 0065](../adr/0065-mutable-knowledge-base-and-model-judged-writes.md)) — jedyna ścieżka cofnięcia `File(edit\|delete)`. Domyślna wartość leży **wewnątrz** `data/`: przy włączonej mutacji przestaw ją na wolumen stanu. Powody są trzy i niezależne — patrz akapit pod tabelą. |
+| `WORKMATE_METRICS_DB` | *(brak = wyłączone)* | Licznik użycia, pseudonimizowany ([ADR 0049](../adr/0049-usage-metrics-pseudonymized-counter.md)). |
+| `WORKMATE_AUDIT_DB` | *(brak = wyłączone)* | Dziennik audytu wywołań narzędzi ([ADR 0067](../adr/0067-observability-audit-journal-and-notifier-dead-letter.md)) — rejestruje akcje i ścieżki, nigdy treści. |
+
+Trzy ostatnie ścieżki wchodzą na listę `Settings.persistent_paths()`, którą drzwi sprawdzają
+`require_writable` przy starcie: **zła ścieżka to twardy błąd startu**, a nie cichy brak zapisu
+(rejestrator audytu łyka błędy per wywołanie, więc bez tej sondy dawał „dziennik" z zerem wierszy).
+Migawki wchodzą na sondę **tylko przy `_ENABLE_NOTE_MUTATION=true`**, bo bezwarunkowa sonda kładłaby
+drzwi na katalogu, którego proces nigdy nie tknie. Bazy metryk i audytu wchodzą wyłącznie wtedy, gdy
+operator jawnie wskazał plik.
+
+Obie te bazy plus obie kwarantanny w `events.db` czyta `workmate-diagnostics` (ADR 0069, R2):
+`workmate-diagnostics {audit|dead-letters|inbound} [--db …] [--source …] [--since 24h] [--json]`.
+Bez `--db` narzędzie bierze ścieżkę ze zmiennej (`WORKMATE_AUDIT_DB` dla audytu,
+`WORKMATE_EVENTS_DB` dla kwarantann) i **nie zgaduje** domyślnej — otwiera połączenie tylko do
+odczytu, więc zła ścieżka wraca jako błąd, a nie jako pusty, świeżo założony plik.
+
+**Dlaczego migawki mają wyjść spod `data/` — trzy niezależne powody, dwa zależne od wdrożenia.**
+
+1. **Agent czyta katalog notatek zachłannie**, więc kopie leżące w środku wracałyby jako wyniki
+   wyszukiwania. Ten powód obowiązuje ZAWSZE, niezależnie od montażu.
+2. **W tym repozytorium `data/` jest montowane `:ro`** (`deploy/docker/docker-compose.yml` — bind
+   z katalogu hosta, bazą wiedzy zarządza `git pull`), więc pierwsza migawka padłaby na sondzie
+   zapisywalności.
+3. **Na flocie wdrożeniowej `data/` jest montowane RW** (`infra-docker-workmate/docker-compose.yml`
+   — nazwany wolumen `workmate-data`, bo `/notatka` z Teams musi tam pisać; drugi, osobny montaż
+   `workmate-data:/mnt/system` jest `:ro` dla powłoki). Tam powodem jest co innego:
+   `tools/restore-notes.sh` czyści **cały** wolumen docelowy, więc odtworzenie kopii skasowałoby
+   razem z bazą wiedzy mechanizm cofania pojedynczej zmiany.
+
+Zalecenie jest w obu wdrożeniach to samo — wolumen stanu — ale uzasadnienie różne; nie przenoś
+jednego na drugie.
 
 ### Tryb HTTP (`streamable-http`, Bramka 3 / [ADR 0007](../adr/0007-gate-3-http-auth-deployment.md))
 
@@ -85,7 +120,7 @@ Napędza drzwi Teams/CLI. `validate()` twardo wymaga klucza.
 
 | Zmienna | Domyślnie | Opis |
 |---------|-----------|------|
-| `WORKMATE_ENABLE_WORKSPACE` | `false` | Bramka narzędzi `create_file`/`read_file`/`list_files` (niezależna od zapisu notatek). |
+| `WORKMATE_ENABLE_WORKSPACE` | `false` | Bramka narzędzi `CreateFile`/`ReadFile`/`ListFiles` (niezależna od zapisu notatek; nazwy w PascalCase od [ADR 0068](../adr/0068-agent-tool-names-and-the-cost-of-a-wrong-one.md)). |
 | `WORKMATE_WORKSPACE_DIR` | pod `data_dir` | Katalog plików roboczych per rozmowa. |
 | `WORKMATE_WORKSPACE_MAX_FILE_MB` / `_MAX_FILES` / `_MAX_TOTAL_MB` | limity | Sufity rozmiaru/liczby/łącznego budżetu. |
 | `WORKMATE_WORKSPACE_ALLOWED_EXT` | `md,txt,csv,json` | Dozwolone rozszerzenia (tylko tekst). |
@@ -115,6 +150,30 @@ Procedura: [`how-to/teams-graph.md`](../how-to/teams-graph.md).
 | `WORKMATE_TEAMS_GRAPH_MAX_EXTRACT_MB` | `50` | Sufit rozmiaru pliku ekstrahowanego do tekstu (docx/xlsx/pptx). |
 | `WORKMATE_TEAMS_GRAPH_MAX_IMAGE_EDGE` | `2048` | Sufit dłuższej krawędzi obrazu (px, downscaling). |
 
+### Bramki zdolności na drzwiach Teams (ADR 0062–0066) — wszystkie domyślnie `false`
+
+Pięć przełączników, których **kod nie włącza sam** i których żaden wariant wdrożenia nie ustawia
+domyślnie. Kolumna *Wymaga* zbiera warunki, których niespełnienie **zatrzymuje start drzwi**, ale
+egzekwują je DWA różne mechanizmy: zależności między bramkami i obecność mapy tożsamości sprawdza
+`TeamsGraphSettings.validate()`, a zapisywalność katalogu migawek — `require_writable` po liście
+`Settings.persistent_paths()`, wołane w `main()` drzwi (efekt uboczny `mkdir` nie może wejść do
+`validate`). Macierz „chcę, żeby…": [`how-to/gate-matrix.md`](../how-to/gate-matrix.md) rozdziela to
+per wiersz.
+
+| Zmienna | Co włącza | Wymaga |
+|---------|-----------|--------|
+| `WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ` | Autoryzację odczytu notatek — fail-closed po mapie tożsamości; nierozpoznany nadawca nie dostaje narzędzi bazy wiedzy ([ADR 0062](../adr/0062-note-read-authorization.md)) | istniejący plik `WORKMATE_TEAMS_GRAPH_IDENTITIES` |
+| `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL` | `File(action='read')` — model podaje sobie plik z katalogu roboczego DO WGLĄDU — **oraz** odkładanie załączników użytkownika na dysk rozmowy ([ADR 0064](../adr/0064-file-tool-and-model-initiated-materialization.md)). Wyłączona gasi obie strony naraz | — |
+| `WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_MUTATION` | `File(action='edit')` — pierwszą w historii tego systemu drogę **zmiany** istniejącej notatki, przez `NoteMutationService` i niezależnego sędziego ([ADR 0065](../adr/0065-mutable-knowledge-base-and-model-judged-writes.md)) | `validate()`: `_ENABLE_FILE_TOOL=true` (mutacja jest akcją narzędzia `File`) + istniejący plik `_IDENTITIES`. Osobno `require_writable`: zapisywalny `WORKMATE_NOTE_SNAPSHOTS_DIR` (sondowany dopiero przy tej bramce włączonej) |
+| `WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_DELETE` | `File(action='delete')` — kasowanie notatki | `_ENABLE_NOTE_MUTATION=true`; **plus warunek spoza kodu**: działająca nocna kopia wolumenu, na której ADR 0065 opiera całą odwracalność |
+| `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS` | Koperty klas zaufania T0–T3 wokół treści OBCEJ, z granicą znaczoną nonce'em losowanym na turę, i lepką skazę rozmowy ([ADR 0066](../adr/0066-content-trust-classes-and-sticky-conversation-taint.md)) | — (patrz uwaga niżej) |
+
+`_ENABLE_TRUST_LABELS` jest **jedyną z tej piątki bez warunku w `validate()`**: włączona sama daje
+koperty, ale nie rozszczepienie nadawcy na T1/T2 — to liczy ten sam autoryzator co
+`_ENABLE_NOTE_READ_AUTHZ`, więc bez niej każdy nadawca jest nierozpoznany. Chcąc całe ADR 0066,
+włącz obie. Sama koperta **nie jest obroną przed wstrzyknięciem promptu** — granicą zostają bramki
+zdolności, montaż `ro`, wykonawca bez sieci i odwracalność.
+
 ## Push do Teams (`TeamsPushSettings`, most → Teams)
 
 Notifier wypychający zdarzenia `EventStore` do Teams ([ADR 0022](../adr/0022-proactive-dual-target-teams-push.md)).
@@ -141,7 +200,7 @@ Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.m
 | `WORKMATE_GITHUB_POLL_INTERVAL` | `60` (podłoga `30`) | Odstęp odpytań (s). |
 | `WORKMATE_GITHUB_PER_PAGE` | `50` | Rozmiar strony. |
 | `WORKMATE_GITHUB_WATCH_KINDS` | `issues,comments` | Białą listą: `issues,comments,pulls,reviews,ci` ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)) oraz `pull_state` (tranzycje PR merged/closed) i `branches` (push/delete gałęzi, SHA-diff) ([ADR 0029](../adr/0029-branch-pr-state-transitions-and-project-activity.md)). |
-| `WORKMATE_GITHUB_ENABLE_WRITE` | `false` | Bramka 4: akcje `GitHub(action='create_issue'/'comment')`, create-only ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)). |
+| `WORKMATE_GITHUB_ENABLE_WRITE` | `false` | Bramka 4: akcje `Activity(action='create_issue'/'comment')`, create-only ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)). |
 | `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT` | `false` | Deterministyczny auto-komentarz przy porażce CI; wymaga `_ENABLE_WRITE` ORAZ `ci` w `WATCH_KINDS`. |
 | `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
 | `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |
@@ -192,6 +251,8 @@ Lokalny wariant przez Bot Framework Emulator/Azure ([`how-to/teams-bot.md`](../h
 | `WORKMATE_TEAMS_APP_ID` / `_APP_PASSWORD` / `_TENANT_ID` | Rejestracja bota (Azure). |
 | `WORKMATE_TEAMS_ANONYMOUS` | `true` = tryb bez uwierzytelniania (tylko loopback/Emulator). |
 | `WORKMATE_TEAMS_BIND_HOST` / `_PORT` | Adres/port nasłuchu drzwi bota. |
+| `WORKMATE_TEAMS_IDENTITIES` | Mapa tożsamości AAD → członek pionu; ten sam format i zwykle ten sam plik co `WORKMATE_TEAMS_GRAPH_IDENTITIES`. |
+| `WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ` | Bramka członkostwa ODCZYTU bazy wiedzy ([ADR 0062](../adr/0062-note-read-authorization.md)), domyślnie OFF; włączona wymaga `_IDENTITIES` (fail-fast). Tożsamość nadawcy pochodzi z `activity.from.aadObjectId` — gość bez AAD id jest nierozpoznany i odczytu nie dostaje. |
 
 ---
 

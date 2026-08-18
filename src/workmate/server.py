@@ -7,6 +7,12 @@ zależy od abstrakcji (portów), a nie od konkretnych implementacji.
 Dołożenie drzwi Fazy 2 (Teams) polega na dodaniu tu drugiego adaptera
 wejściowego nad tymi samymi ``notes_service`` / ``projects_service`` — bez
 zmiany rdzenia.
+
+IMPORT TEGO MODUŁU NIE MA EFEKTÓW UBOCZNYCH: nie czyta środowiska, nie buduje
+lematyzatora, nie sonduje ``events.db`` i nie otwiera klienta HTTP do Jiry.
+Wszystko to dzieje się dopiero w ``build_server`` — albo przy pierwszym sięgnięciu
+po leniwy atrybut modułu ``mcp`` (na samym dole pliku), którego potrzebuje wyłącznie
+CLI FastMCP (``mcp dev``).
 """
 
 from __future__ import annotations
@@ -95,9 +101,8 @@ def _events_service_if_present() -> EventService | None:
     """``EventService`` nad wspólnym ``events.db`` — TYLKO gdy plik istnieje (most w użyciu).
 
     Lustro ``agent_wiring._events_if_present``: drzwi MCP bez mostu NIE tworzą pustego ``events.db``
-    tylko po to, by wystawić kursorowy odczyt (composition root nie ma efektów ubocznych na import,
-    a ``mcp = build_server()`` jest na poziomie modułu). Importy leniwe, by ścieżka stdio bez mostu
-    za adapter SQLite nie płaciła.
+    tylko po to, by wystawić kursorowy odczyt. Importy leniwe, by ścieżka stdio bez mostu za adapter
+    SQLite nie płaciła.
     """
     from pathlib import Path
 
@@ -140,9 +145,26 @@ def _my_jira_tasks_service_if_present() -> MyJiraTasksService | None:
     )
 
 
-# Obiekt na poziomie modułu — wykrywany przez CLI FastMCP oraz przez
-# `.mcp.json` (skrypt konsolowy `workmate`) i `python -m workmate`.
-mcp = build_server()
+# Obiekt na poziomie modułu — wykrywany przez CLI FastMCP (`uv run mcp dev src/workmate/server.py`),
+# które szuka w module nazwy `mcp`/`server`/`app` przez `hasattr`/`getattr`. Budujemy go LENIWIE
+# (PEP 562), a nie w treści modułu, bo import ma być bez efektów ubocznych — dokładnie tak, jak
+# obiecuje docstring tego pliku. Eager `mcp = build_server()` czytał środowisko, budował
+# lematyzator, sondował `events.db`, a przy skonfigurowanej Jirze alokował `httpx.Client`
+# z `atexit` — i robił to na KOLEKCJI testów, zanim fixture zdążył wyczyścić `WORKMATE_*`.
+#
+# `hasattr`/`getattr` na module wołają to `__getattr__`, więc CLI FastMCP działa bez zmian;
+# `.mcp.json` (skrypt `workmate`) i `python -m workmate` idą przez `main()`, które składa serwer
+# jawnie z własnych ustawień i tej ścieżki w ogóle nie potrzebuje.
+_mcp: FastMCP | None = None
+
+
+def __getattr__(name: str) -> FastMCP:
+    if name == "mcp":
+        global _mcp
+        if _mcp is None:
+            _mcp = build_server()
+        return _mcp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _build_http_server(settings: Settings) -> FastMCP:
@@ -210,7 +232,7 @@ def _run_http(settings: Settings) -> None:
         app,
         host=settings.bind_host,
         port=settings.bind_port,
-        log_level=settings.log_level.lower(),
+        log_level=settings.uvicorn_log_level,
         ssl_certfile=str(settings.tls_certfile) if use_tls else None,
         ssl_keyfile=str(settings.tls_keyfile) if use_tls else None,
     )
@@ -220,11 +242,14 @@ def _run_http(settings: Settings) -> None:
 def main() -> None:
     """Uruchom serwer z transportem z konfiguracji (domyślnie stdio)."""
     settings = Settings.from_env()
+    settings.validate()
     if settings.transport == "streamable-http":
         _run_http(settings)
     else:
         # Lokalne, zaufane drzwi dev: stdio bez uwierzytelniania (Fazy 1 tyg. 1-3).
-        mcp.run(transport="stdio")
+        # Serwer składamy z TYCH ustawień, a nie z obiektu modułowego: gałąź HTTP też dostaje
+        # jawne `settings` (`_build_http_server`), więc obie ścieżki mają jedno źródło prawdy.
+        build_server(settings).run(transport="stdio")
 
 
 if __name__ == "__main__":

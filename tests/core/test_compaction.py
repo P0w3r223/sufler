@@ -220,7 +220,7 @@ def test_flatten_describes_user_attachments_and_excludes_base64():
     assert "TEEJBUE5H" not in flat  # base64 poza streszczaczem
 
 
-def test_flatten_keeps_a_trace_of_a_file_the_model_pulled_in(monkeypatch):
+def test_flatten_keeps_a_trace_of_a_file_the_model_pulled_in():
     """Plik podany przez ``File`` (ADR 0064) musi zostawić ślad w streszczeniu.
 
     Po kompaktowaniu streszczenie jest JEDYNYM, co z tury zostaje. Załącznik użytkownika
@@ -245,7 +245,7 @@ def test_flatten_keeps_a_trace_of_a_file_the_model_pulled_in(monkeypatch):
 
     assert "[Załącznik umowa.pdf (application/pdf)]" in flat
     assert "QkFTRTY0" not in flat  # base64 poza streszczaczem, jak przy załączniku użytkownika
-    assert "materialized" not in flat  # treść wyniku narzędzia dalej nie wchodzi
+    assert "materialized" in flat  # od ADR 0068 §7 wynik narzędzia wchodzi (przycięty)
 
 
 def test_history_reaches_the_summarizer_as_foreign_content():
@@ -284,3 +284,55 @@ def test_without_a_nonce_compaction_behaves_exactly_as_before():
 
     (_system, transcript, _tools) = llm.calls[0]
     assert "dane-obce" not in transcript[0].text
+
+
+# --- Wyniki narzedzi docieraja do streszczacza, przyciete (ADR 0068 §7) ---------------
+
+
+def test_identyfikatory_z_wyniku_narzedzia_docieraja_do_streszczacza():
+    """Prompt streszczacza prosi o identyfikatory, a materialu do nich NIE dostawal.
+
+    Wiersz tury narzedziowej ma pusty `text` z definicji (`conversations._row_of`), a `_flatten`
+    bral z niego wylacznie bloki BEZ `call_id`. Klucz Jiry i identyfikator notatki przezywaly
+    kompaktowanie tylko wtedy, gdy model powtorzyl je wlasnymi slowami.
+    """
+    store = _store()
+    service = CompactionService(store, _FakeLLM(), threshold_tokens=100, keep_turns=2)
+    wiersz = ConversationMessage(
+        id=2,
+        conversation_id="c",
+        role="tool",
+        text="",
+        created_at=_TS,
+        blocks=[
+            {
+                "call_id": "t1",
+                "content": '{"count": 1, "tasks": [{"key": "WT-42", "summary": "SCADA"}]}',
+                "is_error": False,
+            }
+        ],
+    )
+
+    flat = service._flatten(None, [wiersz])
+
+    assert "WT-42" in flat
+    assert flat.startswith("Narzędzie:")
+
+
+def test_dlugi_wynik_narzedzia_wchodzi_przyciety_i_mowi_o_tym():
+    """Verbatim wynik potrafi mieć setki kilobajtów — przyciecie ma byc widoczne, nie ciche."""
+    store = _store()
+    service = CompactionService(store, _FakeLLM(), threshold_tokens=100, keep_turns=2)
+    wiersz = ConversationMessage(
+        id=2,
+        conversation_id="c",
+        role="tool",
+        text="",
+        created_at=_TS,
+        blocks=[{"call_id": "t1", "content": "x" * 5000, "is_error": False}],
+    )
+
+    flat = service._flatten(None, [wiersz])
+
+    assert len(flat) < 1000
+    assert "przycięty" in flat

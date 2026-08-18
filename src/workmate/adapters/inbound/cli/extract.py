@@ -67,10 +67,22 @@ def main() -> None:
     # do którego kieruje sam opis narzędzia — kończył się `BrokenPipeError` na STDERR, mimo że
     # potok zadziałał. Model widzi wyłącznie kod wyjścia i strumienie, więc sukces udawał awarię.
     # `head` zamyka wejście po swoich N liniach; SIGPIPE jest wtedy normalnym końcem, nie błędem.
-    with contextlib.suppress(AttributeError, ValueError):  # brak SIGPIPE (Windows) → bez zmian
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sigpipe = getattr(signal, "SIGPIPE", None)  # brak SIGPIPE (Windows) → bez zmian
+    if sigpipe is not None:
+        with contextlib.suppress(ValueError):  # ustawienie poza głównym wątkiem
+            signal.signal(sigpipe, signal.SIG_DFL)
     args = _parse_args(sys.argv[1:])
     path = Path(args.path)
+
+    # Katalog rozpoznajemy PYTANIEM, nie z rodzaju wyjątku. Odczyt katalogu podnosi
+    # ``IsADirectoryError`` tylko na POSIX; Windows mapuje ten sam błąd na ``PermissionError``,
+    # więc na maszynie deweloperskiej rada „to katalog, nie plik" degradowała do ogólnego
+    # „nie udało się odczytać" — a to jest dokładnie ta różnica, którą model ma zobaczyć,
+    # żeby poprawić polecenie. Gałąź ``except`` zostaje jako domknięcie wyścigu (katalog
+    # podstawiony między sprawdzeniem a odczytem).
+    if path.is_dir():
+        print(f"To katalog, nie plik: {args.path}", file=sys.stderr)
+        raise SystemExit(1)
 
     try:
         text = extract_text_from_path(path)

@@ -102,7 +102,31 @@ def test_upload_sends_raw_bytes_with_content_type():
 
     assert seen["body"] == b"# Raport"  # surowe bajty, nie base64
     assert seen["ctype"] == _MD
-    assert seen["auth"] == "Bearer access-token"  # _refresh_auth ustawia token przed wysyłką
+    assert seen["auth"] == "Bearer access-token"  # żądanie niesie token (skąd — sonda niżej)
+
+
+def test_token_is_carried_by_the_request_not_stored_on_the_shared_client():
+    """Token doklejamy PER ŻĄDANIE, nie do ``client.headers`` (wzorzec ``graph_thread_source``).
+
+    Sonda wyżej tego NIE rozstrzyga: ``httpx`` scala nagłówki klienta z nagłówkami żądania, więc
+    ``request.headers["Authorization"]`` wygląda identycznie przy obu implementacjach. Rozstrzyga
+    dopiero token ZMIENNY — przy tokenie ustawionym raz na kliencie wszystkie sześć żądań wysyłki
+    jedzie pierwszym, a nagłówek zostaje na kliencie dzielonym z innymi adapterami i pulą wątków.
+    Bliźniaczy ``graph_user_push`` ma tę sondę; ten adapter jej nie miał.
+    """
+    tokeny = iter([f"token-{i}" for i in range(1, 10)])
+    autoryzacje: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        autoryzacje.append(request.headers.get("Authorization"))
+        return _happy(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    _send(HttpxGraphUserDocPush(client, lambda: next(tokeny), sleep=lambda _s: None))
+
+    # Sześć żądań szczęśliwej ścieżki, każde z WŁASNYM, świeżym tokenem.
+    assert autoryzacje == [f"Bearer token-{i}" for i in range(1, 7)]
+    assert "Authorization" not in client.headers  # nic nie zostaje na dzielonym kliencie
 
 
 def test_invite_grants_read_to_the_recipient_by_object_id():
@@ -228,15 +252,26 @@ def test_push_folder_is_ensured_once_across_sends():
     assert len(folder_calls) == 1  # utworzenie folderu raz, mimo dwóch wysyłek
 
 
-def test_existing_push_folder_409_is_tolerated():
-    """Folder już istnieje → Graph zwraca 409, które traktujemy jako sukces (nie replace)."""
+def test_existing_push_folder_409_is_tolerated_and_the_send_completes():
+    """Folder już istnieje → Graph zwraca 409, które traktujemy jako sukces (nie replace).
+
+    „Nie rzuca" to za mało: 409 połknięte razem z resztą wysyłki dałoby ten sam wynik testu,
+    a odbiorca nie dostałby nic. Sprawdzamy więc, że sekwencja idzie DALEJ — aż do POST-a
+    wiadomości z załącznikiem.
+    """
+    calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
         if request.url.path.endswith("/children"):
             return httpx.Response(409, json={"error": {"code": "nameAlreadyExists"}})
         return _happy(request)
 
-    _send(_push(handler))  # nie rzuca — 409 na folderze jest OK, wysyłka dochodzi do końca
+    _send(_push(handler))
+
+    assert calls[0].endswith("/children")  # próba utworzenia była, 409 jej nie zatrzymało
+    assert calls[-1] == "/v1.0/chats/chat-1/messages"
+    assert _CONTENT_PATH in calls  # plik faktycznie poszedł na dysk, nie tylko wiadomość
 
 
 # --- niepełna odpowiedź uploadu -------------------------------------------------

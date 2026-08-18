@@ -8,7 +8,8 @@ dlatego „Jerzy Zastepski" działa, choć nie ma go w mapie tożsamości Jiry.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -31,10 +32,21 @@ _MAX_ENTRIES = 200
 class TeamScheduleService:
     """Zwraca grafik (zmiany + nieobecności) jednego zespołu w zadanym oknie, w strefie pionu."""
 
-    def __init__(self, client: ScheduleReadPort, *, team_id: str, tz: str) -> None:
+    def __init__(
+        self,
+        client: ScheduleReadPort,
+        *,
+        team_id: str,
+        tz: str,
+        now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
+    ) -> None:
         self._client = client
         self._team_id = team_id
         self._tz = ZoneInfo(tz)
+        # Zegar WSTRZYKNIĘTY, jak w ``worklog`` — rdzeń nie sięga po czas rzeczywisty sam.
+        # „Bieżący tydzień" jest funkcją chwili, więc bez tego szwu sonda na granicę tygodnia
+        # albo zmianę czasu wymagałaby łatania modułu.
+        self._now = now
 
     def schedule(
         self,
@@ -44,7 +56,7 @@ class TeamScheduleService:
         person: str = "",
     ) -> dict[str, Any]:
         """Grafik zespołu w oknie (tydzień lub zakres dat), opcjonalnie dla jednej osoby."""
-        now = datetime.now(tz=timezone.utc)
+        now = self._now()
         start, end = resolve_schedule_range(
             week=week, date_from=date_from, date_to=date_to, today=now, tz=self._tz
         )
@@ -82,6 +94,11 @@ class TeamScheduleService:
         )
         with_entries = {e.person for e in shifts} | {e.person for e in times_off}
         without = sorted(v for v in members_by_id.values() if v not in with_entries)
+        # Sufit MUSI być widoczny w odpowiedzi. ``people_without_entries`` liczy się z PEŁNYCH list,
+        # więc przy cichym przycięciu dwa pola tej samej odpowiedzi przeczyły sobie: osoba miała
+        # zmianę (nie było jej wśród „bez wpisów"), a w `shifts` po niej nie było śladu. Wzorzec
+        # ``truncated`` jest w tym systemie ustalony (historia Jiry, wyszukiwanie zdarzeń).
+        pominietych = max(0, len(shifts) - _MAX_ENTRIES) + max(0, len(times_off) - _MAX_ENTRIES)
         return {
             # ``end`` jest wykładniczy (półotwarty) — pokazujemy WŁĄCZNY ostatni dzień, czytelniej.
             "range": {
@@ -91,6 +108,8 @@ class TeamScheduleService:
             "timezone": str(self._tz),
             "shifts": [e.model_dump(mode="json") for e in shifts[:_MAX_ENTRIES]],
             "times_off": [e.model_dump(mode="json") for e in times_off[:_MAX_ENTRIES]],
+            "truncated": pominietych > 0,
+            "omitted_entries": pominietych,
             "people_without_entries": [] if person.strip() else without,
         }
 

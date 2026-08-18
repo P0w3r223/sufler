@@ -16,12 +16,25 @@ from workmate.core.domain.trust import (
 
 
 def test_envelope_keeps_the_content_byte_for_byte():
-    """Koperta ZMIENIA STATUS treści, nie treść — inaczej cytat z pliku byłby nieprawdziwy."""
-    tresc = "Kwota: 12 300 zł\nTermin: 2026-09-01"
+    """Koperta ZMIENIA STATUS treści, nie treść — inaczej cytat z pliku byłby nieprawdziwy.
+
+    Sonda wycina kopertę i porównuje ŚRODEK znak w znak: samo ``tresc in out`` przeszłoby także
+    wtedy, gdyby koperta po cichu doklejała, normalizowała albo filtrowała treść wokół.
+    """
+    tresc = "Kwota: 12 300 zł\nTermin: 2026-09-01\n\n  wcięcie i puste linie  "
 
     out = wrap_untrusted(tresc, origin="plik", nonce="abcd1234")
+    srodek = out.split(">\n", 1)[1].rsplit("\n</dane-obce", 1)[0]
 
-    assert tresc in out
+    assert srodek == tresc
+
+
+def test_envelope_wraps_empty_content_without_collapsing_the_markers():
+    """Pusty plik też musi zostać oznaczony — inaczej model nie wie, że coś w ogóle przeczytał."""
+    out = wrap_untrusted("", origin="plik", nonce="ab12")
+
+    assert out.startswith("<dane-obce:plik ab12>")
+    assert out.endswith("</dane-obce ab12>")
 
 
 def test_envelope_names_the_origin_and_carries_the_nonce_on_both_ends():
@@ -45,15 +58,22 @@ def test_content_cannot_forge_the_closing_marker_without_knowing_the_nonce():
     assert out.endswith("</dane-obce 7f3a9c01>")
 
 
-def test_operator_and_mapped_member_keep_instruction_status():
-    """T0/T1 zostają instrukcją — inaczej bot przestałby słuchać własnego operatora."""
-    assert "T0" not in DATA_CLASSES
-    assert "T1" not in DATA_CLASSES
+def test_two_different_turns_get_two_different_boundaries():
+    """Nonce jest LOSOWY NA TURĘ: znacznik zapamiętany z poprzedniej tury nic nie otwiera."""
+    tura_1 = wrap_untrusted("x", origin="plik", nonce="aaaa1111")
+    tura_2 = wrap_untrusted("x", origin="plik", nonce="bbbb2222")
+
+    assert "aaaa1111" not in tura_2
+    assert tura_1 != tura_2
 
 
-def test_foreign_content_and_unmapped_senders_are_data():
-    assert "T3" in DATA_CLASSES
-    assert "T2" in DATA_CLASSES
+def test_the_data_classes_are_exactly_the_two_without_a_resolvable_sender():
+    """Zbiór ZAMKNIĘTY, nie „zawiera": dopisanie klasy tu przesuwa granicę dane/instrukcje.
+
+    Rozbicie tego na dwie sondy („T0/T1 nie są" i „T2/T3 są") przechodziło także wtedy, gdy do
+    zbioru dołożono coś trzeciego — a to jest dokładnie ta zmiana, która wymaga ADR-u.
+    """
+    assert set(DATA_CLASSES) == {"T2", "T3"}
 
 
 def test_header_sentence_explains_the_marker_and_repeats_the_nonce():

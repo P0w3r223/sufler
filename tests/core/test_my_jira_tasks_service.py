@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 import pytest
 
 from workmate.core.application.my_jira_tasks import MyJiraTasksService
@@ -51,7 +50,8 @@ def test_maps_returned_issues() -> None:
         issues=[{"key": "WM-1", "fields": {"summary": "Coś", "status": {"name": "To Do"}}}]
     )
     service = MyJiraTasksService(client, assignee="mikolaj@example.org", base_url="https://jira.example.org")
-    tasks = service.my_open_tasks()
+    tasks, truncated = service.my_open_tasks()
+    assert not truncated
     assert len(tasks) == 1
     assert tasks[0].key == "WM-1"
     assert tasks[0].url == "https://jira.example.org/browse/WM-1"
@@ -59,38 +59,60 @@ def test_maps_returned_issues() -> None:
 
 def test_empty_result_is_empty_list_not_error() -> None:
     service = MyJiraTasksService(_FakeJiraRead(issues=[]), assignee="mikolaj@example.org")
-    assert service.my_open_tasks() == []
+    assert service.my_open_tasks() == ([], False)
 
 
-@pytest.mark.parametrize("status_code", [401, 403])
-def test_auth_error_raises_readable_jira_read_error(status_code: int) -> None:
-    response = httpx.Response(status_code, request=httpx.Request("GET", "https://jira.example"))
-    error = httpx.HTTPStatusError("boom", request=response.request, response=response)
-    service = MyJiraTasksService(_FakeJiraRead(error=error), assignee="mikolaj@example.org")
-    with pytest.raises(JiraReadError, match="brak dostępu"):
-        service.my_open_tasks()
+def test_max_results_is_a_PAGE_size_so_the_service_caps_the_whole_result() -> None:
+    """``max_results`` przekazywane do portu jest rozmiarem STRONY, nie całości.
+
+    Adapter paginuje do dziesięciu stron, więc bez przycięcia po zmapowaniu `my_tasks` mogło
+    wsypać do kontekstu modelu pięćset zgłoszeń — dwie strony jednej odpowiedzi. Bliźniacza
+    ścieżka historii tnie i sygnalizuje ``truncated``; ta nie robiła ani jednego, ani drugiego.
+    """
+    issues = [
+        {"key": f"WM-{i}", "fields": {"summary": "x", "status": {"name": "To Do"}}}
+        for i in range(120)
+    ]
+    service = MyJiraTasksService(_FakeJiraRead(issues=issues), assignee="mikolaj@example.org")
+
+    tasks, truncated = service.my_open_tasks()
+
+    assert len(tasks) == 50
+    assert truncated is True
 
 
-def test_rate_limit_error_raises_readable_jira_read_error() -> None:
-    response = httpx.Response(429, request=httpx.Request("GET", "https://jira.example"))
-    error = httpx.HTTPStatusError("boom", request=response.request, response=response)
-    service = MyJiraTasksService(_FakeJiraRead(error=error), assignee="mikolaj@example.org")
-    with pytest.raises(JiraReadError, match="429"):
-        service.my_open_tasks()
+def test_a_result_that_fits_is_NOT_flagged_as_truncated() -> None:
+    """Druga strona granicy — flaga ma znaczyć „coś ucięto", a nie „wynik był z Jiry"."""
+    issues = [
+        {"key": f"WM-{i}", "fields": {"summary": "x", "status": {"name": "To Do"}}}
+        for i in range(50)
+    ]
+    service = MyJiraTasksService(_FakeJiraRead(issues=issues), assignee="mikolaj@example.org")
+
+    tasks, truncated = service.my_open_tasks()
+
+    assert len(tasks) == 50 and truncated is False
 
 
-def test_timeout_raises_readable_jira_read_error() -> None:
-    error = httpx.ConnectTimeout("timed out")
-    service = MyJiraTasksService(_FakeJiraRead(error=error), assignee="mikolaj@example.org")
-    with pytest.raises(JiraReadError, match="timeout"):
-        service.my_open_tasks()
+# --- Awaria odczytu: rdzeń PRZEPUSZCZA błąd portu, nie tłumaczy go i nie połyka ---
+#
+# Tłumaczenie httpx → ``JiraReadError`` przeniosło się na granicę adaptera
+# (``adapters/outbound/jira_http.as_jira_read_error``), więc brzmienia komunikatów pilnują sondy
+# adaptera (``tests/adapters/test_jira_api.py``). Tutaj zostaje to, co dalej należy do rdzenia:
+# błąd portu ma dojść do wołającego NIETKNIĘTY. Sonda ma sens, bo obie metody robią po awarii coś
+# jeszcze (mapowanie, przycięcie do sufitu) — połknięcie błędu dałoby PUSTĄ listę zadań, czyli
+# „nie masz nic do zrobienia" zamiast „nie udało się zapytać".
 
 
-def test_generic_transport_error_raises_readable_jira_read_error() -> None:
-    error = httpx.ConnectError("dns failed")
-    service = MyJiraTasksService(_FakeJiraRead(error=error), assignee="mikolaj@example.org")
-    with pytest.raises(JiraReadError, match="nie udało się połączyć"):
-        service.my_open_tasks()
+@pytest.mark.parametrize("metoda", ["my_open_tasks", "my_history"])
+def test_a_port_error_reaches_the_caller_untouched(metoda: str) -> None:
+    awaria = JiraReadError("brak dostępu do Jiry — token jest nieważny albo bez uprawnień odczytu.")
+    service = MyJiraTasksService(_FakeJiraRead(error=awaria), assignee="mikolaj@example.org")
+
+    with pytest.raises(JiraReadError, match="brak dostępu") as exc:
+        getattr(service, metoda)()
+
+    assert exc.value is awaria, "rdzeń nie ma opakowywać błędu portu w drugi, własny"
 
 
 # --- my_history (ADR 0059) ---------------------------------------------------

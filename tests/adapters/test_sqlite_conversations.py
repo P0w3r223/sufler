@@ -238,6 +238,35 @@ def test_list_conversations_filters_by_channel():
     assert [c.id for c in result] == [teams.id]
 
 
+def test_list_conversations_filters_by_external_id_in_SQL():
+    """Zawężenie do JEDNEGO wątku idzie do WHERE — ``/historia`` nie ma filtrować po fakcie."""
+    store = _store()
+    moja = store.open_conversation("teams_graph", "moj-watek")
+    store.open_conversation("teams_graph", "cudzy-watek")
+    store.open_conversation("telegram", "moj-watek")  # ta sama nazwa, inne drzwi
+
+    result = store.list_conversations(channel="teams_graph", external_id="moj-watek")
+
+    assert [c.id for c in result] == [moja.id]
+
+
+def test_list_conversations_limit_applies_AFTER_the_thread_filter():
+    """Sufit liczony na już zawężonym zbiorze — inaczej stara rozmowa wątku ginie za oknem.
+
+    To jest cały powód, dla którego filtr musi stać w zapytaniu: przy filtrowaniu po zwróceniu
+    okna wątek z jedną, starszą rozmową dostawał wynik PUSTY, nieodróżnialny od „nie ma
+    historii", a magazyn i tak liczył usage/tury dla każdego wiersza okna.
+    """
+    store = _store()
+    moja = store.open_conversation("teams_graph", "moj-watek")
+    for i in range(30):  # nowsze rozmowy innych wątków tego samego kanału
+        store.open_conversation("teams_graph", f"cudzy-{i}")
+
+    result = store.list_conversations(channel="teams_graph", external_id="moj-watek", limit=10)
+
+    assert [c.id for c in result] == [moja.id]
+
+
 def test_list_conversations_orders_by_updated_at_newest_first():
     """Sortuje po ``updated_at`` malejąco — nawet gdy przeczy to kolejności zapisu."""
     store = _store()

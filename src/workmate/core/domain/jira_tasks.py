@@ -298,5 +298,11 @@ def _clip_text(text: str, limit: int) -> str:
 
 
 def _clip(text: str) -> str:
-    text = text.strip()
-    return text if len(text) <= _MAX_SUMMARY else text[:_MAX_SUMMARY] + " […]"
+    """Podsumowanie zgłoszenia — te same reguły co dla opisu i komentarzy, w tym znaki sterujące.
+
+    ``summary`` jest w pełni sterowane przez autora zgłoszenia i trafia do promptu oraz do logu,
+    więc surowe C0/C1 (przewijanie terminala, sekwencje ANSI, znaki dwukierunkowe) przechodziły
+    tędy nietknięte — wbrew docstringowi ``map_task_details``, który obiecuje wycięcie ich na
+    granicy dla CAŁEJ treści zewnętrznej, i wbrew bliźniaczemu ``_clip_text``.
+    """
+    return _clip_text(text, _MAX_SUMMARY)

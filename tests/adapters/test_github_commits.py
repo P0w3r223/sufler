@@ -6,7 +6,7 @@ odpowiedź wraca nietknięta — białą listę pól nakłada dopiero rdzeń.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -48,8 +48,8 @@ def test_passes_time_window_and_author_as_query_params() -> None:
     _client(handler).list_commits(
         _OWNER,
         _REPO,
-        since=datetime(2026, 7, 13, tzinfo=timezone.utc),
-        until=datetime(2026, 7, 19, 23, 59, 59, tzinfo=timezone.utc),
+        since=datetime(2026, 7, 13, tzinfo=UTC),
+        until=datetime(2026, 7, 19, 23, 59, 59, tzinfo=UTC),
         author="P0w3r223",
     )
     assert seen["params"]["since"].startswith("2026-07-13")

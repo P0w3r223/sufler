@@ -15,6 +15,7 @@ from __future__ import annotations
 import codecs
 import io
 import re
+import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -35,6 +36,12 @@ _MAX_SHEET_ROWS = 2000
 # ważą wielokrotnie więcej niż treść: 4 MB źródła to z zapasem realna zapisana strona, a
 # jednocześnie ułamek sekundy parsowania zamiast dziesiątek sekund na pliku-bombie.
 _MAX_HTML_CHARS = 4_000_000
+# Sufit ROZPAKOWANEJ zawartości pakietu OOXML (.docx/.xlsx/.pptx to ZIP-y). Deklarowane rozmiary
+# czytamy z katalogu archiwum PRZED parsowaniem, bo python-docx/openpyxl/python-pptx materializują
+# części dokumentu w pamięci: kilkusetkilobajtowy załącznik potrafi zadeklarować gigabajty
+# (klasyczna bomba dekompresji), a proces drzwi ginie na OOM, zanim jakikolwiek cap wyjścia
+# zdąży zadziałać. 128 MB mieści z zapasem realny dokument z grafiką, a odrzuca bombę.
+_MAX_ZIP_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
 
 
 class DocumentExtractionError(Exception):
@@ -48,40 +55,123 @@ def _cap(text: str) -> str:
     return text
 
 
+class _TextBudget:
+    """Akumulator fragmentów z twardym hamulcem NA AKUMULACJI (nie na gotowym wyniku).
+
+    Bliźniak ``_HtmlTextExtractor._emit``: przycinanie po fakcie znaczy, że cała treść jest
+    najpierw zmaterializowana w pamięci, a proces drzwi w tym czasie stoi. Tu dochodzi drugi
+    powód — dokumenty OOXML są ZIP-ami, więc „gotowy string" bywa o rzędy wielkości większy od
+    pliku, który go wyprodukował. Wołający sprawdza ``full`` i przerywa PĘTLĘ, żeby nie płacić
+    nawet za wytworzenie fragmentów, których i tak nie przyjmiemy.
+    """
+
+    def __init__(self, limit: int = _MAX_TEXT_CHARS) -> None:
+        self._parts: list[str] = []
+        self._collected = 0
+        self._limit = limit
+        self._truncated = False
+
+    @property
+    def full(self) -> bool:
+        """Czy budżet jest wyczerpany — sygnał do przerwania pętli u wołającego."""
+        return self._collected >= self._limit
+
+    def add(self, chunk: str) -> None:
+        """Dopisz fragment, docinając go do reszty budżetu; wyczerpanie odnotuj jako ucięcie."""
+        if self.full:
+            self._truncated = True
+            return
+        room = self._limit - self._collected
+        if len(chunk) > room:
+            chunk = chunk[:room]
+        self._parts.append(chunk)
+        self._collected += len(chunk)
+        # Znacznik stawia WYCZERPANIE budżetu, nie samo docięcie fragmentu. Fragment mieszczący
+        # się co do znaku zamykał budżet bez znacznika, a wołający przerywał wtedy pętlę na
+        # ``full`` i nigdy nie wracał tu po drugi ``add`` — reszta dokumentu znikała po cichu.
+        # Fałszywy alarm (dokument równy budżetowi co do znaku) jest tu tańszy niż cisza.
+        self._truncated = self._truncated or self.full
+
+    def text(self) -> str:
+        """Złóż fragmenty (jak dotąd: pojedynczy ``\\n``) i dopisz jawną notkę o ucięciu."""
+        joined = "\n".join(self._parts).strip()
+        return f"{joined}\n… (obcięto)" if self._truncated else joined
+
+
+def _reject_zip_bomb(data: bytes, ext: str) -> None:
+    """Odrzuć pakiet OOXML, którego SUMA zadeklarowanych rozmiarów przekracza sufit.
+
+    Czytamy sam katalog archiwum (``ZipInfo.file_size``) — bez dekompresji jednego bajtu — więc
+    koszt sprawdzenia jest stały, a decyzja zapada PRZED oddaniem pliku bibliotece parsującej.
+    Uszkodzony/nie-ZIP-owy plik dostaje ten sam typ błędu co reszta ekstrakcji, żeby konsument
+    nie musiał rozróżniać ``BadZipFile`` od ``DocumentExtractionError``.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            declared = sum(info.file_size for info in archive.infolist())
+    except zipfile.BadZipFile as exc:
+        raise DocumentExtractionError(f"uszkodzony pakiet .{ext}: {exc}") from exc
+    if declared > _MAX_ZIP_UNCOMPRESSED_BYTES:
+        raise DocumentExtractionError(
+            f"pakiet .{ext} deklaruje {declared} B po rozpakowaniu — ponad sufit "
+            f"{_MAX_ZIP_UNCOMPRESSED_BYTES} B (odrzucone bez parsowania)"
+        )
+
+
 def extract_docx(data: bytes) -> str:
     """Wyciągnij tekst z .docx: akapity + komórki tabel (``python-docx``, import leniwy)."""
     from docx import Document
 
+    _reject_zip_bomb(data, "docx")
     doc = Document(io.BytesIO(data))
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    budget = _TextBudget()
+    for paragraph in doc.paragraphs:
+        if budget.full:
+            break
+        if paragraph.text.strip():
+            budget.add(paragraph.text)
     for table in doc.tables:
+        if budget.full:
+            break
         for row in table.rows:
+            if budget.full:
+                break
             cells = [cell.text.strip() for cell in row.cells]
             if any(cells):
-                parts.append(" | ".join(cells))
-    return _cap("\n".join(parts).strip())
+                budget.add(" | ".join(cells))
+    return budget.text()
 
 
 def extract_xlsx(data: bytes) -> str:
-    """Wyciągnij tekst z .xlsx: per arkusz nagłówek + wiersze (``openpyxl``, import leniwy)."""
+    """Wyciągnij tekst z .xlsx: per arkusz nagłówek + wiersze (``openpyxl``, import leniwy).
+
+    ``_MAX_SHEET_ROWS`` ogranicza wiersze W ARKUSZU, a nie liczbę arkuszy — sam nie jest więc
+    capem WYJŚCIA (skoroszyt z tysiącem arkuszy mieści się w nim bez trudu). Sufit całości
+    pilnuje ``_TextBudget``, jak w pozostałych ekstraktorach.
+    """
     from openpyxl import load_workbook
 
+    _reject_zip_bomb(data, "xlsx")
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
-        parts: list[str] = []
+        budget = _TextBudget()
         for sheet in workbook.worksheets:
-            parts.append(f"# Arkusz: {sheet.title}")
+            if budget.full:
+                break
+            budget.add(f"# Arkusz: {sheet.title}")
             rows = 0
             for row in sheet.iter_rows(values_only=True):
+                if budget.full:
+                    break
                 cells = [str(value) for value in row if value is not None]
                 if not cells:
                     continue
-                parts.append(" | ".join(cells))
+                budget.add(" | ".join(cells))
                 rows += 1
                 if rows >= _MAX_SHEET_ROWS:
-                    parts.append("… (obcięto wiersze)")
+                    budget.add("… (obcięto wiersze)")
                     break
-        return "\n".join(parts).strip()
+        return budget.text()
     finally:
         workbook.close()
 
@@ -90,16 +180,21 @@ def extract_pptx(data: bytes) -> str:
     """Wyciągnij tekst z .pptx: per slajd tekst z kształtów (``python-pptx``, import leniwy)."""
     from pptx import Presentation
 
+    _reject_zip_bomb(data, "pptx")
     prs = Presentation(io.BytesIO(data))
-    parts: list[str] = []
+    budget = _TextBudget()
     for index, slide in enumerate(prs.slides, start=1):
-        parts.append(f"# Slajd {index}")
+        if budget.full:
+            break
+        budget.add(f"# Slajd {index}")
         for shape in slide.shapes:
+            if budget.full:
+                break
             if shape.has_text_frame:
                 text = shape.text_frame.text.strip()
                 if text:
-                    parts.append(text)
-    return _cap("\n".join(parts).strip())
+                    budget.add(text)
+    return budget.text()
 
 
 def extract_pdf(data: bytes) -> str:
@@ -111,18 +206,19 @@ def extract_pdf(data: bytes) -> str:
     from pypdf import PdfReader
     from pypdf.errors import PyPdfError
 
+    budget = _TextBudget()
     try:
         reader = PdfReader(io.BytesIO(data))
-        parts: list[str] = []
         for index, page in enumerate(reader.pages, start=1):
+            if budget.full:
+                break
             text = (page.extract_text() or "").strip()
             if text:
-                parts.append(f"# Strona {index}")
-                parts.append(text)
-        joined = "\n".join(parts).strip()
+                budget.add(f"# Strona {index}")
+                budget.add(text)
     except PyPdfError as exc:
         raise DocumentExtractionError(f"nieczytelny PDF: {exc}") from exc
-    return _cap(joined)
+    return budget.text()
 
 
 def extract_text(data: bytes) -> str:

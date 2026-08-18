@@ -17,6 +17,8 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from workmate.adapters.outbound.sqlite_readonly import connect_readonly, select_recent
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -57,7 +59,11 @@ class SqliteAuditStore:
 
     def __init__(self, db_path: Path | str) -> None:
         if str(db_path) != ":memory:":
-            Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            # ``expanduser`` musi objąć TAKŻE ``connect``: policzony wyłącznie na potrzeby
+            # ``mkdir`` zakładał katalog rozwinięty (``/home/x/.workmate``), a bazę otwierał pod
+            # literalnym ``~`` w katalogu roboczym procesu — dwa różne pliki pod jedną nazwą.
+            db_path = Path(db_path).expanduser()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout = 5000")
@@ -107,3 +113,38 @@ class SqliteAuditStore:
                 (limit,),
             ).fetchall()
         return [{col: row[col] for col in _COLUMNS} for row in rows]
+
+
+class SqliteAuditReader:
+    """Odczyt dziennika audytu połączeniem tylko-do-odczytu (ADR 0069 R2, follow-up ADR 0067).
+
+    Osobna klasa od pisarza: narzędzie operatora otwiera bazę ``mode=ro`` i NIE zakłada schematu,
+    więc wskazanie złej ścieżki wraca jako pomyłka, a nie jako pusty dziennik. Filtr po „źródle"
+    to tutaj kolumna ``door`` — ta sama oś, po której filtruje się obie kwarantanny.
+    """
+
+    def __init__(self, db_path: Path | str) -> None:
+        self._conn = connect_readonly(db_path)
+        self._lock = threading.Lock()
+
+    def entries(
+        self,
+        *,
+        source: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Ostatnie wpisy dziennika (najnowsze pierwsze), zawężone do drzwi i okresu."""
+        with self._lock:
+            return select_recent(
+                self._conn,
+                table="audit_tool_calls",
+                columns=_COLUMNS,
+                time_column="occurred_at",
+                source_column="door",
+                source=source,
+                since=since,
+                until=until,
+                limit=limit,
+            )

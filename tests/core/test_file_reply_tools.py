@@ -8,6 +8,7 @@ nie wywracają pollera. Testy na strukturalnych atrapach portów — bez httpx/G
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import pytest
@@ -68,7 +69,7 @@ def _tool(sender: _FakeSender, renderer: _FakeRenderer, *, max_bytes: int = 4096
     catalog = build_file_reply_catalog(
         sender, renderer, "team-1", "chan-1", "root-9", max_bytes=max_bytes
     )
-    assert [spec.name for spec in catalog] == ["reply_with_file"]
+    assert [spec.name for spec in catalog] == ["ReplyWithFile"]
     return catalog[0].fn
 
 
@@ -115,13 +116,15 @@ def test_reply_html_is_trusted_and_escapes_filename():
 
 
 def test_model_cannot_choose_thread_target():
-    """Cel wątku pochodzi z fabryki, nie od modelu — sygnatura narzędzia nie ma pól team/channel."""
+    """Cel wątku pochodzi z fabryki, nie od modelu — sygnatura narzędzia nie ma pól team/channel.
+
+    Sondujemy przez ``inspect.signature``, nie przez ``__code__.co_varnames[:co_argcount]``:
+    ``co_argcount`` NIE liczy parametrów keyword-only, więc dołożenie ``*, team_id`` przeszłoby
+    tamtą asercję bez mrugnięcia — a to dokładnie ten regres, którego ta sonda ma pilnować.
+    """
     fn = _tool(_FakeSender(), _FakeRenderer())
-    assert set(fn.__code__.co_varnames[: fn.__code__.co_argcount]) == {
-        "content",
-        "file_format",
-        "filename",
-    }
+
+    assert set(inspect.signature(fn).parameters) == {"content", "file_format", "filename"}
 
 
 def test_polish_filename_is_ascii_slugged():

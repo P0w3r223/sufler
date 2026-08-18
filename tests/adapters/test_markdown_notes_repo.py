@@ -249,3 +249,29 @@ def test_save_note_then_search_sees_fresh_note_on_same_dir(tmp_path: Path):
 
     hits = notes_service.search_notes("scada")
     assert any("scada" in hit.title.lower() for hit in hits)
+
+
+def test_all_skips_a_note_that_disappears_between_the_walk_and_the_stat(tmp_path: Path):
+    """Od ADR 0065 kasowanie notatki jest realną drogą, więc wyścig ze spacerem ``rglob`` też.
+
+    ``rglob`` oddaje ścieżki zebrane wcześniej; gdy notatka zniknie zanim dojdzie do ``stat``,
+    surowy ``FileNotFoundError`` wywraca CAŁY odczyt bazy wiedzy (retrieval, statusy projektów),
+    zamiast pominąć jeden plik, którego już nie ma.
+    """
+    notes_dir = tmp_path / "notes"
+    (notes_dir / "mpwik" / "scada").mkdir(parents=True)
+    (notes_dir / "mpwik" / "scada" / "zostaje.md").write_text(VALID_NOTE, encoding="utf-8")
+    znikajaca = notes_dir / "mpwik" / "scada" / "znika.md"
+    znikajaca.write_text(VALID_NOTE, encoding="utf-8")
+
+    prawdziwy_stat = Path.stat
+
+    def stat_po_kasacji(self, *args, **kwargs):
+        if self.name == "znika.md":
+            znikajaca.unlink(missing_ok=True)  # kasowanie zdążyło się wykonać
+        return prawdziwy_stat(self, *args, **kwargs)
+
+    with mock.patch.object(Path, "stat", stat_po_kasacji):
+        notes = MarkdownNotesRepository(notes_dir).all()
+
+    assert [note.id for note in notes] == ["mpwik/scada/zostaje"]

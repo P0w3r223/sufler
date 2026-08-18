@@ -161,6 +161,28 @@ def test_map_task_details_strips_control_chars_from_description() -> None:
     assert details.description.startswith("opis")
 
 
+def test_map_task_details_strips_control_chars_from_the_SUMMARY_too() -> None:
+    """``summary`` jest polem w PEŁNI sterowanym przez autora zgłoszenia i idzie do promptu i logu.
+
+    Bliźniaczy ``_clip_text`` wycinał znaki sterujące z opisu i komentarzy, a ``_clip`` na
+    podsumowaniu — nie, więc surowe C0/C1 (sekwencje ANSI, przewijanie terminala, znaki
+    dwukierunkowe) przechodziły granicę nietknięte, wbrew docstringowi ``map_task_details``.
+    """
+    issue = {"key": "WT-5", "fields": {"summary": "tytu\x00ł\x1b[2J z \x07 ozdobnikami"}}
+
+    details = map_task_details(issue, [])
+
+    assert not any(c in details.summary for c in "\x00\x1b\x07")
+    assert details.summary.startswith("tytuł")
+
+
+def test_map_my_tasks_strips_control_chars_from_the_summary_as_well() -> None:
+    """Ta sama funkcja tnie podsumowanie na OBU ścieżkach mapowania — listy i szczegółów."""
+    tasks = map_my_tasks([{"key": "WM-9", "fields": {"summary": "lista\x1b[31m zada\x00ń"}}])
+
+    assert not any(c in tasks[0].summary for c in "\x00\x1b")
+
+
 def test_map_task_details_sanitizes_comment_body() -> None:
     issue = {"key": "WT-5", "fields": {"summary": "x"}}
     comments = [

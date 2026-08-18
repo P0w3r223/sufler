@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -489,3 +490,25 @@ def test_reply_sets_mode_from_color_word_zielono():
     decision = interpret_reply(proposal, "w pon na zielono", tz=WAW, group_id=None, llm=llm)
     assert decision.schedule is not None
     assert decision.schedule.shifts[0].theme == "green"
+
+
+def test_zly_json_nie_wypuszcza_calego_wyjscia_modelu_do_logu(caplog):
+    """Wyjście modelu to przetworzona WIADOMOŚĆ PRACOWNIKA — log dostaje skrót, nie całość.
+
+    Powód urlopu, sprawa rodzinna czy stan zdrowia potrafią przejść przez model i wrócić w jego
+    odpowiedzi. Log usługi bywa zbierany centralnie i czytany przez ludzi spoza zespołu, więc
+    trafia tam tyle, ile trzeba do rozpoznania „model systematycznie psuje JSON": powód, długość
+    i krótki początek. Wcześniej szło 200 znaków w treści wyjątku PLUS pełny ślad stosu
+    (`exc_info=True`), którego `JSONDecodeError` ciągnie razem z całym dokumentem.
+    """
+    wrazliwe = "leczenie onkologiczne w klinice w Gliwicach"
+    surowe = "Nie mogę zwrócić JSON. " + ("x" * 300) + " " + wrazliwe
+    with caplog.at_level(logging.WARNING):
+        decision = interpret_reply(
+            _proposal(), "cokolwiek", tz=WAW, group_id="TAG", llm=_FakeLlm(surowe)
+        )
+    assert decision.action == "unclear"
+    zapis = caplog.text
+    assert wrazliwe not in zapis
+    assert "x" * 200 not in zapis  # skrót, nie 200-znakowy wycinek jak dotąd
+    assert str(len(surowe)) in zapis  # długość zostaje — po niej poznaje się awarię modelu

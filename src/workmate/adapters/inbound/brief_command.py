@@ -20,9 +20,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from workmate.core.errors import NoteAuthorizationError
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.project_brief import ProjectBriefService
 
 logger = logging.getLogger(__name__)
@@ -43,11 +46,14 @@ class BriefContext:
     """Kontekst wywołania one-pagera z respondera.
 
     ``external_id`` (``team/channel/root``) — cel ewentualnej dostawy PDF w wątku. ``mentions_bot``
-    — czy wiadomość @wzmiankuje bota (warunek wyzwalacza).
+    — czy wiadomość @wzmiankuje bota (warunek wyzwalacza). ``sender_id`` (AAD id nadawcy,
+    addytywne) niesie TOŻSAMOŚĆ do bramki odczytu bazy wiedzy (ADR 0062): brief serwuje treść
+    notatek, więc musi ją mieć, choć sam niczego nie zapisuje.
     """
 
     external_id: str
     mentions_bot: bool
+    sender_id: str = ""
 
 
 class BriefRouter:
@@ -63,11 +69,18 @@ class BriefRouter:
         service: ProjectBriefService,
         *,
         deliver_pdf: Callable[[str, str, str], None] | None = None,
+        read_authorizer: NoteReadAuthorizer | None = None,
     ) -> None:
         self._service = service
         # Dostawa PDF (external_id, BAZA nazwy bez rozszerzenia, treść Markdown) → wysyłka plikiem
         # w wątku; ``None`` → tryb PDF niedostępny (file-reply off), ``| pdf`` degraduje do tekstu.
         self._deliver_pdf = deliver_pdf
+        # Bramka członkostwa ODCZYTU (ADR 0062); ``None`` → wyłączona (zachowanie sprzed bramki).
+        # Brief nie jest „read-only, więc bez autoryzacji": ``ProjectBrief.to_text`` zwraca pięć
+        # ostatnich notatek projektu z datami, tytułami i uczestnikami — czyli dokładnie tę treść,
+        # której bramka broni w ``search_notes``. Router odpalał się PRZED jakąkolwiek autoryzacją,
+        # więc jedna @wzmianka obchodziła całą bramkę.
+        self._read_authorizer = read_authorizer
 
     def dispatch(self, text: str, ctx: BriefContext) -> str | None:
         # Wyzwalacz wymaga @wzmianki bota: bez niej to zwykła wiadomość (bot odpowie normalną turą).
@@ -76,10 +89,25 @@ class BriefRouter:
         parsed = _parse_directive(text)
         if parsed is None:
             return None  # wzmianka bez „ogarnij mnie na" → normalna tura agenta
+        # Autoryzacja PO rozpoznaniu dyrektywy, PRZED dotknięciem notatek: zwykła wiadomość ma
+        # dalej iść turą agenta (tam bramkę egzekwują narzędzia), a nie dostawać odmowy.
+        refusal = self._read_authz_refusal(ctx.sender_id)
+        if refusal is not None:
+            return refusal
         project, want_pdf = parsed
         if not project:
             return _USAGE  # dyrektywa bez projektu → podpowiedz składnię
         return self._handle(project, want_pdf, ctx)
+
+    def _read_authz_refusal(self, sender_id: str) -> str | None:
+        """Odmowa odczytu bazy wiedzy (ADR 0062) albo ``None`` (wolno / bramka wyłączona)."""
+        if self._read_authorizer is None:
+            return None
+        try:
+            self._read_authorizer.authorize(sender_id)
+        except NoteAuthorizationError as exc:
+            return f"Brak uprawnień do odczytu bazy wiedzy: {exc}"
+        return None
 
     def _handle(self, project: str, want_pdf: bool, ctx: BriefContext) -> str:
         brief = self._service.brief(project)

@@ -1,4 +1,4 @@
-"""Bramki skonsolidowanego narzędzia ``Notes`` (ADR 0009, wzorzec ``action=…``).
+"""Bramki skonsolidowanego narzędzia ``Project`` (ADR 0009, wzorzec ``action=…``).
 
 Dwie z nich obowiązują od tego kroku na każdym następnym narzędziu tej serii:
 
@@ -25,7 +25,7 @@ from workmate.core.application.services import (
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import ToolSpec, build_notes_catalog
+from workmate.core.application.tools import ToolSpec, build_project_catalog
 from workmate.core.domain.models import Project, ProjectStatusRecord
 
 
@@ -49,11 +49,10 @@ def _write_service() -> NotesWriteService:
     return NotesWriteService(FakeNotesWriter(), FakeProjectsRepository(projects, {}))
 
 
-def _spec(*, write: bool, shell: bool = False) -> ToolSpec:
-    return build_notes_catalog(
+def _spec(*, write: bool) -> ToolSpec:
+    return build_project_catalog(
         _projects_service(),
         write_service=_write_service() if write else None,
-        shell_available=shell,
     )[0]
 
 
@@ -68,9 +67,9 @@ def _dozwolone_akcje(schema: dict[str, Any]) -> set[str]:
 # ── Zamrożenie schematu ─────────────────────────────────────────────────────────────────
 
 
-def test_narzedzie_nazywa_sie_notes_i_ma_akcje_wymagana() -> None:
+def test_narzedzie_nazywa_sie_project_i_ma_akcje_wymagana() -> None:
     definicja = _to_tool_def(_spec(write=True))
-    assert definicja["name"] == "Notes"
+    assert definicja["name"] == "Project"
     assert definicja["input_schema"]["required"] == ["action"]
 
 
@@ -95,7 +94,7 @@ def test_pola_zapisu_sa_w_schemacie_wariantu_zapisu() -> None:
 
 def test_bez_write_service_akcja_save_nie_istnieje_w_schemacie() -> None:
     schema = _to_tool_def(_spec(write=False))["input_schema"]
-    assert _dozwolone_akcje(schema) == {"project_status"}
+    assert _dozwolone_akcje(schema) == {"status"}
     assert "save" not in str(schema), "wartość `save` przecieka do schematu wariantu odczytu"
 
 
@@ -110,21 +109,34 @@ def test_bez_write_service_opis_nie_obiecuje_zapisu() -> None:
     assert "zapis" not in opis.lower()
 
 
-# ── Opis odsyła tam, gdzie zdolność faktycznie jest ─────────────────────────────────────
+# ── Nazwa oddaje zawartość, więc opis nie prostuje nazwy (ADR 0068 §1) ──────────────────
 
 
-def test_bez_powloki_opis_odsyla_do_narzedzi_odczytu() -> None:
-    """Odesłanie do `workmate-search` bez `Bash` byłoby obietnicą bez pokrycia — i to w stanie
-    DOMYŚLNYM produkcji, gdzie `WORKMATE_ENABLE_SHELL` jest wyłączona (ADR 0010)."""
-    opis = _spec(write=False, shell=False).description
-    assert "search_notes" in opis and "get_note" in opis
-    assert "workmate-search" not in opis
+def test_opis_nie_mowi_czego_narzedzie_nie_robi() -> None:
+    """Dawne ``Notes`` zużywało 44% opisu na akapit „to narzędzie do tego nie służy".
+
+    Akapit istniał tylko dlatego, że nazwa obiecywała bazę notatek, a narzędzie dawało stan
+    jednego projektu. Nazwa zgodna z zawartością kasuje potrzebę prostowania — a przy okazji
+    zależność opisu od tego, czy TE drzwi mają powłokę (odesłanie do `workmate-search` albo
+    do `search_notes` bywało fałszywe po każdej stronie).
+    """
+    for opis in (_spec(write=False).description, _spec(write=True).description):
+        assert "nie służy" not in opis
+        assert "workmate-search" not in opis
+        assert "search_notes" not in opis
 
 
-def test_z_powloka_opis_odsyla_do_rankera_w_powloce() -> None:
-    opis = _spec(write=False, shell=True).description
-    assert "workmate-search" in opis
-    assert "search_notes" not in opis
+def test_opis_nie_niesie_sciezek_montazu() -> None:
+    """Układ ścieżek mieszka w sekcji ``ENVIRONMENT`` promptu — w dwóch miejscach rozjeżdża się.
+
+    Podpowiedź przy braku `project` niosła `/mnt/system/projects/`, czyli drugą kopię mapy
+    montaży, fałszywą na drzwiach bez powłoki.
+    """
+    opis = _spec(write=True).description
+    braki = _spec(write=False).fn(action="status")
+
+    assert "/mnt/" not in opis
+    assert "/mnt/" not in braki["hint"]
 
 
 def test_bez_write_service_pola_zapisu_znikaja_ze_schematu() -> None:
@@ -134,7 +146,7 @@ def test_bez_write_service_pola_zapisu_znikaja_ze_schematu() -> None:
 
 def test_z_write_service_akcja_save_jest_dostepna() -> None:
     assert _dozwolone_akcje(_to_tool_def(_spec(write=True))["input_schema"]) == {
-        "project_status",
+        "status",
         "save",
     }
 
@@ -150,26 +162,26 @@ def test_brak_pola_wymaganego_przez_akcje_daje_blad_strukturalny() -> None:
     """
     wynik = _spec(write=True).fn(action="save", project="workmate")
     assert wynik["status"] == "invalid_request"
-    assert wynik["tool"] == "Notes"
+    assert wynik["tool"] == "Project"
     assert wynik["action"] == "save"
     assert wynik["missing"] == ["title", "date", "body"]
     assert wynik["hint"]
 
 
 def test_project_status_bez_projektu_wskazuje_brakujace_pole() -> None:
-    wynik = _spec(write=False).fn(action="project_status")
+    wynik = _spec(write=False).fn(action="status")
     assert wynik["missing"] == ["project"]
 
 
 def test_project_status_zwraca_stan_projektu() -> None:
-    wynik = _spec(write=False).fn(action="project_status", project="workmate")
+    wynik = _spec(write=False).fn(action="status", project="workmate")
     assert wynik["key"] == "workmate"
     assert "error" not in wynik
 
 
 def test_nieistniejacy_projekt_mowi_to_wprost() -> None:
     """Pusty wynik czyta się jak awaria i wywołuje ponowienie — więc go nie zwracamy."""
-    wynik = _spec(write=False).fn(action="project_status", project="nie-ma-takiego")
+    wynik = _spec(write=False).fn(action="status", project="nie-ma-takiego")
     assert "nie istnieje w rejestrze" in wynik["error"]
 
 
@@ -189,7 +201,7 @@ def test_nieznana_akcja_nie_zwraca_po_cichu_stanu_projektu() -> None:
     """Jak w ``Jira``/``GitHub`` — nieznana akcja ma dawać odmowę, nie wynik innej zdolności."""
     wynik = _spec(write=True).fn(action="wymyslona", project="workmate")
     assert wynik["status"] == "invalid_request"
-    assert wynik["allowed"] == ["project_status", "save"]
+    assert wynik["allowed"] == ["status", "save"]
 
 
 def test_wariant_odczytu_tez_odmawia_nieznanej_akcji() -> None:
@@ -202,5 +214,36 @@ def test_wariant_odczytu_tez_odmawia_nieznanej_akcji() -> None:
     """
     wynik = _spec(write=False).fn(action="save", project="workmate")
     assert wynik["status"] == "invalid_request"
-    assert wynik["allowed"] == ["project_status"]
+    assert wynik["allowed"] == ["status"]
     assert "save" not in wynik["hint"], "podpowiedź wymienia akcję, której schemat nie ma"
+
+
+# --- Ksztalt odpowiedzi "nie znaleziono" (ADR 0068 §9) --------------------------------
+
+
+def test_zly_klucz_projektu_niesie_tyle_samo_co_brak_klucza() -> None:
+    """Model, ktory podal ZLY klucz, dostawal mniej materialu niz ten, ktory nie podal ZADNEGO.
+
+    Brak pola wracal kopertą `tool`/`action`/`hint`, a "projekt nie istnieje" — samym `error`.
+    To odwrocona kolejnosc: blizej celu jest ten, kto juz probowal wskazac projekt.
+    """
+    brak = _spec(write=False).fn(action="status")
+    zly = _spec(write=False).fn(action="status", project="nie-ma-takiego")
+
+    assert zly["tool"] == brak["tool"] == "Project"
+    assert zly["action"] == brak["action"] == "status"
+    assert zly["hint"] == brak["hint"]
+    assert zly["status"] == "not_found"
+    assert brak["status"] == "invalid_request"
+
+
+def test_opis_kieruje_pytanie_jak_stoi_projekt() -> None:
+    """Zdanie kierujace jest tym, co rozstrzyga wybor miedzy `Project(status)` a `Activity`.
+
+    ADR 0068 stawia `Project` jako narzedzie od kondycji projektu, a `Activity(summary)` od
+    przebiegu prac — ale po skroceniu opisu wskazowke mial tylko ten drugi, wiec dla pytania
+    „jak stoi projekt X" jawna podpowiedz kierowala do narzedzia, ktore mialo przegrywac.
+    """
+    opis = _spec(write=False).description
+
+    assert "jak stoi projekt" in opis

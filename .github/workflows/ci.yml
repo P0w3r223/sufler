@@ -53,23 +53,34 @@ jobs:
       - name: Synchronizacja zależności
         run: uv sync ${{ matrix.sync_args }}
 
-      - name: Testy
-        run: uv run pytest
-
+      # Bramki statyczne PRZED testami, a każda dodatkowo z `!cancelled()` — kolejność sama
+      # nie wystarcza. Incydent z 2026-07-30 (komentarz wyżej): jeden czerwony test przykrył
+      # lint, format, mypy i granice na tyle długo, że trzy pliki stały niezgodne z `ruff
+      # format` przy „zielonym" CI. Krok, który padł, ma zabrać ze sobą TYLKO swoją informację,
+      # a nie wynik wszystkich pozostałych. `!cancelled()` (nie `always()`) przerywa przy
+      # anulowaniu przebiegu; przy padniętym `uv sync` wszystkie bramki zapalą się czerwono —
+      # to świadomy koszt czytelności, bo pierwszą przyczynę widać w kroku synchronizacji.
       - name: Lint (ruff)
+        if: ${{ !cancelled() }}
         run: uv run ruff check ${{ matrix.lint_paths }}
 
       - name: Format (ruff)
+        if: ${{ !cancelled() }}
         run: uv run ruff format --check ${{ matrix.lint_paths }}
 
       - name: Typy (mypy)
+        if: ${{ !cancelled() }}
         run: uv run mypy
 
       # import-linter (pyproject.toml [tool.importlinter]) egzekwuje granice tylko rdzenia
       # workmate (core ↛ adapters, outbound ↛ inbound) — pod-projekty go nie mają.
       - name: Granice architektoniczne (import-linter)
-        if: matrix.name == 'workmate'
+        if: ${{ !cancelled() && matrix.name == 'workmate' }}
         run: uv run lint-imports
+
+      - name: Testy
+        if: ${{ !cancelled() }}
+        run: uv run pytest
 
   docker-build:
     name: Budowa obrazu floty

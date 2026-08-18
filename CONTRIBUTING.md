@@ -4,7 +4,10 @@ Krótki przewodnik dla kogoś, kto dołącza do projektu i nie budował go od ze
 
 ## 1. Środowisko
 
-Wymagania: **Python 3.10+** i [`uv`](https://docs.astral.sh/uv/).
+Wymagania: **Python 3.11+** i [`uv`](https://docs.astral.sh/uv/). Niższej wersji nie wspieramy:
+`.python-version` i obraz floty stoją na 3.11 (CI bierze wersję stamtąd przez `setup-uv`, nie ma
+osi wersji w macierzy), a `requires-python` ma być równe temu, co jest realnie testowane — wiąże to
+`tests/deploy/test_python_version_floor.py`.
 
 ```bash
 uv sync            # instaluje zależności + narzędzia dev do .venv

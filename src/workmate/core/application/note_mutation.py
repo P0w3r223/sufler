@@ -83,6 +83,18 @@ class NoteMutationService:
         # zostać niedostępna — nie „dostępna z ostrzeżeniem".
         self._allow_delete = allow_delete
 
+    @property
+    def allow_delete(self) -> bool:
+        """Czy kasowanie jest wypuszczone — do ZBUDOWANIA powierzchni, nie tylko do odmowy.
+
+        Wystawione, bo katalog narzędzi musi znać tę bramkę PRZED złożeniem sygnatury: wzorzec
+        „bramka w ``Literal``, nie w ciele" (ADR 0006) wymaga, żeby wyłączona zdolność w ogóle
+        nie istniała w schemacie. Odczyt z serwisu, a nie druga flaga przekazywana obok, bo dwie
+        kopie tej samej reguły rozjeżdżają się dokładnie tak, jak rozjechał się ``shell_available``
+        (ADR 0068 §12): model widziałby wtedy `delete` w enumie i tracił rundę na odmowę z ciała.
+        """
+        return self._allow_delete
+
     def edit_note(
         self,
         note_id: str,
@@ -100,11 +112,11 @@ class NoteMutationService:
         identyfikator i miejsce pliku, więc ich zmiana byłaby w istocie przeniesieniem notatki
         pod inny adres — inną operacją, z innym promieniem rażenia niż „popraw treść".
         """
-        note = self._require_mutable(note_id)
+        # ``wersja`` jest starsza LUB równa treści ``note`` — patrz ``_require_mutable``. To ona
+        # domyka okno między odczytem a zapisem: między nimi leży wywołanie sieciowe sędziego,
+        # a drzwi obsługują tury równolegle.
+        wersja, note = self._require_mutable(note_id)
         reject_dangerous_content(new_body)
-        # Znacznik wersji bierzemy TERAZ, przed oceną zmiany: między odczytem a zapisem leży
-        # wywołanie sieciowe, a drzwi obsługują tury równolegle.
-        wersja = self._writer.digest(note_id)
         request = MutationRequest(
             kind="edit",
             note_id=note_id,
@@ -140,7 +152,10 @@ class NoteMutationService:
             raise WriteError(
                 "usuwanie notatek jest wyłączone (ADR 0065 wiąże je z działającą kopią zapasową)"
             )
-        note = self._require_mutable(note_id)
+        # Kontrola wersji jak przy edycji — okno jest tu nawet szersze, bo przy werdykcie
+        # „confirm" między odczytem a usunięciem leży CAŁA tura, nie samo wywołanie sędziego.
+        # Bez niej równoległa edycja z tego okna znikała BEZ MIGAWKI.
+        wersja, note = self._require_mutable(note_id)
         request = MutationRequest(
             kind="delete",
             note_id=note_id,
@@ -154,21 +169,37 @@ class NoteMutationService:
         outcome = self._decide(request, note)
         if not outcome.applied:
             raise MutationRefused(outcome)
-        self._writer.delete(note_id)
+        self._writer.delete(note_id, expected_sha256=wersja)
         return outcome
 
-    def _require_mutable(self, note_id: str) -> Note:
-        """Zwróć notatkę, jeśli w ogóle wolno ją ruszać; inaczej ``WriteError`` z powodem."""
+    def _require_mutable(self, note_id: str) -> tuple[str, Note]:
+        """Zwróć ``(znacznik wersji, notatka)``, jeśli wolno ją ruszać; inaczej ``WriteError``.
+
+        **Skrót bierzemy PRZED treścią i to jest cała treść tej kolejności.** Oba odczyty idą
+        osobno do systemu plików, więc dzieli je okno, w które może wejść równoległa tura. Przy
+        kolejności odwrotnej (treść, potem skrót) zapis w tym oknie dawał skrót NOWEJ wersji
+        i migawkę STAREJ: kontrola wersji przepuszczała operację, a wersja pośrednia znikała bez
+        kopii — dokładnie stan, który port ``NotesWriter.overwrite`` nazywa niedopuszczalnym.
+
+        Przy tej kolejności migawka jest zawsze NIE STARSZA niż skrót, więc zgodność skrótu przy
+        zapisie dowodzi, że plik nie zmienił się od chwili skrótu — a zatem migawka trzyma to,
+        co za moment zostanie nadpisane albo usunięte. Zapis w oknie daje niezgodność skrótu
+        i odmowę zapisu, czyli kierunek awarii, o który tu chodzi: nic nie ginie.
+
+        Domknięcie do JEDNEGO odczytu bajtów (skrót i materiał migawki z tej samej treści)
+        wymagałoby nowego czasownika portu; przy tej kolejności nie jest potrzebne.
+        """
         if _jest_deterministyczna(note_id):
             raise WriteError(
                 f"notatka {note_id} pochodzi ze spotkania lub wątku i jest tylko do odczytu "
                 "— jej niezmienność jest gwarancją, że powtórne przetworzenie źródła niczego "
                 "nie nadpisze"
             )
+        wersja = self._writer.digest(note_id)
         note = self._notes.get(note_id)
         if note is None:
             raise WriteError(f"notatka nie istnieje: {note_id}")
-        return note
+        return wersja, note
 
     def _decide(self, request: MutationRequest, note: Note) -> MutationOutcome:
         """Migawka, potem sędzia. Awaria któregokolwiek kroku = odmowa.
@@ -246,7 +277,11 @@ def _jest_deterministyczna(note_id: str) -> bool:
     """
     nazwa = note_id.rsplit("/", 1)[-1]
     ogon = nazwa[_DATE_PREFIX_LEN:]
-    return any(marker in ogon for marker in _DETERMINISTIC_MARKERS)
+    # PREFIKS ogona, nie podłańcuch: ``paths`` składa te identyfikatory jako ``<data>-mtg-<skrót>``,
+    # więc znacznik stoi ZARAZ za datą. Test podłańcucha zamrażał każdą notatkę, której slug tytułu
+    # miał w środku „-mtg-"/„-thr-" („Ustalenia mtg tygodniowy" → ``…-ustalenia-mtg-tygodniowy``) —
+    # trwale nieedytowalną i nieusuwalną, z komunikatem kłamiącym o jej pochodzeniu.
+    return any(ogon.startswith(marker) for marker in _DETERMINISTIC_MARKERS)
 
 
 class MutationRefused(WriteError):

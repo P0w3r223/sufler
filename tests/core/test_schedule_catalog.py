@@ -110,3 +110,47 @@ def test_blad_odczytu_wraca_koperta_a_nie_wyjatkiem() -> None:
     """Brak zgody Schedule.Read.All ma degradować łagodnie — tura nie może się wywrócić."""
     _, spec = _zbuduj(error=ScheduleReadError("brak zgody na grafik"))
     assert "error" in spec.fn()
+
+
+# ── Instrukcja prezentacji skroconego wyniku w kopercie (ADR 0068 §5) ──────────────────
+
+
+def test_skrocony_grafik_niesie_ostrzezenie_w_wyniku() -> None:
+    """Bez tego zdania `people_without_entries` przeczy skroconym listom — ale w opisie
+    jechalo w kazdym zadaniu, takze wtedy, gdy grafik miescil sie w calosci."""
+    _, spec = _zbuduj(
+        result={"shifts": [], "times_off": [], "truncated": True, "omitted_entries": 12}
+    )
+
+    wynik = spec.fn()
+
+    assert "omitted_entries" in wynik["note"]
+    assert "people_without_entries" in wynik["note"]
+
+
+def test_notka_NIE_podwaza_pola_liczonego_z_pelnego_okna() -> None:
+    """Notka mówiła modelowi coś odwrotnego niż robi serwis — a to pole jest tu jedynym pewnym.
+
+    ``TeamScheduleService.schedule`` wylicza ``people_without_entries`` z PEŁNYCH list, PRZED
+    przycięciem, więc przycięcie zostawia je nienaruszonym. Notka twierdziła, że „dotyczy tylko
+    tego, co widać", czyli kazała modelowi zaniżyć zaufanie do jedynego pola, którego skrócenie
+    nie dotyka — i to w tej samej odpowiedzi, w której reszta list jest już niepełna.
+    """
+    _, spec = _zbuduj(
+        result={"shifts": [], "times_off": [], "truncated": True, "omitted_entries": 12}
+    )
+
+    notka = spec.fn()["note"]
+
+    assert "tylko tego, co widać" not in notka
+    assert "CAŁEGO" in notka or "całego okna" in notka
+
+
+def test_pelny_grafik_nie_dostaje_notki() -> None:
+    _, spec = _zbuduj(result={"shifts": [], "times_off": [], "truncated": False})
+
+    assert "note" not in spec.fn()
+
+
+def test_opis_nie_niesie_juz_regul_prezentacji_skrocenia() -> None:
+    assert "omitted_entries" not in _zbuduj()[1].description

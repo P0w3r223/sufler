@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.domain.audit import project_arguments
@@ -38,7 +38,7 @@ ToolCallRecorder = Callable[[str, Mapping[str, Any], str], None]
 
 def _utcnow() -> datetime:
     """Chwila zdarzenia (UTC, tz-aware) — wstrzykiwalna w testach przez ``clock``."""
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 class AuditService:

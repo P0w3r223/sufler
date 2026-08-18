@@ -20,6 +20,18 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _SUFIKS_KOPII = ".bak"
+_SUFIKS_PROBY = ".probe"
+
+
+class StateWriteError(RuntimeError):
+    """Nie da się utrwalić stanu (brak miejsca, tylko-do-odczytu, brak praw).
+
+    Wydzielony z ``OSError``, bo dla orkiestracji NIE jest to błąd przejściowy: ponowienie
+    przebiegu przy pełnym dysku nie zapisze stanu, ale ZDĄŻY wysłać kolejne wiadomości, zanim
+    znowu padnie na zapisie. Ten plik jest jedyną pamięcią „kogo już zagadnąłem", więc jego
+    awaria musi zatrzymać wysyłkę, a nie ją zwielokrotnić (patrz ``app._run_once_with_retry``).
+    """
+
 
 # statusy obiegu
 AWAITING_REPLY = "awaiting_reply"
@@ -51,6 +63,12 @@ class PendingReminder:
     # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
     # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``app._record_failure``).
     fail_count: int = 0
+    # Ile cykli Z RZĘDU zakończyło się `ReadOutcome.UNKNOWN` (nie dało się ustalić, czy pracownik
+    # odpisał). Zerowany przy każdym rozstrzygniętym odczycie. Bez tego licznika wpis, którego
+    # czatu nie da się przeczytać, żył wiecznie i po cichu: `fail_count` nie rósł (awaria
+    # `list_chat_messages` jest PRZED obsługą wiadomości), a `should_expire` słusznie odmawiał
+    # wygaszenia bez dowodu.
+    unknown_count: int = 0
     # Pamięć rozmowy: WYŁĄCZNIE wiadomości pracownika (nie bota), od najstarszej do najnowszej,
     # przycięta do ostatnich 10 (``replies.MEMORY_CAP``). Kontekst wieloturowy dla interpretera.
     # Pole opcjonalne — stare pliki stanu bez niego dostają pustą listę.
@@ -59,6 +77,10 @@ class PendingReminder:
     # w pamięci. Osobne pole (a nie ``employee_memory[0]``), by przycięcie do 10 NIE przesuwało okna
     # — inaczej okno stałoby się kroczące zamiast liczonym od pierwszej interakcji.
     memory_started_at: str = ""
+    # Gotowy HTML wiadomości INICJOWANEJ przez bota, która czeka na dopuszczalne okno wysyłki
+    # (`config.send_window_*`). Pusty napis = nic nie czeka. Status terminalny utrwalamy od razu,
+    # więc odłożenie dotyczy WYŁĄCZNIE wysyłki — wpis nigdy nie wraca do obiegu przez porę doby.
+    odlozona_wiadomosc: str = ""
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}
@@ -116,6 +138,30 @@ def load_state(path: Path) -> dict[str, PendingReminder]:
     return {}
 
 
+def ensure_writable(path: Path) -> None:
+    """Sprawdź, że stan DA SIĘ zapisać — wołane PRZED pierwszą nieodwracalną wysyłką w przebiegu.
+
+    Kolejność „wyślij, potem utrwal" jest bezpieczna tylko wtedy, gdy „potem utrwal" naprawdę
+    działa. Przy pełnym wolumenie (ENOSPC) albo wolumenie podmontowanym tylko-do-odczytu wysyłka
+    się udaje, zapis pada, przebieg jest ponawiany — i ta sama osoba dostaje kolejną prośbę przy
+    każdej próbie. Próbny zapis z `fsync` kosztuje jedną operację na przebieg i zamienia serię
+    wiadomości do pracowników w jeden czytelny błąd przed wysłaniem czegokolwiek.
+
+    To bramka, nie gwarancja: dysk może się zapełnić między próbą a właściwym zapisem. Dlatego
+    ``save_state`` i tak sygnalizuje awarię osobnym wyjątkiem, którego orkiestracja nie ponawia.
+    """
+    proba = path.with_suffix(path.suffix + _SUFIKS_PROBY)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with proba.open("w", encoding="utf-8") as plik:
+            plik.write("{}")
+            plik.flush()
+            os.fsync(plik.fileno())  # ENOSPC wychodzi dopiero tutaj, nie na `write`
+        proba.unlink()
+    except OSError as blad:
+        raise StateWriteError(f"Nie da się zapisać stanu {path}: {blad}") from blad
+
+
 def save_state(path: Path, state: dict[str, PendingReminder]) -> None:
     """Zapisz stan atomowo, z `fsync` i kopią poprzedniej wersji.
 
@@ -128,19 +174,26 @@ def save_state(path: Path, state: dict[str, PendingReminder]) -> None:
     `os.replace(path, path.bak)` przed `os.replace(tmp, path)` — czyli dwa przeniesienia pod rząd,
     a MIĘDZY NIMI plik stanu nie istniał. Proces ubity w tym oknie kasował stan całkowicie,
     mimo że dane leżały w kopii. Zapis na `path` musi pozostać JEDNĄ operacją.
+
+    Awaria systemu plików wychodzi jako ``StateWriteError``, nie surowy ``OSError``: dla
+    orkiestracji NIE jest to błąd przejściowy i nie wolno ponawiać na nim całego przebiegu
+    (patrz ``app._run_once_with_retry``).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {key: asdict(value) for key, value in state.items()}
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as plik:
-        json.dump(payload, plik, ensure_ascii=False, indent=2)
-        plik.flush()
-        os.fsync(plik.fileno())  # dane NA DYSKU, nie tylko w buforze systemu
-    if path.exists():
-        # Best-effort: brak kopii jest lepszy niż zablokowany zapis stanu, bo bez zapisu
-        # grozi podwójna wysyłka. Oryginał zostaje na miejscu do samej podmiany.
-        try:
-            shutil.copy2(path, path.with_suffix(path.suffix + _SUFIKS_KOPII))
-        except OSError:
-            logger.warning("Nie udało się utworzyć kopii stanu %s", path)
-    os.replace(tmp, path)  # JEDYNA operacja na `path` — brak okna bez pliku stanu
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as plik:
+            json.dump(payload, plik, ensure_ascii=False, indent=2)
+            plik.flush()
+            os.fsync(plik.fileno())  # dane NA DYSKU, nie tylko w buforze systemu
+        if path.exists():
+            # Best-effort: brak kopii jest lepszy niż zablokowany zapis stanu, bo bez zapisu
+            # grozi podwójna wysyłka. Oryginał zostaje na miejscu do samej podmiany.
+            try:
+                shutil.copy2(path, path.with_suffix(path.suffix + _SUFIKS_KOPII))
+            except OSError:
+                logger.warning("Nie udało się utworzyć kopii stanu %s", path)
+        os.replace(tmp, path)  # JEDYNA operacja na `path` — brak okna bez pliku stanu
+    except OSError as blad:
+        raise StateWriteError(f"Nie udało się utrwalić stanu {path}: {blad}") from blad

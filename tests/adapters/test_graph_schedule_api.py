@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -13,8 +13,8 @@ import pytest
 from workmate.adapters.outbound.graph_schedule_api import HttpxGraphScheduleClient
 from workmate.core.errors import ScheduleReadError
 
-_START = datetime(2026, 8, 3, tzinfo=timezone.utc)
-_END = datetime(2026, 8, 10, tzinfo=timezone.utc)
+_START = datetime(2026, 8, 3, tzinfo=UTC)
+_END = datetime(2026, 8, 10, tzinfo=UTC)
 
 
 def _client(handler, token: str = "tok-123") -> HttpxGraphScheduleClient:
@@ -103,3 +103,25 @@ def test_not_found_response_raises_readable_schedule_read_error():
 
     with pytest.raises(ScheduleReadError, match="nie znaleziono grafiku"):
         _client(handler).list_members("team-1")
+
+
+def test_page_ceiling_leaves_a_warning_with_the_resource_name(caplog):
+    """Ucięcie na ``@odata.nextLink`` było CICHE: „połowa zespołu nie ma zmian" wyglądało jak
+    stan grafiku, a nie jak wyczerpany sufit stron."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "value": [{"id": f"S{calls['n']}"}],
+                "@odata.nextLink": f"https://graph.microsoft.com/v1.0/next?page={calls['n']}",
+            },
+        )
+
+    with caplog.at_level("WARNING"):
+        shifts = _client(handler).list_shifts("team-1", _START, _END)
+
+    assert len(shifts) == 20  # sufit stron
+    assert any("/teams/team-1/schedule/shifts" in rec.getMessage() for rec in caplog.records)

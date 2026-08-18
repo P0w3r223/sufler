@@ -5,7 +5,7 @@ Status: accepted
 Author: P0w3r223
 Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (write-side membership gate — the template),
 [ADR 0006](0006-write-capability-gate-2.md) (write capability gate),
-[ADR 0035](0035-weekly-timesheets.md) / [ADR 0036](0036-timesheet-issue-attribution.md) (identity directory),
+[ADR 0035](0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md) / [ADR 0036](0036-shift-worklog-integration-identity-and-week-contract.md) (identity directory),
 [ADR 0057](0057-shell-executor-container-without-network.md) (executor mount boundary),
 infra `docs/decyzje/0006` (workspace write model), `docs/decyzje/0010` (conversation isolation in the shell),
 `docs/przebudowa-harnessu.md` §6 (stage 2)
@@ -212,3 +212,53 @@ Net effect on implementation surface (all still gated OFF by default): `can_read
 additive `build_agent_runtime` flag to suppress the base read-catalog for the Teams door; `/szukaj`
 enforcement via `ctx.sender_id` (precedent: `/moje-zadania`, `commands.py:178`); the config toggle +
 fail-fast. MCP door and operator CLI untouched; golden MCP surface unchanged.
+
+## Update (2026-08-17) — the enforcement perimeter, closed and drawn explicitly
+
+An audit of the branch found that the gate, once wired, was still **bypassable by four routes** that
+serve knowledge-base content. The policy (membership gate) and §5 (own toggle, default OFF) are
+unchanged; this amendment fixes the *perimeter* and — per the owner's decision — records which door
+stays deliberately open.
+
+**Closed (all four served note-derived content and ran with no authorization at all):**
+
+1. **`BriefRouter` (`responder.py`, ADR 0051).** The one-pager directive was consulted *before* any
+   authorization, and `BriefContext` had no sender field at all — so the gate had nothing to check.
+   `ProjectBrief.to_text()` returns the project's **five most recent notes with dates, titles and
+   participants**: exactly the content `search_notes` refuses. "Read-only, so no authorization" was
+   the reasoning in the original router docstring; being read-only is what this ADR gates, not what
+   exempts from it. Fixed: `sender_id` added to `BriefContext`, `NoteReadAuthorizer` injected into
+   the router, refusal returned **after** directive recognition (a plain message must still fall
+   through to the agent turn) and **before** any note is touched.
+2. **`ChangeDigestRouter` (`responder.py`, ADR 0052).** Same shape, same fix — see the open door
+   below for why an events-only digest is nonetheless gated.
+3. **`/status <projekt>` (`commands.py`).** The only read handler without `_read_authz_refusal`.
+   `get_project_status` returns a synthesis built from division notes (summary, note count, open
+   action items). Same command, same door, one argument's difference from `/szukaj`. Fixed.
+4. **`Notes(action='project_status')` in the base agent catalog (`agent_wiring.py`).** *(Names as of
+   this ADR. [ADR 0068](0068-agent-tool-names-and-the-cost-of-a-wrong-one.md), same day, renamed the
+   tool to `Project(action='status')` and its builder to `build_project_catalog`; the defect and the
+   fix are unchanged, only the labels are. The same applies to `Activity(action='events')` below.)*
+   `suppress_notes_read` removed only `build_notes_read_catalog` (that one keeps its name);
+   `build_notes_catalog` — which carries `project_status` — stayed in the base catalog
+   unconditionally. It was the **only read
+   path that survived wiring the gate**. Fixed by folding the whole knowledge-base surface into the
+   per-turn, sender-keyed factory (Decision §3's promised consolidation), done on the **door** side:
+   `core/application/tools.py` is shared with the MCP surface, which this gate explicitly does not
+   cover (see the 2026-08-11 update, point 2).
+
+**Deliberately left open — `Activity(action='events')`**, written `GitHub(action='events')` when
+this ADR was decided (see the note on point 4 above)**.** The bridge event feed is **not** the
+knowledge base: events are titles, URLs and timestamps mirrored from GitHub, already visible to
+anyone with repository access, and the tool is the agent's cursor over `events.db`. It stays
+ungated, and this is a decision rather than an omission.
+
+The line between it and the gated `ChangeDigestRouter` — which also folds only events — is the
+**level, not the payload**: `Activity(events)` is a tool call inside a turn whose knowledge-base tools
+already refuse an unrecognized sender, whereas the digest directive is a **door-level answer**
+composed before the agent turn exists, summarizing activity across every project of the division in
+a single message to a possibly unrecognized sender. If a later ADR gives the door a uniform
+pre-turn authorization step, this asymmetry should be revisited.
+
+**Still out of scope, unchanged:** the shell / CLI path over the `ro` mount (Decision §4) and the
+MCP door (2026-08-11 update, point 2).

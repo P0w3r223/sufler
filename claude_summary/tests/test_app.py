@@ -1,15 +1,18 @@
-"""Integracja CLI: bramka zgody (fail-closed) i pełny bieg bez repo (same prompty)."""
+"""Integracja CLI: bramka zgody (fail-closed), bieg bez repo, zapis plików i start ``main``."""
 
 from __future__ import annotations
 
 import json
-from datetime import date
+import sys
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from claude_summary.app import _Args, run
+from claude_summary import app as app_module
+from claude_summary.app import _Args, _with_prose, _write_files, main, run
 from claude_summary.config import Settings
+from claude_summary.core.models import Commit, DaySummary, Prompt, SummaryReport
 
 
 def _settings(tmp_path: Path, **overrides: object) -> Settings:
@@ -61,3 +64,107 @@ def test_pipeline_without_repo(tmp_path: Path, capsys: pytest.CaptureFixture[str
     out = capsys.readouterr().out
     assert "2026-07-20" in out
     assert "zrobiłem X" in out
+
+
+def test_missing_projects_dir_warns_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """REGRESJA: zły katalog projektów dawał raport z zerami i ciche wyjście 0."""
+    code = run(_Args(consent=True), _settings(tmp_path))
+    assert code == 0
+    assert "nie istnieje" in capsys.readouterr().err
+
+
+def _report() -> SummaryReport:
+    prompt = Prompt(
+        timestamp=datetime(2026, 7, 20, 7, tzinfo=timezone.utc),
+        text="zrobiłem X",
+        session_id="sess",
+        cwd="",
+        project="p",
+    )
+    commit = Commit(
+        sha="a1b2c3d4e5",
+        timestamp=datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+        author="Jan",
+        message="feat: x",
+    )
+    day = DaySummary(day=date(2026, 7, 20), prompts=(prompt,), commits=(commit,))
+    return SummaryReport(
+        person="Jan",
+        since=date(2026, 7, 20),
+        until=date(2026, 7, 20),
+        repo=None,
+        days=(day,),
+    )
+
+
+def test_out_with_dotted_name_keeps_the_date(tmp_path: Path) -> None:
+    """REGRESJA: --out raport.2026-07-20 i raport.2026-07-19 pisały do tego samego pliku."""
+    settings = _settings(tmp_path)
+    for day in ("2026-07-19", "2026-07-20"):
+        _write_files(
+            _report(), md=f"# {day}", js=None, out=tmp_path / f"raport.{day}", settings=settings
+        )
+    assert (tmp_path / "raport.2026-07-19.md").read_text(encoding="utf-8") == "# 2026-07-19"
+    assert (tmp_path / "raport.2026-07-20.md").read_text(encoding="utf-8") == "# 2026-07-20"
+
+
+def test_out_with_own_suffix_is_not_doubled(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    _write_files(_report(), md="# md", js="{}", out=tmp_path / "raport.md", settings=settings)
+    assert (tmp_path / "raport.md").exists()
+    assert (tmp_path / "raport.json").exists()
+    assert not (tmp_path / "raport.md.md").exists()
+
+
+def test_write_files_without_out_uses_output_dir(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    _write_files(_report(), md="# md", js="{}", out=None, settings=settings)
+    stem = tmp_path / "out" / "summary_2026-07-20_2026-07-20"
+    assert stem.with_suffix(".md").exists()
+    assert stem.with_suffix(".json").exists()
+
+
+def test_with_prose_without_api_key_notes_and_degrades(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    days = list(_report().days)
+    result = _with_prose(days, settings=_settings(tmp_path), person="Jan")
+    assert result == days  # dane strukturalne bez zmian
+    assert "brak klucza API" in capsys.readouterr().err
+
+
+def test_with_prose_degrades_single_failing_day(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _boom(day: DaySummary, *, person: str, llm: object) -> str:
+        raise RuntimeError("model padł")
+
+    monkeypatch.setattr(app_module, "summarize_day", _boom)
+    days = list(_report().days)
+    result = _with_prose(days, settings=_settings(tmp_path, api_key="sk-test"), person="Jan")
+    assert [day.llm_prose for day in result] == [None]
+    assert "model padł" in capsys.readouterr().err
+
+
+def test_main_reports_broken_config_without_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REGRESJA: konfiguracja czytana przed parsowaniem argumentów sypała ValueError."""
+    monkeypatch.setattr(app_module.env, "load_dotenv", lambda: None)
+    monkeypatch.setenv("CLAUDE_SUMMARY_DEFAULT_DAYS", "dużo")
+    monkeypatch.setattr(sys, "argv", ["claude-summary", "--consent"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "Błąd konfiguracji" in str(exc.value)
+
+
+def test_main_help_works_despite_broken_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(app_module.env, "load_dotenv", lambda: None)
+    monkeypatch.setenv("CLAUDE_SUMMARY_TZ", "Mars/Olympus")
+    monkeypatch.setattr(sys, "argv", ["claude-summary", "--help"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    assert "Użycie:" in capsys.readouterr().out

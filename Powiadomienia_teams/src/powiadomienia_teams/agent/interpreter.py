@@ -294,10 +294,29 @@ def _items_or_none(data: dict[str, Any], key: str) -> list[dict[str, Any]] | Non
     return [item for item in value if isinstance(item, dict)]
 
 
+_MAX_PODGLAD_ODPOWIEDZI = 80  # ile znaków wyjścia modelu wolno pokazać w logu
+
+
+def _podglad(text: str) -> str:
+    """Krótki, jednolinijkowy podgląd wyjścia modelu do logu — reszta zostaje nieujawniona.
+
+    Wyjście modelu jest przetworzoną WIADOMOŚCIĄ PRACOWNIKA: potrafi zacytować powód urlopu,
+    sprawę rodzinną albo stan zdrowia. Log usługi bywa zbierany centralnie i czytany przez ludzi
+    spoza zespołu, więc trafia tam tyle, ile potrzeba do rozpoznania „model systematycznie psuje
+    JSON" — długość i początek — a nie cała treść.
+    """
+    jedna_linia = " ".join(text.split())
+    if len(jedna_linia) <= _MAX_PODGLAD_ODPOWIEDZI:
+        return jedna_linia
+    return jedna_linia[:_MAX_PODGLAD_ODPOWIEDZI] + "…"
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
-        raise ValueError(f"Brak JSON w odpowiedzi modelu: {text[:200]!r}")
+        # Bez treści w komunikacie: wyjątek bywa logowany ze śladem stosu, a wtedy całe wyjście
+        # modelu (czyli odpowiedź pracownika) wyciekłoby do logu mimo skracania w miejscu obsługi.
+        raise ValueError("Brak JSON w odpowiedzi modelu")
     data: dict[str, Any] = json.loads(match.group(0))
     return data
 
@@ -416,8 +435,16 @@ def interpret_reply(
     raw = llm.complete(_SYSTEM, payload)
     try:
         data = _extract_json(raw)
-    except ValueError:
-        logger.warning("Model zwrócił niepoprawny JSON — degraduję do »unclear«.", exc_info=True)
+    except ValueError as blad:
+        # BEZ `exc_info`: ślad stosu ciągnie za sobą treść `json.JSONDecodeError.doc`, czyli całe
+        # wyjście modelu. Do rozpoznania awarii wystarczy powód, długość i skrócony początek.
+        logger.warning(
+            "Model zwrócił niepoprawny JSON (%s; %d znaków, początek: %s) — degraduję do "
+            "»unclear«.",
+            type(blad).__name__,
+            len(raw),
+            _podglad(raw),
+        )
         return ReplyDecision("unclear", None, ())
     action = str(data.get("action", "unclear"))
 

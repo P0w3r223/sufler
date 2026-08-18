@@ -21,13 +21,13 @@ from __future__ import annotations
 import base64
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from workmate.adapters.outbound.jira_http import request_with_retry
+from workmate.adapters.outbound.jira_http import as_jira_read_error, request_with_retry
 from workmate.core.domain.adf import adf_to_text
 from workmate.core.errors import InvalidRequestError
 
@@ -90,7 +90,8 @@ class HttpxJiraCloudClient:
         issues: list[dict[str, Any]] = []
         seen_tokens: set[str] = set()
         next_token = ""
-        for _ in range(_MAX_PAGES):
+        incomplete = False
+        for page_no in range(_MAX_PAGES):
             payload: dict[str, Any] = {
                 "jql": jql,
                 "maxResults": max_results,
@@ -111,6 +112,17 @@ class HttpxJiraCloudClient:
             if body.get("isLast") or not next_token or not page or next_token in seen_tokens:
                 break
             seen_tokens.add(next_token)
+            incomplete = page_no == _MAX_PAGES - 1
+        if incomplete:
+            # Wyszliśmy przez sufit stron, nie przez ``isLast`` — wynik jest NIEPEŁNY. Ucięcie bez
+            # śladu wygląda w danych jak „tyle zadań jest" (por. ``transcript_sources``, które
+            # podnosi wtedy błąd; odczyt ma wrócić, więc zostaje ostrzeżenie z nazwą zasobu).
+            logger.warning(
+                "Odczyt %s ucięty po %d stronach — oddaję %d pozycji, dalsze pominięte.",
+                "rest/api/3/search/jql",
+                _MAX_PAGES,
+                len(issues),
+            )
         return issues
 
     def get_issue(self, key: str) -> dict[str, Any]:
@@ -140,10 +152,15 @@ class HttpxJiraCloudClient:
     # --- transport ---------------------------------------------------------------
 
     def _get_json(self, url: str, params: dict[str, str] | None = None) -> Any:
-        return request_with_retry(self._client, "GET", url, params=params).json()
+        # Tłumaczenie błędu transportu siedzi TU (granica adaptera), nie w rdzeniu — patrz
+        # ``jira_http.as_jira_read_error``.
+        with as_jira_read_error():
+            return request_with_retry(self._client, "GET", url, params=params).json()
 
     def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        data = request_with_retry(self._client, "POST", url, json=payload).json()
+        # ``POST /search/jql`` to na Cloud ODCZYT (bulk search) — ta sama granica błędu co GET.
+        with as_jira_read_error():
+            data = request_with_retry(self._client, "POST", url, json=payload).json()
         return data if isinstance(data, dict) else {}
 
 
@@ -167,7 +184,7 @@ def _warn_on_timezone_skew(account_tz: Any) -> None:
     name = str(account_tz or "").strip()
     if not name:
         return
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     try:
         account_offset = now.astimezone(ZoneInfo(name)).utcoffset()
     except (ZoneInfoNotFoundError, ValueError):
