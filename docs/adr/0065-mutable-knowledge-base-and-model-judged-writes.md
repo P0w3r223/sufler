@@ -129,6 +129,23 @@ This ADR records that reversal with its risks stated as conscious consent, and s
    update verb. What is recorded is the verdict, the reason, and the trust class of the turn — never
    the note content (ADR 0067 redaction rule holds unchanged).
 
+   *Amended at implementation, 2026-08-18 (this decision had shipped only as a schema column:
+   `AuditService.record` wrote a hardcoded `None` and `NoteMutationService` never called audit, so
+   the Phase 6 acceptance criterion was unreachable by any flag).* The verdict reaches the row
+   through a **slot on the per-turn recorder** (`TurnAudit.record_verdict`), not through a fourth
+   argument carried by the runtime. The reason is mechanical: the row is appended in
+   `AgentRuntime._dispatch`, *after* the tool returns, while the verdict is born *inside* the `File`
+   tool — a fourth argument would force `core/agent/runtime.py` to carry a value it cannot produce
+   and does not understand, for every tool in the catalog. The slot keeps the runtime contract at
+   three arguments, is filled by the mutation gate and **consumed** by the next appended row
+   (cleared unconditionally, including on a failed write), so one verdict can never attach itself to
+   a later call. What is recorded is unchanged — verdict plus reason — with the reason passed
+   through `project_verdict`, which applies the ADR 0067 field ceiling (128 chars) to it: the reason
+   is free text written by a model that has just read the note, and the ceiling is the only
+   mechanical guarantee available that a note fragment does not ride into the log inside it.
+   Refusals raised *before* the judge (no `reason` given, unresolved requester, closed gate) report
+   **no** verdict — a row saying `deny` where nobody adjudicated would misdescribe the system.
+
 ## Risk register — this is the conscious-consent content
 
 | # | Risk introduced | Mitigation |

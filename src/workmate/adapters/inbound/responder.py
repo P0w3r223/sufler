@@ -218,10 +218,18 @@ class ConversationalResponder:
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
         file_catalog_factory: (
             Callable[
-                # Ostatni argument to SKAZA rozmowy: ``Callable`` zamiast ``bool``, bo fabryka
-                # czyta ją w chwili MUTACJI, nie budowy katalogu (ADR 0066) — patrz miejsce
-                # wywołania niżej.
-                [WorkspaceScope, AttachmentQueue, str, str, Callable[[], bool]],
+                # Przedostatni argument to SKAZA rozmowy: ``Callable`` zamiast ``bool``, bo
+                # fabryka czyta ją w chwili MUTACJI, nie budowy katalogu (ADR 0066) — patrz
+                # miejsce wywołania niżej. Ostatni to ujście werdyktu sędziego do wiersza audytu
+                # tej tury (ADR 0065 §8); ``None`` przy wyłączonym audycie.
+                [
+                    WorkspaceScope,
+                    AttachmentQueue,
+                    str,
+                    str,
+                    Callable[[], bool],
+                    Callable[[str, str], None] | None,
+                ],
                 Sequence[ToolSpec],
             ]
             | None
@@ -462,6 +470,24 @@ class ConversationalResponder:
                 logger.warning("Nie rozstrzygnąłem klasy nadawcy %r — T2", message.sender_id)
                 trust = "T2"
 
+        # Rejestrator audytu (ADR 0067) domknięty PER TURĘ: pseudonim nadawcy/rozmowy liczony raz,
+        # klasa zaufania z osi pochodzenia. ``None`` → audyt wyłączony. Runtime woła go dla
+        # każdego tool-calla; rejestrator jest best-effort (nie wywróci tury).
+        #
+        # Powstaje PRZED katalogami, choć używa go dopiero ``run_turn``: fabryka ``File`` bierze
+        # z niego ujście werdyktu sędziego (ADR 0065 §8), a katalogi składamy niżej. Zbudowany
+        # po nich — jak było do tej zmiany — nie miałby jak trafić do bramki mutacji.
+        audit_recorder = (
+            self._audit.turn_recorder(
+                door=self._channel,
+                raw_user=message.sender_id or message.sender,
+                conversation_id=external_id,
+                trust_class=trust if self._sender_trust is not None else "unknown",
+            )
+            if self._audit is not None
+            else None
+        )
+
         # Skaza z faktów ZNANYCH PRZED turą (ADR 0066) — zapalana TU, przed budową katalogów.
         # Rozdzielenie na dwie połowy (druga niżej, po turze) nie jest kosmetyką: załącznik ląduje
         # na dysku rozmowy PRZED wywołaniem modelu, więc gdyby cała skaza czekała na wynik tury,
@@ -543,6 +569,9 @@ class ConversationalResponder:
                         # ``GitHub``) zapala się dopiero PO niej, a sędzia ma widzieć rozmowę
                         # taką, jaka jest w momencie orzekania.
                         lambda: self._is_tainted(conversation_id),
+                        # Werdykt sędziego mutacji wraca TĄ drogą do wiersza audytu tego samego
+                        # wywołania ``File`` (ADR 0065 §8) — bez audytu ujścia po prostu nie ma.
+                        audit_recorder.record_verdict if audit_recorder is not None else None,
                     )
                 )
             except Exception:
@@ -611,19 +640,6 @@ class ConversationalResponder:
                     exc_info=True,
                 )
         trust_nonce = self._trust_nonce(external_id)
-        # Rejestrator audytu (ADR 0067) domknięty PER TURĘ: pseudonim nadawcy/rozmowy liczony raz,
-        # klasa zaufania z osi pochodzenia. ``None`` → audyt wyłączony. Runtime woła go dla
-        # każdego tool-calla; rejestrator jest best-effort (nie wywróci tury).
-        audit_recorder = (
-            self._audit.turn_recorder(
-                door=self._channel,
-                raw_user=message.sender_id or message.sender,
-                conversation_id=external_id,
-                trust_class=trust if self._sender_trust is not None else "unknown",
-            )
-            if self._audit is not None
-            else None
-        )
         result = self._runtime.run_turn(
             message.text,
             attachments=message.attachments,

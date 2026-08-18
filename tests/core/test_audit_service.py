@@ -86,3 +86,70 @@ def test_trust_class_passes_through():
     assert row["trust_class"] == "T3"
     assert row["status"] == "error"
     assert row["judge_verdict"] is None
+
+
+# --- Gniazdo werdyktu sędziego (ADR 0065 §8, znalezisko 9.11) -------------------------
+
+
+def test_verdict_lands_in_the_same_row_as_the_tool_call():
+    """Sonda przeciw kodowi SPRZED poprawki: ``judge_verdict`` był tam na stałe ``None``,
+    więc kryterium odbioru Fazy 6 („werdykt w audit.db") było nieosiągalne kodem."""
+    store = _FakeStore()
+    recorder = AuditService(store, clock=_clock).turn_recorder(
+        door="teams", raw_user="u", conversation_id="c"
+    )
+
+    recorder.record_verdict("deny", "notatka opisuje inny projekt")
+    recorder("File", {"action": "edit", "name": "biap/mpwik/2026-08-01-x"}, "error")
+
+    (row,) = store.rows
+    assert row["judge_verdict"] == "deny: notatka opisuje inny projekt"
+
+
+def test_a_call_without_a_verdict_leaves_the_column_empty():
+    """``File(read)`` i każde inne narzędzie nie mają werdyktu — kolumna ma wtedy MILCZEĆ,
+    a nie powtarzać ostatni znany werdykt."""
+    store = _FakeStore()
+    recorder = AuditService(store, clock=_clock).turn_recorder(
+        door="teams", raw_user="u", conversation_id="c"
+    )
+
+    recorder("File", {"action": "read", "name": "umowa.pdf"}, "ok")
+
+    (row,) = store.rows
+    assert row["judge_verdict"] is None
+
+
+def test_the_verdict_is_consumed_by_the_row_it_belongs_to():
+    """Werdykt jednego wywołania nie ma jak dokleić się do NASTĘPNEGO — to cały inwariant
+    gniazda: jeden werdykt, jeden wiersz."""
+    store = _FakeStore()
+    recorder = AuditService(store, clock=_clock).turn_recorder(
+        door="teams", raw_user="u", conversation_id="c"
+    )
+
+    recorder.record_verdict("allow")
+    recorder("File", {"action": "edit", "name": "x"}, "ok")
+    recorder("Bash", {"command": "ls"}, "ok")
+
+    pierwszy, drugi = store.rows
+    assert pierwszy["judge_verdict"] == "allow"
+    assert drugi["judge_verdict"] is None
+
+
+def test_the_slot_is_cleared_even_when_the_store_fails():
+    """Awaria zapisu nie może zostawić werdyktu w gnieździe: doczepiłby się do wiersza
+    następnego narzędzia i przypisał orzeczenie wywołaniu, którego nie dotyczyło."""
+    store = _FakeStore(fail=True)
+    recorder = AuditService(store, clock=_clock).turn_recorder(
+        door="teams", raw_user="u", conversation_id="c"
+    )
+    recorder.record_verdict("deny", "powód")
+    recorder("File", {"action": "edit", "name": "x"}, "error")
+
+    store._fail = False
+    recorder("Bash", {"command": "ls"}, "ok")
+
+    (row,) = store.rows
+    assert row["tool_name"] == "Bash"
+    assert row["judge_verdict"] is None

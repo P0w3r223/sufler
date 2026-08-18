@@ -84,3 +84,26 @@ def project_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     kluczy zachowana dla czytelności dziennika.
     """
     return {name: _project_value(name, value) for name, value in arguments.items()}
+
+
+def project_verdict(verdict: str, reason: str = "") -> str:
+    """Złóż wartość kolumny ``judge_verdict``: werdykt + uzasadnienie, obie zredagowane.
+
+    Werdykt sędziego mutacji (ADR 0065 §8) ląduje w TYM SAMYM wierszu, co wywołanie narzędzia,
+    które go wywołało — dlatego jest projekcją, a nie osobnym zapisem. Sam werdykt to skalar
+    z domeny (``allow``/``deny``/``confirm``), więc idzie wprost.
+
+    Uzasadnienie jest inne i to jest cała treść tej funkcji: pisze je MODEL, który przed chwilą
+    czytał notatkę, więc może w nie wciągnąć fragment bazy wiedzy. ADR 0065 §8 każe je zapisać
+    („the verdict, the reason") i zarazem trzyma regułę redakcji ADR 0067 („never the note
+    content"). Jedyne, co da się tekstowi swobodnemu dać mechanicznie, to ten sam sufit, co
+    polu z allowlisty: powyżej ``_MAX_FIELD_CHARS`` zostaje znacznik ``<str:długość>``. Poniżej
+    sufitu zapisujemy dosłownie — bo zdanie „notatka opisuje inny projekt niż podany" jest
+    dokładnie tym, po co ta kolumna istnieje, a bez niego wiersz mówi „deny" i nic więcej.
+    """
+    powod = reason.strip()
+    if not powod:
+        return verdict
+    if len(powod) > _MAX_FIELD_CHARS:
+        powod = _redact(powod)
+    return f"{verdict}: {powod}"

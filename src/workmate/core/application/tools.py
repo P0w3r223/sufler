@@ -18,6 +18,7 @@ import base64
 import binascii
 import hashlib
 import inspect
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from workmate.core.application.note_mutation import NoteMutationService
     from workmate.core.application.team_schedule import TeamScheduleService
     from workmate.core.application.worklog import WorklogService
+    from workmate.core.domain.mutation import JudgeVerdict
     from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.document import DocumentRenderer
     from workmate.core.ports.file_output import TeamsFileSender
@@ -58,6 +60,8 @@ from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import InvalidRequestError, RepositoryError, WorkMateError
 from workmate.core.ports.document import FILE_REPLY_FORMATS
 from workmate.core.ports.user_push import IMAGE_CONTENT_TYPES, sniff_image_format
+
+logger = logging.getLogger(__name__)
 
 # Alias typu daty pod adnotacje pól, których model widzi pod nazwą ``date``. Adnotacje są tu
 # napisami (``from __future__ import annotations``) rozwiązywanymi w globalach modułu, więc
@@ -699,6 +703,7 @@ def build_file_catalog(
     tainted: bool | Callable[[], bool] = True,
     turn_token: str = "",
     shell_available: bool = False,
+    verdict_sink: Callable[[str, str], None] | None = None,
 ) -> list[ToolSpec]:
     """Zbuduj narzędzie ``File`` dla danej rozmowy (ADR 0064) — WYŁĄCZNIE dla runtime agenta.
 
@@ -728,6 +733,11 @@ def build_file_catalog(
     kazał czytać `cat`-em, z powłoką — brać identyfikator z ``search_notes``/``get_note``,
     zdjętych właśnie przy powłoce. Flaga ma pochodzić z tego samego źródła co katalog powłoki
     (obecność fabryki), a nie z ustawienia operatora.
+
+    ``verdict_sink`` odbiera werdykt sędziego mutacji (ADR 0065 §8) i odkłada go do wiersza
+    audytu TEGO wywołania — ``None`` przy wyłączonym audycie. Zgłaszamy KAŻDE orzeczenie, także
+    zgodę: dziennik, w którym widać wyłącznie odmowy, każe operatorowi wnioskować o zgodach
+    z ich nieobecności, a to jest nieodróżnialne od sędziego, który w ogóle nie biegł.
     """
 
     def _skaza() -> bool:
@@ -812,6 +822,20 @@ def build_file_catalog(
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
+    def _zglos_werdykt(verdict: JudgeVerdict) -> None:
+        """Odłóż werdykt do wiersza audytu tego wywołania — nigdy kosztem samej mutacji.
+
+        Audyt jest poboczny (ADR 0067 §1.1), więc jego awaria nie może zamienić udanej zmiany
+        w błąd narzędzia ani odmowy — w komunikat o dzienniku. Osłona stoi TU, bo tylko tu widać,
+        co się traci przy jej braku: wynik operacji, którą użytkownik właśnie zlecił.
+        """
+        if verdict_sink is None:
+            return
+        try:
+            verdict_sink(verdict.verdict, verdict.reason)
+        except Exception:
+            logger.warning("Nie udało się odłożyć werdyktu sędziego do audytu — pomijam")
+
     def _mutacja(action: str, note_id: str, content: str, reason: str) -> dict[str, Any]:
         """Przepisz prośbę modelu na ZWALIDOWANĄ operację na notatce (ADR 0065, R3).
 
@@ -856,8 +880,9 @@ def build_file_catalog(
                     trust_class=trust_class,
                     tainted=skaza,
                 )
+                _zglos_werdykt(wynik.verdict)
                 return {"deleted": True, "id": note_id, "kopia": _skrot_kopii(wynik.snapshot)}
-            mutations.edit_note(
+            wynik = mutations.edit_note(
                 note_id,
                 content,
                 requester=requester,
@@ -866,10 +891,12 @@ def build_file_catalog(
                 trust_class=trust_class,
                 tainted=skaza,
             )
+            _zglos_werdykt(wynik.verdict)
             return {"edited": True, "id": note_id}
         except MutationRefused as odmowa:
             # Odmowa NIE jest awarią — to normalny wynik z powodem, który model ma przekazać
             # człowiekowi. Wyjątek zamieniony na wynik, żeby nie wyglądał jak błąd narzędzia.
+            _zglos_werdykt(odmowa.outcome.verdict)
             return {
                 "error": odmowa.outcome.verdict.reason,
                 "verdict": odmowa.outcome.verdict.verdict,

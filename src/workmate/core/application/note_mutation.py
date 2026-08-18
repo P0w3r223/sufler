@@ -105,12 +105,18 @@ class NoteMutationService:
         turn_token: str = "",
         trust_class: str = "unknown",
         tainted: bool = True,
-    ) -> Note:
+    ) -> MutationOutcome:
         """Podmień TREŚĆ istniejącej notatki; metadane zostają nietknięte.
 
         Metadane (projekt, data, uczestnicy) są poza zasięgiem rozmyślnie: to z nich wywodzi się
         identyfikator i miejsce pliku, więc ich zmiana byłaby w istocie przeniesieniem notatki
         pod inny adres — inną operacją, z innym promieniem rażenia niż „popraw treść".
+
+        Zwraca ``MutationOutcome``, tak samo jak ``delete_note``, a nie zmienioną notatkę. Werdykt
+        sędziego ma trafić do wiersza audytu (ADR 0065 §8) TAKŻE wtedy, gdy zmiana przeszła —
+        dziennik, w którym widać wyłącznie odmowy, opisuje inny system niż ten, który działa.
+        Notatki i tak nikt tu nie odbierał: jedyny wołający (``build_file_catalog``) potwierdza
+        człowiekowi sam fakt zmiany, a treść po mutacji zna, bo sam ją podał.
         """
         # ``wersja`` jest starsza LUB równa treści ``note`` — patrz ``_require_mutable``. To ona
         # domyka okno między odczytem a zapisem: między nimi leży wywołanie sieciowe sędziego,
@@ -135,7 +141,7 @@ class NoteMutationService:
         # Skrót liczony z TEGO SAMEGO renderu, który leży na dysku — kontrola wersji ma
         # porównywać plik z plikiem, nie model z plikiem.
         self._writer.overwrite(zmieniona, expected_sha256=wersja)
-        return zmieniona
+        return outcome
 
     def delete_note(
         self,

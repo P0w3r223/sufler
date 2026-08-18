@@ -605,10 +605,11 @@ def test_metadata_is_untouched_by_an_edit():
     więc ich zmiana byłaby PRZENIESIENIEM notatki, nie poprawką treści."""
     service, writer, _s, _j, _l = _service()
 
-    zmieniona = service.edit_note(_note().id, "nowa treść", requester="Anna", intent="x")
+    service.edit_note(_note().id, "nowa treść", requester="Anna", intent="x")
 
-    assert zmieniona.id == _note().id
-    assert zmieniona.metadata == _METADATA
+    # Pytamy o to, co POSZŁO NA DYSK: ``edit_note`` oddaje werdykt (ADR 0065 §8), a jedynym
+    # świadkiem tego, czy metadane ocalały, jest i tak zapis, nie zwrot.
+    assert writer.overwritten[0].id == _note().id
     assert writer.overwritten[0].metadata == _METADATA
 
 
