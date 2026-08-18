@@ -262,31 +262,65 @@ class _FakeMutations:
         self.deletes: list[tuple] = []
         self.origin: list[tuple] = []
 
-    def _maybe_refuse(self):
+    def _maybe_refuse(self, verdict_sink=None):  # noqa: ANN001, ANN202
+        """Odmowa sędziego — z werdyktem zgłoszonym PRZED podniesieniem wyjątku.
+
+        Atrapa naśladuje tu kolejność prawdziwej bramki (``NoteMutationService._decide``): werdykt
+        idzie do ujścia w chwili ORZECZENIA, a wyjątek dopiero potem. Atrapa zgłaszająca po
+        wyjątku opisywałaby serwis, w którym werdykt ``allow`` ginie przy nieudanym zapisie —
+        czyli dokładnie ten defekt, przed którym ujście ma bronić.
+        """
         if self.refuse:
             from workmate.core.application.note_mutation import MutationOutcome, MutationRefused
             from workmate.core.domain.mutation import JudgeVerdict
 
+            if verdict_sink is not None:
+                verdict_sink("confirm", self.refuse)
             raise MutationRefused(MutationOutcome(False, JudgeVerdict("confirm", self.refuse)))
 
     def edit_note(  # noqa: ANN001, ANN201
-        self, note_id, body, *, requester, intent, turn_token="", trust_class="", tainted=True
-    ):
-        self._maybe_refuse()
-        self.edits.append((note_id, body, requester, intent))
-        # Pochodzenie tury (ADR 0066) i token tury (ADR 0065) notujemy OSOBNO: dopóki atrapa je
-        # połykała, narzędzie mogło przestać je przekazywać i żadna sonda by tego nie zauważyła.
-        self.origin.append((turn_token, trust_class, tainted))
-
-    def delete_note(  # noqa: ANN001, ANN201
-        self, note_id, *, requester, intent, turn_token="", trust_class="", tainted=True
+        self,
+        note_id,
+        body,
+        *,
+        requester,
+        intent,
+        turn_token="",
+        trust_class="",
+        tainted=True,
+        verdict_sink=None,
     ):
         from workmate.core.application.note_mutation import MutationOutcome
         from workmate.core.domain.mutation import JudgeVerdict
 
-        self._maybe_refuse()
+        self._maybe_refuse(verdict_sink)
+        self.edits.append((note_id, body, requester, intent))
+        # Pochodzenie tury (ADR 0066) i token tury (ADR 0065) notujemy OSOBNO: dopóki atrapa je
+        # połykała, narzędzie mogło przestać je przekazywać i żadna sonda by tego nie zauważyła.
+        self.origin.append((turn_token, trust_class, tainted))
+        if verdict_sink is not None:
+            verdict_sink("allow", "ok")
+        return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
+
+    def delete_note(  # noqa: ANN001, ANN201
+        self,
+        note_id,
+        *,
+        requester,
+        intent,
+        turn_token="",
+        trust_class="",
+        tainted=True,
+        verdict_sink=None,
+    ):
+        from workmate.core.application.note_mutation import MutationOutcome
+        from workmate.core.domain.mutation import JudgeVerdict
+
+        self._maybe_refuse(verdict_sink)
         self.deletes.append((note_id, requester, intent))
         self.origin.append((turn_token, trust_class, tainted))
+        if verdict_sink is not None:
+            verdict_sink("allow", "ok")
         return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
 
 
@@ -298,6 +332,7 @@ def _tool_z_mutacjami(
     trust_class: str = "unknown",
     tainted=True,
     allow_delete: bool = True,
+    verdict_sink=None,
 ):
     scope_dir = str(_SCOPE.dirpath())
     repo = _FakeWorkspace({f"{scope_dir}/umowa.pdf": _PDF})
@@ -313,8 +348,78 @@ def _tool_z_mutacjami(
         trust_class,
         tainted,
         turn_token,
+        False,
+        verdict_sink,
     )
     return spec, mutations
+
+
+# --- Werdykt sędziego trafia do wiersza audytu (ADR 0065 §8, znalezisko 9.11) ---------
+
+
+def test_an_allowed_edit_reports_its_verdict_to_the_audit_sink():
+    """Zgoda też jest orzeczeniem. Dziennik z samymi odmowami każe operatorowi wnioskować
+    o zgodach z ich NIEOBECNOŚCI — nieodróżnialnej od sędziego, który nie biegł."""
+    zgloszone: list[tuple[str, str]] = []
+    spec, _ = _tool_z_mutacjami(verdict_sink=lambda v, r: zgloszone.append((v, r)))
+
+    spec.fn(action="edit", name="biap/mpwik/2026-08-01-x", content="nowa", reason="literówka")
+
+    assert zgloszone == [("allow", "ok")]
+
+
+def test_a_refused_edit_reports_the_verdict_and_the_reason():
+    """Odmowa niesie POWÓD — po to ta kolumna istnieje; sam werdykt nie tłumaczy niczego.
+
+    Atrapa odmawia werdyktem ``confirm`` (zapowiedź czekająca na powtórzenie z innej tury) —
+    i to jest właśnie ten wiersz, którego brak najbardziej boli: bez niego zapowiedź, która
+    nigdy nie wróciła, nie zostawia w dzienniku żadnego śladu.
+    """
+    zgloszone: list[tuple[str, str]] = []
+    spec, _ = _tool_z_mutacjami(
+        refuse="notatka opisuje inny projekt",
+        verdict_sink=lambda v, r: zgloszone.append((v, r)),
+    )
+
+    spec.fn(action="edit", name="biap/mpwik/2026-08-01-x", content="nowa", reason="bo tak")
+
+    assert zgloszone == [("confirm", "notatka opisuje inny projekt")]
+
+
+def test_an_allowed_delete_reports_its_verdict_too():
+    zgloszone: list[tuple[str, str]] = []
+    spec, _ = _tool_z_mutacjami(verdict_sink=lambda v, r: zgloszone.append((v, r)))
+
+    spec.fn(action="delete", name="biap/mpwik/2026-08-01-x", reason="duplikat")
+
+    assert zgloszone == [("allow", "ok")]
+
+
+def test_refusals_BEFORE_the_judge_report_nothing():
+    """Brak powodu odbija się PRZED sędzią, więc werdyktu nie ma i nie wolno go udawać —
+    wiersz „deny" bez orzeczenia kłamałby o tym, że sędzia w ogóle się wypowiedział."""
+    zgloszone: list[tuple[str, str]] = []
+    spec, _ = _tool_z_mutacjami(verdict_sink=lambda v, r: zgloszone.append((v, r)))
+
+    spec.fn(action="edit", name="biap/mpwik/2026-08-01-x", content="nowa", reason="   ")
+
+    assert zgloszone == []
+
+
+def test_a_broken_audit_sink_never_costs_the_mutation():
+    """Audyt jest poboczny (ADR 0067 §1.1): jego awaria nie może zamienić udanej zmiany w błąd."""
+
+    def sink_ktory_pada(_v: str, _r: str) -> None:
+        raise RuntimeError("baza audytu zablokowana")
+
+    spec, mutations = _tool_z_mutacjami(verdict_sink=sink_ktory_pada)
+
+    result = spec.fn(
+        action="edit", name="biap/mpwik/2026-08-01-x", content="nowa", reason="literówka"
+    )
+
+    assert result == {"edited": True, "id": "biap/mpwik/2026-08-01-x"}
+    assert len(mutations.edits) == 1
 
 
 def test_mutation_actions_are_absent_from_the_schema_when_the_gate_is_closed():

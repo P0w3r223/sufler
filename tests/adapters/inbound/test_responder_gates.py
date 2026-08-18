@@ -124,7 +124,7 @@ def _file_factory_spy(widziane: list[bool]):
     rozwija jedno i drugie — mierzymy STAN rozmowy, nie sposób jego przekazania.
     """
 
-    def factory(_scope, _queue, _sender_id, _trust, tainted):
+    def factory(_scope, _queue, _sender_id, _trust, tainted, _verdict_sink=None):
         widziane.append(tainted() if callable(tainted) else tainted)
         return []
 
@@ -226,3 +226,71 @@ def test_guest_with_an_attachment_lights_both_sources_but_the_store_keeps_only_t
         "magazyn zapisuje pierwszy zapłon; gdyby zaczął zapisywać oba, ta asercja ma zapytać "
         "o aktualizację kontraktu, a nie po cichu przestać cokolwiek znaczyć"
     )
+
+
+# --- ujście werdyktu sędziego do audytu tury (ADR 0065 §8, znalezisko 9.11) -----
+
+
+class _FakeAudit:
+    """Serwis audytu oddający rejestrator, który notuje samo swoje użycie."""
+
+    def __init__(self) -> None:
+        self.recorder = _FakeTurnAudit()
+
+    def turn_recorder(self, **_kwargs: Any) -> _FakeTurnAudit:
+        return self.recorder
+
+
+class _FakeTurnAudit:
+    def __init__(self) -> None:
+        self.verdicts: list[tuple[str, str]] = []
+
+    def record_verdict(self, verdict: str, reason: str = "") -> None:
+        self.verdicts.append((verdict, reason))
+
+    def __call__(self, *_args: Any) -> None:
+        return None
+
+
+def _sink_spy(zebrane: list[object]):
+    """Fabryka ``File`` notująca UJŚCIE werdyktu, które dostała od respondera."""
+
+    def factory(_scope, _queue, _sender_id, _trust, _tainted, verdict_sink=None):
+        zebrane.append(verdict_sink)
+        return []
+
+    return factory
+
+
+def test_the_file_factory_gets_a_live_verdict_sink_when_audit_is_on():
+    """Sonda przeciw kodowi SPRZED poprawki: rejestrator audytu powstawał PO katalogach,
+    więc bramka mutacji nie miała jak zgłosić werdyktu do wiersza swojego wywołania."""
+    zebrane: list[object] = []
+    audit = _FakeAudit()
+    responder, _ = _responder(
+        file_catalog_factory=_sink_spy(zebrane), attachment_budget_bytes=1024, audit=audit
+    )
+
+    _reply(
+        responder,
+        InboundMessage(text="popraw notatkę", conversation_id="team/chan/root", sender_id="aad-1"),
+    )
+
+    (sink,) = zebrane
+    assert sink is not None
+    sink("allow", "ok")
+    assert audit.recorder.verdicts == [("allow", "ok")]
+
+
+def test_without_audit_the_sink_is_absent_rather_than_a_no_op():
+    """Bez audytu ujścia po prostu NIE MA — atrapa „zjadająca" werdykt wyglądałaby
+    w kodzie tak samo jak działający dziennik."""
+    zebrane: list[object] = []
+    responder, _ = _responder(file_catalog_factory=_sink_spy(zebrane), attachment_budget_bytes=1024)
+
+    _reply(
+        responder,
+        InboundMessage(text="popraw notatkę", conversation_id="team/chan/root", sender_id="aad-1"),
+    )
+
+    assert zebrane == [None]

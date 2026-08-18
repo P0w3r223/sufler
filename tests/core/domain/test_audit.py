@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from workmate.core.domain.audit import project_arguments
+from workmate.core.domain.audit import project_arguments, project_verdict
 
 
 def test_keeps_structural_fields_verbatim():
@@ -56,3 +56,50 @@ def test_projection_is_json_serializable():
     projected = project_arguments({"action": "edit", "content": b"\x00\x01\x02"})
     # Nie rzuca; bytes zredagowane do znacznika.
     assert json.loads(json.dumps(projected)) == {"action": "edit", "content": "<bytes:3>"}
+
+
+# --- Projekcja werdyktu sędziego (ADR 0065 §8) ----------------------------------------
+
+
+def test_bare_verdict_when_there_is_no_reason():
+    assert project_verdict("allow") == "allow"
+    assert project_verdict("refuse", "   ") == "refuse"
+
+
+def test_verdict_carries_a_short_reason_verbatim():
+    """Krótkie uzasadnienie zostaje dosłownie — po nie ta kolumna istnieje."""
+    assert project_verdict("refuse", "notatka opisuje inny projekt") == (
+        "refuse: notatka opisuje inny projekt"
+    )
+
+
+def test_a_long_reason_is_redacted_to_a_marker():
+    """Uzasadnienie pisze model, który przed chwilą czytał notatkę: powyżej sufitu pola
+    z allowlisty (128 znaków) zostaje sam znacznik, nie treść bazy wiedzy."""
+    dlugi = "x" * 129
+
+    assert project_verdict("refuse", dlugi) == "refuse: <str:129>"
+
+
+def test_a_reason_exactly_at_the_ceiling_still_passes():
+    """Granica jest inkluzywna — jak w ``_project_value``; sonda pilnuje, żeby nie odjechała."""
+    na_granicy = "y" * 128
+
+    assert project_verdict("allow", na_granicy) == f"allow: {na_granicy}"
+
+
+def test_control_characters_never_reach_the_log_line():
+    """Uzasadnienie to jedyne pole tego dziennika trafiające do bazy SUROWO — ``arg_summary``
+    escapuje ``json.dumps``, a czytnik operatora drukuje werdykt wprost. Powód z ``\n`` rozbiłby
+    listing na wiersze wyglądające jak kolejne wpisy, a sekwencja ANSI poszłaby do terminala."""
+    wynik = project_verdict("refuse", "pierwsza\ndruga\ttrzecia\x1b[31m")
+
+    assert "\n" not in wynik
+    assert "\t" not in wynik
+    assert "\x1b" not in wynik
+    assert wynik.startswith("refuse: pierwsza druga trzecia")
+
+
+def test_whitespace_only_reason_collapses_to_the_bare_verdict():
+    """Spłaszczenie białych znaków nie może zamienić „brak powodu" w „powód pusty"."""
+    assert project_verdict("allow", "\n\t  \n") == "allow"

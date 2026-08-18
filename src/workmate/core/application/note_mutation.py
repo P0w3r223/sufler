@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from workmate.core.domain.mutation import JudgeVerdict, MutationRequest, refusal
+from workmate.core.domain.mutation import JudgeVerdict, MutationRequest, Verdict, refusal
 from workmate.core.domain.sanitize import reject_dangerous_content
 from workmate.core.errors import WriteError
 
@@ -44,6 +45,10 @@ _DETERMINISTIC_MARKERS = ("-mtg-", "-thr-")
 _DATE_PREFIX_LEN = len("RRRR-MM-DD")
 
 logger = logging.getLogger(__name__)
+
+# Ujście werdyktu sędziego: (werdykt, uzasadnienie). Wołane w chwili orzeczenia, best-effort po
+# stronie WOŁAJĄCEGO — bramka mutacji nie ma prawa paść przez dziennik (ADR 0067 §1.1).
+VerdictSink = Callable[[Verdict, str], None]
 
 
 @dataclass(frozen=True)
@@ -105,12 +110,19 @@ class NoteMutationService:
         turn_token: str = "",
         trust_class: str = "unknown",
         tainted: bool = True,
-    ) -> Note:
+        verdict_sink: VerdictSink | None = None,
+    ) -> MutationOutcome:
         """Podmień TREŚĆ istniejącej notatki; metadane zostają nietknięte.
 
         Metadane (projekt, data, uczestnicy) są poza zasięgiem rozmyślnie: to z nich wywodzi się
         identyfikator i miejsce pliku, więc ich zmiana byłaby w istocie przeniesieniem notatki
         pod inny adres — inną operacją, z innym promieniem rażenia niż „popraw treść".
+
+        Zwraca ``MutationOutcome``, tak samo jak ``delete_note``, a nie zmienioną notatkę. Werdykt
+        sędziego ma trafić do wiersza audytu (ADR 0065 §8) TAKŻE wtedy, gdy zmiana przeszła —
+        dziennik, w którym widać wyłącznie odmowy, opisuje inny system niż ten, który działa.
+        Notatki i tak nikt tu nie odbierał: jedyny wołający (``build_file_catalog``) potwierdza
+        człowiekowi sam fakt zmiany, a treść po mutacji zna, bo sam ją podał.
         """
         # ``wersja`` jest starsza LUB równa treści ``note`` — patrz ``_require_mutable``. To ona
         # domyka okno między odczytem a zapisem: między nimi leży wywołanie sieciowe sędziego,
@@ -128,14 +140,14 @@ class NoteMutationService:
             trust_class=trust_class,
             tainted=tainted,
         )
-        outcome = self._decide(request, note)
+        outcome = self._decide(request, note, verdict_sink)
         if not outcome.applied:
             raise MutationRefused(outcome)
         zmieniona = note.model_copy(update={"body": new_body.strip()})
         # Skrót liczony z TEGO SAMEGO renderu, który leży na dysku — kontrola wersji ma
         # porównywać plik z plikiem, nie model z plikiem.
         self._writer.overwrite(zmieniona, expected_sha256=wersja)
-        return zmieniona
+        return outcome
 
     def delete_note(
         self,
@@ -146,6 +158,7 @@ class NoteMutationService:
         turn_token: str = "",
         trust_class: str = "unknown",
         tainted: bool = True,
+        verdict_sink: VerdictSink | None = None,
     ) -> MutationOutcome:
         """Usuń POJEDYNCZĄ notatkę — po migawce i po werdykcie sędziego."""
         if not self._allow_delete:
@@ -166,7 +179,7 @@ class NoteMutationService:
             trust_class=trust_class,
             tainted=tainted,
         )
-        outcome = self._decide(request, note)
+        outcome = self._decide(request, note, verdict_sink)
         if not outcome.applied:
             raise MutationRefused(outcome)
         self._writer.delete(note_id, expected_sha256=wersja)
@@ -201,12 +214,27 @@ class NoteMutationService:
             raise WriteError(f"notatka nie istnieje: {note_id}")
         return wersja, note
 
-    def _decide(self, request: MutationRequest, note: Note) -> MutationOutcome:
+    def _decide(
+        self,
+        request: MutationRequest,
+        note: Note,
+        verdict_sink: VerdictSink | None = None,
+    ) -> MutationOutcome:
         """Migawka, potem sędzia. Awaria któregokolwiek kroku = odmowa.
 
         Migawka PRZED werdyktem, choć przy odmowie okaże się niepotrzebna: gdyby powstawała po
         werdykcie, jej awaria zostawiałaby operację zatwierdzoną i niezabezpieczoną, a to gorszy
         stan niż jedna zbędna kopia. Kopia jest tania, utrata notatki nie.
+
+        ``verdict_sink`` dostaje orzeczenie **w chwili, w której padło** — nie po udanym zapisie.
+        Zapis może jeszcze paść na kontroli wersji (równoległa tura w oknie, które
+        ``_require_mutable`` opisuje), a wtedy zgłoszenie po fakcie gubiłoby werdykt ``allow``
+        i zostawiało wiersz audytu nieodróżnialny od „sędzia w ogóle nie biegł".
+
+        Dwie odmowy WYŻEJ nie zgłaszają nic i to jest różnica merytoryczna, nie przeoczenie:
+        awaria migawki i niedostępność sędziego to odmowy **techniczne**, przy których nikt nie
+        orzekał. Wiersz „refuse" z tekstem wyjątku udawałby orzeczenie — i to akurat w sytuacji,
+        w której dziennik ma wyjaśnić awarię infrastruktury, a nie decyzję o treści.
         """
         try:
             location = self._snapshots.save(note)
@@ -216,14 +244,16 @@ class NoteMutationService:
             verdict = self._judge.review(request)
         except Exception as exc:  # implementacja portu ma nie rzucać — ale to bramka, nie ufa
             return MutationOutcome(False, refusal(f"sędzia niedostępny: {exc}"), location)
+        if verdict_sink is not None:
+            verdict_sink(verdict.verdict, verdict.reason)
         applied = (
             self._confirmed(request) if verdict.verdict == "confirm" else verdict.verdict == "allow"
         )
         # Ślad w dzienniku procesu: BEZ treści notatki i bez uzasadnienia sędziego (oba mogą
         # nieść fragmenty bazy wiedzy) — sama decyzja, kto, co i czy weszła w życie. To jest
-        # ta połowa mitygacji R11, która czyni usunięcie głośnym PO fakcie; wpisanie werdyktu
-        # do wiersza audytu (ADR 0065 §8) wymaga przeprowadzenia rejestratora tury przez
-        # fabryki narzędzi i zostaje jako osobny krok.
+        # ta połowa mitygacji R11, która czyni usunięcie głośnym PO fakcie. Uzasadnienie idzie
+        # do wiersza audytu (ADR 0065 §8) — bazy o innej retencji i innym czytelniku — po
+        # redakcji ``project_verdict``, a nie tutaj.
         logger.warning(
             "Mutacja bazy wiedzy: %s %s przez %s — werdykt %s, wykonana=%s, kopia=%s",
             request.kind,

@@ -129,6 +129,43 @@ This ADR records that reversal with its risks stated as conscious consent, and s
    update verb. What is recorded is the verdict, the reason, and the trust class of the turn — never
    the note content (ADR 0067 redaction rule holds unchanged).
 
+   *Amended at implementation, 2026-08-18 (this decision had shipped only as a schema column:
+   `AuditService.record` wrote a hardcoded `None` and `NoteMutationService` never called audit, so
+   the Phase 6 acceptance criterion was unreachable by any flag).* The verdict reaches the row
+   through a **slot on the per-turn recorder** (`TurnAudit.record_verdict`), not through a fourth
+   argument carried by the runtime. The reason is mechanical: the row is appended in
+   `AgentRuntime._dispatch`, *after* the tool returns, while the verdict is born *inside* the `File`
+   tool — a fourth argument would force `core/agent/runtime.py` to carry a value it cannot produce
+   and does not understand, for every tool in the catalog. The slot keeps the runtime contract at
+   three arguments, is filled by the mutation gate and **consumed** by the next appended row
+   (cleared unconditionally, including on a failed write), so one verdict can never attach itself to
+   a later call. What is recorded is unchanged — verdict plus reason — with the reason passed
+   through `project_verdict`, which strips control characters and collapses whitespace before
+   applying the ADR 0067 field ceiling (128 chars). Both halves matter: the reason is free text
+   written by a model that has just read the note, the ceiling is the only mechanical guarantee
+   available that a note fragment does not ride into the log inside it, and the stripping keeps a
+   reason containing `\n` or an ANSI escape from rewriting the operator's audit listing — this is
+   the one field of that log that would otherwise reach the database raw (`arg_summary` goes
+   through `json.dumps`).
+
+   The verdict is reported **at the moment it is made** (`NoteMutationService._decide`), not after
+   a successful write. The write can still fail on the version check — a parallel turn inside the
+   window `_require_mutable` describes — and reporting afterwards would lose exactly the `allow`
+   that a destructive-but-refused-by-infrastructure attempt produced, leaving a row indistinguishable
+   from "the judge never ran".
+
+   Refusals that are **not** adjudications report no verdict at all: gate-level refusals before the
+   judge (no `reason` given, unresolved requester, closed gate) and the two *technical* refusals
+   inside `_decide` — a failed snapshot and an unavailable judge. A row saying `refuse` with an
+   exception's text would claim someone adjudicated, precisely in the situation where the log is
+   supposed to explain an infrastructure failure instead.
+
+   Complementing this, the judge's system prompt asks for a reason written *in its own words*
+   rather than quoting the note, with the reason given (the log is read without the ADR 0062 read
+   gate). That sentence is **hygiene, not a boundary** — the judge is itself an injection target
+   (R10) and no prompt closes that. The mechanical guarantee stays on the write side, where it does
+   not depend on what the model decided to write.
+
 ## Risk register — this is the conscious-consent content
 
 | # | Risk introduced | Mitigation |

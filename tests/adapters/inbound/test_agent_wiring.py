@@ -28,7 +28,9 @@ from workmate.adapters.inbound.responder import (
     SafeResponder,
 )
 from workmate.config import AgentSettings, ConversationSettings, Settings
+from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import NoteAuthorizationError
+from workmate.core.ports.llm import AttachmentQueue
 from workmate.core.ports.materialization import MaterializationLimits
 
 # Sondy, które budują PRAWDZIWĄ fabrykę powłoki, dotykają klienta wykonawcy — a ten jest
@@ -937,6 +939,38 @@ def test_file_tool_gate_on_wires_both_sides(tmp_path: Path, monkeypatch):
 
     assert responder._file_catalog_factory is not None
     assert responder._attachment_stager is not None
+
+
+def test_the_file_factory_forwards_the_verdict_sink_to_the_catalog(tmp_path: Path, monkeypatch):
+    """Jedyne ogniwo łańcucha werdyktu (ADR 0065 §8), które da się urwać niezauważenie.
+
+    ``build_file_support`` podaje argumenty do ``build_file_catalog`` POZYCYJNIE, więc dołożenie
+    czegokolwiek przed ``verdict_sink`` przesunie go na cudze miejsce. Reszta trasy — responder →
+    fabryka i fabryka → ujście — ma własne sondy; ten kawałek nie miał żadnej.
+    """
+    widziane: dict[str, object] = {}
+
+    def szpieg(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        widziane["ostatni"] = args[-1]
+        return []
+
+    monkeypatch.setattr(agent_wiring, "build_file_catalog", szpieg)
+    responder = _responder_z_file(tmp_path, monkeypatch, wlaczony=True)
+    assert responder._file_catalog_factory is not None
+
+    def ujscie(_verdict: str, _reason: str) -> None:
+        return None
+
+    responder._file_catalog_factory(
+        WorkspaceScope("teams_graph", "team/chan/root"),
+        AttachmentQueue(budget_bytes=1024),
+        "aad-1",
+        "T1",
+        False,
+        ujscie,
+    )
+
+    assert widziane["ostatni"] is ujscie
 
 
 # --- Bramki MUTACJI bazy wiedzy (ADR 0065) -------------------------------------

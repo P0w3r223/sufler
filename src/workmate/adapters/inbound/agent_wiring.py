@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.application.tools import ToolSpec
+    from workmate.core.domain.mutation import Verdict
     from workmate.core.domain.workspace import WorkspaceScope
     from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.conversations import ConversationStore
@@ -416,10 +417,18 @@ def build_file_support(
     read_authorizer: NoteReadAuthorizer | None = None,
     shell_available: bool = False,
 ) -> tuple[
-    # Ostatni argument fabryki to SKAZA rozmowy podana LENIWIE (``Callable``, nie ``bool``):
-    # sędzia mutacji czyta ją w chwili orzekania, a nie budowy katalogu (ADR 0066).
+    # Przedostatni argument fabryki to SKAZA rozmowy podana LENIWIE (``Callable``, nie ``bool``):
+    # sędzia mutacji czyta ją w chwili orzekania, a nie budowy katalogu (ADR 0066). Ostatni to
+    # ujście werdyktu sędziego do wiersza audytu tury (ADR 0065 §8) — ``None`` bez audytu.
     Callable[
-        [WorkspaceScope, AttachmentQueue, str, str, Callable[[], bool]],
+        [
+            WorkspaceScope,
+            AttachmentQueue,
+            str,
+            str,
+            Callable[[], bool],
+            Callable[[Verdict, str], None] | None,
+        ],
         list[ToolSpec],
     ],
     Callable[[WorkspaceScope, Sequence[Attachment]], list[str]],
@@ -457,6 +466,7 @@ def build_file_support(
         sender_id: str,
         trust_class: str = "unknown",
         tainted: bool | Callable[[], bool] = True,
+        verdict_sink: Callable[[Verdict, str], None] | None = None,
     ) -> list[ToolSpec]:
         """Zbuduj ``File`` dla tej tury; akcje mutujące TYLKO dla rozpoznanego człowieka.
 
@@ -498,6 +508,7 @@ def build_file_support(
             # wykonanie muszą pochodzić z RÓŻNYCH tur.
             uuid.uuid4().hex,
             shell_available,
+            verdict_sink,
         )
 
     def stage(scope: WorkspaceScope, attachments: Sequence[Attachment]) -> list[str]:
