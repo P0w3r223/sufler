@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import signal
 import socket
@@ -54,6 +55,85 @@ _MAX_REQUEST_BYTES = 1024 * 1024
 _CONN_TIMEOUT_S = 60.0
 _SOCKET_PATH = Path(os.environ.get("WORKMATE_EXEC_SOCKET", "/var/run/workmate/exec.sock"))
 _DEFAULT_CWD = Path(os.environ.get("WORKMATE_EXEC_CWD", "/home/scratchpad"))
+
+
+def _dodatni_z_env(nazwa: str, domyslna: int) -> int:
+    """Liczba dodatnia ze środowiska; zła wartość → domyślna, bo wykonawca ma wstać.
+
+    Wykonawca startuje bez operatora przy klawiaturze (stawia go menedżer, ADR 0012), więc
+    literówka w limicie ma dać limit domyślny, a nie kontener, który nie wstaje — i przez to
+    rozmowę bez powłoki, której przyczyny nikt nie widzi.
+    """
+    try:
+        wartosc = int(os.environ.get(nazwa, ""))
+    except ValueError:
+        return domyslna
+    return wartosc if wartosc > 0 else domyslna
+
+
+# ── Granice zużycia polecenia (ADR infra 0013) ──────────────────────────────────────────────
+# Wykonawca ograniczał dotąd wyłącznie WYJŚCIE (64 kB) i CZAS (60 s / max 300 s). Nie ograniczał
+# niczego, co polecenie ZOSTAWIA: `dd if=/dev/zero of=x bs=1M count=100000` biegł do wyczerpania
+# wolumenu, a `:(){ :|:& };:` do wyczerpania tablicy procesów.
+#
+# Sufit pliku jest CELOWO tą samą liczbą, co kwota katalogu roboczego dla narzędzi
+# (`WORKMATE_WORKSPACE_MAX_FILE_MB`, domyślnie 5 MB). Powłoka i narzędzia piszą w to samo
+# miejsce; dwa różne sufity na jeden katalog byłyby dwoma źródłami prawdy do rozjechania.
+_MAX_FILE_MB = _dodatni_z_env("WORKMATE_EXEC_MAX_FILE_MB", 5)
+_MAX_PROC = _dodatni_z_env("WORKMATE_EXEC_MAX_PROC", 64)
+_MAX_OPEN_FILES = _dodatni_z_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256)
+
+# Limity zakłada BUILTIN `ulimit` powłoki, nie `preexec_fn`. Powód jest wykonawczy, nie
+# estetyczny: `preexec_fn` biegnie w dziecku po `fork` w procesie, który MA WĄTKI (wątek na
+# połączenie), a dokumentacja `subprocess` nazywa to wprost niebezpiecznym — dziecko może zastać
+# zamek trzymany przez inny wątek i zawisnąć przed `exec`. `ulimit` nakłada te same rlimity,
+# ale robi to już w dziecku, po `exec`, więc żaden zamek rodzica go nie dotyczy.
+#
+# Polecenie modelu jedzie jako `$0`, nie w treści skryptu: zewnętrzna powłoka nigdy go nie parsuje,
+# więc żaden cudzysłów ani `;` nie ma jak zmienić prologu. `&&` sprawia, że nieudany `ulimit`
+# ZATRZYMUJE polecenie zamiast puszczać je bez limitów — kierunek awarii, o który tu chodzi.
+# `exec` zostawia jeden proces zamiast dwóch, więc zabicie grupy działa dokładnie jak dotąd.
+_PROLOG_LIMITOW = 'ulimit -f {fsize_kb} -u {nproc} -n {nofile} -t {cpu_s} && exec /bin/bash -c "$0"'
+
+# Sygnały, którymi jądro melduje przekroczenie rlimitu. Surowy kod wyjścia `-25` nie mówi modelowi
+# nic — a granica, której model nie rozumie, wygląda jak defekt narzędzia i skłania do obchodzenia
+# jej kolejnymi próbami zamiast do zmiany podejścia.
+_KOMUNIKAT_LIMITU: dict[int, str] = {
+    signal.SIGXFSZ: (
+        f"Polecenie przekroczyło limit rozmiaru pliku ({_MAX_FILE_MB} MB na plik) i zostało "
+        "zatrzymane. Zapisz mniej albo podziel wynik na części."
+    ),
+    signal.SIGXCPU: (
+        "Polecenie przekroczyło limit czasu procesora i zostało zatrzymane. "
+        "Zawęź zakres pracy albo policz to na mniejszej porcji danych."
+    ),
+}
+
+
+def _sygnal_z_kodu(kod: int) -> int | None:
+    """Numer sygnału, którym zginęło polecenie — albo ``None``, gdy zakończyło się zwyczajnie.
+
+    DWIE postacie, bo do wykonawcy wraca kod tego, co akurat stało się procesem bezpośrednim:
+
+    * **ujemny** — sygnał zabił proces, na który patrzy ``Popen`` (powłoka ``exec``-uje wtedy
+      polecenie prosto, więc ginie ta sama pidem);
+    * **``128 + N``** — powłoka polecenie ROZWIDLIŁA (potok, przekierowanie, kilka poleceń)
+      i sama zameldowała śmierć dziecka swoją konwencją wyjścia.
+
+    Pierwsza wersja tej funkcji znała tylko postać ujemną i przez to milczała dokładnie w tych
+    poleceniach, w których model najczęściej pisze duży plik — z przekierowaniem albo w potoku.
+    Ujemny kod złapała sonda, drugą postać dopiero sonda z ``2>/dev/null``.
+
+    Cena rozpoznawania ``128 + N``: program, który SAM zwróci 153, dostanie zdanie o limicie,
+    którego nie przekroczył. To konwencja powłoki, a nie odczyt jądra — biorąc ją, bierze się
+    i tę niejednoznaczność. Kierunek pomyłki jest tu właściwy: zdanie o limicie przy dziwnym
+    kodzie wyjścia myli mniej niż cisza po realnym przekroczeniu limitu.
+    """
+    if kod < 0:
+        return -kod
+    if kod > 128:
+        return kod - 128
+    return None
 
 
 def _truncate(raw: bytes) -> tuple[str, bool]:
@@ -96,9 +176,20 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
     # Podłoga ORAZ sufit: ``timeout_s`` układa model, a wartość ujemna (albo mikroskopijna)
     # zabijała polecenie natychmiast, dając wynik nieodróżnialny od realnego timeoutu.
     limit = min(max(timeout_s or _DEFAULT_TIMEOUT_S, _MIN_TIMEOUT_S), _MAX_TIMEOUT_S)
+    # Sufit CZASU PROCESORA równy sufitowi czasu ściennego. Nie jest to ta sama wielkość:
+    # `sleep 200` zużywa zero procesora i ma ginąć od timeoutu, a pętla zajmująca rdzeń ma ginąć
+    # od rlimitu — bo proces odłączony od potoków wraca natychmiast, a timeout ścienny go wtedy
+    # nie dosięga. Jedna liczba na oba sufity, bo są to dwie drogi do tej samej obietnicy
+    # („polecenie nie zajmie maszyny dłużej niż tyle"), a druga liczba byłaby drugim źródłem.
+    prolog = _PROLOG_LIMITOW.format(
+        fsize_kb=_MAX_FILE_MB * 1024,
+        nproc=_MAX_PROC,
+        nofile=_MAX_OPEN_FILES,
+        cpu_s=max(1, math.ceil(limit)),
+    )
 
     proc = subprocess.Popen(  # noqa: S602 — powłoka to CEL tego narzędzia, nie przeoczenie
-        ["/bin/bash", "-c", command],
+        ["/bin/bash", "-c", prolog, command],
         cwd=workdir,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -128,8 +219,15 @@ def run_command(command: str, *, cwd: str = "", timeout_s: float = 0) -> dict[st
 
     stdout, cut_out = _truncate(out or b"")
     stderr, cut_err = _truncate(err or b"")
+    kod = proc.returncode if proc.returncode is not None else -1
+    # Przekroczony rlimit wraca jako SYGNAŁ, nie jako komunikat. Zdanie doklejamy do `stderr`,
+    # bo tam model już patrzy, gdy polecenie się nie udało — osobne pole musiałoby wejść do
+    # kontraktu protokołu i do opisu narzędzia, żeby ktokolwiek na nie spojrzał.
+    sygnal = _sygnal_z_kodu(kod)
+    if sygnal in _KOMUNIKAT_LIMITU:
+        stderr = f"{stderr}\n{_KOMUNIKAT_LIMITU[sygnal]}".lstrip("\n")
     return {
-        "exit_code": proc.returncode if proc.returncode is not None else -1,
+        "exit_code": kod,
         "stdout": stdout,
         "stderr": stderr,
         "truncated": cut_out or cut_err,

@@ -1352,6 +1352,16 @@ class ExecManagerSettings:
     # gniazdo utworzone przez roota (0660 owner root ≠ 10001), a wykonawca nie zapisałby brudnopisu.
     exec_uid: int = 10001
     exec_gid: int = 10001
+    # ── Granice zużycia wykonawcy (ADR infra 0013) ────────────────────────────────────────
+    # Wartości domyślne, nie wymagane: wykonawca ma wstać także wtedy, gdy compose ich nie poda —
+    # inaczej podbicie paczki bez podbicia zmiennych zostawiałoby rozmowy bez powłoki. Sufit
+    # pliku jest CELOWO tą samą liczbą, co kwota katalogu roboczego dla narzędzi
+    # (``WORKMATE_WORKSPACE_MAX_FILE_MB``): powłoka i narzędzia piszą w to samo miejsce.
+    exec_memory_mb: int = 512
+    exec_pids_limit: int = 128
+    exec_cpu_limit: float = 1.0
+    exec_max_file_mb: int = 5
+    exec_max_open_files: int = 256
 
     @classmethod
     def from_env(cls) -> ExecManagerSettings:
@@ -1374,6 +1384,11 @@ class ExecManagerSettings:
             reap_interval_s=_int_from_env("WORKMATE_EXEC_REAP_INTERVAL_S", 60),
             exec_uid=_int_from_env("WORKMATE_EXEC_UID", 10001),
             exec_gid=_int_from_env("WORKMATE_EXEC_GID", 10001),
+            exec_memory_mb=_int_from_env("WORKMATE_EXEC_MEMORY_MB", 512),
+            exec_pids_limit=_int_from_env("WORKMATE_EXEC_PIDS_LIMIT", 128),
+            exec_cpu_limit=_float_from_env("WORKMATE_EXEC_CPU_LIMIT", 1.0),
+            exec_max_file_mb=_int_from_env("WORKMATE_EXEC_MAX_FILE_MB", 5),
+            exec_max_open_files=_int_from_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256),
         )
 
     def validate(self) -> None:
@@ -1407,6 +1422,20 @@ class ExecManagerSettings:
             raise ValueError(
                 f"WORKMATE_EXEC_REAP_INTERVAL_S musi być >= 1, jest: {self.reap_interval_s}"
             )
+        # Granice zużycia (ADR infra 0013) sprawdzamy TU, nie w kontenerze-wykonawcy: zero albo
+        # wartość ujemna znaczy dla Docker API „bez limitu", więc literówka w compose zdejmowałaby
+        # granicę po cichu, zostawiając wykonawcę wyglądającego na utwardzony. Menedżer jest
+        # jedynym miejscem, gdzie ta liczba jest jeszcze konfiguracją, a nie faktem o kontenerze.
+        for nazwa, wartosc in (
+            ("WORKMATE_EXEC_MEMORY_MB", self.exec_memory_mb),
+            ("WORKMATE_EXEC_PIDS_LIMIT", self.exec_pids_limit),
+            ("WORKMATE_EXEC_MAX_FILE_MB", self.exec_max_file_mb),
+            ("WORKMATE_EXEC_MAX_OPEN_FILES", self.exec_max_open_files),
+        ):
+            if wartosc < 1:
+                raise ValueError(f"{nazwa} musi być >= 1, jest: {wartosc}")
+        if self.exec_cpu_limit <= 0:
+            raise ValueError(f"WORKMATE_EXEC_CPU_LIMIT musi być > 0, jest: {self.exec_cpu_limit}")
 
 
 # Ile procedur trafia do nagłówka sesji. Granica jest po to, żeby lista nie rosła w nieskończoność

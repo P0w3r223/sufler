@@ -6,6 +6,30 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Dodane
+
+- **Granice zużycia wykonawcy powłoki** (infra ADR 0013, Faza 2 planu WorkMate 2.0). Wykonawca
+  ograniczał dotąd wyłącznie WYJŚCIE (64 kB) i CZAS (60 s / max 300 s), a nie ograniczał niczego,
+  co polecenie ZOSTAWIA: `dd if=/dev/zero of=x bs=1M count=100000` biegł do wyczerpania wolumenu,
+  a `:(){ :|:& };:` do wyczerpania tablicy procesów **hosta** — kontener własnej nie miał.
+  Granice wchodzą na dwóch piętrach:
+  - `exec_server` zakłada rlimity na poleceniu (`fsize` 5 MB, `nproc` 64, `nofile` 256,
+    `cpu` = sufit czasu polecenia) builtinem `ulimit`, nie `preexec_fn` — ten biegnie w dziecku
+    po `fork` w procesie z wątkami i może zawisnąć przed `exec`. Polecenie modelu jedzie jako
+    `$0`, więc zewnętrzna powłoka nigdy go nie parsuje i żaden cudzysłów nie sięga prologu.
+  - `docker_engine` zakłada `CapDrop: [ALL]`, `PidsLimit`, `Memory`, `NanoCpus` i `Ulimits`
+    na kontenerze wykonawcy. Te obowiązują KAŻDY jego proces — także taki, który powstał drogą,
+    o której `exec_server` nie wie.
+
+  Przekroczenie wraca do modelu **zdaniem**, nie kodem sygnału: granica, której model nie rozumie,
+  wygląda jak defekt narzędzia i skłania do obchodzenia jej kolejnymi próbami. Rozpoznajemy obie
+  postacie zakończenia sygnałem — kod ujemny (powłoka `exec`-uje polecenie prosto) oraz `128 + N`
+  (powłoka je rozwidliła: potok, przekierowanie, kilka poleceń), czyli najczęstszy kształt
+  polecenia piszącego duży plik.
+- `ExecManagerSettings` niesie granice zużycia (`WORKMATE_EXEC_MEMORY_MB`, `…_PIDS_LIMIT`,
+  `…_CPU_LIMIT`, `…_MAX_FILE_MB`, `…_MAX_OPEN_FILES`) z walidacją odrzucającą zero: dla Docker API
+  zero znaczy **bez limitu**, więc literówka w compose zdejmowałaby granicę po cichu.
+
 ### Naprawione
 
 - **Werdykt sędziego mutacji trafia wreszcie do dziennika audytu** (ADR 0065 §8). Kolumna

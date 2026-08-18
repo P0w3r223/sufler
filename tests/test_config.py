@@ -486,3 +486,50 @@ def test_komplet_bramek_mutacji_przechodzi_walidacje(tmp_path):
         enable_note_mutation=True,
         enable_note_delete=True,
     ).validate()
+
+
+# --- Granice zużycia wykonawcy (ADR infra 0013) -----------------------------------------
+
+
+def _menedzer(**kwargs):
+    """Menedżer z kompletem stałego szablonu — zostaje sam sprawdzany parametr."""
+    from workmate.config import ExecManagerSettings
+
+    return ExecManagerSettings(
+        image="workmate:1.11.0-deploy",
+        scratchpad_volume="workmate_workmate-scratchpad",
+        sock_volume="workmate_workmate-exec-sock",
+        data_volume="workmate_workmate-data",
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize(
+    ("pole", "zmienna"),
+    [
+        ("exec_memory_mb", "WORKMATE_EXEC_MEMORY_MB"),
+        ("exec_pids_limit", "WORKMATE_EXEC_PIDS_LIMIT"),
+        ("exec_max_file_mb", "WORKMATE_EXEC_MAX_FILE_MB"),
+        ("exec_max_open_files", "WORKMATE_EXEC_MAX_OPEN_FILES"),
+    ],
+)
+def test_zerowa_granica_zuzycia_wywala_start_menedzera(pole, zmienna):
+    """Zero znaczy dla Docker API „BEZ LIMITU", nie „limit zero".
+
+    Bez tej walidacji literówka w compose zdejmowałaby granicę po cichu, zostawiając wykonawcę
+    wyglądającego na utwardzony — a menedżer jest ostatnim miejscem, gdzie ta liczba jest jeszcze
+    konfiguracją, a nie faktem o kontenerze.
+    """
+    with pytest.raises(ValueError, match=zmienna):
+        _menedzer(**{pole: 0}).validate()
+
+
+def test_zerowy_limit_cpu_wywala_start_menedzera():
+    with pytest.raises(ValueError, match="WORKMATE_EXEC_CPU_LIMIT"):
+        _menedzer(exec_cpu_limit=0).validate()
+
+
+def test_domyslne_granice_zuzycia_przechodza_walidacje():
+    """Kontrast: komplet domyślny MUSI przejść — inaczej wykonawca nie wstaje bez zmiennych,
+    a podbicie paczki bez podbicia compose zostawiałoby rozmowy bez powłoki."""
+    _menedzer().validate()

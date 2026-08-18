@@ -162,6 +162,11 @@ def build_service(settings: ExecManagerSettings) -> ExecManagerService:
         data_volume=settings.data_volume,
         notes_dir=settings.notes_dir,
         skills_source=settings.skills_source,
+        memory_mb=settings.exec_memory_mb,
+        pids_limit=settings.exec_pids_limit,
+        cpu_limit=settings.exec_cpu_limit,
+        max_file_mb=settings.exec_max_file_mb,
+        max_open_files=settings.exec_max_open_files,
     )
     engine = DockerHttpEngine(template, socket_path=str(settings.docker_socket))
     workspace = FilesystemScopeWorkspace(
