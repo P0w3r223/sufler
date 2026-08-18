@@ -62,6 +62,15 @@ class DockerRunTemplate:
     user: str = "10001:10001"
     tmpfs_size: str = "size=64m"
     extra_env: tuple[str, ...] = field(default_factory=tuple)
+    # ── Granice zużycia wykonawcy (ADR infra 0013) ────────────────────────────────────────
+    # Drugie piętro obrony, nad `ulimit` z `exec_server`. Tamto daje czytelny komunikat, ale
+    # zależy od tego, czy wykonawca faktycznie założył limity; te obowiązują KAŻDY proces
+    # kontenera — także taki, który powstał drogą, o której `exec_server` nie wie.
+    memory_mb: int = 512
+    pids_limit: int = 128
+    cpu_limit: float = 1.0
+    max_file_mb: int = 5
+    max_open_files: int = 256
 
 
 class DockerHttpEngine:
@@ -175,7 +184,17 @@ class DockerHttpEngine:
                     "ReadOnly": True,
                 }
             )
-        env = [f"WORKMATE_NOTES_DIR={template.notes_dir}", *template.extra_env]
+        # Sufity plikowe idą do wykonawcy TAKŻE zmienną środowiskową, choć `Ulimits` wyżej
+        # nakłada je już na kontener. To nie jest dublowanie przez nieuwagę: `exec_server`
+        # zakłada je jeszcze raz `ulimitem`, żeby móc PRZETŁUMACZYĆ przekroczenie na zdanie dla
+        # modelu (sam `Ulimits` daje mu kod `-25` i nic więcej). Wartość ma być jedna, więc
+        # jedzie stąd, a nie z drugiego miejsca konfiguracji.
+        env = [
+            f"WORKMATE_NOTES_DIR={template.notes_dir}",
+            f"WORKMATE_EXEC_MAX_FILE_MB={template.max_file_mb}",
+            f"WORKMATE_EXEC_MAX_OPEN_FILES={template.max_open_files}",
+            *template.extra_env,
+        ]
         return {
             "Image": template.image,
             "Cmd": list(template.command),
@@ -186,6 +205,33 @@ class DockerHttpEngine:
                 "NetworkMode": "none",
                 "ReadonlyRootfs": True,
                 "SecurityOpt": ["no-new-privileges"],
+                # Wykonawca biegnie jako 10001, na tylko-do-odczytu korzeniu, bez sieci: nie ma
+                # czynności, do której zdolności byłyby mu potrzebne (ADR infra 0013).
+                "CapDrop": ["ALL"],
+                # Bomba widłowa umiera na granicy KONTENERA. Bez tego pola `:(){ :|:& };:`
+                # wyczerpuje tablicę procesów HOSTA — kontener nie ma własnej.
+                "PidsLimit": template.pids_limit,
+                "Memory": template.memory_mb * 1024 * 1024,
+                # RÓWNE `Memory` = swap wyłączony dla tego kontenera. Bez tego pola Docker daje
+                # swapowi drugie tyle, więc `Memory: 512M` znaczyłoby 512 MB RAM PLUS 512 MB
+                # swapu — czyli inną granicę, niż mówi liczba. Dziś host swapu nie ma i różnicy
+                # nie widać; pole jest tu po to, żeby jego włączenie nie zmieniło po cichu limitu.
+                "MemorySwap": template.memory_mb * 1024 * 1024,
+                "NanoCpus": int(template.cpu_limit * 1_000_000_000),
+                # Te same sufity, co `ulimit` w `exec_server`, ale niezależne od jego kodu.
+                # `Soft` == `Hard`, żeby proces w kontenerze nie mógł podnieść sobie miękkiego.
+                "Ulimits": [
+                    {
+                        "Name": "fsize",
+                        "Soft": template.max_file_mb * 1024 * 1024,
+                        "Hard": template.max_file_mb * 1024 * 1024,
+                    },
+                    {
+                        "Name": "nofile",
+                        "Soft": template.max_open_files,
+                        "Hard": template.max_open_files,
+                    },
+                ],
                 "Tmpfs": {"/tmp": template.tmpfs_size},
                 "Mounts": mounts,
                 "AutoRemove": False,

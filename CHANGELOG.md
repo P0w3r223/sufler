@@ -6,6 +6,56 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Dodane
+
+- **Granice zużycia wykonawcy powłoki** (infra ADR 0013, Faza 2 planu WorkMate 2.0). Wykonawca
+  ograniczał dotąd wyłącznie WYJŚCIE (64 kB) i CZAS (60 s / max 300 s), a nie ograniczał niczego,
+  co polecenie ZOSTAWIA: `dd if=/dev/zero of=x bs=1M count=100000` zapisywał plik do wyczerpania
+  wolumenu, a `:(){ :|:& };:` wyczerpywał tablicę procesów **hosta** — kontener własnej nie miał.
+  Granice wchodzą na dwóch piętrach:
+  - `exec_server` zakłada rlimity na poleceniu (`fsize` 5 MB, `nofile` 256 oraz sufit czasu
+    procesora jako BEZPIECZNIK — dwukrotność maksymalnego czasu ściennego, bez komunikatu, na
+    proces, który wyszedł z grupy przez `setsid` i którego nie dosięga ani timeout, ani `killpg`)
+    builtinem `ulimit`,
+    nie `preexec_fn` — ten biegnie w dziecku po `fork` w procesie z wątkami i może zawisnąć przed
+    `exec`. Polecenie modelu jedzie jako `$0`, więc zewnętrzna powłoka nigdy go nie parsuje
+    i żaden cudzysłów nie sięga prologu.
+  - `docker_engine` zakłada `CapDrop: [ALL]`, `PidsLimit`, `Memory` + `MemorySwap` (równe, czyli
+    bez swapu), `NanoCpus` i `Ulimits`
+    na kontenerze wykonawcy. Te obowiązują KAŻDY jego proces — także taki, który powstał drogą,
+    o której `exec_server` nie wie.
+
+  Przekroczenie wraca do modelu **zdaniem**, nie kodem sygnału: granica, której model nie rozumie,
+  wygląda jak defekt narzędzia i skłania do obchodzenia jej kolejnymi próbami. Rozpoznajemy obie
+  postacie zakończenia sygnałem — kod ujemny (powłoka `exec`-uje polecenie prosto) oraz `128 + N`
+  (powłoka je rozwidliła: przekierowanie, kilka poleceń), czyli najczęstszy kształt polecenia
+  piszącego duży plik. **Czego to NIE obejmuje:** potoku — jego kod wyjścia to kod ostatniego
+  członu, więc `(pętla) | cat` po zabiciu pierwszego wraca `0`. Informacja ginie w powłoce,
+  zanim wykonawca cokolwiek zobaczy.
+
+  **Sufit jest per PLIK, nie per katalog rozmowy.** Tysiąc plików po 5 MB przechodzi. Narzędzia
+  mają na tym samym katalogu dodatkowo `max_files_per_scope` i `max_total_mb` — powłoka nie ma
+  żadnego z nich. Z trzech kwot katalogu odwzorowana jest jedna; domknięcie pozostałych dwóch
+  jest osobną decyzją (infra ADR 0013, sekcja „czego ten ADR świadomie nie robi").
+
+  **Sufitu czasu procesora świadomie NIE MA.** Pierwsza wersja go zakładała, ale nie działał na
+  dwa sposoby naraz: `ulimit -t N` ustawia sufit miękki i twardy na tę samą wartość, a przy
+  `soft == hard` jądro wysyła `SIGKILL` zamiast `SIGXCPU`; po rozdzieleniu sufitów sygnał pada,
+  ale i tak nigdy nie dochodzi, bo przy kwocie `NanoCpus` jednego rdzenia sekunda procesora
+  kosztuje co najmniej sekundę zegara — timeout ścienny wyczerpuje się pierwszy. Oba przebiegi
+  zmierzone. Granica czasu jest jedna i stoi w `communicate(timeout=...)`.
+
+  **`RLIMIT_NPROC` też świadomie nie wchodzi.** Liczy się per UID i obejmuje wątki, a cała flota
+  biegnie na uid 10001 bez remapowania przestrzeni użytkowników — budżet byłby jeden, wspólny,
+  a `PidsLimit` pozwala jednej rozmowie go wyczerpać. Skutkiem nie byłaby izolacja, tylko jej
+  odwrotność: polecenia POZOSTAŁYCH rozmów padałyby na `fork: Resource temporarily unavailable`.
+  Bombę widłową zatrzymuje `PidsLimit` — jedyna z tych granic, która jest per kontener.
+- `ExecManagerSettings` niesie granice zużycia (`WORKMATE_EXEC_MEMORY_MB`, `…_PIDS_LIMIT`,
+  `…_CPU_LIMIT`, `…_MAX_FILE_MB`, `…_MAX_OPEN_FILES`) z walidacją ZAKRESÓW, nie samych podłóg:
+  dla Docker API zero znaczy **bez limitu**, więc literówka w compose zdejmowałaby granicę po
+  cichu, a wartość poniżej minimum Dockera (6 MB pamięci) odbiłaby się dopiero przy `create` —
+  głośno, ale późno i w innym procesie niż literówka.
+
 ### Naprawione
 
 - **Werdykt sędziego mutacji trafia wreszcie do dziennika audytu** (ADR 0065 §8). Kolumna

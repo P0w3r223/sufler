@@ -1352,6 +1352,16 @@ class ExecManagerSettings:
     # gniazdo utworzone przez roota (0660 owner root ≠ 10001), a wykonawca nie zapisałby brudnopisu.
     exec_uid: int = 10001
     exec_gid: int = 10001
+    # ── Granice zużycia wykonawcy (ADR infra 0013) ────────────────────────────────────────
+    # Wartości domyślne, nie wymagane: wykonawca ma wstać także wtedy, gdy compose ich nie poda —
+    # inaczej podbicie paczki bez podbicia zmiennych zostawiałoby rozmowy bez powłoki. Sufit
+    # pliku jest CELOWO tą samą liczbą, co kwota katalogu roboczego dla narzędzi
+    # (``WORKMATE_WORKSPACE_MAX_FILE_MB``): powłoka i narzędzia piszą w to samo miejsce.
+    exec_memory_mb: int = 512
+    exec_pids_limit: int = 128
+    exec_cpu_limit: float = 1.0
+    exec_max_file_mb: int = 5
+    exec_max_open_files: int = 256
 
     @classmethod
     def from_env(cls) -> ExecManagerSettings:
@@ -1374,6 +1384,11 @@ class ExecManagerSettings:
             reap_interval_s=_int_from_env("WORKMATE_EXEC_REAP_INTERVAL_S", 60),
             exec_uid=_int_from_env("WORKMATE_EXEC_UID", 10001),
             exec_gid=_int_from_env("WORKMATE_EXEC_GID", 10001),
+            exec_memory_mb=_int_from_env("WORKMATE_EXEC_MEMORY_MB", 512),
+            exec_pids_limit=_int_from_env("WORKMATE_EXEC_PIDS_LIMIT", 128),
+            exec_cpu_limit=_float_from_env("WORKMATE_EXEC_CPU_LIMIT", 1.0),
+            exec_max_file_mb=_int_from_env("WORKMATE_EXEC_MAX_FILE_MB", 5),
+            exec_max_open_files=_int_from_env("WORKMATE_EXEC_MAX_OPEN_FILES", 256),
         )
 
     def validate(self) -> None:
@@ -1406,6 +1421,29 @@ class ExecManagerSettings:
         if self.reap_interval_s < 1:
             raise ValueError(
                 f"WORKMATE_EXEC_REAP_INTERVAL_S musi być >= 1, jest: {self.reap_interval_s}"
+            )
+        # Granice zużycia (ADR infra 0013) sprawdzamy TU, nie w kontenerze-wykonawcy: zero albo
+        # wartość ujemna znaczy dla Docker API „bez limitu", więc literówka w compose zdejmowałaby
+        # granicę po cichu, zostawiając wykonawcę wyglądającego na utwardzony. Menedżer jest
+        # jedynym miejscem, gdzie ta liczba jest jeszcze konfiguracją, a nie faktem o kontenerze.
+        # ZAKRESY, nie same podłogi — jak przy bliźniaczej kwocie katalogu roboczego wyżej.
+        # Sama podłoga „>= 1" przepuszcza wartości, które odbije dopiero Docker (minimum 6 MB
+        # pamięci, 0.01 CPU) albo które zabiją kontener na starcie — awaria wtedy jest głośna,
+        # ale późna i w INNYM PROCESIE niż literówka, więc operator szuka jej nie tam.
+        for nazwa, wartosc, dol, gora in (
+            ("WORKMATE_EXEC_MEMORY_MB", self.exec_memory_mb, 16, 8192),
+            ("WORKMATE_EXEC_PIDS_LIMIT", self.exec_pids_limit, 8, 4096),
+            ("WORKMATE_EXEC_MAX_FILE_MB", self.exec_max_file_mb, 1, 1024),
+            ("WORKMATE_EXEC_MAX_OPEN_FILES", self.exec_max_open_files, 32, 65536),
+        ):
+            if not dol <= wartosc <= gora:
+                raise ValueError(f"{nazwa} musi być w zakresie {dol}..{gora}, jest: {wartosc}")
+        # Sufit rzędu liczby rdzeni realnego hosta, nie „dowolnie dużo": kwota ponad liczbę
+        # rdzeni jest fikcją, a uzasadnienie sufitu czasu procesora w wykonawcy (`exec_server`)
+        # wisi na założeniu, że kwota nie przekracza rzędu jednego rdzenia.
+        if not 0.01 <= self.exec_cpu_limit <= 16:
+            raise ValueError(
+                f"WORKMATE_EXEC_CPU_LIMIT musi być w zakresie 0.01..16, jest: {self.exec_cpu_limit}"
             )
 
 

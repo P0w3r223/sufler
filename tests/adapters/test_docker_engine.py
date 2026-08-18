@@ -61,6 +61,45 @@ def test_body_niesie_utwardzenia_i_stały_szablon():
     assert host["RestartPolicy"] == {"Name": "no"}
 
 
+def test_body_niesie_granice_zuzycia_wykonawcy():
+    """ADR infra 0013: `HostConfig` niósł dotąd `NetworkMode`/`ReadonlyRootfs`/`SecurityOpt` i NIC
+    o zużyciu. Bez `PidsLimit` bomba widłowa wyczerpuje tablicę procesów HOSTA — kontener swojej
+    nie ma. Sonda pilnuje KOMPLETU: lista podana częściowo wygląda jak granica, a przepuszcza to,
+    czego nie wymienia."""
+    host = _engine()._create_body(_spec())["HostConfig"]  # noqa: SLF001
+
+    assert host["CapDrop"] == ["ALL"]
+    assert host["PidsLimit"] == 128
+    assert host["Memory"] == 512 * 1024 * 1024
+    assert host["NanoCpus"] == 1_000_000_000
+    ulimity = {u["Name"]: u for u in host["Ulimits"]}
+    assert ulimity["fsize"]["Soft"] == 5 * 1024 * 1024
+    assert ulimity["nofile"]["Soft"] == 256
+
+
+def test_ulimity_maja_rowny_sufit_miekki_i_twardy():
+    """Miękki niższy od twardego proces w kontenerze podniósłby sobie sam — czyli granica
+    obowiązywałaby dokładnie do chwili, w której komuś zaczęłaby przeszkadzać."""
+    host = _engine()._create_body(_spec())["HostConfig"]  # noqa: SLF001
+
+    for ulimit in host["Ulimits"]:
+        assert ulimit["Soft"] == ulimit["Hard"], ulimit["Name"]
+
+
+def test_sufit_pliku_jedzie_do_wykonawcy_takze_zmienna_srodowiskowa():
+    """Dwa piętra tej samej granicy mają brać liczbę z JEDNEGO miejsca.
+
+    `Ulimits` zabija proces, ale daje modelowi sam kod `-25`; `exec_server` zakłada ten sam sufit
+    `ulimitem`, żeby przetłumaczyć przekroczenie na zdanie. Rozjazd tych dwóch wartości dałby
+    komunikat mówiący o innej liczbie niż ta, która realnie ucięła zapis.
+    """
+    body = _engine(max_file_mb=7)._create_body(_spec())  # noqa: SLF001
+
+    assert "WORKMATE_EXEC_MAX_FILE_MB=7" in body["Env"]
+    ulimity = {u["Name"]: u for u in body["HostConfig"]["Ulimits"]}
+    assert ulimity["fsize"]["Soft"] == 7 * 1024 * 1024
+
+
 def test_subpath_scope_ląduje_w_montazu_a_nie_w_poleceniu():
     """Jedyna zmienna z niezaufanego wejścia idzie do ``VolumeOptions.Subpath`` obu wolumenów."""
     body = _engine()._create_body(_spec())  # noqa: SLF001
