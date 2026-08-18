@@ -146,15 +146,27 @@ def main() -> None:
         if path == core_settings.note_snapshots_dir and not settings.enable_note_mutation:
             continue
         require_writable(path, env_var, is_directory=is_dir)
-    if workspace_settings.enabled:
-        # TTL sprzątanie katalogu roboczego (ADR 0018) — raz na starcie, backstop przeciw rośnięciu.
-        removed = prune_stale(
-            workspace_settings.workspace_dir,
-            older_than=timedelta(days=workspace_settings.retention_days),
-            now=datetime.now(tz=UTC),
-        )
-        if removed:
-            logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
+    # TTL sprzątanie katalogu roboczego (ADR 0018) — raz na starcie, backstop przeciw rośnięciu.
+    #
+    # Warunkiem jest ISTNIENIE katalogu, nie bramka ``WORKMATE_ENABLE_WORKSPACE``. Retencja jest
+    # własnością DANYCH, a nie tego, które narzędzia są włączone — a te dwie rzeczy rozjechały się
+    # w układzie docelowym: przy powłoce ON i workspace OFF do brudnopisu pisze WYKONAWCA, a
+    # bramka narzędzi jest zamknięta, więc sprzątacz nie biegł ani razu. Zmierzone na produkcji
+    # 2026-08-18: katalogi rozmów z próby 11–12.08 leżały nietknięte, choć TTL wynosi 30 dni.
+    #
+    # ``prune_stale`` na nieistniejącym korzeniu jest ciche i zwraca 0, więc bezwarunkowe wołanie
+    # nie robi nic tam, gdzie brudnopisu nie ma.
+    #
+    # Zostaje ograniczenie, którego ta zmiana NIE zdejmuje: sprzątanie pada raz, przy starcie
+    # drzwi. Proces żyjący tygodniami nie posprząta w międzyczasie — domknięcie tego wymaga
+    # zegara po stronie menedżera wykonawców i jest osobną decyzją (plan, §7.1 wariant (c)).
+    removed = prune_stale(
+        workspace_settings.workspace_dir,
+        older_than=timedelta(days=workspace_settings.retention_days),
+        now=datetime.now(tz=UTC),
+    )
+    if removed:
+        logger.info("Katalog roboczy: usunięto %d bezczynnych katalogów rozmów (TTL).", removed)
     jira_settings = JiraSettings.from_env()
     extra_catalog, github_thread_link = _build_bridge_catalog(
         events_settings, GithubSettings.from_env()

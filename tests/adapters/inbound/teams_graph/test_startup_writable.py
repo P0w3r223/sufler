@@ -174,3 +174,74 @@ def test_optional_databases_stay_unconditional(tmp_path: Path, monkeypatch: pyte
 
     with pytest.raises(ValueError, match="nie jest zapisywalna"):
         app.main()
+
+
+# --- Sprzątanie brudnopisu nie wisi na bramce NARZĘDZI (znalezisko 9.13) ----------------
+
+
+def _stary_katalog_rozmowy(brudnopis: Path) -> Path:
+    """Katalog rozmowy z aktywnością sprzed 60 dni — dwukrotnie ponad TTL (30 dni)."""
+    import os
+    import time
+
+    rozmowa = brudnopis / "teams_graph" / ("a" * 8)
+    rozmowa.mkdir(parents=True)
+    (rozmowa / "notatka.md").write_text("stara treść", encoding="utf-8")
+    dawno = time.time() - 60 * 24 * 3600
+    os.utime(rozmowa / "notatka.md", (dawno, dawno))
+    os.utime(rozmowa, (dawno, dawno))
+    return rozmowa
+
+
+def test_stale_scratch_is_pruned_even_with_the_workspace_tools_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Sonda przeciw kodowi SPRZED poprawki: sprzątacz biegł tylko przy
+    ``WORKMATE_ENABLE_WORKSPACE``, czyli przy bramce NARZĘDZI.
+
+    W układzie docelowym („powłoka ON, workspace OFF") do brudnopisu pisze WYKONAWCA, a bramka
+    narzędzi jest zamknięta — więc sprzątacz nie biegł ani razu, mimo TTL 30 dni. Retencja jest
+    własnością danych, nie tego, które narzędzia są włączone.
+    """
+    _base_env(tmp_path, monkeypatch)
+    brudnopis = tmp_path / "scratchpad"
+    monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(brudnopis))
+    monkeypatch.delenv("WORKMATE_ENABLE_WORKSPACE", raising=False)
+    rozmowa = _stary_katalog_rozmowy(brudnopis)
+
+    with pytest.raises(_Stop):
+        app.main()
+
+    assert not rozmowa.exists()
+
+
+def test_a_fresh_conversation_dir_survives_the_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Kontrast: sprzątacz bezwarunkowy nie może kasować katalogów, które ŻYJĄ — inaczej
+    zamiast retencji byłaby utrata brudnopisu przy każdym restarcie drzwi."""
+    _base_env(tmp_path, monkeypatch)
+    brudnopis = tmp_path / "scratchpad"
+    monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(brudnopis))
+    monkeypatch.delenv("WORKMATE_ENABLE_WORKSPACE", raising=False)
+    swieza = brudnopis / "teams_graph" / "bbbbbbbb"
+    swieza.mkdir(parents=True)
+    (swieza / "notatka.md").write_text("świeża treść", encoding="utf-8")
+
+    with pytest.raises(_Stop):
+        app.main()
+
+    assert swieza.exists()
+
+
+def test_a_missing_scratch_root_is_not_a_startup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Bezwarunkowe wołanie nie może wywrócić drzwi tam, gdzie brudnopisu nie ma wcale —
+    a to jest domyślny stan drzwi bez wolumenu scratchpada."""
+    _base_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(tmp_path / "nie-ma-mnie"))
+    monkeypatch.delenv("WORKMATE_ENABLE_WORKSPACE", raising=False)
+
+    with pytest.raises(_Stop):
+        app.main()
