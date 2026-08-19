@@ -6,6 +6,8 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-08-19
+
 ### Dodane
 
 - **Granice zużycia wykonawcy powłoki** (infra ADR 0013, Faza 2 planu WorkMate 2.0). Wykonawca
@@ -38,12 +40,16 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   żadnego z nich. Z trzech kwot katalogu odwzorowana jest jedna; domknięcie pozostałych dwóch
   jest osobną decyzją (infra ADR 0013, sekcja „czego ten ADR świadomie nie robi").
 
-  **Sufitu czasu procesora świadomie NIE MA.** Pierwsza wersja go zakładała, ale nie działał na
-  dwa sposoby naraz: `ulimit -t N` ustawia sufit miękki i twardy na tę samą wartość, a przy
-  `soft == hard` jądro wysyła `SIGKILL` zamiast `SIGXCPU`; po rozdzieleniu sufitów sygnał pada,
-  ale i tak nigdy nie dochodzi, bo przy kwocie `NanoCpus` jednego rdzenia sekunda procesora
-  kosztuje co najmniej sekundę zegara — timeout ścienny wyczerpuje się pierwszy. Oba przebiegi
-  zmierzone. Granica czasu jest jedna i stoi w `communicate(timeout=...)`.
+  **Sufit czasu procesora jest BEZPIECZNIKIEM, nie główną granicą czasu** — i warto wiedzieć,
+  dlaczego wypadł, zanim wrócił. Pierwsza wersja nie działała na dwa sposoby naraz: `ulimit -t N`
+  ustawia sufit miękki i twardy na tę samą wartość, a przy `soft == hard` jądro wysyła `SIGKILL`
+  zamiast `SIGXCPU`; po rozdzieleniu sufitów sygnał pada, ale przy kwocie `NanoCpus` jednego
+  rdzenia sekunda procesora kosztuje co najmniej sekundę zegara, więc timeout ścienny wyczerpuje
+  się pierwszy. Oba przebiegi zmierzone — i stąd wniosek, że jako GŁÓWNA granica jest bezużyteczny.
+  Wrócił jako siatka na jeden przypadek, którego `communicate(timeout=…)` nie łapie: proces, który
+  wyszedł z grupy przez `setsid` i którego nie dosięga ani timeout, ani `killpg`. Dlatego sufit
+  jest dwukrotnością maksymalnego czasu ściennego i nie ma własnego komunikatu — normalna ścieżka
+  nigdy go nie dotyka. Główna granica czasu pozostaje jedna: `communicate(timeout=...)`.
 
   **`RLIMIT_NPROC` też świadomie nie wchodzi.** Liczy się per UID i obejmuje wątki, a cała flota
   biegnie na uid 10001 bez remapowania przestrzeni użytkowników — budżet byłby jeden, wspólny,
