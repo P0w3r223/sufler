@@ -206,9 +206,21 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 - **The nightly volume backup is shipped but NOT installed on prod (verified 2026-08-14:
   `systemctl is-enabled workmate-backup.timer` → `not-found`, no `/etc/workmate/backup.env`).** R2 and
   R11 rest their entire case on procedural reversibility, so this is a **precondition, not a
-  follow-up**: `delete` does not ship until the timer is installed, enabled, pointed at an off-host
-  destination, and has one successful run to show. Per-operation snapshots alone protect a single
+  follow-up**: `delete` does not ship until the timer is installed, enabled, **proven by one
+  restore**, and has one successful run to show. Per-operation snapshots alone protect a single
   mistake, not a bad day.
+
+  **Amended 2026-08-19 (infra ADR 0014): the destination no longer has to be off-host.** The
+  original wording said "off-host destination" — inherited verbatim from `systemd/README.md`,
+  written the day before this ADR, and adopted here under "the question was answered by shipped
+  infra" rather than derived from what `delete` needs. It conflated two threats. Losing a note to
+  an *operation* (`down -v`, an agent deleting it) is what `delete` opens, and a copy **outside the
+  Docker volume** covers it — which is exactly what upstream ADR 0008 asks for. Losing the *medium*
+  (disk failure, host loss) is unchanged by `delete` and is Phase 7's offsite work. The deployment
+  host has a single volume and will not get a second one, so the inherited wording made Phase 6
+  unreachable for a reason unrelated to its own risk register. The precondition is now a backup
+  that is **working and restorable**, with the weaker medium consented to explicitly and re-stated
+  in the log on every run.
 
 ## Closed questions — decisions of 2026-08-14
 
@@ -224,8 +236,10 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 - **Does `delete` exist?** → **Yes** (Decision 5), single-file and snapshot-first. Consented risk
   **R11**.
 - **Backup cadence** → per-operation snapshot **always**, plus the **nightly full-volume backup that
-  already exists** (infra `systemd/workmate-backup.timer`, 03:00 daily, off-host destination
-  mandatory, 30 kept). No new cadence is invented here; the question was answered by shipped infra.
+  already exists** (infra `systemd/workmate-backup.timer`, 03:00 daily, destination outside the
+  Docker volume, 365 kept). No new cadence is invented here; the question was answered by shipped
+  infra — which is also why the destination requirement needed amending later, see the precondition
+  note above and infra ADR 0014.
 - **Is the security reversal accepted as written?** → **Yes**, 2026-08-14. What is consented to is the
   register above: R1–R4, R8–R9 as written, plus **R10** (the judge is not a Dual-LLM boundary) and
   **R11** (`delete` blast radius). ADR 0003's create-only invariant and ADR 0057's "security by lack"
