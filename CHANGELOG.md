@@ -6,6 +6,8 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-08-19
+
 ### Dodane
 
 - **Granice zużycia wykonawcy powłoki** (infra ADR 0013, Faza 2 planu WorkMate 2.0). Wykonawca

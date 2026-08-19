@@ -1,6 +1,6 @@
 [project]
 name = "workmate"
-version = "1.11.0"
+version = "1.12.0"
 description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/CLI, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira 'moje zadania' oraz lokalny retrieval leksykalny notatek."
 readme = "README.md"
 # 3.11 to jedyna wersja, na której cokolwiek tu biega: `.python-version` mówi 3.11, a oba etapy
