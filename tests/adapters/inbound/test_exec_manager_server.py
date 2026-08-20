@@ -18,7 +18,11 @@ import pytest
 
 pytest.importorskip("fcntl", reason="menedżer wykonawców jest POSIX-only (gniazda unix)")
 
-from workmate.adapters.inbound.exec_manager_server import _dispatch  # noqa: E402
+from workmate.adapters.inbound.exec_manager_server import (  # noqa: E402
+    _dispatch,
+    _install_stop_flag,
+    serve,
+)
 from workmate.core.errors import ExecManagerError  # noqa: E402
 
 _SCOPE = f"teams-graph/{'a' * 32}"
@@ -29,6 +33,7 @@ class _FakeService:
         self._ensure_result = ensure_result
         self._boom = boom
         self.reaped: list[str] = []
+        self.shut_down = False
 
     def ensure(self, scope: str) -> str:
         if self._boom:
@@ -37,6 +42,9 @@ class _FakeService:
 
     def reap(self, scope: str) -> None:
         self.reaped.append(scope)
+
+    def shutdown(self) -> None:
+        self.shut_down = True
 
 
 def _line(**payload) -> bytes:
@@ -84,3 +92,54 @@ def test_brak_pola_scope_dostaje_error():
     response = _dispatch(_line(verb="ensure"), _FakeService())  # type: ignore[arg-type]
 
     assert "error" in response
+
+
+# --- zatrzymanie procesu -----------------------------------------------------
+
+
+def test_SIGTERM_ustawia_flage_zamiast_zabic_proces():
+    """Bez handlera SIGTERM domyślna akcja kończy proces BEZ rozwijania ``finally`` w ``serve``.
+
+    Kontener dostaje od Dockera właśnie SIGTERM, nie SIGINT, więc łapanie samego
+    ``KeyboardInterrupt`` nie robiło nic: każde ``docker stop`` menedżera zostawiało wszystkie
+    kontenery wykonawców żywe, po jednym na rozmowę. Ta sonda jest zarazem dowodem negatywnym —
+    gdyby handler zniknął, SIGTERM zabiłby proces testów, a nie tylko wywrócił asercję.
+    """
+    import os
+    import signal
+
+    poprzednie = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        stop = _install_stop_flag()
+
+        os.kill(os.getpid(), signal.SIGTERM)
+
+        assert stop.wait(timeout=5.0)
+    finally:
+        for sig, handler in poprzednie.items():
+            signal.signal(sig, handler)
+
+
+def test_serve_sprzata_wykonawcow_gdy_flaga_zatrzymania_padnie(tmp_path):
+    """Domknięcie tej samej ścieżki od drugiej strony: flaga → wyjście z pętli → ``shutdown``.
+
+    Sam handler nie wystarczy — wartość ma dopiero to, że ustawiona flaga NAPRAWDĘ prowadzi do
+    ubicia wykonawców. Tu biegnie prawdziwe gniazdo i prawdziwa pętla ``serve``, bo właśnie jej
+    ``finally`` jest przedmiotem sondy.
+    """
+    import threading
+
+    service = _FakeService()
+    stop = threading.Event()
+    watek = threading.Thread(
+        target=serve,
+        args=(service, tmp_path / "control.sock"),
+        kwargs={"reap_interval_s": 0.05, "stop": stop},
+        daemon=True,
+    )
+    watek.start()
+    stop.set()
+    watek.join(timeout=5.0)
+
+    assert not watek.is_alive()
+    assert service.shut_down

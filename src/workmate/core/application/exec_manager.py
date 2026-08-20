@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from workmate.core.ports.exec_manager import (
         ContainerEngine,
         ContainerSpec,
+        RunningExecutor,
         ScopeWorkspace,
     )
 
@@ -199,33 +200,75 @@ class ExecManagerService:
     def reconcile(self) -> None:
         """Po starcie menedżera pogódź rejestr z rzeczywistością silnika (ADR 0012 §3).
 
-        Rejestr startuje pusty, więc każdy żywy zarządzany kontener to ślad po POPRZEDNIM
-        menedżerze.
-        Wykonawców z poprawną etykietą scope ADOPTUJEMY (żeby restart menedżera nie zabił ciepłego
-        wykonawcy obsługującego czynną rozmowę), a sieroty bez czytelnego scope UBIJAMY (nikt ich
-        już
-        nie pilnuje). Adoptowany dostaje świeży ``last_used`` — inaczej wpadłby od razu w reap.
+        Rejestr startuje pusty, więc każdy zarządzany kontener to ślad po POPRZEDNIM menedżerze.
+        Adoptujemy WYŁĄCZNIE takiego, którego umielibyśmy dziś postawić sami: żywego, z czytelnym
+        scope'em, z BIEŻĄCEGO obrazu, jedynego dla swojej rozmowy i mieszczącego się w limicie N.
+        Wszystko inne ubijamy. Cold start kosztuje jeden ``docker run``; każda z tych pomyłek jest
+        cicha i trwała. Adoptowany dostaje świeży ``last_used`` — inaczej wpadłby od razu w reap.
+
+        **Adopcja kontenera z POPRZEDNIEGO obrazu jest tu najgroźniejsza i najmniej widoczna.**
+        Dopóki ``list_managed`` było zepsute (rzucało zawsze), rejestr zostawał pusty i pierwszy
+        ``ensure`` stawiał wykonawcę od nowa — awaria przypadkiem gwarantowała poprawne wdrożenie.
+        Po jej naprawie adopcja bez sprawdzenia obrazu serwowałaby STARY kod tak długo, jak długo
+        rozmowa jest czynna: każde ``ensure`` odświeża ``last_used``, więc TTL nigdy nie dobiega.
+        Podbicie obrazu wyglądałoby na udane, a powłoka jechałaby na wydaniu sprzed niego.
         """
         try:
             managed = self._engine.list_managed()
         except Exception:  # noqa: BLE001 — reconcile nie może wywrócić startu menedżera
             logger.warning("Reconcile: nie udało się wypisać wykonawców — pomijam", exc_info=True)
             return
-        adopted = 0
+        adopted: dict[str, str] = {}
         for running in managed:
-            if _SCOPE_RE.match(running.scope):
-                with self._lock:
-                    self._by_scope[running.scope] = _ManagedExecutor(
-                        running.scope, running.container_id, self._clock()
-                    )
-                adopted += 1
-            else:
+            powod = self._powod_odrzucenia(running, adopted)
+            if powod is not None:
                 logger.warning(
-                    "Reconcile: sierota bez czytelnego scope (%s) — ubijam",
+                    "Reconcile: %s (%s, scope %r) — ubijam",
+                    powod,
                     running.container_id[:12],
+                    running.scope,
                 )
                 self._safe_remove(running.container_id)
-        logger.info("Reconcile: adoptowano %d wykonawców", adopted)
+                continue
+            adopted[running.scope] = running.container_id
+        if adopted:
+            teraz = self._clock()
+            with self._lock:
+                for scope, container_id in adopted.items():
+                    self._by_scope[scope] = _ManagedExecutor(scope, container_id, teraz)
+        logger.info(
+            "Reconcile: adoptowano %d wykonawców, ubito %d",
+            len(adopted),
+            len(managed) - len(adopted),
+        )
+
+    def _powod_odrzucenia(self, running: RunningExecutor, adopted: dict[str, str]) -> str | None:
+        """Powód, dla którego zastanego kontenera NIE adoptujemy — albo ``None``, gdy wolno.
+
+        Kolejność warunków jest od najtańszego do najbardziej pojemnego, ale nie to jest w niej
+        istotne: każdy z nich opisuje INNY sposób, w jaki adopcja psuje coś po cichu, i każdy
+        kończy się tak samo — usunięciem. Menedżer ma po reconcile trzymać wyłącznie kontenery,
+        za które umie odpowiedzieć.
+        """
+        if not _SCOPE_RE.match(running.scope):
+            return "sierota bez czytelnego scope"
+        if not running.running:
+            # Nie wykonawca, tylko ślad po awarii (np. ubity limitem pamięci). Adopcja wpisałaby
+            # do rejestru trupa, a `ensure` tej rozmowy zwracałby ścieżkę gniazda, którego nikt
+            # nie nasłuchuje — czyli awarię przesuniętą o jedno wywołanie dalej.
+            return "kontener zatrzymany, nie wykonawca"
+        if running.image != self._engine.image:
+            return f"obraz {running.image!r} ≠ bieżący {self._engine.image!r}"
+        if running.scope in adopted:
+            # Dwa kontenery tej samej rozmowy: rejestr trzyma jeden wpis na scope, więc drugi
+            # zniknąłby z pola widzenia menedżera i został na hoście bez właściciela.
+            return "duplikat scope (drugi kontener tej samej rozmowy)"
+        if len(adopted) >= self._max:
+            # Limit N jest granicą zużycia hosta, a nie regułą samego `ensure`. Bez tego warunku
+            # menedżer wstawał ponad limit i wyrównywał go dopiero eksmisją LRU — czyli kosztem
+            # rozmowy, która akurat poprosiła o powłokę.
+            return f"ponad limit N={self._max}"
+        return None
 
     def shutdown(self) -> None:
         """Ubij wszystkich znanych wykonawców — sprzątanie przy zatrzymaniu menedżera."""

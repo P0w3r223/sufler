@@ -20,6 +20,7 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import socket
 import sys
 import threading
@@ -185,6 +186,31 @@ def build_service(settings: ExecManagerSettings) -> ExecManagerService:
     )
 
 
+def _install_stop_flag() -> threading.Event:
+    """Handler SIGTERM/SIGINT ustawiający flagę zatrzymania — inaczej ``serve`` nie sprząta.
+
+    ``serve`` ubija wykonawców w ``finally`` (``service.shutdown()``), ale **domyślna akcja
+    SIGTERM kończy proces bez rozwijania ``finally``** — a kontener dostaje od Dockera właśnie
+    SIGTERM, nie SIGINT. Bez tego handlera każde ``docker stop`` / ``compose up -d`` menedżera
+    zostawiało WSZYSTKIE kontenery wykonawców żywe, po jednym na rozmowę, i nic ich nie zdejmowało
+    aż do reconcile następnego menedżera. Łapanie samego ``KeyboardInterrupt`` tego nie robiło:
+    ono odpowiada SIGINT, czyli Ctrl-C z terminala, a nie zatrzymaniu kontenera.
+
+    Czego to nie gwarantuje: że sprzątanie ZDĄŻY. Docker daje domyślnie 10 s do SIGKILL, a
+    ``shutdown`` usuwa kontenery po kolei. Przy przekroczeniu okna reszta zostaje żywa — i to jest
+    dopuszczalne, bo reconcile następnego menedżera ją zastanie i (już poprawnie) rozstrzygnie.
+    """
+    stop = threading.Event()
+
+    def _request_stop(_signum: int, _frame: Any) -> None:
+        stop.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(ValueError):  # poza wątkiem głównym → domyślne zamknięcie
+            signal.signal(sig, _request_stop)
+    return stop
+
+
 def main() -> None:
     """Entrypoint menedżera: waliduj konfigurację, reconcile po restarcie, serwuj gniazdo
     kontrolne."""
@@ -195,12 +221,16 @@ def main() -> None:
     settings.validate()
     service = build_service(settings)
     service.reconcile()
+    stop = _install_stop_flag()
     try:
         serve(
             service,
             settings.control_socket,
             reap_interval_s=float(settings.reap_interval_s),
             socket_owner=(settings.exec_uid, settings.exec_gid),
+            stop=stop,
         )
-    except KeyboardInterrupt:  # pragma: no cover — sygnał zatrzymania kontenera
+    except KeyboardInterrupt:  # pragma: no cover — Ctrl-C przed instalacją handlera
         logger.info("Menedżer wykonawców zatrzymany")
+    else:
+        logger.info("Menedżer wykonawców zatrzymany sygnałem — wykonawcy sprzątnięci")
