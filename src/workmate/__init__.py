@@ -9,4 +9,4 @@ niezależna od interfejsu; ``adapters`` to tanie "drzwi" (MCP teraz, Teams/GitHu
 później). Szczegóły: ``docs/explanation/architecture.md``.
 """
 
-__version__ = "1.12.0"
+__version__ = "1.12.1"

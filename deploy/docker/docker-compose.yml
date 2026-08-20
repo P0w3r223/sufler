@@ -38,12 +38,12 @@ x-poller-health: &poller-health
 # Wspólny szkielet drzwi/serwera: jeden obraz (wiele entrypointów przez `command`), wspólny wolumen
 # stanu (współdzielony events.db — ADR 0019), baza wiedzy montowana RO, utwardzenie jak w podprojekcie.
 x-workmate-common: &workmate-common
-  image: workmate:1.12.0
+  image: workmate:1.12.1
   build:
     context: ../..
     dockerfile: deploy/docker/Dockerfile
     args:
-      WERSJA: "1.12.0"
+      WERSJA: "1.12.1"
   env_file:
     - ./env
   restart: unless-stopped

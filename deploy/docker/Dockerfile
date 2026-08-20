@@ -5,7 +5,7 @@
 # (`workmate`, `workmate-github`, `workmate-teams-graph`, …). ADR 0044.
 #
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
-# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.12.0 .
+# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.12.1 .
 # Testy biegną W TRAKCIE budowania (etap `test`) — obraz nie powstanie z czerwonego drzewa.
 
 # Extras całej floty — jedno źródło prawdy dla wszystkich etapów.
@@ -150,7 +150,7 @@ USER 10001:10001
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["workmate"]
 
-ARG WERSJA=1.12.0
+ARG WERSJA=1.12.1
 LABEL org.opencontainers.image.title="workmate" \
       org.opencontainers.image.description="Serwer MCP pionu + drzwi mostu GitHub/Jira/Teams (flota)" \
       org.opencontainers.image.version="${WERSJA}" \

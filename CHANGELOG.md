@@ -6,6 +6,93 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.12.1] — 2026-08-20
+
+Wydanie **wyłącznie naprawcze**, zebrane w jednym dniu z dwóch rund przeglądu: pierwsza szła po
+usterkach znalezionych WYKONANIEM karty aktywacji, druga — po poprawkach z pierwszej, zanim
+weszły do obrazu. Druga runda okazała się potrzebna: dwie z tych poprawek miały własne usterki,
+a jedna z nich ujawniłaby się dopiero przy najbliższym podbiciu obrazu.
+
+Wspólny mianownik połowy tych błędów: **prawdą o notatce jest PLIK, a kod traktował jako prawdę
+model**. Drugiej połowy: **ścieżka, która nigdy nie przebiegła, nie jest ścieżką sprawdzoną** —
+cały ten kod ruszył pierwszy raz w historii instalacji 2026-08-20 i padł.
+
+### Naprawione
+
+- **Menedżer wykonawców adoptował po restarcie kontenery z POPRZEDNIEGO obrazu** (#70).
+  `RunningExecutor` nie niósł obrazu, a adopcja była bezwarunkowa dla każdego kontenera
+  z poprawną etykietą scope. Ponieważ `ensure` przy trafieniu w rejestr odświeża `last_used`,
+  TTL nie dobiegał nigdy, dopóki rozmowa była czynna: adoptowany wykonawca ze starego tagu
+  serwowałby stary kod **bezterminowo**, a podbicie obrazu wyglądałoby na udane.
+
+  Jest to regresja wprowadzona poprawką `list_managed` (#68) i to w niej najciekawsze: dopóki
+  wypisywanie rzucało, rejestr zostawał pusty i pierwszy `ensure` stawiał wykonawcę na nowo —
+  **zepsuty odzysk przypadkiem gwarantował poprawne wdrożenie**. Adoptujemy teraz wyłącznie
+  kontener, który umielibyśmy dziś postawić sami: żywy, z czytelnym scope'em, z bieżącego obrazu,
+  jedyny dla swojej rozmowy i mieszczący się w limicie N. Porównanie obrazu nie wykryje tagu
+  RUCHOMEGO (`:latest` przebudowany pod tą samą nazwą); flota jedzie na tagach wersjonowanych.
+
+- **Menedżer nie sprzątał wykonawców przy `docker stop`** (#70). `serve` ubija ich w `finally`,
+  ale proces nie instalował handlera SIGTERM, a `main` łapało wyłącznie `KeyboardInterrupt` —
+  czyli SIGINT z terminala, nie sygnał, którym zatrzymuje się kontener. Domyślna akcja SIGTERM
+  kończy proces bez rozwijania `finally`, więc każde `compose up -d` menedżera zostawiało
+  wszystkie kontenery wykonawców żywe. To było właściwe źródło objawu „kontenery narastają bez
+  końca"; #68 leczyło dopiero jego skutek.
+
+- **`list_managed` nie widziało kontenerów ZATRZYMANYCH** (#70, brak `all=true`). Wykonawca ubity
+  limitem pamięci kończy jako `exited` (`AutoRemove: False`, `RestartPolicy: no`) i po restarcie
+  menedżera był dla `reconcile` niewidzialny — a scope'y są per rozmowa, więc nikt już po niego
+  nie wracał. Przy okazji `reconcile` respektuje `max_executors` i ubija duplikat scope'a.
+
+- **Bramka treści odmawiała treści CAŁKOWICIE POPRAWNEJ** (#71). Warunek „domknięcia" pytał tylko,
+  czy dalej stoi druga linia `---`, więc akapit obramowany dwiema poziomymi kreskami spełniał go,
+  będąc zwykłym markdownem. Model dostawał wtedy komunikat każący usunąć pola YAML, **których
+  w treści nie ma** — polecenie niewykonalne inaczej niż przez skasowanie tekstu człowieka.
+  Bramka pyta teraz o POLE ze schematu `NoteMetadata`, a zbiór pól bierze z modelu, żeby dopisanie
+  pola domykało ją samo.
+
+- **BOM omijał tę samą bramkę** (#71): `lstrip()` bez argumentu go nie zdejmuje, więc treść z pliku
+  zapisanego pod Windows przechodziła i dawała dokładnie tę korupcję, przed którą bramka stoi.
+
+- **Ostrzeżenie o `content` nie docierało do modelu** (#71). Dopisano je do docstringów `File`,
+  a opis widziany przez model powstaje z `_FILE_OPIS`/`_FILE_EDIT` i idzie jawnym argumentem
+  `ToolSpec`; w MCP `File` nie jest rejestrowany w ogóle. Zdanie było martwe — zostawała sama
+  twarda odmowa, czyli runda narzędziowa spalona na czymś, przed czym dało się uprzedzić.
+
+- **Migawka notatki nie była kopią pliku, tylko renderem z modelu** (#72). `NoteMetadata` jest
+  pydantikiem z `extra="ignore"`, więc pola dopisane ręcznie do frontmatteru (`status:`,
+  `source_url:`) i komentarze YAML **znikały z kopii bez śladu**. Przy `edit` ratowała jeszcze
+  nocna kopia wolumenu; przy `delete` migawka jest JEDYNYM odzyskiem między kopiami, więc strata
+  była nieodwracalna — a kopia wyglądała na udaną. Materiałem migawki są teraz bajty pliku.
+
+  Przy okazji `NotesWriter` dostaje `content_with_digest`: skrót wersji i materiał kopii pochodzą
+  z JEDNEGO odczytu bajtów. Dotąd były to dwa osobne odczyty i między nie mieściła się równoległa
+  tura — skrót opisywał wtedy inną wersję pliku niż ta, którą zabezpieczała kopia.
+
+- **Edycja notatki przepisywała jej nagłówek z modelu** (#73), choć `edit_note` deklarował
+  „metadane zostają nietknięte". Przy każdej edycji ginął komentarz YAML i pola spoza schematu,
+  dochodziły puste pola schematu (`participants: []`, `decisions: []`…) i zmieniało się wcięcie
+  list. Notatka uzupełniona ręcznie traciła te uzupełnienia przy pierwszej poprawce literówki.
+  Czasownik portu nazywa się teraz `overwrite_body(note_id, body)` i przepisuje nagłówek BAJTOWO
+  z pliku — inna sygnatura, nie tylko inne ciało, bo parametr, którego wołający nie może użyć,
+  jest gorszy niż jego brak.
+
+- **Strażnik własnego frontmatteru stał tylko na ścieżce `edit`** (#73). Ścieżki TWORZENIA
+  (`save_note`, `save_meeting_note`, `save_thread_note`, seed korpusu) brały treść od modelu
+  i renderowały ją pod świeżym nagłówkiem — ta sama korupcja, nikt jej nie łapał (odtworzone:
+  cztery bloki `---` w jednym pliku). Strażnik mieszka teraz w `core/domain/sanitize.py`
+  i jest wołany w PISARZU, bo wszystkie ścieżki schodzą się dopiero w nim.
+
+### Uwaga wdrożeniowa
+
+Wydanie **nie włącza i nie wyłącza żadnej bramki** — stan flag produkcji zostaje taki, jaki był
+po karcie aktywacji (kroki 1–7 ON, `delete` OFF). Zmiany dotyczą zachowania kodu, który już biegnie.
+
+Dwie zmiany są widoczne operacyjnie: seed korpusu odmówi importu dokumentu niosącego własny
+frontmatter (dotąd cicho podwajał nagłówek; importer raportuje błąd per dokument i idzie dalej),
+a menedżer wykonawców przy starcie ubije kontenery z poprzedniego obrazu zamiast je adoptować —
+czyli pierwsze `ensure` po tej migracji postawi wykonawcę od nowa.
+
 ## [1.12.0] — 2026-08-19
 
 ### Dodane
