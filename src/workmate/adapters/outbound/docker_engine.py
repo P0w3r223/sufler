@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from workmate.core.errors import ExecManagerError
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from workmate.core.ports.exec_manager import ContainerSpec, RunningExecutor
@@ -126,7 +127,16 @@ class DockerHttpEngine:
         """Wypisz żywe kontenery z etykietą zarządzania — do reconcile."""
         from workmate.core.ports.exec_manager import RunningExecutor
 
-        filters = json.dumps({"label": [f"{_LABEL_MANAGED}=1"]})
+        # `quote`, bo `json.dumps` wstawia SPACJĘ po dwukropku, a `http.client` odrzuca ścieżkę
+        # z jakimkolwiek znakiem z zakresu [\x00-\x20\x7f] (`InvalidURL`). Bez kodowania
+        # `list_managed` rzucało więc ZAWSZE — czyli `reconcile` nie mógł wypisać ani jednego
+        # wykonawcy i sprzątanie nigdy nie biegło. Objaw na produkcji 2026-08-20:
+        #   ExecManagerError: docker.sock niedostępny (/var/run/docker.sock):
+        #   URL can't contain control characters. '/v1.45/containers/json?filters={"label": [...]}'
+        # `ensure` działało bez zarzutu, więc awaria była WYŁĄCZNIE po stronie odzysku: kontenery
+        # wykonawców narastały bez końca, jeden na rozmowę, i nic ich nie zdejmowało.
+        # `safe=""` — kodujemy też `{`, `}`, `"` i `[`, nie licząc na tolerancję demona.
+        filters = quote(json.dumps({"label": [f"{_LABEL_MANAGED}=1"]}), safe="")
         try:
             raw = self._request("GET", f"/containers/json?filters={filters}", None)
         except _DockerApiError as exc:
