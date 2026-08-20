@@ -920,7 +920,9 @@ def build_file_catalog(
         `action='read'` — podaj plik `name` (z katalogu roboczego) do wglądu; pojawi się jako
         materiał zaraz po tym wyniku, w tej samej turze.
         `action='edit'` — podmień treść notatki `name` (IDENTYFIKATOR notatki, nie nazwa pliku)
-        na `content`; `reason` to powód zmiany.
+        na `content`; `reason` to powód zmiany. W `content` podajesz SAMĄ TREŚĆ — bez nagłówka
+        `---` i bez pól YAML. Metadane są poza zasięgiem `edit`; jeśli notatkę wcześniej
+        odczytałeś w całości, oddaj tylko część spod nagłówka.
         """
         return _operacja(action, name, content, reason)
 
@@ -935,7 +937,9 @@ def build_file_catalog(
         `action='read'` — podaj plik `name` (z katalogu roboczego) do wglądu; pojawi się jako
         materiał zaraz po tym wyniku, w tej samej turze.
         `action='edit'` — podmień treść notatki `name` (IDENTYFIKATOR notatki, nie nazwa pliku)
-        na `content`; `reason` to powód zmiany.
+        na `content`; `reason` to powód zmiany. W `content` podajesz SAMĄ TREŚĆ — bez nagłówka
+        `---` i bez pól YAML. Metadane są poza zasięgiem `edit`; jeśli notatkę wcześniej
+        odczytałeś w całości, oddaj tylko część spod nagłówka.
         `action='delete'` — usuń notatkę `name`; `reason` to powód.
         """
         return _operacja(action, name, content, reason)
