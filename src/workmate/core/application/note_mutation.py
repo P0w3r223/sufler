@@ -129,6 +129,7 @@ class NoteMutationService:
         # a drzwi obsługują tury równolegle.
         wersja, note = self._require_mutable(note_id)
         reject_dangerous_content(new_body)
+        odrzuc_wlasny_frontmatter(new_body)
         request = MutationRequest(
             kind="edit",
             note_id=note_id,
@@ -297,6 +298,42 @@ class NoteMutationService:
         """
         material = f"{request.requester}|{request.kind}|{request.note_id}|{request.new_body}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def odrzuc_wlasny_frontmatter(new_body: str) -> None:
+    """Podnieś ``WriteError``, gdy treść niesie WŁASNY frontmatter — zamiast dołożyć go drugi raz.
+
+    ``edit_note`` przyjmuje SAMĄ TREŚĆ; metadane zostają nietknięte i pisarz dokłada je sam
+    (``render_note``). Model, który notatkę najpierw ODCZYTAŁ — przez `File(read)` albo przez
+    `cat` po włączeniu powłoki — dostaje plik RAZEM z nagłówkiem, więc oddanie całości z powrotem
+    jest zachowaniem naturalnym, nie egzotycznym.
+
+    Bez tej bramki kończyło się to notatką z frontmatterem DWA RAZY: raz jako tekst na początku
+    treści, raz dołożonym przez pisarza. Odtworzone na produkcji przy pierwszej realnej mutacji
+    (2026-08-20): sędzia orzekł ``allow``, audyt zapisał ``status: ok``, człowiek dostał
+    „Zrobione ✅" — a plik był uszkodzony, cicho i trwale. Kolejna edycja dokładałaby trzeci.
+
+    ODMOWA, nie ciche obcięcie. Obcinanie musiałoby zgadywać, czy blok na początku jest
+    nagłówkiem, czy treścią (poziomą linią, blokiem kodu, cytatem), a pomyłka kasowałaby
+    użytkownikowi tekst bez śladu. Zdanie z komunikatu model czyta w tej samej turze i poprawia
+    wywołanie; obcięcia nie zauważyłby nikt.
+    """
+    tresc = new_body.lstrip()
+    if not tresc.startswith("---"):
+        return
+    linie = tresc.splitlines()
+    if not linie or linie[0].strip() != "---":
+        return
+    # Nagłówek to blok DOMKNIĘTY drugim `---`. Sama pierwsza linia to w markdownie pozioma
+    # kreska i nią ma zostać — inaczej odmawialibyśmy treści całkiem poprawnej.
+    if not any(l.strip() == "---" for l in linie[1:]):
+        return
+    raise WriteError(
+        "`content` zaczyna się od frontmatteru (`---`), a `edit` przyjmuje SAMĄ TREŚĆ — "
+        "metadane (tytuł, projekt, data, uczestnicy) są poza zasięgiem tej operacji i pisarz "
+        "dokłada je sam. Przekazanie całego pliku dałoby notatkę z nagłówkiem dwa razy. "
+        "Ponów z treścią spod nagłówka, bez linii `---` i bez pól YAML."
+    )
 
 
 def _jest_deterministyczna(note_id: str) -> bool:

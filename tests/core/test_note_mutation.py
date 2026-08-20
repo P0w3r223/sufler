@@ -131,6 +131,51 @@ def test_allowed_edit_replaces_the_body_and_keeps_a_snapshot():
     assert snapshots.saved == [(_note().id, "treść", "Ustalenia")]  # PEŁNA kopia sprzed zmiany
 
 
+def test_tresc_z_wlasnym_frontmatterem_jest_odmowa_a_nie_drugim_naglowkiem():
+    """Model, który notatkę wcześniej ODCZYTAŁ, oddaje ją z nagłówkiem — i to jest normalne.
+
+    `File(read)` i `cat` (po włączeniu powłoki) podają plik W CAŁOŚCI, więc zwrócenie całości
+    z powrotem do `edit` jest zachowaniem naturalnym, nie egzotycznym. Bez bramki kończyło się
+    notatką z frontmatterem DWA RAZY: raz jako tekst na początku treści, raz dołożonym przez
+    pisarza. Odtworzone na produkcji przy pierwszej realnej mutacji (2026-08-20) — sędzia orzekł
+    `allow`, audyt `status: ok`, człowiek dostał „Zrobione ✅", a plik był uszkodzony cicho.
+
+    Odmowa MUSI paść przed migawką i przed sędzią: uszkodzona treść nie ma być ani zapisana,
+    ani skopiowana, ani oceniana.
+    """
+    service, writer, snapshots, judge, _l = _service()
+    caly_plik = (
+        "---\n"
+        "title: Ustalenia\n"
+        "project: mpwik\n"
+        "---\n"
+        "\n"
+        "treść\n"
+        "\n"
+        "dopisek"
+    )
+
+    with pytest.raises(WriteError, match="SAMĄ TREŚĆ"):
+        service.edit_note(_note().id, caly_plik, requester="Anna", intent="dopisek")
+
+    assert writer.overwritten == []
+    assert snapshots.saved == []
+    assert judge.seen == []
+
+
+def test_tresc_zaczynajaca_sie_od_poziomej_kreski_przechodzi():
+    """`---` na początku bez DOMKNIĘCIA to w markdownie pozioma linia, nie nagłówek.
+
+    Bramka szersza o ten przypadek odmawiałaby treści całkiem poprawnej — a odmowa fałszywa
+    uczy operatora obchodzić bramkę, nie ufać jej.
+    """
+    service, writer, _s, _j, _l = _service()
+
+    service.edit_note(_note().id, "---\n\nrozdział drugi", requester="Anna", intent="x")
+
+    assert writer.overwritten[0].body == "---\n\nrozdział drugi"
+
+
 def test_snapshot_failure_refuses_the_mutation():
     """Migawka jest jedyną odwracalnością, jaka została po zniesieniu create-only.
 
