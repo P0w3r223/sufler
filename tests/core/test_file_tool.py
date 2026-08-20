@@ -742,3 +742,18 @@ def test_odmowa_nieznanej_akcji_nie_podpowiada_delete_gdy_go_nie_ma():
 
     assert wynik["allowed"] == ["read", "edit"]
     assert "delete" not in wynik["hint"]
+
+
+def test_opis_edycji_mowi_modelowi_ze_content_to_SAMA_tresc():
+    """Ostrzeżenie ma stać w OPISIE narzędzia, bo docstringa `File` nikt nie czyta.
+
+    Pierwsza redakcja tego zdania (poprawka #69) trafiła do docstringów `file`/`file_bez_kasowania`
+    — a opis widziany przez model powstaje z `_FILE_OPIS`/`_FILE_EDIT` i idzie jawnym argumentem
+    `ToolSpec("File", opis, …)`; w MCP `File` nie jest w ogóle rejestrowany. Zdanie było więc
+    martwe: zostawała sama twarda odmowa, czyli runda narzędziowa spalona na czymś, przed czym
+    dało się uprzedzić. Sonda pilnuje MIEJSCA, nie brzmienia.
+    """
+    opis = _opis(shell=True, mutacje=True)
+
+    assert "SAMA TREŚĆ" in opis
+    assert "pól YAML" in opis

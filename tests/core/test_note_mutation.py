@@ -167,6 +167,43 @@ def test_tresc_zaczynajaca_sie_od_poziomej_kreski_przechodzi():
     assert writer.overwritten[0].body == "---\n\nrozdział drugi"
 
 
+def test_dwie_poziome_kreski_wokol_akapitu_to_nadal_tresc_a_nie_naglowek():
+    """Odmowa fałszywa była tu gorsza niż brak bramki, bo jej komunikat był NIEWYKONALNY.
+
+    Pierwsza redakcja pytała tylko, czy DALEJ stoi druga linia `---` — a akapit obramowany
+    dwiema poziomymi kreskami spełnia ten warunek, będąc treścią całkowicie poprawną. Model
+    dostawał wtedy polecenie „usuń pola YAML", których w treści nie ma, więc jedynym sposobem
+    na jego spełnienie było skasowanie tekstu człowieka.
+
+    Bramka pyta więc o POLE ze schematu `NoteMetadata`, nie o kreski.
+    """
+    service, writer, _s, _j, _l = _service()
+    akapit = "---\n\nrozdział drugi\n\n---\n\nkoniec"
+
+    service.edit_note(_note().id, akapit, requester="Anna", intent="x")
+
+    assert writer.overwritten[0].body == akapit
+
+
+def test_frontmatter_po_BOM_tez_jest_odmowa():
+    """BOM nie jest białym znakiem dla `lstrip()` bez argumentu — a plik z Windows zaczyna się
+    właśnie od niego.
+
+    Treść przechodziła wtedy bramkę i dawała dokładnie tę korupcję, przed którą bramka stoi:
+    znak niewidoczny w żadnym podglądzie decydował o tym, czy notatka wyjdzie cała, czy z
+    nagłówkiem dwa razy.
+    """
+    service, writer, snapshots, judge, _l = _service()
+    z_bom = "\ufeff---\ntitle: Ustalenia\nproject: mpwik\n---\n\ntreść"
+
+    with pytest.raises(WriteError, match="SAMĄ TREŚĆ"):
+        service.edit_note(_note().id, z_bom, requester="Anna", intent="x")
+
+    assert writer.overwritten == []
+    assert snapshots.saved == []
+    assert judge.seen == []
+
+
 def test_snapshot_failure_refuses_the_mutation():
     """Migawka jest jedyną odwracalnością, jaka została po zniesieniu create-only.
 
