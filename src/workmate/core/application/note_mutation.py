@@ -127,7 +127,7 @@ class NoteMutationService:
         # ``wersja`` jest starsza LUB równa treści ``note`` — patrz ``_require_mutable``. To ona
         # domyka okno między odczytem a zapisem: między nimi leży wywołanie sieciowe sędziego,
         # a drzwi obsługują tury równolegle.
-        wersja, note = self._require_mutable(note_id)
+        wersja, note, migawka = self._require_mutable(note_id)
         reject_dangerous_content(new_body)
         odrzuc_wlasny_frontmatter(new_body)
         request = MutationRequest(
@@ -141,7 +141,7 @@ class NoteMutationService:
             trust_class=trust_class,
             tainted=tainted,
         )
-        outcome = self._decide(request, note, verdict_sink)
+        outcome = self._decide(request, migawka, verdict_sink)
         if not outcome.applied:
             raise MutationRefused(outcome)
         zmieniona = note.model_copy(update={"body": new_body.strip()})
@@ -169,7 +169,7 @@ class NoteMutationService:
         # Kontrola wersji jak przy edycji — okno jest tu nawet szersze, bo przy werdykcie
         # „confirm" między odczytem a usunięciem leży CAŁA tura, nie samo wywołanie sędziego.
         # Bez niej równoległa edycja z tego okna znikała BEZ MIGAWKI.
-        wersja, note = self._require_mutable(note_id)
+        wersja, note, migawka = self._require_mutable(note_id)
         request = MutationRequest(
             kind="delete",
             note_id=note_id,
@@ -180,28 +180,31 @@ class NoteMutationService:
             trust_class=trust_class,
             tainted=tainted,
         )
-        outcome = self._decide(request, note, verdict_sink)
+        outcome = self._decide(request, migawka, verdict_sink)
         if not outcome.applied:
             raise MutationRefused(outcome)
         self._writer.delete(note_id, expected_sha256=wersja)
         return outcome
 
-    def _require_mutable(self, note_id: str) -> tuple[str, Note]:
-        """Zwróć ``(znacznik wersji, notatka)``, jeśli wolno ją ruszać; inaczej ``WriteError``.
+    def _require_mutable(self, note_id: str) -> tuple[str, Note, str]:
+        """Zwróć ``(znacznik wersji, notatka, treść pliku)``, jeśli wolno ją ruszać; inaczej
+        ``WriteError``.
 
-        **Skrót bierzemy PRZED treścią i to jest cała treść tej kolejności.** Oba odczyty idą
-        osobno do systemu plików, więc dzieli je okno, w które może wejść równoległa tura. Przy
-        kolejności odwrotnej (treść, potem skrót) zapis w tym oknie dawał skrót NOWEJ wersji
-        i migawkę STAREJ: kontrola wersji przepuszczała operację, a wersja pośrednia znikała bez
-        kopii — dokładnie stan, który port ``NotesWriter.overwrite`` nazywa niedopuszczalnym.
+        **Skrót i materiał migawki pochodzą z JEDNEGO odczytu bajtów** (``content_with_digest``)
+        i to jest cała treść tej kolejności. Przy dwóch osobnych odczytach dzieli je okno, w które
+        może wejść równoległa tura — a wtedy skrót opisuje inną wersję pliku niż ta, którą
+        zabezpiecza kopia: kontrola wersji przepuszcza operację, bo skrót się zgadza, a migawka
+        trzyma treść, której już nie ma. Wcześniejsza redakcja radziła sobie z tym kolejnością
+        (skrót przed treścią), co gwarantowało tylko tyle, że migawka jest NIE STARSZA niż skrót;
+        jeden odczyt gwarantuje, że jest DOKŁADNIE tą wersją.
 
-        Przy tej kolejności migawka jest zawsze NIE STARSZA niż skrót, więc zgodność skrótu przy
-        zapisie dowodzi, że plik nie zmienił się od chwili skrótu — a zatem migawka trzyma to,
-        co za moment zostanie nadpisane albo usunięte. Zapis w oknie daje niezgodność skrótu
-        i odmowę zapisu, czyli kierunek awarii, o który tu chodzi: nic nie ginie.
+        Materiałem migawki są BAJTY PLIKU, nie render z modelu — patrz port ``NoteSnapshots``.
+        Notatka z ``self._notes`` służy dalej do oceny zmiany (sędzia dostaje ``current_body``)
+        i do zapisu; do zabezpieczenia — nie, bo model gubi to, czego nie zna.
 
-        Domknięcie do JEDNEGO odczytu bajtów (skrót i materiał migawki z tej samej treści)
-        wymagałoby nowego czasownika portu; przy tej kolejności nie jest potrzebne.
+        Pusty skrót znaczy „nie ma czego zabezpieczyć" (plik zniknął w oknie, jest nieczytelny
+        albo nie jest poprawnym UTF-8) i jest ODMOWĄ: mutacja bez kopii to dokładnie ten stan,
+        którego ta warstwa ma nie dopuszczać.
         """
         if _jest_deterministyczna(note_id):
             raise WriteError(
@@ -209,16 +212,20 @@ class NoteMutationService:
                 "— jej niezmienność jest gwarancją, że powtórne przetworzenie źródła niczego "
                 "nie nadpisze"
             )
-        wersja = self._writer.digest(note_id)
+        tresc_pliku, wersja = self._writer.content_with_digest(note_id)
         note = self._notes.get(note_id)
         if note is None:
             raise WriteError(f"notatka nie istnieje: {note_id}")
-        return wersja, note
+        if not wersja:
+            raise WriteError(
+                f"nie udało się odczytać pliku notatki {note_id} — nie ruszam jej bez kopii"
+            )
+        return wersja, note, tresc_pliku
 
     def _decide(
         self,
         request: MutationRequest,
-        note: Note,
+        snapshot_material: str,
         verdict_sink: VerdictSink | None = None,
     ) -> MutationOutcome:
         """Migawka, potem sędzia. Awaria któregokolwiek kroku = odmowa.
@@ -238,7 +245,7 @@ class NoteMutationService:
         w której dziennik ma wyjaśnić awarię infrastruktury, a nie decyzję o treści.
         """
         try:
-            location = self._snapshots.save(note)
+            location = self._snapshots.save(request.note_id, snapshot_material)
         except Exception as exc:
             return MutationOutcome(False, refusal(f"nie udało się zabezpieczyć kopii: {exc}"))
         try:

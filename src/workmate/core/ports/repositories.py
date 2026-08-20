@@ -68,6 +68,25 @@ class NotesWriter(Protocol):
         """
         ...
 
+    def content_with_digest(self, note_id: str) -> tuple[str, str]:
+        """Zwróć ``(treść pliku, skrót)`` z JEDNEGO odczytu bajtów; ``("", "")``, gdy się nie da.
+
+        Istnieje dla migawki i to jest cała jego treść. Migawka ma być KOPIĄ pliku, a nie
+        renderem z modelu: ``NoteMetadata`` ignoruje pola spoza schematu, więc `status:` czy
+        `source_url:` dopisane ręcznie znikały z kopii bez śladu — przy ``delete``, gdzie migawka
+        jest jedynym odzyskiem między nocnymi kopiami, znaczyło to utratę nieodwracalną.
+
+        Jeden odczyt, nie dwa, bo skrót i materiał kopii MUSZĄ pochodzić z tej samej chwili.
+        Przy dwóch odczytach między nimi mieści się równoległa tura: skrót opisywałby wtedy inną
+        wersję pliku niż ta, którą zabezpiecza kopia. Tego domknięcia nie dało się zrobić bez
+        nowego czasownika portu — stąd ten czasownik.
+
+        ``("", "")`` znaczy „nie ma czego zabezpieczyć" (notatki brak albo bajty nie są poprawnym
+        UTF-8) i jest dla wołającego ODMOWĄ, nie zachętą do pracy na domyśle. Błąd I/O jest
+        głośny jak w ``digest`` — cisza w tym miejscu byłaby zgodą na mutację bez kopii.
+        """
+        ...
+
     def delete(self, note_id: str, *, expected_sha256: str) -> None:
         """Usuń POJEDYNCZĄ notatkę (ADR 0065). Nigdy katalog, nigdy wzorzec, nigdy rekurencyjnie.
 

@@ -13,23 +13,24 @@ mieszka na tym samym wolumenie co notatki.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
-
-if TYPE_CHECKING:
-    from workmate.core.domain.models import Note
+from typing import Protocol
 
 
 class NoteSnapshots(Protocol):
     """Zapis kopii treści notatki przed jej zmianą albo usunięciem."""
 
-    def save(self, note: Note) -> str:
-        """Zapisz migawkę CAŁEJ notatki i zwróć jej lokalizację (do komunikatu i do audytu).
+    def save(self, note_id: str, content: str) -> str:
+        """Zapisz migawkę PLIKU notatki i zwróć jej lokalizację (do komunikatu i do audytu).
 
-        Całej, nie samej treści — i to jest istotne przy usuwaniu. Wartość notatki w tym
-        schemacie siedzi w dużej mierze we frontmatterze: tytuł, uczestnicy, DECYZJE, zadania,
-        pytania otwarte. Kopia samych akapitów pozwoliłaby odtworzyć prozę i zgubić ustalenia,
-        czyli dokładnie to, po co ta baza istnieje — a odwracalność ``delete`` stoi wyłącznie
-        na tej kopii.
+        ``content`` to bajty pliku z dysku, nie render z modelu — i to jest różnica między
+        kopią a rekonstrukcją. Wartość notatki w tym schemacie siedzi w dużej mierze we
+        frontmatterze: tytuł, uczestnicy, DECYZJE, zadania, pytania otwarte. Render odtwarzał
+        wyłącznie pola ZNANE schematowi ``NoteMetadata`` (pydantic z ``extra="ignore"``), więc
+        wszystko dopisane ręcznie — `status:`, `source_url:`, komentarz YAML — ginęło w kopii po
+        cichu. Przy ``edit`` ratowała jeszcze nocna kopia wolumenu; przy ``delete`` migawka jest
+        JEDYNYM odzyskiem, więc strata była nieodwracalna.
+
+        Kopia bajtów nie ma też jak rozjechać się z formatem zapisu, bo niczego nie formatuje.
 
         Podnosi ``WriteError``, gdy kopia się nie uda — wołający MUSI wtedy odmówić mutacji.
         """
