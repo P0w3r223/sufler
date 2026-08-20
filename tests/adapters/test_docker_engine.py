@@ -15,6 +15,8 @@ import pytest
 
 pytest.importorskip("fcntl", reason="silnik Docker jest POSIX-only (gniazdo unix docker.sock)")
 
+from urllib.parse import unquote
+
 from workmate.adapters.outbound import docker_engine  # noqa: E402
 from workmate.adapters.outbound.docker_engine import (  # noqa: E402
     DockerHttpEngine,
@@ -22,7 +24,6 @@ from workmate.adapters.outbound.docker_engine import (  # noqa: E402
 )
 from workmate.core.errors import ExecManagerError  # noqa: E402
 from workmate.core.ports.exec_manager import ContainerSpec  # noqa: E402
-from urllib.parse import unquote
 
 _SCOPE = f"teams-graph/{'a' * 32}"
 

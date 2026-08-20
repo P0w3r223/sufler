@@ -22,9 +22,9 @@ import socket
 import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from workmate.core.errors import ExecManagerError
-from urllib.parse import quote
 
 if TYPE_CHECKING:
     from workmate.core.ports.exec_manager import ContainerSpec, RunningExecutor
