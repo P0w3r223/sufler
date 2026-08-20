@@ -72,6 +72,10 @@ _SUFIT_BAJTOW = 2048
 # przez co realna suma 7628 B stała ponad sufitem, a bramka tego nie widziała.
 #
 # Zapas to ~135 B, czyli JEDNO ZDANIE — i to jest komunikat tej liczby, a nie jej wada.
+# Pomiar 2026-08-20 (po dopisaniu do `File(edit)` zdania o `content`): 7716 B z powłoką,
+# 7971 B bez niej, czyli zapas stopniał do ~29 B. Zdanie zostało wcześniej ODCHUDZONE z 201 B
+# do 104 B właśnie po to, żeby zmieścić się w budżecie zamiast podnosić próg — pierwsza
+# redakcja kładła tę bramkę (8066 B) i tak miała zostać przeczytana: jako rachunek, nie usterka.
 # Najmniejsze narzędzie agenta ma 68 B (``ListProjects``), najmniejsze skonsolidowane 782 B
 # (``Project``), więc kolejne narzędzie musi zostać opłacone CIĘCIEM, a nie podniesieniem
 # progu. Podniesienie sufitu jest dopuszczalne, ale ma być decyzją zapisaną w ADR — dokładnie

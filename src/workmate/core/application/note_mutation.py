@@ -301,7 +301,8 @@ class NoteMutationService:
 
 
 def odrzuc_wlasny_frontmatter(new_body: str) -> None:
-    """Podnieś ``WriteError``, gdy treść niesie WŁASNY frontmatter — zamiast dołożyć go drugi raz.
+    """Podnieś ``WriteError``, gdy treść niesie WŁASNY nagłówek notatki — zamiast dołożyć go drugi
+    raz.
 
     ``edit_note`` przyjmuje SAMĄ TREŚĆ; metadane zostają nietknięte i pisarz dokłada je sam
     (``render_note``). Model, który notatkę najpierw ODCZYTAŁ — przez `File(read)` albo przez
@@ -317,22 +318,50 @@ def odrzuc_wlasny_frontmatter(new_body: str) -> None:
     nagłówkiem, czy treścią (poziomą linią, blokiem kodu, cytatem), a pomyłka kasowałaby
     użytkownikowi tekst bez śladu. Zdanie z komunikatu model czyta w tej samej turze i poprawia
     wywołanie; obcięcia nie zauważyłby nikt.
+
+    **Rozpoznajemy NASZ nagłówek, nie „coś między kreskami" — i to jest cała ostrożność tej
+    bramki.** Pierwsza redakcja pytała tylko, czy dalej stoi druga linia ``---``; tak szeroki
+    warunek odmawiał treści całkiem poprawnej (dwie poziome kreski wokół akapitu), a komunikat
+    kazał wtedy usunąć pola YAML, których w treści nie ma — polecenie niewykonalne inaczej niż
+    przez skasowanie tekstu człowieka. Pytamy więc o POLE ze schematu ``NoteMetadata``: korupcja,
+    o którą chodzi, to zawsze oddany z powrotem plik pisarza, a ten nosi ``title``/``project``.
     """
-    tresc = new_body.lstrip()
-    if not tresc.startswith("---"):
-        return
-    linie = tresc.splitlines()
+    # BOM nie jest białym znakiem dla ``lstrip()`` bez argumentu, a plik zapisany pod Windows
+    # zaczyna się właśnie od niego — treść przechodziła wtedy bramkę i dawała dokładnie tę
+    # korupcję, przed którą ta bramka stoi.
+    linie = new_body.lstrip("\ufeff \t\r\n").splitlines()
     if not linie or linie[0].strip() != "---":
         return
-    # Nagłówek to blok DOMKNIĘTY drugim `---`. Sama pierwsza linia to w markdownie pozioma
-    # kreska i nią ma zostać — inaczej odmawialibyśmy treści całkiem poprawnej.
-    if not any(linia.strip() == "---" for linia in linie[1:]):
+    domkniecie = next(
+        (nr for nr, linia in enumerate(linie[1:], start=1) if linia.strip() == "---"), None
+    )
+    # Sama pierwsza linia to w markdownie pozioma kreska i nią ma zostać.
+    if domkniecie is None:
+        return
+    if not _niesie_pole_naglowka(linie[1:domkniecie]):
         return
     raise WriteError(
         "`content` zaczyna się od frontmatteru (`---`), a `edit` przyjmuje SAMĄ TREŚĆ — "
         "metadane (tytuł, projekt, data, uczestnicy) są poza zasięgiem tej operacji i pisarz "
         "dokłada je sam. Przekazanie całego pliku dałoby notatkę z nagłówkiem dwa razy. "
         "Ponów z treścią spod nagłówka, bez linii `---` i bez pól YAML."
+    )
+
+
+def _niesie_pole_naglowka(blok: list[str]) -> bool:
+    """Czy blok między znacznikami niesie POLE nagłówka notatki — czy prozę między kreskami.
+
+    Zbiór pól bierzemy z ``NoteMetadata``, a nie z listy przepisanej tutaj: nagłówek składa
+    ``render_note`` z tego samego schematu, więc dopisanie pola w modelu ma domykać bramkę samo.
+    Lista przepisana obok rozjechałaby się przy pierwszej takiej zmianie — i to po cichu, bo
+    rozjazd widać dopiero na uszkodzonej notatce.
+    """
+    from workmate.core.domain.models import NoteMetadata
+
+    pola = set(NoteMetadata.model_fields)
+    return any(
+        separator and klucz.strip() in pola
+        for klucz, separator, _ in (linia.partition(":") for linia in blok)
     )
 
 

@@ -666,6 +666,8 @@ _FILE_EDIT = """
 Akcja `edit` — podmień TREŚĆ istniejącej notatki w bazie wiedzy. `name` to IDENTYFIKATOR
 NOTATKI (`<firma>/<projekt>/<plik>`, {zrodlo}), a `reason` to jedno zdanie: po co ta zmiana.
 
+`content` to SAMA TREŚĆ — bez `---` i pól YAML; z odczytanego pliku oddaj część spod nagłówka.
+
 Zanim zmienisz — przeczytaj notatkę i pokaż człowiekowi, co konkretnie ma się zmienić.
 Zmianę ocenia niezależny sędzia i może poprosić o potwierdzenie: wtedy powiedz człowiekowi,
 co się stanie, poczekaj na jego odpowiedź i dopiero wtedy poproś ponownie o to samo.
@@ -920,9 +922,7 @@ def build_file_catalog(
         `action='read'` — podaj plik `name` (z katalogu roboczego) do wglądu; pojawi się jako
         materiał zaraz po tym wyniku, w tej samej turze.
         `action='edit'` — podmień treść notatki `name` (IDENTYFIKATOR notatki, nie nazwa pliku)
-        na `content`; `reason` to powód zmiany. W `content` podajesz SAMĄ TREŚĆ — bez nagłówka
-        `---` i bez pól YAML. Metadane są poza zasięgiem `edit`; jeśli notatkę wcześniej
-        odczytałeś w całości, oddaj tylko część spod nagłówka.
+        na `content`; `reason` to powód zmiany.
         """
         return _operacja(action, name, content, reason)
 
@@ -937,9 +937,7 @@ def build_file_catalog(
         `action='read'` — podaj plik `name` (z katalogu roboczego) do wglądu; pojawi się jako
         materiał zaraz po tym wyniku, w tej samej turze.
         `action='edit'` — podmień treść notatki `name` (IDENTYFIKATOR notatki, nie nazwa pliku)
-        na `content`; `reason` to powód zmiany. W `content` podajesz SAMĄ TREŚĆ — bez nagłówka
-        `---` i bez pól YAML. Metadane są poza zasięgiem `edit`; jeśli notatkę wcześniej
-        odczytałeś w całości, oddaj tylko część spod nagłówka.
+        na `content`; `reason` to powód zmiany.
         `action='delete'` — usuń notatkę `name`; `reason` to powód.
         """
         return _operacja(action, name, content, reason)
@@ -952,6 +950,11 @@ def build_file_catalog(
     # ma, i tracił rundę narzędziową na odmowę. Do ADR 0068 (runda 4) wariantów były dwa i
     # dokładnie tak zachowywało się `delete` przy `MUTATION=true` + `DELETE=false`.
     # Przy powłoce ten sam problem rozwiązano tak samo: narzędzia po prostu nie ma.
+    # UWAGA: opis `File` widziany przez model to TEN napis, nie docstring funkcji niżej.
+    # `ToolSpec("File", opis, …)` podaje go jawnie, a adapter bierze `spec.description`;
+    # `File` nie jest też rejestrowany w MCP (jedyny wołający to `agent_wiring`), więc
+    # FastMCP nigdy nie sięgnie po docstring. Zdanie dopisane w docstringu byłoby martwe —
+    # tak właśnie przepadła pierwsza redakcja ostrzeżenia o `content` (poprawka #69).
     opis = _FILE_OPIS + (_FILE_TEKST_POWLOKA if shell_available else _FILE_TEKST_NARZEDZIA)
     if mutations is None:
         return [ToolSpec("File", opis, file_tylko_odczyt)]
