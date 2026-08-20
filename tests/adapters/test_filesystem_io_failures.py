@@ -245,7 +245,7 @@ def test_interrupted_snapshot_is_loud_and_leaves_no_leftover(
     _urwij_zapis(monkeypatch)
 
     with pytest.raises(WriteError, match="nie udało się zapisać migawki"):
-        snapshots.save(_note("mpwik/scada-integration/2026-08-17-przeglad"))
+        snapshots.save("mpwik/scada-integration/2026-08-17-przeglad", "treść pliku")
 
     assert list((tmp_path / "snapshots").rglob("*.tmp")) == []
     assert list((tmp_path / "snapshots").rglob("*.md")) == []

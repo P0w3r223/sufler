@@ -64,6 +64,23 @@ class MarkdownNotesWriter:
         raw = _read_bytes_or_none(path)
         return hashlib.sha256(raw).hexdigest() if raw is not None else ""
 
+    def content_with_digest(self, note_id: str) -> tuple[str, str]:
+        """Treść pliku i jej skrót z jednego odczytu bajtów (patrz port)."""
+        path = _resolve_within(self._notes_dir, f"{note_id}.md")
+        if not path.is_file():
+            return "", ""
+        raw = _read_bytes_or_none(path)
+        if raw is None:
+            return "", ""
+        try:
+            tresc = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # Fail-closed i GŁOŚNO w dzienniku: plik jest, ale nie jest tym, za co się podaje.
+            # Cicha zgoda oznaczałaby tu mutację notatki, której kopii nie umiemy zapisać.
+            logger.warning("Notatka %s nie jest poprawnym UTF-8: %s", path, exc)
+            return "", ""
+        return tresc, hashlib.sha256(raw).hexdigest()
+
     def overwrite(self, note: Note, *, expected_sha256: str) -> None:
         """Podmień treść ISTNIEJĄCEJ notatki atomowo (ADR 0065) — nigdy w miejscu.
 

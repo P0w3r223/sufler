@@ -6,6 +6,7 @@ ODMAWIAJĄ, więc atrapa systemu plików sprawdzałaby wyłącznie własną atra
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -77,7 +78,7 @@ def test_snapshot_lands_outside_the_notes_tree_and_keeps_the_content(tmp_path):
     wracałyby jako wyniki wyszukiwania i mnożyły odpowiedzi."""
     snapshots = FilesystemNoteSnapshots(tmp_path / "snapshots")
 
-    gdzie = snapshots.save(_note("stara treść"))
+    gdzie = snapshots.save(_note().id, "---\ntitle: Ustalenia\n---\n\nstara treść\n")
 
     assert "snapshots" in gdzie
     assert (tmp_path / "snapshots").exists()
@@ -91,7 +92,7 @@ def test_snapshot_flattens_the_note_id_into_one_path_segment(tmp_path):
     identyfikatorze wyprowadziłby zapis poza katalog kopii."""
     snapshots = FilesystemNoteSnapshots(tmp_path / "snapshots")
 
-    gdzie = snapshots.save(Note(id="../../ucieczka/notatka", metadata=_META, body="treść"))
+    gdzie = snapshots.save("../../ucieczka/notatka", "treść")
 
     from pathlib import Path
 
@@ -106,7 +107,7 @@ def test_snapshot_failure_is_loud(tmp_path):
     snapshots = FilesystemNoteSnapshots(plik_zamiast_katalogu)
 
     with pytest.raises(WriteError):
-        snapshots.save(_note())
+        snapshots.save(_note().id, "treść")
 
 
 def test_confirmation_expires_with_time():
@@ -184,28 +185,60 @@ def test_overwrite_refuses_when_the_note_changed_since_it_was_read(tmp_path):
     )
 
 
-def test_snapshot_keeps_the_metadata_not_only_the_body(tmp_path):
-    """Wartość notatki siedzi w dużej mierze we frontmatterze: decyzje, zadania, uczestnicy.
+def test_snapshot_is_a_byte_copy_of_the_file_including_fields_outside_the_schema(tmp_path):
+    """Migawka ma być KOPIĄ PLIKU, nie renderem z modelu — i to jest cała ta poprawka.
 
-    Kopia samych akapitów pozwoliłaby po skasowaniu odtworzyć prozę i zgubić USTALENIA — czyli
-    to, po co ta baza w ogóle istnieje, a na czym stoi cała odwracalność `delete`.
+    Poprzednia redakcja składała kopię przez ``render_note``, czyli z ``NoteMetadata``, a ten
+    jest pydantikiem z domyślnym ``extra="ignore"``. Pola dopisane ręcznie do frontmatteru
+    (``status:``, ``source_url:``) i komentarze YAML **znikały z kopii bez śladu**. Przy ``edit``
+    ratowała jeszcze nocna kopia wolumenu; przy ``delete`` migawka jest JEDYNYM odzyskiem między
+    kopiami, więc strata była nieodwracalna — a wyglądała jak udane zabezpieczenie.
+
+    Sonda idzie CAŁĄ ścieżką (plik → ``content_with_digest`` → migawka), bo dokładnie na jej
+    styku ginęły te pola: adapter migawek nigdy ich nie widział.
     """
     from pathlib import Path as _Path
 
-    snapshots = FilesystemNoteSnapshots(tmp_path / "snapshots")
-    notatka = Note(
-        id="biap/mpwik/2026-08-01-ustalenia",
-        metadata=NoteMetadata(
-            title="Ustalenia", project="mpwik", date="2026-08-01", decisions=["zamawiamy pompę"]
-        ),
-        body="treść",
+    plik = tmp_path / "biap" / "mpwik" / "2026-08-01-ustalenia.md"
+    plik.parent.mkdir(parents=True)
+    oryginal = (
+        "---\n"
+        "# uzupełnione ręcznie 2026-08-19\n"
+        "title: Ustalenia\n"
+        "project: mpwik\n"
+        "date: 2026-08-01\n"
+        "status: do-weryfikacji\n"
+        "source_url: https://przyklad/12\n"
+        "---\n"
+        "\n"
+        "treść\n"
     )
+    plik.write_text(oryginal, encoding="utf-8")
+    writer = MarkdownNotesWriter(tmp_path)
+    snapshots = FilesystemNoteSnapshots(tmp_path / "snapshots")
 
-    gdzie = snapshots.save(notatka)
+    tresc, skrot = writer.content_with_digest(_note().id)
+    gdzie = snapshots.save(_note().id, tresc)
 
-    kopia = _Path(gdzie).read_text(encoding="utf-8")
-    assert "zamawiamy pompę" in kopia  # decyzja przetrwała
-    assert "treść" in kopia
+    assert _Path(gdzie).read_text(encoding="utf-8") == oryginal  # CO DO BAJTU
+    assert skrot == hashlib.sha256(oryginal.encode("utf-8")).hexdigest()
+
+
+def test_content_with_digest_refuses_instead_of_guessing_when_there_is_nothing_to_copy(tmp_path):
+    """Pusty skrót znaczy „nie ma czego zabezpieczyć" i bramka mutacji czyta to jako odmowę.
+
+    Zwracanie samej treści bez skrótu (albo odwrotnie) dawałoby wołającemu wybór między mutacją
+    bez kopii a kopią bez kontroli wersji — dwa stany, których ta warstwa ma nie dopuszczać.
+    """
+    writer = MarkdownNotesWriter(tmp_path)
+
+    assert writer.content_with_digest("biap/mpwik/nie-ma") == ("", "")
+
+    plik = tmp_path / "biap" / "mpwik" / "krzaki.md"
+    plik.parent.mkdir(parents=True)
+    plik.write_bytes(b"---\ntitle: \xff\xfe niepoprawny UTF-8\n---\n")
+
+    assert writer.content_with_digest("biap/mpwik/krzaki") == ("", "")
 
 
 def test_delete_refuses_when_the_note_changed_since_it_was_read(tmp_path):

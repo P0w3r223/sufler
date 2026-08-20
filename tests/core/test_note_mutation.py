@@ -17,6 +17,11 @@ from workmate.core.errors import WriteError
 
 _METADATA = NoteMetadata(title="Ustalenia", project="mpwik", date="2026-08-01")
 
+# PLIK na dysku — nie to samo, co render z modelu, i o tę różnicę tu chodzi. `status:` jest
+# poza schematem ``NoteMetadata``, więc kopia składana z modelu gubiła je po cichu; sondy niżej
+# porównują migawkę z TYM napisem, żeby ta strata nie mogła wrócić niezauważona.
+_PLIK = "---\ntitle: Ustalenia\nproject: mpwik\nstatus: dopisane-ręcznie\n---\n\ntreść\n"
+
 
 def _note(note_id: str = "biap/mpwik/2026-08-01-ustalenia", body: str = "treść") -> Note:
     return Note(id=note_id, metadata=_METADATA, body=body)
@@ -25,8 +30,8 @@ def _note(note_id: str = "biap/mpwik/2026-08-01-ustalenia", body: str = "treść
 class _FakeNotes:
     def __init__(self, notes: dict[str, Note] | None = None, *, on_get=None) -> None:
         self.notes = notes or {}
-        # Zaczep odpalany PRZED oddaniem treści — odtwarza równoległy zapis, który wchodzi
-        # między dwa odczyty bramki (skrót pliku i treść notatki).
+        # Zaczep odpalany PRZED oddaniem notatki — odtwarza równoległy zapis, który wchodzi
+        # między odczyt PLIKU (skrót + materiał migawki, jedno wywołanie) a odczyt modelu.
         self._on_get = on_get
 
     def all(self) -> list[Note]:
@@ -48,12 +53,17 @@ class _FakeWriter:
         # Znacznik wersji pliku. Podmienialny, żeby dało się odtworzyć wyścig „ktoś zmienił
         # notatkę, gdy sędzia oglądał zmianę" — między odczytem a zapisem leży wywołanie sieciowe.
         self.wersja = "wersja-v0"
+        # Bajty pliku oddawane przez ``content_with_digest`` — materiał migawki.
+        self.plik = _PLIK
 
     def exists(self, note_id: str) -> bool:
         return True
 
     def digest(self, note_id: str) -> str:
         return self.wersja
+
+    def content_with_digest(self, note_id: str) -> tuple[str, str]:
+        return self.plik, self.wersja
 
     def write(self, note: Note) -> None:
         raise AssertionError("mutacji nie wolno używać create-only `write`")
@@ -69,15 +79,15 @@ class _FakeWriter:
 
 class _FakeSnapshots:
     def __init__(self, *, fail: bool = False) -> None:
-        self.saved: list[tuple[str, str, str]] = []
+        self.saved: list[tuple[str, str]] = []
         self._fail = fail
 
-    def save(self, note: Note) -> str:
+    def save(self, note_id: str, content: str) -> str:
         if self._fail:
             raise WriteError("dysk pełny")
-        # Notujemy metadane RAZEM z treścią — sonda ma widzieć, że kopia jest pełna.
-        self.saved.append((note.id, note.body, note.metadata.title))
-        return f"/snap/{note.id}"
+        # Notujemy DOKŁADNIE to, co dostał adapter — sonda ma widzieć bajty pliku, nie model.
+        self.saved.append((note_id, content))
+        return f"/snap/{note_id}"
 
 
 class _FakeJudge:
@@ -128,7 +138,7 @@ def test_allowed_edit_replaces_the_body_and_keeps_a_snapshot():
     service.edit_note(_note().id, "nowa treść", requester="Anna", intent="poprawka literówki")
 
     assert writer.overwritten[0].body == "nowa treść"
-    assert snapshots.saved == [(_note().id, "treść", "Ustalenia")]  # PEŁNA kopia sprzed zmiany
+    assert snapshots.saved == [(_note().id, _PLIK)]  # PEŁNA kopia sprzed zmiany
 
 
 def test_tresc_z_wlasnym_frontmatterem_jest_odmowa_a_nie_drugim_naglowkiem():
@@ -362,7 +372,7 @@ def test_enabled_delete_removes_the_note_after_a_snapshot():
     wynik = service.delete_note(_note().id, requester="Anna", intent="duplikat")
 
     assert writer.deleted == [_note().id]
-    assert snapshots.saved == [(_note().id, "treść", "Ustalenia")]
+    assert snapshots.saved == [(_note().id, _PLIK)]
     assert wynik.snapshot.endswith(_note().id)
 
 
@@ -419,15 +429,16 @@ def test_the_captured_version_is_passed_to_the_writer_not_recomputed():
 
 @pytest.mark.parametrize("operacja", ["edit", "delete"])
 def test_the_version_marker_is_taken_BEFORE_the_content_the_snapshot_is_made_of(operacja: str):
-    """Skrót i treść to DWA osobne odczyty dysku — kolejność rozstrzyga, co ginie w oknie między.
+    """Skrót i materiał migawki idą z JEDNEGO odczytu — a zapis w oknie ma odbić się o wersję.
 
-    Przy kolejności „treść, potem skrót" zapis wchodzący w to okno dawał skrót NOWEJ wersji
-    i migawkę STAREJ: kontrola wersji przepuszczała operację (plik zgadzał się ze skrótem),
-    a wersja pośrednia znikała bez kopii — czyli ten sam stan, który ta kontrola miała zamknąć,
-    tylko w oknie o dwa syscalle zamiast o całe wywołanie sędziego.
+    Historycznie były to dwa osobne odczyty i kolejność rozstrzygała, co ginie: przy „treść,
+    potem skrót" zapis wchodzący między nie dawał skrót NOWEJ wersji i migawkę STAREJ, więc
+    kontrola wersji przepuszczała operację, a wersja pośrednia znikała bez kopii. Od
+    ``content_with_digest`` okna nie ma — obie wartości pochodzą z tych samych bajtów.
 
-    Sonda podmienia wersję pliku DOKŁADNIE przy odczycie treści. Przy poprawnej kolejności do
-    zapisu idzie skrót SPRZED podmiany, więc realny writer operację odbije i nic nie zginie.
+    Sonda pilnuje tego, co zostało: równoległy zapis wchodzący między odczyt PLIKU a odczyt
+    modelu nie może podmienić znacznika idącego do writera. Do zapisu ma iść wersja SPRZED
+    podmiany, żeby realny writer operację odbił i nic nie zginęło.
     """
     writer = _FakeWriter()
     notes = _FakeNotes(
@@ -622,7 +633,7 @@ def test_a_snapshot_is_taken_even_when_the_judge_refuses():
     with pytest.raises(MutationRefused) as exc:
         service.edit_note(_note().id, "nowa", requester="Anna", intent="x")
 
-    assert snapshots.saved == [(_note().id, "treść", "Ustalenia")]
+    assert snapshots.saved == [(_note().id, _PLIK)]
     assert exc.value.outcome.snapshot.endswith(_note().id)
 
 
