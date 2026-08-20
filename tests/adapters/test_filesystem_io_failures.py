@@ -208,7 +208,7 @@ def test_interrupted_overwrite_keeps_the_previous_version_of_the_note(
     _urwij_zapis(monkeypatch)
 
     with pytest.raises(WriteError, match="nie udało się podmienić"):
-        writer.overwrite(_note(note_id, body="druga wersja"), expected_sha256=skrot)
+        writer.overwrite_body(note_id, "druga wersja", expected_sha256=skrot)
 
     assert (tmp_path / f"{note_id}.md").read_bytes() == przed
     assert list(tmp_path.rglob("*.tmp")) == []
@@ -539,7 +539,7 @@ def test_podmiana_nieczytelnej_notatki_nie_melduje_ze_jej_nie_ma(
     _nieczytelny(monkeypatch, "2026-08-17-przeglad.md")
 
     with pytest.raises(WriteError, match="nie udało się odczytać notatki"):
-        writer.overwrite(_note(note.id, body="druga wersja"), expected_sha256=skrot)
+        writer.overwrite_body(note.id, "druga wersja", expected_sha256=skrot)
 
     with pytest.raises(WriteError, match="nie udało się odczytać notatki"):
         writer.delete(note.id, expected_sha256=skrot)

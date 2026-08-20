@@ -45,7 +45,8 @@ class _FakeNotes:
 
 class _FakeWriter:
     def __init__(self) -> None:
-        self.overwritten: list[Note] = []
+        # (id notatki, nowa treść) — pisarz dostaje TREŚĆ, nie model: nagłówek zostaje w pliku.
+        self.overwritten: list[tuple[str, str]] = []
         self.expected: list[str] = []
         self.deleted: list[str] = []
         # Skróty podane PRZY USUWANIU — kontrola wersji dotyczy obu czasowników mutacji.
@@ -68,8 +69,8 @@ class _FakeWriter:
     def write(self, note: Note) -> None:
         raise AssertionError("mutacji nie wolno używać create-only `write`")
 
-    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
-        self.overwritten.append(note)
+    def overwrite_body(self, note_id: str, body: str, *, expected_sha256: str) -> None:
+        self.overwritten.append((note_id, body))
         self.expected.append(expected_sha256)
 
     def delete(self, note_id: str, *, expected_sha256: str) -> None:
@@ -137,7 +138,7 @@ def test_allowed_edit_replaces_the_body_and_keeps_a_snapshot():
 
     service.edit_note(_note().id, "nowa treść", requester="Anna", intent="poprawka literówki")
 
-    assert writer.overwritten[0].body == "nowa treść"
+    assert writer.overwritten[0][1] == "nowa treść"
     assert snapshots.saved == [(_note().id, _PLIK)]  # PEŁNA kopia sprzed zmiany
 
 
@@ -174,7 +175,7 @@ def test_tresc_zaczynajaca_sie_od_poziomej_kreski_przechodzi():
 
     service.edit_note(_note().id, "---\n\nrozdział drugi", requester="Anna", intent="x")
 
-    assert writer.overwritten[0].body == "---\n\nrozdział drugi"
+    assert writer.overwritten[0][1] == "---\n\nrozdział drugi"
 
 
 def test_dwie_poziome_kreski_wokol_akapitu_to_nadal_tresc_a_nie_naglowek():
@@ -192,7 +193,7 @@ def test_dwie_poziome_kreski_wokol_akapitu_to_nadal_tresc_a_nie_naglowek():
 
     service.edit_note(_note().id, akapit, requester="Anna", intent="x")
 
-    assert writer.overwritten[0].body == akapit
+    assert writer.overwritten[0][1] == akapit
 
 
 def test_frontmatter_po_BOM_tez_jest_odmowa():
@@ -263,7 +264,7 @@ def test_confirm_is_announced_first_and_applied_only_from_a_later_turn():
 
     service.edit_note(_note().id, "nowa", requester="Anna", intent="x", turn_token="tura-2")
 
-    assert writer.overwritten[0].body == "nowa"
+    assert writer.overwritten[0][1] == "nowa"
     assert not ledger.keys  # zgoda JEDNORAZOWA — kolejna zmiana zaczyna od zapowiedzi
 
 
@@ -558,7 +559,7 @@ def test_an_ordinary_note_stays_mutable(note_id: str):
 
     service.edit_note(note_id, "nowa treść", requester="Anna", intent="poprawka")
 
-    assert writer.overwritten[0].body == "nowa treść"
+    assert writer.overwritten[0][1] == "nowa treść"
 
 
 def test_the_date_prefix_is_what_the_marker_is_measured_against():
@@ -568,7 +569,7 @@ def test_the_date_prefix_is_what_the_marker_is_measured_against():
 
     service.edit_note(note_id, "nowa", requester="Anna", intent="x")
 
-    assert writer.overwritten[0].body == "nowa"
+    assert writer.overwritten[0][1] == "nowa"
 
 
 @pytest.mark.parametrize(
@@ -597,7 +598,7 @@ def test_a_users_title_containing_the_marker_does_NOT_freeze_the_note(note_id: s
 
     service.edit_note(note_id, "nowa treść", requester="Anna", intent="poprawka")
 
-    assert writer.overwritten[0].body == "nowa treść"
+    assert writer.overwritten[0][1] == "nowa treść"
     assert judge.seen, "zwykła notatka ma dojść do sędziego, a nie odbić się o niezmienność"
 
 
@@ -667,7 +668,7 @@ def test_the_new_body_is_stripped_before_it_is_judged_and_written():
 
     (request,) = judge.seen
     assert request.new_body == "nowa treść"
-    assert writer.overwritten[0].body == "nowa treść"
+    assert writer.overwritten[0][1] == "nowa treść"
 
 
 def test_whitespace_only_difference_reuses_the_same_confirmation():
@@ -681,20 +682,24 @@ def test_whitespace_only_difference_reuses_the_same_confirmation():
         )
     service.edit_note(_note().id, "nowa treść", requester="Anna", intent="x", turn_token="2")
 
-    assert writer.overwritten[0].body == "nowa treść"
+    assert writer.overwritten[0][1] == "nowa treść"
 
 
 def test_metadata_is_untouched_by_an_edit():
     """Metadane są poza zasięgiem rozmyślnie: z nich wywodzi się identyfikator i miejsce pliku,
-    więc ich zmiana byłaby PRZENIESIENIEM notatki, nie poprawką treści."""
+    więc ich zmiana byłaby PRZENIESIENIEM notatki, nie poprawką treści.
+
+    Gwarancja jest teraz STRUKTURALNA, nie umowna: do pisarza idzie identyfikator i sama treść,
+    więc nie ma czym nadpisać nagłówka. Poprzednia redakcja przekazywała cały model i pilnowała
+    umową, że metadane są te same — a mimo zgodnego modelu plik i tak tracił przy każdej edycji
+    komentarze YAML oraz pola spoza schematu, bo nagłówek składał się z modelu na nowo. Bajtowa
+    nietykalność nagłówka ma własną sondę przy adapterze (``test_note_mutation_adapters``).
+    """
     service, writer, _s, _j, _l = _service()
 
     service.edit_note(_note().id, "nowa treść", requester="Anna", intent="x")
 
-    # Pytamy o to, co POSZŁO NA DYSK: ``edit_note`` oddaje werdykt (ADR 0065 §8), a jedynym
-    # świadkiem tego, czy metadane ocalały, jest i tak zapis, nie zwrot.
-    assert writer.overwritten[0].id == _note().id
-    assert writer.overwritten[0].metadata == _METADATA
+    assert writer.overwritten == [(_note().id, "nowa treść")]
 
 
 def test_an_allowed_delete_returns_the_verdict_along_with_the_copy():
@@ -723,7 +728,7 @@ def test_the_gate_never_uses_the_create_only_write_path():
 class _WriterKtoryPadaPoZgodzie(_FakeWriter):
     """Pisarz odbijający zapis kontrolą wersji — równoległa tura weszła w okno po orzeczeniu."""
 
-    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
+    def overwrite_body(self, note_id: str, body: str, *, expected_sha256: str) -> None:
         raise WriteError("notatka zmieniła się od odczytu")
 
 

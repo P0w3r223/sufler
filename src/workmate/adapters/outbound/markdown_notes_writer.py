@@ -26,6 +26,7 @@ from pathlib import Path
 import yaml
 
 from workmate.core.domain.models import Note, NoteMetadata
+from workmate.core.domain.sanitize import odrzuc_wlasny_frontmatter
 from workmate.core.errors import NoteExistsError, WriteError
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,10 @@ class MarkdownNotesWriter:
         return _resolve_within(self._notes_dir, f"{note_id}.md").is_file()
 
     def write(self, note: Note) -> None:
+        # Strażnik nagłówka TU, a nie u wołających: pisarz jest ostatnią bramą przed dyskiem,
+        # a ścieżek tworzenia jest kilka (`save_note`, `save_meeting_note`, `save_thread_note`,
+        # seed korpusu). Reguła powtórzona przy każdej z nich rozjeżdża się przy pierwszej nowej.
+        odrzuc_wlasny_frontmatter(note.body)
         path = _resolve_within(self._notes_dir, f"{note.id}.md")
         # ``mkdir`` POD osłoną, tak samo jak sam zapis: katalog firmy/projektu powstaje dopiero
         # przy pierwszej notatce, więc read-only wolumen bazy wiedzy odmawia WŁAŚNIE tutaj —
@@ -81,27 +86,40 @@ class MarkdownNotesWriter:
             return "", ""
         return tresc, hashlib.sha256(raw).hexdigest()
 
-    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
-        """Podmień treść ISTNIEJĄCEJ notatki atomowo (ADR 0065) — nigdy w miejscu.
+    def overwrite_body(self, note_id: str, body: str, *, expected_sha256: str) -> None:
+        """Podmień treść pod ZASTANYM nagłówkiem pliku, atomowo (ADR 0065) — nigdy w miejscu.
+
+        Nagłówek przepisujemy BAJTOWO z pliku, zamiast składać go z modelu. Skład z modelu
+        deklarował „metadane zostają nietknięte", a przy każdej edycji gubił komentarze YAML
+        i pola spoza schematu ``NoteMetadata`` (``extra="ignore"``), dokładał puste pola
+        schematu i zmieniał wcięcie list. Notatkę uzupełnioną ręcznie edycja agenta cicho
+        okrawała do tego, co model umiał nazwać.
 
         ``os.replace`` na w pełni zapisanym pliku tymczasowym: czytelnik widzi albo starą, albo
         nową treść, nigdy połowy. Zapis „w miejscu" (truncate + write) zostawiałby przy awarii
         w połowie notatkę uciętą — czyli cichą utratę wiedzy pod pozorem udanej edycji.
 
-        Odmawiamy, gdy notatki NIE MA: ``overwrite`` ma zmieniać, nie tworzyć. Gdyby tworzył,
+        Odmawiamy, gdy notatki NIE MA: ten czasownik ma zmieniać, nie tworzyć. Gdyby tworzył,
         literówka w identyfikatorze rodziłaby po cichu nowy plik obok tego, który miał być
         poprawiony.
         """
-        path = _resolve_within(self._notes_dir, f"{note.id}.md")
+        odrzuc_wlasny_frontmatter(body)
+        path = _resolve_within(self._notes_dir, f"{note_id}.md")
         raw = _read_bytes_or_none(path) if path.is_file() else None
         if raw is None:
-            raise WriteError(f"notatka nie istnieje, nie ma czego podmienić: {note.id}")
+            raise WriteError(f"notatka nie istnieje, nie ma czego podmienić: {note_id}")
         if hashlib.sha256(raw).hexdigest() != expected_sha256:
             raise WriteError(
-                f"notatka {note.id} zmieniła się od odczytu — nie nadpisuję. "
+                f"notatka {note_id} zmieniła się od odczytu — nie nadpisuję. "
                 "Przeczytaj ją ponownie i powtórz zmianę."
             )
-        _atomic_replace(path, _render(note.metadata, note.body))
+        try:
+            tresc_pliku = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WriteError(
+                f"notatka {note_id} nie jest poprawnym UTF-8 — nie podmieniam jej treści"
+            ) from exc
+        _atomic_replace(path, f"{_naglowek_pliku(tresc_pliku, note_id)}\n\n{body.strip()}\n")
 
     def delete(self, note_id: str, *, expected_sha256: str) -> None:
         """Usuń POJEDYNCZY plik notatki (ADR 0065). Katalogów nie ruszamy — nawet pustych.
@@ -166,6 +184,23 @@ def _render(metadata: NoteMetadata, body: str) -> str:
         default_flow_style=False,
     )
     return f"{_FRONTMATTER_FENCE}\n{front}{_FRONTMATTER_FENCE}\n\n{body.strip()}\n"
+
+
+def _naglowek_pliku(raw: str, note_id: str) -> str:
+    """Blok frontmatteru DOKŁADNIE tak, jak stoi w pliku — z komentarzami i polami spoza schematu.
+
+    Dzielimy tak samo jak czytelnik (``_split_frontmatter``): na pierwszym ``---`` i pierwszym
+    ``\n---``, więc poziome kreski w treści zostają nietknięte.
+    """
+    if not raw.startswith(_FRONTMATTER_FENCE):
+        raise WriteError(
+            f"notatka {note_id} nie zaczyna się od frontmatteru — nie podmieniam jej treści"
+        )
+    _, _, reszta = raw.partition(_FRONTMATTER_FENCE)
+    front, fence, _ = reszta.partition(f"\n{_FRONTMATTER_FENCE}")
+    if not fence:
+        raise WriteError(f"notatka {note_id} nie ma zamykającego '---' — nie podmieniam treści")
+    return f"{_FRONTMATTER_FENCE}{front}{fence}"
 
 
 def _resolve_within(notes_dir: Path, relpath: str) -> Path:

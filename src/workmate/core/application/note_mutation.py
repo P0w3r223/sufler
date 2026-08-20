@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workmate.core.domain.mutation import JudgeVerdict, MutationRequest, Verdict, refusal
-from workmate.core.domain.sanitize import reject_dangerous_content
+from workmate.core.domain.sanitize import odrzuc_wlasny_frontmatter, reject_dangerous_content
 from workmate.core.errors import WriteError
 
 if TYPE_CHECKING:
@@ -124,8 +124,8 @@ class NoteMutationService:
         Notatki i tak nikt tu nie odbierał: jedyny wołający (``build_file_catalog``) potwierdza
         człowiekowi sam fakt zmiany, a treść po mutacji zna, bo sam ją podał.
         """
-        # ``wersja`` jest starsza LUB równa treści ``note`` — patrz ``_require_mutable``. To ona
-        # domyka okno między odczytem a zapisem: między nimi leży wywołanie sieciowe sędziego,
+        # ``wersja`` i ``migawka`` pochodzą z JEDNEGO odczytu pliku (patrz ``_require_mutable``).
+        # Wersja domyka okno między odczytem a zapisem: leży w nim wywołanie sieciowe sędziego,
         # a drzwi obsługują tury równolegle.
         wersja, note, migawka = self._require_mutable(note_id)
         reject_dangerous_content(new_body)
@@ -144,10 +144,9 @@ class NoteMutationService:
         outcome = self._decide(request, migawka, verdict_sink)
         if not outcome.applied:
             raise MutationRefused(outcome)
-        zmieniona = note.model_copy(update={"body": new_body.strip()})
-        # Skrót liczony z TEGO SAMEGO renderu, który leży na dysku — kontrola wersji ma
-        # porównywać plik z plikiem, nie model z plikiem.
-        self._writer.overwrite(zmieniona, expected_sha256=wersja)
+        # Sam czasownik podmiany TREŚCI: nagłówek pliku zostaje bajtowo taki, jaki był, więc
+        # model nie ma jak okroić go do pól, które umie nazwać.
+        self._writer.overwrite_body(note_id, new_body.strip(), expected_sha256=wersja)
         return outcome
 
     def delete_note(
@@ -305,71 +304,6 @@ class NoteMutationService:
         """
         material = f"{request.requester}|{request.kind}|{request.note_id}|{request.new_body}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-
-def odrzuc_wlasny_frontmatter(new_body: str) -> None:
-    """Podnieś ``WriteError``, gdy treść niesie WŁASNY nagłówek notatki — zamiast dołożyć go drugi
-    raz.
-
-    ``edit_note`` przyjmuje SAMĄ TREŚĆ; metadane zostają nietknięte i pisarz dokłada je sam
-    (``render_note``). Model, który notatkę najpierw ODCZYTAŁ — przez `File(read)` albo przez
-    `cat` po włączeniu powłoki — dostaje plik RAZEM z nagłówkiem, więc oddanie całości z powrotem
-    jest zachowaniem naturalnym, nie egzotycznym.
-
-    Bez tej bramki kończyło się to notatką z frontmatterem DWA RAZY: raz jako tekst na początku
-    treści, raz dołożonym przez pisarza. Odtworzone na produkcji przy pierwszej realnej mutacji
-    (2026-08-20): sędzia orzekł ``allow``, audyt zapisał ``status: ok``, człowiek dostał
-    „Zrobione ✅" — a plik był uszkodzony, cicho i trwale. Kolejna edycja dokładałaby trzeci.
-
-    ODMOWA, nie ciche obcięcie. Obcinanie musiałoby zgadywać, czy blok na początku jest
-    nagłówkiem, czy treścią (poziomą linią, blokiem kodu, cytatem), a pomyłka kasowałaby
-    użytkownikowi tekst bez śladu. Zdanie z komunikatu model czyta w tej samej turze i poprawia
-    wywołanie; obcięcia nie zauważyłby nikt.
-
-    **Rozpoznajemy NASZ nagłówek, nie „coś między kreskami" — i to jest cała ostrożność tej
-    bramki.** Pierwsza redakcja pytała tylko, czy dalej stoi druga linia ``---``; tak szeroki
-    warunek odmawiał treści całkiem poprawnej (dwie poziome kreski wokół akapitu), a komunikat
-    kazał wtedy usunąć pola YAML, których w treści nie ma — polecenie niewykonalne inaczej niż
-    przez skasowanie tekstu człowieka. Pytamy więc o POLE ze schematu ``NoteMetadata``: korupcja,
-    o którą chodzi, to zawsze oddany z powrotem plik pisarza, a ten nosi ``title``/``project``.
-    """
-    # BOM nie jest białym znakiem dla ``lstrip()`` bez argumentu, a plik zapisany pod Windows
-    # zaczyna się właśnie od niego — treść przechodziła wtedy bramkę i dawała dokładnie tę
-    # korupcję, przed którą ta bramka stoi.
-    linie = new_body.lstrip("\ufeff \t\r\n").splitlines()
-    if not linie or linie[0].strip() != "---":
-        return
-    domkniecie = next(
-        (nr for nr, linia in enumerate(linie[1:], start=1) if linia.strip() == "---"), None
-    )
-    # Sama pierwsza linia to w markdownie pozioma kreska i nią ma zostać.
-    if domkniecie is None:
-        return
-    if not _niesie_pole_naglowka(linie[1:domkniecie]):
-        return
-    raise WriteError(
-        "`content` zaczyna się od frontmatteru (`---`), a `edit` przyjmuje SAMĄ TREŚĆ — "
-        "metadane (tytuł, projekt, data, uczestnicy) są poza zasięgiem tej operacji i pisarz "
-        "dokłada je sam. Przekazanie całego pliku dałoby notatkę z nagłówkiem dwa razy. "
-        "Ponów z treścią spod nagłówka, bez linii `---` i bez pól YAML."
-    )
-
-
-def _niesie_pole_naglowka(blok: list[str]) -> bool:
-    """Czy blok między znacznikami niesie POLE nagłówka notatki — czy prozę między kreskami.
-
-    Zbiór pól bierzemy z ``NoteMetadata``, a nie z listy przepisanej tutaj: nagłówek składa
-    ``render_note`` z tego samego schematu, więc dopisanie pola w modelu ma domykać bramkę samo.
-    Lista przepisana obok rozjechałaby się przy pierwszej takiej zmianie — i to po cichu, bo
-    rozjazd widać dopiero na uszkodzonej notatce.
-    """
-    from workmate.core.domain.models import NoteMetadata
-
-    pola = set(NoteMetadata.model_fields)
-    return any(
-        separator and klucz.strip() in pola
-        for klucz, separator, _ in (linia.partition(":") for linia in blok)
-    )
 
 
 def _jest_deterministyczna(note_id: str) -> bool:

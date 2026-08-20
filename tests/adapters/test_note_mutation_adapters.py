@@ -28,7 +28,7 @@ def test_overwrite_replaces_content_of_an_existing_note(tmp_path):
     writer = MarkdownNotesWriter(tmp_path)
     writer.write(_note("pierwsza"))
 
-    writer.overwrite(_note("druga"), expected_sha256=writer.digest(_note().id))
+    writer.overwrite_body(_note().id, "druga", expected_sha256=writer.digest(_note().id))
 
     plik = tmp_path / "biap/mpwik/2026-08-01-ustalenia.md"
     assert "druga" in plik.read_text(encoding="utf-8")
@@ -41,7 +41,7 @@ def test_overwrite_refuses_to_create_a_note_that_does_not_exist(tmp_path):
     writer = MarkdownNotesWriter(tmp_path)
 
     with pytest.raises(WriteError, match="nie istnieje"):
-        writer.overwrite(_note(), expected_sha256="cokolwiek")
+        writer.overwrite_body(_note().id, "treść", expected_sha256="cokolwiek")
 
 
 def test_write_still_refuses_to_overwrite(tmp_path):
@@ -156,9 +156,7 @@ def test_new_verbs_refuse_to_escape_the_notes_directory(tmp_path):
     with pytest.raises(WriteError, match="poza katalogiem"):
         writer.delete("../poza-baza", expected_sha256="x")
     with pytest.raises(WriteError, match="poza katalogiem"):
-        writer.overwrite(
-            Note(id="../poza-baza", metadata=_META, body="podmiana"), expected_sha256="x"
-        )
+        writer.overwrite_body("../poza-baza", "podmiana", expected_sha256="x")
     with pytest.raises(WriteError, match="poza katalogiem"):
         writer.digest("../poza-baza")
 
@@ -175,10 +173,11 @@ def test_overwrite_refuses_when_the_note_changed_since_it_was_read(tmp_path):
     writer.write(_note("wersja 0"))
     wersja0 = writer.digest(_note().id)
 
-    writer.overwrite(_note("wersja 1"), expected_sha256=wersja0)  # pierwsza tura zdążyła
+    writer.overwrite_body(_note().id, "wersja 1", expected_sha256=wersja0)  # pierwsza tura zdążyła
 
     with pytest.raises(WriteError, match="zmieniła się od odczytu"):
-        writer.overwrite(_note("wersja 2"), expected_sha256=wersja0)  # druga miała stary skrót
+        # druga tura miała stary skrót
+        writer.overwrite_body(_note().id, "wersja 2", expected_sha256=wersja0)
 
     assert "wersja 1" in (tmp_path / "biap/mpwik/2026-08-01-ustalenia.md").read_text(
         encoding="utf-8"
@@ -251,7 +250,7 @@ def test_delete_refuses_when_the_note_changed_since_it_was_read(tmp_path):
     writer = MarkdownNotesWriter(tmp_path)
     writer.write(_note("pierwsza"))
     wersja_z_odczytu = writer.digest(_note().id)
-    writer.overwrite(_note("zmiana w oknie sędziego"), expected_sha256=wersja_z_odczytu)
+    writer.overwrite_body(_note().id, "zmiana w oknie sędziego", expected_sha256=wersja_z_odczytu)
 
     with pytest.raises(WriteError, match="zmieniła się od odczytu"):
         writer.delete(_note().id, expected_sha256=wersja_z_odczytu)
