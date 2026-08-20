@@ -15,6 +15,8 @@ import pytest
 
 pytest.importorskip("fcntl", reason="silnik Docker jest POSIX-only (gniazdo unix docker.sock)")
 
+from urllib.parse import unquote
+
 from workmate.adapters.outbound import docker_engine  # noqa: E402
 from workmate.adapters.outbound.docker_engine import (  # noqa: E402
     DockerHttpEngine,
@@ -166,6 +168,10 @@ class _FakeConnection:
         self._raw = raw
 
     def request(self, method, path, body=None, headers=None) -> None:  # noqa: ARG002
+        # Ścieżkę ZAPAMIĘTUJEMY. Atrapa przyjmowała dotąd dowolną i nigdy jej nie oglądała —
+        # dlatego `list_managed` z niezakodowanym `filters` przechodziło cały zestaw, a padało
+        # przy PIERWSZYM `reconcile` na produkcji.
+        self.ostatnia_sciezka = path
         return None
 
     def getresponse(self) -> _FakeResponse:
@@ -219,3 +225,30 @@ def test_odmowa_docker_api_przy_starcie_wraca_jako_ExecManagerError(monkeypatch)
 
     with pytest.raises(ExecManagerError):
         engine.run(_spec())
+
+
+def test_filtry_list_managed_przechodza_walidacje_sciezki_http(monkeypatch):
+    """`json.dumps` wstawia spację po dwukropku, a `http.client` odrzuca ją w ścieżce.
+
+    Objaw był całkowity, nie brzegowy: `list_managed` rzucało ZAWSZE, więc `reconcile` nie mógł
+    wypisać ani jednego wykonawcy i sprzątanie nigdy nie biegło. `ensure` działało bez zarzutu,
+    więc na produkcji wyglądało to na sprawny menedżer — przy kontenerach narastających bez
+    końca, po jednym na rozmowę.
+
+    Sonda pyta o to, o co pyta `http.client`: żadnego znaku z zakresu [\x00-\x20\x7f].
+    Sprawdzenie „czy jest spacja" byłoby węższe niż kontrola, która to odrzuca.
+    """
+    import re
+
+    polaczenie = _FakeConnection(raw=b"[]")
+    engine = _with_connection(monkeypatch, polaczenie)
+
+    engine.list_managed()
+
+    sciezka = polaczenie.ostatnia_sciezka
+    zakazane = getattr(
+        http.client, "_contains_disallowed_url_pchar_re", re.compile("[\x00-\x20\x7f]")
+    )
+    assert not zakazane.search(sciezka), f"http.client odrzuci tę ścieżkę: {sciezka!r}"
+    # Filtr ma nadal DZIAŁAĆ, nie tylko przechodzić walidację — etykieta musi w nim być.
+    assert "workmate.exec.managed" in unquote(sciezka), sciezka
