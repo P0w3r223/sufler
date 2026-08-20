@@ -20,6 +20,14 @@ from workmate.core.ports.exec_manager import ContainerSpec, RunningExecutor
 _HASH = "a" * 32
 _SCOPE = f"teams-graph/{_HASH}"
 _SCOPE_B = f"teams-graph/{'b' * 32}"
+# Obraz, z którego atrapa silnika „stawia" wykonawców — reconcile porównuje z nim to, co zastał.
+_OBRAZ = "workmate:test"
+_OBRAZ_STARY = "workmate:poprzedni"
+
+
+def _zastany(container_id: str, scope: str, *, image: str = _OBRAZ, running: bool = True):
+    """Kontener zastany przez reconcile po restarcie menedżera."""
+    return RunningExecutor(container_id=container_id, scope=scope, image=image, running=running)
 
 
 @dataclass
@@ -30,6 +38,7 @@ class FakeEngine:
     removed: list[str] = field(default_factory=list)
     managed: list[RunningExecutor] = field(default_factory=list)
     fail_run: bool = False
+    image: str = _OBRAZ
     _counter: int = 0
 
     def run(self, spec: ContainerSpec) -> str:
@@ -239,8 +248,8 @@ def test_reconcile_adoptuje_poprawne_a_ubija_sieroty():
     """Po restarcie: wykonawca z czytelnym scope jest adoptowany, bez scope — ubijany."""
     engine, workspace = FakeEngine(), FakeWorkspace()
     engine.managed = [
-        RunningExecutor(container_id="cid-alive", scope=_SCOPE),
-        RunningExecutor(container_id="cid-orphan", scope="bez-scope"),
+        _zastany("cid-alive", _SCOPE),
+        _zastany("cid-orphan", "bez-scope"),
     ]
     service, _ = _service(engine, workspace)
 
@@ -250,6 +259,76 @@ def test_reconcile_adoptuje_poprawne_a_ubija_sieroty():
     # Adoptowany jest znany: ``ensure`` tego scope'a nie stawia nowego kontenera.
     service.ensure(_SCOPE)
     assert engine.started == []
+
+
+def test_reconcile_ubija_wykonawce_z_POPRZEDNIEGO_obrazu():
+    """Adopcja po podbiciu obrazu serwowałaby stary kod — i to bezterminowo.
+
+    Regresja wprowadzona naprawą `list_managed`: dopóki wypisywanie rzucało, rejestr zostawał
+    pusty i pierwszy `ensure` stawiał wykonawcę na nowo, więc zepsuty odzysk PRZYPADKIEM
+    gwarantował poprawne wdrożenie. Po naprawie adoptowany kontener ze starego tagu żyje tak
+    długo, jak długo rozmowa jest czynna: każde `ensure` odświeża `last_used`, więc TTL nie
+    dobiega nigdy. Podbicie wygląda wtedy na udane, a powłoka jedzie na wydaniu sprzed niego.
+    """
+    engine, workspace = FakeEngine(), FakeWorkspace()
+    engine.managed = [_zastany("cid-stary", _SCOPE, image=_OBRAZ_STARY)]
+    service, _ = _service(engine, workspace)
+
+    service.reconcile()
+
+    assert engine.removed == ["cid-stary"]
+    # Rozmowa dostaje wykonawcę z BIEŻĄCEGO obrazu, a nie adoptowanego poprzednika.
+    service.ensure(_SCOPE)
+    assert [spec.scope for spec in engine.started] == [_SCOPE]
+
+
+def test_reconcile_ubija_zatrzymanego_zamiast_go_adoptowac():
+    """Kontener `exited` (np. po limicie pamięci) to ślad po awarii, nie wykonawca.
+
+    Adopcja wpisałaby do rejestru trupa, a `ensure` tej rozmowy zwracałby ścieżkę gniazda,
+    którego nikt nie nasłuchuje — awaria przesunięta o jedno wywołanie dalej, już bez śladu
+    po przyczynie.
+    """
+    engine, workspace = FakeEngine(), FakeWorkspace()
+    engine.managed = [_zastany("cid-trup", _SCOPE, running=False)]
+    service, _ = _service(engine, workspace)
+
+    service.reconcile()
+
+    assert engine.removed == ["cid-trup"]
+    service.ensure(_SCOPE)
+    assert [spec.scope for spec in engine.started] == [_SCOPE]
+
+
+def test_reconcile_nie_wstaje_ponad_limit_N():
+    """Limit N jest granicą zużycia hosta, więc obowiązuje też adopcję, nie tylko `ensure`.
+
+    Bez tego menedżer wstawał z rejestrem większym niż limit i wyrównywał go dopiero eksmisją
+    LRU — czyli kosztem rozmowy, która akurat poprosiła o powłokę.
+    """
+    engine, workspace = FakeEngine(), FakeWorkspace()
+    engine.managed = [
+        _zastany(f"cid-{i}", f"teams-graph/{format(i, 'x') * 32}") for i in range(1, 4)
+    ]
+    service, _ = _service(engine, workspace, max_executors=2)
+
+    service.reconcile()
+
+    assert engine.removed == ["cid-3"]
+    assert len(service._by_scope) == 2  # noqa: SLF001 — sonda rejestru od środka
+
+
+def test_reconcile_ubija_duplikat_scope():
+    """Dwa kontenery jednej rozmowy: rejestr ma jeden wpis na scope, więc drugi zniknąłby z pola
+    widzenia menedżera i został na hoście bez właściciela."""
+    engine, workspace = FakeEngine(), FakeWorkspace()
+    engine.managed = [_zastany("cid-pierwszy", _SCOPE), _zastany("cid-drugi", _SCOPE)]
+    service, _ = _service(engine, workspace)
+
+    service.reconcile()
+
+    assert engine.removed == ["cid-drugi"]
+    assert len(service._by_scope) == 1  # noqa: SLF001 — sonda rejestru od środka
 
 
 def test_reap_jawny_gasi_konkretny_scope():

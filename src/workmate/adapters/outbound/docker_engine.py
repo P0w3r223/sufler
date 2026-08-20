@@ -88,6 +88,11 @@ class DockerHttpEngine:
         self._socket_path = socket_path
         self._timeout_s = timeout_s
 
+    @property
+    def image(self) -> str:
+        """Obraz, z którego stawiamy wykonawców — reconcile porównuje z nim to, co zastał."""
+        return self._template.image
+
     def run(self, spec: ContainerSpec) -> str:
         """Utwórz i wystartuj wykonawcę scope'a; zwróć id kontenera.
 
@@ -124,7 +129,7 @@ class DockerHttpEngine:
             ) from exc
 
     def list_managed(self) -> list[RunningExecutor]:
-        """Wypisz żywe kontenery z etykietą zarządzania — do reconcile."""
+        """Wypisz zarządzane kontenery — także ZATRZYMANE — do reconcile."""
         from workmate.core.ports.exec_manager import RunningExecutor
 
         # `quote`, bo `json.dumps` wstawia SPACJĘ po dwukropku, a `http.client` odrzuca ścieżkę
@@ -137,8 +142,13 @@ class DockerHttpEngine:
         # wykonawców narastały bez końca, jeden na rozmowę, i nic ich nie zdejmowało.
         # `safe=""` — kodujemy też `{`, `}`, `"` i `[`, nie licząc na tolerancję demona.
         filters = quote(json.dumps({"label": [f"{_LABEL_MANAGED}=1"]}), safe="")
+        # `all=true`, bo bez niego Docker wypisuje wyłącznie kontenery BIEGNĄCE. Wykonawca ubity
+        # limitem pamięci kończy jako `exited` (`AutoRemove: False`, `RestartPolicy: no`), a scope'y
+        # są per rozmowa — po restarcie menedżera nikt by po takiego nie wrócił i zostawałby na
+        # hoście na zawsze. Zatrzymanych nie adoptujemy (patrz `RunningExecutor.running`), tylko
+        # usuwamy: reconcile ma zostawiać hosta w stanie, który sam umie opisać.
         try:
-            raw = self._request("GET", f"/containers/json?filters={filters}", None)
+            raw = self._request("GET", f"/containers/json?all=true&filters={filters}", None)
         except _DockerApiError as exc:
             raise ExecManagerError(f"nie udało się wypisać wykonawców: {exc}") from exc
         result: list[RunningExecutor] = []
@@ -150,6 +160,13 @@ class DockerHttpEngine:
                 RunningExecutor(
                     container_id=str(item["Id"]),
                     scope=str(labels.get(_LABEL_SCOPE, "")),
+                    # `Image` to nazwa Z TAGIEM, tak jak podał ją `create` — czyli dokładnie to,
+                    # co trzyma szablon. Czego to NIE wykryje: tagu RUCHOMEGO (`:latest`
+                    # przebudowany pod tą samą nazwą) — tam napis się zgadza, a obraz jest inny.
+                    # Flota jedzie na tagach wersjonowanych (`workmate:1.12.0-deploy`), więc dla
+                    # niej porównanie napisów jest rozstrzygające.
+                    image=str(item.get("Image", "")),
+                    running=str(item.get("State", "")).lower() == "running",
                 )
             )
         return result

@@ -252,3 +252,38 @@ def test_filtry_list_managed_przechodza_walidacje_sciezki_http(monkeypatch):
     assert not zakazane.search(sciezka), f"http.client odrzuci tę ścieżkę: {sciezka!r}"
     # Filtr ma nadal DZIAŁAĆ, nie tylko przechodzić walidację — etykieta musi w nim być.
     assert "workmate.exec.managed" in unquote(sciezka), sciezka
+
+
+def test_list_managed_pyta_takze_o_ZATRZYMANE_i_niesie_obraz(monkeypatch):
+    """Bez `all=true` Docker wypisuje wyłącznie kontenery biegnące — a te martwe zostają na hoście.
+
+    Wykonawca ubity limitem pamięci kończy jako `exited` (`AutoRemove: False`,
+    `RestartPolicy: no`). Póki menedżer żyje, zdejmie go reap po TTL; jeśli zrestartuje się
+    wcześniej — a po naprawie sprzątania przy SIGTERM restart jest zwykłą czynnością — taki
+    kontener jest dla `reconcile` NIEWIDZIALNY, a scope'y są per rozmowa, więc nikt po niego
+    nie wróci.
+
+    Sonda pilnuje też pól, na których stoi decyzja o adopcji: `Image` (kontener z poprzedniego
+    wydania) i `State` (trup zamiast wykonawcy). Bez nich `reconcile` adoptuje na ślepo.
+    """
+    polaczenie = _FakeConnection(
+        raw=(
+            b'[{"Id": "cid-1", "Image": "workmate:1.9.0-deploy", "State": "running",'
+            b' "Labels": {"workmate.exec.scope": "teams-graph/' + b"a" * 32 + b'"}},'
+            b' {"Id": "cid-2", "Image": "workmate:stary", "State": "exited", "Labels": {}}]'
+        )
+    )
+    engine = _with_connection(monkeypatch, polaczenie)
+
+    wykonawcy = engine.list_managed()
+
+    assert "all=true" in polaczenie.ostatnia_sciezka
+    assert [(w.container_id, w.image, w.running) for w in wykonawcy] == [
+        ("cid-1", "workmate:1.9.0-deploy", True),
+        ("cid-2", "workmate:stary", False),
+    ]
+
+
+def test_silnik_wystawia_swoj_obraz_do_porownania():
+    """`reconcile` porównuje zastane kontenery z obrazem szablonu — musi mieć z czym."""
+    assert _engine().image == "workmate:1.9.0-deploy"

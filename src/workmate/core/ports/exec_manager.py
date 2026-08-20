@@ -45,14 +45,38 @@ class ContainerSpec:
 
 @dataclass(frozen=True)
 class RunningExecutor:
-    """Żywy, zarządzany wykonawca widziany przez silnik: id kontenera + scope z etykiety."""
+    """Zarządzany kontener widziany przez silnik: id, scope z etykiety, obraz i czy jeszcze żyje.
+
+    ``image`` i ``running`` są w tym kontrakcie, bo bez nich reconcile nie odróżnia wykonawcy,
+    którego warto adoptować, od takiego, którego trzeba ubić — a obie pomyłki są ciche:
+
+    - kontener z POPRZEDNIEGO obrazu, raz adoptowany, serwuje stary kod tak długo, jak długo
+      rozmowa jest czynna (każde ``ensure`` odświeża ``last_used``, więc TTL nigdy nie dobiega).
+      Podbicie obrazu wygląda wtedy na udane, a powłoka jedzie na wydaniu sprzed niego;
+    - kontener ZATRZYMANY (np. ubity limitem pamięci) nie jest wykonawcą, tylko śmieciem po
+      awarii: adopcja wpisałaby do rejestru trupa, a scope'y są per rozmowa, więc nikt by po
+      niego nie wrócił.
+    """
 
     container_id: str
     scope: str
+    image: str
+    """Obraz, z którego kontener FAKTYCZNIE powstał — porównywany z ``ContainerEngine.image``."""
+    running: bool = True
+    """Czy kontener nadal biegnie. ``False`` = do usunięcia, nigdy do adopcji."""
 
 
 class ContainerEngine(Protocol):
     """Kontrakt menedżera nad silnikiem kontenerów — trzy czasowniki, żadnej powłoki."""
+
+    @property
+    def image(self) -> str:
+        """Obraz, z którego silnik STAWIA wykonawców — punkt odniesienia adopcji przy reconcile.
+
+        Wystawiony, bo obraz jest własnością szablonu (adapter), a decyzja „adoptować czy ubić"
+        należy do menedżera (rdzeń). Bez tego rdzeń nie ma z czym porównać tego, co zastał.
+        """
+        ...
 
     def run(self, spec: ContainerSpec) -> str:
         """Postaw kontener-wykonawcę ze stałego szablonu; zwróć jego id. Podnieś przy odmowie."""
