@@ -45,8 +45,16 @@ class NotesWriter(Protocol):
         """
         ...
 
-    def overwrite(self, note: Note, *, expected_sha256: str) -> None:
-        """Podmień treść ISTNIEJĄCEJ notatki (ADR 0065) — osobny czasownik, nie tryb ``write``.
+    def overwrite_body(self, note_id: str, body: str, *, expected_sha256: str) -> None:
+        """Podmień TREŚĆ istniejącej notatki (ADR 0065) — nagłówek pliku zostaje NIETKNIĘTY.
+
+        Bierze ``note_id`` i samą treść, a nie całą notatkę, bo tyle właśnie umie i tyle ma
+        umieć. Poprzednia redakcja przyjmowała ``Note`` i składała plik od nowa przez
+        ``render_note`` — czyli deklarowała „metadane zostają nietknięte", a w rzeczywistości
+        przepisywała nagłówek z modelu przy KAŻDEJ edycji. Zmierzone: ginął komentarz YAML,
+        ginęły pola spoza schematu (``status:``, ``source_url:``), dochodziły puste pola
+        schematu, zmieniało się wcięcie list. Parametr, którego wołający nie może użyć, jest
+        gorszy niż jego brak — stąd inna sygnatura, nie tylko inne ciało.
 
         Osobny rozmyślnie: gdyby ``write`` dostał flagę „nadpisuj", każdy dotychczasowy wołający
         (trzy ścieżki ``save_*``, seed korpusu, atrapy w testach) niósłby domyślnie zdolność,
@@ -57,6 +65,9 @@ class NotesWriter(Protocol):
         wywołanie sędziego — sekundy — a drzwi obsługują tury równolegle. Bez tej kontroli dwie
         równoległe zmiany tej samej notatki nadpisywały się wzajemnie i wersja pośrednia ginęła
         BEZ MIGAWKI, czyli w jedynym stanie, którego ta warstwa ma nie dopuszczać.
+
+        Treść niosącą WŁASNY nagłówek odrzuca (``odrzuc_wlasny_frontmatter``) — pisarz jest
+        ostatnią bramą przed dyskiem, więc reguła stoi tu, a nie przy jednym wołającym.
         """
         ...
 

@@ -146,3 +146,81 @@ def test_temp_cleanup_failure_does_not_mask_note_exists_error(tmp_path: Path, mo
 
     with pytest.raises(NoteExistsError):
         writer.write(_note(note_id, body="druga"))
+
+
+def test_write_refuses_a_body_that_carries_its_own_frontmatter(tmp_path: Path):
+    """Ta sama korupcja co przy `edit`, tylko na ścieżce TWORZENIA — i dotąd nikt jej nie łapał.
+
+    Model, który notatkę wcześniej odczytał (`File(read)`, `cat`), oddaje plik w całości; przy
+    „zapisz to jako nową notatkę" cała zawartość ląduje jako `body`, a pisarz dokłada NAD nią
+    własny nagłówek. Odtworzone przed poprawką na prawdziwej ścieżce (`save_note` → plik
+    z frontmatterem dwa razy, cztery bloki `---`).
+
+    Strażnik stoi w pisarzu, bo ścieżek tworzenia jest kilka — `save_note`, `save_meeting_note`,
+    `save_thread_note` i seed korpusu — a wszystkie schodzą się dopiero tutaj. Reguła powtórzona
+    przy każdej z nich rozjechałaby się przy pierwszej nowej.
+    """
+    writer = MarkdownNotesWriter(tmp_path)
+    caly_plik = "---\ntitle: Ustalenia\nproject: mpwik\n---\n\nTreść notatki."
+
+    with pytest.raises(WriteError, match="SAMĄ TREŚĆ"):
+        writer.write(_note("mpwik/scada-integration/2025-06-12-api", body=caly_plik))
+
+    assert list(tmp_path.rglob("*.md")) == []
+
+
+def test_overwrite_body_keeps_the_file_header_byte_for_byte(tmp_path: Path):
+    """Nagłówek jest PRZEPISYWANY Z PLIKU, nie składany z modelu — i to jest cała ta poprawka.
+
+    Poprzednia redakcja renderowała cały plik z ``Note``, więc każda edycja agenta cicho okrawała
+    nagłówek do pól, które model umiał nazwać. Zmierzone na tym samym wejściu: ginął komentarz
+    YAML, ginęły `status:` i `source_url:`, dochodziły puste `participants: []`/`decisions: []`
+    i zmieniało się wcięcie list. Notatka uzupełniona ręcznie traciła te uzupełnienia przy
+    pierwszej poprawce literówki — a `edit_note` deklarował „metadane zostają nietknięte".
+    """
+    writer = MarkdownNotesWriter(tmp_path)
+    plik = tmp_path / "mpwik" / "scada-integration" / "2025-06-12-api.md"
+    plik.parent.mkdir(parents=True)
+    naglowek = (
+        "---\n"
+        "# uzupełnione ręcznie 2026-08-19\n"
+        "title: Przeglad API\n"
+        "project: scada-integration\n"
+        "date: 2025-06-12\n"
+        "status: do-weryfikacji\n"
+        "source_url: https://przyklad/12\n"
+        "tags:\n"
+        "  - pompy\n"
+        "  - awaria\n"
+        "---"
+    )
+    plik.write_text(f"{naglowek}\n\nPierwsza wersja.\n", encoding="utf-8")
+    skrot = writer.digest("mpwik/scada-integration/2025-06-12-api")
+
+    writer.overwrite_body(
+        "mpwik/scada-integration/2025-06-12-api", "Druga wersja.", expected_sha256=skrot
+    )
+
+    assert plik.read_text(encoding="utf-8") == f"{naglowek}\n\nDruga wersja.\n"
+
+
+def test_overwrite_body_refuses_a_body_that_carries_its_own_frontmatter(tmp_path: Path):
+    """Bramka mutacji odmawia wcześniej (przed migawką i sędzią), ale pisarz jest OSTATNI.
+
+    Obrona w głąb ma sens, dopóki kosztuje jedną linię: wołający bramki może przyjść inny,
+    a plik na dysku jest jeden.
+    """
+    writer = MarkdownNotesWriter(tmp_path)
+    writer.write(_note("mpwik/scada-integration/2025-06-12-api", body="Pierwsza wersja."))
+    skrot = writer.digest("mpwik/scada-integration/2025-06-12-api")
+
+    with pytest.raises(WriteError, match="SAMĄ TREŚĆ"):
+        writer.overwrite_body(
+            "mpwik/scada-integration/2025-06-12-api",
+            "---\ntitle: Ustalenia\n---\n\npodmiana",
+            expected_sha256=skrot,
+        )
+
+    assert "Pierwsza wersja." in (tmp_path / "mpwik/scada-integration/2025-06-12-api.md").read_text(
+        encoding="utf-8"
+    )
