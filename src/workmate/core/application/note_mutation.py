@@ -326,7 +326,7 @@ def odrzuc_wlasny_frontmatter(new_body: str) -> None:
         return
     # Nagłówek to blok DOMKNIĘTY drugim `---`. Sama pierwsza linia to w markdownie pozioma
     # kreska i nią ma zostać — inaczej odmawialibyśmy treści całkiem poprawnej.
-    if not any(l.strip() == "---" for l in linie[1:]):
+    if not any(linia.strip() == "---" for linia in linie[1:]):
         return
     raise WriteError(
         "`content` zaczyna się od frontmatteru (`---`), a `edit` przyjmuje SAMĄ TREŚĆ — "

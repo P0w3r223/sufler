@@ -144,16 +144,7 @@ def test_tresc_z_wlasnym_frontmatterem_jest_odmowa_a_nie_drugim_naglowkiem():
     ani skopiowana, ani oceniana.
     """
     service, writer, snapshots, judge, _l = _service()
-    caly_plik = (
-        "---\n"
-        "title: Ustalenia\n"
-        "project: mpwik\n"
-        "---\n"
-        "\n"
-        "treść\n"
-        "\n"
-        "dopisek"
-    )
+    caly_plik = "---\ntitle: Ustalenia\nproject: mpwik\n---\n\ntreść\n\ndopisek"
 
     with pytest.raises(WriteError, match="SAMĄ TREŚĆ"):
         service.edit_note(_note().id, caly_plik, requester="Anna", intent="dopisek")
