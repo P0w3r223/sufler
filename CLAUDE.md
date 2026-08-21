@@ -7,25 +7,24 @@ Narzędzie: uruchom i pokaż wynik — nie opisuj kroków. Po zmianach: jedna li
 ## Budżet kontekstu
 - Kod lokalizuj przez **crg** (MCP `code-review-graph`; CLI: `uvx code-review-graph search|query|impact|architecture|dead-code`). Pierwszeństwo przed globalną regułą CodeGraph.
 - Pusty wynik `search` znaczy „indeks tego nie zna", nie „nie istnieje" — indeks bywa starszy niż gałąź. Wtedy `uvx code-review-graph update`, a do czasu przebudowy szukaj wprost. `No graph found` to inny stan: indeks nie istnieje w tym klonie, stawia go `uvx code-review-graph build` (per maszyna, `.code-review-graph/` jest w `.gitignore`).
-- Czytaj fragmenty, nie całe pliki. ADR-y i `docs/` tylko gdy zadanie ich dotyczy — nie „na wszelki wypadek".
-- `.claude/SYSTEM-SPEC.md` i briefy `.claude/sessions/` opisują system szerzej niż ten plik. Przy rozjeździe z kodem rządzi kod — sprawdź datę pliku wobec gałęzi.
+- Czytaj fragmenty zamiast całych plików; ADR-y i `docs/` otwieraj, gdy zadanie ich dotyczy.
+- `.claude/SYSTEM-SPEC.md` i briefy `.claude/sessions/` to MIGAWKI (spec: 2026-07-30, przed narzędziem `File`, mutacją notatek i menedżerem wykonawców). Czytaj je po historię decyzji; stan bieżący bierz z kodu.
 - Po zmianach w kodzie: `uvx code-review-graph update`.
 
 ## System (minimum)
 Serwer MCP i runtime agenta dzielą ŹRÓDŁO narzędzi (`core/application/tools.py`), ale mają osobne powierzchnie — rozjazd zamierzony, bo po stronie MCP nie ma naszego wykonawcy.
-Agent ma DWIE powierzchnie, rozstrzyga je `WORKMATE_ENABLE_SHELL`. Z powłoką osiem narzędzi: `Bash`·`Project`·`Activity`·`Jira`·`Schedule`·`File` (ADR 0068, 0064) plus dostawa `SendImage`/`SendDocument`. Bez powłoki czternaście — dochodzą trzy narzędzia odczytu bazy wiedzy, katalog roboczy (`CreateFile`/`ReadFile`/`ListFiles`) i `ReplyWithFile`, bo nie ma czym ich zastąpić. KOMPLET obu wariantów trzyma `tests/core/test_tool_descriptions.py`; narzędzie pominięte w tej parze zaniża sumę bajtów i bramka sufitu staje się fikcją (tak przepadła jej pierwsza wersja).
+Agent ma DWIE powierzchnie, rozstrzyga je `WORKMATE_ENABLE_SHELL`. Z powłoką osiem narzędzi: `Bash`·`Project`·`Activity`·`Jira`·`Schedule`·`File` (ADR 0068, 0064) plus dostawa `SendImage`/`SendDocument`. Bez powłoki czternaście — dochodzą trzy narzędzia odczytu bazy wiedzy, katalog roboczy (`CreateFile`/`ReadFile`/`ListFiles`) i `ReplyWithFile`, bo nie ma czym ich zastąpić. KOMPLET obu wariantów trzyma `tests/core/test_tool_descriptions.py` — narzędzie pominięte w tej parze zaniża sumę bajtów i bramka sufitu staje się fikcją.
 Sesja MCP: zamrożona ósemka, pilnowana golden-testem.
 Most GitHub ↔ `EventStore` (SQLite `~/.workmate/events.db`, append-only, poza `data/`) ↔ Teams.
-Jira: odczyt bez zapisu, bez mostu, bez EventStore (akcje — reguła 8).
+Jira: odczyt bez zapisu, bez mostu, bez EventStore; dual-provider `WORKMATE_JIRA_DEPLOYMENT=server|cloud` (akcje — reguła 8).
 Retrieval leksykalny BM25 nad notatkami `data/notes/<firma>/<projekt>/*.md`.
 Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbound,outbound}` · `server.py` (wiring) · `config.py`.
-Jira dual-provider: `WORKMATE_JIRA_DEPLOYMENT=server|cloud`.
 
 ## Komendy
 - `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval, retrieval-dense, file-reply, seed)
 - `uv run --no-sync pytest --testmon` · bramka: `uv run --no-sync pytest` (`--no-sync` omija blokadę `workmate.exe`)
 - `uv run ruff check .` · **`uv run ruff format --check src tests eval deploy scripts`** · `uv run mypy` (obejmuje `src`, limit linii 100) · `uv run lint-imports`
-  Format to OSOBNY krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check` — bramka bez niego daje czerwone CI. Ta sama lista katalogów co w CI: `deploy` i `scripts` doszły po incydencie, w którym trzy pliki stały niezgodne przy zielonym przebiegu.
+  Format to osobny krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check`; obejmuje tę samą listę katalogów, z `deploy` i `scripts` włącznie.
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`
 - Pod-projekty (własny venv): `cd Powiadomienia_teams|claude_summary && uv run pytest`
 
@@ -42,12 +41,10 @@ Jira dual-provider: `WORKMATE_JIRA_DEPLOYMENT=server|cloud`.
 10. Decyzje żyją w `docs/adr/`, decyzje paczki wdrożeniowej w `infra-docker-workmate/docs/decyzje/`. Zmiana niezmiennika = ADR przed kodem.
 
 ## Pod-projekty
-Samodzielne venv-y uv z własnym `PLAN.md` — czytaj dopiero przy pracy nad nimi.
-`Powiadomienia_teams/` (Shifts; zapis tylko po jawnym „tak", strażnik cross-user, wygaszenie okna wymaga dowodu pustego odczytu).
-`claude_summary/` (bramka zgody fail-closed, redakcja na granicy, wynik poza repo).
+`Powiadomienia_teams/` (Shifts) i `claude_summary/` — samodzielne venv-y uv, każdy z własnym `PLAN.md`; czytaj przy pracy nad nimi. Oba mają zdolność ZAPISU za bramkami, więc ich niezmienniki bierz z `PLAN.md`, nie stąd.
 
 ## Konwencje
-Opisy narzędzi: słowa kluczowe na początku, nazwa oddaje ZAWARTOŚĆ, jedna konwencja (PascalCase) na powierzchni agenta — ADR 0068. Sufit 2048 B per narzędzie i 8000 B na całą powierzchnię pilnuje `tests/core/test_tool_descriptions.py`; realna powierzchnia to 7692 B z powłoką i 7947 B bez niej, czyli **53 B zapasu** (pomiar 2026-08-21, wydanie 1.13.0) — nowa akcja mieści się kosztem istniejącej prozy, nie obok niej. Liczbę przelicz, zamiast jej ufać: rozstrzyga o tym, czy jedno zdanie więcej w opisie w ogóle wejdzie, a każdemu wydaniu zdarza się ją przesunąć. Instrukcje prezentacji wyniku idą polem `note` w kopercie, nie w opisie.
+Opisy narzędzi: słowa kluczowe na początku, nazwa oddaje ZAWARTOŚĆ, jedna konwencja (PascalCase) na powierzchni agenta — ADR 0068. Sufit 2048 B per narzędzie i 8000 B na całą powierzchnię pilnuje `tests/core/test_tool_descriptions.py`; realna powierzchnia to 7692 B z powłoką i 7947 B bez niej, czyli **53 B zapasu** (pomiar 1.13.0) — nowa akcja mieści się kosztem istniejącej prozy, a liczbę przelicz tym testem, bo każde wydanie ją przesuwa. Instrukcje prezentacji wyniku idą polem `note` w kopercie, nie w opisie.
 Testy odwzorowują `src/` z grubsza (rdzeń płasko w `tests/core/`); rdzeń na atrapach w pamięci.
 Proza po polsku; ADR i `docs/research/` po angielsku.
-Gałąź robocza bywa inna niż `Dev` — sprawdź `git status` przed pracą. CI biega wyłącznie na `Main` i `Dev`.
+Gałąź robocza bywa inna niż `Dev`; CI biega wyłącznie na `Main` i `Dev`.
