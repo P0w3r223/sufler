@@ -34,6 +34,7 @@ def make_handle_message(
                 # Szew „zapisz to" (ADR 0048): sygnał wzmianki + id/znacznik wzmianki (idempotencja
                 # po ``source_message_id``, deterministyczna data z ``source_timestamp``).
                 mentions_bot=message.mentions_bot,
+                mention_texts=message.mention_texts,
                 source_message_id=message.id,
                 source_timestamp=message.created,
             )

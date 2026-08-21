@@ -121,6 +121,9 @@ class InboundMessage:
     mentions_bot: bool = False
     source_message_id: str = ""
     source_timestamp: str = ""
+    # NAZWY z @wzmianek (``mentions[].mentionText``). Wzmianka jest adresatem, nie argumentem,
+    # więc wyzwalacz „zapisz to" musi te słowa wykluczyć z szukania klucza projektu.
+    mention_texts: tuple[str, ...] = ()
 
 
 class Responder(Protocol):
@@ -419,6 +422,7 @@ class ConversationalResponder:
                     source_timestamp=message.source_timestamp,
                     sender_id=message.sender_id,
                     mentions_bot=message.mentions_bot,
+                    mention_texts=message.mention_texts,
                 ),
             )
             if reply is not None:

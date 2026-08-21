@@ -210,3 +210,36 @@ def test_limit_is_clamped_to_ceiling_and_floor():
 
     low = fn(after_id=0, limit=-1)  # -1 = brak limitu w SQLite → ścięte do 1, nie do całości
     assert low["count"] == 1
+
+
+# --- ten sam ślad po filtrze co na drzwiach Teams (przegląd 2026-08-21) -----
+
+
+def test_filtered_stream_carries_the_narrowed_view_marker():
+    """Te same filtry nad tym samym magazynem dają tę samą fałszywą nieobecność.
+
+    Drzwi Teams dostały ślad po filtrze; bez niego sesja Claude Code odpowiadałaby „nie ma"
+    na podstawie widoku, który wykluczył wszystko, co bot sam zapisał do GitHuba z Teamsów.
+    """
+    fn = _tool(build_events_since_catalog(_service("github", "teams")))
+
+    wynik = fn(source="github")
+
+    assert "source='github'" in wynik["note"]
+
+
+def test_unfiltered_stream_carries_no_marker():
+    # Kontrakt kursorowy JUŻ każe powtarzać odczyt, aż ``count`` = 0 — bez filtru nie ma
+    # o czym uprzedzać, a zdanie w każdej turze byłoby szumem.
+    fn = _tool(build_events_since_catalog(_service("github", "teams")))
+
+    assert "note" not in fn()
+
+
+def test_source_description_says_it_is_the_recording_door():
+    # Opis obiecywał „issue, PR, CI, recenzje", czyli SYSTEM docelowy — a `source` niesie
+    # drzwi, które zdarzenie zapisały. To ta sama nieprawda co w `Activity(action='events')`.
+    (spec,) = build_events_since_catalog(_service("github"))
+
+    assert "DRZWI" in spec.description
+    assert "recenzje" not in spec.description

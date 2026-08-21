@@ -652,3 +652,32 @@ def test_plan_channel_does_not_mutate_input_channel_state():
     )
 
     assert channel_state["threads"]["root-1"]["watermark"] == original_watermark
+
+
+def test_normalize_carries_mention_texts_for_the_save_trigger():
+    """``mentionText`` to nazwa, którą Graph podmienia znacznik ``<at>``.
+
+    ``_strip_html`` spłaszcza wzmiankę do gołej nazwy, więc bez tego pola wyzwalacz „zapisz to"
+    nie odróżnia adresata od argumentu — a nazwa bota niesie klucz rejestru (`workmate`).
+    """
+    raw = _raw_message(
+        msg_id="m", created="2024-01-01T10:00:00Z", text="Zapisz to, Virtual WorkMate"
+    )
+    raw["mentions"] = [
+        {"mentionText": "Virtual WorkMate", "mentioned": {"user": {"id": _ME}}},
+        {"mentionText": "Kanał", "mentioned": {}},
+    ]
+
+    msg = normalize(raw, _ME)
+
+    assert msg is not None
+    assert msg.mention_texts == ("Virtual WorkMate", "Kanał")
+
+
+def test_normalize_without_mentions_leaves_mention_texts_empty():
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="zwykła wiadomość")
+
+    msg = normalize(raw, _ME)
+
+    assert msg is not None
+    assert msg.mention_texts == ()

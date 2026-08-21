@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from workmate.core.errors import NoteAuthorizationError, WorkMateError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
     from workmate.core.application.thread_notes import ThreadNoteService
@@ -43,9 +43,26 @@ logger = logging.getLogger(__name__)
 # forma naturalna (``zapisz to jako notatkę projektu <klucz>``) — patrz ``_klucz_projektu``.
 _DIRECTIVE = "zapisz to"
 # Token klucza projektu: rejestr używa kluczy typu ``workmate`` / ``scada-integration``.
-_TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_TOKEN = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
+# Adresy wypadają z szukania klucza: segment ścieżki bywa równy kluczowi projektu
+# (``https://github.com/…/workmate/…``), a wklejony link nie jest poleceniem zapisu.
+_URL = re.compile(r"https?://\S+")
 # Ile kluczy wypisać w podpowiedzi, zanim urwiemy wielokropkiem (podpowiedź, nie katalog).
 _USAGE_MAX_KEYS = 8
+
+
+def _bez_wzmianek(rest: str, wzmianki: Sequence[str]) -> str:
+    """Wytnij z tekstu NAZWY @wzmianek — zostaje to, co nadawca napisał jako argument.
+
+    Wycinamy POZYCYJNIE (całe wystąpienie nazwy), nie po wartości tokenu. Różnica jest tu
+    wszystkim: nazwa bota brzmi „Virtual WorkMate", a klucz projektu to `workmate`, więc
+    wykluczanie po wartości zabiłoby zdanie „@Virtual WorkMate zapisz to jako notatkę projektu
+    workmate" — czyli dokładnie tę formę, dla której ta ścieżka powstała.
+    """
+    for nazwa in wzmianki:
+        if nazwa:
+            rest = re.sub(re.escape(nazwa), " ", rest, flags=re.IGNORECASE)
+    return rest
 
 
 def _usage(klucze: Sequence[str]) -> str:
@@ -99,6 +116,9 @@ class ThreadNoteContext:
     source_timestamp: str
     sender_id: str
     mentions_bot: bool
+    # NAZWY @wzmianek (``mentions[].mentionText``) — wykluczane z szukania klucza projektu.
+    # Addytywne: drzwi bez tego pojęcia (i testy) zostawiają puste.
+    mention_texts: tuple[str, ...] = ()
 
 
 class ThreadNoteRouter:
@@ -142,25 +162,25 @@ class ThreadNoteRouter:
         # rejestru przy KAŻDEJ wzmiance — także przy zwykłym pytaniu, które router przepuszcza
         # dalej — i przy zepsutym pliku logowali ostrzeżenie w każdej takiej turze.
         klucze = self._klucze()
-        project = _klucz_projektu(rest, klucze)
+        project = _klucz_projektu(rest, klucze, ctx.mention_texts)
         if not project:
             # „zapisz to" bez rozpoznanego projektu → podpowiedz składnię REALNYMI kluczami.
-            return _usage(sorted(klucze))
+            return _usage(sorted(klucze.values()))
         return self._handle(project, ctx)
 
-    def _klucze(self) -> frozenset[str]:
-        """Klucze rejestru; przy braku repozytorium albo błędzie odczytu — pusty zbiór.
+    def _klucze(self) -> Mapping[str, str]:
+        """Mapa ``klucz zmałowany → postać kanoniczna``; bez repozytorium albo przy błędzie pusta.
 
         Rejestr jest tu wygodą, nie bramką, więc jego awaria ma degradować podpowiedź, a nie
         wywracać wyzwalacz: ze składnią z kreską „zapisz to" działa dalej.
         """
         if self._projects is None:
-            return frozenset()
+            return {}
         try:
-            return frozenset(p.key for p in self._projects.all())
+            return {p.key.lower(): p.key for p in self._projects.all()}
         except Exception:
             logger.warning("Nie udało się odczytać rejestru projektów do podpowiedzi 'zapisz to'")
-            return frozenset()
+            return {}
 
     def _handle(self, project: str, ctx: ThreadNoteContext) -> str:
         try:
@@ -247,23 +267,48 @@ def _po_dyrektywie(text: str) -> str | None:
     return None if idx == -1 else text[idx + len(_DIRECTIVE) :]
 
 
-def _klucz_projektu(rest: str, klucze: frozenset[str]) -> str:
+def _klucz_projektu(rest: str, klucze: Mapping[str, str], wzmianki: Sequence[str]) -> str:
     """Klucz projektu z tekstu za dyrektywą; ``""`` → nie da się ustalić jednoznacznie.
 
-    Dwie drogi, ta sama gwarancja. Z kreską: wszystko po ``|``, bez zmian — tak brzmi ADR 0048,
-    tak stoi w dokumentacji i tak dalej rozstrzyga o istnieniu projektu ``require_project``
-    w serwisie, nie ten parser. Bez kreski: szukamy tokenu, który JEST kluczem rejestru; przy
-    zerze albo dwóch trafieniach oddajemy ``""``, bo zgadywanie miejsca zapisu jest gorsze
-    niż pytanie.
+    Dwie drogi, ta sama gwarancja. Z kreską: wszystko po ``|`` — tak brzmi ADR 0048 i tak stoi
+    w dokumentacji; o ISTNIENIU projektu i tak rozstrzyga ``require_project`` w serwisie, nie
+    ten parser. Bez kreski: szukamy tokenu, który JEST kluczem rejestru; przy zerze albo dwóch
+    trafieniach oddajemy ``""``, bo zgadywanie miejsca zapisu jest gorsze niż pytanie.
 
     Rozluźnienie NIE osłabia niczego, co chroni ADR 0009 §3. Gwarancją jest tam POCHODZENIE
     klucza — z tekstu wzmianki nadawcy, nigdy z treści wątku — a zdanie „zapisz to jako notatkę
     projektu workmate" też jest tekstem wzmianki. Sztywna kreska chroniła prostotę parsera,
     nie użytkownika: na demo 2026-08-21 człowiek napisał formę naturalną i dostał odmowę.
+
+    Trzy rzeczy WYPADAJĄ z szukania, bo żadna nie jest argumentem nadawcy:
+
+    1. **Nazwy @wzmianek.** ``_strip_html`` spłaszcza ``<at>Virtual WorkMate</at>`` do gołej
+       nazwy, a `workmate` jest kluczem rejestru — bez tego „Zapisz to, @Virtual WorkMate"
+       zapisywało wątek pod projekt `workmate` PO CICHU, a notatki `-thr-` są niezmienne.
+    2. **Adresy.** Wklejony link, którego segment ścieżki równa się kluczowi, nie jest poleceniem.
+    3. **Wielkość liter.** Dopasowanie idzie po kluczu zmałowanym (``require_project`` też
+       porównuje bez względu na wielkość), a zwracamy postać KANONICZNĄ z rejestru — inaczej
+       klucz z wersalikiem dawałoby się wypisać w podpowiedzi, ale nie dałoby się go użyć.
+
+    Kreska ma jeszcze jedno ustępstwo: gdy tekst po ``|`` NIE jest kluczem rejestru, a zdanie
+    niesie dokładnie jeden klucz, wygrywa zdanie. Podpowiedź reklamuje teraz formę naturalną,
+    a wiadomości Teams rutynowo niosą ``|`` (tabele, kod, adresy) — bez tego ustępstwa
+    „zapisz to jako notatkę projektu workmate | dzięki" ginęło na „nieznanym projekcie".
     """
     if "|" in rest:
-        return rest.split("|", 1)[1].strip()
-    trafienia = {token for token in _TOKEN.findall(rest.lower()) if token in klucze}
+        po_kresce = rest.split("|", 1)[1].strip()
+        if not klucze or po_kresce.lower() in klucze:
+            return klucze.get(po_kresce.lower(), po_kresce)
+        # Kreska trafiła w tekst, nie w argument. Gdy zdanie nie rozstrzyga, oddajemy to, co
+        # człowiek NAPISAŁ po kresce — komunikat o nieznanym projekcie ma go cytować.
+        return _ze_zdania(rest, klucze, wzmianki) or po_kresce
+    return _ze_zdania(rest, klucze, wzmianki)
+
+
+def _ze_zdania(rest: str, klucze: Mapping[str, str], wzmianki: Sequence[str]) -> str:
+    """Jedyny klucz rejestru w zdaniu (po odjęciu wzmianek i adresów) albo ``""``."""
+    tekst = _URL.sub(" ", _bez_wzmianek(rest, wzmianki)).lower()
+    trafienia = {klucze[token] for token in _TOKEN.findall(tekst) if token in klucze}
     return trafienia.pop() if len(trafienia) == 1 else ""
 
 

@@ -67,6 +67,7 @@ def _ctx(
     source_timestamp: str = _TS,
     external_id: str = "team/chan/root",
     source_message_id: str = "msg-1",
+    mention_texts: tuple[str, ...] = (),
 ) -> ThreadNoteContext:
     return ThreadNoteContext(
         external_id=external_id,
@@ -74,6 +75,7 @@ def _ctx(
         source_timestamp=source_timestamp,
         sender_id=sender_id,
         mentions_bot=mentions_bot,
+        mention_texts=mention_texts,
     )
 
 
@@ -442,3 +444,106 @@ def test_directive_reads_the_registry_once():
 
     assert router.dispatch("@WorkMate zapisz to", _ctx()) is not None
     assert projects.odczyty == 1
+
+
+# --- przegląd kodu 2026-08-21: wzmianka nie jest argumentem -----------------
+
+
+_BOT = ("Virtual WorkMate",)
+
+
+def test_bot_mention_after_the_directive_is_not_a_project_key():
+    """Nazwa bota zawiera klucz rejestru — i po ``_strip_html`` wygląda jak słowo człowieka.
+
+    „Zapisz to, @Virtual WorkMate" zapisywało wątek pod projekt `workmate` PO CICHU: w trybie
+    async ACK nie nazywa projektu, a notatki `-thr-` są NIEZMIENNE, więc pomyłki nie dało się
+    ani zauważyć, ani cofnąć. Wzmianka jest adresatem, nie argumentem.
+    """
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch("Zapisz to, Virtual WorkMate", _ctx(mention_texts=_BOT))
+
+    assert reply is not None and "podaj projekt" in reply
+    assert service.calls == []
+
+
+def test_mention_before_the_directive_still_lets_the_sentence_name_the_project():
+    """Wycinamy wzmiankę POZYCYJNIE, nie po wartości tokenu.
+
+    Gdyby wykluczać token `workmate` dlatego, że występuje w nazwie bota, zginęłaby forma,
+    dla której cała ta ścieżka powstała.
+    """
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch(
+        "Virtual WorkMate zapisz to jako notatkę projektu workmate", _ctx(mention_texts=_BOT)
+    )
+
+    assert reply is not None and reply.startswith("✓")
+    assert service.calls[0][2] == "workmate"
+
+
+def test_a_pasted_url_whose_path_matches_a_key_is_not_a_project_key():
+    # Segment ścieżki bywa równy kluczowi projektu; wklejony link nie jest poleceniem zapisu.
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch(
+        "zapisz to https://github.com/BIAP/workmate/pull/78", _ctx(mention_texts=_BOT)
+    )
+
+    assert reply is not None and "podaj projekt" in reply
+    assert service.calls == []
+
+
+def test_pipe_in_prose_falls_back_to_the_key_named_in_the_sentence():
+    """Kreska wygrywała nad formą naturalną przy KAŻDYM ``|`` w wiadomości.
+
+    Podpowiedź reklamuje teraz formę naturalną, a wiadomości Teams rutynowo niosą ``|``.
+    Tekst po kresce nie jest kluczem, zdanie niesie dokładnie jeden — wygrywa zdanie.
+    """
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch("zapisz to jako notatkę projektu workmate | dzięki", _ctx())
+
+    assert reply is not None and reply.startswith("✓")
+    assert service.calls[0][2] == "workmate"
+
+
+def test_pipe_still_wins_literally_when_it_names_a_registry_key():
+    # Kontrakt kreski zostaje: tekst po ``|`` jest argumentem, gdy jest kluczem rejestru.
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate", "biap-www")))
+
+    router.dispatch("zapisz to do workmate | biap-www", _ctx())
+
+    assert service.calls[0][2] == "biap-www"
+
+
+def test_unknown_key_after_the_pipe_is_quoted_back_by_the_service():
+    # Gdy ani kreska, ani zdanie nie dają klucza, do serwisu idzie to, co człowiek NAPISAŁ —
+    # komunikat „nieznany projekt" ma cytować jego tekst, nie milczeć.
+    service = _FakeThreadService(raises=WriteError("nieznany projekt: literowka"))
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch("zapisz to | literowka", _ctx())
+
+    assert reply is not None and "literowka" in reply
+    assert service.calls[0][2] == "literowka"
+
+
+def test_registry_key_with_capitals_is_matched_and_returned_canonically():
+    """``require_project`` porównuje bez względu na wielkość liter — parser musi też.
+
+    Inaczej klucz z wersalikiem daje się WYPISAĆ w podpowiedzi, ale nie daje się użyć:
+    człowiek kopiuje go z komunikatu bota i dostaje ten sam komunikat.
+    """
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("WorkMate",)))
+
+    router.dispatch("zapisz to jako notatkę projektu workmate", _ctx())
+
+    assert service.calls[0][2] == "WorkMate"

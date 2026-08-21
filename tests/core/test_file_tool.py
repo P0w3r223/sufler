@@ -739,6 +739,11 @@ def test_przemycone_delete_przy_zamknietej_bramce_dostaje_odmowe_ze_wskazaniem_w
     wynik = spec.fn(action="delete", name="biap/mpwik/x", reason="po co")
 
     assert "Usuwanie notatek jest wyłączone" in wynik["error"]
+    # Wyjście ma ISTNIEĆ dla notatki, o którą pytano. Poprzednia redakcja odsyłała do `edit`
+    # bezwarunkowo, a przy `-mtg-`/`-thr-` `edit` odbija się o niezmienność (`note_mutation`):
+    # jedno martwe wyjście zamieniono by na drugie, czyli na tę samą pętlę ponowień.
+    assert "spoza spotkań i wątków" in wynik["error"]
+    assert "człowiekowi" in wynik["error"]
     assert "`edit`" in wynik["error"]
     assert mutations.deletes == []  # serwis NIE zostal zawolany
 

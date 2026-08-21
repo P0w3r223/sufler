@@ -260,3 +260,25 @@ def test_opis_zdarzen_mowi_ze_source_to_drzwi_a_nie_system() -> None:
 
     assert "DRZWI" in opis
     assert "BEZ `source`" in opis
+
+
+def test_okno_limitu_tez_jest_zawezeniem() -> None:
+    # Domyślne 20 najnowszych z 200 w magazynie jest dla twierdzenia „nie ma" równie
+    # zwodnicze jak filtr `source` — a to była DRUGA nieprawda z demo, nie tylko ta o #76.
+    class _Pelne:
+        def recent(self, *, source=None, project=None, limit=20):
+            return [
+                Event(
+                    id=i,
+                    source="github",
+                    kind="issue_opened",
+                    external_id=f"repo#{i}",
+                    occurred_at=datetime(2026, 8, 1, tzinfo=UTC),
+                    ingested_at=datetime(2026, 8, 1, tzinfo=UTC),
+                )
+                for i in range(limit)
+            ]
+
+    wynik = build_activity_catalog(events=_Pelne())[0].fn(action="events", limit=20)
+
+    assert "limit=20" in wynik["note"]
