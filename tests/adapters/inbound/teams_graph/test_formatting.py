@@ -83,3 +83,64 @@ def test_falls_back_to_escaped_text_when_library_missing(monkeypatch):
     assert "**b**" in result  # znaczniki Markdown zostają dosłownie
     assert "&lt;script&gt;" in result  # surowy HTML zescapowany
     assert "<br>" in result  # nowa linia zamieniona na <br>
+
+
+# --- czytelność odpowiedzi: tabele, łamanie linii, przekreślenie (2026-08-21) ---
+
+
+def test_markdown_table_becomes_a_real_table():
+    """Tabela z modelu docierała jako JEDEN ``<p>`` pełen kresek i pipe'ów.
+
+    Teams zwija znaki nowej linii wewnątrz akapitu, więc cała tabela lądowała w jednej długiej
+    linii — to był główny powód, dla którego wypisy (issue, pliki, grafik) były nieczytelne.
+    Render ``<table>`` zmierzony na żywo w wątku kanału 2026-08-21.
+    """
+    html = to_teams_html("| # | Tytuł |\n|---|---|\n| 77 | Zadanie |")
+
+    assert "<table>" in html and "<th>Tytuł</th>" in html and "<td>77</td>" in html
+    assert "|---|" not in html
+
+
+def test_single_newline_becomes_a_line_break():
+    # To jest czat, nie dokument: blok pisany linia-po-linii zwijał się w jedno zdanie ciągiem.
+    assert "<br />" in to_teams_html("pierwsza linia\ndruga linia")
+
+
+def test_strikethrough_becomes_a_tag():
+    assert "<s>nieaktualne</s>" in to_teams_html("~~nieaktualne~~")
+
+
+def test_bare_url_stays_text_because_teams_links_it_itself():
+    """Gołych adresów renderer ŚWIADOMIE nie tyka — Teams linkuje je sam.
+
+    Zmierzone na żywo 2026-08-21: goły adres w wiadomości kanału jest klikalny bez naszego
+    udziału. Gdyby ktoś mimo to sięgnął po regułę ``linkify``, wymaga ona ``linkify-it-py``,
+    którego w obrazie NIE MA — ``enable("linkify")`` bez pakietu RZUCA, a ``to_teams_html``
+    degraduje wtedy CAŁY render do zescapowanego tekstu. Ta sonda pilnuje obu rzeczy naraz.
+    """
+    html = to_teams_html("zobacz https://example/adr-0002")
+
+    assert "<a " not in html
+    assert "https://example/adr-0002" in html
+
+
+def test_untrusted_content_keeps_tables_but_never_live_links():
+    # Most (treść z GitHuba) nadal bez żywych linków — anty-phishing (ADR 0016). Tabela
+    # jest formatowaniem, nie kanałem wyprowadzenia, więc jej ta bramka nie dotyczy.
+    html = to_teams_html("| a |\n|---|\n| [Kliknij](https://atakujacy) |", allow_links=False)
+
+    assert "<table>" in html
+    assert "<a " not in html and "atakujacy" in html
+
+
+def test_conventions_make_the_table_the_default_for_record_lists():
+    """Sam renderer nie wystarczy: prompt kazał modelowi robić DOKŁADNIE odwrotnie.
+
+    Poprzednia redakcja brzmiała „bullets for enumerations […] Teams renders dense blocks
+    poorly" — więc nawet po włączeniu tabel model dalej sypałby punktorami.
+    """
+    from workmate.core.agent.prompt import STATIC_PROMPT, STATIC_PROMPT_SHELL
+
+    for prompt in (STATIC_PROMPT, STATIC_PROMPT_SHELL):
+        assert "Markdown table" in prompt
+        assert "fenced code block" in prompt
