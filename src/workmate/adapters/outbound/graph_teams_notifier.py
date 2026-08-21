@@ -47,8 +47,9 @@ class HttpxTeamsNotifier:
     async def send_chat_html(self, target_user_id: str, html: str) -> None:
         """Wyślij GOTOWY HTML 1:1 — ta sama ścieżka czatu co ``send_chat``, ale BEZ renderera.
 
-        Świadomie omijamy ``to_teams_html``: renderer escapuje surowy HTML i nie włącza tabel
-        (ADR 0035), więc tabela godzin dotarłaby jako ``&lt;table&gt;``. Bezpieczeństwo opiera się
+        Świadomie omijamy ``to_teams_html``: renderer escapuje surowy HTML, więc GOTOWA tabela
+        dotarłaby jako ``&lt;table&gt;``. (Tabel z Markdowna renderer od 2026-08-21 już nie gubi —
+        to zdanie dotyczy wyłącznie HTML-a składanego w rdzeniu.) Bezpieczeństwo opiera się
         na kontrakcie portu — HTML składa czysta funkcja rdzenia, która escapuje każdą wstawioną
         wartość. Treść niezaufana MUSI iść przez ``send_chat``, nie tędy.
         """
