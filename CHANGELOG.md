@@ -6,6 +6,77 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-08-21
+
+Wydanie z **jednego dnia pracy nad jedną rzeczą: prawdą tego, co bot mówi i jak to pokazuje.**
+Zebrane z demo 2026-08-21, gdzie WorkMate dwa razy skłamał przed widownią, oraz z przeglądu
+kodu, który tę pierwszą poprawkę sprawdził.
+
+Wspólny mianownik obu nieprawd: **twierdzenie o NIEISTNIENIU wyprowadzone z widoku, który był
+przefiltrowany.** „Najnowsze issue to #76" (bo #77 leżało pod innym `source`) i „nie zapisałem
+żadnej notatki" (bo router spiął krótko przed turą agenta) mają ten sam kształt, a nie dwie
+przyczyny. Drugi mianownik, tym razem po stronie formy: **odpowiedzi były nieczytelne nie
+dlatego, że model źle pisał, tylko dlatego, że konwerter rozwalał to, co napisał dobrze.**
+
+Trzeci wzorzec, wart zapamiętania osobno: **komentarz w kodzie nie jest pomiarem.** Dwa zdania
+w źródłach twierdziły rzeczy nieprawdziwe („Teams renderuje `<table>` niekonsekwentnie") i nikt
+ich nie kwestionował, bo brzmiały jak ustalenie. Za żadnym nie stał ani ADR, ani liczba.
+
+### Dodane
+
+- **Odpowiedzi wreszcie mają kształt danych** (#80). Tabela Markdown z modelu docierała jako
+  JEDEN akapit pełen pipe'ów: preset `commonmark` ma regułę `table` wyłączoną, a Teams zwija
+  w akapicie znaki nowej linii. Włączone `table` i `strikethrough`, dołożone `breaks=True` —
+  to ostatnie ważniejsze, niż wygląda, bo **to jest czat, nie dokument**: pojedynczy `\n` był
+  zwijany do spacji, więc każdy blok pisany linia-po-linii docierał jako jedno zdanie ciągiem.
+
+  Sam renderer to połowa roboty — `_CONVENTIONS` w prompcie kazało modelowi robić DOKŁADNIE
+  odwrotnie („bullets for enumerations"). Nowa redakcja: tabela dla pozycji o tych samych
+  polach (issue, notatki, pliki, grafik, zadania), punktory dla list jednowymiarowych, blok
+  kodu dla treści plików i surowego wyjścia.
+
+- **Ślad po zawężonym widoku w wyniku `Activity(action='events')`** i w bliźniaczym
+  `read_events_since` (#78, #79). Notka wchodzi, gdy filtr `source`/`project` albo samo okno
+  `limit` zawęziły widok — bez niej lista przefiltrowana jest nie do odróżnienia od pełnej.
+
+- **„zapisz to" przyjmuje formę naturalną** (#78, #79). Obok składni z kreską działa zdanie
+  „zapisz to jako notatkę projektu &lt;klucz&gt;", a podpowiedź wypisuje REALNE klucze rejestru
+  zamiast wymyślonego przykładu.
+
+### Naprawione
+
+- **Prompt nie miał reguły dla twierdzeń NEGATYWNYCH** (#78). Test kontrolny („would they find
+  the claim in it?") i `_IDENTITY` („when the tools come back empty, say so plainly") dotyczyły
+  wyłącznie twierdzeń pozytywnych — instrukcja o pustym wyniku wręcz ZACHĘCAŁA do przełożenia
+  pustego widoku na twierdzenie o świecie. Model wykonał ją wzorowo i dlatego skłamał.
+
+- **Wzmianka bota trafiała do notatki jako klucz projektu** (#79). Poprawka z #78 wprowadziła
+  regresję: `_strip_html` spłaszcza `<at>Virtual WorkMate</at>` do gołej nazwy, a `workmate`
+  JEST kluczem rejestru, więc „Zapisz to, @Virtual WorkMate" zapisywało wątek pod ten projekt
+  PO CICHU. W trybie async potwierdzenie nie nazywa projektu, a notatki `-thr-` są niezmienne —
+  pomyłki nie dało się ani zauważyć, ani cofnąć. Nazwy wzmianek jadą teraz z Graph do routera
+  i są wycinane pozycyjnie; tą samą drogą wypadają wklejone adresy.
+
+- **Trzy opisy narzędzi obiecywały niedostępne** (#78, #79) — `File` kazał zapisywać poprawki
+  „jako nową notatkę", której agent na drzwiach Teams nie ma czym utworzyć; `source` w opisie
+  zdarzeń udawał system docelowy, a znaczy DRZWI zapisujące; `/notatka` podawało klucz
+  `scada-integration`, którego nie ma w rejestrze.
+
+- **Kreska w „zapisz to" wygrywała przy KAŻDYM `|`** w wiadomości (#79), a wiadomości Teams
+  rutynowo je niosą. Klucz z wersalikiem dawał się wypisać w podpowiedzi, ale nie użyć.
+
+- **Odmowa kasowania odsyłała do `edit`**, który przy notatkach `-mtg-`/`-thr-` też się odbija
+  (#79) — jedno martwe wyjście za drugie.
+
+### Uwagi wdrożeniowe
+
+- **Powierzchnia MCP**: odświeżony `description` narzędzia `read_events_since` w golden-basie
+  (`tool_surface_baseline.json`). Sygnatura i `parameters` bez zmian, bajt w bajt.
+- **Sufit sumy opisów narzędzi** (8000 B): 7971 → 7947 B bez powłoki. Zapas urósł z 29 do 53 B,
+  bo usunięta martwa obietnica opłaciła dłuższe zdanie o `source`.
+- Zmiany są wyłącznie w warstwie aplikacji — **bez migracji danych, bez zmian schematu, bez
+  nowych zmiennych środowiskowych**. Wycofanie = poprzedni tag obrazu.
+
 ## [1.12.1] — 2026-08-20
 
 Wydanie **wyłącznie naprawcze**, zebrane w jednym dniu z dwóch rund przeglądu: pierwsza szła po
