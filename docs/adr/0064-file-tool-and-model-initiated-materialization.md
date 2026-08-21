@@ -127,8 +127,11 @@ owner is acting on is forward-looking — the traffic measured above is from a f
 off, attachments are rare because the bot visibly cannot do much with them, and the capability is
 wanted before the demand rather than after it.
 
-**Follow-up that keeps this honest:** re-measure after the shell has lived a month on prod (same
-query, plus `File` call counts from `audit.db`, ADR 0067). If `File` is unused by then, the honest
+**Follow-up that keeps this honest:** re-measure after the shell has lived a month on prod. The
+reference date was left implicit while it was still obvious, so it is written down here before it
+stops being: the shell and the per-conversation executor went live on **2026-08-20** (activation
+card steps 4-5, image 1.12.1), which puts the re-measure at **~2026-09-20** (same query, plus
+`File` call counts from `audit.db`, ADR 0067). If `File` is unused by then, the honest
 move is removal, not silence — a tool that costs prefix bytes every turn and buys nothing is exactly
 the scaffolding this project deletes.
 
