@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Dyrektywa wyzwalacza (case-insensitive). Składnia: ``@WorkMate zapisz to | <projekt>`` albo
-# forma naturalna (``zapisz to jako notatkę projektu <klucz>``) — patrz ``_parse_directive``.
+# forma naturalna (``zapisz to jako notatkę projektu <klucz>``) — patrz ``_klucz_projektu``.
 _DIRECTIVE = "zapisz to"
 # Token klucza projektu: rejestr używa kluczy typu ``workmate`` / ``scada-integration``.
 _TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -135,10 +135,14 @@ class ThreadNoteRouter:
         # Wyzwalacz wymaga @wzmianki bota: bez niej to zwykła wiadomość (bot odpowie normalną turą).
         if not ctx.mentions_bot:
             return None
-        klucze = self._klucze()
-        project = _parse_directive(text, klucze)
-        if project is None:
+        rest = _po_dyrektywie(text)
+        if rest is None:
             return None  # wzmianka bez „zapisz to" → normalna tura agenta
+        # Rejestr czytamy DOPIERO tu, gdy dyrektywa faktycznie padła. Wyżej statowalibyśmy plik
+        # rejestru przy KAŻDEJ wzmiance — także przy zwykłym pytaniu, które router przepuszcza
+        # dalej — i przy zepsutym pliku logowali ostrzeżenie w każdej takiej turze.
+        klucze = self._klucze()
+        project = _klucz_projektu(rest, klucze)
         if not project:
             # „zapisz to" bez rozpoznanego projektu → podpowiedz składnię REALNYMI kluczami.
             return _usage(sorted(klucze))
@@ -232,26 +236,31 @@ class ThreadNoteRouter:
             logger.exception("Nie udało się odesłać wyniku 'zapisz to' do wątku %r", target)
 
 
-def _parse_directive(text: str, klucze: frozenset[str] = frozenset()) -> str | None:
-    """Rozpoznaj dyrektywę „zapisz to"; zwróć projekt, ``""`` lub ``None``.
+def _po_dyrektywie(text: str) -> str | None:
+    """Tekst ZA dyrektywą „zapisz to" albo ``None``, gdy dyrektywy w wiadomości nie ma.
 
-    ``None`` → brak dyrektywy (zwykła wiadomość). ``""`` → dyrektywa jest, ale projektu nie da
-    się ustalić jednoznacznie (podpowiedz składnię). Inaczej → klucz projektu.
+    Wydzielone z rozpoznania klucza, żeby wykrycie dyrektywy było TANIE: router konsultuje
+    każdą wzmiankę bota, a rejestr projektów ma czytać wyłącznie ta garstka, która niesie
+    „zapisz to".
+    """
+    idx = text.lower().find(_DIRECTIVE)
+    return None if idx == -1 else text[idx + len(_DIRECTIVE) :]
 
-    Dwie drogi, ta sama gwarancja. Z kreską: bierzemy wszystko po ``|`` — bez zmian, bo tak
-    brzmi ADR 0048 i tak stoi w dokumentacji. Bez kreski: szukamy w tekście wzmianki tokenu,
-    który JEST kluczem rejestru; przy zerze albo dwóch trafieniach odmawiamy podpowiedzią,
-    bo zgadywanie miejsca zapisu jest gorsze niż pytanie.
+
+def _klucz_projektu(rest: str, klucze: frozenset[str]) -> str:
+    """Klucz projektu z tekstu za dyrektywą; ``""`` → nie da się ustalić jednoznacznie.
+
+    Dwie drogi, ta sama gwarancja. Z kreską: wszystko po ``|``, bez zmian — tak brzmi ADR 0048,
+    tak stoi w dokumentacji i tak dalej rozstrzyga o istnieniu projektu ``require_project``
+    w serwisie, nie ten parser. Bez kreski: szukamy tokenu, który JEST kluczem rejestru; przy
+    zerze albo dwóch trafieniach oddajemy ``""``, bo zgadywanie miejsca zapisu jest gorsze
+    niż pytanie.
 
     Rozluźnienie NIE osłabia niczego, co chroni ADR 0009 §3. Gwarancją jest tam POCHODZENIE
     klucza — z tekstu wzmianki nadawcy, nigdy z treści wątku — a zdanie „zapisz to jako notatkę
     projektu workmate" też jest tekstem wzmianki. Sztywna kreska chroniła prostotę parsera,
     nie użytkownika: na demo 2026-08-21 człowiek napisał formę naturalną i dostał odmowę.
     """
-    idx = text.lower().find(_DIRECTIVE)
-    if idx == -1:
-        return None
-    rest = text[idx + len(_DIRECTIVE) :]
     if "|" in rest:
         return rest.split("|", 1)[1].strip()
     trafienia = {token for token in _TOKEN.findall(rest.lower()) if token in klucze}

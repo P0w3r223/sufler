@@ -322,8 +322,10 @@ class _FakeProjects:
     def __init__(self, klucze: tuple[str, ...], *, raises: Exception | None = None) -> None:
         self._klucze = klucze
         self._raises = raises
+        self.odczyty = 0
 
     def all(self) -> list[Project]:
+        self.odczyty += 1
         if self._raises is not None:
             raise self._raises
         return [Project(key=k, company="biap", name=k, description="d") for k in self._klucze]
@@ -420,3 +422,23 @@ def test_pipe_syntax_keeps_working_for_keys_outside_the_registry():
 
     assert reply is not None and reply.startswith("✓")
     assert service.calls[0][2] == "scada-integration"
+
+
+def test_mention_without_directive_never_touches_the_registry():
+    # Router konsultuje KAŻDĄ wzmiankę bota, także zwykłe pytanie, które przepuszcza dalej.
+    # Rejestr ma czytać wyłącznie ta garstka, która niesie „zapisz to" — inaczej każda wzmianka
+    # statuje plik rejestru, a przy zepsutym pliku logujemy ostrzeżenie w każdej takiej turze.
+    projects = _FakeProjects(("workmate",))
+    router = ThreadNoteRouter(_FakeThreadService(), projects=projects)
+
+    assert router.dispatch("@WorkMate co słychać w projekcie?", _ctx()) is None
+    assert projects.odczyty == 0
+
+
+def test_directive_reads_the_registry_once():
+    # Jeden odczyt na turę: podpowiedź i rozpoznanie klucza dzielą ten sam wynik.
+    projects = _FakeProjects(("workmate", "biap-www"))
+    router = ThreadNoteRouter(_FakeThreadService(), projects=projects)
+
+    assert router.dispatch("@WorkMate zapisz to", _ctx()) is not None
+    assert projects.odczyty == 1
