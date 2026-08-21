@@ -72,6 +72,18 @@ def _usage(klucze: Sequence[str]) -> str:
     sam defekt co martwa obietnica ``/mnt/user/outputs``: klucza nie było ani w rejestrze, ani
     w notatkach, więc każdy, kto skopiował przykład, dostawał odmowę. Router ma rejestr pod ręką
     — ma z niego czytać, a nie powielać literał, który zgnije przy pierwszej zmianie rejestru.
+
+    Z przykładu znika też ``@WorkMate`` — i to jest szersza poprawka niż podmiana nazwy.
+    Wyzwalacz stoi na ``mentions[]`` z Graph, NIE na tekście, więc wzmianka musi zostać wybrana
+    z podpowiedzi Teams; wklejony ``@cokolwiek`` jest zwykłym słowem i nic nie uruchamia.
+    Drukowanie jakiejkolwiek nazwy dawało więc przykład NIEKOPIOWALNY — a dodatkowo widniała tam
+    nazwa `WorkMate`, gdy bot na produkcji nazywa się `Virtual WorkMate`. Zdanie mówi teraz, co
+    człowiek ma zrobić (wybrać wzmiankę), zamiast pokazywać znaki do przepisania.
+
+    Ostatnie zdanie zyskało powód. Sonda 2026-08-21 po migracji 1.13.0: człowiek napisał
+    „Zapisz to, @Virtual WorkMate", dostał tę podpowiedź i odczytał ją jako „bot nie zrozumiał".
+    Router zachował się POPRAWNIE — bez tego zapisałby wątek pod projekt `workmate`, bo nazwa
+    bota niesie klucz rejestru — ale odmowa bez powodu wygląda jak awaria.
     """
     if klucze:
         lista = ", ".join(klucze[:_USAGE_MAX_KEYS])
@@ -81,10 +93,11 @@ def _usage(klucze: Sequence[str]) -> str:
     else:
         projekt = "Rejestr projektów jest pusty — poproś operatora o dodanie projektu."
     return (
-        "Aby zapisać ten wątek jako notatkę, wzmiankuj mnie i podaj projekt:\n"
-        "  @WorkMate zapisz to | <projekt>\n"
-        "  albo wprost: @WorkMate zapisz to jako notatkę projektu <projekt>\n"
-        f"  {projekt} O projekcie decydujesz Ty, nie treść wątku."
+        "Aby zapisać ten wątek jako notatkę, wzmiankuj mnie (wybierz mnie z podpowiedzi Teams) "
+        "i podaj projekt:\n"
+        "  zapisz to | <projekt>\n"
+        "  albo wprost: zapisz to jako notatkę projektu <projekt>\n"
+        f"  {projekt} Projekt wskazujesz Ty — treść wątku ani moja nazwa o tym nie decydują."
     )
 
 

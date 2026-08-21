@@ -547,3 +547,39 @@ def test_registry_key_with_capitals_is_matched_and_returned_canonically():
     router.dispatch("zapisz to jako notatkę projektu workmate", _ctx())
 
     assert service.calls[0][2] == "WorkMate"
+
+
+def test_usage_shows_no_copyable_mention_token():
+    """Wyzwalacz stoi na ``mentions[]`` z Graph, nie na tekście — `@Nazwa` jest nie do skopiowania.
+
+    Podpowiedź drukowała `@WorkMate`, gdy bot na produkcji nazywa się `Virtual WorkMate`. Sama
+    podmiana nazwy zostawiłaby przykład NIEKOPIOWALNY: wklejone `@cokolwiek` to zwykłe słowo
+    i wzmianki nie tworzy. Zdanie mówi teraz, co zrobić, zamiast pokazywać znaki do przepisania.
+    """
+    router = ThreadNoteRouter(_FakeThreadService(), projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch(
+        "@Virtual WorkMate zapisz to", _ctx(mention_texts=("Virtual WorkMate",))
+    )
+
+    assert reply is not None
+    assert "@" not in reply
+    assert "podpowiedzi Teams" in reply
+
+
+def test_usage_gives_the_reason_it_refuses():
+    """Odmowa bez powodu wygląda jak awaria — sonda 2026-08-21 po migracji 1.13.0.
+
+    Człowiek napisał „Zapisz to, @Virtual WorkMate", dostał podpowiedź i odczytał ją jako
+    „bot nie zrozumiał". Router zachował się poprawnie (bez tego zapisałby wątek pod `workmate`,
+    bo nazwa bota niesie klucz rejestru), ale nie powiedział, DLACZEGO pyta.
+    """
+    router = ThreadNoteRouter(_FakeThreadService(), projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch(
+        "Zapisz to, Virtual WorkMate", _ctx(mention_texts=("Virtual WorkMate",))
+    )
+
+    assert reply is not None
+    assert "moja nazwa" in reply and "treść wątku" in reply
+    assert "Klucze z rejestru: workmate." in reply
