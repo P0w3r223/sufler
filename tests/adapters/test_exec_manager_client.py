@@ -31,12 +31,21 @@ from workmate.core.errors import ExecManagerError  # noqa: E402
 
 
 def _serve_control(sock_path: Path, response: dict) -> threading.Thread:
-    """Wystaw jednorazowy serwer kontrolny oddający ``response`` na pierwsze żądanie."""
+    """Wystaw jednorazowy serwer kontrolny oddający ``response`` na pierwsze żądanie.
+
+    Gotowość sygnalizuje ``Event`` USTAWIONY PO ``listen()``, nie istnienie pliku gniazda.
+    Różnica jest tu przyczyną migotania: plik powstaje przy ``bind()``, czyli ZANIM serwer
+    zacznie nasłuchiwać, a ``connect`` w tym oknie dostaje ``ECONNREFUSED``. Klient mapuje
+    każdy ``OSError`` na „menedżer niedostępny", więc test oczekujący komunikatu o scope
+    padał — losowo i tylko pod obciążeniem pełnego pakietu, gdy okno się poszerza.
+    """
+    gotowy = threading.Event()
 
     def loop() -> None:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(sock_path))
         server.listen(1)
+        gotowy.set()
         conn, _ = server.accept()
         with conn, conn.makefile("rwb") as stream:
             stream.readline()
@@ -46,10 +55,7 @@ def _serve_control(sock_path: Path, response: dict) -> threading.Thread:
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
-    for _ in range(200):
-        if sock_path.exists():
-            break
-        time.sleep(0.01)
+    assert gotowy.wait(5), "serwer kontrolny nie zaczął nasłuchiwać"
     return thread
 
 
@@ -140,10 +146,13 @@ def test_niedostepny_menedzer_degraduje_do_wyniku_nie_wyjatku():
 def _serve_endless_line(sock_path: Path) -> threading.Thread:
     """Wykonawca, który sączy odpowiedź BEZ końca linii — zerwane/wrogie połączenie."""
 
+    gotowy = threading.Event()
+
     def loop() -> None:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(sock_path))
         server.listen(1)
+        gotowy.set()
         conn, _ = server.accept()
         with conn, conn.makefile("rwb") as stream:
             stream.readline()
@@ -156,6 +165,8 @@ def _serve_endless_line(sock_path: Path) -> threading.Thread:
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
+    # Ten helper NIE CZEKAŁ w ogóle — wariant ostrzejszy tej samej wady co w ``_serve_control``.
+    assert gotowy.wait(5), "serwer sączący nie zaczął nasłuchiwać"
     return thread
 
 
