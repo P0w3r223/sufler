@@ -910,10 +910,10 @@ def _build_thread_note_router(
     source = HttpxGraphThreadSource(transport, token_provider)
     summarizer = AnthropicMeetingSummarizer(agent_settings)
     verifier = summarizer if agent_settings.verify_meeting_note else None
-    write_service = NotesWriteService(
-        MarkdownNotesWriter(core_settings.notes_dir),
-        YamlProjectsRepository(core_settings.projects_registry),
-    )
+    # Jedno repozytorium rejestru dla zapisu i dla podpowiedzi routera: dwa niezależne
+    # odczyty tego samego pliku rozjechałyby się przy edycji YAML-a między nimi.
+    projects = YamlProjectsRepository(core_settings.projects_registry)
+    write_service = NotesWriteService(MarkdownNotesWriter(core_settings.notes_dir), projects)
     authorizer = MeetingNoteAuthorizer(YamlIdentityDirectory(settings.meeting_note_identities))
     scheduler, callback = _build_async_note_dispatch(settings, token_provider)
     logger.info(
@@ -925,6 +925,7 @@ def _build_thread_note_router(
     )
     return ThreadNoteRouter(
         ThreadNoteService(source, summarizer, write_service, verifier=verifier),
+        projects=projects,
         authorizer=authorizer,
         scheduler=scheduler,
         callback=callback,

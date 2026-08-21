@@ -227,3 +227,36 @@ def test_opis_nie_obiecuje_jiry_w_warstwie_zdarzen() -> None:
 
     assert "Jir" not in opis.splitlines()[0]
     assert "'jira'" not in opis
+
+
+# --- ślad po filtrze w wyniku (demo 2026-08-21) ------------------------------
+
+
+def test_przefiltrowany_widok_zdarzen_niesie_slad_po_filtrze() -> None:
+    # Bez tego śladu lista przefiltrowana jest nie do odróżnienia od pełnej, a model
+    # wyprowadza z niej twierdzenie o ŚWIECIE: na demo odpowiedział „najnowsze issue to #76",
+    # bo #77 — założone przez niego samego z Teamsów — leży pod ``source='teams'``.
+    fn = build_activity_catalog(events=_FakeEvents())[0].fn
+
+    wynik = fn(action="events", source="github")
+
+    assert "note" in wynik
+    assert "source='github'" in wynik["note"]
+    assert "ZAWĘŻONY" in wynik["note"]
+
+
+def test_niefiltrowany_widok_zdarzen_nie_dokleja_notki() -> None:
+    # Zdanie jedzie TYLKO w turach, których dotyczy — inaczej opłacamy je w każdej.
+    fn = build_activity_catalog(events=_FakeEvents())[0].fn
+
+    assert "note" not in fn(action="events")
+
+
+def test_opis_zdarzen_mowi_ze_source_to_drzwi_a_nie_system() -> None:
+    # ``source`` niesie DRZWI, które zdarzenie zapisały. Opis obiecujący „issue, PR, CI"
+    # zapraszał do filtrowania po systemie docelowym i wykluczał wszystko, co bot sam
+    # zapisał do GitHuba z Teamsów.
+    opis = build_activity_catalog(events=_FakeEvents())[0].description
+
+    assert "DRZWI" in opis
+    assert "BEZ `source`" in opis

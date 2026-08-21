@@ -16,7 +16,7 @@ from workmate.adapters.inbound.thread_note_command import ThreadNoteContext, Thr
 from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
 from workmate.core.application.thread_notes import ThreadNoteOutcome
 from workmate.core.domain.identity import Person
-from workmate.core.domain.models import Note, NoteMetadata
+from workmate.core.domain.models import Note, NoteMetadata, Project
 from workmate.core.errors import LLMError, WriteError
 
 _TS = "2026-07-28T10:00:00Z"  # Graph ``created`` wzmianki → data notatki 2026-07-28.
@@ -311,3 +311,112 @@ def test_async_refusal_is_sync_and_schedules_no_background():
     assert scheduler.submitted == 0
     assert service.calls == []
     assert callback.posts == []
+
+
+# --- podpowiedź z REALNEGO rejestru i forma naturalna (demo 2026-08-21) -----
+
+
+class _FakeProjects:
+    """Atrapa ``ProjectsRepository`` — tylko ``all()``; ``raises`` symuluje zepsuty rejestr."""
+
+    def __init__(self, klucze: tuple[str, ...], *, raises: Exception | None = None) -> None:
+        self._klucze = klucze
+        self._raises = raises
+
+    def all(self) -> list[Project]:
+        if self._raises is not None:
+            raise self._raises
+        return [Project(key=k, company="biap", name=k, description="d") for k in self._klucze]
+
+    def get(self, key: str) -> Project | None:  # pragma: no cover - router tego nie woła
+        raise AssertionError("router nie rozstrzyga istnienia projektu — robi to serwis")
+
+    def status_record(self, key: str) -> None:  # pragma: no cover - router tego nie woła
+        raise AssertionError("router nie czyta statusów")
+
+
+def test_usage_lists_real_registry_keys():
+    # Podpowiedź wypisuje klucze Z REJESTRU. Wersja z wymyślonym „np. scada-integration"
+    # dawała odmowę każdemu, kto skopiował przykład (demo 2026-08-21): rejestr niósł jeden
+    # klucz `workmate`, a `scada` nie występował ani tam, ani w notatkach.
+    projects = _FakeProjects(("workmate", "biap-www"))
+    router = ThreadNoteRouter(_FakeThreadService(), projects=projects)
+
+    reply = router.dispatch("@WorkMate zapisz to", _ctx())
+
+    assert reply is not None
+    assert "biap-www, workmate" in reply  # posortowane, realne
+    assert "scada-integration" not in reply
+
+
+def test_usage_without_registry_falls_back_to_syntax_only():
+    # Bez repozytorium (ścieżki operatorskie) podpowiedź nadal działa — bez listy kluczy
+    # i BEZ wymyślonego przykładu.
+    router = ThreadNoteRouter(_FakeThreadService())
+
+    reply = router.dispatch("@WorkMate zapisz to", _ctx())
+
+    assert reply is not None and "podaj projekt" in reply
+    assert "scada-integration" not in reply
+
+
+def test_broken_registry_degrades_usage_instead_of_breaking_the_trigger():
+    # Rejestr jest tu wygodą, nie bramką: jego awaria ma zdegradować podpowiedź, a wyzwalacz
+    # ze składnią z kreską ma działać dalej.
+    service = _FakeThreadService()
+    projects = _FakeProjects((), raises=RuntimeError("YAML padł"))
+    router = ThreadNoteRouter(service, projects=projects)
+
+    assert router.dispatch("@WorkMate zapisz to", _ctx()) is not None
+    reply = router.dispatch("@WorkMate zapisz to | workmate", _ctx())
+
+    assert reply is not None and reply.startswith("✓")
+    assert service.calls[0][2] == "workmate"
+
+
+def test_natural_phrasing_resolves_the_project_from_the_mention_text():
+    # Forma, którą człowiek napisał na demo. Klucz nadal pochodzi z tekstu WZMIANKI (ADR 0009
+    # §3) — luźniejszy parser tej gwarancji nie rusza, bo źródłem jest ta sama wiadomość.
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch("@WorkMate zapisz to jako notatkę projektu workmate", _ctx())
+
+    assert reply is not None and reply.startswith("✓")
+    assert service.calls[0][2] == "workmate"
+
+
+def test_unknown_word_after_directive_gives_usage_instead_of_a_guess():
+    # Bez kreski klucz musi BYĆ kluczem rejestru. Słowo spoza rejestru nie ma się stać
+    # miejscem zapisu — zgadywanie jest gorsze niż pytanie.
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch("@WorkMate zapisz to jako notatkę projektu klienta", _ctx())
+
+    assert reply is not None and "podaj projekt" in reply
+    assert service.calls == []
+
+
+def test_two_registry_keys_in_one_mention_give_usage():
+    # Dwa klucze w jednym zdaniu → nie zgadujemy, który; podpowiedź i decyzja człowieka.
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate", "biap-www")))
+
+    reply = router.dispatch("@WorkMate zapisz to do workmate albo biap-www", _ctx())
+
+    assert reply is not None and "podaj projekt" in reply
+    assert service.calls == []
+
+
+def test_pipe_syntax_keeps_working_for_keys_outside_the_registry():
+    # Kreska zostaje drogą DOSŁOWNĄ: bierze wszystko po ``|`` niezależnie od rejestru, a o tym,
+    # czy projekt istnieje, rozstrzyga serwis (``require_project``). Rozluźnienie nie przeniosło
+    # tej decyzji do routera.
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
+
+    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+
+    assert reply is not None and reply.startswith("✓")
+    assert service.calls[0][2] == "scada-integration"

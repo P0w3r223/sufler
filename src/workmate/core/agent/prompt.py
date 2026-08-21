@@ -132,7 +132,13 @@ One constraint worth its cost: add notes, and leave existing ones as their autho
 wrote them. They are the division's institutional memory.
 
 When you are unsure whether an answer is grounded, picture the person opening the note
-you cited: would they find the claim in it?"""
+you cited: would they find the claim in it?
+
+That test has a mirror image, and it is the one that fails in practice. Claims of absence
+and claims of "the latest" rest on where you looked, so name the place: "among the last
+twenty events filed under `source='github'`, the newest is #76". An empty or filtered
+result describes your view — another filter, another source, or an earlier conversation
+may still hold the thing you were asked about."""
 
 
 def _static(environment: str) -> str:

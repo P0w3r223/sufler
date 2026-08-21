@@ -604,12 +604,19 @@ def test_a_smuggled_mutation_is_refused_by_the_read_only_door(action: str):
 
 
 def test_the_read_only_door_names_the_alternative_instead_of_just_refusing():
-    """Odmowa ma prowadzić do wyjścia — inaczej model ponawia albo zmyśla, że zapisał."""
+    """Odmowa ma prowadzić do wyjścia — inaczej model ponawia albo zmyśla, że zapisał.
+
+    Wyjściem było „zapisz jako nową notatkę" i na drzwiach Teams było MARTWE: agent nie ma
+    tam czym utworzyć notatki (``Project(action='save')`` nie wchodzi do katalogu przy
+    ``enable_write=False``, ADR 0006), a ``build_file_catalog`` nie ma jak tego rozróżnić.
+    Wyjście, które istnieje na każdych drzwiach, prowadzi do CZŁOWIEKA — i to ono jest tu
+    pilnowane. Sama własność „odmowa nazywa wyjście" zostaje bez zmian.
+    """
     spec, _ = _tool(files={"umowa.pdf": _PDF})
 
     wynik = spec.fn(action="edit", name="biap/mpwik/x")
 
-    assert "nową notatkę" in wynik["error"]
+    assert "człowiekowi" in wynik["error"]
 
 
 # --- Opis odsyla tam, gdzie zdolnosc faktycznie jest (ADR 0068 §2) --------------------
@@ -652,6 +659,19 @@ def test_zrodlo_identyfikatora_notatki_zalezy_od_powloki():
 
     assert "workmate-search" in z_powloka and "SearchNotes" not in z_powloka
     assert "SearchNotes" in bez_powloki and "workmate-search" not in bez_powloki
+
+
+def test_opis_nie_obiecuje_tworzenia_notatki_przy_niezmiennych():
+    """Zasada z `tools.py:392` w drugą stronę: opis nie obiecuje zdolności spoza `Literal`.
+
+    Opis mówił o `-mtg-`/`-thr-`: „poprawki do nich zapisuj jako nową notatkę". Na drzwiach
+    Teams agent nie ma tego czym zrobić (`Project(action='save')` przy `enable_write=False`,
+    ADR 0006), a `build_file_catalog` nie zna profilu zapisu sąsiedniego narzędzia — więc
+    milczy. Sama reguła o tylko-do-odczytu ZOSTAJE: bez niej model traci turę na odmowę.
+    """
+    for opis in (_opis(shell=True, mutacje=True), _opis(shell=False, mutacje=True)):
+        assert "tylko do odczytu" in opis
+        assert "nową notatkę" not in opis
 
 
 def test_brak_pliku_niesie_podpowiedz_jak_brak_pola():

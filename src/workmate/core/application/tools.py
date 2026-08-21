@@ -671,8 +671,7 @@ NOTATKI (`<firma>/<projekt>/<plik>`, {zrodlo}), a `reason` to jedno zdanie: po c
 Zanim zmienisz — przeczytaj notatkę i pokaż człowiekowi, co konkretnie ma się zmienić.
 Zmianę ocenia niezależny sędzia i może poprosić o potwierdzenie: wtedy powiedz człowiekowi,
 co się stanie, poczekaj na jego odpowiedź i dopiero wtedy poproś ponownie o to samo.
-Notatki ze spotkań i wątków (`-mtg-`, `-thr-`) są tylko do odczytu — poprawki do nich
-zapisuj jako nową notatkę."""
+Notatki ze spotkań i wątków (`-mtg-`, `-thr-`) są tylko do odczytu."""
 
 _FILE_DELETE = """
 
@@ -768,9 +767,9 @@ def build_file_catalog(
         """Wspólne CIAŁO trzech wariantów — same wrappery różnią się wyłącznie ``Literal``em."""
 
         def build() -> dict[str, Any]:
-            # Akcje mutujące idą do ``_mutacja`` NAWET przy zamkniętej bramce: tam odmowa jest
-            # merytoryczna i wskazuje wyjście („zapisz jako nową notatkę"), a nie samo „nie ma
-            # takiej akcji". ``Literal`` i tak zamyka je wobec modelu — to jest obrona w głąb
+            # Akcje mutujące idą do ``_mutacja`` NAWET przy zamkniętej bramce: tam odmowa mówi,
+            # CO jest wyłączone i co z tym zrobić, a nie samo „nie ma takiej akcji".
+            # ``Literal`` i tak zamyka je wobec modelu — to jest obrona w głąb
             # dla wołających z pominięciem koercji (router komend, kod aplikacji).
             if action in ("edit", "delete"):
                 return _mutacja(action, name, content, reason)
@@ -850,8 +849,8 @@ def build_file_catalog(
         if mutations is None:
             return {
                 "error": (
-                    "Zmienianie bazy wiedzy jest wyłączone na tych drzwiach. "
-                    "Poprawkę zapisz jako nową notatkę."
+                    "Zmienianie bazy wiedzy jest wyłączone na tych drzwiach — powiedz "
+                    "człowiekowi, co wymaga poprawki, i zostaw notatkę taką, jaka jest."
                 )
             }
         if action == "delete" and not kasowanie:
@@ -861,7 +860,7 @@ def build_file_catalog(
             return {
                 "error": (
                     "Usuwanie notatek jest wyłączone na tych drzwiach. "
-                    "Popraw treść przez `edit` albo zapisz sprostowanie jako nową notatkę."
+                    "Treść możesz poprawić przez `edit`."
                 )
             }
         if not requester:
@@ -1120,11 +1119,21 @@ def build_events_since_catalog(events: EventService) -> list[ToolSpec]:
     return [ToolSpec("read_events_since", read_events_since.__doc__ or "", read_events_since)]
 
 
+# Ślad po filtrze idzie do WYNIKU (pole ``note`` w kopercie, ADR 0068 §5), nie do opisu — i
+# tylko wtedy, gdy filtr faktycznie zawęził widok, żeby zdanie nie jechało w turach, których nie
+# dotyczy. Bez tego śladu lista przefiltrowana jest nie do odróżnienia od pełnej, a model
+# wyprowadza z niej twierdzenie o ŚWIECIE: na demo 2026-08-21 odpowiedział „najnowsze issue to
+# #76", bo #77 — założone przez niego samego z Teamsów — leży pod ``source='teams'``.
+_EVENTS_FILTERED_NOTE = (
+    "Ten widok jest ZAWĘŻONY ({filtry}) — to nie jest pełna lista zdarzeń. Zanim powiesz, "
+    "że czegoś nie ma albo co jest najnowsze, powtórz odczyt bez filtru."
+)
+
 _ACTIVITY_AKCJE: dict[str, str] = {
     "events": (
         "`events` — ostatnie zdarzenia z warstwy spajającej, najnowsze pierwsze. Opcjonalnie: "
-        "`source` ('github' — issue, PR, CI, recenzje; 'teams' — to, co zespół zrobił z Teamsów), "
-        "`project` (klucz z rejestru), `limit` (domyślnie 20)."
+        "`source` — DRZWI, które zdarzenie zapisały ('github', 'teams'), nie system, którego "
+        "dotyczy; o stan GitHuba pytaj BEZ `source`. `project` (klucz z rejestru), `limit` (20)."
     ),
     "summary": (
         "`summary` — podsumowanie PRZEBIEGU prac projektu ze zdarzeń: liczniki wg typu, czas "
@@ -1231,7 +1240,15 @@ def build_activity_catalog(
             items = events.recent(
                 source=source, project=project, limit=max(1, min(limit, _ACTIVITY_MAX_EVENTS))
             )
-            return {"count": len(items), "events": [e.model_dump(mode="json") for e in items]}
+            wynik = {"count": len(items), "events": [e.model_dump(mode="json") for e in items]}
+            filtry = ", ".join(
+                f"{nazwa}={wartosc!r}"
+                for nazwa, wartosc in (("source", source), ("project", project))
+                if wartosc
+            )
+            if filtry:
+                return {**wynik, "note": _EVENTS_FILTERED_NOTE.format(filtry=filtry)}
+            return wynik
 
         return _envelope(build)
 

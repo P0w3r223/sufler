@@ -1,7 +1,9 @@
 """Przechwycenie „zapisz to" — notatka z WĄTKU po @wzmiance bota (ADR 0048, F2).
 
 Lustro ``MeetingNoteRouter`` dla innego wyzwalacza: nie komenda ``/notatka`` z argami, lecz
-@WZMIANKA bota niosąca dyrektywę ``zapisz to | <projekt>``. Świadomie OSOBNY router (nie read-only
+@WZMIANKA bota niosąca dyrektywę ``zapisz to`` z kluczem projektu — po kresce
+(``zapisz to | <projekt>``) albo wprost w zdaniu, gdy tekst wzmianki niesie klucz
+z rejestru. Świadomie OSOBNY router (nie read-only
 ``CommandRouter`` — ADR 0017 zostaje read-only), budowany tylko przy włączonej bramce
 ``enable_thread_note_capture``, konsultowany przez respondera OBOK komend i routera spotkań.
 
@@ -21,6 +23,7 @@ retry bezpiecznym.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import TYPE_CHECKING
@@ -28,21 +31,46 @@ from typing import TYPE_CHECKING
 from workmate.core.errors import NoteAuthorizationError, WorkMateError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
     from workmate.core.application.thread_notes import ThreadNoteService
+    from workmate.core.ports.repositories import ProjectsRepository
 
 logger = logging.getLogger(__name__)
 
-# Dyrektywa wyzwalacza (case-insensitive). Składnia: ``@WorkMate zapisz to | <projekt>``.
+# Dyrektywa wyzwalacza (case-insensitive). Składnia: ``@WorkMate zapisz to | <projekt>`` albo
+# forma naturalna (``zapisz to jako notatkę projektu <klucz>``) — patrz ``_parse_directive``.
 _DIRECTIVE = "zapisz to"
-_USAGE = (
-    "Aby zapisać ten wątek jako notatkę, wzmiankuj mnie i podaj projekt po kresce:\n"
-    "  @WorkMate zapisz to | <projekt>\n"
-    "  <projekt> — klucz projektu z rejestru (np. scada-integration). O projekcie decydujesz "
-    "Ty, nie treść wątku."
-)
+# Token klucza projektu: rejestr używa kluczy typu ``workmate`` / ``scada-integration``.
+_TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# Ile kluczy wypisać w podpowiedzi, zanim urwiemy wielokropkiem (podpowiedź, nie katalog).
+_USAGE_MAX_KEYS = 8
+
+
+def _usage(klucze: Sequence[str]) -> str:
+    """Podpowiedź składni z REALNYMI kluczami rejestru.
+
+    Poprzednia wersja podawała jeden przykład na sztywno („np. scada-integration") i był to ten
+    sam defekt co martwa obietnica ``/mnt/user/outputs``: klucza nie było ani w rejestrze, ani
+    w notatkach, więc każdy, kto skopiował przykład, dostawał odmowę. Router ma rejestr pod ręką
+    — ma z niego czytać, a nie powielać literał, który zgnije przy pierwszej zmianie rejestru.
+    """
+    if klucze:
+        lista = ", ".join(klucze[:_USAGE_MAX_KEYS])
+        if len(klucze) > _USAGE_MAX_KEYS:
+            lista += ", …"
+        projekt = f"Klucze z rejestru: {lista}."
+    else:
+        projekt = "Rejestr projektów jest pusty — poproś operatora o dodanie projektu."
+    return (
+        "Aby zapisać ten wątek jako notatkę, wzmiankuj mnie i podaj projekt:\n"
+        "  @WorkMate zapisz to | <projekt>\n"
+        "  albo wprost: @WorkMate zapisz to jako notatkę projektu <projekt>\n"
+        f"  {projekt} O projekcie decydujesz Ty, nie treść wątku."
+    )
+
+
 _ACK = (
     "Przyjąłem — zapisuję ten wątek jako notatkę (streszczam ustalenia). "
     "Wynik odeślę w tym wątku za chwilę."
@@ -85,11 +113,17 @@ class ThreadNoteRouter:
         self,
         service: ThreadNoteService,
         *,
+        projects: ProjectsRepository | None = None,
         authorizer: MeetingNoteAuthorizer | None = None,
         scheduler: Callable[[Callable[[], None]], None] | None = None,
         callback: Callable[[str, str], None] | None = None,
     ) -> None:
         self._service = service
+        # Rejestr projektów — WYŁĄCZNIE do podpowiedzi i do rozpoznania klucza w formie
+        # naturalnej. O tym, czy projekt istnieje, i tak rozstrzyga ``require_project``
+        # w serwisie: ta ścieżka niczego nie autoryzuje. ``None`` (ścieżki operatorskie,
+        # testy) → podpowiedź bez kluczy i wyłącznie składnia z kreską.
+        self._projects = projects
         # Bramka członkostwa (B2 / ADR 0042); ``None`` → bez autoryzacji (operatorskie ścieżki).
         self._authorizer = authorizer
         # Async (B3 / ADR 0043): ``scheduler`` zleca thunk do tła, ``callback`` odsyła wynik do
@@ -101,12 +135,28 @@ class ThreadNoteRouter:
         # Wyzwalacz wymaga @wzmianki bota: bez niej to zwykła wiadomość (bot odpowie normalną turą).
         if not ctx.mentions_bot:
             return None
-        project = _parse_directive(text)
+        klucze = self._klucze()
+        project = _parse_directive(text, klucze)
         if project is None:
             return None  # wzmianka bez „zapisz to" → normalna tura agenta
         if not project:
-            return _USAGE  # „zapisz to" bez projektu → podpowiedz składnię
+            # „zapisz to" bez rozpoznanego projektu → podpowiedz składnię REALNYMI kluczami.
+            return _usage(sorted(klucze))
         return self._handle(project, ctx)
+
+    def _klucze(self) -> frozenset[str]:
+        """Klucze rejestru; przy braku repozytorium albo błędzie odczytu — pusty zbiór.
+
+        Rejestr jest tu wygodą, nie bramką, więc jego awaria ma degradować podpowiedź, a nie
+        wywracać wyzwalacz: ze składnią z kreską „zapisz to" działa dalej.
+        """
+        if self._projects is None:
+            return frozenset()
+        try:
+            return frozenset(p.key for p in self._projects.all())
+        except Exception:
+            logger.warning("Nie udało się odczytać rejestru projektów do podpowiedzi 'zapisz to'")
+            return frozenset()
 
     def _handle(self, project: str, ctx: ThreadNoteContext) -> str:
         try:
@@ -182,20 +232,30 @@ class ThreadNoteRouter:
             logger.exception("Nie udało się odesłać wyniku 'zapisz to' do wątku %r", target)
 
 
-def _parse_directive(text: str) -> str | None:
-    """Rozpoznaj dyrektywę „zapisz to | <projekt>"; zwróć projekt, ``""`` lub ``None``.
+def _parse_directive(text: str, klucze: frozenset[str] = frozenset()) -> str | None:
+    """Rozpoznaj dyrektywę „zapisz to"; zwróć projekt, ``""`` lub ``None``.
 
-    ``None`` → brak dyrektywy (zwykła wiadomość). ``""`` → dyrektywa jest, ale brak projektu po
-    kresce (podpowiedz składnię). Inaczej → klucz projektu (przycięty). Treść po dyrektywie to
-    jawny argument nadawcy, nie interpretacja treści wątku (ADR 0009 §3).
+    ``None`` → brak dyrektywy (zwykła wiadomość). ``""`` → dyrektywa jest, ale projektu nie da
+    się ustalić jednoznacznie (podpowiedz składnię). Inaczej → klucz projektu.
+
+    Dwie drogi, ta sama gwarancja. Z kreską: bierzemy wszystko po ``|`` — bez zmian, bo tak
+    brzmi ADR 0048 i tak stoi w dokumentacji. Bez kreski: szukamy w tekście wzmianki tokenu,
+    który JEST kluczem rejestru; przy zerze albo dwóch trafieniach odmawiamy podpowiedzią,
+    bo zgadywanie miejsca zapisu jest gorsze niż pytanie.
+
+    Rozluźnienie NIE osłabia niczego, co chroni ADR 0009 §3. Gwarancją jest tam POCHODZENIE
+    klucza — z tekstu wzmianki nadawcy, nigdy z treści wątku — a zdanie „zapisz to jako notatkę
+    projektu workmate" też jest tekstem wzmianki. Sztywna kreska chroniła prostotę parsera,
+    nie użytkownika: na demo 2026-08-21 człowiek napisał formę naturalną i dostał odmowę.
     """
     idx = text.lower().find(_DIRECTIVE)
     if idx == -1:
         return None
     rest = text[idx + len(_DIRECTIVE) :]
-    if "|" not in rest:
-        return ""
-    return rest.split("|", 1)[1].strip()
+    if "|" in rest:
+        return rest.split("|", 1)[1].strip()
+    trafienia = {token for token in _TOKEN.findall(rest.lower()) if token in klucze}
+    return trafienia.pop() if len(trafienia) == 1 else ""
 
 
 def _iso_date(timestamp: str) -> date:
