@@ -79,6 +79,20 @@ def test_prompt_declares_precedence_and_decision_heuristic():
         assert "When you are unsure" in prompt
 
 
+def test_prompt_covers_claims_of_absence_not_only_claims_of_presence():
+    """Test kontrolny promptu obejmował wyłącznie twierdzenia POZYTYWNE (ADR 0056).
+
+    „Ground answers in what the tools return […] when the tools come back empty, say so
+    plainly" plus „would they find the claim in it?" opisują wypowiedź o tym, co JEST.
+    Obie nieprawdy z demo 2026-08-21 („najnowsze issue to #76", „nie zapisałem żadnej
+    notatki") miały kształt odwrotny: twierdzenie o nieistnieniu wyprowadzone z widoku,
+    który był przefiltrowany. Reguła musi więc mówić o miejscu, w które model zajrzał.
+    """
+    for prompt in (STATIC_PROMPT, STATIC_PROMPT_SHELL):
+        assert "Claims of absence" in prompt
+        assert "name the place" in prompt
+
+
 def test_prompt_avoids_pushy_capitals():
     """Bramka redakcyjna: bez nacisku wersalikami (ADR 0056)."""
     for prompt in (STATIC_PROMPT, STATIC_PROMPT_SHELL, SUMMARY_SYSTEM_PROMPT):

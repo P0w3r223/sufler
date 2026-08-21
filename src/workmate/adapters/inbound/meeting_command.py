@@ -44,7 +44,7 @@ _TOKEN = "/notatka"
 _USAGE = (
     "Użycie: /notatka <ref-spotkania> | <projekt> | <RRRR-MM-DD>\n"
     "  <ref-spotkania> — link „Dołącz do spotkania” (joinWebUrl) albo id spotkania,\n"
-    "  <projekt>       — klucz projektu z rejestru (np. scada-integration),\n"
+    "  <projekt>       — klucz projektu z rejestru,\n"
     "  <RRRR-MM-DD>    — data spotkania (o dacie/projekcie decyduje wywołujący, nie transkrypt)."
 )
 _ACK = (
