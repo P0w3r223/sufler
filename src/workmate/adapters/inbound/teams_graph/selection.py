@@ -65,6 +65,12 @@ class ChannelMessage:
     # ``normalize`` z ``me_id`` (znanym w pollerze), bo sama treść wzmianki nie wystarcza:
     # potrzebny jest AAD id bota. Addytywne, domyślnie ``False`` (drzwi/testy bez ``me_id``).
     mentions_bot: bool = False
+    # TEKSTY wzmianek (``mentions[].mentionText``) — nazwy, którymi Graph podmienia znaczniki
+    # ``<at>``. Potrzebne, bo ``_strip_html`` spłaszcza wzmiankę do gołej nazwy i staje się ona
+    # nieodróżnialna od słowa napisanego przez człowieka. Wyzwalacz „zapisz to" musi te słowa
+    # WYKLUCZYĆ z szukania klucza projektu: „Zapisz to, @Virtual WorkMate" nie jest poleceniem
+    # zapisu do projektu `workmate`. Addytywne, domyślnie puste (drzwi/testy bez wzmianek).
+    mention_texts: tuple[str, ...] = ()
 
 
 def parse_iso(value: str) -> datetime:
@@ -117,6 +123,7 @@ def normalize(raw: dict[str, Any], me_id: str = "") -> ChannelMessage | None:
         text=text,
         attachment_refs=refs,
         mentions_bot=bool(me_id) and me_id in _parse_mention_ids(raw),
+        mention_texts=_parse_mention_texts(raw),
     )
 
 
@@ -134,6 +141,16 @@ def _parse_mention_ids(raw: dict[str, Any]) -> frozenset[str]:
         if uid:
             ids.add(uid)
     return frozenset(ids)
+
+
+def _parse_mention_texts(raw: dict[str, Any]) -> tuple[str, ...]:
+    """Nazwy z ``mentions[].mentionText`` — to, czym Graph zastąpił znaczniki ``<at>``.
+
+    Bierzemy WSZYSTKIE wzmianki, nie tylko bota: wzmianka to z definicji adresat, a nie argument
+    polecenia, więc żadna z tych nazw nie ma prawa zostać wzięta za klucz projektu.
+    """
+    nazwy = [str(m.get("mentionText") or "").strip() for m in raw.get("mentions") or []]
+    return tuple(n for n in nazwy if n)
 
 
 def _parse_refs(raw: dict[str, Any], body_html: str | None) -> tuple[AttachmentRef, ...]:
