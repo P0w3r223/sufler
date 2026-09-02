@@ -1,7 +1,7 @@
 # Szkielet wdrożenia HTTP (Bramka 3, ADR 0007)
 
 Ten katalog to **gotowy do użycia szkielet** wdrożenia WorkMate po `streamable-http`
-z uwierzytelnianiem per osoba. Kod serwera (`config.py`, `adapters/inbound/mcp/auth.py`,
+z uwierzytelnianiem per osoba. Kod serwera (`config/server.py`, `adapters/inbound/mcp/auth.py`,
 gałąź HTTP w `server.py`) jest domknięty i przetestowany — tu leżą **narzędzia
 operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
 

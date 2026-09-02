@@ -175,10 +175,12 @@ def przestrzen_config() -> dict[str, object]:
 
     from workmate import config
 
+    # ``walk_packages``, nie ``iter_modules``: gdy któraś domena urośnie kiedyś w PODPAKIET
+    # (``config/<x>/``), nazwy z jego modułów wymknęłyby się bramkom tak samo cicho, jak
+    # wymykały się piętro wyżej przed rozbiciem — a to jest dokładnie ta wada, którą tu łatamy.
     przestrzen: dict[str, object] = dict(vars(config))
-    for info in pkgutil.iter_modules(config.__path__):
-        modul = importlib.import_module(f"{config.__name__}.{info.name}")
-        przestrzen.update(vars(modul))
+    for info in pkgutil.walk_packages(config.__path__, prefix=f"{config.__name__}."):
+        przestrzen.update(vars(importlib.import_module(info.name)))
     return przestrzen
 
 

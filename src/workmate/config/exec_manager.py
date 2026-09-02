@@ -12,10 +12,11 @@ from workmate.config.shell import _DEFAULT_MANAGER_SOCKET
 # Domyślne punkty montażu i nazwy wolumenów menedżera — spójne z compose (infra 0012). Menedżer
 # montuje wolumen brudnopisu i gniazd pod TYMI SAMYMI ścieżkami co aplikacja, żeby ścieżka gniazda
 # oddawana w ``ensure`` była ważna po obu stronach bez tłumaczenia układów.
-# Te trzy (i ``_DEFAULT_MANAGER_SOCKET`` wyżej) zostają literałami POSIX BEZ rozgałęzienia po
-# ``os.name`` — inaczej niż ``_DEFAULT_TOKENS_FILE`` i ``_DEFAULT_SCHEDULE_CACHE``. Różnica jest
-# rzeczowa, nie z niedopatrzenia: to gniazda uniksowe i punkty montażu kontenera-wykonawcy
-# (ADR 0057 / infra 0012), a ta zdolność na Windows nie działa w ogóle — nie ma ani gniazd
+# Te trzy (i ``_DEFAULT_MANAGER_SOCKET`` z ``config/shell.py``) zostają literałami POSIX BEZ
+# rozgałęzienia po ``os.name`` — inaczej niż ``_DEFAULT_TOKENS_FILE`` i ``_DEFAULT_SCHEDULE_CACHE``.
+# Różnica jest rzeczowa, nie z niedopatrzenia: to gniazda uniksowe i punkty montażu
+# kontenera-wykonawcy (ADR 0057 / infra 0012), a ta zdolność na Windows nie działa w ogóle —
+# nie ma ani gniazd
 # AF_UNIX w tym układzie, ani `docker.sock`. Windowsowy wariant byłby fikcją wskazującą na nic.
 # Pilnuje tego jawny rejestr w ``tests/test_config.py`` (ścieżki zwolnione z kontroli
 # „absolutna na TEJ platformie" muszą być wymienione z nazwy).
@@ -131,7 +132,8 @@ class ExecManagerSettings:
         # wartość ujemna znaczy dla Docker API „bez limitu", więc literówka w compose zdejmowałaby
         # granicę po cichu, zostawiając wykonawcę wyglądającego na utwardzony. Menedżer jest
         # jedynym miejscem, gdzie ta liczba jest jeszcze konfiguracją, a nie faktem o kontenerze.
-        # ZAKRESY, nie same podłogi — jak przy bliźniaczej kwocie katalogu roboczego wyżej.
+        # ZAKRESY, nie same podłogi — jak przy bliźniaczej kwocie katalogu roboczego
+        # (``config/workspace.py``).
         # Sama podłoga „>= 1" przepuszcza wartości, które odbije dopiero Docker (minimum 6 MB
         # pamięci, 0.01 CPU) albo które zabiją kontener na starcie — awaria wtedy jest głośna,
         # ale późna i w INNYM PROCESIE niż literówka, więc operator szuka jej nie tam.

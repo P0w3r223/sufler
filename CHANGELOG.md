@@ -16,6 +16,10 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   Kod przeniesiony 1:1 — bez zmian sygnatur, wartości domyślnych i nazw zmiennych
   środowiskowych. Najdłuższy moduł to dziś `config/teams_graph.py` (510 linii).
 
+  Kontrakt „jedno wejście" nie jest prozą: pilnuje go trzeci kontrakt import-lintera
+  („config ma jedno wejście", tylko importy bezpośrednie). Sprawdzony sondą — podmiana
+  jednego importu w `server.py` na moduł domeny zapala go natychmiast.
+
   Bramki refleksyjne (ścieżki stanu, bramki domyślnie zamknięte, nośniki sekretu) oglądały
   `vars(config)` — po rozbiciu widziałyby tylko re-eksport, więc stała pominięta w
   `__init__` wymykałaby się im BEZ ŚLADU. Chodzą teraz po wszystkich modułach pakietu

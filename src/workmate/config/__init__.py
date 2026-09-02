@@ -7,7 +7,8 @@ może nadpisać ścieżki pojedynczą zmienną środowiskową.
 
 Pakiet, nie moduł: jeden plik na domenę ustawień, wspólne pomocniki w ``_env``.
 Ten plik jest JEDYNYM wejściem — ``from workmate.config import <cokolwiek>`` działa
-jak przed rozbiciem i nowy kod ma sięgać tutaj, nie do modułów wewnętrznych.
+jak przed rozbiciem, a sięganie po moduł domeny wprost łamie kontrakt import-lintera
+„config ma jedno wejście" (``pyproject.toml``), więc nie jest to prośba, tylko bramka.
 """
 
 from __future__ import annotations
