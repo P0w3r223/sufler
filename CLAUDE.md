@@ -18,7 +18,7 @@ Sesja MCP: zamrożona ósemka, pilnowana golden-testem.
 Most GitHub ↔ `EventStore` (SQLite `~/.workmate/events.db`, append-only, poza `data/`) ↔ Teams.
 Jira: odczyt bez zapisu, bez mostu, bez EventStore; dual-provider `WORKMATE_JIRA_DEPLOYMENT=server|cloud` (akcje — reguła 8).
 Retrieval leksykalny BM25 nad notatkami `data/notes/<firma>/<projekt>/*.md`.
-Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbound,outbound}` · `server.py` (wiring) · `config.py`.
+Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbound,outbound}` · `server.py` (wiring) · `config/` (moduł na domenę, jedno wejście: `workmate.config`).
 
 ## Komendy
 - `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval, retrieval-dense, file-reply, seed)

@@ -1,6 +1,6 @@
 """Golden-test bramek: KAŻDA zdolność mutująca i wychodząca jest domyślnie ZAMKNIĘTA.
 
-Rozproszone `default=False` w ``config.py`` łatwo przestawić — przy dopisywaniu pola, przy
+Rozproszone `default=False` w ``config/`` łatwo przestawić — przy dopisywaniu pola, przy
 scalaniu, przy „tymczasowym" włączeniu do testów. Ten test zbiera je REFLEKSYJNIE, i to na DWÓCH
 poziomach:
 
@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate import config
+from tests.conftest import pochodzi_z_config, przestrzen_config
 from workmate.config import ScheduleSettings, Settings
 
 # Klasy ustawień znane z przeglądu 2026-08-17. Refleksja MUSI je wszystkie znaleźć — inaczej
@@ -75,10 +75,10 @@ def _klasy_ustawien() -> dict[str, type]:
     """Wszystkie dataklasy ``*Settings`` zdefiniowane w ``workmate.config``."""
     return {
         name: obj
-        for name, obj in vars(config).items()
+        for name, obj in przestrzen_config().items()
         if inspect.isclass(obj)
         and dataclasses.is_dataclass(obj)
-        and obj.__module__ == "workmate.config"
+        and pochodzi_z_config(obj)
         and (name.endswith("Settings") or name == "Settings")
     }
 
@@ -335,8 +335,8 @@ def test_heurystyka_nazwy_bramki_widzi_realne_klucze() -> None:
 def test_dotenv_z_repozytorium_nie_otwiera_bramki_pod_pytestem() -> None:
     """Lokalny ``.env`` (bywa w nim ``WORKMATE_ENABLE_WRITE=true``) nie może sterować testami.
 
-    ``config.py`` czyta wyłącznie ``os.environ``; ``.env`` wczytują dopiero wejścia drzwi
-    (``env.load_dotenv``). Gdyby kiedyś ktoś przeniósł wczytywanie do ``config.py`` „dla wygody",
+    ``config/`` czyta wyłącznie ``os.environ``; ``.env`` wczytują dopiero wejścia drzwi
+    (``env.load_dotenv``). Gdyby kiedyś ktoś przeniósł wczytywanie do ``config/`` „dla wygody",
     cały pakiet zacząłby mierzyć konfigurację maszyny — ta sonda zapala się od razu.
     """
     dotenv = Path(__file__).resolve().parents[1] / ".env"

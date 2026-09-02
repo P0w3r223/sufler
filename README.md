@@ -68,7 +68,7 @@ src/workmate/
 │   ├── inbound/    # DRZWI: mcp, teams, teams_graph, cli, github…
 │   └── outbound/  # KLIENCI zewnętrznych API
 ├── server.py               # wiring serwera MCP
-└── config.py               # ustawienia WORKMATE_*
+└── config/                 # ustawienia WORKMATE_* — moduł na domenę, re-eksport w __init__
 ```
 
 ```mermaid

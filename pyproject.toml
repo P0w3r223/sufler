@@ -279,3 +279,15 @@ name = "outbound nie importuje inbound"
 type = "forbidden"
 source_modules = ["workmate.adapters.outbound"]
 forbidden_modules = ["workmate.adapters.inbound"]
+
+# Rozbicie ``config.py`` na pakiet ma sens tylko dopóki ``config/__init__`` zostaje JEDYNYM
+# wejściem. Pierwszy ``from workmate.config.teams_graph import …`` wszedłby niezauważony,
+# a re-eksport przestałby cokolwiek znaczyć — z prozy w docstringu bramka się nie robi.
+[[tool.importlinter.contracts]]
+name = "config ma jedno wejście"
+type = "forbidden"
+source_modules = ["workmate.core", "workmate.adapters", "workmate.server"]
+forbidden_modules = ["workmate.config.*"]
+# Tylko importy BEZPOŚREDNIE: każda droga do modułu domeny prowadzi przez ``config/__init__``,
+# więc bez tego kontrakt zapala się na własnym re-eksporcie.
+allow_indirect_imports = true

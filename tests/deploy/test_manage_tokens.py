@@ -193,7 +193,7 @@ def test_default_store_is_not_written_as_a_path_literal() -> None:
     """Sama równość nie wystarczy: na Windows kopia i oryginał mają tę samą wartość, więc milczy.
 
     Sondujemy więc ZAPIS: prawa strona przypisania ``DEFAULT_STORE`` nie może być literałem
-    tekstowym. Dopóki nim była, poprawka po stronie ``config.py`` nie miała jak tu dojechać —
+    tekstowym. Dopóki nim była, poprawka po stronie ``config/server.py`` nie miała jak tu dojechać —
     a rozjazd ujawniał się wyłącznie na Linuksie, czyli na jedynej platformie produkcyjnej.
     """
     przypisanie = re.search(

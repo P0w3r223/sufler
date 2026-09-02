@@ -5,7 +5,7 @@ strukturalnie — bez dziedziczenia — dzięki czemu serwisy testujemy w pełni
 w pamięci, bez dotykania dysku.
 
 Izolacja środowiska (``_srodowisko_bez_konfiguracji_maszyny``) jest tu, bo wynik pakietu nie
-może zależeć od maszyny. ``config.py`` czyta WYŁĄCZNIE ``os.environ`` (``.env`` wczytują dopiero
+może zależeć od maszyny. ``config/`` czyta WYŁĄCZNIE ``os.environ`` (``.env`` wczytują dopiero
 wejścia drzwi przez ``env.load_dotenv``), więc pod pytestem plik ``.env`` z repo nie działa —
 ale realna powłoka operatora działa. Empirycznie: z ``WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true``
 w środowisku ``test_enable_ci_auto_comment_defaults_false`` przewracał się na maszynie, na której
@@ -157,3 +157,34 @@ def sample_notes() -> list[Note]:
             tags=["schemat"],
         ),
     ]
+
+
+# --- Refleksja po konfiguracji -------------------------------------------------------------
+# Bramki refleksyjne (ścieżki stanu w ``test_config``, bramki domyślnie zamknięte w
+# ``test_gates_closed_by_default``, nośniki sekretu w ``security/test_secret_leakage``) oglądały
+# ``vars(config)``, gdy konfiguracja była JEDNYM plikiem. Po rozbiciu na pakiet ``vars`` widzi
+# tylko re-eksport z ``__init__`` — a stała pominięta w re-eksporcie wymykałaby się bramce BEZ
+# ŚLADU (test przechodzi na pustym zbiorze). Dlatego refleksja chodzi po WSZYSTKICH modułach
+# pakietu: nowy moduł domeny jest objęty bramkami z automatu, bez dopisywania go gdziekolwiek.
+
+
+def przestrzen_config() -> dict[str, object]:
+    """Nazwy najwyższego poziomu CAŁEGO pakietu ``workmate.config`` — z każdego modułu domeny."""
+    import importlib
+    import pkgutil
+
+    from workmate import config
+
+    # ``walk_packages``, nie ``iter_modules``: gdy któraś domena urośnie kiedyś w PODPAKIET
+    # (``config/<x>/``), nazwy z jego modułów wymknęłyby się bramkom tak samo cicho, jak
+    # wymykały się piętro wyżej przed rozbiciem — a to jest dokładnie ta wada, którą tu łatamy.
+    przestrzen: dict[str, object] = dict(vars(config))
+    for info in pkgutil.walk_packages(config.__path__, prefix=f"{config.__name__}."):
+        przestrzen.update(vars(importlib.import_module(info.name)))
+    return przestrzen
+
+
+def pochodzi_z_config(obj: object) -> bool:
+    """Czy obiekt jest ZDEFINIOWANY w ``workmate.config`` (a nie tylko tam zaimportowany)."""
+    modul = getattr(obj, "__module__", "")
+    return modul == "workmate.config" or modul.startswith("workmate.config.")

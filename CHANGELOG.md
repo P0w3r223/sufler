@@ -6,6 +6,26 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Zmienione
+
+- **`config.py` (2041 linii) rozbity na pakiet `config/`** — moduł na domenę ustawień
+  (`server`, `teams_graph`, `github`, `jira`, `schedule`…), wspólne pomocniki `_*_from_env`
+  w `config/_env.py`, re-eksport kompletu nazw w `config/__init__.py` (#76). **Żaden import
+  się nie zmienia**: `from workmate.config import <cokolwiek>` działa jak dotąd, także dla
+  nazw prywatnych, po które sięgają `deploy/http/manage_tokens.py` i testy helperów env.
+  Kod przeniesiony 1:1 — bez zmian sygnatur, wartości domyślnych i nazw zmiennych
+  środowiskowych. Najdłuższy moduł to dziś `config/teams_graph.py` (510 linii).
+
+  Kontrakt „jedno wejście" nie jest prozą: pilnuje go trzeci kontrakt import-lintera
+  („config ma jedno wejście", tylko importy bezpośrednie). Sprawdzony sondą — podmiana
+  jednego importu w `server.py` na moduł domeny zapala go natychmiast.
+
+  Bramki refleksyjne (ścieżki stanu, bramki domyślnie zamknięte, nośniki sekretu) oglądały
+  `vars(config)` — po rozbiciu widziałyby tylko re-eksport, więc stała pominięta w
+  `__init__` wymykałaby się im BEZ ŚLADU. Chodzą teraz po wszystkich modułach pakietu
+  (`tests/conftest.py::przestrzen_config`), więc nowy moduł domeny jest objęty z automatu.
+
+
 ## [1.13.0] — 2026-08-21
 
 Wydanie z **jednego dnia pracy nad jedną rzeczą: prawdą tego, co bot mówi i jak to pokazuje.**

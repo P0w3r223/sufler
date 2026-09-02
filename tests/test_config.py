@@ -1,4 +1,4 @@
-"""Testy wspólnych helperów ``config.py`` — parsowanie env, zapisywalność, domyślne ścieżki.
+"""Testy wspólnych helperów ``config/_env.py`` — parsowanie env, zapisywalność, ścieżki domyślne.
 
 ``require_writable`` to fail-fast dla TRWAŁYCH ścieżek: bez niego domyślne ``~/.workmate`` na
 koncie kontenera z ``--no-create-home`` (i rootfs ``read_only``) przyjmuje zapis dopiero „w
@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
+from tests.conftest import przestrzen_config
 from workmate import config
 from workmate.config import (
     TeamsGraphSettings,
@@ -100,10 +101,14 @@ def test_require_writable_directory_raises_when_path_is_a_file(tmp_path):
 # --- domyślne ścieżki stanu: absolutne i POZA repozytorium ------------------
 #
 # Poprzednia wersja tego pliku porównywała ``_DEFAULT_TOKENS_FILE`` z literałem powtórzonym
-# z ``config.py`` (``if os.name == "nt": assert == Path("C:/ProgramData/...")``) — czyli
+# z ``config/server.py`` (``if os.name == "nt": assert == Path("C:/ProgramData/...")``) — czyli
 # przepisywała implementację i przechodziła także wtedy, gdy zmiana literału była błędem.
 # Testujemy WŁASNOŚĆ, którą opisuje komentarz w kodzie: ścieżka ma być absolutna (windowsowe
 # „C:/…" na Linuksie stawało się katalogiem WZGLĘDNYM pod CWD) i ma leżeć poza bazą wiedzy.
+
+# Nazwy z CAŁEGO pakietu ``workmate.config``, nie tylko z re-eksportu w ``__init__`` — inaczej
+# bramka odkrywania niżej chodziłaby po pustym zbiorze i cichła po każdym nowym module domeny.
+_KONFIG = przestrzen_config()
 
 # Trwały stan i sekrety, których domyślna ścieżka musi działać na TEJ platformie.
 _TRWALE_SCIEZKI = (
@@ -138,7 +143,7 @@ _SCIEZKI_TYLKO_LINUX = (
 @pytest.mark.parametrize("nazwa", _TRWALE_SCIEZKI)
 def test_domyslna_sciezka_stanu_jest_absolutna(nazwa: str):
     """Ścieżka względna zaczepiłaby stan o katalog roboczy procesu — inny dla każdych drzwi."""
-    sciezka: Path = getattr(config, nazwa)
+    sciezka: Path = _KONFIG[nazwa]
     assert sciezka.is_absolute(), f"{nazwa}={sciezka} jest względna wobec CWD"
 
 
@@ -151,7 +156,7 @@ def test_domyslna_sciezka_stanu_lezy_poza_repozytorium(nazwa: str):
     """
     korzen = _repo_root_or_none(Path(__file__).resolve())
     assert korzen is not None, "test biegnie w drzewie repozytorium"
-    sciezka: Path = getattr(config, nazwa)
+    sciezka: Path = _KONFIG[nazwa]
 
     assert korzen.resolve() not in sciezka.resolve().parents, (
         f"{nazwa}={sciezka} domyślnie wewnątrz repozytorium {korzen}"
@@ -275,7 +280,7 @@ def test_kazda_domyslna_sciezka_stoi_w_jednym_z_dwoch_rejestrow():
     """
     wszystkie = {
         nazwa
-        for nazwa, wartosc in vars(config).items()
+        for nazwa, wartosc in _KONFIG.items()
         if nazwa.startswith("_DEFAULT_") and isinstance(wartosc, Path)
     }
     nieobjete = wszystkie - set(_TRWALE_SCIEZKI) - set(_SCIEZKI_TYLKO_LINUX)
@@ -293,7 +298,7 @@ def test_sciezka_tylko_linuksowa_jest_absolutna_po_posixowemu(nazwa: str):
     Miarą jest ``PurePosixPath``, bo na Windows ``Path.is_absolute()`` na tych literałach mówi
     ``False`` (brak dysku) — i to jest właśnie powód, dla którego stoją w rejestrze zwolnień.
     """
-    sciezka: Path = getattr(config, nazwa)
+    sciezka: Path = _KONFIG[nazwa]
     assert PurePosixPath(sciezka.as_posix()).is_absolute(), f"{nazwa}={sciezka} nie jest absolutna"
 
 
