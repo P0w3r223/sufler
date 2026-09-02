@@ -54,6 +54,37 @@ def test_consent_gate_blocks(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "--consent" in capsys.readouterr().err
 
 
+def test_granice_zakresu_ida_do_gita_ZE_STREFA_nie_naiwnym_napisem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regresja: naiwny napis git czyta w strefie PROCESU, a grupowanie idzie w `settings.tz`.
+
+    Na hoście w UTC (kontener, maszyna CI) „2026-09-02 00:00:00" znaczyło 02:00 czasu
+    warszawskiego, więc commity z pierwszych dwóch godzin pierwszej doby zakresu wypadały
+    z raportu bez żadnego śladu. To narzędzie jest materiałem dowodowym dla worklogu Jira, więc
+    zgubiony commit to zaniżony czas pracy.
+    """
+    from claude_summary.adapters import git_log
+
+    zapytania: dict[str, str] = {}
+
+    def _spy(repo, *, since: str, until: str, author: str):  # noqa: ANN001, ANN202
+        zapytania.update(since=since, until=until)
+        return []
+
+    monkeypatch.setattr(app_module.git_log, "run_git_log", _spy)
+    monkeypatch.setattr(git_log, "resolve_author", lambda _repo: "kto@example.com")
+
+    settings = _settings(tmp_path, consent=True)
+    args = _Args(repo=tmp_path, since=date(2026, 9, 2), until=date(2026, 9, 2))
+    run(args, settings)
+
+    # Offset strefy raportu MUSI być w obu granicach — inaczej git liczy dobę gdzie indziej.
+    assert zapytania["since"].startswith("2026-09-02T00:00:00+")
+    assert zapytania["until"].startswith("2026-09-02T23:59:59")
+    assert "+" in zapytania["until"]
+
+
 def test_pipeline_without_repo(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     projects = tmp_path / "projects"
     _write_prompt(projects, "C--proj", "zrobiłem X", "C:\\x", "2026-07-20T09:00:00.000Z")

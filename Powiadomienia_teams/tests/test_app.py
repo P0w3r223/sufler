@@ -655,6 +655,44 @@ def test_whole_week_vacation_without_team_reasons_is_unclear(tmp_path: Path):
     assert "Zapiszę ." not in "".join(html for _chat, html in client.sent)
 
 
+def test_dzien_juz_wolny_w_grafiku_nie_jest_obiecywany_ani_falszywie_domykany(tmp_path: Path):
+    """Regresja: bot obiecywał zapis dnia, którego nie miał zamiaru tknąć, a potem kłamał.
+
+    Tekst potwierdzenia powstawał z PEŁNEJ listy dni wolnych, a ``_build_writable`` odsiewało
+    z niej dni obecne już w Shifts (``known_time_off_weekdays``). Gdy odsiew zabierał wszystko,
+    ``_apply_confirmed_yes`` wchodziło w gałąź „nie ma czego zapisać" i wysyłało komunikat
+    o MINIONYM TYGODNIU — w tym scenariuszu po prostu nieprawdziwy, bo tydzień dopiero nadchodzi.
+
+    Scenariusz jest osiągalny wprost: nudge zaczepia osobę z urlopem CZĘŚCIOWYM i sam wymienia
+    jej dni wolne, więc pracownik odpisuje właśnie o nich.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                known_time_off_weekdays=[4],  # piątek JUŻ jest urlopem w Shifts
+            )
+        },
+    )
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "w piątek mam urlop")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[],"time_off":[{"weekday":4,"powod":"urlop"}]}')
+
+    poll_replies(_settings(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    tresc = "".join(html for _chat, html in client.sent)
+    assert "Zapiszę" not in tresc  # bez obietnicy, której nie da się dotrzymać
+    assert "już zaznaczone jako wolne" in tresc
+    assert "Tydzień, którego dotyczyło przypomnienie" not in tresc  # tydzień DOPIERO nadchodzi
+    assert client.time_off == []  # nic nie dopisujemy — stan świata już jest właściwy
+    assert load_state(state_path)["u1"].status == SELF_FILLED  # domknięcie POMYŚLNE
+
+
 def test_time_off_written_for_addressee_on_confirm(tmp_path: Path):
     # „tak" na propozycję z rozstrzygniętym dniem wolnym → utworzenie timeOff tylko dla u1.
     state_path = tmp_path / "state.json"
@@ -2439,6 +2477,30 @@ def test_nierozstrzygniete_cykle_sa_liczone_i_alarmuja_po_progu(tmp_path: Path, 
 
     assert load_state(state_path)["u1"].unknown_count == _MAX_CYKLI_UNKNOWN + 5
     assert wyslane == ["Nie da się odczytać czatu przypomnienia"]  # DOKŁADNIE raz
+
+
+def test_alert_o_nieodczytanym_czacie_nie_niesie_imienia_na_webhook(tmp_path: Path, monkeypatch):
+    """Webhook bywa POZA organizacją (Power Automate, Slack, endpoint operatora).
+
+    Ta sama kategoria danych, ten sam kanał i przeciwna decyzja niż w ``_tresc_publiczna``
+    i ``AmbiguousAccountError.publiczny``, które istnieją dokładnie po to, żeby dane osobowe nie
+    opuszczały organizacji tą drogą. Dwa alerty wysyłały ``member_name`` prosto w ładunku.
+    """
+    tresci: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: tresci.append(tresc) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings(state_path), alert_webhook_url="https://hook")
+
+    for _ in range(_MAX_CYKLI_UNKNOWN):
+        poll_replies(settings, _OdczytPadaZawsze({}), _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    (tresc,) = tresci
+    assert "Ala" not in tresc  # imię zostaje w logu usługi
+    assert "u1" in tresc  # identyfikator wystarczy operatorowi do rozpoznania wpisu
 
 
 def test_udany_odczyt_zeruje_licznik_nierozstrzygnietych(tmp_path: Path):

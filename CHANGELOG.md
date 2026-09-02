@@ -8,6 +8,41 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **`Powiadomienia_teams`: bot obiecywał zapisać czas wolny, nie zapisywał nic i wysyłał
+  nieprawdziwe domknięcie.** Tekst potwierdzenia powstawał z PEŁNEJ listy dni wolnych, a odsianie
+  dni obecnych już w Shifts (`known_time_off_weekdays`) działo się dopiero przy zapisie. Gdy odsiew
+  zabierał wszystko, `_apply_confirmed_yes` wchodziło w gałąź „nie ma czego zapisać" i wysyłało
+  komunikat o MINIONYM TYGODNIU — w tym scenariuszu po prostu nieprawdziwy, bo tydzień dopiero
+  nadchodził. Wpis lądował w terminalnym `EXPIRED`.
+
+  Scenariusz był osiągalny wprost: nudge zaczepia osobę z urlopem CZĘŚCIOWYM i sam wymienia jej
+  dni wolne, więc pracownik odpisuje właśnie o nich. Odsiew przeniesiono PRZED tekst potwierdzenia
+  — tam, gdzie komentarz obok od początku obiecywał, że wiadomość zapowie „dokładnie to, co zostanie
+  zapisane". Gdy po odsiewie nie zostaje nic, wpis domyka się jako `SELF_FILLED` z komunikatem
+  mówiącym, co jest faktem: te dni są już w grafiku.
+
+- **`claude_summary`: commity znikały z raportu przez strefę czasu.** `git log --since/--until`
+  dostawało naiwny napis, który git interpretuje w strefie PROCESU, a `group_by_day` grupuje
+  w `CLAUDE_SUMMARY_TZ`. Na hoście w UTC — czyli w kontenerze i na maszynie CI — „2026-09-02
+  00:00:00" znaczyło 02:00 czasu warszawskiego, więc commity z pierwszych dwóch godzin pierwszej
+  doby zakresu nie trafiały do raportu i nikt się o tym nie dowiadywał. Granice idą teraz z offsetem.
+  Ten raport jest materiałem dowodowym dla worklogu Jira, więc zgubiony commit to zaniżony czas pracy.
+
+- **`Powiadomienia_teams`: GUID-y porównywane z uwzględnieniem wielkości liter.** `ONLY_USER_IDS`
+  wklejone WIELKIMI literami nie pasowało do niczego, `missing` schodziło do zera, a podsumowanie
+  dla administratora mówiło „0 próśb" — awaria konfiguracji wyglądała identycznie jak spokojny
+  tydzień. Ten sam rozjazd między `/me` a `/teams/{id}/members` sprawiał, że bot pisał sam do siebie.
+  `reminders/replies.py` casefoldował z dokładnie tego powodu; teraz robią to wszystkie trzy miejsca.
+
+- **`Powiadomienia_teams`: imiona pracowników przestały lecieć na zewnętrzny webhook.** Dwa alerty
+  wysyłały `member_name` prosto w ładunku, choć `_tresc_publiczna` i `AmbiguousAccountError.publiczny`
+  istnieją po to, żeby dane osobowe nie opuszczały organizacji tą drogą. Na webhook idzie liczba
+  i identyfikatory; imiona zostają w logu usługi.
+
+- **`claude_summary`: klient Anthropic bez limitu czasu.** Domyślne 10 minut SDK × 2 ponowienia na
+  wywołanie, a opis prozą leci raz na dzień zakresu — `--llm --since` sprzed miesiąca mogło zająć
+  kilkanaście godzin zegara ściennego bez wyjścia.
+
 - **Punkt kontrolny człowieka przenosił się między rozmowami.** Klucz zapowiedzi mutacji notatki
   to `sha256(człowiek | rodzaj | notatka | treść)` — bez identyfikatora rozmowy. Rejestr powstaje
   RAZ na proces, a token tury jest świeży co turę, więc zapowiedź wystawiona w wątku A przechodziła

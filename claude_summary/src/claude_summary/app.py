@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import sys
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -226,10 +226,17 @@ def run(args: _Args, settings: Settings) -> int:
                 file=sys.stderr,
             )
         person = author or person
+        # Granice ze STREFĄ, nie naiwnym napisem. Naiwną datę git interpretuje w strefie procesu,
+        # a `group_by_day` grupuje w `settings.tz` — na hoście w UTC (kontener, ta maszyna)
+        # „2026-09-02 00:00:00" znaczyło 02:00 czasu warszawskiego, więc commity z pierwszych
+        # dwóch godzin pierwszej doby zakresu nie trafiały do raportu i nikt się o tym nie
+        # dowiadywał. Symetrycznie na końcu zakresu git zwracał commity z następnej doby lokalnej,
+        # a grupowanie odrzucało je po cichu. To narzędzie jest materiałem dowodowym dla worklogu
+        # Jira, więc brakujący commit to zaniżony czas pracy. Git przyjmuje ISO 8601 ze strefą.
         commits = git_log.run_git_log(
             repo,
-            since=f"{since.isoformat()} 00:00:00",
-            until=f"{until.isoformat()} 23:59:59",
+            since=datetime.combine(since, time.min, tzinfo=tz).isoformat(),
+            until=datetime.combine(until, time.max, tzinfo=tz).isoformat(),
             author=author,
         )
     person = person or "nieznany"

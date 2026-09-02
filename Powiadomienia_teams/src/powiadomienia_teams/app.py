@@ -51,6 +51,7 @@ from powiadomienia_teams.messages import (
     STALE_WEEK_TEXT,
     UNCLEAR_TEXT,
     WRITE_FAILED_TEXT,
+    build_already_off_text,
     build_confirm_text,
     build_nudge_text,
     build_self_filled_text,
@@ -184,7 +185,10 @@ def run_once(
     # innego (potwierdzone na żywo — „Virtual WorkMate" trafiło na listę braków). Filtr w KODZIE,
     # nie tylko w `ONLY_USER_IDS`, bo pusta lista odbiorców oznacza „wszyscy" i wtedy konfiguracja
     # nie chroni przed niczym.
-    members = [m for m in client.list_members(ctx.team_id) if m.user_id != me_id]
+    # Porównanie po `casefold`: `/me` i `/teams/{id}/members` potrafią oddać ten sam GUID różną
+    # wielkością liter, a wtedy konto bota przechodziło przez filtr i bot pisał sam do siebie.
+    nasze_konto = me_id.casefold()
+    members = [m for m in client.list_members(ctx.team_id) if m.user_id.casefold() != nasze_konto]
 
     prior_monday, target_monday, target_end = week_windows(now, tz)
 
@@ -201,7 +205,7 @@ def run_once(
     off_by_member = off_weekdays_by_member(next_time_off, target_monday, tz)
     missing = list(members_without_shifts(members, next_shifts, off_by_member))
     if settings.only_user_ids:  # tryb pilotażowy — ogranicz do wskazanych osób
-        missing = [m for m in missing if m.user_id in settings.only_user_ids]
+        missing = [m for m in missing if m.user_id.casefold() in settings.only_user_ids]
     prior_shifts = client.read_shifts(
         ctx.team_id, prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)
     )
@@ -511,16 +515,22 @@ def _policz_nierozstrzygniete(
         st.save_state(settings.state_path, state)
     if zaalarmowane:
         nazwy = ", ".join(sorted(p.member_name for p in zaalarmowane))
+        identyfikatory = ", ".join(sorted(p.member_id for p in zaalarmowane))
         logger.error(
             "Nie udało się rozstrzygnąć odczytu czatu %d razy z rzędu dla: %s",
             _MAX_CYKLI_UNKNOWN,
             nazwy,
         )
+        # Na webhook idzie LICZBA i identyfikatory, nie imiona: ten kanał bywa poza organizacją
+        # (Power Automate, Slack, dowolny endpoint operatora) — dokładnie ten powód, dla którego
+        # istnieją `_tresc_publiczna` i `AmbiguousAccountError.publiczny`. Nazwiska zostają
+        # w `logger.error` tuż wyżej, czyli w kanale wewnętrznym.
         _alert(
             settings,
             "Nie da się odczytać czatu przypomnienia",
-            f"{_MAX_CYKLI_UNKNOWN} cykli z rzędu bez rozstrzygnięcia dla: {nazwy}. Dopóki trwa, "
-            f"te osoby nie dostaną ani domknięcia, ani nowego przypomnienia.",
+            f"{_MAX_CYKLI_UNKNOWN} cykli z rzędu bez rozstrzygnięcia dla {len(zaalarmowane)} "
+            f"osób ({identyfikatory}). Dopóki trwa, te osoby nie dostaną ani domknięcia, "
+            f"ani nowego przypomnienia. Imiona są w logu usługi.",
         )
 
 
@@ -608,12 +618,13 @@ def _close_bez_dowodu(
             pending.member_id,
         )
     st.save_state(settings.state_path, state)
+    # Jak wyżej: webhook dostaje liczbę i identyfikatory, imiona zostają w logu usługi.
     _alert(
         settings,
         "Przypomnienia zablokowane na odczycie czatu",
         f"{len(zablokowane)} wpisów zamknięto po przekroczeniu twardego sufitu wieku bez "
         f"udanego odczytu czatu. Pracownicy NIE dostali wiadomości — sprawdź, czy czaty i konta "
-        f"nadal istnieją: {', '.join(sorted(p.member_name for p in zablokowane))}",
+        f"nadal istnieją: {', '.join(sorted(p.member_id for p in zablokowane))}",
     )
 
 
@@ -1052,7 +1063,27 @@ def _interpret_and_confirm(
                     "Pominięto część dni wolnych dla %s — brak powodów czasu wolnego w zespole",
                     pending.member_name,
                 )
+        # Dni JUŻ oznaczone jako wolne w Shifts odsiewamy TUTAJ, a nie dopiero przy zapisie.
+        # Komentarz nad tym blokiem obiecuje, że wiadomość ma zapowiadać „dokładnie to, co zostanie
+        # zapisane" — a `_build_writable` odsiewało je później, więc bot zapowiadał „Zapiszę czas
+        # wolny: pt: Urlop" dla dnia, którego nie miał zamiaru tknąć. Gdy odsiew zabierał WSZYSTKO,
+        # zapis kończył się komunikatem o minionym tygodniu, nieprawdziwym w tym scenariuszu.
+        juz_wolne = set(pending.known_time_off_weekdays)
+        juz_w_grafiku = [w for w in resolved_time_off if int(w.get("weekday", -1)) in juz_wolne]
+        resolved_time_off = [
+            w for w in resolved_time_off if int(w.get("weekday", -1)) not in juz_wolne
+        ]
         if decision.schedule.is_empty and not resolved_time_off:
+            if juz_w_grafiku:
+                # Stan świata jest już taki, o jaki prosił pracownik — to domknięcie POMYŚLNE,
+                # nie porażka. Status terminalny jak przy samodzielnym uzupełnieniu grafiku.
+                pending.status = st.SELF_FILLED
+                _commit(settings, state, pending, watermark, reply_text=text)
+                client.send_chat_message(
+                    pending.chat_id,
+                    to_html(build_already_off_text(int(w["weekday"]) for w in juz_w_grafiku)),
+                )
+                return
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
             _commit(settings, state, pending, watermark, reply_text=text)

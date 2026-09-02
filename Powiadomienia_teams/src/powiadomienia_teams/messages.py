@@ -51,6 +51,22 @@ NO_CONFIRM_TEXT = (
 )
 
 
+def build_already_off_text(weekdays: Iterable[int]) -> str:
+    """Domknięcie, gdy WSZYSTKIE wskazane dni wolne są już w grafiku Shifts.
+
+    Osobne od ``STALE_WEEK_TEXT``, bo to zupełnie inny stan świata. Oba dawały dotąd tę samą
+    wiadomość o minionym tygodniu, która w tym przypadku była po prostu nieprawdziwa: tydzień
+    trwa, a bot zdążył jeszcze obiecać „Zapiszę czas wolny: …". Scenariusz jest osiągalny wprost,
+    bo nudge zaczepia osobę z urlopem CZĘŚCIOWYM i sam wymienia jej dni wolne — pracownik odpisuje
+    właśnie o nich.
+    """
+    dni = ", ".join(_DNI[d] for d in sorted(set(weekdays)))
+    return (
+        f"Te dni masz już zaznaczone jako wolne w grafiku: {dni} ✅ "
+        "Nic nie zmieniam i kończę przypominanie."
+    )
+
+
 def build_self_filled_text(week_label: str) -> str:
     """Podziękowanie, gdy pracownik SAM uzupełnił grafik w Shifts, zanim odpisał na czacie.
 

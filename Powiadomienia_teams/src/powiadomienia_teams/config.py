@@ -283,7 +283,12 @@ class Settings:
             send_window_end_hour=_int("SEND_WINDOW_END_HOUR", 18),
             send_window_weekdays=_int_list("SEND_WINDOW_WEEKDAYS", (0, 1, 2, 3, 4)),
             dry_run=_bool("DRY_RUN", True),
-            only_user_ids=_list("ONLY_USER_IDS"),
+            # GUID-y normalizujemy NA WEJŚCIU — ta sama ostrożność, którą `reminders/replies.py`
+            # stosuje po obu stronach porównania i tam ją uzasadnia. Bez niej GUID wklejony
+            # WIELKIMI literami nie pasował do niczego, `missing` schodziło do zera, a podsumowanie
+            # dla administratora mówiło „0 próśb" — awaria konfiguracji wyglądała wtedy dokładnie
+            # jak spokojny tydzień.
+            only_user_ids=tuple(v.casefold() for v in _list("ONLY_USER_IDS")),
             llm_model=_get("LLM_MODEL", "claude-haiku-4-5"),
             anthropic_api_key=(os.environ.get("ANTHROPIC_API_KEY") or _get("AGENT_API_KEY")),
             admin_user_id=_get("ADMIN_USER_ID"),
