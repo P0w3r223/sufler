@@ -64,7 +64,7 @@ docker compose build 2>&1 | tail -3 && docker compose --profile mcp --profile br
 ```bash
 docker compose run --rm -T -e WORKMATE_GITHUB_TOKEN= github; echo "exit=$?"
 ```
-**Oczekiwane:** proces kończy się w kilka sekund z `exit != 0`, a na stderr jest CZYTELNY komunikat walidacji wskazujący brak `WORKMATE_GITHUB_TOKEN` (fail-fast `GithubSettings.validate`, `config.py:1003-1017`) — NIE surowy traceback z połowy pollingu.
+**Oczekiwane:** proces kończy się w kilka sekund z `exit != 0`, a na stderr jest CZYTELNY komunikat walidacji wskazujący brak `WORKMATE_GITHUB_TOKEN` (fail-fast `GithubSettings.validate`, `config/github.py`) — NIE surowy traceback z połowy pollingu.
 **Porażka oznacza:** brak fail-fast na starcie (obala A6) — drzwi wstają „na pół" i padają dopiero w runtime.
 
 **STOP — jeśli T03 lub T04 padły, nie idź dalej: kolejne fazy zakładają żywy `mcp` i fail-fast drzwi.**
@@ -79,7 +79,7 @@ docker compose run --rm -T -e WORKMATE_GITHUB_TOKEN= github; echo "exit=$?"
 ```bash
 docker compose run --rm -T -e WORKMATE_EVENTS_DB=/nonexistent/events.db mcp python -c "import asyncio;from workmate.server import build_server;print(sorted(t.name for t in asyncio.run(build_server().list_tools())))"
 ```
-**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'search_notes']` (4 = zamrożone odczyty, ADR 0040; `save_note` NIEOBECNE — `WORKMATE_ENABLE_WRITE` jest domyślnie OFF nawet na stdio od amendmentu ADR 0006, 2026-07-31, `config.py:202`).
+**Oczekiwane:** dokładnie `['get_note', 'get_project_status', 'list_projects', 'search_notes']` (4 = zamrożone odczyty, ADR 0040; `save_note` NIEOBECNE — `WORKMATE_ENABLE_WRITE` jest domyślnie OFF nawet na stdio od amendmentu ADR 0006, 2026-07-31, `config/server.py`).
 **Porażka oznacza:** nadmiar/brak narzędzi → naruszenie zamrożonego kontraktu (golden-test `test_mcp_tool_surface`); `save_note` obecne bez jawnego `WORKMATE_ENABLE_WRITE=true` → bramka Gate 2 otwarta domyślnie (regres #8).
 
 ### T05b · F2 · ~1 min

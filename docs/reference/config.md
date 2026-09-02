@@ -1,7 +1,8 @@
 # Reference: konfiguracja
 
-Konfiguracja jest scentralizowana w `src/workmate/config.py` (zestaw zamrożonych dataklas
-`*Settings` z metodami `from_env()` + `validate()`) i czytana ze zmiennych środowiskowych
+Konfiguracja jest scentralizowana w `src/workmate/config/` (zestaw zamrożonych dataklas
+`*Settings` z metodami `from_env()` + `validate()`, jeden moduł na domenę; importuj z
+`workmate.config`) i czytana ze zmiennych środowiskowych
 (lub z `.env` w korzeniu repo — patrz [`.env.example`](../../.env.example)).
 
 **Co wymaga sekretów, a co nie:**
@@ -258,7 +259,7 @@ Lokalny wariant przez Bot Framework Emulator/Azure ([`how-to/teams-bot.md`](../h
 
 ## Jak wyznaczana jest ścieżka domyślna
 
-`config.py` szuka korzenia repozytorium, idąc w górę do katalogu z `pyproject.toml`. Dzięki temu
+`config/_env.py` szuka korzenia repozytorium, idąc w górę do katalogu z `pyproject.toml`. Dzięki temu
 serwer działa niezależnie od bieżącego katalogu roboczego, bez zaszywania ścieżek w kodzie.
 
 ## Karty czasu (WorklogPRO) — WYCOFANE
@@ -267,6 +268,6 @@ Cały moduł cotygodniowych kart czasu (generowanie arkuszy WorklogPRO, wysyłka
 żądanie) został wycofany z projektu w całości ([ADR 0055](../adr/0055-withdraw-worklogpro-timesheets.md),
 supersedes 0035/0036/0037/0038) — to decyzja trwała, nie pauza. `WorklogiSettings`, drzwi
 `workmate-worklogi`/`workmate-worklog-selfservice` i wszystkie zmienne `WORKMATE_WORKLOGI_*` nie
-istnieją już w `config.py`. Propozycja czasu z commitów GitHub (`propose_worklog`, czyste odczytowe
+istnieją już w `config/`. Propozycja czasu z commitów GitHub (`propose_worklog`, czyste odczytowe
 narzędzie, [ADR 0034](../adr/0034-jira-worklog-from-github-commits.md)) **zostaje bez zmian** — patrz
 sekcja *Propozycja czasu z commitów* wyżej (`GithubSettings`).

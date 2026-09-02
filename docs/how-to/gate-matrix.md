@@ -3,7 +3,7 @@
 WorkMate jest **read-first**: odczyt (notatki, status, zdarzenia) działa domyślnie, a każda zdolność
 **mutująca lub proaktywna jest bramkowana i domyślnie OFF** (Bramka 2, [ADR 0006](../adr/0006-write-capability-gate-2.md)).
 Ten dokument zbiera bramki w jedną macierz „funkcja → co włączyć": każdy wiersz zweryfikowany wobec
-`src/workmate/config.py` (kolumna *Egzekwuje*). Nazwy zmiennych i domyślne wartości ustawiasz w
+`src/workmate/config/` (kolumna *Egzekwuje*). Nazwy zmiennych i domyślne wartości ustawiasz w
 [`deploy/docker/env.example`](../../deploy/docker/env.example) (flota) lub `.env` (dev); pełny wykaz:
 [`reference/config.md`](../reference/config.md).
 
@@ -23,7 +23,7 @@ obie naraz, chyba że świadomie chcesz same koperty.
 
 ## Macierz
 
-| Chcę, żeby… | Włącz (wszystkie naraz) | Egzekwuje (`config.py`) |
+| Chcę, żeby… | Włącz (wszystkie naraz) | Egzekwuje (`config/`) |
 |-------------|--------------------------|--------------------------|
 | **Zdarzenia mostu lądowały w Teams** (github → czat/kanał) | `WORKMATE_TEAMS_PUSH_ENABLE_CHAT=true` (+`_CHAT_USER_ID`) **LUB** `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL=true` (+`_TEAM_ID`+`_CHANNEL_ID`); zawsze `_CLIENT_ID`+`_TENANT_ID` | `TeamsPushSettings.validate` |
 | **Jedno zgłoszenie = jeden wątek na kanale** | `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` (wymaga `_ENABLE_CHANNEL=true`) | `TeamsPushSettings.validate` |
@@ -45,9 +45,9 @@ obie naraz, chyba że świadomie chcesz same koperty.
 | **Brief projektu na @wzmiankę** (F4, "ogarnij mnie na \<projekt\>") | `WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF=true` | `TeamsGraphSettings.validate` |
 | **Digest "co się zmieniło od \<data\>" na @wzmiankę** (F5) | `WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST=true` | `TeamsGraphSettings.validate` |
 | **Proaktywny cotygodniowy DM z digestem** (F6) | `WORKMATE_TEAMS_DIGEST_ENABLED=true` (+ lista odbiorców + mechanizm opt-out — WARUNEK KONIECZNY, patrz uwaga niżej); zacznij od `_DRY_RUN=true` | `TeamsDigestSettings.validate` |
-| **Agent uruchamiał polecenia powłoki (`Bash`)** | `WORKMATE_ENABLE_SHELL=true` + podniesiony `exec-manager` (profil `shell`, gniazdo kontrolne `WORKMATE_EXEC_MANAGER_SOCKET`) + obraz **zawierający entrypoint `workmate-exec-manager`** (Main po §2, ADR infra 0012 — sam tag „1.6.0 lub nowszy" NIE wystarcza: powłoka na 1.6.0 nie ma menedżera wykonawców). Bramka członkostwa (ADR 0063): nie-członek pionu → pusta lista narzędzi powłoki. Wykonawca per rozmowa montuje TYLKO podkatalog brudnopisu (ADR 0012 znosi wymóg wzajemnego zaufania z ADR 0010) | `ShellSettings`/`ExecManagerSettings` (`config.py`) + `ShellAuthorizer` (`shell_authz.py`) + `_build_shell_factory` (`agent_wiring.py`) |
-| **Agent widział grafik zespołu (`Schedule`)** | `WORKMATE_SCHEDULE_ENABLED` (`auto` = wchodzi, gdy grafik Shifts jest skonfigurowany; `false` chowa mimo konfiguracji, `true` wymusza) | `ScheduleSettings` (`config.py`) |
-| **Model widział procedury powtarzalnej pracy** | montaż `/mnt/skills` (paczka) + `WORKMATE_SKILLS_DIR`; `WORKMATE_SKILLS_MAX_IN_HEADER` ogranicza, ile wchodzi do nagłówka sesji | `SkillsSettings` (`config.py`) |
+| **Agent uruchamiał polecenia powłoki (`Bash`)** | `WORKMATE_ENABLE_SHELL=true` + podniesiony `exec-manager` (profil `shell`, gniazdo kontrolne `WORKMATE_EXEC_MANAGER_SOCKET`) + obraz **zawierający entrypoint `workmate-exec-manager`** (Main po §2, ADR infra 0012 — sam tag „1.6.0 lub nowszy" NIE wystarcza: powłoka na 1.6.0 nie ma menedżera wykonawców). Bramka członkostwa (ADR 0063): nie-członek pionu → pusta lista narzędzi powłoki. Wykonawca per rozmowa montuje TYLKO podkatalog brudnopisu (ADR 0012 znosi wymóg wzajemnego zaufania z ADR 0010) | `ShellSettings`/`ExecManagerSettings` (`config/`) + `ShellAuthorizer` (`shell_authz.py`) + `_build_shell_factory` (`agent_wiring.py`) |
+| **Agent widział grafik zespołu (`Schedule`)** | `WORKMATE_SCHEDULE_ENABLED` (`auto` = wchodzi, gdy grafik Shifts jest skonfigurowany; `false` chowa mimo konfiguracji, `true` wymusza) | `ScheduleSettings` (`config/schedule.py`) |
+| **Model widział procedury powtarzalnej pracy** | montaż `/mnt/skills` (paczka) + `WORKMATE_SKILLS_DIR`; `WORKMATE_SKILLS_MAX_IN_HEADER` ogranicza, ile wchodzi do nagłówka sesji | `SkillsSettings` (`config/skills.py`) |
 | **Skrzynka nadawcza `outputs/`** (model kładzie plik, drzwi go wysyłają) | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY=true` — **ta sama bramka co `ReplyWithFile`**; przy powłoce skrzynka pokrywa dostawę, przy jej braku zostaje narzędzie | `TeamsGraphSettings.validate` |
 | **Katalog roboczy agenta (workspace)** | `WORKMATE_ENABLE_WORKSPACE=true` + `WORKMATE_WORKSPACE_DIR` na wolumenie | `WorkspaceSettings.validate` |
 | **Zapis notatki lokalnie (`save_note`, stdio — Claude Code/`workmate-agent`)** | `WORKMATE_ENABLE_WRITE=true` (amendment ADR 0006, 2026-07-31 — domyślnie OFF bez wyjątku, także na stdio) | `Settings` / `server.py` |

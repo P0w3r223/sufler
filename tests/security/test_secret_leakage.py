@@ -19,8 +19,7 @@ import re
 import typing
 
 import pytest
-
-from workmate import config
+from tests.conftest import pochodzi_z_config, przestrzen_config
 
 # Nazwy pól niosących sekret. Wzorzec celowo szeroki (``*_token``, ``token``, ``api_key``,
 # ``*password*``, ``*secret*``), zawężony potem typem ``str`` — ``tokens_file``,
@@ -40,10 +39,10 @@ _WARTOSC = "sekret-nie-do-logu-8f3a1c"
 
 def _pola_sekretne() -> list[tuple[str, type, dataclasses.Field]]:
     znalezione: list[tuple[str, type, dataclasses.Field]] = []
-    for name, obj in vars(config).items():
+    for name, obj in przestrzen_config().items():
         if not (inspect.isclass(obj) and dataclasses.is_dataclass(obj)):
             continue
-        if obj.__module__ != "workmate.config":
+        if not pochodzi_z_config(obj):
             continue
         hints = typing.get_type_hints(obj)
         for field in dataclasses.fields(obj):

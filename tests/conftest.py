@@ -157,3 +157,32 @@ def sample_notes() -> list[Note]:
             tags=["schemat"],
         ),
     ]
+
+
+# --- Refleksja po konfiguracji -------------------------------------------------------------
+# Bramki refleksyjne (ścieżki stanu w ``test_config``, bramki domyślnie zamknięte w
+# ``test_gates_closed_by_default``, nośniki sekretu w ``security/test_secret_leakage``) oglądały
+# ``vars(config)``, gdy konfiguracja była JEDNYM plikiem. Po rozbiciu na pakiet ``vars`` widzi
+# tylko re-eksport z ``__init__`` — a stała pominięta w re-eksporcie wymykałaby się bramce BEZ
+# ŚLADU (test przechodzi na pustym zbiorze). Dlatego refleksja chodzi po WSZYSTKICH modułach
+# pakietu: nowy moduł domeny jest objęty bramkami z automatu, bez dopisywania go gdziekolwiek.
+
+
+def przestrzen_config() -> dict[str, object]:
+    """Nazwy najwyższego poziomu CAŁEGO pakietu ``workmate.config`` — z każdego modułu domeny."""
+    import importlib
+    import pkgutil
+
+    from workmate import config
+
+    przestrzen: dict[str, object] = dict(vars(config))
+    for info in pkgutil.iter_modules(config.__path__):
+        modul = importlib.import_module(f"{config.__name__}.{info.name}")
+        przestrzen.update(vars(modul))
+    return przestrzen
+
+
+def pochodzi_z_config(obj: object) -> bool:
+    """Czy obiekt jest ZDEFINIOWANY w ``workmate.config`` (a nie tylko tam zaimportowany)."""
+    modul = getattr(obj, "__module__", "")
+    return modul == "workmate.config" or modul.startswith("workmate.config.")

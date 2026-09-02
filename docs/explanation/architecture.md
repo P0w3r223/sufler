@@ -72,7 +72,8 @@ flowchart TB
   `sqlite_conversations` / `sqlite_thread_links`, `graph_teams_notifier`, `simplemma_lemmatizer`,
   `filesystem_workspace`.
 - **`server.py`** — **punkt składania**: tworzy adaptery, wstrzykuje je do serwisów, podpina
-  serwisy do drzwi. `config.py` — typowana konfiguracja ze zmiennych środowiskowych.
+  serwisy do drzwi. `config/` — typowana konfiguracja ze zmiennych
+  środowiskowych, moduł na domenę; importuj z `workmate.config`, nie z modułów wewnętrznych.
 
 ## Reguła zależności (najważniejsza konwencja)
 

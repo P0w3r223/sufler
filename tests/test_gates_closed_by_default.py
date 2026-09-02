@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate import config
+from tests.conftest import pochodzi_z_config, przestrzen_config
 from workmate.config import ScheduleSettings, Settings
 
 # Klasy ustawień znane z przeglądu 2026-08-17. Refleksja MUSI je wszystkie znaleźć — inaczej
@@ -75,10 +75,10 @@ def _klasy_ustawien() -> dict[str, type]:
     """Wszystkie dataklasy ``*Settings`` zdefiniowane w ``workmate.config``."""
     return {
         name: obj
-        for name, obj in vars(config).items()
+        for name, obj in przestrzen_config().items()
         if inspect.isclass(obj)
         and dataclasses.is_dataclass(obj)
-        and obj.__module__ == "workmate.config"
+        and pochodzi_z_config(obj)
         and (name.endswith("Settings") or name == "Settings")
     }
 
