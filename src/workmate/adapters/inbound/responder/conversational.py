@@ -1,18 +1,4 @@
-"""Szew między DRZWIAMI (Teams, CLI, …) a TREŚCIĄ odpowiedzi (Faza 2).
-
-``Responder`` oddziela transport (konkretne drzwi) od tego, co bot odpowiada —
-wspólny dla wszystkich drzwi wejściowych, dlatego żyje tu, w `adapters/inbound/`,
-a nie w pakiecie pojedynczych drzwi. Dziś dostępny ``EchoResponder`` (spike:
-potwierdzenie odbioru); ``RuntimeResponder`` opakowuje runtime agenta rdzenia, a
-``SaveNoteResponder`` (stub) — przyszły zapis. Przełączenie to jedna linia w
-entry-poincie drzwi (``EchoResponder()`` → ``RuntimeResponder(runtime)``);
-handler i wiring drzwi bez zmian.
-
-Moduł jest wolny od importów SDK, więc szew i jego testy działają bez extra
-drzwi. Reguła ``core ↛ adapters`` stoi: rdzeń nie zaimportuje tego protokołu —
-to drzwi opakują runtime rdzenia w ``Responder`` (strukturalnie, jak atrapy repo
-w testach).
-"""
+"""``ConversationalResponder`` — pełna tura agenta: pamięć, kompaktowanie, narzędzia, outbox."""
 
 from __future__ import annotations
 
@@ -22,9 +8,8 @@ import hmac
 import logging
 import secrets
 import threading
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.brief_command import BriefContext
 from workmate.adapters.inbound.change_command import ChangeDigestContext
@@ -33,21 +18,12 @@ from workmate.adapters.inbound.thread_note_command import ThreadNoteContext
 from workmate.core.agent.prompt import build_session_header
 from workmate.core.domain.trust import TrustClass
 from workmate.core.domain.workspace import WorkspaceScope
-from workmate.core.errors import WorkMateError
 from workmate.core.ports.llm import (
     AgentResult,
     AssistantTurn,
     Attachment,
     AttachmentQueue,
-    RawTurn,
-    ToolOutput,
-    ToolResults,
-    UserText,
-    attachment_from_row,
 )
-
-# ``stop_reason`` oznaczający uciętą odpowiedź (ADR 0011) — drzwi dokładają notkę.
-_TRUNCATED_STOP = "max_tokens"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -62,15 +38,22 @@ if TYPE_CHECKING:
     from workmate.core.application.compaction import CompactionService
     from workmate.core.application.conversations import ConversationService
     from workmate.core.application.metrics import MetricsService
-    from workmate.core.application.services import NotesWriteService
     from workmate.core.application.tools import ToolSpec
-    from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
+    from workmate.core.domain.conversation import ConversationMessage
     from workmate.core.domain.mutation import Verdict
     from workmate.core.ports.llm import TranscriptEntry
 
-# Prefiks wiadomości z podsumowaniem kompaktowania (ADR 0014). Sonnet 5 nie ma systemowych
-# wiadomości w środku rozmowy, więc podsumowanie idzie jako treść użytkownika z tym nagłówkiem.
-_SUMMARY_PREFIX = "[Podsumowanie wcześniejszej rozmowy]"
+from workmate.adapters.inbound.responder.protocols import InboundMessage, OutboxDeliverer
+from workmate.adapters.inbound.responder.transcript import (
+    _attachment_bytes,
+    _to_transcript,
+    _to_transcript_with_summary,
+    _utcnow,
+    _with_notices,
+    _with_thinking,
+)
+
+logger = logging.getLogger(__name__)
 
 # Narzędzia, których WYNIK niesie treść spoza bramek zdolności (ADR 0066): komentarze i opisy
 # z GitHuba, wyjście powłoki oraz pliki katalogu roboczego. `Notes`/`Jira`/`Schedule` tu NIE są —
@@ -83,119 +66,6 @@ _SUMMARY_PREFIX = "[Podsumowanie wcześniejszej rozmowy]"
 # scenariuszu skażają. Nazwy pilnuje sonda wiążąca ten zbiór z realnym katalogiem narzędzi;
 # bez niej zmiana nazwy narzędzia po cichu gasiłaby wyzwalacz.
 _TAINTING_TOOLS = frozenset({"Activity", "Bash", "File", "ReadFile", "ListFiles"})
-
-logger = logging.getLogger(__name__)
-
-
-def _utcnow() -> datetime:
-    """Bieżąca chwila jako NAIVE UTC — spójna z timestampami bazy rozmów.
-
-    Magazyn zapisuje ``updated_at`` przez ``CURRENT_TIMESTAMP`` (UTC, bez strefy),
-    a serwis liczy bezczynność jako ``now - updated_at`` (ADR 0012). ``now`` musi
-    więc być w tej samej postaci (naive UTC), inaczej odejmowanie aware−naive rzuca
-    ``TypeError``. Zegar jest w adapterze — rdzeń nie woła zegara.
-    """
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
-@dataclass(frozen=True)
-class InboundMessage:
-    """Wiadomość z drzwi, znormalizowana do postaci niezależnej od SDK.
-
-    ``text`` wystarcza echu; ``sender``/``conversation_id`` niosą atrybucję, której
-    przyszłe ``save_note`` użyje bez zmiany sygnatury szwu (pola addytywne). ``attachments``
-    (addytywne, domyślnie puste) niosą treść multimodalną z drzwi, które ją materializują.
-    ``sender_id`` (AAD id nadawcy, addytywne) niesie CEL wyjściowej dostawy 1:1 (ADR 0027) —
-    drzwi bez tego pojęcia zostawiają je puste, a narzędzie push-u się nie zbuduje.
-    """
-
-    text: str
-    sender: str = ""
-    conversation_id: str = ""
-    attachments: tuple[Attachment, ...] = ()
-    sender_id: str = ""
-    # Szew „zapisz to" (ADR 0048), addytywne: ``mentions_bot`` = wiadomość @wzmiankuje bota
-    # (warunek wyzwalacza); ``source_message_id`` = id wzmianki (klucz idempotencji, §5);
-    # ``source_timestamp`` = Graph ``created`` wzmianki (deterministyczna data notatki). Drzwi bez
-    # tego pojęcia zostawiają je puste/False, a router „zapisz to" nie zbuduje się (bramka OFF).
-    mentions_bot: bool = False
-    source_message_id: str = ""
-    source_timestamp: str = ""
-    # NAZWY z @wzmianek (``mentions[].mentionText``). Wzmianka jest adresatem, nie argumentem,
-    # więc wyzwalacz „zapisz to" musi te słowa wykluczyć z szukania klucza projektu.
-    mention_texts: tuple[str, ...] = ()
-
-
-class Responder(Protocol):
-    """Kontrakt szwu: z wiadomości produkuje tekst odpowiedzi."""
-
-    async def respond(self, message: InboundMessage) -> str: ...
-
-
-class OutboxDeliverer(Protocol):
-    """Dwufazowa dostawa ze skrzynki nadawczej rozmowy (ADR 0009 paczki wdrożeniowej).
-
-    ``snapshot`` musi paść PRZED turą, ``deliver`` po niej. Migawka jest granicą pochodzenia
-    plików: rozmowy dzielą jeden wolumen brudnopisu (ADR 0010 paczki), więc bez niej nie da się
-    odróżnić wyniku tej tury od pliku podłożonego wcześniej przez inną rozmowę.
-    """
-
-    def snapshot(self, scope: WorkspaceScope) -> None: ...
-
-    def deliver(self, scope: WorkspaceScope) -> str: ...
-
-
-class EchoResponder:
-    """Spike: potwierdza odbiór, nie dotykając rdzenia WorkMate."""
-
-    async def respond(self, message: InboundMessage) -> str:
-        return f"Odebrałem notatkę: {message.text}"
-
-
-class RuntimeResponder:
-    """Szew M1→drzwi (ADR 0008): odpowiedź składa runtime agenta rdzenia.
-
-    Wpięcie to jedna linia w entry-poincie drzwi (``EchoResponder()`` →
-    ``RuntimeResponder(runtime)``); handler i wiring bez zmian. ``AgentRuntime.run``
-    jest synchroniczny (woła Claude API), więc uruchamiamy go w wątku puli, żeby nie
-    blokować pętli zdarzeń drzwi async. Katalog runtime'u dla mniej zaufanych drzwi
-    (Teams) budujemy BEZ ``write_service`` (ADR 0006) — agent czyta, ale
-    nie zapisuje.
-    """
-
-    def __init__(self, runtime: AgentRuntime, *, clock: Callable[[], datetime] = _utcnow) -> None:
-        self._runtime = runtime
-        # Zegar wstrzykiwany jak w ``ConversationalResponder`` — nagłówek sesji (ADR 0056)
-        # niesie datę, a rdzeń zegara nie woła.
-        self._clock = clock
-
-    async def respond(self, message: InboundMessage) -> str:
-        loop = asyncio.get_running_loop()
-        header = build_session_header(self._clock(), thread=message.conversation_id)
-        return await loop.run_in_executor(
-            None,
-            lambda: self._runtime.run(
-                message.text, attachments=message.attachments, session_header=header
-            ),
-        )
-
-
-class SaveNoteResponder:
-    """STUB (ADR 0008): responder zapisujący wiadomość jako notatkę przez ``save_note``.
-
-    Świadomie NIEWPIĘTY: drzwi asynchroniczne (Teams) są mniej zaufane
-    (ADR 0006), więc bezpośredni zapis z nich wymaga osobnej decyzji (bramka zapisu
-    per drzwi + parsowanie wiadomości w ``NoteMetadata``). Zostawiony jako punkt
-    szwu — realizacja to kolejny krok M3/M4, nie spike.
-    """
-
-    def __init__(self, write_service: NotesWriteService) -> None:
-        self._write_service = write_service
-
-    async def respond(self, message: InboundMessage) -> str:
-        raise NotImplementedError(
-            "SaveNoteResponder to stub — zapis z drzwi wymaga decyzji bramkowania (ADR 0006/0008)."
-        )
 
 
 class ConversationalResponder:
@@ -800,157 +670,3 @@ class ConversationalResponder:
         except Exception:
             logger.warning("Nie udało się odczytać powiązania wątku %r — pomijam", external_id)
             return None
-
-
-class SafeResponder:
-    """Dekorator responder'a: łagodna degradacja przy błędach (odporność drzwi async).
-
-    Owija dowolny ``Responder`` i łapie błędy, żeby wdrożony bot nie odpowiadał ciszą
-    ani tracebackiem, gdy runtime/narzędzie/infrastruktura zawiedzie:
-
-    - ``WorkMateError`` (LLM, repozytorium, zapis) — błąd oczekiwany (np. przejściowy
-      błąd Claude API): log WARNING + przyjazny komunikat.
-    - dowolny inny wyjątek — defekt kodu: log z pełnym tracebackiem (``exception``),
-      ale i tak zwracamy komunikat zamiast wywracać proces bota (jedna zła tura nie
-      kładzie usługi). Błąd NIE jest połykany po cichu — ląduje w logu ze szczegółami.
-
-    Analogicznie do granicy MCP (która zamienia błąd na ``{"error": ...}``) — ten szew
-    daje tę granicę drzwiom async (Teams). Kontekst (nadawca, rozmowa) w logu.
-    """
-
-    _FALLBACK = "Przepraszam, wystąpił chwilowy błąd po mojej stronie. Spróbuj ponownie za chwilę."
-
-    def __init__(self, inner: Responder, *, fallback: str = _FALLBACK) -> None:
-        self._inner = inner
-        self._fallback = fallback
-
-    async def respond(self, message: InboundMessage) -> str:
-        try:
-            return await self._inner.respond(message)
-        except WorkMateError as exc:
-            logger.warning(
-                "Błąd obsługi wiadomości (nadawca=%r, rozmowa=%r): %s",
-                message.sender,
-                message.conversation_id,
-                exc,
-            )
-            return self._fallback
-        except Exception:
-            logger.exception(
-                "Nieoczekiwany błąd obsługi wiadomości (nadawca=%r, rozmowa=%r)",
-                message.sender,
-                message.conversation_id,
-            )
-            return self._fallback
-
-
-def _with_thinking(reply: str, thinking: str) -> str:
-    """Poprzedź odpowiedź podsumowaniem rozumowania modelu (tylko drzwi zaufane — CLI).
-
-    ``thinking`` (gdy ``display=summarized``) to czytelne streszczenie toku myślenia.
-    Pokazujemy je nad odpowiedzią, wyraźnie oznaczone; puste — nic nie dodajemy.
-    """
-    if not thinking.strip():
-        return reply
-    return f"[rozumowanie modelu]\n{thinking.strip()}\n\n{reply}"
-
-
-def _with_notices(reply: str, *, rolled_over: bool, stop_reason: str) -> str:
-    """Dołóż notki systemowe przed odpowiedź (rollover rozmowy, ucięcie na limicie).
-
-    Notka rolloveru jest NEUTRALNA co do powodu: nowy wątek startuje albo po limicie
-    kontekstu, albo po dłuższej przerwie (bezczynność, ADR 0012) — ``prepare_turn`` nie
-    rozróżnia tych przyczyn, a użytkownikowi wystarczy wiedza, że zaczęła się nowa rozmowa.
-    """
-    notices: list[str] = []
-    if rolled_over:
-        notices.append(
-            "(Zaczynam nową rozmowę — poprzednia dobiegła limitu kontekstu "
-            "albo minęła dłuższa przerwa.)"
-        )
-    if stop_reason == _TRUNCATED_STOP:
-        notices.append("(Odpowiedź została ucięta — przekroczyła limit długości.)")
-    if not notices:
-        return reply
-    return "\n".join(notices) + "\n\n" + reply
-
-
-def _attachment_bytes(message: InboundMessage) -> int:
-    """Ile bajtów base64 drzwi już wstawiły do tury użytkownika (ADR 0064 — wspólny budżet).
-
-    Liczymy SUROWE bajty (base64 ÷ 4 × 3), bo w tej samej jednostce wyrażony jest sufit
-    materializacji. Pliki zamienione na tekst nie niosą base64 i słusznie ważą zero — nie idą
-    do API jako bajty.
-    """
-    return sum(len(a.data_base64) * 3 // 4 for a in message.attachments)
-
-
-def _to_transcript(messages: list[ConversationMessage]) -> list[TranscriptEntry]:
-    """Zmapuj tury rozmowy na wpisy transkryptu LLM — bezstratnie (ADR 0011).
-
-    Tury asystenta z zapisanymi blokami odtwarzamy jako ``RawTurn`` (bloki dostawcy
-    VERBATIM — thinking z ``signature`` wraca 1:1); tury ``tool`` jako ``ToolResults``
-    z formy domenowej. Wiersze sprzed 0011 (bez bloków) degradują do text-only
-    ``AssistantTurn`` / ``UserText`` — zawsze poprawne do odesłania do API.
-    """
-    entries: list[TranscriptEntry] = []
-    for msg in messages:
-        if msg.role == "assistant":
-            if msg.blocks:
-                entries.append(RawTurn("assistant", tuple(msg.blocks)))
-            elif msg.text:
-                entries.append(AssistantTurn(msg.text, ()))
-        elif msg.role == "tool":
-            if msg.blocks:
-                # Wiersz tury narzędziowej niesie DWA rodzaje bloków (ADR 0064): wyniki narzędzi
-                # (mają ``call_id``) oraz pliki podane przez ``File`` w formie neutralnej. Bez
-                # tego podziału plik wróciłby jako wynik bez ``call_id`` i wywrócił replay.
-                entries.append(
-                    ToolResults(
-                        tuple(
-                            ToolOutput(b["call_id"], b["content"], b.get("is_error", False))
-                            for b in msg.blocks
-                            if "call_id" in b
-                        ),
-                        tuple(attachment_from_row(b) for b in msg.blocks if "call_id" not in b),
-                    )
-                )
-        elif msg.text or msg.blocks:
-            # Wiersz użytkownika: ``blocks`` (gdy są) to NEUTRALNA forma załączników —
-            # odtwarzamy je, by replay był bezstratny. Warunek ``or msg.blocks`` pilnuje,
-            # by wiadomość z SAMYM plikiem (pusty caption) nie wypadła z transkryptu.
-            attachments = tuple(attachment_from_row(b) for b in (msg.blocks or []))
-            # Klasa pochodzenia (ADR 0066) wraca z wiersza; wiersze sprzed 0066 i drzwi bez
-            # rozszczepienia mają NULL → T1, czyli dawne zachowanie. Bez tego tura gościa
-            # wracałaby w kolejnych turach jako instrukcja — granica trzymałaby JEDNĄ turę.
-            trust: TrustClass = "T2" if msg.trust == "T2" else "T1"
-            entries.append(UserText(msg.text, attachments, trust))
-    return entries
-
-
-def _to_transcript_with_summary(
-    summary: ConversationSummary | None, messages: list[ConversationMessage]
-) -> list[TranscriptEntry]:
-    """Jak ``_to_transcript``, ale z doklejonym aktywnym podsumowaniem (ADR 0014).
-
-    Podsumowanie idzie jako treść UŻYTKOWNIKA z prefiksem (Sonnet 5 nie ma systemowych
-    wiadomości w środku rozmowy). Doklejamy je do PIERWSZEJ tury użytkownika w replayu —
-    po kompaktowaniu replay zaczyna się właśnie turą użytkownika — zamiast wstawiać osobną
-    wiadomość, żeby nie powstały dwie tury ``user`` z rzędu. Gdy replay nie zaczyna się od
-    użytkownika (sytuacja defensywna), podsumowanie idzie jako osobna wiadomość na początku.
-    """
-    entries = _to_transcript(messages)
-    if summary is None:
-        return entries
-    header = f"{_SUMMARY_PREFIX}\n{summary.summary}"
-    if entries and isinstance(entries[0], UserText):
-        first = entries[0]
-        # Doklejamy nagłówek do tekstu, ale ZACHOWUJEMY załączniki pierwszej tury.
-        # ZACHOWUJEMY klasę pierwszej tury (ADR 0066): podsumowanie doklejamy do jej
-        # tekstu, więc gdyby klasa przepadła, tura gościa awansowałaby do instrukcji
-        # dokładnie w momencie kompaktowania — czyli tam, gdzie nikt by tego nie szukał.
-        return [
-            UserText(f"{header}\n\n{first.text}", first.attachments, first.trust),
-            *entries[1:],
-        ]
-    return [UserText(header), *entries]

@@ -31,7 +31,7 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
   cache_creation_input_tokens from messages where role='assistant' order by id desc limit 2;"`.
   Pierwsza tura ma `cache_creation_input_tokens > 0` (zapis do cache), zero odczytu.
 - **Uwaga:** skład `extra_tools` może się zmienić między turami (kanał, różni nadawcy —
-  fabryki per-turowe w `responder.py`), co unieważnia breakpoint historii i daje cache-miss na
+  fabryki per-turowe w `responder/conversational.py`), co unieważnia breakpoint historii i daje cache-miss na
   DRUGIM breakpoincie — to oczekiwana, łagodna degradacja kosztowa, nie błąd. Breakpoint
   system+tools (pierwszy) powinien trafiać niezależnie od tego.
 

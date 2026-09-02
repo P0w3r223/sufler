@@ -140,9 +140,9 @@ def _mark_cache(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     zamieniamy na listę jednego bloku tekstowego — cache_control wymaga bloku, nie stringa.
 
     Skład narzędzi per tura może się zmienić między turami tej samej rozmowy (kanał, różni
-    nadawcy — ``responder.py`` fabryki per-turowe) → cache-miss na tym breakpoincie jest
-    oczekiwaną, łagodną degradacją kosztową, nie błędem: prefiks tools+system (breakpoint
-    wyżej) i tak zostaje trafiony w większości przypadków.
+    nadawcy — fabryki per-turowe w ``responder/conversational.py``) → cache-miss na tym
+    breakpoincie jest oczekiwaną, łagodną degradacją kosztową, nie błędem: prefiks
+    tools+system (breakpoint wyżej) i tak zostaje trafiony w większości przypadków.
     """
     if not messages:
         return messages
