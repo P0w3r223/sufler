@@ -6,39 +6,31 @@ zaufane drzwi (lokalne CLI) budują katalog READ+WRITE, mniej zaufane (Teams) �
 READ-ONLY (agent czyta, nie zapisuje). Import Claude API jest leniwy (w adapterze
 outbound); brak extra ``agent`` daje ``ImportError``, który entry-point drzwi
 zamienia na czytelny komunikat.
+
+Pakiet, nie moduł: fabryki poszczególnych ZDOLNOŚCI mieszkają w modułach obok
+(``notes_read``, ``workspace``, ``file_support``, ``shell``, ``outbox``), a tutaj zostają
+PUNKTY SKŁADANIA — ``build_agent_runtime``, ``build_conversational_responder``,
+``build_compaction_service``. Ten plik jest JEDYNYM wejściem: wszystko, co repo importuje
+z ``workmate.adapters.inbound.agent_wiring``, działa jak przed rozbiciem, łącznie
+z podmianą atrybutów przez ``monkeypatch.setattr(agent_wiring, …)`` w testach — nazwy są
+globalami TEGO modułu, więc podmiana trafia dokładnie tam, gdzie szuka ich wołający.
 """
 
 from __future__ import annotations
 
-import base64
-import binascii
-import functools
 import logging
-import uuid
 from dataclasses import replace
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.commands import CommandRouter
-from workmate.adapters.inbound.document_text import BINARY_EXTS
 from workmate.adapters.inbound.responder import (
     ConversationalResponder,
     Responder,
     SafeResponder,
 )
-from workmate.adapters.inbound.retrieval_wiring import build_lemmatizer, build_semantic_ranker
-from workmate.adapters.inbound.teams_graph.attachments import FileBytesMaterializer
 from workmate.adapters.outbound.anthropic_judge import AnthropicMutationJudge
-from workmate.adapters.outbound.filesystem_outbox import (
-    OUTBOX_DIRNAME,
-    FilesystemOutboxRepository,
-)
 from workmate.adapters.outbound.filesystem_skills import read_skill_catalog
 from workmate.adapters.outbound.filesystem_snapshots import FilesystemNoteSnapshots
-from workmate.adapters.outbound.filesystem_workspace import (
-    FilesystemWorkspaceRepository,
-    FilesystemWorkspaceWriter,
-)
 from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
 from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 from workmate.adapters.outbound.memory_confirmations import InMemoryConfirmations
@@ -46,37 +38,20 @@ from workmate.adapters.outbound.sqlite_audit import SqliteAuditStore
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
-from workmate.config import RetrievalSettings
 from workmate.core.agent.prompt import static_prompt_for
 from workmate.core.agent.runtime import AgentRuntime
 from workmate.core.application.audit import AuditService
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService
-from workmate.core.application.events import EventService
 from workmate.core.application.metrics import MetricsService
 from workmate.core.application.note_mutation import NoteMutationService
-from workmate.core.application.outbox import OutboxDelivery, OutboxLimits
 from workmate.core.application.services import (
-    NotesService,
     NotesWriteService,
-    ProjectsService,
 )
 from workmate.core.application.tools import (
     build_agent_notes_read_catalog,
-    build_file_catalog,
     build_project_catalog,
-    build_shell_catalog,
-    build_tool_catalog,
-    build_workspace_catalog,
 )
-from workmate.core.application.workspace import (
-    WorkspaceLimits,
-    WorkspaceService,
-    WorkspaceWriteService,
-)
-from workmate.core.errors import NoteAuthorizationError, WriteError
-from workmate.core.ports.command import CommandResult
-from workmate.core.ports.llm import Attachment, AttachmentQueue
 from workmate.core.ports.materialization import MaterializationLimits
 from workmate.core.ports.outbox import Deliverable
 
@@ -99,12 +74,40 @@ if TYPE_CHECKING:
     from workmate.core.application.note_read_authz import NoteReadAuthorizer
     from workmate.core.application.shell_authz import ShellAuthorizer
     from workmate.core.application.tools import ToolSpec
-    from workmate.core.domain.mutation import Verdict
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.command import CommandRunner
     from workmate.core.ports.conversations import ConversationStore
     from workmate.core.ports.identity import AadIdentityLookup
-    from workmate.core.ports.repositories import NotesRepository
+
+
+from workmate.adapters.inbound.agent_wiring.file_support import build_file_support
+from workmate.adapters.inbound.agent_wiring.notes_read import (
+    _build_notes_read_factory,
+    _read_services,
+    build_notes_service,
+    build_read_catalog,
+)
+from workmate.adapters.inbound.agent_wiring.outbox import _build_outbox_delivery
+from workmate.adapters.inbound.agent_wiring.shell import _build_shell_factory, _ScopedRunner
+from workmate.adapters.inbound.agent_wiring.workspace import _build_workspace_factory
+
+# Re-eksport z nazwami prywatnymi to nie przeoczenie: repo importuje stąd ``_ScopedRunner``,
+# ``_build_notes_read_factory`` i ``_build_outbox_delivery``, a testy podmieniają
+# ``_build_shell_factory``/``_read_services``/``build_file_support`` jako ATRYBUTY tego modułu.
+# Bez ``__all__`` ruff zdjąłby importy, których samo składanie nie woła.
+__all__ = [
+    "_ScopedRunner",
+    "_build_notes_read_factory",
+    "_build_outbox_delivery",
+    "_build_shell_factory",
+    "_build_workspace_factory",
+    "_read_services",
+    "build_agent_runtime",
+    "build_agent_runtime_or_exit",
+    "build_compaction_service",
+    "build_conversational_responder",
+    "build_file_support",
+    "build_notes_service",
+    "build_read_catalog",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -115,95 +118,6 @@ _MISSING_AGENT = "Runtime agenta wymaga extra 'agent'. Zainstaluj: uv sync --ext
 # Fail-closed rozmyślnie — drzwi, które chcą narzędzia, muszą podać własne liczby, a nie
 # odziedziczyć hojny domyślny sufit z sygnatury.
 _BEZ_PULAPOW = MaterializationLimits(max_bytes=0, max_extract_bytes=0)
-
-
-def build_notes_service(
-    settings: Settings, *, notes_repo: NotesRepository | None = None
-) -> NotesService:
-    """Zbuduj serwis wyszukiwania notatek z pełnym rankerem (BM25 nad lematami + opcjonalny dense).
-
-    JEDNO źródło budowy rankera dla wszystkich konsumentów: narzędzi agenta, komendy ``/szukaj``
-    i CLI ``workmate-search``. Gdyby CLI składało własny wariant, eval retrievalu mierzyłby coś
-    innego, niż wykonuje produkcja, a rozjazd byłby niewidoczny do pierwszego złego wyniku.
-
-    ``notes_repo`` podaje wołający, gdy ma już repozytorium do WSPÓŁDZIELENIA (``_read_services``
-    daje to samo ``ProjectsService``) — repozytorium cache'uje wczytane notatki, więc druga
-    instancja czytałaby ten sam katalog po raz drugi.
-
-    Lematyzator PL (ADR 0023) degraduje łagodnie do rankingu podłańcuchowego przy braku extra
-    ``retrieval``. Dense (ADR 0039) powstaje TYLKO obok lematyzatora — fuzja RRF żyje w gałęzi
-    BM25, więc sam byłby cichym no-opem.
-    """
-    retrieval = RetrievalSettings.from_env()
-    lemmatizer = build_lemmatizer(retrieval)
-    semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
-    return NotesService(
-        notes_repo if notes_repo is not None else MarkdownNotesRepository(settings.notes_dir),
-        lemmatizer=lemmatizer,
-        semantic=semantic,
-        rrf_k=retrieval.rrf_k,
-        dense_top_n=retrieval.dense_top_n,
-    )
-
-
-def _read_services(settings: Settings) -> tuple[NotesService, ProjectsService]:
-    """Komplet serwisów ODCZYTU dla tej konfiguracji — JEDEN na proces, współdzielony.
-
-    Składanie jednych drzwi wołało to trzy razy (runtime, per-turowa fabryka odczytu, katalog
-    komend), a każde wywołanie budowało własny ranker semantyczny, czyli własny model ONNX
-    w pamięci i własny warmup. Trzy modele i trzy warmupy zamiast jednego — koszt startu
-    i pamięci, nie poprawności (repozytoria mają własny cache, a ranker własne zamki).
-
-    Klucz cache'u to CAŁA konfiguracja, od której zależy budowa, a nie samo ``settings``:
-    ranker czyta ``RetrievalSettings`` z ENV, a ``ProjectsService`` — obecność pliku
-    ``events.db``. Bez tych dwóch składników drzwi zbudowane po zmianie zmiennej środowiskowej
-    (albo po pojawieniu się mostu) dostawałyby serwis z poprzedniego świata, i to po cichu.
-    """
-    return _read_services_cached(settings, RetrievalSettings.from_env(), _events_db_if_present())
-
-
-@functools.cache
-def _read_services_cached(
-    settings: Settings,
-    _retrieval: RetrievalSettings,
-    _events_db: Path | None,
-) -> tuple[NotesService, ProjectsService]:
-    """Właściwa budowa, memoizowana po pełnym kluczu konfiguracji (patrz ``_read_services``).
-
-    Argumenty z podkreśleniem wchodzą WYŁĄCZNIE do klucza — same wartości czytają niżej
-    ``build_notes_service`` (z ENV) i ``_events_if_present`` (z dysku), tak jak przed memoizacją.
-    """
-    notes_repo = MarkdownNotesRepository(settings.notes_dir)
-    projects_repo = YamlProjectsRepository(settings.projects_registry)
-    return (
-        build_notes_service(settings, notes_repo=notes_repo),
-        ProjectsService(projects_repo, notes_repo, events=_events_if_present()),
-    )
-
-
-def _events_db_if_present() -> Path | None:
-    """Ścieżka ``events.db``, jeśli plik istnieje — składnik klucza cache'u serwisów odczytu."""
-    from workmate.config import EventsSettings
-
-    path = Path(str(EventsSettings.from_env().db_path)).expanduser()
-    return path if path.exists() else None
-
-
-def _events_if_present() -> EventService | None:
-    """``EventService`` nad wspólnym ``events.db`` — TYLKO gdy plik istnieje (most w użyciu).
-
-    Wzbogaca ``get_project_status`` o aktywność GitHub (ADR 0029). Bez pliku ``None`` — drzwi
-    agenta bez mostu NIE tworzą pustego ``events.db`` tylko pod odczyt statusu.
-    """
-    from pathlib import Path
-
-    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-    from workmate.config import EventsSettings
-
-    path = EventsSettings.from_env().db_path
-    if not Path(str(path)).expanduser().exists():
-        return None
-    return EventService(SqliteEventStore(path))
 
 
 def build_agent_runtime(
@@ -308,420 +222,6 @@ def build_agent_runtime_or_exit(
         )
     except ImportError as exc:
         raise SystemExit(_MISSING_AGENT) from exc
-
-
-def _build_notes_read_factory(
-    settings: Settings,
-    authorizer: NoteReadAuthorizer,
-    *,
-    enable_write: bool = False,
-) -> Callable[[str], list[ToolSpec]]:
-    """Per-turowa fabryka CAŁEJ powierzchni bazy wiedzy, bramkowana NADAWCĄ (ADR 0062).
-
-    Wzorzec jak ``user_push_tool_factory``/``my_jira_tasks_factory``: serwisy budujemy RAZ, fabryka
-    na turę domyka je autoryzacją TEGO nadawcy. Rozpoznany członek → realne
-    ``Project``/``SearchNotes``/``GetNote``/``ListProjects``; nierozpoznany → te SAME narzędzia
-    (nazwa i schemat zachowane przez ``functools.wraps``), ale ich ``fn`` zwraca czytelną odmowę,
-    którą model relacjonuje — jak płyną błędy narzędzi. W katalogu bazowym są wtedy STŁUMIONE
-    (``suppress_notes_read``), żeby nie było drogi obejścia bramki.
-
-    ``Project`` jest tu razem z trójką odczytu, bo ``Project(action='status')`` serwuje treść
-    bazy wiedzy (syntezę z notatek projektu) — zostawiony w katalogu bazowym był jedyną drogą
-    odczytu, która przeżyła wpięcie bramki. ADR 0062 §3 zapowiadał złożenie odczytu do
-    ``build_project_catalog``; robimy to od strony DRZWI, bo ``core/application/tools/`` jest
-    wspólny z powierzchnią MCP (zamrożoną golden-testem), której bramka nie dotyczy.
-
-    ``enable_write`` przenosi profil zapisu drzwi (ADR 0006) na tę fabrykę — inaczej złożenie
-    ``Project`` tutaj cicho zabrałoby drzwiom zaufanym akcję ``save``.
-    """
-    notes, projects = _read_services(settings)
-    write_service = (
-        NotesWriteService(
-            MarkdownNotesWriter(settings.notes_dir),
-            YamlProjectsRepository(settings.projects_registry),
-        )
-        if enable_write
-        else None
-    )
-
-    def _refusing(
-        original: Callable[..., dict[str, Any]], refusal: dict[str, Any]
-    ) -> Callable[..., dict[str, Any]]:
-        @functools.wraps(original)  # zachowuje sygnaturę → schemat narzędzia bez zmian
-        def refuse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            return refusal
-
-        return refuse
-
-    def factory(sender_id: str) -> list[ToolSpec]:
-        # Fabryka wpina się WYŁĄCZNIE bez powłoki (``notes_read_gated``), bo z powłoką agent
-        # czyta montaż ``ro`` i bramka i tak nie sięga.
-        catalog = [
-            *build_project_catalog(projects, write_service=write_service),
-            *build_agent_notes_read_catalog(notes, projects),
-        ]
-        try:
-            authorizer.authorize(sender_id)
-        except NoteAuthorizationError as exc:
-            refusal = {"error": f"Brak uprawnień do odczytu bazy wiedzy: {exc}"}
-            return [replace(spec, fn=_refusing(spec.fn, refusal)) for spec in catalog]
-        return catalog
-
-    return factory
-
-
-def build_read_catalog(settings: Settings) -> list[ToolSpec]:
-    """Katalog narzędzi TYLKO DO ODCZYTU (bez ``save_note``) — dla komend read-only.
-
-    Zawsze read-only, niezależnie od profilu drzwi: strukturalna gwarancja, że komendy
-    (``/szukaj`` itd.) nie omijają bramki zapisu (ADR 0006), nawet na CLI z ``enable_write``.
-    """
-    notes, projects = _read_services(settings)
-    return build_tool_catalog(notes, projects, write_service=None)
-
-
-def _build_workspace_factory(
-    workspace_settings: WorkspaceSettings,
-) -> Callable[[WorkspaceScope], list[ToolSpec]]:
-    """Fabryka narzędzi KATALOGU ROBOCZEGO (ADR 0018) wiążących je ze scope rozmowy.
-
-    Serwisy (read/write) budujemy RAZ; fabryka na turę tylko domyka je scope'em rozmowy —
-    izolacja per rozmowa bez współdzielonego stanu w runtime.
-    """
-    repo = FilesystemWorkspaceRepository(workspace_settings.workspace_dir)
-    limits = WorkspaceLimits(
-        max_file_bytes=workspace_settings.max_file_mb * 1024 * 1024,
-        max_files_per_scope=workspace_settings.max_files_per_scope,
-        max_total_bytes=workspace_settings.max_total_mb * 1024 * 1024,
-        allowed_ext=frozenset(workspace_settings.allowed_ext),
-    )
-    read_service = WorkspaceService(repo)
-    write_service = WorkspaceWriteService(
-        FilesystemWorkspaceWriter(workspace_settings.workspace_dir), repo, limits
-    )
-
-    def factory(scope: WorkspaceScope) -> list[ToolSpec]:
-        return build_workspace_catalog(scope, read_service, write_service)
-
-    return factory
-
-
-def build_file_support(
-    workspace_settings: WorkspaceSettings,
-    *,
-    max_image_edge: int,
-    staged_ext: frozenset[str],
-    materialization_limits: MaterializationLimits,
-    mutations: NoteMutationService | None = None,
-    identities: AadIdentityLookup | None = None,
-    read_authorizer: NoteReadAuthorizer | None = None,
-    shell_available: bool = False,
-) -> tuple[
-    # Przedostatni argument fabryki to SKAZA rozmowy podana LENIWIE (``Callable``, nie ``bool``):
-    # sędzia mutacji czyta ją w chwili orzekania, a nie budowy katalogu (ADR 0066). Ostatni to
-    # ujście werdyktu sędziego do wiersza audytu tury (ADR 0065 §8) — ``None`` bez audytu.
-    Callable[
-        [
-            WorkspaceScope,
-            AttachmentQueue,
-            str,
-            str,
-            Callable[[], bool],
-            Callable[[Verdict, str], None] | None,
-        ],
-        list[ToolSpec],
-    ],
-    Callable[[WorkspaceScope, Sequence[Attachment]], list[str]],
-]:
-    """Zbuduj parę dla ``File`` (ADR 0064): fabrykę narzędzia i odkładanie załączników.
-
-    Jedna funkcja zwraca oba, bo obie strony MUSZĄ patrzeć na ten sam katalog roboczy —
-    rozdzielone montaże rozjechałyby się cicho: model czytałby z jednego miejsca, drzwi pisały
-    do drugiego, a objawem byłoby wyłącznie „nie ma takiego pliku".
-
-    ``staged_ext`` jest szersza niż lista rozszerzeń, które model wolno mu TWORZYĆ: użytkownik
-    przysyła pdf/obrazy/dokumenty, a nie tylko md/txt/csv/json. To rozróżnienie jest celowe —
-    odkładamy CUDZY plik do wglądu, nie pozwalamy modelowi pisać binariów.
-
-    ``shell_available`` przenosi się wprost do opisu ``File`` (ADR 0068 §2): to on rozstrzyga,
-    czy opis odsyła po tekst do `cat`-a, czy do ``ReadFile``, i skąd wziąć identyfikator notatki.
-    Bierze się — jak wszędzie w tych drzwiach — z OBECNOŚCI fabryki powłoki, nie z ustawienia.
-    """
-    repo = FilesystemWorkspaceRepository(workspace_settings.workspace_dir)
-    limits = WorkspaceLimits(
-        max_file_bytes=workspace_settings.max_file_mb * 1024 * 1024,
-        max_files_per_scope=workspace_settings.max_files_per_scope,
-        max_total_bytes=workspace_settings.max_total_mb * 1024 * 1024,
-        allowed_ext=frozenset(workspace_settings.allowed_ext),
-    )
-    read_service = WorkspaceService(repo)
-    write_service = WorkspaceWriteService(
-        FilesystemWorkspaceWriter(workspace_settings.workspace_dir), repo, limits
-    )
-    materializer = FileBytesMaterializer(max_image_edge=max_image_edge)
-
-    def factory(
-        scope: WorkspaceScope,
-        queue: AttachmentQueue,
-        sender_id: str,
-        trust_class: str = "unknown",
-        tainted: bool | Callable[[], bool] = True,
-        verdict_sink: Callable[[Verdict, str], None] | None = None,
-    ) -> list[ToolSpec]:
-        """Zbuduj ``File`` dla tej tury; akcje mutujące TYLKO dla rozpoznanego człowieka.
-
-        Rozwiązanie tożsamości pada TU, przy budowie katalogu — tak samo jak przy bramce
-        powłoki (ADR 0063): nierozpoznany nadawca nie dostaje zdolności, zamiast dostawać ją
-        i odbijać się dopiero przy wywołaniu. Nierozwiązywalna tożsamość degraduje do samego
-        odczytu (fail-closed), nie do wyjątku — tura ma się odbyć.
-        """
-        requester = ""
-        if mutations is not None and identities is not None and sender_id:
-            try:
-                person = identities.resolve_by_aad_user_id(sender_id)
-                # Kluczem jest ``source_id`` (klucz mapy, unikalny z definicji), nie nazwa
-                # wyświetlana: ta bywa pusta i bywa wspólna dla dwóch osób, a służy tu ZARAZEM
-                # za tożsamość w rejestrze potwierdzeń. Dwie osoby o tej samej nazwie dzieliłyby
-                # przestrzeń zgód — jedna domykałaby zapowiedź drugiej.
-                requester = person.source_id if person is not None else ""
-                if requester and read_authorizer is not None:
-                    # ADR 0065 §7: kto nie może CZYTAĆ bazy wiedzy, nie może jej też zmieniać.
-                    # Bez tego bramka odczytu (ADR 0062) przestawałaby cokolwiek znaczyć dla
-                    # ścieżki NISZCZĄCEJ, a odmowa sędziego (niosąca fragment treści) byłaby
-                    # kanałem odczytu wokół niej.
-                    read_authorizer.authorize(sender_id)
-            except Exception:
-                logger.warning("Nadawca %r bez prawa mutacji bazy wiedzy — same odczyty", sender_id)
-                requester = ""
-        return build_file_catalog(
-            scope,
-            read_service,
-            materializer,
-            queue,
-            materialization_limits,
-            mutations if requester else None,
-            requester,
-            trust_class,
-            tainted,
-            # Token TURY: każde wywołanie fabryki to jedna tura, więc token wylosowany tutaj
-            # jest dokładnie tym, czego potrzebuje punkt kontrolny człowieka — zapowiedź i
-            # wykonanie muszą pochodzić z RÓŻNYCH tur.
-            uuid.uuid4().hex,
-            shell_available,
-            verdict_sink,
-        )
-
-    def stage(scope: WorkspaceScope, attachments: Sequence[Attachment]) -> list[str]:
-        """Zapisz załączniki tury na dysk rozmowy; zwróć nazwy, pod którymi wylądowały.
-
-        Pojedynczy załącznik, którego nie da się odłożyć (nieznane rozszerzenie, limit dysku),
-        jest POMIJANY z logiem — reszta tury jedzie dalej. Model i tak widzi go w kontekście;
-        brak kopii na dysku odbiera mu jedynie możliwość wrócenia do pliku później.
-        """
-        names: list[str] = []
-        for att in attachments:
-            plik = _attachment_for_disk(att)
-            if plik is None:
-                continue
-            nazwa, data = plik
-            try:
-                names.append(
-                    write_service.stage_attachment(scope, nazwa, data, allowed_ext=staged_ext).name
-                )
-            except (WriteError, OSError):
-                logger.warning("Nie odłożyłem załącznika %r na dysk rozmowy — pomijam", att.name)
-        return names
-
-    return factory, stage
-
-
-def _attachment_for_disk(att: Attachment) -> tuple[str, bytes] | None:
-    """``(nazwa, bajty)`` do zapisu: base64 dla obrazu/PDF, tekst dla plików zekstrahowanych.
-
-    ``None`` dla załącznika, który nie niesie ani jednego, ani drugiego — czyli dla NOTKI
-    statusu, którą materializer wstawia zamiast pliku (limit/błąd/nieobsługiwany typ). Odkładanie
-    notki na dysk byłoby zapisaniem komunikatu o błędzie pod nazwą pliku, którego nie ma.
-
-    NAZWA bywa inna niż oryginalna i to jest sedno tej funkcji. Drzwi materializują ``.docx``/
-    ``.xlsx``/``.pptx`` jako TEKST po ekstrakcji (Claude API nie przyjmuje Worda natywnie) —
-    oryginalnych bajtów już nie ma. Zapisanie tego tekstu pod nazwą ``raport.docx`` dawało plik,
-    który KŁAMIE rozszerzeniem: model czytał go potem ``File(read)``, materializer rozpoznawał
-    ``.docx`` i puszczał na niego czytnik Worda, który przewracał się na „to nie jest zip".
-    Ta sama pułapka czekała na ``workmate-extract`` w powłoce. Rozszerzenie idzie więc za
-    ZAWARTOŚCIĄ: tekst zapisujemy jako ``.txt``, a nazwa (razem z nią) trafia do nagłówka sesji,
-    więc model woła plik tak, jak ten naprawdę się nazywa.
-    """
-    if att.data_base64:
-        try:
-            return att.name, base64.b64decode(att.data_base64, validate=True)
-        except (binascii.Error, ValueError):
-            return None
-    if not att.text or "." not in att.name:
-        return None
-    stem, _, ext = att.name.rpartition(".")
-    nazwa = f"{stem}.txt" if ext.lower() in BINARY_EXTS else att.name
-    return nazwa, att.text.encode("utf-8")
-
-
-class _ScopedRunner:
-    """``CommandRunner`` zapewniający istnienie katalogu rozmowy przed wysłaniem polecenia.
-
-    Wykonawca, gdy podany ``cwd`` nie istnieje, degraduje do swojego katalogu domyślnego —
-    rozsądnie, bo ``Popen`` z nieistniejącym ``cwd`` rzuca błędem mówiącym o katalogu zamiast
-    o poleceniu. Skutkiem ubocznym byłaby jednak UTRATA IZOLACJI: katalog rozmowy powstaje
-    leniwie, przy pierwszym ``CreateFile``, więc do tego czasu wszystkie rozmowy dzieliłyby
-    wspólny korzeń brudnopisu i widziały nawzajem swoje pliki. Zmierzone: ``pwd`` w świeżej
-    rozmowie zwracało ``/home/scratchpad``, nie ``/home/scratchpad/<kanał>/<hash>``.
-
-    Katalog zakłada APLIKACJA, nie wykonawca: „rozmowa" to pojęcie aplikacji, a wykonawca ma
-    zostać procesem bez wiedzy o tym, co znaczą ścieżki, które dostaje. Nieudany zapis wraca
-    jako wynik z niezerowym kodem — jak każda inna porażka polecenia (ADR 0057).
-    """
-
-    def __init__(self, inner: CommandRunner, *, with_outbox: bool = False) -> None:
-        self._inner = inner
-        # Skrzynkę zakładamy TYLKO, gdy jest kto ją opróżnia. Katalog tworzony przy wyłączonej
-        # dostawie byłby zaproszeniem do zapisu, którego nikt nie odbiera — i rósłby bez końca.
-        self._with_outbox = with_outbox
-
-    def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
-        if cwd:
-            try:
-                # Skrzynkę nadawczą zakłada aplikacja razem z katalogiem roboczym, bo opis
-                # narzędzia każe modelowi pisać do ``outputs/`` ścieżką WZGLĘDNĄ — a
-                # przekierowanie powłoki do nieistniejącego katalogu kończy się błędem,
-                # nie utworzeniem go.
-                target = Path(cwd, OUTBOX_DIRNAME) if self._with_outbox else Path(cwd)
-                target.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                return CommandResult(
-                    exit_code=-1,
-                    stdout="",
-                    stderr=f"Nie udało się przygotować katalogu roboczego {cwd}: {exc}",
-                )
-        return self._inner.run(command, cwd=cwd, timeout_s=timeout_s)
-
-
-def _build_shell_factory(
-    shell_settings: ShellSettings,
-    workspace_settings: WorkspaceSettings,
-    *,
-    outbox_enabled: bool = False,
-    authorizer: ShellAuthorizer | None = None,
-) -> Callable[[WorkspaceScope, str], list[ToolSpec]] | None:
-    """Fabryka narzędzia ``Bash`` (ADR 0057) wiążącego polecenia z katalogiem rozmowy.
-
-    Zwraca ``None``, gdy powłoka jest wyłączona ALBO gdy klienta wykonawcy nie da się
-    zaimportować — jest POSIX-only (gniazda unix), więc na maszynie deweloperskiej z Windows
-    degradujemy do „brak narzędzia" zamiast wywracać start drzwi. Import jest leniwy z tego
-    samego powodu co Claude API.
-
-    ``workspace_settings.workspace_dir`` jest korzeniem ścieżek dla OBU stron: aplikacja pisze
-    tam pliki narzędziem ``CreateFile``, a wykonawca dostaje ten sam katalog jako ``cwd``.
-    Rozjazd tych dwóch wartości oznaczałby, że model tworzy plik narzędziem i nie widzi go
-    powłoką — dlatego korzeń bierzemy z jednej konfiguracji, a nie z dwóch.
-
-    ``authorizer`` (ADR 0063) bramkuje powłokę członkostwem NADAWCY na drzwiach wieloużytkownikowych
-    (Teams): fabryka bierze więc też ``sender_id``. Nierozpoznany nadawca → powłoki NIE dokładamy
-    (build-time omission, jak Jira ADR 0054). ``None`` (drzwi zaufane — jeden operator CLI, brak
-    przychodzącego ``sender_id``, jak w ADR 0042/0062) → powłoka bez bramki, jak przed ADR 0063.
-
-    Od ADR infra 0012 wykonawca jest stawiany PER ROZMOWA: zamiast jednego stałego gniazda budujemy
-    KLIENTA MENEDŻERA (raz), a runner per scope pyta go ``ensure(scope)`` o gniazdo wykonawcy TEJ
-    rozmowy przed każdym poleceniem. Izolacja przenosi się z konwencji ``cwd`` na granicę montażu:
-    wykonawca scope'a widzi wyłącznie swój podkatalog brudnopisu.
-    """
-    if not shell_settings.enabled:
-        return None
-    try:
-        from workmate.adapters.outbound.exec_client import ManagedCommandRunner
-        from workmate.adapters.outbound.exec_manager_client import SocketExecManagerClient
-    except ImportError:
-        logger.info(
-            "Klient wykonawcy jest POSIX-only — narzędzie powłoki pomijam na tej platformie."
-        )
-        return None
-
-    manager = SocketExecManagerClient(shell_settings.manager_socket_path)
-    workspace_root = workspace_settings.workspace_dir.as_posix()
-
-    def factory(scope: WorkspaceScope, sender_id: str) -> list[ToolSpec]:
-        # Bramka członkostwa (ADR 0063): na drzwiach wieloużytkownikowych nierozpoznany nadawca nie
-        # dostaje powłoki. Przy powłoce ON narzędzia odczytu i tak schodzą z katalogu bazowego
-        # (``shell_available``), więc pominięta powłoka = brak JAKIEJKOLWIEK drogi do bazy wiedzy
-        # dla gościa (fail-closed). Bez autoryzatora (CLI) — powłoka jak dawniej, bez bramki.
-        if authorizer is not None and authorizer.resolve(sender_id) is None:
-            return []
-        # Runner per scope: ``ensure(str(scope.dirpath()))`` u menedżera zwraca gniazdo wykonawcy
-        # TEJ rozmowy. ``_ScopedRunner`` dalej zakłada po stronie APLIKACJI podkatalog roboczy (i
-        # ``outputs/``), bo aplikacja montuje cały wolumen brudnopisu — a menedżer robi to samo po
-        # swojej stronie przed startem wykonawcy (idempotentnie, ADR 0012 §4).
-        runner = _ScopedRunner(
-            ManagedCommandRunner(manager, str(scope.dirpath())), with_outbox=outbox_enabled
-        )
-        return build_shell_catalog(
-            scope,
-            runner,
-            workspace_root=workspace_root,
-            default_timeout_s=shell_settings.default_timeout_s,
-            outbox_enabled=outbox_enabled,
-        )
-
-    return factory
-
-
-def _build_outbox_delivery(
-    workspace_settings: WorkspaceSettings,
-    send_factory: Callable[[str], Callable[[Deliverable], None] | None],
-    *,
-    max_file_bytes: int,
-    max_files_per_turn: int,
-    max_seconds: float,
-) -> _ScopedOutbox:
-    """Zbuduj dostawę ze skrzynki nadawczej rozmowy — wołaną PO turze, zwracającą zdanie raportu.
-
-    Korzeń bierzemy z ``workspace_settings``, tego samego, z którego liczy się ``cwd`` poleceń
-    (``_build_shell_factory``) — rozjazd tych dwóch wartości oznaczałby, że model zapisuje plik
-    w skrzynce, której drzwi nie czytają, i to bez żadnego objawu poza brakiem załącznika.
-    """
-    delivery = OutboxDelivery(
-        FilesystemOutboxRepository(workspace_settings.workspace_dir),
-        OutboxLimits(
-            max_file_bytes=max_file_bytes,
-            max_files_per_turn=max_files_per_turn,
-            max_total_seconds=max_seconds,
-        ),
-    )
-
-    return _ScopedOutbox(delivery, send_factory)
-
-
-class _ScopedOutbox:
-    """Dwufazowa dostawa dla respondera: migawka na starcie tury, wysyłka po niej.
-
-    Fazy są DWIE, bo migawka jest granicą pochodzenia plików — musi powstać, zanim model
-    dostanie powłokę. Zwinięcie ich w jedno wywołanie po turze znaczyłoby, że nie umiemy
-    odróżnić pliku wytworzonego w tej turze od podłożonego wcześniej z innej rozmowy.
-    """
-
-    def __init__(
-        self,
-        delivery: OutboxDelivery,
-        send_factory: Callable[[str], Callable[[Deliverable], None] | None],
-    ) -> None:
-        self._delivery = delivery
-        self._send_factory = send_factory
-
-    def snapshot(self, scope: WorkspaceScope) -> None:
-        self._delivery.snapshot(str(scope.dirpath()))
-
-    def deliver(self, scope: WorkspaceScope) -> str:
-        send = self._send_factory(scope.conversation)
-        if send is None:
-            # Wątek bez celu dostawy (np. rozmowa spoza kanału): zostawiamy skrzynkę nietkniętą,
-            # bo plik nie jest odrzucony — po prostu nie ma dokąd pójść z TYCH drzwi.
-            return ""
-        return self._delivery.deliver(str(scope.dirpath()), send).notice()
 
 
 def build_conversational_responder(
