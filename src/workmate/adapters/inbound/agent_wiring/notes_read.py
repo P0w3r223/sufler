@@ -57,6 +57,7 @@ def build_notes_service(
     BM25, więc sam byłby cichym no-opem.
     """
     retrieval = RetrievalSettings.from_env()
+    retrieval.validate()
     lemmatizer = build_lemmatizer(retrieval)
     semantic = build_semantic_ranker(retrieval) if lemmatizer is not None else None
     return NotesService(

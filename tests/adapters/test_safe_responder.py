@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import pytest
+
 from workmate.adapters.inbound.responder import InboundMessage, SafeResponder
-from workmate.core.errors import LLMError
+from workmate.core.errors import LLMError, RepositoryError
 
 
 class _OkResponder:
@@ -65,3 +67,36 @@ def test_custom_fallback_message_is_used():
     reply = asyncio.run(responder.respond(InboundMessage(text="czesc")))
 
     assert reply == "Awaria."
+
+
+# --- ``ponawialne``: drzwi z licznikiem prób muszą ZOBACZYĆ porażkę (ADR 0069) ---
+
+
+def test_klasa_ponawialna_przelatuje_do_wolajacego():
+    """Regresja: dekorator łapał WSZYSTKO, więc licznik prób pollera Teams nie widział ani jednej
+    porażki obsługi. Przejściowy błąd Claude API kończył się przeprosinami, a wiadomość znikała
+    ze strumienia jako obsłużona — bez wpisu do kwarantanny i bez szansy na ponowienie."""
+    responder = SafeResponder(
+        _FailingResponder(LLMError("529 overloaded")), ponawialne=(LLMError,)
+    )
+
+    with pytest.raises(LLMError):
+        asyncio.run(responder.respond(InboundMessage(text="czesc")))
+
+
+def test_poza_lista_ponawialnych_degradacja_zostaje_bez_zmian():
+    """Kontrast: lista zawęża, nie otwiera. Błąd spoza niej dalej wraca komunikatem."""
+    responder = SafeResponder(
+        _FailingResponder(RepositoryError("baza nie odpowiada")), ponawialne=(LLMError,)
+    )
+
+    reply = asyncio.run(responder.respond(InboundMessage(text="czesc")))
+
+    assert reply == SafeResponder._FALLBACK
+
+
+def test_bez_listy_zachowanie_jest_dotychczasowe():
+    """Domyślnie pusta krotka — drzwi, które nie ponawiają (CLI, bot), nic nie tracą."""
+    responder = SafeResponder(_FailingResponder(LLMError("529")))
+
+    assert asyncio.run(responder.respond(InboundMessage(text="czesc"))) == SafeResponder._FALLBACK

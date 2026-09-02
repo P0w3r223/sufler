@@ -44,6 +44,7 @@ def main() -> None:
     settings = GithubSettings.from_env()
     settings.validate()
     events_settings = EventsSettings.from_env()
+    events_settings.validate()
     push_settings = TeamsPushSettings.from_env()
     push_settings.validate()
     # R/L1: watermark drzwi i wspólny events.db MUSZĄ być zapisywalne — inaczej stan leci w próżnię

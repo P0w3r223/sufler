@@ -32,3 +32,16 @@ class SkillsSettings:
             skills_dir=_optional_path_from_env("WORKMATE_SKILLS_DIR"),
             max_in_header=_int_from_env("WORKMATE_SKILLS_MAX_IN_HEADER", _MAX_SKILLS_IN_HEADER),
         )
+
+    def validate(self) -> None:
+        """Twardy błąd startu przy sufcie, który po cichu ukrywa wszystkie procedury.
+
+        ``max_in_header`` idzie do przycięcia listy, a wartość zerowa lub ujemna dawała listę pustą
+        albo obciętą od końca — czyli objaw nie do odróżnienia od „katalog procedur jest pusty",
+        dokładnie ten, przed którym ostrzega komentarz przy ``_MAX_SKILLS_IN_HEADER``.
+        """
+        if self.max_in_header < 1:
+            raise ValueError(
+                "WORKMATE_SKILLS_MAX_IN_HEADER musi być >= 1 — mniejsza wartość ukrywa procedury "
+                f"bez śladu, jest: {self.max_in_header}."
+            )

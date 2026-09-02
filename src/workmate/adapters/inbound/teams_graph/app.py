@@ -43,6 +43,7 @@ from workmate.config import (
     WorkspaceSettings,
     require_writable,
 )
+from workmate.core.errors import LLMError
 from workmate.core.ports.materialization import MaterializationLimits
 
 if TYPE_CHECKING:
@@ -155,12 +156,17 @@ def main() -> None:
     )
     shell_settings = ShellSettings.from_env()
     shell_settings.validate()
+    # Sufit listy procedur sprawdzany PRZY STARCIE, nie przy składaniu nagłówka: zła wartość
+    # ukrywa procedury bez śladu, więc ma wywrócić start, zamiast wyglądać jak pusty katalog.
+    skills_settings = SkillsSettings.from_env()
+    skills_settings.validate()
     # Bramka członkostwa POWŁOKI (ADR 0063), osobno — ``None`` gdy powłoka wyłączona. Gdy włączona,
     # WYMAGA mapy tożsamości (fail-fast w builderze), więc rozstrzygamy ją WCZEŚNIE: brak mapy ma
     # wywrócić start, zanim ruszymy resztę składania drzwi.
     shell_authorizer = _build_shell_authorizer(settings, shell_settings)
     # R/L1: pamięć rozmów agenta i wspólny events.db MUSZĄ być zapisywalne (tryb watch pisze oba).
     events_settings = EventsSettings.from_env()
+    events_settings.validate(data_dir=core_settings.data_dir)
     require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
     require_writable(conv_settings.db_path, "WORKMATE_CONVERSATIONS_DB")
     # Baza wiedzy — sondowana TYLKO przy włączonym zapisie notatek (inaczej drzwi read-only
@@ -287,7 +293,7 @@ def main() -> None:
         settings.outbox_max_files_per_turn,
         settings.outbox_max_seconds,
         # Procedury z `/mnt/skills` (ADR 0005) — bez ścieżki lista zostaje pusta.
-        SkillsSettings.from_env(),
+        skills_settings,
         note_read_authorizer=note_read_authorizer,
         shell_authorizer=shell_authorizer,
         # Narzędzie ``File`` (ADR 0064) dzieli sufit z materializerem załączników, bo pobrania
@@ -372,6 +378,10 @@ def _build_responder(
         channel="teams_graph",
         enable_write=False,
         safe=True,
+        # Błąd rozmowy z modelem ma dojść do licznika prób pollera (ADR 0069), a nie skończyć się
+        # przeprosinami i wiadomością odhaczoną jako obsłużona. Te drzwi jako jedyne mają licznik,
+        # więc jako jedyne o to proszą; reszta błędów dalej degraduje łagodnie w ``SafeResponder``.
+        ponawialne=(LLMError,),
         enable_workspace=workspace_settings.enabled,
         workspace_settings=workspace_settings,
         shell_settings=shell_settings,

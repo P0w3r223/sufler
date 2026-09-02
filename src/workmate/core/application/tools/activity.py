@@ -166,11 +166,14 @@ def build_activity_catalog(
             by_kind: dict[str, int] = {}
             for event in items:
                 by_kind[event.kind] = by_kind.get(event.kind, 0) + 1
+            # MAKSIMUM, nie pierwszy element — ``recent`` sortuje po ``id`` (kolejność PRZYJĘCIA),
+            # a osobne watermarki per typ zasobu potrafią wpuścić starsze zdarzenie po nowszym.
+            najnowsze = max((e.occurred_at for e in items), default=None)
             return {
                 "project": project,
                 "event_count": len(items),
                 "by_kind": by_kind,
-                "latest_activity_at": items[0].occurred_at.isoformat() if items else None,
+                "latest_activity_at": najnowsze.isoformat() if najnowsze else None,
                 "recent": [e.model_dump(mode="json") for e in items[:20]],
             }
 

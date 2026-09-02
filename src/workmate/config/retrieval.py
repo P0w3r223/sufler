@@ -60,3 +60,27 @@ class RetrievalSettings:
             dense_top_n=_int_from_env("WORKMATE_RETRIEVAL_DENSE_TOP_N", 0),
             dense_min_similarity=_float_from_env("WORKMATE_RETRIEVAL_DENSE_MIN_SIM", 0.0),
         )
+
+    def validate(self) -> None:
+        """Twardy błąd startu przy wartościach, które wywracają ranking dopiero przy użyciu.
+
+        ``rrf_k`` wchodzi do ``1.0 / (k + rank)``, a ``rank`` startuje od zera — ``0`` (wiarygodna
+        wartość dla operatora chcącego „wyłączyć dyskonto") albo liczba ujemna dawały
+        ``ZeroDivisionError`` w środku ``NotesService.search_notes``, czyli surowy wyjątek zamiast
+        błędu narzędzia. Zapalnik jest odłożony: fuzja biegnie dopiero przy ``enable_dense=true``,
+        a ta bramka jest domyślnie wyłączona.
+        """
+        if self.rrf_k < 1:
+            raise ValueError(f"WORKMATE_RETRIEVAL_RRF_K musi być >= 1, jest: {self.rrf_k}.")
+        if self.dense_top_n < 0:
+            raise ValueError(
+                f"WORKMATE_RETRIEVAL_DENSE_TOP_N musi być >= 0 (0 = całość), "
+                f"jest: {self.dense_top_n}."
+            )
+        if not -1.0 <= self.dense_min_similarity <= 1.0:
+            raise ValueError(
+                "WORKMATE_RETRIEVAL_DENSE_MIN_SIM to próg cosinusa, więc musi być w zakresie "
+                f"-1.0..1.0, jest: {self.dense_min_similarity}."
+            )
+        if not self.lang.strip():
+            raise ValueError("WORKMATE_RETRIEVAL_LANG nie może być puste.")

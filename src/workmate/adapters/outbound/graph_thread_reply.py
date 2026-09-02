@@ -18,11 +18,11 @@ from typing import Any
 
 import httpx
 
+from workmate.adapters.outbound.graph_http import retry_after_s
 from workmate.core.errors import ThreadRootGone
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 _MAX_429_RETRIES = 5
-_DEFAULT_RETRY_AFTER_S = 5
 
 
 class HttpxGraphThreadReplyPoster:
@@ -51,7 +51,7 @@ class HttpxGraphThreadReplyPoster:
             response = self._client.post(url, json=payload, headers=headers)
             if response.status_code == 429 and attempt < _MAX_429_RETRIES:
                 # 429 = odrzucone przed przetworzeniem → powtórka bezpieczna (nie dubluje).
-                self._sleep(_retry_after_s(response))
+                self._sleep(retry_after_s(response))
                 continue
             if response.status_code == 404:
                 raise ThreadRootGone(f"root wątku {root_id} nie istnieje")
@@ -59,10 +59,6 @@ class HttpxGraphThreadReplyPoster:
             return
 
 
-def _retry_after_s(response: httpx.Response) -> float:
-    """Sekundy do odczekania z nagłówka ``Retry-After`` (albo domyślne), odporne na śmieci."""
-    raw = response.headers.get("Retry-After", "")
-    try:
-        return float(raw)
-    except ValueError:
-        return float(_DEFAULT_RETRY_AFTER_S)
+# Czekanie po 429 liczy WSPÓLNA funkcja transportu Graph — lokalna wersja brała wartość
+# z nagłówka bez sufitu i bez podłogi, więc `Retry-After: 3600` zawieszał wysyłkę odpowiedzi
+# na godzinę, a wartość ujemna dawała `ValueError` z `time.sleep`.

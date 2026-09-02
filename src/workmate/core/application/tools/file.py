@@ -282,7 +282,7 @@ def build_file_catalog(
                     verdict_sink=_ujscie_werdyktu,
                 )
                 return {"deleted": True, "id": note_id, "kopia": _skrot_kopii(wynik.snapshot)}
-            mutations.edit_note(
+            wynik = mutations.edit_note(
                 note_id,
                 content,
                 requester=requester,
@@ -292,7 +292,12 @@ def build_file_catalog(
                 tainted=skaza,
                 verdict_sink=_ujscie_werdyktu,
             )
-            return {"edited": True, "id": note_id}
+            # ``kopia`` wraca TAKŻE z edycji. Dotąd oddawało ją tylko kasowanie, a to edycja jest
+            # częstsza i jako jedyna działa przy ``DELETE=false`` — czyli w konfiguracji, którą
+            # ADR 0065 przewiduje jako domyślną. Bez tego pola człowiek proszący „cofnij tę zmianę"
+            # nie dostawał żadnego wskaźnika, choć docstring ``MutationOutcome`` obiecuje wprost,
+            # że migawka jest po to, „żeby cofnięcie nie wymagało śledztwa".
+            return {"edited": True, "id": note_id, "kopia": _skrot_kopii(wynik.snapshot)}
         except MutationRefused as odmowa:
             # Odmowa NIE jest awarią — to normalny wynik z powodem, który model ma przekazać
             # człowiekowi. Wyjątek zamieniony na wynik, żeby nie wyglądał jak błąd narzędzia.

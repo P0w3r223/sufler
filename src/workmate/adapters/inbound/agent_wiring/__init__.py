@@ -232,6 +232,7 @@ def build_conversational_responder(
     channel: str,
     enable_write: bool,
     safe: bool,
+    ponawialne: tuple[type[BaseException], ...] = (),
     show_thinking: bool = False,
     enable_workspace: bool = False,
     workspace_settings: WorkspaceSettings | None = None,
@@ -266,7 +267,9 @@ def build_conversational_responder(
     """Złóż całą receptę drzwi: runtime → store → pamięć → kompaktowanie → router komend.
 
     Jedno źródło recepty ``SafeResponder(ConversationalResponder(...))`` (dawniej skopiowanej
-    w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``show_thinking`` tylko
+    w 4 drzwiach). ``safe=True`` owija w ``SafeResponder`` (drzwi async); ``ponawialne`` wskazuje
+    mu klasy błędów, które ma przepuścić do wołającego, i ma sens WYŁĄCZNIE dla drzwi, które za
+    tym szwem ponawiają (dziś: licznik prób ADR 0069 w pollerze Teams). ``show_thinking`` tylko
     dla drzwi zaufanych (CLI). Router komend dostaje katalog READ-ONLY (bramka ADR 0006).
     ``enable_workspace`` (osobna bramka, ADR 0018) dokłada agentowi narzędzia katalogu roboczego,
     a ``shell_settings.enabled`` (znów osobna, ADR 0057) — narzędzie ``Bash`` biegnące
@@ -522,7 +525,7 @@ def build_conversational_responder(
         outbox_delivery=outbox_delivery,
         skills=skills,
     )
-    return SafeResponder(inner) if safe else inner
+    return SafeResponder(inner, ponawialne=ponawialne) if safe else inner
 
 
 def build_compaction_service(

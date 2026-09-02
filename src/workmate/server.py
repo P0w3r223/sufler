@@ -64,7 +64,9 @@ def build_server(settings: Settings | None = None) -> FastMCP:
 
     # Lematyzacja PL (ADR 0023) — lekka, więc również na drzwiach MCP stdio; brak extra
     # degraduje do dawnego rankingu podłańcuchowego. Warstwa dense (Faza B) tu NIE wchodzi.
-    lemmatizer = build_lemmatizer(RetrievalSettings.from_env())
+    retrieval_settings = RetrievalSettings.from_env()
+    retrieval_settings.validate()
+    lemmatizer = build_lemmatizer(retrieval_settings)
     notes_service = NotesService(notes_repo, lemmatizer=lemmatizer)
     projects_service = ProjectsService(projects_repo, notes_repo)
 

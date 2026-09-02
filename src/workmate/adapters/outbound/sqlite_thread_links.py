@@ -67,10 +67,16 @@ class SqliteThreadLinkStore:
         return str(row["root_id"]) if row is not None else None
 
     def get_target(self, team_id: str, channel_id: str, root_id: str) -> tuple[str, str] | None:
+        # ``UNIQUE`` stoi na (team, channel, kind, number), czyli pilnuje JEDNEGO WĄTKU NA CEL —
+        # w drugą stronę nic nie gwarantuje: ten sam ``root_id`` może stać w kilku wierszach, gdy
+        # jeden wątek powiązano z dwoma celami. Bez porządku SQLite oddawał wtedy dowolny z nich,
+        # więc odpowiedź na tę samą wiadomość mogła raz trafić do issue, raz do PR-a.
+        # Najświeższe powiązanie jest tu jedynym rozstrzygnięciem, które da się uzasadnić.
         with self._lock:
             row = self._conn.execute(
                 "SELECT target_kind, target_number FROM thread_links "
-                "WHERE team_id=? AND channel_id=? AND root_id=?",
+                "WHERE team_id=? AND channel_id=? AND root_id=? "
+                "ORDER BY rowid DESC LIMIT 1",
                 (team_id, channel_id, root_id),
             ).fetchone()
         return (str(row["target_kind"]), str(row["target_number"])) if row else None

@@ -342,8 +342,10 @@ class TeamsGraphSettings:
                 f"1..{_MAX_ATTACHMENTS_PER_MESSAGE_CEILING}, jest: "
                 f"{self.max_attachments_per_message}."
             )
-        # Łączny budżet też w 1..32 (sufit żądania API). Nie wiążemy go z ``max_attachment_mb``:
-        # plik większy niż budżet materializer i tak łagodnie zdegraduje do notki.
+        # Łączny budżet ma ten sam zakres co pojedynczy załącznik: 1..24 MB SUROWYCH, bo po
+        # zakodowaniu base64 daje to ~32 MB, czyli sufit żądania API. Budżet jest ODDZIELNY od
+        # ``max_attachment_mb``: plik większy niż budżet materializer i tak łagodnie zdegraduje
+        # do notki.
         if not 1 <= self.max_total_attachment_mb <= _MAX_ATTACHMENT_MB_CEILING:
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB musi być w zakresie "

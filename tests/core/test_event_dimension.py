@@ -269,6 +269,66 @@ def test_project_status_enriched_with_event_activity(tmp_path) -> None:
     assert status.latest_activity_at is not None
 
 
+def _ev_o(external_id: str, *, when: datetime) -> NewEvent:
+    """Zdarzenie o WSKAZANEJ chwili zajścia — do sondy „kolejność przyjęcia ≠ kolejność zajścia"."""
+    return NewEvent(
+        source="github",
+        kind="pr_opened",
+        external_id=external_id,
+        repo="o/r",
+        project="wm",
+        title="t",
+        occurred_at=when,
+    )
+
+
+def test_ostatnia_aktywnosc_to_najpozniejsze_ZAJSCIE_nie_ostatnie_przyjecie(tmp_path) -> None:
+    """Regresja: oba miejsca brały ``items[0].occurred_at``, a ``recent`` sortuje po ``id``.
+
+    Poller ma OSOBNE watermarki per typ zasobu (issues/comments/runs/reviews), więc starsze
+    zdarzenie potrafi wejść do magazynu po nowszym. Pierwszy element okna zaniżał wtedy pole,
+    na którym model buduje zdania w rodzaju „ostatnio nic się nie działo". Dotychczasowe sondy
+    asertowały ``is not None``, więc odwrócenie kolejności ich nie ruszało.
+    """
+    from datetime import date
+
+    from workmate.core.application.events import EventService
+    from workmate.core.application.tools import build_activity_catalog
+    from workmate.core.domain.models import ProjectStatusRecord
+
+    pozniej = datetime(2026, 7, 1, 10, 5, tzinfo=UTC)
+    wczesniej = datetime(2026, 7, 1, 10, 0, tzinfo=UTC)
+
+    store = SqliteEventStore(tmp_path / "events.db")
+    store.append(_ev_o("o/r#1", when=pozniej))  # przyjęte PIERWSZE, zaszło PÓŹNIEJ
+    store.append(_ev_o("o/r#2", when=wczesniej))  # przyjęte DRUGIE, zaszło WCZEŚNIEJ
+
+    spec = build_activity_catalog(events=EventService(store))[0]
+    assert spec.fn(action="summary", project="wm")["latest_activity_at"] == pozniej.isoformat()
+
+    class _Repo:
+        def all(self):
+            return [Project(key="wm", company="biap", name="WM", description="")]
+
+        def get(self, key):
+            return self.all()[0] if key == "wm" else None
+
+        def status_record(self, key):
+            return ProjectStatusRecord(
+                key="wm",
+                status="active",
+                health="green",
+                phase="p",
+                summary="s",
+                last_updated=date(2026, 7, 1),
+            )
+
+    service = ProjectsService(_Repo(), _EmptyNotesRepo(), events=EventService(store))
+    status = service.get_project_status("wm")
+    assert status is not None
+    assert status.latest_activity_at == pozniej
+
+
 def test_diff_branches_seeds_then_detects_push_and_delete() -> None:
     from workmate.adapters.inbound.github import selection
 

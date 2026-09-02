@@ -27,3 +27,28 @@ class EventsSettings:
     @classmethod
     def from_env(cls) -> EventsSettings:
         return cls(db_path=_path_from_env("WORKMATE_EVENTS_DB", _DEFAULT_EVENTS_DB))
+
+    def validate(self, *, data_dir: Path | None = None) -> None:
+        """Twardy błąd startu, gdy magazyn zdarzeń wskazuje katalog albo wnętrze bazy wiedzy.
+
+        Ten sam inwariant, który ``WorkspaceSettings`` egzekwuje dla brudnopisu: zdarzenia
+        przychodzą z drzwi i są treścią NIEZAUFANĄ, więc plik nie może wylądować w ``data/``,
+        które rdzeń indeksuje jako notatki. ``data_dir`` opcjonalny, bo klasa bywa czytana bez
+        pełnych ustawień rdzenia; wtedy zostaje sama kontrola kształtu ścieżki.
+
+        Zapisywalność sprawdza ``require_writable`` po stronie drzwi — tu nie ma efektów ubocznych.
+        """
+        resolved = self.db_path.resolve()
+        if not resolved.name:
+            raise ValueError(f"WORKMATE_EVENTS_DB musi wskazywać PLIK, jest: {resolved}.")
+        if resolved.is_dir():
+            raise ValueError(
+                f"WORKMATE_EVENTS_DB wskazuje katalog, a ma być plikiem bazy: {resolved}."
+            )
+        if data_dir is not None:
+            resolved_data = data_dir.resolve()
+            if resolved == resolved_data or resolved_data in resolved.parents:
+                raise ValueError(
+                    f"WORKMATE_EVENTS_DB ({resolved}) leży w katalogu danych ({resolved_data}) "
+                    "— zdarzenia z drzwi to treść niezaufana i nie mogą trafić do bazy wiedzy."
+                )
