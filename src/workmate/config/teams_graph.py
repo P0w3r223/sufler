@@ -303,7 +303,7 @@ class TeamsGraphSettings:
             ),
         )
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # noqa: C901, PLR0915
         """Twardy błąd startu, gdy brak tożsamości aplikacji albo bezsensowne limity."""
         missing = [
             name

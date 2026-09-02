@@ -146,6 +146,28 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   ścieżce CLI, więc gdyby ktoś policzył koszt dniem dzisiejszym zamiast dniem rozmowy, nic by
   tego nie złapało — a różnicę widać dopiero na rachunku.
 
+### Dodane
+
+- **Sufit funkcji egzekwowany maszynowo (`C901`, `PLR0915`).** Do tej pory żył wyłącznie w prozie
+  i w cudzej pamięci: rozbicie plików-monolitów (#76/#87) przeprowadzono ręcznie, więc nic nie
+  pilnowało, żeby funkcje urosły z powrotem — 36-parametrowa fabryka i 326-linijkowa metoda
+  przechodziły w ciszy. Bramka zapala się na znanym długu (sześć miejsc w `src`, cztery
+  w `Powiadomienia_teams`, jedno w `claude_summary`), a w `tests/` ani razu. Sprawdzone, że gryzie
+  także na NOWYM kodzie, nie tylko domyka stan zastany.
+
+  Wyjątki są PUNKTOWE (`noqa` przy funkcji), nie plikowe — mają zniknąć razem z długiem, zamiast
+  stać się cichym zwolnieniem modułu. Dwie klasy: dług do rozbicia oraz miejsca, w których długość
+  JEST kontraktem (sygnatura buildera narzędzia to schemat pokazywany modelowi, więc skrócenie
+  kosztowałoby zdolność).
+
+- **Nocny bieg CI (`schedule`, 04:17 UTC) i ręczne uruchomienie (`workflow_dispatch`).** Bez biegu
+  nocnego bramka pada dopiero przy następnym pushu, a bywa, że nikt nic nie zepsuł: #88 stało
+  czerwone JEDENAŚCIE DNI, bo wygasła cena wprowadzająca — kod się nie zmienił, zmienił się
+  kalendarz. Przez ten czas nie dało się zbudować obrazu floty (`pytest && touch .tests-passed`
+  w Dockerfile). Druga instancja tej klasy — zegar systemowy w oknie wysyłki `Powiadomienia_teams`
+  — wracała w KAŻDY weekend. Godzina jest po północy UTC i przed początkiem pracy zespołu,
+  a minuta nieokrągła świadomie (o pełnych godzinach kolejka GitHuba jest najdłuższa).
+
 ### Zmienione
 
 - **`responder.py` (956 linii) rozbity na pakiet `responder/`** — kontrakty w `protocols`,

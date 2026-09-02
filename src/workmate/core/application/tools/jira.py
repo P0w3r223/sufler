@@ -145,7 +145,7 @@ _JIRA_NIEZNANA_OSOBA = "Nie rozpoznaję jednoznacznie osoby {member!r} w mapie p
 _JIRA_OSOBA_HINT = "`member` to pełne imię i nazwisko osoby z pionu — sprawdź pisownię"
 
 
-def build_jira_catalog(
+def build_jira_catalog(  # noqa: C901
     service: MyJiraTasksService,
     read_service: JiraReadService,
     resolve_member: _Callable[[str], str | None],

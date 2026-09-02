@@ -24,6 +24,7 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 - `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval, retrieval-dense, file-reply, seed)
 - `uv run --no-sync pytest --testmon` · bramka: `uv run --no-sync pytest` (`--no-sync` omija blokadę `workmate.exe`)
 - `uv run ruff check .` · **`uv run ruff format --check src tests eval deploy scripts`** · `uv run mypy` (obejmuje `src`, limit linii 100) · `uv run lint-imports`
+  `ruff check` egzekwuje też SUFIT FUNKCJI (`C901` złożoność 15, `PLR0915` 50 instrukcji) — do 2026-09-02 sufit żył wyłącznie w prozie, więc 36-parametrowa fabryka i 326-linijkowa metoda przechodziły w ciszy. Wyjątki są punktowe (`noqa` przy funkcji, z powodem) i mają zniknąć razem z długiem; te same reguły mają oba pod-projekty.
   Format to osobny krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check`; obejmuje tę samą listę katalogów, z `deploy` i `scripts` włącznie.
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`
 - Pod-projekty (własny venv): `cd Powiadomienia_teams|claude_summary && uv run pytest`
@@ -47,4 +48,4 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 Opisy narzędzi: słowa kluczowe na początku, nazwa oddaje ZAWARTOŚĆ, jedna konwencja (PascalCase) na powierzchni agenta — ADR 0068. Sufit 2048 B per narzędzie i 8000 B na całą powierzchnię pilnuje `tests/core/test_tool_descriptions.py`; realna powierzchnia to 7428 B z powłoką i 7683 B bez niej, czyli **317 B zapasu** (pomiar po przeglądzie 2026-09-02) — nowa akcja mieści się kosztem istniejącej prozy, a liczbę przelicz tym testem, bo każde wydanie ją przesuwa. Instrukcje prezentacji wyniku idą polem `note` w kopercie, nie w opisie.
 Testy odwzorowują `src/` z grubsza (rdzeń płasko w `tests/core/`); rdzeń na atrapach w pamięci.
 Proza po polsku; ADR i `docs/research/` po angielsku.
-Gałąź robocza bywa inna niż `Dev`; CI biega wyłącznie na `Main` i `Dev`.
+Gałąź robocza bywa inna niż `Dev`; CI biega na `Main`, `Dev`, PR-ach ORAZ raz na dobę (`schedule`, 04:17 UTC, z gałęzi domyślnej) — bieg nocny łapie bomby kalendarzowe, których push nie ruszy (#88 stało czerwone 11 dni).

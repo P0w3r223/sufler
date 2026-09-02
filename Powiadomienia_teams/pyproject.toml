@@ -38,7 +38,12 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# C901/PLR0915 jak w korzeniu repo — sufit funkcji egzekwowany maszynowo, nie pamiętany.
+# Wyjątki są punktowe (`noqa` przy funkcji) i mają zniknąć razem z długiem, który opisują.
+select = ["E", "F", "I", "UP", "B", "SIM", "C901", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.mypy]
 python_version = "3.10"

@@ -198,7 +198,20 @@ target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# C901 (złożoność) i PLR0915 (liczba instrukcji) domykają sufit, który do tej pory żył wyłącznie
+# w prozie i w cudzej pamięci. Rozbicie plików-monolitów (#76/#87) przeprowadzono ręcznie, więc
+# nic nie pilnowało, żeby funkcje urosły z powrotem: 36-parametrowa fabryka i 326-linijkowa metoda
+# przechodziły w ciszy. Progi dobrane tak, żeby bramka zapalała się na ZNANYM długu (po sześć
+# miejsc w `src`), a nie na zwykłym kodzie — w `tests/` nie zapala się ani razu.
+#
+# Wyjątki są PUNKTOWE (`noqa` przy funkcji), nie plikowe: mają zniknąć razem z długiem, zamiast
+# stać się cichym zwolnieniem całego modułu. Dwie klasy wyjątków — dług do rozbicia oraz miejsca,
+# w których długość JEST kontraktem (sygnatura buildera narzędzia to schemat pokazywany modelowi,
+# więc skrócenie kosztowałoby zdolność). Każdy `noqa` mówi, do której klasy należy.
+select = ["E", "F", "I", "UP", "B", "SIM", "C901", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.mypy]
 python_version = "3.11"

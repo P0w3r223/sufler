@@ -86,7 +86,7 @@ _WORKLOG_NOTE = (
 )
 
 
-def build_activity_catalog(
+def build_activity_catalog(  # noqa: C901, PLR0915
     *,
     events: EventService | None = None,
     worklog: WorklogService | None = None,

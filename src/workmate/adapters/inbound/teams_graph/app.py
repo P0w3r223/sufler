@@ -119,7 +119,7 @@ _STAGED_ATTACHMENT_EXTS = SUPPORTED_EXTS | frozenset(
 )
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915
     """Uruchom proces drzwi Teams (delegowany polling) z runtime agenta (read-only)."""
     env.load_dotenv()
     env.configure_logging()

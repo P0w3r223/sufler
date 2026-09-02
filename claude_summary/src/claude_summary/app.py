@@ -76,7 +76,7 @@ def _parse_date(flag: str, value: str) -> date:
         raise SystemExit(f"Flaga {flag}: zła data {value!r} (oczekiwano RRRR-MM-DD).") from exc
 
 
-def _parse_args(argv: list[str]) -> _Args:
+def _parse_args(argv: list[str]) -> _Args:  # noqa: C901
     args = _Args()
     index = 0
 

@@ -242,7 +242,7 @@ class ConversationalResponder:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._respond_sync, message)
 
-    def _respond_sync(self, message: InboundMessage) -> str:
+    def _respond_sync(self, message: InboundMessage) -> str:  # noqa: C901, PLR0915
         # Klucz wątku: rozmowa z kanału (czat/wątek), a gdy jej brak — nadawca.
         external_id = message.conversation_id or message.sender or "default"
         # Metryka wywołania (Tor A): best-effort, PRZED dispatchem, więc liczy też komendy. Nadawca

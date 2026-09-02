@@ -155,7 +155,7 @@ def _najblizsze_okno(settings: Settings, moment: datetime) -> datetime:
     )
 
 
-def run_once(
+def run_once(  # noqa: PLR0915
     settings: Settings,
     client: GraphClient,
     *,
@@ -1581,7 +1581,7 @@ def _po_probie(
     )
 
 
-def run_forever(
+def run_forever(  # noqa: C901, PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,

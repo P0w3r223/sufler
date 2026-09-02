@@ -89,7 +89,7 @@ def _skrot_kopii(sciezka: str) -> str:
     return "/".join(segmenty[-2:]) if segmenty else ""
 
 
-def build_file_catalog(
+def build_file_catalog(  # noqa: C901, PLR0915
     scope: WorkspaceScope,
     read_service: WorkspaceService,
     materializer: FileMaterializer,

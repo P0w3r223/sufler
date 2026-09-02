@@ -179,7 +179,7 @@ class Settings:
         """
         return self.state_path.with_name("heartbeat")
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # noqa: C901
         missing = [n for n in ("client_id", "tenant_id", "team_id") if not getattr(self, n)]
         if missing:
             raise ConfigError(f"Brak wymaganych ustawień: {', '.join(missing)}")

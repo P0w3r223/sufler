@@ -272,7 +272,9 @@ class OutboxDelivery:
         """
         self._at_start[dirpath] = frozenset(e.name for e in self._repo.list_entries(dirpath))
 
-    def deliver(self, dirpath: str, send: Callable[[Deliverable], None]) -> DeliveryReport:
+    def deliver(  # noqa: C901, PLR0915
+        self, dirpath: str, send: Callable[[Deliverable], None]
+    ) -> DeliveryReport:
         """Wyślij zawartość skrzynki ``dirpath``; zwróć raport, nigdy nie podnoś wyjątku wysyłki.
 
         Wyjątek z ``send`` jest ŁAPANY i zamieniany w pozycję raportu: dostawa jest dodatkiem
