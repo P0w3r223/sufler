@@ -120,9 +120,10 @@ def _my_jira_tasks_service_if_present() -> MyJiraTasksService | None:
     konto Jira (``WORKMATE_JIRA_MY_ACCOUNT``) obok URL-a i tokenu odczytu.
 
     Sesja stdio (Claude Code/CLI) nie ma tożsamości Teams AAD, więc — inaczej niż na drzwiach
-    Teams (``teams_graph.app._build_my_jira_tasks_factory``, mapa AAD→Jira) — identyfikacja
-    pytającego jest tu z konfiguracji: JEDEN principal per proces serwera. Import Jiry leniwy, jak
-    reszta zdolności addytywnych, żeby ścieżka bez Jiry nie płaciła za ``httpx``.
+    Teams (``teams_graph.wiring_catalogs._build_my_jira_tasks_factory``, mapa AAD→Jira) —
+    identyfikacja pytającego jest tu z konfiguracji: JEDEN principal per proces serwera.
+    Import Jiry leniwy, jak reszta zdolności addytywnych, żeby ścieżka bez Jiry nie płaciła
+    za ``httpx``.
     """
     from workmate.config import JiraSettings
 

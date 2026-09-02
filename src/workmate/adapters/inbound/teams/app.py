@@ -67,7 +67,7 @@ def build_web_app(settings: TeamsSettings, responder: Responder) -> Any:
 def build_note_read_authorizer(settings: TeamsSettings) -> NoteReadAuthorizer | None:
     """Bramka członkostwa ODCZYTU bazy wiedzy (ADR 0062) albo ``None``.
 
-    Bliźniak ``teams_graph.app._build_note_read_authorizer`` — te drzwi mają go od audytu
+    Bliźniak ``teams_graph.wiring_authz._build_note_read_authorizer`` — te drzwi mają go od audytu
     2026-08-17, bo dotąd nie miały go WCALE: ``/szukaj``, ``/projekty``, ``/status`` i narzędzia
     odczytu agenta jechały tu bez sprawdzenia nadawcy, podczas gdy bliźniacze drzwi odmawiały.
     ``None``, gdy ``enable_note_read_authz`` wyłączona (domyślnie) — zachowanie jak przed 0062.
