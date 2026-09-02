@@ -44,7 +44,7 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 `Powiadomienia_teams/` (Shifts) i `claude_summary/` — samodzielne venv-y uv, każdy z własnym `PLAN.md`; czytaj przy pracy nad nimi. Oba mają zdolność ZAPISU za bramkami, więc ich niezmienniki bierz z `PLAN.md`, nie stąd.
 
 ## Konwencje
-Opisy narzędzi: słowa kluczowe na początku, nazwa oddaje ZAWARTOŚĆ, jedna konwencja (PascalCase) na powierzchni agenta — ADR 0068. Sufit 2048 B per narzędzie i 8000 B na całą powierzchnię pilnuje `tests/core/test_tool_descriptions.py`; realna powierzchnia to 7692 B z powłoką i 7947 B bez niej, czyli **53 B zapasu** (pomiar 1.13.0) — nowa akcja mieści się kosztem istniejącej prozy, a liczbę przelicz tym testem, bo każde wydanie ją przesuwa. Instrukcje prezentacji wyniku idą polem `note` w kopercie, nie w opisie.
+Opisy narzędzi: słowa kluczowe na początku, nazwa oddaje ZAWARTOŚĆ, jedna konwencja (PascalCase) na powierzchni agenta — ADR 0068. Sufit 2048 B per narzędzie i 8000 B na całą powierzchnię pilnuje `tests/core/test_tool_descriptions.py`; realna powierzchnia to 7428 B z powłoką i 7683 B bez niej, czyli **317 B zapasu** (pomiar po przeglądzie 2026-09-02) — nowa akcja mieści się kosztem istniejącej prozy, a liczbę przelicz tym testem, bo każde wydanie ją przesuwa. Instrukcje prezentacji wyniku idą polem `note` w kopercie, nie w opisie.
 Testy odwzorowują `src/` z grubsza (rdzeń płasko w `tests/core/`); rdzeń na atrapach w pamięci.
 Proza po polsku; ADR i `docs/research/` po angielsku.
 Gałąź robocza bywa inna niż `Dev`; CI biega wyłącznie na `Main` i `Dev`.

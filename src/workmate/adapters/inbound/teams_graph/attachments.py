@@ -64,10 +64,16 @@ class AttachmentLimits:
 
     Rozróżniamy dwie klasy: pliki wysyłane jako BASE64 (obraz/PDF) obowiązuje ``max_bytes`` i
     ŁĄCZNY ``max_total_bytes`` (sufit 32 MB żądania API); pliki EKSTRAHOWANE do tekstu
-    (docx/xlsx/pptx/txt) dostają wyższy ``max_extract_bytes`` i NIE liczą się do budżetu API
+    (docx/xlsx/pptx/txt) dostają wyższy ``max_extract_bytes`` i NIE wchodzą do budżetu base64
     (wysyłamy z nich sam tekst, nie bajty). ``max_extract_bytes`` jest zarazem UNIWERSALNYM
     twardym capem surowego pobrania (pierwsza bramka dla każdego typu). Budżet liczymy w bajtach
-    SUROWYCH — przeliczik na base64 (~1.33×) siedzi w suficie configu (24 MB raw ≈ 32 MB API).
+    SUROWYCH — przelicznik na base64 (~1.33×) siedzi w suficie configu (24 MB raw ≈ 32 MB API).
+
+    Tekst z ekstrakcji ma WŁASNY łączny sufit (``max_total_text_chars``), bo granica, o którą przy
+    nim chodzi, jest inna niż przy base64: nie rozmiar żądania, tylko OKNO KONTEKSTU modelu.
+    Dopóki ekstrakcja zaliczała do budżetu zero, jedynym ogranicznikiem tej ścieżki był
+    ``max_count`` — dwadzieścia dokumentów po 200 000 znaków dawało do czterech milionów znaków
+    w jednej turze użytkownika, czyli żądanie odbite przez API po opłaceniu dwudziestu ekstrakcji.
     """
 
     max_bytes: int  # pojedynczy plik base64 (obraz/PDF), w bajtach surowych
@@ -75,6 +81,10 @@ class AttachmentLimits:
     max_total_bytes: int  # łączny budżet base64 (bajty surowe; sufit 24 MB ≈ 32 MB API)
     max_extract_bytes: int = 50 * 1024 * 1024  # sufit tekstu ORAZ uniwersalny cap pobrania
     max_image_edge: int = 2048  # dłuższa krawędź obrazu (px) — powyżej skalujemy w dół
+    # Łączny sufit tekstu z ekstrakcji na JEDNĄ wiadomość. Tyle, ile wolno pojedynczemu plikowi
+    # (``document_text._MAX_TEXT_CHARS``): jedna wiadomość może więc wnieść materiał jednego
+    # dużego dokumentu, a nie dwudziestu naraz.
+    max_total_text_chars: int = 200_000
 
 
 class AttachmentMaterializer:
@@ -104,13 +114,24 @@ class AttachmentMaterializer:
             dropped = len(refs) - len(kept)
             out.append(_note(f"Pominięto {dropped} załącznik(ów) — limit na wiadomość."))
         total = 0
+        total_text = 0
         for ref in kept:
             remaining = self._limits.max_total_bytes - total
-            att, size = await self._materialize_one(
-                team_id, channel_id, msg.thread_root_id, msg.id, ref, budget=remaining
+            att, size, znaki = await self._materialize_one(
+                team_id,
+                channel_id,
+                msg.thread_root_id,
+                msg.id,
+                ref,
+                budget=remaining,
+                budget_text=self._limits.max_total_text_chars - total_text,
             )
             out.append(att)
             total += size
+            # Znaki liczy materializacja, a nie ``att.kind`` tutaj: NOTKA o statusie też jest
+            # załącznikiem tekstowym, więc rozpoznawanie po typie doliczałoby do budżetu własne
+            # komunikaty o jego przekroczeniu.
+            total_text += znaki
         return tuple(out)
 
     async def _materialize_one(
@@ -122,8 +143,9 @@ class AttachmentMaterializer:
         ref: AttachmentRef,
         *,
         budget: int,
-    ) -> tuple[Attachment, int]:
-        """Pobierz i zbuduj załącznik; zwróć (Attachment, bajty_zaliczone_do_budżetu_API).
+        budget_text: int,
+    ) -> tuple[Attachment, int, int]:
+        """Pobierz i zbuduj załącznik; zwróć (Attachment, bajty do budżetu API, znaki tekstu).
 
         Pobranie i budowanie mają osobne ``try``: błąd POBRANIA (np. 404 wklejonego obrazu AMS)
         to stan oczekiwany → ``warning`` + rzeczowa notka (bez straszącego tracebacku); błąd
@@ -143,43 +165,71 @@ class AttachmentMaterializer:
         except Exception as exc:
             logger.warning("Nie pobrano załącznika %s (status %s).", ref.name, _http_status(exc))
             if ref.kind == "hosted":
-                return _note(
-                    f"Załącznika „{ref.name}” (obraz wklejony w treści wiadomości) nie udało się "
-                    "pobrać. Można go wysłać ponownie jako osobny plik."
-                ), 0
-            return _note(f"Załącznika „{ref.name}” nie udało się pobrać."), 0
+                return (
+                    _note(
+                        f"Załącznika „{ref.name}” (obraz wklejony w treści wiadomości) nie udało "
+                        "się pobrać. Można go wysłać ponownie jako osobny plik."
+                    ),
+                    0,
+                    0,
+                )
+            return _note(f"Załącznika „{ref.name}” nie udało się pobrać."), 0, 0
 
         try:
             if len(data) > self._limits.max_extract_bytes:
-                return _note(
-                    f"Załącznika „{ref.name}” nie udało się odczytać: plik jest za duży."
-                ), 0
+                return (
+                    _note(f"Załącznika „{ref.name}” nie udało się odczytać: plik jest za duży."),
+                    0,
+                    0,
+                )
             result = _build(ref, data, max_image_edge=self._limits.max_image_edge)
         except Exception:
             logger.exception("Nie udało się przetworzyć załącznika %s", ref.name)
-            return _note(f"Załącznika „{ref.name}” nie udało się przetworzyć."), 0
+            return _note(f"Załącznika „{ref.name}” nie udało się przetworzyć."), 0, 0
 
         if result is None:
-            return _note(
-                f"Załącznika „{ref.name}” nie udało się odczytać: nieobsługiwany typ pliku."
-            ), 0
+            return (
+                _note(f"Załącznika „{ref.name}” nie udało się odczytać: nieobsługiwany typ pliku."),
+                0,
+                0,
+            )
         built, sent = result
         if built.kind == "text" and not built.text.strip():
             # Plik czytelny, ale bez tekstu (strona wyłącznie graficzna, pusty dokument).
             # Bez tej gałęzi model dostawał samą etykietę „[Plik: raport.html]" i nic dalej —
             # nieodróżnialne od pliku, którego treść po prostu przemilczano. Komenda powłoki
             # rozróżnia ten stan od dawna; drzwi milczały.
-            return _note(f"Załącznik „{ref.name}” nie zawiera tekstu do odczytania."), 0
+            return _note(f"Załącznik „{ref.name}” nie zawiera tekstu do odczytania."), 0, 0
         if sent > self._limits.max_bytes:
-            return _note(
-                f"Załącznika „{ref.name}” nie udało się odczytać: przekracza limit rozmiaru."
-            ), 0
+            return (
+                _note(
+                    f"Załącznika „{ref.name}” nie udało się odczytać: przekracza limit rozmiaru."
+                ),
+                0,
+                0,
+            )
         if sent > budget:
-            return _note(
-                f"Załącznika „{ref.name}” nie udało się odczytać: przekroczony łączny limit "
-                "załączników wiadomości."
-            ), 0
-        return built, sent
+            return (
+                _note(
+                    f"Załącznika „{ref.name}” nie udało się odczytać: przekroczony łączny limit "
+                    "załączników wiadomości."
+                ),
+                0,
+                0,
+            )
+        if built.kind == "text" and len(built.text) > budget_text:
+            # Osobny sufit, bo osobna granica: tekst nie zajmuje miejsca w ŻĄDANIU, tylko w OKNIE
+            # KONTEKSTU. Degradacja do notki jest tu ważniejsza niż przy base64 — model ma
+            # wiedzieć, że plik istniał i czego z niego nie dostał, zamiast wnioskować z ciszy.
+            return (
+                _note(
+                    f"Załącznik „{ref.name}” pominięto: łączny limit tekstu z załączników tej "
+                    "wiadomości został wyczerpany. Poproś o pojedynczy plik."
+                ),
+                0,
+                0,
+            )
+        return built, sent, (len(built.text) if built.kind == "text" else 0)
 
 
 def _build(

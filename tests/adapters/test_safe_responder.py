@@ -76,9 +76,7 @@ def test_klasa_ponawialna_przelatuje_do_wolajacego():
     """Regresja: dekorator łapał WSZYSTKO, więc licznik prób pollera Teams nie widział ani jednej
     porażki obsługi. Przejściowy błąd Claude API kończył się przeprosinami, a wiadomość znikała
     ze strumienia jako obsłużona — bez wpisu do kwarantanny i bez szansy na ponowienie."""
-    responder = SafeResponder(
-        _FailingResponder(LLMError("529 overloaded")), ponawialne=(LLMError,)
-    )
+    responder = SafeResponder(_FailingResponder(LLMError("529 overloaded")), ponawialne=(LLMError,))
 
     with pytest.raises(LLMError):
         asyncio.run(responder.respond(InboundMessage(text="czesc")))

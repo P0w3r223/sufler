@@ -12,6 +12,7 @@ from workmate.config._env import (
     _int_from_env,
     _list_from_env,
     _path_from_env,
+    _scisly_bool_from_env,
 )
 
 # --- proaktywny cotygodniowy digest zmian (ADR 0053, F6) ----------------------
@@ -50,7 +51,9 @@ class TeamsDigestSettings:
     def from_env(cls) -> TeamsDigestSettings:
         return cls(
             enabled=_bool_from_env("WORKMATE_TEAMS_DIGEST_ENABLED", default=False),
-            dry_run=_bool_from_env("WORKMATE_TEAMS_DIGEST_DRY_RUN", default=True),
+            # Parser ŚCISŁY, bo to jedyna flaga o odwróconej polaryzacji: literówka
+            # w niej zdejmuje tryb próbny, zamiast go zostawić (patrz `_scisly_bool_from_env`).
+            dry_run=_scisly_bool_from_env("WORKMATE_TEAMS_DIGEST_DRY_RUN", default=True),
             recipients=_list_from_env("WORKMATE_TEAMS_DIGEST_RECIPIENTS", ()),
             run_weekday=_int_from_env("WORKMATE_TEAMS_DIGEST_RUN_WEEKDAY", 0),
             run_hour=_int_from_env("WORKMATE_TEAMS_DIGEST_RUN_HOUR", 8),

@@ -146,4 +146,3 @@ def retry_after_s(response: httpx.Response) -> float:
         return max(0.0, min(float(raw), _MAX_BACKOFF_S))
     except ValueError:
         return float(_DEFAULT_RETRY_AFTER_S)
-

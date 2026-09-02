@@ -285,25 +285,50 @@ def test_model_cannot_confirm_itself_within_one_turn():
     assert writer.deleted == []
 
 
-def test_confirmation_rests_on_the_turn_differing_not_on_where_it_was_written():
-    """Zgoda wynika z RÓŻNICY tur, a nie z miejsca, w którym człowiek się odezwał.
+def test_confirmation_rests_on_the_turn_differing_within_one_conversation():
+    """Zgoda wynika z RÓŻNICY tur — sprawdzane w obrębie JEDNEJ rozmowy.
 
-    Poprzednia nazwa („…does_not_transfer_between_conversations…") twierdziła coś odwrotnego
-    do własnych asercji: sonda pokazuje, że zapowiedź z jednej rozmowy DOMYKA się w drugiej,
-    bo token tury jest inny. Nazwa i treść muszą mówić to samo, inaczej sonda dezinformuje
-    czytającego o granicy, której pilnuje.
+    Historia tej sondy jest pouczająca. Najpierw nazywała się
+    „…does_not_transfer_between_conversations…", a jej asercje pokazywały coś odwrotnego; nazwę
+    poprawiono wtedy do treści, zamiast sprawdzić treść wobec decyzji. ADR 0065 §6 mówi jednak
+    wprost: to „human checkpoint **in the Teams thread**", a dowodem ma być, że człowiek odezwał
+    się PO ZOBACZENIU, co się zmieni. Zobaczenie dzieje się w konkretnym wątku, więc granicą jest
+    para (rozmowa, tura), nie sama tura. Sonda niżej pilnuje drugiej połowy tej pary.
     """
     service, writer, _s, _j, _l = _service(judge=_FakeJudge("confirm"), allow_delete=True)
 
     with pytest.raises(MutationRefused):
-        service.delete_note(_note().id, requester="Anna", intent="x", turn_token="kanal-1")
+        service.delete_note(
+            _note().id, requester="Anna", intent="x", turn_token="tura-1", conversation="watek-A"
+        )
 
-    # Inna tura, więc zgoda przechodzi — i to jest zamierzone: dowodem jest odezwanie się
-    # człowieka, nie miejsce, w którym to zrobił. Sonda pilnuje, że mechanizm opiera się na
-    # RÓŻNICY tur, a nie na przypadkowej zbieżności kluczy.
-    service.delete_note(_note().id, requester="Anna", intent="x", turn_token="kanal-2")
+    service.delete_note(
+        _note().id, requester="Anna", intent="x", turn_token="tura-2", conversation="watek-A"
+    )
 
     assert writer.deleted == [_note().id]
+
+
+def test_confirmation_does_not_transfer_between_conversations():
+    """Zapowiedź z wątku A nie autoryzuje wykonania w wątku B.
+
+    Rejestr zapowiedzi powstaje RAZ na proces, a token tury jest świeży co turę — bez zakresu
+    rozmowy w kluczu wystarczyło, że Anna poprosi o tę samą zmianę gdzie indziej w ciągu TTL, by
+    weszła bez zapowiedzi w tym miejscu. Człowiek widział wtedy zapowiedź w innym wątku albo
+    wcale, czyli punkt kontrolny nie miał materiału, który ma sprawdzać (ADR 0065 §6).
+    """
+    service, writer, _s, _j, _l = _service(judge=_FakeJudge("confirm"), allow_delete=True)
+
+    with pytest.raises(MutationRefused):
+        service.delete_note(
+            _note().id, requester="Anna", intent="x", turn_token="tura-1", conversation="watek-A"
+        )
+    with pytest.raises(MutationRefused):
+        service.delete_note(
+            _note().id, requester="Anna", intent="x", turn_token="tura-2", conversation="watek-B"
+        )
+
+    assert writer.deleted == []
 
 
 def test_confirmation_does_not_transfer_to_a_different_change():

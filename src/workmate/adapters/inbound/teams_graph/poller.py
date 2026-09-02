@@ -547,3 +547,20 @@ class ChannelPoller:
                 channel["since_roots"] = startup_iso
             if not isinstance(channel.get("threads"), dict):
                 channel["threads"] = {}
+            # Ten sam argument o poziom głębiej: utwardzenie kończyło się na ``threads`` jako
+            # CAŁOŚCI, a wartości w środku szły do ``plan_channel`` bez sprawdzenia. Wpis bez
+            # ``last_seen``, napis zamiast słownika albo ``null`` wywracały rundę
+            # (``KeyError``/``ValueError``/``TypeError``), a skutek był gorszy niż przy wariantach
+            # załatanych wyżej: wyjątek łapie ``except`` per kanał, po nim puls I TAK bije, a zapis
+            # stanu się udaje — kontener stoi „healthy", choć na tym kanale od restartu nie przeszła
+            # ani jedna wiadomość. Wpis nieczytelny kasujemy: brak wątku znaczy „licz od nowa",
+            # czyli najwyżej ponowne przeczytanie odpowiedzi, a nie ich utrata.
+            threads: dict[str, Any] = channel["threads"]
+            for root_id in [
+                rid
+                for rid, info in threads.items()
+                if not isinstance(info, dict)
+                or not isinstance(info.get("watermark"), str)
+                or not isinstance(info.get("last_seen"), str)
+            ]:
+                del threads[root_id]

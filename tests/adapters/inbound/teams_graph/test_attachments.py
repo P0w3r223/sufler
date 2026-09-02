@@ -104,6 +104,7 @@ def _materialize(
     max_total: int = 5_000_000,
     max_extract: int = 50_000_000,
     max_image_edge: int = 2048,
+    max_total_text: int = 200_000,
     msg_id: str = "m-1",
     root: str = "root-1",
 ) -> tuple:
@@ -115,6 +116,7 @@ def _materialize(
             max_total_bytes=max_total,
             max_extract_bytes=max_extract,
             max_image_edge=max_image_edge,
+            max_total_text_chars=max_total_text,
         ),
     )
     return asyncio.run(materializer.materialize(_TEAM, _CHAN, _msg(refs, msg_id=msg_id, root=root)))
@@ -549,6 +551,38 @@ def test_file_text_formats_decoded_as_text():
     assert (att.kind, att.media_type) == ("text", "text/plain")
     assert "scada-integration" in att.text
     assert "żółć" in att.text  # UTF-8 zachowane
+
+
+def test_tekst_z_ekstrakcji_ma_wlasny_laczny_sufit():
+    """Regresja: ekstrakcja zaliczała do budżetu ZERO, więc obie bramki bajtów ją przepuszczały.
+
+    Jedynym ogranicznikiem tej ścieżki zostawał ``max_count`` (domyślnie 20) razy 200 000 znaków
+    na plik — do czterech milionów znaków w JEDNEJ turze użytkownika, czyli grubo ponad okno
+    kontekstu modelu. Żądanie odbijało się na API już po opłaceniu wszystkich ekstrakcji.
+    """
+    duzy = ("x" * 900).encode()
+    client = _FakeGraphClient(
+        files={"u://1": duzy, "u://2": duzy, "u://3": duzy},
+    )
+    refs = tuple(AttachmentRef(kind="file", name=f"d{i}.txt", url=f"u://{i}") for i in (1, 2, 3))
+
+    wyniki = _materialize(client, refs, max_total_text=2000)
+
+    # Notka o statusie też jest załącznikiem tekstowym, więc rozróżniamy po NAZWIE pliku.
+    tresci = [a for a in wyniki if a.name.endswith(".txt")]
+    assert len(tresci) == 2  # dwa mieszczą się w 2000 znaków, trzeci już nie
+    assert any("limit tekstu" in a.text for a in wyniki if a.name == "status załącznika")
+
+
+def test_sufit_tekstu_nie_rusza_plikow_ktore_sie_miescza():
+    """Kontrast: sufit ma przycinać nadmiar, nie blokować zwykłej wiadomości z załącznikiem."""
+    client = _FakeGraphClient(files={"u://1": b"krotka tresc"})
+    ref = AttachmentRef(kind="file", name="d1.txt", url="u://1")
+
+    (att,) = _materialize(client, (ref,), max_total_text=2000)
+
+    assert att.kind == "text"
+    assert "krotka tresc" in att.text
 
 
 def test_corrupt_xlsx_yields_note_not_raised():

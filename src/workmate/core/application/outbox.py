@@ -133,13 +133,22 @@ def _okno_tury(
     świeżego wysłać. Gdy świeżych nie ma, okno należy do nich w całości — rezerwowanie miejsca
     dla nikogo byłoby stratą trzeciego rodzaju.
 
+    ``limit == 1`` to przypadek graniczny, w którym rezerwacja ``limit - 1`` daje zero miejsc,
+    więc rozstrzyga sama KOLEJNOŚĆ. Pierwszeństwo ma tu ŚWIEŻY plik: pozycja ponawiana czeka
+    jedną turę dłużej i wraca (ma jeszcze próby oraz sufit tur przetrzymywania), a świeża
+    wypchnięta za okno jest KASOWANA razem z pracą, którą model właśnie wykonał — czyli dokładnie
+    strata z drugiego punktu wyżej, tyle że wpuszczona bokiem przez warunek graniczny. Domyślne
+    ``5`` nie jest tu bramką: ``WORKMATE_TEAMS_GRAPH_OUTBOX_MAX_FILES`` ustawia operator.
+
     Liczba prób do WYBORU okna nie wchodzi (steruje wyłącznie porządkiem wysyłki), więc pozycja
     ponawiana nie traci miejsca przez to, że już raz zawiodła.
     """
     ponawiane = sorted((e for e in entries if e.name in ours), key=lambda e: e.name)
     swieze = sorted((e for e in entries if e.name not in ours), key=lambda e: e.name)
-    if not swieze or limit <= 1:
-        return [*ponawiane, *swieze]
+    if not swieze:
+        return ponawiane
+    if limit <= 1:
+        return [*swieze, *ponawiane]
 
     miejsc_na_ponowienia = min(len(ponawiane), limit - 1)
     return [

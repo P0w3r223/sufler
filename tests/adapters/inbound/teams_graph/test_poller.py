@@ -589,6 +589,54 @@ def test_seed_repairs_null_branches_instead_of_looping_on_attribute_error():
     assert state["attempts"] == {}
 
 
+@pytest.mark.parametrize(
+    ("nazwa", "wpis"),
+    [
+        ("brak last_seen", {"watermark": "2024-01-01T00:00:00Z"}),
+        ("napis zamiast slownika", "2024-01-01T00:00:00Z"),
+        ("null", None),
+        ("watermark nie-napis", {"watermark": 17, "last_seen": "2024-01-01T00:00:00Z"}),
+    ],
+)
+def test_seed_repairs_broken_thread_entries_not_only_the_threads_branch(nazwa: str, wpis: object):
+    """Utwardzenie kończyło się na ``threads`` jako całości — wartości w środku szły dalej surowe.
+
+    Skutek był GORSZY niż przy wariantach załatanych wcześniej: wyjątek łapie ``except`` per kanał,
+    po nim puls i tak bije, a zapis stanu się udaje. Kontener stał więc „healthy", podczas gdy na
+    tym kanale od restartu nie przeszła ani jedna wiadomość, a wyjściem było ręczne skasowanie
+    pliku stanu.
+    """
+    root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
+    state: dict[str, Any] = {
+        "channels": {"team/chan": {"since_roots": _STARTUP, "threads": {"root-9": wpis}}}
+    }
+    client = FakeGraphClient([{"roots": [root], "replies": {}}])
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+
+    poller._seed(_STARTUP)
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert client.posted == [("team", "chan", "root-1", "odp")], f"kanał stanął na: {nazwa}"
+    assert "root-9" not in state["channels"]["team/chan"]["threads"]
+
+
+def test_seed_zostawia_czytelny_wpis_watku():
+    """Kontrast do sondy wyżej: naprawa ma KASOWAĆ nieczytelne, nie czyścić całej gałęzi."""
+    dobry = {"watermark": "2024-01-01T10:00:00Z", "last_seen": "2024-01-01T10:00:00Z"}
+    state: dict[str, Any] = {
+        "channels": {
+            "team/chan": {"since_roots": _STARTUP, "threads": {"root-9": dobry, "root-8": None}}
+        }
+    }
+    poller, _ = _make_poller(
+        FakeGraphClient([{"roots": [], "replies": {}}]), RecordingHandler("x"), state=state
+    )
+
+    poller._seed(_STARTUP)
+
+    assert state["channels"]["team/chan"]["threads"] == {"root-9": dobry}
+
+
 def test_failed_handling_names_the_message_in_the_log(caplog):
     """Log ma nazwać wiadomość i powiedzieć, czy będzie ponowienie — inaczej operator zgaduje."""
     root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")

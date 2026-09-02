@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -219,6 +220,7 @@ def _build_change_digest_router(
     return ChangeDigestRouter(service, deliver_pdf=deliver_pdf, read_authorizer=read_authorizer)
 
 
+@functools.cache
 def _build_async_note_dispatch(
     settings: TeamsGraphSettings, token_provider: Callable[[], str]
 ) -> tuple[Callable[[Callable[[], None]], None] | None, Callable[[str, str], None] | None]:
@@ -229,6 +231,15 @@ def _build_async_note_dispatch(
     transkrypt+Claude) i ``HttpxGraphThreadReplyPoster`` (sync, ten sam delegowany token co poller).
     Callback wyłuskuje cel ``team/channel/root`` z ``external_id`` wątku (NIE od modelu) i tam
     wrzuca wynik. Pula i klient żyją przez proces; domykamy je przy wyjściu (jak inne sync klienty).
+
+    ``functools.cache`` jest tu CZĘŚCIĄ KONTRAKTU, nie optymalizacją. Docstring
+    ``_build_thread_note_router`` deklaruje, że async „współdzieli pulę/poster ``/notatka``", ale
+    obaj wołający liczyli tę funkcję osobno, a ona bezwarunkowo stawiała nowy ``ThreadPoolExecutor``
+    i nowy klient HTTP. Przy obu bramkach włączonych sufit równoległych łańcuchów transkrypt+Claude
+    był więc faktycznie DWUKROTNOŚCIĄ ``meeting_note_async_workers``, a rejestracji ``atexit`` były
+    cztery zamiast dwóch — rozjazd niewidoczny w niczym poza ``ps``. Argumenty są haszowalne
+    (ustawienia to zamrożony dataclass, dostawca tokenu — funkcja), a wpis żyje tyle co proces,
+    czyli dokładnie tyle, co pula i klient. Ten sam chwyt co ``_read_services_cached``.
     """
     if not settings.enable_meeting_note_async:
         return None, None

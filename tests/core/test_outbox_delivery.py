@@ -645,6 +645,29 @@ def test_bez_swiezych_plikow_ponowienia_biora_cale_okno():
     assert sorted(_bez_skrotow(report.delivered)) == ["a-stary.md", "b-stary.md"], report
 
 
+def test_przy_limicie_jeden_swiezy_plik_ma_pierwszenstwo_przed_ponowieniem():
+    """Regresja warunku granicznego: przy ``limit == 1`` rezerwacja ``limit - 1`` daje ZERO miejsc,
+    więc rozstrzygała sama kolejność — a ta stawiała ponowienia bezwzględnie pierwsze.
+
+    Pozycja ponawiana czeka jedną turę i wraca (ma jeszcze próby oraz sufit tur przetrzymywania).
+    Świeża wypchnięta za okno jest KASOWANA razem z pracą, którą model właśnie wykonał — czyli
+    dokładnie ta strata, którą rezerwacja miała zlikwidować, wpuszczona bokiem przez limit=1.
+    """
+    repo = FakeRepo({})
+    delivery = _delivery(repo, max_files=1)
+
+    delivery.snapshot(_DIR)
+    repo.files["a-stary.md"] = b"x"
+    delivery.deliver(_DIR, _fail_always)  # zostaje w skrzynce do ponowienia
+
+    delivery.snapshot(_DIR)
+    repo.files["z-nowy.md"] = b"x"  # nazwa sortuje się ZA ponowieniem
+    report = delivery.deliver(_DIR, lambda item: None)
+
+    assert _bez_skrotow(report.delivered) == ["z-nowy.md"], report
+    assert "a-stary.md" in repo.files  # ponowienie CZEKA, nie ginie
+
+
 def test_licznik_zeruje_sie_po_udanej_wysylce():
     """Klucz to nazwa, a model użyje jej ponownie — świeży plik nie może dziedziczyć prób."""
     repo = FakeRepo({})

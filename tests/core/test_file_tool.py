@@ -261,6 +261,7 @@ class _FakeMutations:
         self.edits: list[tuple] = []
         self.deletes: list[tuple] = []
         self.origin: list[tuple] = []
+        self.rozmowy: list[str] = []
 
     def _maybe_refuse(self, verdict_sink=None):  # noqa: ANN001, ANN202
         """Odmowa sędziego — z werdyktem zgłoszonym PRZED podniesieniem wyjątku.
@@ -286,6 +287,7 @@ class _FakeMutations:
         requester,
         intent,
         turn_token="",
+        conversation="",
         trust_class="",
         tainted=True,
         verdict_sink=None,
@@ -298,6 +300,7 @@ class _FakeMutations:
         # Pochodzenie tury (ADR 0066) i token tury (ADR 0065) notujemy OSOBNO: dopóki atrapa je
         # połykała, narzędzie mogło przestać je przekazywać i żadna sonda by tego nie zauważyła.
         self.origin.append((turn_token, trust_class, tainted))
+        self.rozmowy.append(conversation)
         if verdict_sink is not None:
             verdict_sink("allow", "ok")
         return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")
@@ -309,6 +312,7 @@ class _FakeMutations:
         requester,
         intent,
         turn_token="",
+        conversation="",
         trust_class="",
         tainted=True,
         verdict_sink=None,
@@ -319,6 +323,7 @@ class _FakeMutations:
         self._maybe_refuse(verdict_sink)
         self.deletes.append((note_id, requester, intent))
         self.origin.append((turn_token, trust_class, tainted))
+        self.rozmowy.append(conversation)
         if verdict_sink is not None:
             verdict_sink("allow", "ok")
         return MutationOutcome(True, JudgeVerdict("allow", "ok"), "/snap/x")

@@ -42,13 +42,12 @@ pozostałe formaty jako wyciągnięty tekst."""
 _FILE_TEKST_POWLOKA = """
 
 Do plików tekstowych, które wystarczy przeczytać (md, txt, csv, json), użyj powłoki
-(`cat`) — taniej. Nazwę pliku bierz z listy katalogu roboczego; ścieżek ani katalogów
-nie podawaj."""
+(`cat`) — taniej. Nazwę pliku bierz z listy katalogu roboczego — samą nazwę, bez ścieżki."""
 
 _FILE_TEKST_NARZEDZIA = """
 
 Do plików tekstowych, które wystarczy przeczytać (md, txt, csv, json), użyj `ReadFile`
-— taniej. Nazwę pliku bierz z `ListFiles`; ścieżek ani katalogów nie podawaj."""
+— taniej. Nazwę pliku bierz z `ListFiles` — samą nazwę, bez ścieżki."""
 
 # Akcje mutujące bazę wiedzy (ADR 0065) doklejane TYLKO wtedy, gdy nadawca jest rozpoznany i
 # bramka mutacji wpięta. Opis mówi wprost, czym jest `name` przy tych akcjach — inaczej model
@@ -76,8 +75,8 @@ _FILE_DELETE = """
 Akcja `delete` — usuń notatkę `name` z bazy wiedzy. Ten sam identyfikator, ten sam wymagany
 `reason` i ten sam sędzia co przy `edit`."""
 
-_FILE_ZRODLO_ID_POWLOKA = "z wyniku `workmate-search`, nie nazwa pliku katalogu roboczego"
-_FILE_ZRODLO_ID_NARZEDZIA = "z `SearchNotes`/`GetNote`, nie nazwa pliku katalogu roboczego"
+_FILE_ZRODLO_ID_POWLOKA = "z wyniku `workmate-search`"
+_FILE_ZRODLO_ID_NARZEDZIA = "z `SearchNotes`/`GetNote`"
 
 
 def _skrot_kopii(sciezka: str) -> str:
@@ -277,6 +276,7 @@ def build_file_catalog(
                     requester=requester,
                     intent=reason,
                     turn_token=turn_token,
+                    conversation=str(scope.dirpath()),
                     trust_class=trust_class,
                     tainted=skaza,
                     verdict_sink=_ujscie_werdyktu,
@@ -288,6 +288,10 @@ def build_file_catalog(
                 requester=requester,
                 intent=reason,
                 turn_token=turn_token,
+                # Zakres rozmowy z tego samego DOMKNIĘTEGO ``scope``, co katalog roboczy — model
+                # nie ma jak go podać ani podmienić. Bez niego zapowiedź z innego wątku
+                # przechodziła tu jako potwierdzenie (ADR 0065, punkt kontrolny człowieka).
+                conversation=str(scope.dirpath()),
                 trust_class=trust_class,
                 tainted=skaza,
                 verdict_sink=_ujscie_werdyktu,

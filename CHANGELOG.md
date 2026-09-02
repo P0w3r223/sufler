@@ -8,6 +8,49 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **Punkt kontrolny człowieka przenosił się między rozmowami.** Klucz zapowiedzi mutacji notatki
+  to `sha256(człowiek | rodzaj | notatka | treść)` — bez identyfikatora rozmowy. Rejestr powstaje
+  RAZ na proces, a token tury jest świeży co turę, więc zapowiedź wystawiona w wątku A przechodziła
+  jako potwierdzenie w wątku B, dopóki wpis nie wygasł. Argument z ADR 0065 („powtórzenie dowodzi,
+  że człowiek odezwał się po zobaczeniu, co się zmieni") tej ścieżki nie obejmował: człowiek widział
+  zapowiedź gdzie indziej albo wcale.
+
+  ADR 0065 §6 nazywa to „human checkpoint **in the Teams thread**", więc granicą jest para
+  (rozmowa, tura), nie sama tura. Zakres idzie z DOMKNIĘTEGO `scope` narzędzia `File`, czyli model
+  nie ma jak go podać ani podmienić. **To zmiana zachowania:** sonda
+  `…rests_on_the_turn_differing_not_on_where_it_was_written` twierdziła dotąd coś przeciwnego —
+  jej nazwę poprawiono kiedyś do treści, zamiast sprawdzić treść wobec decyzji.
+
+- **Uszkodzony wpis wątku wyłączał kanał na stałe, przy zielonym healthchecku.** Utwardzenie `_seed`
+  kończyło się na gałęzi `threads` jako CAŁOŚCI; wartości w środku szły do `plan_channel` surowe.
+  Wpis bez `last_seen`, napis zamiast słownika albo `null` wywracały rundę
+  (`KeyError`/`ValueError`/`TypeError` — wszystkie trzy odtworzone), a skutek był gorszy niż przy
+  wariantach załatanych wcześniej: wyjątek łapie `except` per kanał, po nim puls I TAK bije, a zapis
+  stanu się udaje. Kontener stał „healthy", choć na tym kanale od restartu nie przeszła ani jedna
+  wiadomość, a wyjściem było ręczne skasowanie pliku stanu.
+
+- **Tekst z ekstrakcji nie wchodził do żadnego budżetu.** Pliki ekstrahowane zaliczały do budżetu
+  zero, więc obie bramki bajtów je przepuszczały, a jedynym ogranicznikiem zostawał `max_count`
+  (20) razy 200 000 znaków — do czterech milionów znaków w jednej turze użytkownika. Granica, o którą
+  tu chodzi, to OKNO KONTEKSTU, nie rozmiar żądania, więc tekst dostał własny łączny sufit
+  (`max_total_text_chars`, domyślnie tyle, ile wolno pojedynczemu plikowi).
+
+- **`WORKMATE_TEAMS_DIGEST_DRY_RUN=ture` uzbrajało realną wysyłkę.** `_bool_from_env` mapuje
+  wszystko spoza listy prawdy na `False`, co dla bramek `enable_*` jest kierunkiem bezpiecznym.
+  To jedyna flaga o ODWRÓCONEJ polaryzacji, więc literówka zdejmowała tryb próbny i puszczała DM do
+  całej listy odbiorców; pole nie nazywa się `enable_*`, więc golden-test bramek go nie obejmuje.
+  Ma teraz parser ścisły — nierozpoznana wartość wywraca start.
+
+- **Async `/notatka` stawiał DWIE pule wątków.** Docstring `_build_thread_note_router` deklaruje
+  „async współdzieli pulę/poster", a obaj wołający liczyli `_build_async_note_dispatch` osobno.
+  Przy obu bramkach ON sufit równoległych łańcuchów transkrypt+Claude był faktycznie dwukrotnością
+  `meeting_note_async_workers`, a rejestracji `atexit` były cztery zamiast dwóch.
+
+- **Przy `OUTBOX_MAX_FILES=1` świeże pliki modelu były kasowane.** Rezerwacja `limit - 1` daje przy
+  jedynce zero miejsc, więc rozstrzygała sama kolejność — a ta stawiała ponowienia bezwzględnie
+  pierwsze. Pozycja ponawiana czeka turę i wraca; świeża wypchnięta za okno ginie razem z pracą
+  modelu, czyli dokładnie ta strata, którą rezerwacja miała zlikwidować.
+
 - **Katalog roboczy wskazujący wolumen stanu kasował migawki notatek.** `WorkspaceSettings.validate`
   broniło dwóch kierunków (korzeń systemu / katalog domowy, brudnopis nad bazą wiedzy), a komentarz
   przy bramce wymieniał TRZECI — wolumen stanu — którego kod nie sprawdzał. Na flocie

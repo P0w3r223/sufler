@@ -42,12 +42,11 @@ _ACTIVITY_AKCJE: dict[str, str] = {
     ),
     "create_issue": (
         "`create_issue` — NOWE issue w repozytorium GitHub zespołu (ZAPIS). Wymaga: `title`, "
-        "`body` (Markdown). Opcjonalnie: `labels`. Tworzy wyłącznie nowe — bez edycji "
-        "i usuwania istniejących."
+        "`body` (Markdown). Opcjonalnie: `labels`."
     ),
     "comment": (
-        "`comment` — komentarz do istniejącego issue GitHuba (ZAPIS). Wymaga: `number`, `body` "
-        "(Markdown). Tworzy wyłącznie nowy komentarz."
+        "`comment` — NOWY komentarz do istniejącego issue GitHuba (ZAPIS). Wymaga: `number`, "
+        "`body` (Markdown)."
     ),
 }
 

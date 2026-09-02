@@ -38,11 +38,43 @@ def _path_from_env(name: str, default: Path) -> Path:
     return Path(value).expanduser() if value else default
 
 
+_PRAWDA = ("1", "true", "yes", "on")
+_FALSZ = ("0", "false", "no", "off")
+
+
 def _bool_from_env(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
         return default
-    return value.strip().lower() in ("1", "true", "yes", "on")
+    return value.strip().lower() in _PRAWDA
+
+
+def _scisly_bool_from_env(name: str, default: bool) -> bool:
+    """Jak ``_bool_from_env``, ale nieznana wartość jest BŁĘDEM, nie cichym ``False``.
+
+    ``_bool_from_env`` mapuje wszystko spoza listy prawdy na ``False`` i dla bramek nazwanych
+    ``enable_*`` jest to kierunek bezpieczny: literówka zostawia zdolność wyłączoną. Dla flagi
+    o ODWRÓCONEJ polaryzacji ten sam mechanizm działa przeciwnie —
+    ``WORKMATE_TEAMS_DIGEST_DRY_RUN=ture`` dawało ``False``, czyli zdejmowało tryb próbny
+    i uzbrajało realną wysyłkę DM do całej listy odbiorców. Pole nie nazywa się ``enable_*``,
+    więc golden-test bramek go z konstrukcji nie obejmuje.
+
+    Stąd osobny parser zamiast odwrócenia pola: nazwa ``dry_run`` jest w tym module i w env
+    operatora od początku, a cicha zmiana jej znaczenia byłaby gorsza niż głośny błąd startu.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    znormalizowana = value.strip().lower()
+    if znormalizowana in _PRAWDA:
+        return True
+    if znormalizowana in _FALSZ:
+        return False
+    raise ValueError(
+        f"{name} musi być jedną z wartości {_PRAWDA + _FALSZ}, jest: {value!r}. "
+        "Ta flaga ma odwróconą polaryzację, więc nierozpoznana wartość nie może cicho "
+        "oznaczać „wyłączone”."
+    )
 
 
 def _int_from_env(name: str, default: int) -> int:

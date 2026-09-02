@@ -104,13 +104,13 @@ def build_my_jira_tasks_catalog(service: MyJiraTasksService) -> list[ToolSpec]:
 # `search` od `member_*` i granica ODCZYTU zostają — to reguły WYBORU narzędzia, więc
 # muszą być widoczne PRZED wywołaniem.
 _JIRA_DESC = """\
-Jira: zadania i zgłoszenia pionu — wyłącznie ODCZYT, żadna akcja nic nie zmienia.
+Jira: zadania i zgłoszenia pionu — wyłącznie ODCZYT.
 
 `my_tasks` / `my_history` — TWOJE zadania otwarte / zakończone, bez pól. Zawężone do konta
 pytającego, wziętego z zaufanej mapy pionu; pola `member` te akcje nie czytają.
 
 `member_tasks` / `member_history` — to samo dla INNEJ osoby, wymaga `member` (imię i nazwisko,
-np. 'Mikołaj Anonimowicz'). Konto rozwiązuje WYŁĄCZNIE zaufana mapa pionu; osoba nieznana albo
+np. 'Mikołaj Anonimowicz'). Konto rozwiązuje zaufana mapa pionu; osoba nieznana lub
 niejednoznaczna daje czytelną odmowę.
 
 `task` — szczegóły JEDNEGO zgłoszenia. Wymaga `key` (np. 'WT-5'). Zwraca podsumowanie, opis,
