@@ -6,6 +6,7 @@ import functools
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from workmate.config import (
     AgentSettings,
@@ -149,6 +150,9 @@ def _build_thread_note_router(
         authorizer=authorizer,
         scheduler=scheduler,
         callback=callback,
+        # Data notatki liczona w strefie drzwi, nie w UTC znacznika Graph — inaczej „zapisz to"
+        # po 22:00 czasu lokalnego zakłada notatkę pod poprzednim dniem, a `-thr-` są niezmienne.
+        tz=ZoneInfo(settings.tz_name),
     )
 
 

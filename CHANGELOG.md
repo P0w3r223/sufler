@@ -8,6 +8,13 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **Data notatki wątkowej liczona w UTC.** `„zapisz to"` wysłane o 23:30 czasu warszawskiego
+  zakładało notatkę pod POPRZEDNIM dniem — data wchodzi do `build_note_id`, więc notatka dostawała
+  zarówno inny dzień w treści, jak i inny identyfikator, a notatki `-thr-` są niezmienne (korekta
+  wymaga założenia nowej). Bliźniacze drzwi digestu konwertują strefę od początku; tu był rozjazd,
+  nie decyzja. Doszło `WORKMATE_TEAMS_GRAPH_TZ` (domyślnie `Europe/Warsaw`, walidowane jak strefa
+  digestu); bez wstrzykniętej strefy zachowanie zostaje dawne.
+
 - **`Powiadomienia_teams`: bot obiecywał zapisać czas wolny, nie zapisywał nic i wysyłał
   nieprawdziwe domknięcie.** Tekst potwierdzenia powstawał z PEŁNEJ listy dni wolnych, a odsianie
   dni obecnych już w Shifts (`known_time_off_weekdays`) działo się dopiero przy zapisie. Gdy odsiew
