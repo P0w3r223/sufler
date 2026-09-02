@@ -93,6 +93,19 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   pierwsze. Pozycja ponawiana czeka turę i wraca; świeża wypchnięta za okno ginie razem z pracą
   modelu, czyli dokładnie ta strata, którą rezerwacja miała zlikwidować.
 
+- **Porzucona wiadomość nie kończy się już CISZĄ.** Po wyczerpaniu licznika prób (ADR 0069) drzwi
+  Teams odpisują w wątku: co się nie udało, dlaczego i co z tym zrobić, plus identyfikator, pod
+  którym leży wpis w kwarantannie. Cisza była tu najgorszym wyjściem — człowiek napisał, widzi bota
+  odpowiadającego innym w tym samym kanale i nie dostaje nic, czyli objaw nieodróżnialny od
+  zignorowania.
+
+  Powód pochodzi z KLASY wyjątku i wyłącznie z niej. `_failure_reason` (kwarantanna, kanał
+  operatorski) sam nazywa się redukcją ekspozycji, nie granicą: komunikat wyjątku bywa sklejany
+  z danymi wejściowymi — `ValidationError` pydantica wypisuje `input_value`, czyli fragment treści
+  rozmówcy. Na kanał czytany przez zespół idzie więc tylko to, co niesie nazwa klasy. Wysyłka jest
+  ostatnim krokiem, po utrwaleniu stanu (inaczej awaria między wysyłką a zapisem dawałaby przy
+  restarcie drugie „nie udało mi się"), i nigdy nie wywraca rundy.
+
 - **Katalog roboczy wskazujący wolumen stanu kasował migawki notatek.** `WorkspaceSettings.validate`
   broniło dwóch kierunków (korzeń systemu / katalog domowy, brudnopis nad bazą wiedzy), a komentarz
   przy bramce wymieniał TRZECI — wolumen stanu — którego kod nie sprawdzał. Na flocie

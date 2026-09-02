@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import ChannelMessage, ReplyPolicy
+from workmate.core.errors import LLMError, ThreadRootGone
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.teams_graph.attachments import AttachmentMaterializer
@@ -43,6 +44,44 @@ _DOOR = "teams_graph"
 _NO_REASON = "brak zapisanego powodu — proces nie dotrwał do obsługi wyjątku albo został wznowiony"
 # Ile znaków pierwszej linii komunikatu wyjątku wpuszczamy do powodu — patrz ``_failure_reason``.
 _MAX_REASON_HEAD = 200
+
+# Powód porażki DLA ROZMÓWCY, wyprowadzony z KLASY wyjątku i wyłącznie z niej.
+#
+# Komunikat wyjątku tu nie wchodzi, i to jest cała treść tej mapy. ``_failure_reason`` (kwarantanna,
+# kanał operatorski) sam nazywa się REDUKCJĄ ekspozycji, nie granicą: tekst wyjątku bywa sklejany
+# z danymi wejściowymi — ``ValidationError`` pydantica wypisuje ``input_value``, czyli fragment
+# treści rozmówcy. Na KANAŁ, gdzie czyta go cały zespół, może iść tylko to, co niesie sama nazwa
+# klasy. Ten sam argument co przy ``_tresc_publiczna`` w ``Powiadomienia_teams``.
+_POWODY_DLA_ROZMOWCY: tuple[tuple[type[BaseException], str], ...] = (
+    (LLMError, "model nie odpowiedział mimo ponowienia"),
+    (ThreadRootGone, "wątek, w którym mam odpisać, już nie istnieje"),
+)
+_POWOD_DOMYSLNY = "obsługa wiadomości nie powiodła się"
+
+
+def _powod_dla_rozmowcy(exc: BaseException) -> str:
+    """Krótki, bezpieczny powód porażki — po KLASIE wyjątku, nigdy po jego komunikacie."""
+    for klasa, powod in _POWODY_DLA_ROZMOWCY:
+        if isinstance(exc, klasa):
+            return powod
+    return _POWOD_DOMYSLNY
+
+
+def _tekst_porzucenia(powod: str, msg_id: str) -> str:
+    """Wiadomość, którą rozmówca dostaje zamiast CISZY, gdy licznik prób się wyczerpał.
+
+    Cisza jest tu najgorszym z wyjść: człowiek napisał, zobaczył, że bot czyta kanał, i nie
+    dostaje nic — nieodróżnialne od zignorowania. Mówimy więc trzy rzeczy: że się nie udało,
+    DLACZEGO na tyle, na ile wolno powiedzieć, i co z tym zrobić. Identyfikator jest w treści,
+    bo to ten sam klucz, pod którym leży wpis w kwarantannie (``inbound_dead_letters``) —
+    operator ma po czym połączyć zgłoszenie z rekordem.
+    """
+    return (
+        f"Nie udało mi się odpowiedzieć na tę wiadomość — {powod}. "
+        f"Próbowałem {_MAX_ATTEMPTS} razy i przerywam, żeby nie zapętlić kanału. "
+        "Napisz proszę jeszcze raz; jeśli to się powtórzy, przekaż opiekunowi bota "
+        f"identyfikator `{msg_id}`."
+    )
 
 
 def _utcnow() -> datetime:
@@ -184,6 +223,9 @@ class ChannelPoller:
         # trwały jest licznik, bo to on rozstrzyga o porzuceniu — powód jest opisem dla operatora.
         self._dead_letters = dead_letters
         self._last_error: dict[str, str] = {}
+        # Powód DLA ROZMÓWCY trzymamy osobno od powodu dla kwarantanny: tamten niesie fragment
+        # komunikatu wyjątku (kanał operatorski), ten wyłącznie klasę (kanał zespołu).
+        self._last_cause: dict[str, str] = {}
         # Czy OSTATNI zapis stanu się nie udał — gasi puls, żeby healthcheck zobaczył wolumen,
         # który przestał przyjmować zapis (bez tego proces „żyje", nie robiąc nic).
         self._write_failed = False
@@ -320,7 +362,7 @@ class ChannelPoller:
             attempts: dict[str, int] = self._state["attempts"]
             taken = int(attempts.get(msg.id, 0))
             if taken >= _MAX_ATTEMPTS:
-                self._abandon(msg, team_id, channel_id, taken)
+                await self._abandon(msg, team_id, channel_id, taken)
                 continue
             # Próba MUSI dotrwać restartu, inaczej licznik nie liczy — ale NIENALICZONA próba
             # jest lepsza niż naliczona po nieudanym zapisie (patrz ``_record_attempt``).
@@ -346,6 +388,7 @@ class ChannelPoller:
                 # Powód dla operatora: gdy licznik się wysyci, kwarantanna ma powiedzieć NA CZYM
                 # ta wiadomość padła, a nie tylko że padła (ADR 0069).
                 self._last_error[msg.id] = _failure_reason(exc)
+                self._last_cause[msg.id] = _powod_dla_rozmowcy(exc)
                 # Log NAZYWA wiadomość i mówi, czy będzie ponowienie. Goły ``logger.exception``
                 # piętro wyżej zostawiał operatora z tracebackiem bez tej jednej informacji,
                 # która pozwala odróżnić „chwilowo padło" od „ta wiadomość jest trująca".
@@ -438,8 +481,10 @@ class ChannelPoller:
             )
             raise
 
-    def _abandon(self, msg: ChannelMessage, team_id: str, channel_id: str, taken: int) -> None:
-        """Porzuć wiadomość po wyczerpaniu prób: NAJPIERW kwarantanna, potem dedup i zapis.
+    async def _abandon(
+        self, msg: ChannelMessage, team_id: str, channel_id: str, taken: int
+    ) -> None:
+        """Porzuć wiadomość po wyczerpaniu prób: kwarantanna, dedup i zapis, POTEM wiadomość.
 
         Kolejność (wpis trwały, ZANIM wiadomość zniknie ze strumienia) jest ta sama co przy
         dead-letterze notifiera (ADR 0067 §2, tam „zapis przed ruchem kursora"). Rozjeżdża się
@@ -488,14 +533,31 @@ class ChannelPoller:
             if quarantined
             else "BEZ wpisu w kwarantannie — ślad zostaje wyłącznie w logu.",
         )
+        powod = self._last_cause.get(msg.id, _POWOD_DOMYSLNY)
         self._forget_attempt(msg.id)
         self._mark_replied(msg.id)
         self._write_state()
+        # Wiadomość do rozmówcy leci NA KOŃCU, po utrwaleniu stanu, i nigdy nie wywraca rundy.
+        # Kolejność jest tu istotą: gdyby szła przed zapisem, awaria między wysyłką a zapisem
+        # dawałaby przy restarcie DRUGIE „nie udało mi się" na tę samą wiadomość. Własny
+        # ``except`` — porzucenie jest już utrwalone i terminalne, więc podniesienie wyjątku
+        # zatrzymałoby kanał na sprawie, która jest zamknięta.
+        try:
+            await self._client.post_reply(
+                team_id, channel_id, msg.thread_root_id, _tekst_porzucenia(powod, msg.id)
+            )
+        except Exception:
+            logger.exception(
+                "Porzucono wiadomość %s i NIE udało się o tym powiedzieć rozmówcy — zostaje "
+                "cisza po jego stronie, ślad po naszej",
+                msg.id,
+            )
 
     def _forget_attempt(self, msg_id: str) -> None:
         """Zapomnij licznik prób tej wiadomości — sprawa zamknięta (sukces albo rezygnacja)."""
         self._state["attempts"].pop(msg_id, None)
         self._last_error.pop(msg_id, None)
+        self._last_cause.pop(msg_id, None)
 
     def _prune_attempts(self) -> None:
         """Przytnij licznik prób do ``_ATTEMPTS_CAP`` najdawniej DOTKNIĘTYCH wpisów.
@@ -511,6 +573,7 @@ class ChannelPoller:
         for stale in list(attempts)[: max(0, len(attempts) - _ATTEMPTS_CAP)]:
             del attempts[stale]
             self._last_error.pop(stale, None)
+            self._last_cause.pop(stale, None)
 
     def _seed(self, startup_iso: str) -> None:
         """Zainicjuj brakujące gałęzie stanu (idempotentnie), nie ruszając zapisanych pozycji.

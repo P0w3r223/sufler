@@ -471,6 +471,66 @@ def test_quarantine_after_a_crash_says_it_does_not_know_the_reason():
     assert kwarantanna.records[0]["reason"] == poller_module._NO_REASON
 
 
+def test_porzucona_wiadomosc_dostaje_WYJASNIENIE_a_nie_cisze():
+    """Po wyczerpaniu prób rozmówca ma usłyszeć, że się nie udało — i dlaczego.
+
+    Cisza jest tu najgorszym wyjściem: człowiek napisał, widzi bota odpowiadającego innym
+    w tym samym kanale i nie dostaje nic — nieodróżnialne od zignorowania. Powód pochodzi
+    z KLASY wyjątku, nigdy z jego komunikatu (ten bywa sklejony z treścią rozmówcy).
+    """
+    root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
+    client = FakeGraphClient([{"roots": [root], "replies": {}}])
+    state: dict[str, Any] = {"attempts": {"root-1": poller_module._MAX_ATTEMPTS}}
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+    poller._seed(_STARTUP)
+    poller._last_cause["root-1"] = "model nie odpowiedział mimo ponowienia"
+
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    (cel,) = client.posted
+    assert cel[:3] == ("team", "chan", "root-1")
+    assert "model nie odpowiedział" in cel[3]  # POWÓD, nie samo „coś poszło nie tak"
+    assert "root-1" in cel[3]  # identyfikator = klucz wpisu w kwarantannie
+    assert state["replied"] == ["root-1"]  # i sprawa jest zamknięta, bez pętli
+
+
+def test_powod_dla_rozmowcy_idzie_z_KLASY_a_nie_z_komunikatu_wyjatku():
+    """Granica ekspozycji: komunikat wyjątku bywa sklejany z danymi wejściowymi (``input_value``
+    pydantica to fragment treści rozmówcy), a ta wiadomość leci na kanał czytany przez zespół."""
+    from workmate.core.errors import LLMError
+
+    poufne = "TAJNA TREŚĆ Z WIADOMOŚCI UŻYTKOWNIKA"
+
+    assert poufne not in poller_module._powod_dla_rozmowcy(LLMError(poufne))
+    assert poufne not in poller_module._powod_dla_rozmowcy(ValueError(poufne))
+    assert poller_module._powod_dla_rozmowcy(LLMError("x")) != poller_module._POWOD_DOMYSLNY
+
+
+def test_nieudana_wysylka_wyjasnienia_nie_zatrzymuje_kanalu(caplog):
+    """Porzucenie jest już utrwalone i terminalne — wyjątek z wysyłki zatrzymałby kanał na
+    sprawie, która jest zamknięta, a wiadomość i tak wróciłaby przy kolejnej rundzie."""
+    trujaca = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
+    zdrowa = _raw(msg_id="root-2", created="2024-01-01T11:31:00Z")
+
+    class _WysylkaPadaNaWyjasnieniu(FakeGraphClient):
+        async def post_reply(self, team_id, channel_id, root_id, text):  # noqa: ANN001, ANN201
+            if root_id == "root-1":
+                raise OSError("sieć padła przy wyjaśnieniu")
+            return await super().post_reply(team_id, channel_id, root_id, text)
+
+    client = _WysylkaPadaNaWyjasnieniu([{"roots": [trujaca, zdrowa], "replies": {}}])
+    state: dict[str, Any] = {"attempts": {"root-1": poller_module._MAX_ATTEMPTS}}
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+    poller._seed(_STARTUP)
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert [cel[2] for cel in client.posted] == ["root-2"]  # zdrowa obsłużona mimo wszystko
+    assert state["replied"] == ["root-1", "root-2"]
+    assert "NIE udało się o tym powiedzieć" in " ".join(r.getMessage() for r in caplog.records)
+
+
 def test_quarantine_refusal_does_not_stop_the_channel(caplog):
     """Regresja (HIGH): odmowa magazynu blokowała CAŁY kanał, nie tylko trującą wiadomość.
 
@@ -493,7 +553,12 @@ def test_quarantine_refusal_does_not_stop_the_channel(caplog):
     with caplog.at_level("ERROR"):
         asyncio.run(poller._poll_channel("team", "chan", _ME))
 
-    assert client.posted == [("team", "chan", "root-2", "odp")]  # zdrowa obsłużona
+    # Trująca dostaje WYJAŚNIENIE (nie ciszę), zdrowa — normalną odpowiedź. Kolejność wynika
+    # z pętli: porzucenie rozstrzyga się przed obsługą kolejnej wiadomości.
+    assert [(cel[2], cel[3][:24]) for cel in client.posted] == [
+        ("root-1", "Nie udało mi się odpowie"),
+        ("root-2", "odp"),
+    ]
     assert state["replied"] == ["root-1", "root-2"]  # trująca porzucona, kanał idzie dalej
     komunikat = " ".join(rec.getMessage() for rec in caplog.records)
     assert "root-1" in komunikat  # log jest wtedy zapasowym rejestrem — niesie komplet wpisu
