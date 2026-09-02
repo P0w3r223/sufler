@@ -35,7 +35,7 @@ Dodaj trywialne narzędzie read-only end-to-end — przejdziesz przez rdzeń,
 adapter i test:
 
 1. **Przypadek użycia** w `core/application/services.py` (np. `count_notes`).
-2. **Wpis w jednoźródłowym katalogu narzędzi** w `core/application/tools.py` (`build_tool_catalog`) — drzwi MCP i runtime agenta dostają go z jednego miejsca ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)).
+2. **Wpis w jednoźródłowym katalogu narzędzi** w `core/application/tools/` (`build_tool_catalog` w `tools/mcp.py`) — drzwi MCP i runtime agenta dostają go z jednego miejsca ([ADR 0008](docs/adr/0008-agent-runtime-and-tool-catalog.md)).
 3. **Test** w `tests/core/` na atrapie repozytorium (patrz `tests/conftest.py`).
 4. `uv run pytest` → zielono.
 

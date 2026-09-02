@@ -662,7 +662,7 @@ def test_zrodlo_identyfikatora_notatki_zalezy_od_powloki():
 
 
 def test_opis_nie_obiecuje_tworzenia_notatki_przy_niezmiennych():
-    """Zasada z `tools.py:392` w drugą stronę: opis nie obiecuje zdolności spoza `Literal`.
+    """Zasada z `tools/project.py` w drugą stronę: opis nie obiecuje zdolności spoza `Literal`.
 
     Opis mówił o `-mtg-`/`-thr-`: „poprawki do nich zapisuj jako nową notatkę". Na drzwiach
     Teams agent nie ma tego czym zrobić (`Project(action='save')` przy `enable_write=False`,

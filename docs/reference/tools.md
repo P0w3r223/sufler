@@ -1,6 +1,7 @@
 # Reference: katalog narzędzi
 
-WorkMate ma **jednoźródłowy katalog narzędzi** (`core/application/tools.py`) — te same definicje
+WorkMate ma **jednoźródłowy katalog narzędzi** (`core/application/tools/`, moduł na katalog,
+jedno wejście `workmate.core.application.tools`) — te same definicje
 (funkcja + docstring + schemat) napędzają drzwi MCP oraz runtime agenta ([ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
 
 - **Powierzchnia MCP** jest zamrożona golden-testem `tests/adapters/test_mcp_tool_surface.py`

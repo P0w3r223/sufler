@@ -48,8 +48,8 @@ def test_count_notes_filters_by_project(sample_notes):
 > (ADR 0009 paczki wdrożeniowej), więc **nowe narzędzie agenta to prawie zawsze nowa AKCJA
 > w istniejącym**, nie nowy `ToolSpec`.
 
-Narzędzia MCP definiuje się w `src/workmate/core/application/tools.py`
-(funkcja `build_tool_catalog`, [ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
+Narzędzia MCP definiuje się w `src/workmate/core/application/tools/mcp.py`
+(funkcja `build_tool_catalog`, re-eksportowana z `workmate.core.application.tools`, [ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
 Adapter MCP jest cienki i sam się nie zmienia (`mcp/tools.py` tylko rejestruje `spec.fn`
 na FastMCP).
 

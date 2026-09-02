@@ -90,7 +90,8 @@ Claude Code **sam jest agentem** — potrzebuje tylko narzędzi, i do tego słu�
 wystawiają katalog wprost). Teams i CLI własnego agenta nie mają, więc dla nich rdzeń
 dostarcza **runtime agenta**: model, który prowadzi rozmowę (z pamięcią i kompaktowaniem historii),
 woła te same narzędzia i składa odpowiedź. Kluczowe: **katalog narzędzi jest jednoźródłowy**
-(`application/tools.py`) — drzwi MCP i runtime agenta dostają je z tego samego miejsca
+(`application/tools/`, moduł na katalog, jedno wejście `workmate.core.application.tools`) —
+drzwi MCP i runtime agenta dostają je z tego samego miejsca
 ([ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)). Powierzchnia MCP (4+1) jest zamrożona
 i pilnowana golden-testem; narzędzia warstwy roboczej i mostu wchodzą per drzwi przez
 `extra_catalog`, więc nie ruszają tej powierzchni.

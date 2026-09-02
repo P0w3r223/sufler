@@ -328,7 +328,7 @@ def _build_notes_read_factory(
     ``Project`` jest tu razem z trójką odczytu, bo ``Project(action='status')`` serwuje treść
     bazy wiedzy (syntezę z notatek projektu) — zostawiony w katalogu bazowym był jedyną drogą
     odczytu, która przeżyła wpięcie bramki. ADR 0062 §3 zapowiadał złożenie odczytu do
-    ``build_project_catalog``; robimy to od strony DRZWI, bo ``core/application/tools.py`` jest
+    ``build_project_catalog``; robimy to od strony DRZWI, bo ``core/application/tools/`` jest
     wspólny z powierzchnią MCP (zamrożoną golden-testem), której bramka nie dotyczy.
 
     ``enable_write`` przenosi profil zapisu drzwi (ADR 0006) na tę fabrykę — inaczej złożenie

@@ -25,6 +25,22 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   `__init__` wymykałaby się im BEZ ŚLADU. Chodzą teraz po wszystkich modułach pakietu
   (`tests/conftest.py::przestrzen_config`), więc nowy moduł domeny jest objęty z automatu.
 
+- **`core/application/tools.py` (2046 linii) rozbity na pakiet `tools/`** — moduł na katalog
+  narzędzi (`mcp`, `project`, `file`, `shell`, `activity`, `jira`, `schedule`, `file_reply`…),
+  `ToolSpec` i wspólny kształt odpowiedzi w `tools/spec.py`, opisy narzędzi wędrują razem ze
+  swoim builderem, re-eksport kompletu w `tools/__init__.py` (#76). **Żaden import się nie
+  zmienia** i **żaden plik BRAMEK powierzchni w `tests/` nie został tknięty** — golden MCP
+  i sufit opisów przeszły na niezmienionej treści, co jest tu jedynym sensownym dowodem, że
+  opisy nie drgnęły (jedyna zmiana w `tests/` to odsyłacz w docstringu `test_file_tool.py`,
+  który cytował numer wiersza). Najdłuższy moduł to dziś `tools/file.py` (361 linii).
+
+  Uwaga dla czytającego mapę: **podział na moduły nie pokrywa się z podziałem na
+  powierzchnie.** Zamrożona powierzchnia MCP rozkłada się na cztery moduły (`mcp`,
+  `notes_read`, `events` oraz sam builder `build_my_jira_tasks_catalog` w `jira`), bo tyle
+  rejestratorów woła `adapters/inbound/mcp/tools.py`. Wypisane wprost w docstringu
+  `tools/__init__.py` i przy każdym z tych builderów — zdanie „zamrożone = `tools/mcp.py`"
+  byłoby wygodne i nieprawdziwe, a licencjonowałoby „niewinną" edycję pozostałych trzech.
+
 
 ## [1.13.0] — 2026-08-21
 
