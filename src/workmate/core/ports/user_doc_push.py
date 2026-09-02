@@ -8,7 +8,8 @@ Dlatego stoi jako osobny port, a nie metoda na tamtych.
 
 Dostawa 1:1 wymaga zakresów CZATU (``Chat.Create``/``ChatMessage.Send``) ORAZ zapisu
 ``Files.ReadWrite.All`` (wgranie na OneDrive) — szerzej niż obraz. Bramkę i scope'y trzyma
-``config.py`` (``enable_user_doc_push``, osobno od obrazowej ``enable_user_file_push``).
+``config/teams_graph.py`` (``enable_user_doc_push``, osobno od obrazowej
+``enable_user_file_push``).
 
 ``Protocol`` jak pozostałe porty. Metoda jest SYNCHRONICZNA, bo narzędzia agenta biegną
 synchronicznie (dispatch w puli wątków) — adapter używa ``httpx.Client``, jak ``TeamsFileSender``

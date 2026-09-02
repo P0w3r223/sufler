@@ -21,7 +21,7 @@ def configure_logging(level: str | None = None) -> None:
     Wspólne dla drzwi inbound — inaczej każdy entrypoint zaszywa ``INFO`` na sztywno i
     ``WORKMATE_LOG_LEVEL=DEBUG`` nie ma efektu (a serwer HTTP już bierze poziom z
     ``settings.log_level``, ``server.py``). Wołać PO ``load_dotenv``, żeby poziom z ``.env``
-    również zadziałał; ta sama zmienna, którą czyta ``Settings.log_level`` (``config.py``).
+    również zadziałał; ta sama zmienna, którą czyta ``Settings.log_level`` (``config/server.py``).
     """
     resolved = (level or os.environ.get("WORKMATE_LOG_LEVEL", "INFO")).upper()
     logging.basicConfig(level=resolved)

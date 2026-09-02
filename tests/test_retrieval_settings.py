@@ -1,9 +1,10 @@
 """Testy pól dense w ``RetrievalSettings`` i wiringu rankera (ADR 0039) — bez modelu/extra.
 
-Poprzednia wersja pierwszego testu przepisywała wartości domyślne z ``config.py`` (nazwa modelu,
-``rrf_k``, ``dense_top_n``) — przechodziła zawsze, także wtedy, gdy zmiana którejś była błędem,
-bo porównywała kod z jego kopią. Dziś pilnujemy tego, co z tych liczb WYNIKA: że warstwa dense
-jest wyłączona z fabryki i że strojenie fuzji zapisane w DWÓCH miejscach (ustawienia + sygnatura
+Poprzednia wersja pierwszego testu przepisywała wartości domyślne z ``config/retrieval.py``
+(nazwa modelu, ``rrf_k``, ``dense_top_n``) — przechodziła zawsze, także wtedy, gdy zmiana
+którejś była błędem, bo porównywała kod z jego kopią. Dziś pilnujemy tego, co z tych liczb
+WYNIKA: że warstwa dense jest wyłączona z fabryki i że strojenie fuzji zapisane w DWÓCH
+miejscach (ustawienia + sygnatura
 ``NotesService``) nie rozjeżdża się po cichu — wiring podaje jedno drugiemu, więc rozjazd zmienia
 ranking bez śladu w żadnym teście rankingu.
 """

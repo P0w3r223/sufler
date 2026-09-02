@@ -5,7 +5,7 @@ strukturalnie — bez dziedziczenia — dzięki czemu serwisy testujemy w pełni
 w pamięci, bez dotykania dysku.
 
 Izolacja środowiska (``_srodowisko_bez_konfiguracji_maszyny``) jest tu, bo wynik pakietu nie
-może zależeć od maszyny. ``config.py`` czyta WYŁĄCZNIE ``os.environ`` (``.env`` wczytują dopiero
+może zależeć od maszyny. ``config/`` czyta WYŁĄCZNIE ``os.environ`` (``.env`` wczytują dopiero
 wejścia drzwi przez ``env.load_dotenv``), więc pod pytestem plik ``.env`` z repo nie działa —
 ale realna powłoka operatora działa. Empirycznie: z ``WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true``
 w środowisku ``test_enable_ci_auto_comment_defaults_false`` przewracał się na maszynie, na której

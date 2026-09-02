@@ -1,4 +1,4 @@
-"""Testy wspólnych helperów ``config.py`` — parsowanie env, zapisywalność, domyślne ścieżki.
+"""Testy wspólnych helperów ``config/_env.py`` — parsowanie env, zapisywalność, ścieżki domyślne.
 
 ``require_writable`` to fail-fast dla TRWAŁYCH ścieżek: bez niego domyślne ``~/.workmate`` na
 koncie kontenera z ``--no-create-home`` (i rootfs ``read_only``) przyjmuje zapis dopiero „w
@@ -101,7 +101,7 @@ def test_require_writable_directory_raises_when_path_is_a_file(tmp_path):
 # --- domyślne ścieżki stanu: absolutne i POZA repozytorium ------------------
 #
 # Poprzednia wersja tego pliku porównywała ``_DEFAULT_TOKENS_FILE`` z literałem powtórzonym
-# z ``config.py`` (``if os.name == "nt": assert == Path("C:/ProgramData/...")``) — czyli
+# z ``config/server.py`` (``if os.name == "nt": assert == Path("C:/ProgramData/...")``) — czyli
 # przepisywała implementację i przechodziła także wtedy, gdy zmiana literału była błędem.
 # Testujemy WŁASNOŚĆ, którą opisuje komentarz w kodzie: ścieżka ma być absolutna (windowsowe
 # „C:/…" na Linuksie stawało się katalogiem WZGLĘDNYM pod CWD) i ma leżeć poza bazą wiedzy.

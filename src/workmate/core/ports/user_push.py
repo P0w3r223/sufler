@@ -5,7 +5,7 @@ osobie, z którą właśnie rozmawia. Obraz idzie INLINE przez ``hostedContents`
 SharePoint, więc bez zakresu ``Files.*`` (odrębnie od ``TeamsFileSender``/ADR 0026, który wgrywa
 pliki na dysk kanału). Dostawa 1:1 wymaga jednak zakresów CZATU (``Chat.Create``/
 ``ChatMessage.Send``) — skonsentowanych już przez admina (``Powiadomienia_teams``), lecz
-nieobecnych w tokenie pollera kanału bez włączenia bramki (patrz ``config.py``).
+nieobecnych w tokenie pollera kanału bez włączenia bramki (patrz ``config/teams_push.py``).
 
 ``Protocol`` jak pozostałe porty. Metoda jest SYNCHRONICZNA, bo narzędzia agenta biegną
 synchronicznie (dispatch w puli wątków) — adapter używa ``httpx.Client``, nie ``AsyncClient``, jak
