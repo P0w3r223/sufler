@@ -21,6 +21,7 @@ from workmate.adapters.inbound.agent_wiring import (
     build_agent_runtime_or_exit,
     build_conversational_responder,
     build_read_catalog,
+    file_support,
 )
 from workmate.adapters.inbound.responder import (
     ConversationalResponder,
@@ -954,7 +955,10 @@ def test_the_file_factory_forwards_the_verdict_sink_to_the_catalog(tmp_path: Pat
         widziane["ostatni"] = args[-1]
         return []
 
-    monkeypatch.setattr(agent_wiring, "build_file_catalog", szpieg)
+    # Podmiana MUSI trafić w moduł, w którym ``build_file_support`` szuka tej nazwy
+    # (``agent_wiring.file_support``), a nie w pakiet — po rozbiciu `agent_wiring` na pakiet
+    # podmiana na nim byłaby CICHO bez efektu i sonda przechodziłaby na niepodmienionym kodzie.
+    monkeypatch.setattr(file_support, "build_file_catalog", szpieg)
     responder = _responder_z_file(tmp_path, monkeypatch, wlaczony=True)
     assert responder._file_catalog_factory is not None
 

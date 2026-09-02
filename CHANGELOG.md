@@ -24,6 +24,24 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **`agent_wiring.py` (1058 linii) rozbity na pakiet `agent_wiring/`** — fabryki poszczególnych
+  ZDOLNOŚCI wyszły do modułów (`notes_read`, `workspace`, `file_support`, `shell`, `outbox`),
+  a w `__init__.py` zostają PUNKTY SKŁADANIA: `build_agent_runtime`,
+  `build_conversational_responder`, `build_compaction_service` (#87). Plik składania ma dziś
+  558 linii, najdłuższy moduł zdolności 200. Żaden import się nie zmienia — `__all__` trzyma
+  także nazwy prywatne, po które sięgają inne drzwi i testy.
+
+  `logger` jest per moduł, z tego samego powodu co przy `teams_graph`: wspólny logger w module
+  składania był krawędzią zwrotną, przez którą `file_support` i `shell` wracały do niego
+  importem.
+
+  **Jedna sonda w testach musiała ruszyć i jest to zmiana ISTOTNA, nie kosmetyczna.**
+  `test_the_file_factory_forwards_the_verdict_sink_to_the_catalog` podmieniał
+  `build_file_catalog` jako atrybut PAKIETU, a `build_file_support` szuka tej nazwy w globalach
+  swojego modułu. Po rozbiciu podmiana na pakiecie byłaby CICHO bez efektu — sonda ujścia
+  werdyktu (ADR 0065 §8) przechodziłaby na NIEPODMIENIONYM kodzie. Dziś celuje w
+  `agent_wiring.file_support`; sprawdzone mutacją, że nadal łapie regresję, dla której powstała.
+
 - **`teams_graph/app.py` (1355 linii) odchudzony do 477** — dwadzieścia cztery fabryki wiringu
   wyszły do pięciu modułów `wiring_*` obok reszty pakietu (#87): `wiring_bridge` (most GitHub),
   `wiring_delivery` (plik w wątku, outbox, obraz i dokument 1:1, PDF), `wiring_routers` (routery
