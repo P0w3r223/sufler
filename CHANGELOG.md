@@ -6,6 +6,22 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Naprawione
+
+- **Bramka obrazu floty stała czerwona od 1 września — z powodu kalendarza, nie kodu** (#88).
+  `test_cli_app::test_history_...` miał asercję kosztu (`$0.0000`) wpisaną z palca, a rozmowę
+  zakładał na `CURRENT_TIMESTAMP`. `PRICING_SWITCH_DATE = date(2026, 9, 1)` wygasiła cenę
+  wprowadzającą, więc te same 5 + 3 tokenów zaczęły kosztować $0,00006 zamiast $0,00004 —
+  czyli `$0.0001`. Ponieważ Dockerfile odpala `pytest && touch /app/.tests-passed`, obrazu
+  wdrożeniowego **nie dało się zbudować w ogóle**; CI biega tylko na `Main`, `Dev` i PR-ach,
+  więc leżało to niezauważone jedenaście dni.
+
+  Data jest dziś przypięta i WYPROWADZONA z `PRICING_SWITCH_DATE`, nie wpisana z palca —
+  podbicie oczekiwanej kwoty tylko przezbroiłoby bombę na następną zmianę cennika. Doszła też
+  sonda po obu stronach przełącznika: przełącznik cennika nie miał dotąd ŻADNEGO testu na
+  ścieżce CLI, więc gdyby ktoś policzył koszt dniem dzisiejszym zamiast dniem rozmowy, nic by
+  tego nie złapało — a różnicę widać dopiero na rachunku.
+
 ### Zmienione
 
 - **`config.py` (2041 linii) rozbity na pakiet `config/`** — moduł na domenę ustawień
