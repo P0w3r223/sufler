@@ -24,6 +24,23 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **`teams_graph/app.py` (1355 linii) odchudzony do 477** — dwadzieścia cztery fabryki wiringu
+  wyszły do pięciu modułów `wiring_*` obok reszty pakietu (#87): `wiring_bridge` (most GitHub),
+  `wiring_delivery` (plik w wątku, outbox, obraz i dokument 1:1, PDF), `wiring_routers` (routery
+  komend), `wiring_catalogs` (grafik, zadania Jira nadawcy), `wiring_authz` (autoryzacja per
+  nadawca) plus `wiring_common` na dwie stałe. W `app.py` zostaje to, co jest naprawdę drzwiami:
+  `main`, `_build_responder`, pętla `_run`/`_discover`.
+
+  **Żaden plik w `tests/` nie został tknięty.** Siedem testów wiringu importuje te fabryki
+  z `teams_graph.app`, więc te drzwi zostają ich jedynym publicznym adresem — jawny `__all__`
+  trzyma także `_make_thread_link_lookup` i `_worklog_service`, których samo `app` nie woła.
+
+  `logger` jest dziś per moduł (`getLogger(__name__)`), więc nazwy w rekordach logu to
+  `…teams_graph.wiring_*` zamiast `…teams_graph.app`. To nie kosmetyka: wspólny `logger`
+  w `app` był jedyną krawędzią, przez którą moduły wiringu wracały do drzwi — bez tej zmiany
+  podział miałby cykl importów.
+
+
 - **`config.py` (2041 linii) rozbity na pakiet `config/`** — moduł na domenę ustawień
   (`server`, `teams_graph`, `github`, `jira`, `schedule`…), wspólne pomocniki `_*_from_env`
   w `config/_env.py`, re-eksport kompletu nazw w `config/__init__.py` (#76). **Żaden import
