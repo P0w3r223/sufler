@@ -64,7 +64,7 @@ flowchart TB
   polling Graph; obsługuje też komendę `/moje-zadania`), `teams_digest` (proaktywny digest
   tygodniowy), `cli`, `github` (polling PAT + notifier). Nie ma już osobnych drzwi `jira` — most
   Teams↔Jira, poller i push zniknęły ([ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md)).
-  Wspólny szew `responder.py` (tu, nie w rdzeniu — oddziela transport od treści odpowiedzi, ale
+  Wspólny szew `responder/` (tu, nie w rdzeniu — oddziela transport od treści odpowiedzi, ale
   sam jest drzwiami, nie logiką bez I/O).
 - **`adapters/outbound/`** — implementacje portów: repozytoria Markdown/YAML, `anthropic_llm`
   i `anthropic_summarizer` (Claude API), `github_api`, `jira_api` (`HttpxJiraClient`/

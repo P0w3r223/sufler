@@ -11,7 +11,7 @@ wypisze dostępne zespoły i kanały z ich ID i zakończy działanie.
 
 Importy ``msal``/``httpx``/``anthropic`` są leniwe; brak extra kończy się czytelnym
 komunikatem, nie surowym ``ImportError``. Powrót do samego echa (bez API/klucza) to jedna
-linia: ``RuntimeResponder`` → ``EchoResponder`` (patrz ``adapters/inbound/responder.py``).
+linia: ``RuntimeResponder`` → ``EchoResponder`` (patrz ``adapters/inbound/responder/simple.py``).
 """
 
 from __future__ import annotations

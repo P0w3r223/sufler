@@ -73,4 +73,4 @@ team/channel — patrz [`github-bridge.md`](github-bridge.md).
 ## Powrót do echa (bez klucza / bez API)
 
 Runtime agenta degraduje się do prostego echa jedną linią (`RuntimeResponder` → `EchoResponder`,
-patrz `adapters/inbound/responder.py`) — przydatne do testu samego transportu bez kosztów API.
+patrz `adapters/inbound/responder/simple.py`) — przydatne do testu samego transportu bez kosztów API.

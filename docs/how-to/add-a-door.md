@@ -20,7 +20,7 @@ dopieszczenia kontraktu narzędzi.
 ```
 src/workmate/adapters/
   inbound/
-    responder.py  # WSPÓLNY SZEW: Responder(Protocol); RuntimeResponder (dziś), EchoResponder (fallback)
+    responder/   # WSPÓLNY SZEW: Responder(Protocol) w protocols; RuntimeResponder, EchoResponder w simple
     mcp/          # Faza 1 (jest)
     teams/        # Faza 2 — runtime agenta read-only (jest)
       bot.py        # handler wiadomości (SDK-free) + build_agent_app (Agents SDK, leniwie)

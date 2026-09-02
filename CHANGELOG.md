@@ -24,6 +24,24 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **`responder.py` (956 linii) rozbity na pakiet `responder/`** — kontrakty w `protocols`,
+  składanie transkryptu i notki w `transcript`, respondery bez runtime'u agenta w `simple`,
+  pełna tura agenta w `conversational` (#87). Żaden import się nie zmienia; `__all__` trzyma
+  także `_TAINTING_TOOLS`, `_to_transcript*` i `_with_notices`, po które sięgają inne drzwi
+  i testy. **Zero zmian w `tests/`.**
+
+  Uczciwie o granicach tej zmiany: `conversational.py` ma **672 linie**, czyli mieści się pod
+  sufitem 800, ale bez zapasu — bo `ConversationalResponder` to nadal jedna klasa z metodą
+  `_respond_sync` na 326 linii i `__init__` na 159. Zgodnie z rozstrzygnięciem pod #87 ciała
+  metod NIE są ruszane: przeniesienie całej definicji da się udowodnić porównaniem AST,
+  rozbicie ciała nie. Przy dotychczasowym tempie (+414 linii w miesiąc) ten plik wróci nad
+  sufit i będzie wymagał osobnej decyzji, z własnym dowodem.
+
+  Dwie stałe (`_TRUNCATED_STOP`, `_SUMMARY_PREFIX`) mieszkają dziś w `transcript`, a nie przy
+  `ConversationalResponder`: renderuje je składanie transkryptu, więc trzymane po drugiej
+  stronie robiły cykl `transcript` ↔ `conversational`.
+
+
 - **`agent_wiring.py` (1058 linii) rozbity na pakiet `agent_wiring/`** — fabryki poszczególnych
   ZDOLNOŚCI wyszły do modułów (`notes_read`, `workspace`, `file_support`, `shell`, `outbox`),
   a w `__init__.py` zostają PUNKTY SKŁADANIA: `build_agent_runtime`,
