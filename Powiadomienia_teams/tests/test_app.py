@@ -137,6 +137,22 @@ def _settings(state_path: Path) -> Settings:
     )
 
 
+# Środa 11:00 czasu warszawskiego — wewnątrz domyślnego okna wysyłki (pn-pt 8-18).
+_ZEGAR_W_OKNIE = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+
+
+def _w_oknie() -> datetime:
+    """Zegar przebiegu dla sond, które godzin ciszy NIE badają.
+
+    ``run_once`` pyta o bieżący czas przed każdą wysyłką (dławienie Graph potrafi wypchnąć
+    przebieg poza okno), więc bez wstrzyknięcia wynik sondy zależy od dnia i godziny, o której
+    ktoś uruchomił pakiet. Osiem sond padało w ten sposób w każdy weekend, a `pytest` bramkuje
+    budowanie obrazu (`Dockerfile`) — czyli ta sama klasa wady, co wygasła cena w #88.
+    Sondy, które okno badają celowo, podają własny zegar albo podmieniają ``modul.datetime``.
+    """
+    return _ZEGAR_W_OKNIE
+
+
 def _settings_calodobowe(state_path: Path) -> Settings:
     """Ustawienia z oknem wysyłki otwartym cały tydzień, całą dobę.
 
@@ -315,7 +331,7 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     client = _FakeClient({}, members=(member,), shifts=())  # brak zmian → luka na przyszły tydzień
     now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)  # LOKALNY zegar wcześniejszy niż serwer
 
-    run_once(settings, client, now=now)  # type: ignore[arg-type]
+    run_once(settings, client, now=now, zegar=_w_oknie)  # type: ignore[arg-type]
 
     pending = load_state(state_path)["u1"]
     assert pending.status == "awaiting_reply"
@@ -339,11 +355,11 @@ def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):
     now = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)  # piątek
     settings = _settings(state_path)  # dry_run=False
 
-    run_once(settings, client, now=now)
+    run_once(settings, client, now=now, zegar=_w_oknie)
     assert len(client.sent) == 1
     assert load_state(state_path)["u1"].status == "awaiting_reply"
 
-    run_once(settings, client, now=now)  # ponowienie tego samego tygodnia
+    run_once(settings, client, now=now, zegar=_w_oknie)  # ponowienie tego samego tygodnia
     assert len(client.sent) == 1  # brak drugiej wysyłki
 
 
@@ -371,7 +387,7 @@ def test_run_once_does_not_renudge_declined_member_same_week(tmp_path: Path):
     now = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)  # piątek, ten sam tydzień docelowy
     settings = _settings(state_path)
 
-    run_once(settings, client, now=now)
+    run_once(settings, client, now=now, zegar=_w_oknie)
 
     assert client.sent == []  # żadnego ponownego nudge'a
     assert load_state(state_path)["u1"].status == DECLINED  # stan odmowy zachowany
@@ -398,6 +414,7 @@ def test_run_once_with_retry_succeeds_after_transient_failures(tmp_path: Path):
         attempts=3,
         backoff_s=0,
         sleep=lambda s: None,
+        zegar=_w_oknie,
     )
     assert calls["n"] == 3 and len(client.sent) == 1  # dwie porażki + sukces, jedna wysyłka
 
@@ -415,6 +432,7 @@ def test_run_once_with_retry_reraises_after_exhausting(tmp_path: Path):
             attempts=2,
             backoff_s=0,
             sleep=lambda s: None,
+            zegar=_w_oknie,
         )
 
 
@@ -434,6 +452,7 @@ def test_run_once_with_retry_does_not_retry_auth_error(tmp_path: Path):
             attempts=3,
             backoff_s=0,
             sleep=lambda s: None,
+            zegar=_w_oknie,
         )
     assert calls["n"] == 1  # AuthExpiredError nie jest ponawiany
 
@@ -497,7 +516,7 @@ def test_run_once_isolates_per_member_send_failure(tmp_path: Path):
             return f"chat-{target_user_id}"
 
     client = _OneFails({}, members=members, shifts=())
-    run_once(_settings(state_path), client, now=_FRI_16)
+    run_once(_settings(state_path), client, now=_FRI_16, zegar=_w_oknie)
     state = load_state(state_path)
     assert set(state) == {"u1", "u3"}  # u2 pominięty (bez pendingu), reszta wysłana
     assert len(client.sent) == 2
@@ -1164,7 +1183,7 @@ def test_run_once_skips_member_on_time_off(tmp_path: Path):
     client = _FakeClient({}, members=(on_leave, without), shifts=(), time_offs=(vacation,))
     now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
 
-    missing = run_once(settings, client, now=now)  # type: ignore[arg-type]
+    missing = run_once(settings, client, now=now, zegar=_w_oknie)  # type: ignore[arg-type]
 
     assert [m.user_id for m in missing] == ["u2"]
     assert "u1" not in load_state(state_path)
@@ -1742,7 +1761,9 @@ def test_bot_nie_zagaduje_sam_siebie(tmp_path: Path):
     )
     client = _FakeClient({}, members=(bot, czlowiek))
 
-    brakujacy = run_once(settings, client, now=datetime(2026, 7, 21, tzinfo=timezone.utc))
+    brakujacy = run_once(
+        settings, client, now=datetime(2026, 7, 21, tzinfo=timezone.utc), zegar=_w_oknie
+    )
 
     assert [m.display_name for m in brakujacy] == ["Ala"]
 
@@ -2090,7 +2111,7 @@ def test_run_once_partial_time_off_still_nudges_and_excludes_that_day(tmp_path: 
     client = _FakeClient({}, members=(member,), shifts=last_week_shifts, time_offs=(friday_off,))
     now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
 
-    missing = run_once(settings, client, now=now)  # type: ignore[arg-type]
+    missing = run_once(settings, client, now=now, zegar=_w_oknie)  # type: ignore[arg-type]
 
     assert [m.user_id for m in missing] == ["u1"]  # nadal na liście — urlop tylko częściowy
     pending = load_state(state_path)["u1"]
@@ -2200,9 +2221,30 @@ def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path
     client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
 
     with pytest.raises(StateWriteError):
-        run_once(settings, client, now=_SRODA_W_OKNIE)  # type: ignore[arg-type]
+        run_once(settings, client, now=_SRODA_W_OKNIE, zegar=_w_oknie)  # type: ignore[arg-type]
 
     assert client.sent == []  # ANI JEDNEJ wiadomości
+
+
+def test_run_once_pyta_o_okno_WSTRZYKNIETY_zegar_nie_systemowy(tmp_path: Path):
+    """Sonda samego SZWU: przebieg z zegarem poza oknem ma przerwać, mimo że ``now`` jest w oknie.
+
+    Bez niej ``zegar`` mógłby cicho wypaść z ``run_once`` — reszta sond podaje go tylko po to, żeby
+    NIE zależeć od dnia biegu, więc żadna z nich by tego nie zauważyła. Regresja jest realna:
+    dotąd bramka okna czytała zegar systemowy i osiem sond padało w każdy weekend, blokując
+    ``pytest``, który bramkuje budowanie obrazu.
+    """
+    import powiadomienia_teams.app as modul
+
+    settings = _settings(tmp_path / "state.json")
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    with pytest.raises(modul.OknoWysylkiZamknieteError):
+        run_once(  # type: ignore[arg-type]
+            settings, client, now=_SRODA_W_OKNIE, zegar=lambda: _SOBOTA_POZA_OKNEM
+        )
+
+    assert client.sent == []
 
 
 def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: Path, monkeypatch):
@@ -2226,6 +2268,7 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
             client,  # type: ignore[arg-type]
             now=_SRODA_W_OKNIE,
             sleep=spane.append,
+            zegar=_w_oknie,
         )
 
     assert len(client.sent) == 1  # jedna wysyłka, potem stop — bez ponowień
@@ -2617,6 +2660,7 @@ def test_cotygodniowy_przebieg_w_oknie_wysyla_normalnie(tmp_path: Path):
         _SRODA_W_OKNIE,
         lambda _s: None,
         teraz=_SRODA_W_OKNIE,
+        zegar=_w_oknie,
     )
 
     assert udany is WynikPrzebiegu.UDANY

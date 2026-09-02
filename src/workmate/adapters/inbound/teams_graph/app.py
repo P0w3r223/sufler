@@ -149,7 +149,10 @@ def main() -> None:
     conv_settings = ConversationSettings.from_env()
     conv_settings.validate()
     workspace_settings = WorkspaceSettings.from_env()
-    workspace_settings.validate(data_dir=core_settings.data_dir)
+    workspace_settings.validate(
+        data_dir=core_settings.data_dir,
+        persistent_paths=core_settings.persistent_paths(),
+    )
     shell_settings = ShellSettings.from_env()
     shell_settings.validate()
     # Bramka członkostwa POWŁOKI (ADR 0063), osobno — ``None`` gdy powłoka wyłączona. Gdy włączona,

@@ -124,6 +124,41 @@ def test_snapshots_dir_is_probed_as_a_directory_not_as_a_file_in_it(srodowisko):
     assert wpis[2] is True
 
 
+# --- szew: brudnopis nie może OBEJMOWAĆ trwałej ścieżki (sprzątacz TTL, ADR 0065) ---
+
+
+def test_brudnopis_nad_migawkami_wywala_start_drzwi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Regresja: brudnopis wskazujący KORZEŃ wolumenu stanu przechodził walidację, a sprzątacz
+    TTL kasował potem ``snapshots/notes`` przy każdym starcie drzwi — czyli migawki sprzed
+    mutacji notatek, jedyną odwracalność z ADR 0065 działającą w ciągu doby.
+
+    Sonda jedzie przez ``main``, nie przez samo ``WorkspaceSettings.validate``, bo bramka działa
+    wyłącznie wtedy, gdy drzwi karmią ją listą z ``Settings.persistent_paths``. Pominięcie tego
+    argumentu zostawiłoby sondy jednostkowe zielone, a produkcję bez ochrony.
+    """
+    _base_env(tmp_path, monkeypatch)
+    wolumen_stanu = tmp_path / "state"
+    monkeypatch.setenv("WORKMATE_NOTE_SNAPSHOTS_DIR", str(wolumen_stanu / "snapshots" / "notes"))
+    # Pomyłka operatora: zgubiony segment ``/workspace`` na końcu ścieżki.
+    monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(wolumen_stanu))
+
+    with pytest.raises(ValueError, match="WORKMATE_NOTE_SNAPSHOTS_DIR"):
+        app.main()
+
+
+def test_brudnopis_obok_migawek_nie_blokuje_startu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Kontrast do sondy wyżej: układ floty (rodzeństwo na wolumenie stanu) ma dojść dalej."""
+    _base_env(tmp_path, monkeypatch)
+    wolumen_stanu = tmp_path / "state"
+    monkeypatch.setenv("WORKMATE_NOTE_SNAPSHOTS_DIR", str(wolumen_stanu / "snapshots" / "notes"))
+    monkeypatch.setenv("WORKMATE_WORKSPACE_DIR", str(wolumen_stanu / "workspace"))
+
+    with pytest.raises(_Stop):
+        app.main()
+
+
 # --- zachowanie: PRAWDZIWY ``require_writable`` na niezapisywalnej ścieżce ------
 
 

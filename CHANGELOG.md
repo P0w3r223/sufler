@@ -8,6 +8,32 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **Katalog roboczy wskazujący wolumen stanu kasował migawki notatek.** `WorkspaceSettings.validate`
+  broniło dwóch kierunków (korzeń systemu / katalog domowy, brudnopis nad bazą wiedzy), a komentarz
+  przy bramce wymieniał TRZECI — wolumen stanu — którego kod nie sprawdzał. Na flocie
+  `WORKMATE_WORKSPACE_DIR=/var/lib/workmate/workspace` i
+  `WORKMATE_NOTE_SNAPSHOTS_DIR=/var/lib/workmate/snapshots/notes` są rodzeństwem, więc zgubienie
+  ostatniego segmentu dawało ścieżkę przechodzącą walidację; sprzątacz TTL — bezwarunkowy przy
+  KAŻDYM starcie drzwi i schodzący dokładnie dwa poziomy — trafiał wtedy w `snapshots/notes`.
+
+  Ginęły migawki sprzed mutacji, czyli ta połowa odwracalności z ADR 0065, która działa w ciągu
+  doby (druga to nocna kopia). Bramka bierze teraz listę z `Settings.persistent_paths` — jedynego
+  miejsca, w którym spisano, co jest na wolumenie pisane — więc następna trwała ścieżka wchodzi
+  pod nią bez zmiany w `config/workspace.py`. Sonda jedzie przez `main` drzwi, bo bramka działa
+  wyłącznie wtedy, gdy drzwi ją tą listą karmią.
+
+- **Osiem sond `Powiadomienia_teams` padało w każdy weekend, blokując budowę obrazu.** `run_once`
+  przyjmowało moment parametrem, ale bramka godzin ciszy czytała zegar systemowy
+  (`datetime.now(_UTC)`). Domyślne okno wysyłki to pn-pt 8-18, a `Dockerfile` odpala
+  `pytest && touch /app/.testy-przeszly` — obraz pod-projektu przestawał się budować bez żadnej
+  zmiany w kodzie. Ta sama klasa wady co #88, tyle że wracająca co tydzień, nie raz.
+
+  `run_once` (i `_run_once_with_retry` / `_safe_run_once` / `_przebieg_i_podsumowanie`) przyjmuje
+  teraz `zegar` — wołany osobno przed KAŻDĄ wysyłką, bo dławienie Graph potrafi wypchnąć przebieg
+  poza okno. Bez wstrzyknięcia zachowanie jest dotychczasowe (czas na żywo), więc produkcja się nie
+  zmienia. `teraz` z `_przebieg_i_podsumowanie` świadomie NIE jedzie dalej jako zegar: stała
+  wartość zdejmowałaby bramkę okna w trakcie przebiegu, co wykryła sonda przerwanego przebiegu.
+
 - **Bramka obrazu floty stała czerwona od 1 września — z powodu kalendarza, nie kodu** (#88).
   `test_cli_app::test_history_...` miał asercję kosztu (`$0.0000`) wpisaną z palca, a rozmowę
   zakładał na `CURRENT_TIMESTAMP`. `PRICING_SWITCH_DATE = date(2026, 9, 1)` wygasiła cenę

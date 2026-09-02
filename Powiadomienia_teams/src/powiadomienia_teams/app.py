@@ -154,8 +154,27 @@ def _najblizsze_okno(settings: Settings, moment: datetime) -> datetime:
     )
 
 
-def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[Member]:
-    """Jeden przebieg powiadomień: wykryj luki, zbuduj propozycje, wyślij (lub loguj w dry-run)."""
+def run_once(
+    settings: Settings,
+    client: GraphClient,
+    *,
+    now: datetime,
+    zegar: Callable[[], datetime] | None = None,
+) -> list[Member]:
+    """Jeden przebieg powiadomień: wykryj luki, zbuduj propozycje, wyślij (lub loguj w dry-run).
+
+    ``now`` to odniesienie TYGODNIA docelowego — przy nadrobieniu jest to miniony termin, więc
+    stoi w miejscu przez cały przebieg. ``zegar`` oddaje BIEŻĄCY czas i jest wołany osobno przed
+    każdą wysyłką, bo dławienie Graph potrafi rozciągnąć przebieg poza okno ciszy. Te dwa czasy
+    rozjeżdżają się celowo i dlatego są osobnymi parametrami; ten sam podział ma już
+    ``_przebieg_i_podsumowanie``.
+
+    Bez ``zegar`` przebieg czyta zegar systemowy — czyli zachowanie produkcyjne. Wstrzyknięcie go
+    jest jedyną drogą, żeby sonda przebiegu nie zależała od DNIA I GODZINY swojego uruchomienia:
+    domyślne okno wysyłki to pn-pt 8-18, więc bez tego szwu osiem sond padało w każdy weekend,
+    a `pytest` bramkuje budowanie obrazu (`Dockerfile`).
+    """
+    teraz = zegar if zegar is not None else (lambda: datetime.now(_UTC))
     tz = settings.tz
     ctx = settings.team_context  # jeden zespół dziś; pętla po wielu wepnie się tutaj (ADR 0001)
     client.refresh_auth()
@@ -211,7 +230,7 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
         # udanym zapisem ma już zmianę w grafiku i nie występuje w `missing`.
         if existing is not None and existing.week_start == week_start_iso:
             continue
-        if not settings.dry_run and not _wolno_inicjowac(settings, datetime.now(_UTC)):
+        if not settings.dry_run and not _wolno_inicjowac(settings, teraz()):
             # Okno sprawdzamy PRZED KAŻDĄ wysyłką, nie raz na przebieg: dławienie Graph potrafi
             # rozciągnąć przebieg na kilkadziesiąt minut, a wtedy prośby wychodziły już po ciszy.
             # Przerwanie jest bezpieczne — wysłani mają pending, reszta poczeka na otwarcie okna.
@@ -248,7 +267,7 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
         # Fallback, gdy Graph nie zwrócił znacznika: realny „teraz", NIE `now`. Przy nadrobieniu
         # (`_catchup_due`) `now` to PRZESZŁY termin — użycie go cofnęłoby watermark przed faktyczny
         # czas wysyłki, przez co listener mógłby wziąć wcześniejszą wiadomość z czatu za odpowiedź.
-        sent_iso = sent_at or to_graph_iso(datetime.now(_UTC))
+        sent_iso = sent_at or to_graph_iso(teraz())
         state[member.user_id] = st.PendingReminder(
             member_id=member.user_id,
             member_name=member.display_name,
@@ -1093,6 +1112,7 @@ def _run_once_with_retry(
     attempts: int = _RUN_RETRY_ATTEMPTS,
     backoff_s: int = _RUN_RETRY_BACKOFF_S,
     sleep: Callable[[float], None] = time.sleep,
+    zegar: Callable[[], datetime] | None = None,
 ) -> None:
     """Uruchom ``run_once``, ponawiając transientne błędy z narastającym backoffem, zanim odpuścisz.
 
@@ -1112,7 +1132,7 @@ def _run_once_with_retry(
         # a bez odświeżenia healthcheck zgłosiłby „niezdrowy" dla usługi, która właśnie pracuje.
         _touch_heartbeat(settings)
         try:
-            run_once(settings, client, now=now)
+            run_once(settings, client, now=now, zegar=zegar)
             return
         except (
             AuthExpiredError,
@@ -1353,6 +1373,7 @@ def _safe_run_once(
     now: datetime,
     *,
     sleep: Callable[[float], None] = time.sleep,
+    zegar: Callable[[], datetime] | None = None,
 ) -> bool:
     """Przebieg z ponowieniem; zwraca czy się POWIÓDŁ. Utrata tokenu zatrzymuje usługę.
 
@@ -1362,7 +1383,7 @@ def _safe_run_once(
     try:
         # `sleep` MUSI iść dalej: to pętla ponowień faktycznie usypia (30 s + 60 s), więc bez
         # przekazania parametru wstrzyknięcie atrapy nic nie daje i testy śpią naprawdę.
-        _run_once_with_retry(settings, client, now=now, sleep=sleep)
+        _run_once_with_retry(settings, client, now=now, sleep=sleep, zegar=zegar)
         return True
     except OknoWysylkiZamknieteError:
         raise  # nie awaria: godziny ciszy przerwały przebieg — decyduje o tym wołający
@@ -1435,6 +1456,7 @@ def _przebieg_i_podsumowanie(
     sleep: Callable[[float], None],
     *,
     teraz: datetime | None = None,
+    zegar: Callable[[], datetime] | None = None,
 ) -> WynikPrzebiegu:
     """Przebieg RAZEM z podsumowaniem — nierozłącznie. Zwraca, czy przebieg się powiódł.
 
@@ -1446,9 +1468,15 @@ def _przebieg_i_podsumowanie(
     ``now`` to odniesienie TYGODNIA (przy nadrobieniu — miniony termin), a ``teraz`` to bieżąca
     chwila, po której orzekamy o godzinach ciszy. Przy nadrobieniu te dwie wartości są RÓŻNE
     i mylenie ich znaczyłoby sprawdzanie pory doby sprzed kilku godzin.
+
+    ``zegar`` jest ODDZIELNY od ``teraz`` i jedzie dalej, do ``run_once``. Wygląda na duplikat
+    tylko dopóki się go nie rozdzieli: ``teraz`` rozstrzyga JEDNO pytanie („czy w tej chwili wolno
+    zacząć”), a ``zegar`` jest wołany raz przed KAŻDĄ wysyłką, bo dławienie Graph potrafi
+    rozciągnąć przebieg poza okno ciszy. Podanie ``teraz`` jako stałego zegara zdjęłoby tę drugą
+    bramkę — sonda przerwanego przebiegu przechodziła wtedy jako UDANY.
     """
-    teraz = teraz or datetime.now(_UTC)
-    if not _wolno_inicjowac(settings, teraz):
+    chwila = teraz if teraz is not None else datetime.now(_UTC)
+    if not _wolno_inicjowac(settings, chwila):
         # Godziny ciszy: cotygodniowa prośba i podsumowanie to wiadomości INICJOWANE przez bota.
         # ODLOZONY (nie NIEUDANY) mówi pętli, że ma trzymać ten termin do OTWARCIA okna, zamiast
         # oddawać go oknu łaski, które w środku nocy wygaśnie.
@@ -1457,11 +1485,11 @@ def _przebieg_i_podsumowanie(
             settings.send_window_start_hour,
             settings.send_window_end_hour,
             ",".join(str(d) for d in settings.send_window_weekdays),
-            _najblizsze_okno(settings, teraz).isoformat(),
+            _najblizsze_okno(settings, chwila).isoformat(),
         )
         return WynikPrzebiegu.ODLOZONY
     try:
-        udany = _safe_run_once(settings, client, now=now, sleep=sleep)
+        udany = _safe_run_once(settings, client, now=now, sleep=sleep, zegar=zegar)
     except OknoWysylkiZamknieteError as blad:
         # Okno zamknęło się w trakcie (dławienie Graph). Reszta prośb czeka — to odłożenie,
         # nie awaria, więc podsumowanie też poczeka na dokończony przebieg.
