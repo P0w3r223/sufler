@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 # Pola STRUKTURALNE bezpieczne do zapisu wprost (akcja / identyfikator / ścieżka / filtr), wspólne
 # dla narzędzi. Wszystko poza tą listą to potencjalna treść → znacznik typu i długości. Świadomie
 # WĄSKA: łatwiej dopisać pole, gdy pomiar pokaże, że go brakuje, niż wykryć wyciek treści po fakcie.
-# Nazwy skonfrontowane z rzeczywistym katalogiem ``core/application/tools.py`` (ADR 0067, review
+# Nazwy skonfrontowane z rzeczywistym katalogiem ``core/application/tools/`` (ADR 0067, review
 # Fazy 0): ``name`` (create_file/read_file — nazwa pliku scope'a), ``file_format``/``image_format``
 # (enum formatu odpowiedzi), ``week`` (Schedule, ISO), ``since``/``until`` (filtry dat Jira).
 # Treść (``content``/``body``/``command``/``image_base64``/``title``/``query``) świadomie POZA nią.
