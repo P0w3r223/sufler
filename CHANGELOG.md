@@ -6,6 +6,28 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Do dokończenia
+
+- **Nocny bieg CI (`schedule`) — przygotowany, NIE wdrożony.** `.github/workflows/ci.yml` wymaga
+  zakresu `workflow` na tokenie, którego bot nie ma (`remote rejected … without workflow scope`),
+  więc zmiana została wycięta z gałęzi i czeka na wklejenie ręką. Dopóki tego nie ma, CI biega
+  wyłącznie na `Main`, `Dev` i PR-ach, czyli **bomba kalendarzowa dalej czeka na czyjś push** —
+  a to jest wada, przez którą #88 stało czerwone jedenaście dni, blokując budowę obrazu floty.
+
+  Do wklejenia w bloku `on:` pliku `.github/workflows/ci.yml`, po `pull_request:`:
+
+  ```yaml
+    schedule:
+      - cron: "17 4 * * *"   # 06:17 czasu warszawskiego: po północy UTC, przed pracą zespołu;
+                             # minuta nieokrągła, bo o pełnych godzinach kolejka GitHuba jest
+                             # najdłuższa. `schedule` odpala się TYLKO z gałęzi domyślnej (`Main`).
+    workflow_dispatch:       # ręczny bieg — sprawdzenie poprawki bez czekania do rana
+  ```
+
+  Odblokowanie po stronie tokenu: `gh auth refresh -s workflow`, potem zwykły `git push`.
+  Bramka złożoności (`C901`/`PLR0915`) z tej samej pary JEST już wdrożona — patrz „Dodane".
+
+
 ### Naprawione
 
 - **Data notatki wątkowej liczona w UTC.** `„zapisz to"` wysłane o 23:30 czasu warszawskiego
@@ -159,14 +181,6 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   stać się cichym zwolnieniem modułu. Dwie klasy: dług do rozbicia oraz miejsca, w których długość
   JEST kontraktem (sygnatura buildera narzędzia to schemat pokazywany modelowi, więc skrócenie
   kosztowałoby zdolność).
-
-- **Nocny bieg CI (`schedule`, 04:17 UTC) i ręczne uruchomienie (`workflow_dispatch`).** Bez biegu
-  nocnego bramka pada dopiero przy następnym pushu, a bywa, że nikt nic nie zepsuł: #88 stało
-  czerwone JEDENAŚCIE DNI, bo wygasła cena wprowadzająca — kod się nie zmienił, zmienił się
-  kalendarz. Przez ten czas nie dało się zbudować obrazu floty (`pytest && touch .tests-passed`
-  w Dockerfile). Druga instancja tej klasy — zegar systemowy w oknie wysyłki `Powiadomienia_teams`
-  — wracała w KAŻDY weekend. Godzina jest po północy UTC i przed początkiem pracy zespołu,
-  a minuta nieokrągła świadomie (o pełnych godzinach kolejka GitHuba jest najdłuższa).
 
 ### Zmienione
 
