@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-import uuid
 from typing import TYPE_CHECKING
 
 from workmate.adapters.inbound.document_text import BINARY_EXTS
@@ -54,13 +53,16 @@ def build_file_support(
     read_authorizer: NoteReadAuthorizer | None = None,
     shell_available: bool = False,
 ) -> tuple[
-    # Przedostatni argument fabryki to SKAZA rozmowy podana LENIWIE (``Callable``, nie ``bool``):
-    # sędzia mutacji czyta ją w chwili orzekania, a nie budowy katalogu (ADR 0066). Ostatni to
-    # ujście werdyktu sędziego do wiersza audytu tury (ADR 0065 §8) — ``None`` bez audytu.
+    # Czwarty argument fabryki to TOKEN TURY — wymagany, bez wartości domyślnej, bo pominięcie
+    # ma być błędem typowania, a nie cichym powrotem do losu (patrz docstring ``factory``).
+    # Przedostatni to SKAZA rozmowy podana LENIWIE (``Callable``, nie ``bool``): sędzia mutacji
+    # czyta ją w chwili orzekania, a nie budowy katalogu (ADR 0066). Ostatni to ujście werdyktu
+    # sędziego do wiersza audytu tury (ADR 0065 §8) — ``None`` bez audytu.
     Callable[
         [
             WorkspaceScope,
             AttachmentQueue,
+            str,
             str,
             str,
             Callable[[], bool],
@@ -101,11 +103,20 @@ def build_file_support(
         scope: WorkspaceScope,
         queue: AttachmentQueue,
         sender_id: str,
+        turn_token: str,
         trust_class: str = "unknown",
         tainted: bool | Callable[[], bool] = True,
         verdict_sink: Callable[[Verdict, str], None] | None = None,
     ) -> list[ToolSpec]:
         """Zbuduj ``File`` dla tej tury; akcje mutujące TYLKO dla rozpoznanego człowieka.
+
+        ``turn_token`` przychodzi Z ZEWNĄTRZ i jest WYMAGANY. Kiedyś był losowany tutaj, na
+        przesłance „każde wywołanie fabryki to jedna tura". Ta przesłanka jest fałszywa: drzwi
+        Teams ponawiają wiadomość po błędzie modelu (ADR 0069), a ponowienie woła fabrykę drugi
+        raz przy NIEZMIENIONEJ wiadomości i z pustą historią (``record_run`` nie zdążył pobiec).
+        Świeży los czynił wtedy z ponowienia „inną turę" i domykał punkt kontrolny człowieka
+        BEZ udziału człowieka. Token musi wywodzić się z tożsamości WIADOMOŚCI, a ją zna
+        wyłącznie responder — patrz ADR 0065, amendment 2026-09-03.
 
         Rozwiązanie tożsamości pada TU, przy budowie katalogu — tak samo jak przy bramce
         powłoki (ADR 0063): nierozpoznany nadawca nie dostaje zdolności, zamiast dostawać ją
@@ -140,10 +151,7 @@ def build_file_support(
             requester,
             trust_class,
             tainted,
-            # Token TURY: każde wywołanie fabryki to jedna tura, więc token wylosowany tutaj
-            # jest dokładnie tym, czego potrzebuje punkt kontrolny człowieka — zapowiedź i
-            # wykonanie muszą pochodzić z RÓŻNYCH tur.
-            uuid.uuid4().hex,
+            turn_token,
             shell_available,
             verdict_sink,
         )

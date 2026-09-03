@@ -228,3 +228,40 @@ def test_pump_survives_a_failing_round_and_tries_again(monkeypatch: pytest.Monke
 
     assert service.rundy >= 2  # kolejna runda mimo wyjątku w poprzedniej
     assert any("auto-komentarza CI" in rec.message for rec in caplog.records)
+
+
+# --- bramka magazynu zdarzeń jedzie przez main(), nie przez samą konfigurację ---
+
+
+def test_main_karmi_bramke_zdarzen_katalogiem_danych(tmp_path: Path, monkeypatch):
+    """Regresja szwu: te drzwi ZAPISUJĄ zdarzenia, a wołały ``validate()`` bez ``data_dir``.
+
+    Inwariant „treść z drzwi nie trafia do bazy wiedzy" był egzekwowany wyłącznie po stronie
+    drzwi Teams, które tego pliku nie zapisują — bramka po jednej stronie wspólnego magazynu
+    nie broni niczego. Sonda jedzie przez ``main``, bo to ono podaje argument; sonda na samej
+    ``EventsSettings.validate`` zostałaby zielona przy z powrotem pominiętym argumencie.
+    """
+    monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "t")
+    monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "o")
+    monkeypatch.setenv("WORKMATE_GITHUB_REPO", "r")
+    monkeypatch.setenv("WORKMATE_GITHUB_STATE", str(tmp_path / "state.json"))
+    monkeypatch.setenv("WORKMATE_EVENTS_DB", str(tmp_path / "events.db"))
+    monkeypatch.setenv("WORKMATE_DATA_DIR", str(tmp_path / "data"))
+
+    widziane: dict[str, object] = {}
+    prawdziwe = EventsSettings.validate
+
+    def szpieg(self, *, data_dir):  # noqa: ANN001, ANN202
+        widziane["data_dir"] = data_dir
+        return prawdziwe(self, data_dir=data_dir)
+
+    monkeypatch.setattr(EventsSettings, "validate", szpieg)
+
+    def _nie_uruchamiaj(coro):  # noqa: ANN001, ANN202
+        coro.close()  # bez tego pakiet dostaje ostrzeżenie o nieoczekiwanej korutynie
+
+    monkeypatch.setattr(app.asyncio, "run", _nie_uruchamiaj)
+
+    app.main()
+
+    assert widziane["data_dir"] == tmp_path / "data"

@@ -158,6 +158,58 @@ def test_create_shift_posts_shared_shift():
     assert seen["body"]["sharedShift"]["theme"] == "green"  # brak koloru → domyślnie stacjonarnie
 
 
+def test_create_time_off_posts_shared_time_off():
+    """Ścieżka ZAPISU czasu wolnego nie miała żadnego testu, w odróżnieniu od `create_shift`.
+
+    To nieodwracalny zapis w grafiku klienta: literówka w `sharedTimeOff`/`timeOffReasonId` albo
+    dryf kontraktu Graph wyszedłby dopiero w produkcji, u pracownika, po jego „tak".
+    """
+    from powiadomienia_teams.domain.models import TimeOff
+
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://graph.microsoft.com/v1.0/teams/T/schedule/timesOff"
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "timeoff-1"})
+
+    time_off = TimeOff(
+        "u1",
+        datetime(2026, 7, 24, tzinfo=timezone.utc),
+        datetime(2026, 7, 25, tzinfo=timezone.utc),
+        reason_id="TOR_URLOP",
+    )
+
+    assert _graph(handler).create_time_off("T", time_off) == "timeoff-1"
+    assert seen["body"]["userId"] == "u1"
+    assert seen["body"]["sharedTimeOff"]["timeOffReasonId"] == "TOR_URLOP"
+    assert seen["body"]["sharedTimeOff"]["startDateTime"] == "2026-07-24T00:00:00Z"
+    assert seen["body"]["sharedTimeOff"]["endDateTime"] == "2026-07-25T00:00:00Z"
+
+
+def test_list_time_off_reasons_pomija_nieaktywne_i_niepelne():
+    """Nieaktywny powód dalej wraca z Graph — użycie go dałoby odrzucony zapis u pracownika."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "timeOffReasons" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "value": [
+                    {"id": "TOR_URLOP", "displayName": "Urlop", "isActive": True},
+                    {"id": "TOR_STARY", "displayName": "Dawny powód", "isActive": False},
+                    {"id": "TOR_BEZ_NAZWY", "isActive": True},
+                    {"displayName": "Bez id", "isActive": True},
+                ]
+            },
+        )
+
+    reasons = _graph(handler).list_time_off_reasons("T")
+
+    assert reasons.by_name == {"urlop": "TOR_URLOP"}
+    assert reasons.names == {"TOR_URLOP": "Urlop"}
+
+
 def test_create_shift_includes_theme_when_set():
     from powiadomienia_teams.domain.models import Shift
 

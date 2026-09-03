@@ -1,6 +1,10 @@
 # WorkMate — specyfikacja systemowa (kontekst przekazania)
 
 Date: 2026-07-29 (zaktualizowane 2026-07-30 — D1-D3, patrz §0)
+Uwaga: DRZEWO KATALOGÓW w tym dokumencie jest nieaktualne od rozbicia monolitów (#76/#87,
+2026-09-02). Wymienia `config.py`, `tools.py`, `agent_wiring.py` i `responder.py` — dziś każde
+z nich jest PAKIETEM o tej nazwie, nie plikiem. Reszta dokumentu (historia decyzji, uzasadnienia)
+zachowuje wartość; stan bieżący struktury bierz z kodu.
 Status: accepted
 Author: P0w3r223
 Related to: CLAUDE.md, README.md, docs/roadmap.md, docs/roadmap-v1-gap-analysis.md, docs/adr/, docs/explanation/architecture.md

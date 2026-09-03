@@ -252,3 +252,87 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 - **Trust class of the turn** → until ADR 0066 supplies a real class, the judge treats **every turn as
   tainted** (confirmed 2026-08-14). With 0066's T3 labels shipping default-ON, the judge gets real
   provenance for read content immediately; the T1/T2 sender split arrives with 0062's flag.
+
+## Amendment (2026-09-02) — the checkpoint is scoped to the conversation, not just the turn
+
+Decision 6 above says the checkpoint is "a human checkpoint **in the Teams thread**", satisfied when
+the identical request "returns **from a different turn**", and that what it proves is that "a person
+spoke after **seeing** what would change". The implementation carried only the second half. The
+announcement key was `sha256(requester | kind | note_id | new_body)` — no conversation — while the
+register (`InMemoryConfirmations`) is built once per process and the turn token is minted fresh per
+turn. An announcement made in thread A therefore satisfied the checkpoint for the same change
+executed in thread B, for as long as the entry lived (15 min TTL).
+
+That is not the checkpoint this ADR describes. Seeing happens in a specific thread: the person in
+thread B saw nothing, and the person in thread A never answered. The proof the mechanism can offer
+is "a person spoke *here*, after the announcement was made *here*" — so the boundary is the pair
+(conversation, turn), and the turn alone is too weak.
+
+**Change.** `MutationRequest` carries a `conversation` field and it enters the announcement key. The
+value comes from the `WorkspaceScope` already closed over in `build_file_catalog`, so the model can
+neither supply nor alter it — the same property the turn token has.
+
+**What this does not change.** The strength of the proof is unchanged and still limited exactly as
+Decision 6 states: it shows that a person wrote something after seeing the announcement, not that
+they agreed. A stronger proof still needs a channel outside the model.
+
+**Why this is an amendment and not a bug fix.** A probe asserted the opposite behaviour
+(`test_confirmation_rests_on_the_turn_differing_not_on_where_it_was_written`), with a docstring
+explaining that consent follows the person speaking, "not the place where they did it". Its history
+is the interesting part: it was once named `…does_not_transfer_between_conversations…`, someone
+noticed the name contradicted the assertions, and corrected **the name** to match the code instead of
+checking the code against this ADR. Under CLAUDE.md rule 10 an invariant change is an ADR before
+code, so the decision is recorded here rather than left implicit in a renamed test.
+
+## Amendment (2026-09-03) — a retried message is not a later turn
+
+Decision 6 rests on one sentence: the identical request returning "from a different turn" proves a
+person spoke, **because a turn only exists when someone writes**. The 2026-09-02 amendment above
+tightened *where* that has to happen. This one corrects the premise itself.
+
+The turn token was minted inside the `File` catalogue factory, on the reading that "one call to the
+factory is one turn". That reading held until the branch that made `LLMError` retryable
+(ADR 0069): the Teams door now hands the **same message** back to the responder after a transient
+model failure, and `record_run` never ran, so the conversation looks exactly as it did before the
+first attempt. The second attempt therefore rebuilt the catalogue, minted a **fresh** token, and the
+model — seeing an identical context — reissued the identical `File(edit)`. Same announcement key,
+different token: the gate opened. **No person wrote anything between the announcement and its
+execution.** The checkpoint had defeated itself, and the mechanism that did it was a retry designed
+to make the door *more* reliable.
+
+**Change.** The turn token is derived from the identity of the inbound **message**
+(`sha256(source_message_id)`) and passed into the factory as a required argument. Doors with no
+concept of a message id (CLI, the Bot Framework door) supply a random value; they have no retry loop,
+so one call there really is one utterance. The value is never empty — an empty token would compare
+equal to itself and refuse every mutation silently, which is safe but indistinguishable from a broken
+feature.
+
+**Why the fix belongs at the responder, not the factory.** Only the responder knows what a turn *is*.
+The factory sees a call; the poller sees a delivery; the message id is the sole thing that survives a
+retry unchanged. Minting the token where the catalogue is assembled is exactly the mistake of
+measuring a turn by the machinery that serves it rather than by the person who caused it.
+
+**What this does not change.** The strength of the proof is still what Decision 6 says it is — a
+person wrote after seeing the announcement, not that they agreed. A stronger proof still needs a
+channel outside the model.
+
+**Update (2026-09-03, later the same day) — the `LLMError` retry was pulled from this release.** A
+review of the retry branch found that making `LLMError` retryable created several silent-loss and
+hang paths beyond the one this amendment fixes: a retried turn re-snapshots the outbox and discards
+the file the model produced; the agent's Anthropic client had no time bound; `ponawialne=(LLMError,)`
+did not separate transient from permanent failures; and the duplicate bridge-write below. Rather than
+land a half-built retry, the retry opt-in (`SafeResponder(..., ponawialne=(LLMError,))` at the Teams
+door) was **removed**; `LLMError` degrades gracefully in `SafeResponder` as before. The retry returns
+in a dedicated change together with the idempotency design it needs (outbox non-destruction on
+replay, a `source_message_id`-derived key on bridge writes, and idempotent call metrics).
+
+**This turn-token fix ships anyway, as defense-in-depth ahead of that return.** Deriving the token
+from the message identity is correct regardless of whether a retry loop exists today; keeping it means
+the checkpoint is already safe when the retry comes back, and the fix is cheap and self-contained.
+
+**Known consequence — now deferred with the feature, not accepted in this release.** The retry would
+replay every *other* write the turn had already performed before the failure — `Activity(create_issue)`
+and `Activity(comment)` have no equivalent checkpoint, so a retried turn could open a duplicate issue.
+With the retry removed this cannot happen now. Re-enabling the retry is therefore gated on deciding
+whether the bridge writes carry an idempotency key or the retry path withholds them — **a precondition
+of the feature's return, not an open risk that ships**.

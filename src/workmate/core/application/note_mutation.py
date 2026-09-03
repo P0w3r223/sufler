@@ -108,6 +108,7 @@ class NoteMutationService:
         requester: str,
         intent: str,
         turn_token: str = "",
+        conversation: str = "",
         trust_class: str = "unknown",
         tainted: bool = True,
         verdict_sink: VerdictSink | None = None,
@@ -138,6 +139,7 @@ class NoteMutationService:
             current_body=note.body,
             new_body=new_body.strip(),
             turn_token=turn_token,
+            conversation=conversation,
             trust_class=trust_class,
             tainted=tainted,
         )
@@ -156,6 +158,7 @@ class NoteMutationService:
         requester: str,
         intent: str,
         turn_token: str = "",
+        conversation: str = "",
         trust_class: str = "unknown",
         tainted: bool = True,
         verdict_sink: VerdictSink | None = None,
@@ -176,6 +179,7 @@ class NoteMutationService:
             intent=intent,
             current_body=note.body,
             turn_token=turn_token,
+            conversation=conversation,
             trust_class=trust_class,
             tainted=tainted,
         )
@@ -296,13 +300,22 @@ class NoteMutationService:
 
     @staticmethod
     def _confirmation_key(request: MutationRequest) -> str:
-        """Klucz zapowiedzi: człowiek + rodzaj + notatka + TREŚĆ.
+        """Klucz zapowiedzi: człowiek + ROZMOWA + rodzaj + notatka + TREŚĆ.
 
         Treść wchodzi w klucz, żeby zapowiedź „popraw akapit o terminie" nie autoryzowała
         podmiany całej notatki na coś innego przy powtórzeniu — potwierdzeniu ma podlegać
         konkretna zmiana, nie sama chęć zmieniania.
+
+        Rozmowa wchodzi z tego samego powodu, tylko w drugiej osi. Rejestr zapowiedzi powstaje RAZ
+        na proces, a token tury jest świeży co turę — bez zakresu rozmowy zapowiedź wystawiona
+        w wątku A przechodziła jako potwierdzenie w wątku B, dopóki wpis nie wygasł. Człowiek
+        widział wtedy zapowiedź gdzie indziej albo wcale, czyli punkt kontrolny nie miał materiału,
+        który ma sprawdzać.
         """
-        material = f"{request.requester}|{request.kind}|{request.note_id}|{request.new_body}"
+        material = (
+            f"{request.requester}|{request.conversation}|{request.kind}"
+            f"|{request.note_id}|{request.new_body}"
+        )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 

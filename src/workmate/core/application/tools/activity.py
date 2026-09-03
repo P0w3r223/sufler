@@ -42,12 +42,11 @@ _ACTIVITY_AKCJE: dict[str, str] = {
     ),
     "create_issue": (
         "`create_issue` — NOWE issue w repozytorium GitHub zespołu (ZAPIS). Wymaga: `title`, "
-        "`body` (Markdown). Opcjonalnie: `labels`. Tworzy wyłącznie nowe — bez edycji "
-        "i usuwania istniejących."
+        "`body` (Markdown). Opcjonalnie: `labels`."
     ),
     "comment": (
-        "`comment` — komentarz do istniejącego issue GitHuba (ZAPIS). Wymaga: `number`, `body` "
-        "(Markdown). Tworzy wyłącznie nowy komentarz."
+        "`comment` — NOWY komentarz do istniejącego issue GitHuba (ZAPIS). Wymaga: `number`, "
+        "`body` (Markdown)."
     ),
 }
 
@@ -87,7 +86,7 @@ _WORKLOG_NOTE = (
 )
 
 
-def build_activity_catalog(
+def build_activity_catalog(  # noqa: C901, PLR0915
     *,
     events: EventService | None = None,
     worklog: WorklogService | None = None,
@@ -166,11 +165,14 @@ def build_activity_catalog(
             by_kind: dict[str, int] = {}
             for event in items:
                 by_kind[event.kind] = by_kind.get(event.kind, 0) + 1
+            # MAKSIMUM, nie pierwszy element — ``recent`` sortuje po ``id`` (kolejność PRZYJĘCIA),
+            # a osobne watermarki per typ zasobu potrafią wpuścić starsze zdarzenie po nowszym.
+            najnowsze = max((e.occurred_at for e in items), default=None)
             return {
                 "project": project,
                 "event_count": len(items),
                 "by_kind": by_kind,
-                "latest_activity_at": items[0].occurred_at.isoformat() if items else None,
+                "latest_activity_at": najnowsze.isoformat() if najnowsze else None,
                 "recent": [e.model_dump(mode="json") for e in items[:20]],
             }
 

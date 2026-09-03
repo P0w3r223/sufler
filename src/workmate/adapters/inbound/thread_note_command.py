@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from workmate.core.errors import NoteAuthorizationError, WorkMateError
 
@@ -150,8 +151,11 @@ class ThreadNoteRouter:
         authorizer: MeetingNoteAuthorizer | None = None,
         scheduler: Callable[[Callable[[], None]], None] | None = None,
         callback: Callable[[str, str], None] | None = None,
+        tz: ZoneInfo | None = None,
     ) -> None:
         self._service = service
+        # Strefa drzwi — patrz ``_iso_date``. ``None`` zostawia dawne liczenie w UTC.
+        self._tz = tz
         # Rejestr projektów — WYŁĄCZNIE do podpowiedzi i do rozpoznania klucza w formie
         # naturalnej. O tym, czy projekt istnieje, i tak rozstrzyga ``require_project``
         # w serwisie: ta ścieżka niczego nie autoryzuje. ``None`` (ścieżki operatorskie,
@@ -197,7 +201,7 @@ class ThreadNoteRouter:
 
     def _handle(self, project: str, ctx: ThreadNoteContext) -> str:
         try:
-            on = _iso_date(ctx.source_timestamp)
+            on = _iso_date(ctx.source_timestamp, self._tz)
         except ValueError:
             return _BAD_TIMESTAMP
         # Autoryzacja PRZED poborem wątku (B2 / ADR 0042): nieznany nadawca → odmowa, zero pracy.
@@ -325,8 +329,16 @@ def _ze_zdania(rest: str, klucze: Mapping[str, str], wzmianki: Sequence[str]) ->
     return trafienia.pop() if len(trafienia) == 1 else ""
 
 
-def _iso_date(timestamp: str) -> date:
-    """Data z Graph ``created`` (ISO-8601); pusty/zły → ``ValueError`` (deterministyczna data)."""
+def _iso_date(timestamp: str, tz: ZoneInfo | None = None) -> date:
+    """Data KALENDARZOWA znacznika z Graph w strefie drzwi; pusty/zły → ``ValueError``.
+
+    Konwersja jest tu istotą, nie kosmetyką: Graph podaje czas w UTC, więc „zapisz to" wysłane
+    o 23:30 czasu warszawskiego wypadało na POPRZEDNI dzień. Data wchodzi do ``build_note_id``,
+    czyli notatka dostawała zarówno inny dzień w treści, jak i inny identyfikator — a notatki
+    wątkowe są niezmienne, więc korekta wymaga założenia nowej. ``None`` (ścieżki operatorskie
+    i testy) zachowuje dawne zachowanie, czyli datę w UTC.
+    """
     if not timestamp:
         raise ValueError("pusty znacznik czasu wiadomości")
-    return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).date()
+    moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    return moment.astimezone(tz).date() if tz is not None else moment.date()

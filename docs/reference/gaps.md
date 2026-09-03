@@ -1,5 +1,12 @@
 # Audyt gotowości wdrożeniowej WorkMate (flota Docker/Ubuntu)
 
+> **MIGAWKA z 2026-07-30, nie stan bieżący.** Dowody są cytowane po `plik:linia`, a te wskaźniki
+> wygasają przy każdym refaktorze — po rozbiciu monolitów (#76/#87) część z nich już nie
+> rozwiązuje się do niczego (`config.py` nie istnieje od #85, `teams_graph/app.py:955-958` wskazuje
+> poza koniec pliku). Czytaj ten dokument po HISTORIĘ decyzji i po klasy ryzyka; stan bieżący
+> bierz z kodu. Ta sama zasada, co przy `.claude/SYSTEM-SPEC.md` (CLAUDE.md, „Budżet kontekstu").
+
+
 ## 1. Potwierdzone i nierozstrzygalne
 
 | ID | Status | Dowód (plik:linia) | Co się stanie na serwerze | Waga |

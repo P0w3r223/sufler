@@ -118,7 +118,7 @@ _STAGED_ATTACHMENT_EXTS = SUPPORTED_EXTS | frozenset(
 )
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915
     """Uruchom proces drzwi Teams (delegowany polling) z runtime agenta (read-only)."""
     env.load_dotenv()
     env.configure_logging()
@@ -149,15 +149,23 @@ def main() -> None:
     conv_settings = ConversationSettings.from_env()
     conv_settings.validate()
     workspace_settings = WorkspaceSettings.from_env()
-    workspace_settings.validate(data_dir=core_settings.data_dir)
+    workspace_settings.validate(
+        data_dir=core_settings.data_dir,
+        persistent_paths=core_settings.persistent_paths(),
+    )
     shell_settings = ShellSettings.from_env()
     shell_settings.validate()
+    # Sufit listy procedur sprawdzany PRZY STARCIE, nie przy składaniu nagłówka: zła wartość
+    # ukrywa procedury bez śladu, więc ma wywrócić start, zamiast wyglądać jak pusty katalog.
+    skills_settings = SkillsSettings.from_env()
+    skills_settings.validate()
     # Bramka członkostwa POWŁOKI (ADR 0063), osobno — ``None`` gdy powłoka wyłączona. Gdy włączona,
     # WYMAGA mapy tożsamości (fail-fast w builderze), więc rozstrzygamy ją WCZEŚNIE: brak mapy ma
     # wywrócić start, zanim ruszymy resztę składania drzwi.
     shell_authorizer = _build_shell_authorizer(settings, shell_settings)
     # R/L1: pamięć rozmów agenta i wspólny events.db MUSZĄ być zapisywalne (tryb watch pisze oba).
     events_settings = EventsSettings.from_env()
+    events_settings.validate(data_dir=core_settings.data_dir)
     require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
     require_writable(conv_settings.db_path, "WORKMATE_CONVERSATIONS_DB")
     # Baza wiedzy — sondowana TYLKO przy włączonym zapisie notatek (inaczej drzwi read-only
@@ -284,7 +292,7 @@ def main() -> None:
         settings.outbox_max_files_per_turn,
         settings.outbox_max_seconds,
         # Procedury z `/mnt/skills` (ADR 0005) — bez ścieżki lista zostaje pusta.
-        SkillsSettings.from_env(),
+        skills_settings,
         note_read_authorizer=note_read_authorizer,
         shell_authorizer=shell_authorizer,
         # Narzędzie ``File`` (ADR 0064) dzieli sufit z materializerem załączników, bo pobrania

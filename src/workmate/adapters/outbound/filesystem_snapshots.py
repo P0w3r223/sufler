@@ -65,6 +65,13 @@ def _bezpieczny_segment(note_id: str) -> str:
     Identyfikator zawiera ukośniki (``firma/projekt/plik``), więc bez spłaszczenia migawki
     tworzyłyby drzewo lustrzane do bazy wiedzy — a ``..`` w środku wyprowadziłby zapis poza
     katalog migawek.
+
+    Kropka zostaje na białej liście znaków (rozszerzenia plików), więc samo filtrowanie
+    przepuszczało segmenty ``.`` i ``..`` w całości — a to dokładnie te dwa, które ta funkcja ma
+    odciąć. Dziś nieosiągalne, bo ``NoteMutationService`` żąda istnienia notatki przed migawką,
+    ale funkcja istnieje wyłącznie po to, żeby tego nie zakładać. ``filesystem_outbox._entry_path``
+    odrzuca tę parę wprost od początku.
     """
     plaski = note_id.replace("/", "__").replace("\\", "__")
-    return "".join(znak for znak in plaski if znak.isalnum() or znak in "-_.")[:200] or "bez-nazwy"
+    bezpieczny = "".join(znak for znak in plaski if znak.isalnum() or znak in "-_.")[:200]
+    return bezpieczny if bezpieczny not in {"", ".", ".."} else "bez-nazwy"

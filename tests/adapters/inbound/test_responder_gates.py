@@ -124,7 +124,7 @@ def _file_factory_spy(widziane: list[bool]):
     rozwija jedno i drugie — mierzymy STAN rozmowy, nie sposób jego przekazania.
     """
 
-    def factory(_scope, _queue, _sender_id, _trust, tainted, _verdict_sink=None):
+    def factory(_scope, _queue, _sender_id, _token, _trust, tainted, _verdict_sink=None):
         widziane.append(tainted() if callable(tainted) else tainted)
         return []
 
@@ -255,7 +255,7 @@ class _FakeTurnAudit:
 def _sink_spy(zebrane: list[object]):
     """Fabryka ``File`` notująca UJŚCIE werdyktu, które dostała od respondera."""
 
-    def factory(_scope, _queue, _sender_id, _trust, _tainted, verdict_sink=None):
+    def factory(_scope, _queue, _sender_id, _token, _trust, _tainted, verdict_sink=None):
         zebrane.append(verdict_sink)
         return []
 
@@ -294,3 +294,86 @@ def test_without_audit_the_sink_is_absent_rather_than_a_no_op():
     )
 
     assert zebrane == [None]
+
+
+# --- token tury a ponowienie wiadomości (ADR 0065, amendment 2026-09-03) --------
+
+
+def _token_spy(zebrane: list[str]):
+    """Fabryka ``File`` notująca TOKEN TURY, który dostała od respondera."""
+
+    def factory(_scope, _queue, _sender_id, turn_token, _trust, _tainted, _verdict_sink=None):
+        zebrane.append(turn_token)
+        return []
+
+    return factory
+
+
+def _wiadomosc(source_message_id: str) -> InboundMessage:
+    return InboundMessage(
+        text="popraw notatkę",
+        conversation_id="team/chan/root",
+        sender_id="aad-1",
+        source_message_id=source_message_id,
+    )
+
+
+def test_ta_sama_wiadomosc_obsluzona_dwa_razy_dostaje_TEN_SAM_token_tury():
+    """Regresja bezpieczeństwa: token był losowany w fabryce, więc PONOWIENIE tej samej
+    wiadomości (drzwi Teams po ``LLMError``, ADR 0069) wyglądało dla punktu kontrolnego
+    jak „inna tura" i domykało zgodę człowieka BEZ człowieka.
+
+    Sonda jedzie przez respondera, nie przez samą funkcję: ponowienie odtwarza CAŁĄ obsługę,
+    więc pytanie brzmi „co dostaje fabryka przy drugim przebiegu", a nie „co zwraca skrót".
+
+    Asercja KSZTAŁTU nie jest ozdobą i jest tu po przejściach: bez niej ta sonda przechodziła
+    na kodzie SPRZED poprawki. Responder podawał wtedy o jeden argument mniej, więc czwarty
+    parametr atrapy łapał klasę zaufania — dwa przebiegi widziały zgodnie ``"T1"``, równość
+    była spełniona trywialnie i sonda nazwana „regresją bezpieczeństwa" nie widziała dziury,
+    której pilnuje. Skrót ma 32 znaki szesnastkowe; sąsiednie napisy (``"T1"``, AAD nadawcy)
+    tego kształtu nie mają, więc przesunięcie argumentu czerwieni się natychmiast.
+    """
+    zebrane: list[str] = []
+    responder, _ = _responder(
+        file_catalog_factory=_token_spy(zebrane), attachment_budget_bytes=1024
+    )
+
+    _reply(responder, _wiadomosc("graph-msg-1"))
+    _reply(responder, _wiadomosc("graph-msg-1"))
+
+    pierwszy, drugi = zebrane
+    assert pierwszy == drugi
+    assert len(pierwszy) == 32
+    assert set(pierwszy) <= set("0123456789abcdef")
+
+
+def test_kolejna_wiadomosc_czlowieka_dostaje_INNY_token_tury():
+    """Druga połowa kontraktu: gdyby token był stały w rozmowie, człowiek nie miałby jak
+    potwierdzić zapowiedzi — mutacja nie przeszłaby nigdy."""
+    zebrane: list[str] = []
+    responder, _ = _responder(
+        file_catalog_factory=_token_spy(zebrane), attachment_budget_bytes=1024
+    )
+
+    _reply(responder, _wiadomosc("graph-msg-1"))
+    _reply(responder, _wiadomosc("graph-msg-2"))
+
+    pierwszy, drugi = zebrane
+    assert pierwszy != drugi
+
+
+def test_drzwi_bez_identyfikatora_wiadomosci_dostaja_token_mimo_wszystko():
+    """CLI i Bot Framework nie znają ``source_message_id`` i nie mają pętli ponowień —
+    tam jedno wywołanie to naprawdę jedna wypowiedź. Token ma być NIEPUSTY i świeży,
+    bo pusty zablokowałby mutację cicho, na zawsze."""
+    zebrane: list[str] = []
+    responder, _ = _responder(
+        file_catalog_factory=_token_spy(zebrane), attachment_budget_bytes=1024
+    )
+
+    _reply(responder, _wiadomosc(""))
+    _reply(responder, _wiadomosc(""))
+
+    pierwszy, drugi = zebrane
+    assert pierwszy and drugi
+    assert pierwszy != drugi

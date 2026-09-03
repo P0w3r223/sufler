@@ -128,6 +128,48 @@ def test_happy_path_uses_trusted_project_and_graph_timestamp_date():
 # --- data z Graph timestampu ------------------------------------------------
 
 
+def test_data_notatki_liczy_sie_w_STREFIE_DRZWI_nie_w_utc_znacznika():
+    """Regresja: „zapisz to" o 23:30 czasu warszawskiego zakładało notatkę pod POPRZEDNIM dniem.
+
+    Graph podaje czas w UTC, a data wchodzi do ``build_note_id`` — notatka dostawała więc zarówno
+    inny dzień w treści, jak i inny identyfikator. Notatki `-thr-` są niezmienne, więc korekta
+    wymaga założenia nowej. Bliźniacze drzwi digestu konwertują strefę od początku.
+    """
+    from zoneinfo import ZoneInfo
+
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service, tz=ZoneInfo("Europe/Warsaw"))
+
+    # 21:30 UTC = 23:30 w Warszawie → nadal 28 lipca.
+    router.dispatch(
+        "@WorkMate zapisz to | scada-integration",
+        _ctx(source_timestamp="2026-07-28T21:30:00Z"),
+    )
+    # 22:30 UTC = 00:30 następnego dnia w Warszawie → już 29 lipca.
+    router.dispatch(
+        "@WorkMate zapisz to | scada-integration",
+        _ctx(source_timestamp="2026-07-28T22:30:00Z"),
+    )
+
+    assert [wywolanie[3] for wywolanie in service.calls] == [
+        date(2026, 7, 28),
+        date(2026, 7, 29),
+    ]
+
+
+def test_bez_strefy_data_zostaje_w_utc_jak_dotad():
+    """Kontrast: ścieżki operatorskie i testy bez strefy zachowują dawne zachowanie."""
+    service = _FakeThreadService()
+    router = ThreadNoteRouter(service)
+
+    router.dispatch(
+        "@WorkMate zapisz to | scada-integration",
+        _ctx(source_timestamp="2026-07-28T22:30:00Z"),
+    )
+
+    assert service.calls[0][3] == date(2026, 7, 28)
+
+
 def test_empty_timestamp_returns_bad_timestamp_message():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service)

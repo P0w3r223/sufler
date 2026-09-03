@@ -106,3 +106,26 @@ def test_from_env_reads_gate_and_schedule(monkeypatch):
     assert settings.dry_run is False
     assert settings.run_hour == 9
     assert settings.window_days == 14
+
+
+@pytest.mark.parametrize("literowka", ["ture", "flase", "nie", "tak", ""])
+def test_literowka_w_DRY_RUN_wywala_start_zamiast_uzbrajac_wysylke(monkeypatch, literowka: str):
+    """Jedyna flaga o ODWRÓCONEJ polaryzacji — zwykły parser czynił z literówki realną wysyłkę.
+
+    ``_bool_from_env`` mapuje wszystko spoza listy prawdy na ``False``. Dla bramek ``enable_*`` to
+    kierunek bezpieczny, bo literówka zostawia zdolność wyłączoną. Tutaj ``False`` znaczy „to nie
+    jest próba", więc ``DRY_RUN=ture`` przy ``ENABLED=true`` puszczało DM do CAŁEJ listy odbiorców.
+    Pole nie nazywa się ``enable_*``, więc golden-test bramek go nie obejmuje.
+    """
+    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_DRY_RUN", literowka)
+
+    with pytest.raises(ValueError, match="WORKMATE_TEAMS_DIGEST_DRY_RUN"):
+        TeamsDigestSettings.from_env()
+
+
+@pytest.mark.parametrize(("wartosc", "oczekiwane"), [("off", False), ("0", False), ("on", True)])
+def test_rozpoznane_wartosci_DRY_RUN_dzialaja_jak_dotad(monkeypatch, wartosc, oczekiwane):
+    """Kontrast: ścisły parser ZAWĘŻA wejście, nie zmienia znaczenia wartości poprawnych."""
+    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_DRY_RUN", wartosc)
+
+    assert TeamsDigestSettings.from_env().dry_run is oczekiwane

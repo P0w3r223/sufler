@@ -51,6 +51,7 @@ from powiadomienia_teams.messages import (
     STALE_WEEK_TEXT,
     UNCLEAR_TEXT,
     WRITE_FAILED_TEXT,
+    build_already_off_text,
     build_confirm_text,
     build_nudge_text,
     build_self_filled_text,
@@ -154,8 +155,27 @@ def _najblizsze_okno(settings: Settings, moment: datetime) -> datetime:
     )
 
 
-def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[Member]:
-    """Jeden przebieg powiadomień: wykryj luki, zbuduj propozycje, wyślij (lub loguj w dry-run)."""
+def run_once(  # noqa: PLR0915
+    settings: Settings,
+    client: GraphClient,
+    *,
+    now: datetime,
+    zegar: Callable[[], datetime] | None = None,
+) -> list[Member]:
+    """Jeden przebieg powiadomień: wykryj luki, zbuduj propozycje, wyślij (lub loguj w dry-run).
+
+    ``now`` to odniesienie TYGODNIA docelowego — przy nadrobieniu jest to miniony termin, więc
+    stoi w miejscu przez cały przebieg. ``zegar`` oddaje BIEŻĄCY czas i jest wołany osobno przed
+    każdą wysyłką, bo dławienie Graph potrafi rozciągnąć przebieg poza okno ciszy. Te dwa czasy
+    rozjeżdżają się celowo i dlatego są osobnymi parametrami; ten sam podział ma już
+    ``_przebieg_i_podsumowanie``.
+
+    Bez ``zegar`` przebieg czyta zegar systemowy — czyli zachowanie produkcyjne. Wstrzyknięcie go
+    jest jedyną drogą, żeby sonda przebiegu nie zależała od DNIA I GODZINY swojego uruchomienia:
+    domyślne okno wysyłki to pn-pt 8-18, więc bez tego szwu osiem sond padało w każdy weekend,
+    a `pytest` bramkuje budowanie obrazu (`Dockerfile`).
+    """
+    teraz = zegar if zegar is not None else (lambda: datetime.now(_UTC))
     tz = settings.tz
     ctx = settings.team_context  # jeden zespół dziś; pętla po wielu wepnie się tutaj (ADR 0001)
     client.refresh_auth()
@@ -165,7 +185,10 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     # innego (potwierdzone na żywo — „Virtual WorkMate" trafiło na listę braków). Filtr w KODZIE,
     # nie tylko w `ONLY_USER_IDS`, bo pusta lista odbiorców oznacza „wszyscy" i wtedy konfiguracja
     # nie chroni przed niczym.
-    members = [m for m in client.list_members(ctx.team_id) if m.user_id != me_id]
+    # Porównanie po `casefold`: `/me` i `/teams/{id}/members` potrafią oddać ten sam GUID różną
+    # wielkością liter, a wtedy konto bota przechodziło przez filtr i bot pisał sam do siebie.
+    nasze_konto = me_id.casefold()
+    members = [m for m in client.list_members(ctx.team_id) if m.user_id.casefold() != nasze_konto]
 
     prior_monday, target_monday, target_end = week_windows(now, tz)
 
@@ -182,7 +205,7 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
     off_by_member = off_weekdays_by_member(next_time_off, target_monday, tz)
     missing = list(members_without_shifts(members, next_shifts, off_by_member))
     if settings.only_user_ids:  # tryb pilotażowy — ogranicz do wskazanych osób
-        missing = [m for m in missing if m.user_id in settings.only_user_ids]
+        missing = [m for m in missing if m.user_id.casefold() in settings.only_user_ids]
     prior_shifts = client.read_shifts(
         ctx.team_id, prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)
     )
@@ -211,7 +234,7 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
         # udanym zapisem ma już zmianę w grafiku i nie występuje w `missing`.
         if existing is not None and existing.week_start == week_start_iso:
             continue
-        if not settings.dry_run and not _wolno_inicjowac(settings, datetime.now(_UTC)):
+        if not settings.dry_run and not _wolno_inicjowac(settings, teraz()):
             # Okno sprawdzamy PRZED KAŻDĄ wysyłką, nie raz na przebieg: dławienie Graph potrafi
             # rozciągnąć przebieg na kilkadziesiąt minut, a wtedy prośby wychodziły już po ciszy.
             # Przerwanie jest bezpieczne — wysłani mają pending, reszta poczeka na otwarcie okna.
@@ -248,7 +271,7 @@ def run_once(settings: Settings, client: GraphClient, *, now: datetime) -> list[
         # Fallback, gdy Graph nie zwrócił znacznika: realny „teraz", NIE `now`. Przy nadrobieniu
         # (`_catchup_due`) `now` to PRZESZŁY termin — użycie go cofnęłoby watermark przed faktyczny
         # czas wysyłki, przez co listener mógłby wziąć wcześniejszą wiadomość z czatu za odpowiedź.
-        sent_iso = sent_at or to_graph_iso(datetime.now(_UTC))
+        sent_iso = sent_at or to_graph_iso(teraz())
         state[member.user_id] = st.PendingReminder(
             member_id=member.user_id,
             member_name=member.display_name,
@@ -492,16 +515,22 @@ def _policz_nierozstrzygniete(
         st.save_state(settings.state_path, state)
     if zaalarmowane:
         nazwy = ", ".join(sorted(p.member_name for p in zaalarmowane))
+        identyfikatory = ", ".join(sorted(p.member_id for p in zaalarmowane))
         logger.error(
             "Nie udało się rozstrzygnąć odczytu czatu %d razy z rzędu dla: %s",
             _MAX_CYKLI_UNKNOWN,
             nazwy,
         )
+        # Na webhook idzie LICZBA i identyfikatory, nie imiona: ten kanał bywa poza organizacją
+        # (Power Automate, Slack, dowolny endpoint operatora) — dokładnie ten powód, dla którego
+        # istnieją `_tresc_publiczna` i `AmbiguousAccountError.publiczny`. Nazwiska zostają
+        # w `logger.error` tuż wyżej, czyli w kanale wewnętrznym.
         _alert(
             settings,
             "Nie da się odczytać czatu przypomnienia",
-            f"{_MAX_CYKLI_UNKNOWN} cykli z rzędu bez rozstrzygnięcia dla: {nazwy}. Dopóki trwa, "
-            f"te osoby nie dostaną ani domknięcia, ani nowego przypomnienia.",
+            f"{_MAX_CYKLI_UNKNOWN} cykli z rzędu bez rozstrzygnięcia dla {len(zaalarmowane)} "
+            f"osób ({identyfikatory}). Dopóki trwa, te osoby nie dostaną ani domknięcia, "
+            f"ani nowego przypomnienia. Imiona są w logu usługi.",
         )
 
 
@@ -589,12 +618,13 @@ def _close_bez_dowodu(
             pending.member_id,
         )
     st.save_state(settings.state_path, state)
+    # Jak wyżej: webhook dostaje liczbę i identyfikatory, imiona zostają w logu usługi.
     _alert(
         settings,
         "Przypomnienia zablokowane na odczycie czatu",
         f"{len(zablokowane)} wpisów zamknięto po przekroczeniu twardego sufitu wieku bez "
         f"udanego odczytu czatu. Pracownicy NIE dostali wiadomości — sprawdź, czy czaty i konta "
-        f"nadal istnieją: {', '.join(sorted(p.member_name for p in zablokowane))}",
+        f"nadal istnieją: {', '.join(sorted(p.member_id for p in zablokowane))}",
     )
 
 
@@ -743,6 +773,35 @@ def _close_self_filled(
             odlozone,
             _najblizsze_okno(settings, now).isoformat(),
         )
+
+
+def _wyslij_po_domknieciu(client: GraphClient, pending: st.PendingReminder, html: str) -> None:
+    """Wyślij wiadomość, której commit JUŻ się utrwalił — awaria wysyłki nie może cofnąć czasu.
+
+    Wzorzec z ``_close_self_filled``: przy statusie TERMINALNYM kolejność jest „commit, potem
+    wysyłka", więc nieosłonięty wyjątek zostawiał wpis zamknięty NA ZAWSZE, pracownika bez
+    jednego słowa, a jego odpowiedź za przesuniętym watermarkiem — czyli nie do odzyskania.
+    Doliczał się przy tym do licznika „nie da się odczytać czatu" (izolacja per-osoba zapisuje
+    ``ReadOutcome.UNKNOWN``), więc alarm wskazywał operatorowi zupełnie inną awarię niż ta,
+    która zaszła.
+
+    Odwrotna kolejność (wysyłka przed commitem) jest tu niedostępna: przy statusie terminalnym
+    nie ma czego cofać tak, jak robi to gałąź ``AWAITING_CONFIRM`` przez ``_Migawka``. Zostaje
+    log — utrata wiadomości jest wtedy widoczna, a nie przebrana za awarię odczytu.
+
+    Dwa wywołania dotyczą gałęzi NIETERMINALNYCH (prośba o doprecyzowanie). Tam skutek jest
+    łagodniejszy — wpis zostaje otwarty i wróci przy kolejnym cyklu — ale osłona i tak jest na
+    miejscu: watermark już ruszył, więc ponowienie i tak nie odzyskałoby tej wiadomości, a bez
+    osłony dochodziłby jeden fałszywy cykl ``UNKNOWN`` w liczniku „nie da się odczytać czatu".
+
+    ``AuthExpiredError`` przelatuje: utrata sesji dotyczy całej usługi, nie tej wiadomości.
+    """
+    try:
+        client.send_chat_message(pending.chat_id, html)
+    except AuthExpiredError:
+        raise
+    except Exception:
+        logger.exception("Nie udało się wysłać domknięcia do %s", pending.member_name)
 
 
 def _commit(
@@ -1033,11 +1092,32 @@ def _interpret_and_confirm(
                     "Pominięto część dni wolnych dla %s — brak powodów czasu wolnego w zespole",
                     pending.member_name,
                 )
+        # Dni JUŻ oznaczone jako wolne w Shifts odsiewamy TUTAJ, a nie dopiero przy zapisie.
+        # Komentarz nad tym blokiem obiecuje, że wiadomość ma zapowiadać „dokładnie to, co zostanie
+        # zapisane" — a `_build_writable` odsiewało je później, więc bot zapowiadał „Zapiszę czas
+        # wolny: pt: Urlop" dla dnia, którego nie miał zamiaru tknąć. Gdy odsiew zabierał WSZYSTKO,
+        # zapis kończył się komunikatem o minionym tygodniu, nieprawdziwym w tym scenariuszu.
+        juz_wolne = set(pending.known_time_off_weekdays)
+        juz_w_grafiku = [w for w in resolved_time_off if int(w.get("weekday", -1)) in juz_wolne]
+        resolved_time_off = [
+            w for w in resolved_time_off if int(w.get("weekday", -1)) not in juz_wolne
+        ]
         if decision.schedule.is_empty and not resolved_time_off:
+            if juz_w_grafiku:
+                # Stan świata jest już taki, o jaki prosił pracownik — to domknięcie POMYŚLNE,
+                # nie porażka. Status terminalny jak przy samodzielnym uzupełnieniu grafiku.
+                pending.status = st.SELF_FILLED
+                _commit(settings, state, pending, watermark, reply_text=text)
+                _wyslij_po_domknieciu(
+                    client,
+                    pending,
+                    to_html(build_already_off_text(int(w["weekday"]) for w in juz_w_grafiku)),
+                )
+                return
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
             _commit(settings, state, pending, watermark, reply_text=text)
-            client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
+            _wyslij_po_domknieciu(client, pending, to_html(UNCLEAR_TEXT))
             return
         migawka = _Migawka.z_pendingu(pending)
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
@@ -1060,10 +1140,10 @@ def _interpret_and_confirm(
     elif decision.action == "decline":
         pending.status = st.DECLINED
         _commit(settings, state, pending, watermark, reply_text=text)
-        client.send_chat_message(pending.chat_id, to_html(DECLINED_TEXT))
+        _wyslij_po_domknieciu(client, pending, to_html(DECLINED_TEXT))
     else:
         _commit(settings, state, pending, watermark, reply_text=text)
-        client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
+        _wyslij_po_domknieciu(client, pending, to_html(UNCLEAR_TEXT))
 
 
 def _poll_delay(settings: Settings, outcome: PollOutcome | None, now: datetime) -> float:
@@ -1093,6 +1173,7 @@ def _run_once_with_retry(
     attempts: int = _RUN_RETRY_ATTEMPTS,
     backoff_s: int = _RUN_RETRY_BACKOFF_S,
     sleep: Callable[[float], None] = time.sleep,
+    zegar: Callable[[], datetime] | None = None,
 ) -> None:
     """Uruchom ``run_once``, ponawiając transientne błędy z narastającym backoffem, zanim odpuścisz.
 
@@ -1112,7 +1193,7 @@ def _run_once_with_retry(
         # a bez odświeżenia healthcheck zgłosiłby „niezdrowy" dla usługi, która właśnie pracuje.
         _touch_heartbeat(settings)
         try:
-            run_once(settings, client, now=now)
+            run_once(settings, client, now=now, zegar=zegar)
             return
         except (
             AuthExpiredError,
@@ -1353,6 +1434,7 @@ def _safe_run_once(
     now: datetime,
     *,
     sleep: Callable[[float], None] = time.sleep,
+    zegar: Callable[[], datetime] | None = None,
 ) -> bool:
     """Przebieg z ponowieniem; zwraca czy się POWIÓDŁ. Utrata tokenu zatrzymuje usługę.
 
@@ -1362,7 +1444,7 @@ def _safe_run_once(
     try:
         # `sleep` MUSI iść dalej: to pętla ponowień faktycznie usypia (30 s + 60 s), więc bez
         # przekazania parametru wstrzyknięcie atrapy nic nie daje i testy śpią naprawdę.
-        _run_once_with_retry(settings, client, now=now, sleep=sleep)
+        _run_once_with_retry(settings, client, now=now, sleep=sleep, zegar=zegar)
         return True
     except OknoWysylkiZamknieteError:
         raise  # nie awaria: godziny ciszy przerwały przebieg — decyduje o tym wołający
@@ -1374,7 +1456,12 @@ def _safe_run_once(
         _alert(
             settings,
             "Przebieg powiadomień nie powiódł się",
-            f"Mimo ponowień: {blad}. Nikt nie dostał prośby w tym tygodniu.",
+            # Przez `_tresc_publiczna`, bo to jest kanał ZEWNĘTRZNY. Reguła należy do ATRYBUTU
+            # `publiczny`, nie do jednej klasy wyjątku: dziś jedyny wyjątek z danymi osobowymi
+            # (`AmbiguousAccountError`) tędy NIE przechodzi, bo dziedziczy po `AuthExpiredError`
+            # i łapie go gałąź wyżej. Alert nie ma jednak prawa tego zakładać o każdym przyszłym
+            # wyjątku — dwa sąsiednie alerty stosują tę samą redakcję z tego samego powodu.
+            f"Mimo ponowień: {_tresc_publiczna(blad)}. Nikt nie dostał prośby w tym tygodniu.",
         )
         return False
 
@@ -1435,6 +1522,7 @@ def _przebieg_i_podsumowanie(
     sleep: Callable[[float], None],
     *,
     teraz: datetime | None = None,
+    zegar: Callable[[], datetime] | None = None,
 ) -> WynikPrzebiegu:
     """Przebieg RAZEM z podsumowaniem — nierozłącznie. Zwraca, czy przebieg się powiódł.
 
@@ -1446,9 +1534,15 @@ def _przebieg_i_podsumowanie(
     ``now`` to odniesienie TYGODNIA (przy nadrobieniu — miniony termin), a ``teraz`` to bieżąca
     chwila, po której orzekamy o godzinach ciszy. Przy nadrobieniu te dwie wartości są RÓŻNE
     i mylenie ich znaczyłoby sprawdzanie pory doby sprzed kilku godzin.
+
+    ``zegar`` jest ODDZIELNY od ``teraz`` i jedzie dalej, do ``run_once``. Wygląda na duplikat
+    tylko dopóki się go nie rozdzieli: ``teraz`` rozstrzyga JEDNO pytanie („czy w tej chwili wolno
+    zacząć”), a ``zegar`` jest wołany raz przed KAŻDĄ wysyłką, bo dławienie Graph potrafi
+    rozciągnąć przebieg poza okno ciszy. Podanie ``teraz`` jako stałego zegara zdjęłoby tę drugą
+    bramkę — sonda przerwanego przebiegu przechodziła wtedy jako UDANY.
     """
-    teraz = teraz or datetime.now(_UTC)
-    if not _wolno_inicjowac(settings, teraz):
+    chwila = teraz if teraz is not None else datetime.now(_UTC)
+    if not _wolno_inicjowac(settings, chwila):
         # Godziny ciszy: cotygodniowa prośba i podsumowanie to wiadomości INICJOWANE przez bota.
         # ODLOZONY (nie NIEUDANY) mówi pętli, że ma trzymać ten termin do OTWARCIA okna, zamiast
         # oddawać go oknu łaski, które w środku nocy wygaśnie.
@@ -1457,11 +1551,11 @@ def _przebieg_i_podsumowanie(
             settings.send_window_start_hour,
             settings.send_window_end_hour,
             ",".join(str(d) for d in settings.send_window_weekdays),
-            _najblizsze_okno(settings, teraz).isoformat(),
+            _najblizsze_okno(settings, chwila).isoformat(),
         )
         return WynikPrzebiegu.ODLOZONY
     try:
-        udany = _safe_run_once(settings, client, now=now, sleep=sleep)
+        udany = _safe_run_once(settings, client, now=now, sleep=sleep, zegar=zegar)
     except OknoWysylkiZamknieteError as blad:
         # Okno zamknęło się w trakcie (dławienie Graph). Reszta prośb czeka — to odłożenie,
         # nie awaria, więc podsumowanie też poczeka na dokończony przebieg.
@@ -1522,7 +1616,7 @@ def _po_probie(
     )
 
 
-def run_forever(
+def run_forever(  # noqa: C901, PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,

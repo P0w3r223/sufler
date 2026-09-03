@@ -73,7 +73,7 @@ def request_with_retry(
             continue
         if response.status_code == 429 and throttled < _MAX_429_RETRIES:
             throttled += 1
-            sleep(_retry_after(response))
+            sleep(retry_after_s(response))
             continue
         if (
             retry_transient
@@ -114,7 +114,7 @@ async def async_request_with_retry(
             continue
         if response.status_code == 429 and throttled < _MAX_429_RETRIES:
             throttled += 1
-            await asyncio.sleep(_retry_after(response))
+            await asyncio.sleep(retry_after_s(response))
             continue
         if (
             retry_transient
@@ -128,11 +128,16 @@ async def async_request_with_retry(
         return response
 
 
-def _retry_after(response: httpx.Response) -> float:
+def retry_after_s(response: httpx.Response) -> float:
     """Sekundy odczekania z ``Retry-After``, przycięte do sufitu (fallback: brak/niepoprawny).
 
     Przycięcie i podłoga są te same co w ``jira_http._retry_wait`` — jedno miejsce transportu na
     rodzinę klientów, ta sama polityka czekania.
+
+    Publiczna, bo wołają ją także drzwi Teams (``teams_graph/graph.py``) i wysyłka odpowiedzi
+    w wątku (``graph_thread_reply``). Obie miały własne wersje BEZ sufitu, czyli pozwalały
+    serwerowi ustawić długość snu pętli pollingu; ``Retry-After: 300`` usypiało wtedy rundę na
+    tyle długo, że healthcheck floty restartował kontener w jej trakcie.
     """
     raw = response.headers.get("Retry-After")
     if raw is None:

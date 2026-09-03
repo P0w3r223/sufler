@@ -332,7 +332,12 @@ def _rate_limit_wait(response: httpx.Response) -> float:
     retry_after = response.headers.get("Retry-After")
     if retry_after is not None:
         try:
-            return min(float(retry_after), _MAX_BACKOFF_S)
+            # Podłoga jak w gałęzi ``X-RateLimit-Reset`` niżej i w pozostałych trzech transportach:
+            # ujemna wartość nagłówka schodziła wprost do ``time.sleep`` i dawała ``ValueError``,
+            # którego ``_as_read_error`` nie łapie (łapie wyłącznie ``httpx.*``) — czyli wywracała
+            # rundę pollera. Od api.github.com nierealna, ale ``WORKMATE_GITHUB_API_BASE`` jest
+            # konfigurowalny i niewalidowany.
+            return max(0.0, min(float(retry_after), _MAX_BACKOFF_S))
         except ValueError:
             return _DEFAULT_RETRY_AFTER_S
     reset = response.headers.get("X-RateLimit-Reset")

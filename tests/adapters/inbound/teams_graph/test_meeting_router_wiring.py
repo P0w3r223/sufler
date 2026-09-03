@@ -67,3 +67,35 @@ def test_wiring_builds_async_scheduler_when_async_gate_on(tmp_path):
     assert router is not None
     assert router._scheduler is not None
     assert router._callback is not None
+
+
+def test_oba_routery_dostaja_te_sama_pule_i_poster(tmp_path):
+    """Regresja: docstring ``_build_thread_note_router`` deklaruje „async współdzieli pulę/poster",
+    a obaj wołający liczyli ``_build_async_note_dispatch`` osobno — każdy stawiał nowy
+    ``ThreadPoolExecutor`` i nowy klient HTTP.
+
+    Przy obu bramkach ON sufit równoległych łańcuchów transkrypt+Claude był więc faktycznie
+    DWUKROTNOŚCIĄ ``meeting_note_async_workers``: ustawienie mówiło jedno, proces robił drugie,
+    a różnicy nie widać w niczym poza ``ps``.
+    """
+    pytest.importorskip("anthropic")
+    from workmate.adapters.inbound.teams_graph.wiring_routers import _build_async_note_dispatch
+
+    identities = tmp_path / "identities.yaml"
+    identities.write_text("", encoding="utf-8")
+    settings = TeamsGraphSettings(
+        client_id="a",
+        tenant_id="t",
+        enable_meeting_note_write=True,
+        enable_meeting_note_async=True,
+        meeting_note_identities=identities,
+    )
+
+    def token_provider() -> str:  # ta sama TOŻSAMOŚĆ w obu wywołaniach
+        return "tok"
+
+    pierwszy = _build_async_note_dispatch(settings, token_provider)
+    drugi = _build_async_note_dispatch(settings, token_provider)
+
+    assert pierwszy[0] is drugi[0]  # ten sam scheduler → ta sama pula wątków
+    assert pierwszy[1] is drugi[1]  # ten sam callback → ten sam klient HTTP

@@ -56,6 +56,12 @@ class MutationRequest:
     # tego pola pętla narzędzi (do 8 rund w jednej turze, a każda runda może nieść wiele
     # wywołań) pozwalała modelowi zapowiedzieć i wykonać zmianę samemu, bez udziału człowieka.
     turn_token: str = ""
+    # Zakres ROZMOWY (ADR 0065). Token tury odróżnia dwie tury, ale nie odróżnia dwóch WĄTKÓW:
+    # rejestr zapowiedzi żyje przez cały proces, więc bez tego pola zapowiedź wystawiona w wątku A
+    # autoryzowała tę samą zmianę wykonaną w wątku B, dopóki wpis nie wygasł. Argument „powtórzenie
+    # dowodzi, że człowiek odezwał się PO zobaczeniu zapowiedzi" nie obowiązuje wtedy, bo zapowiedź
+    # widział ktoś inny albo nikt.
+    conversation: str = ""
 
 
 @dataclass(frozen=True)

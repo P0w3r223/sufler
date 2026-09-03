@@ -65,7 +65,11 @@ class AnthropicClient:
             raise SystemExit(
                 "Warstwa LLM wymaga zależności 'anthropic' — zainstaluj: uv sync --extra agent."
             ) from exc
-        client = anthropic.Anthropic(api_key=self.api_key)
+        # Limit czasu i JEDNO ponowienie: domyślne 10 minut SDK × 2 ponowienia na wywołanie,
+        # a `_with_prose` woła model raz na dzień zakresu — przy `--llm --since` sprzed miesiąca
+        # dawało to kilkanaście godzin zegara ściennego bez żadnego wyjścia. Bliźniaczy
+        # `Powiadomienia_teams/agent/anthropic_llm.py` niesie komentarz o dokładnie tym scenariuszu.
+        client = anthropic.Anthropic(api_key=self.api_key, timeout=30.0, max_retries=1)
         response = client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,

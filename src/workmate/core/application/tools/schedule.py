@@ -13,7 +13,7 @@ from workmate.core.application.tools.spec import ToolSpec, _envelope
 from workmate.core.errors import WorkMateError
 
 _SCHEDULE_DESC = """\
-Grafik zmian i nieobecności zespołu z Teams Shifts — ODCZYT, nic nie zmienia.
+Grafik zmian i nieobecności zespołu z Teams Shifts — ODCZYT.
 
 Zwraca `shifts` (zmiany) i `times_off` (urlopy, nieobecności) w zadanym oknie, wraz z `range`
 (faktycznie użyty zakres), `timezone` i `people_without_entries` (osoby bez żadnego wpisu w tym

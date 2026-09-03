@@ -49,9 +49,8 @@ _PROJECT_SAVE = """
 Akcja `save` — dopisz NOWĄ notatkę ze spotkania do tego projektu (ZAPIS). Wymaga: `project`,
 `title`, `date` (YYYY-MM-DD), `body`. Opcjonalnie: `participants`, `decisions`, `action_items`,
 `open_questions`, `tags`. Miejsce zapisu wylicza się z metadanych (firma z rejestru →
-projekt → data-slug); ta akcja TWORZY nową notatkę i nigdy nie nadpisuje istniejącej
-(do zmiany istniejącej służy `File(edit)`, jeśli jest dostępne). Użyj wyłącznie na wprost
-wyrażoną prośbę człowieka."""
+projekt → data-slug); ta akcja TWORZY nową notatkę, a istniejącą zmienia `File(edit)`.
+Użyj wyłącznie na wprost wyrażoną prośbę człowieka."""
 
 # Podpowiedź przy braku klucza jest BEZ ścieżek i bez nazw narzędzi. Układ ścieżek mieszka
 # w sekcji ``ENVIRONMENT`` promptu (etap 6), a nazwa narzędzia odczytu zależy od tego, czy te

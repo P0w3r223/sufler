@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from workmate.config._env import (
     _bool_from_env,
@@ -80,6 +81,12 @@ _MAX_USER_DOC_KB_CEILING = 4096
 # skonsentowane — w przeciwieństwie do zakresów czatu/plików). Włączona bramka BEZ nich = martwa
 # (403 przy pobraniu), więc walidacja żąda ich WPROST — fail-fast zamiast cichej, martwej bramki.
 _MEETING_TRANSCRIPT_SCOPES = ("OnlineMeetingTranscript.Read.All", "OnlineMeetings.Read")
+# Strefa, w której drzwi liczą DATĘ KALENDARZOWĄ — dziś jedynym takim miejscem jest data notatki
+# wątkowej. Znaczniki z Graph są w UTC, więc bez konwersji „zapisz to" wysłane o 23:30 czasu
+# warszawskiego lądowało pod POPRZEDNIM dniem: inna data w treści i inny identyfikator notatki.
+# Notatki `-thr-` są niezmienne, więc korekta wymaga nowej notatki. Bliźniacze drzwi digestu
+# konwertują od początku (`WORKMATE_TEAMS_DIGEST_TZ`) — tu był rozjazd, nie decyzja.
+_DEFAULT_TEAMS_GRAPH_TZ = "Europe/Warsaw"
 
 
 def _parse_watch_pairs(value: str) -> tuple[tuple[str, str], ...]:
@@ -117,6 +124,7 @@ class TeamsGraphSettings:
     top_roots: int = 20
     top_replies: int = 50
     active_idle_hours: int = 24
+    tz_name: str = _DEFAULT_TEAMS_GRAPH_TZ
     # Limity załączników (ADR 0016): rozmiar pliku, liczba i ŁĄCZNY budżet na wiadomość.
     max_attachment_mb: int = 8
     max_attachments_per_message: int = 20  # równolegle wysłane pliki na wiadomość (= sufit MAX)
@@ -232,6 +240,7 @@ class TeamsGraphSettings:
             top_roots=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_ROOTS", 20),
             top_replies=_int_from_env("WORKMATE_TEAMS_GRAPH_TOP_REPLIES", 50),
             active_idle_hours=_int_from_env("WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", 24),
+            tz_name=os.environ.get("WORKMATE_TEAMS_GRAPH_TZ", _DEFAULT_TEAMS_GRAPH_TZ).strip(),
             max_attachment_mb=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", 8),
             max_attachments_per_message=_int_from_env("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", 20),
             max_total_attachment_mb=_int_from_env(
@@ -294,7 +303,7 @@ class TeamsGraphSettings:
             ),
         )
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # noqa: C901, PLR0915
         """Twardy błąd startu, gdy brak tożsamości aplikacji albo bezsensowne limity."""
         missing = [
             name
@@ -325,6 +334,13 @@ class TeamsGraphSettings:
                 f"WORKMATE_TEAMS_GRAPH_TOP_REPLIES musi być >= 1, jest: {self.top_replies}."
             )
         # 0 eksmitowałoby każdy wątek natychmiast (koniec wielotury) — wymagamy >= 1.
+        try:
+            ZoneInfo(self.tz_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(
+                f"WORKMATE_TEAMS_GRAPH_TZ={self.tz_name!r} nie jest znaną strefą czasową "
+                "(na Windows wymaga pakietu 'tzdata')."
+            ) from exc
         if self.active_idle_hours < 1:
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS musi być >= 1, jest: "
@@ -342,8 +358,10 @@ class TeamsGraphSettings:
                 f"1..{_MAX_ATTACHMENTS_PER_MESSAGE_CEILING}, jest: "
                 f"{self.max_attachments_per_message}."
             )
-        # Łączny budżet też w 1..32 (sufit żądania API). Nie wiążemy go z ``max_attachment_mb``:
-        # plik większy niż budżet materializer i tak łagodnie zdegraduje do notki.
+        # Łączny budżet ma ten sam zakres co pojedynczy załącznik: 1..24 MB SUROWYCH, bo po
+        # zakodowaniu base64 daje to ~32 MB, czyli sufit żądania API. Budżet jest ODDZIELNY od
+        # ``max_attachment_mb``: plik większy niż budżet materializer i tak łagodnie zdegraduje
+        # do notki.
         if not 1 <= self.max_total_attachment_mb <= _MAX_ATTACHMENT_MB_CEILING:
             raise ValueError(
                 "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB musi być w zakresie "

@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 # Czyszczenie kontekstu jest w Claude API funkcją BETA, więc nagłówek jedzie z żądaniem.
 _CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 
+# Sufit czasu JEDNEGO wywołania modelu. Domyślny timeout SDK to 600 s przy `max_retries=2`, a
+# timeout jest ponawiany, więc zegar ścienny sięga `timeout × (max_retries+1)` ≈ 30 min w jednej
+# turze — przez ten czas nasłuch nie obsługuje nikogo innego, a puls (bity PO całej turze,
+# healthcheck `--max-age 180`) jest nieświeży mimo pozornie zdrowego procesu: najgorszy stan dla
+# pracy bezobsługowej. Żądanie jedzie STRUMIENIEM, więc `timeout` działa jak read-timeout httpx
+# (górny limit PRZERWY między zdarzeniami) — zdrowy długi strumień go nie tnie (zdarzenia płyną co
+# kilka sekund), tnie tylko zawis. 60 s × (1+1) = 120 s worst-case mieści się pod pulsem. Spójne
+# z rodzeństwem (`agent/anthropic_llm.py`, `claude_summary`), które już ma ten sufit.
+_TIMEOUT_S = 60.0
+
 
 class AnthropicLLMClient:
     """``LLMClient`` nad Claude API.
@@ -50,7 +60,9 @@ class AnthropicLLMClient:
         import anthropic
 
         self._settings = settings
-        self._client: Any = anthropic.Anthropic(api_key=settings.api_key or None)
+        self._client: Any = anthropic.Anthropic(
+            api_key=settings.api_key or None, timeout=_TIMEOUT_S, max_retries=1
+        )
 
     def complete(
         self,

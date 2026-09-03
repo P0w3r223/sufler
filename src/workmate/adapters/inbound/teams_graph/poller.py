@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import ChannelMessage, ReplyPolicy
+from workmate.core.errors import ThreadRootGone
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.teams_graph.attachments import AttachmentMaterializer
@@ -43,6 +44,49 @@ _DOOR = "teams_graph"
 _NO_REASON = "brak zapisanego powodu — proces nie dotrwał do obsługi wyjątku albo został wznowiony"
 # Ile znaków pierwszej linii komunikatu wyjątku wpuszczamy do powodu — patrz ``_failure_reason``.
 _MAX_REASON_HEAD = 200
+
+# Powód porażki DLA ROZMÓWCY, wyprowadzony z KLASY wyjątku i wyłącznie z niej.
+#
+# Komunikat wyjątku tu nie wchodzi, i to jest cała treść tej mapy. ``_failure_reason`` (kwarantanna,
+# kanał operatorski) sam nazywa się REDUKCJĄ ekspozycji, nie granicą: tekst wyjątku bywa sklejany
+# z danymi wejściowymi — ``ValidationError`` pydantica wypisuje ``input_value``, czyli fragment
+# treści rozmówcy. Na KANAŁ, gdzie czyta go cały zespół, może iść tylko to, co niesie sama nazwa
+# klasy. Ten sam argument co przy ``_tresc_publiczna`` w ``Powiadomienia_teams``.
+#
+# Są tu wyłącznie klasy, które REALNIE docierają do gałęzi porzucenia. ``LLMError`` do niej nie
+# dochodzi: ``SafeResponder`` łagodnie go degraduje (własny komunikat), więc nie przelatuje do
+# licznika prób pollera. Wróci tu razem z odroczonym ponawianiem ``LLMError`` (ADR 0065 amendment
+# 2026-09-03, „Odroczone" w CHANGELOG). ``ThreadRootGone`` dochodzi — podnosi je ``_post_reply``
+# przy 404 na wysyłce odpowiedzi.
+_POWODY_DLA_ROZMOWCY: tuple[tuple[type[BaseException], str], ...] = (
+    (ThreadRootGone, "wątek, w którym mam odpisać, już nie istnieje"),
+)
+_POWOD_DOMYSLNY = "obsługa wiadomości nie powiodła się"
+
+
+def _powod_dla_rozmowcy(exc: BaseException) -> str:
+    """Krótki, bezpieczny powód porażki — po KLASIE wyjątku, nigdy po jego komunikacie."""
+    for klasa, powod in _POWODY_DLA_ROZMOWCY:
+        if isinstance(exc, klasa):
+            return powod
+    return _POWOD_DOMYSLNY
+
+
+def _tekst_porzucenia(powod: str, msg_id: str) -> str:
+    """Wiadomość, którą rozmówca dostaje zamiast CISZY, gdy licznik prób się wyczerpał.
+
+    Cisza jest tu najgorszym z wyjść: człowiek napisał, zobaczył, że bot czyta kanał, i nie
+    dostaje nic — nieodróżnialne od zignorowania. Mówimy więc trzy rzeczy: że się nie udało,
+    DLACZEGO na tyle, na ile wolno powiedzieć, i co z tym zrobić. Identyfikator jest w treści,
+    bo to ten sam klucz, pod którym leży wpis w kwarantannie (``inbound_dead_letters``) —
+    operator ma po czym połączyć zgłoszenie z rekordem.
+    """
+    return (
+        f"Nie udało mi się odpowiedzieć na tę wiadomość — {powod}. "
+        f"Próbowałem {_MAX_ATTEMPTS} razy i przerywam, żeby nie zapętlić kanału. "
+        "Napisz proszę jeszcze raz; jeśli to się powtórzy, przekaż opiekunowi bota "
+        f"identyfikator `{msg_id}`."
+    )
 
 
 def _utcnow() -> datetime:
@@ -184,9 +228,16 @@ class ChannelPoller:
         # trwały jest licznik, bo to on rozstrzyga o porzuceniu — powód jest opisem dla operatora.
         self._dead_letters = dead_letters
         self._last_error: dict[str, str] = {}
+        # Powód DLA ROZMÓWCY trzymamy osobno od powodu dla kwarantanny: tamten niesie fragment
+        # komunikatu wyjątku (kanał operatorski), ten wyłącznie klasę (kanał zespołu).
+        self._last_cause: dict[str, str] = {}
         # Czy OSTATNI zapis stanu się nie udał — gasi puls, żeby healthcheck zobaczył wolumen,
         # który przestał przyjmować zapis (bez tego proces „żyje", nie robiąc nic).
         self._write_failed = False
+        # Czy w tej rundzie ODCZYT odpowiedzi padł SYSTEMOWO (wszystkie wątki kanału) — gasi puls
+        # tą samą regułą co ``_write_failed``. Inaczej awaria Graph 500/429 na wszystkim dawała
+        # kontener ZDROWY, choć żadna wiadomość nie mogła już przejść. Resetowany na rundę.
+        self._read_failed = False
 
     async def run(self) -> None:
         """Pętla główna: co ``poll_interval`` odpytaj każdy kanał i odpowiedz na nowe wpisy.
@@ -204,6 +255,8 @@ class ChannelPoller:
             me_id,
         )
         while not self._stopping():
+            # Nowa runda — status odczytu liczony od zera (jak `_write_failed` przy zapisie).
+            self._read_failed = False
             try:
                 await self._client.refresh_auth()
             except Exception:
@@ -257,12 +310,14 @@ class ChannelPoller:
     def _beat(self) -> None:
         """Odśwież puls żywotności, jeśli wstrzyknięto (R5). Bez callbacku — no-op (dev/testy).
 
-        Runda, w której stan NIE dał się utrwalić, pulsu nie bije — ta sama reguła co u notifiera
-        („bijemy po rundzie produktywnej", ADR 0067 §2). Bez tego wolumen zamontowany ``ro`` w
-        trakcie pracy dawał kontener ZDROWY, mimo że żadna wiadomość nie mogła już przejść:
-        licznik prób nie utrwala się, więc obsługa w ogóle nie rusza.
+        Runda, w której stan NIE dał się utrwalić (``_write_failed``) ALBO odczyt odpowiedzi padł
+        systemowo na całym kanale (``_read_failed``), pulsu nie bije — ta sama reguła co u notifiera
+        („bijemy po rundzie produktywnej", ADR 0067 §2). Bez pierwszej bramki wolumen zamontowany
+        ``ro`` w trakcie pracy dawał kontener ZDROWY, choć licznik prób nie utrwalał się, więc
+        obsługa w ogóle nie ruszała; bez drugiej awaria Graph 500/429 na WSZYSTKICH wątkach dawała
+        kontener ZDROWY, choć żadna wiadomość nie mogła już przejść.
         """
-        if self._heartbeat is not None and not self._write_failed:
+        if self._heartbeat is not None and not self._write_failed and not self._read_failed:
             self._heartbeat()
 
     def _stopping(self) -> bool:
@@ -286,10 +341,59 @@ class ChannelPoller:
 
         roots = await self._client.list_root_messages(team_id, channel_id, top=self._top_roots)
         replies_by_root: dict[str, list[dict[str, Any]]] = {}
-        for root_id in selection.roots_to_poll(roots, channel_state):
-            replies_by_root[root_id] = await self._client.list_replies(
-                team_id, channel_id, root_id, top=self._top_replies
+        # Rooty, których odczyt padł PRZEJŚCIOWO (5xx/429/sieć) — chronione przed eksmisją: ich
+        # cisza jest NIEZNANA, nie potwierdzona. Osobno rooty skasowane w Teams (404) — eksmisja
+        # od razu. Rozróżnienie robi ``list_replies``, podnosząc ``ThreadRootGone`` na 404.
+        unread_roots: set[str] = set()
+        gone_roots: set[str] = set()
+        polled = selection.roots_to_poll(roots, channel_state)
+        for root_id in polled:
+            try:
+                replies_by_root[root_id] = await self._client.list_replies(
+                    team_id, channel_id, root_id, top=self._top_replies
+                )
+            except ThreadRootGone:
+                # Root skasowany w Teams (404). Samoleczenie bez operatora: pusta lista + eksmisja
+                # w TEJ rundzie (``gone_roots`` w ``plan_channel``), zamiast odpytywać martwy wątek
+                # co rundę aż do ``active_idle``.
+                logger.info(
+                    "Wątek %s/%s/%s już nie istnieje (404) — eksmituję z odpytywania",
+                    team_id,
+                    channel_id,
+                    root_id,
+                )
+                replies_by_root[root_id] = []
+                gone_roots.add(root_id)
+            except Exception:
+                # Przejściowa awaria odczytu JEDNEGO wątku nie może zabrać całego kanału. Pusta
+                # lista + OCHRONA przed eksmisją: ``last_seen`` nie ruszy, ale wątku NIE usuwamy po
+                # ``active_idle`` — nie wiemy, że milczy, tylko że nie dało się go odczytać. Bez tej
+                # ochrony systemowa awaria odczytu zamiatała żywe wątki po 24 h przy bijącym pulsie.
+                logger.warning(
+                    "Nie udało się pobrać odpowiedzi wątku %s/%s/%s — pomijam go w tej rundzie",
+                    team_id,
+                    channel_id,
+                    root_id,
+                    exc_info=True,
+                )
+                replies_by_root[root_id] = []
+                unread_roots.add(root_id)
+
+        # Systemowa awaria odczytu: KAŻDY odpytywany wątek padł PRZEJŚCIOWO (żaden nie odczytany,
+        # żaden nie 404). Runda jest martwa — nie fałszujemy zdrowia: gasimy puls (jak przy porażce
+        # zapisu) i NIE ruszamy stanu kanału. Healthcheck po wieku pulsu wznowi proces. Mieszanka
+        # (część wątków odczytana albo 404) to kanał częściowo żywy — bijemy, a ``unread_roots``
+        # chroni te nieodczytane przed eksmisją do czasu, aż odczyt wróci.
+        if polled and unread_roots == set(polled):
+            self._read_failed = True
+            logger.error(
+                "Odczyt odpowiedzi padł na WSZYSTKICH %d wątkach kanału %s/%s — systemowa awaria "
+                "Graph; pulsu NIE odświeżam, stanu kanału nie przesuwam",
+                len(polled),
+                team_id,
+                channel_id,
             )
+            return
 
         messages, new_channel_state = selection.plan_channel(
             roots,
@@ -301,6 +405,8 @@ class ChannelPoller:
             active_idle=self._active_idle,
             policy=self._policy,
             channel=(team_id, channel_id),
+            unread_roots=unread_roots,
+            gone_roots=gone_roots,
         )
 
         for msg in messages:
@@ -320,7 +426,7 @@ class ChannelPoller:
             attempts: dict[str, int] = self._state["attempts"]
             taken = int(attempts.get(msg.id, 0))
             if taken >= _MAX_ATTEMPTS:
-                self._abandon(msg, team_id, channel_id, taken)
+                await self._abandon(msg, team_id, channel_id, taken)
                 continue
             # Próba MUSI dotrwać restartu, inaczej licznik nie liczy — ale NIENALICZONA próba
             # jest lepsza niż naliczona po nieudanym zapisie (patrz ``_record_attempt``).
@@ -346,6 +452,7 @@ class ChannelPoller:
                 # Powód dla operatora: gdy licznik się wysyci, kwarantanna ma powiedzieć NA CZYM
                 # ta wiadomość padła, a nie tylko że padła (ADR 0069).
                 self._last_error[msg.id] = _failure_reason(exc)
+                self._last_cause[msg.id] = _powod_dla_rozmowcy(exc)
                 # Log NAZYWA wiadomość i mówi, czy będzie ponowienie. Goły ``logger.exception``
                 # piętro wyżej zostawiał operatora z tracebackiem bez tej jednej informacji,
                 # która pozwala odróżnić „chwilowo padło" od „ta wiadomość jest trująca".
@@ -438,8 +545,10 @@ class ChannelPoller:
             )
             raise
 
-    def _abandon(self, msg: ChannelMessage, team_id: str, channel_id: str, taken: int) -> None:
-        """Porzuć wiadomość po wyczerpaniu prób: NAJPIERW kwarantanna, potem dedup i zapis.
+    async def _abandon(
+        self, msg: ChannelMessage, team_id: str, channel_id: str, taken: int
+    ) -> None:
+        """Porzuć wiadomość po wyczerpaniu prób: kwarantanna, dedup i zapis, POTEM wiadomość.
 
         Kolejność (wpis trwały, ZANIM wiadomość zniknie ze strumienia) jest ta sama co przy
         dead-letterze notifiera (ADR 0067 §2, tam „zapis przed ruchem kursora"). Rozjeżdża się
@@ -488,14 +597,31 @@ class ChannelPoller:
             if quarantined
             else "BEZ wpisu w kwarantannie — ślad zostaje wyłącznie w logu.",
         )
+        powod = self._last_cause.get(msg.id, _POWOD_DOMYSLNY)
         self._forget_attempt(msg.id)
         self._mark_replied(msg.id)
         self._write_state()
+        # Wiadomość do rozmówcy leci NA KOŃCU, po utrwaleniu stanu, i nigdy nie wywraca rundy.
+        # Kolejność jest tu istotą: gdyby szła przed zapisem, awaria między wysyłką a zapisem
+        # dawałaby przy restarcie DRUGIE „nie udało mi się" na tę samą wiadomość. Własny
+        # ``except`` — porzucenie jest już utrwalone i terminalne, więc podniesienie wyjątku
+        # zatrzymałoby kanał na sprawie, która jest zamknięta.
+        try:
+            await self._client.post_reply(
+                team_id, channel_id, msg.thread_root_id, _tekst_porzucenia(powod, msg.id)
+            )
+        except Exception:
+            logger.exception(
+                "Porzucono wiadomość %s i NIE udało się o tym powiedzieć rozmówcy — zostaje "
+                "cisza po jego stronie, ślad po naszej",
+                msg.id,
+            )
 
     def _forget_attempt(self, msg_id: str) -> None:
         """Zapomnij licznik prób tej wiadomości — sprawa zamknięta (sukces albo rezygnacja)."""
         self._state["attempts"].pop(msg_id, None)
         self._last_error.pop(msg_id, None)
+        self._last_cause.pop(msg_id, None)
 
     def _prune_attempts(self) -> None:
         """Przytnij licznik prób do ``_ATTEMPTS_CAP`` najdawniej DOTKNIĘTYCH wpisów.
@@ -511,6 +637,7 @@ class ChannelPoller:
         for stale in list(attempts)[: max(0, len(attempts) - _ATTEMPTS_CAP)]:
             del attempts[stale]
             self._last_error.pop(stale, None)
+            self._last_cause.pop(stale, None)
 
     def _seed(self, startup_iso: str) -> None:
         """Zainicjuj brakujące gałęzie stanu (idempotentnie), nie ruszając zapisanych pozycji.
@@ -547,3 +674,29 @@ class ChannelPoller:
                 channel["since_roots"] = startup_iso
             if not isinstance(channel.get("threads"), dict):
                 channel["threads"] = {}
+            # Ten sam argument o poziom głębiej: utwardzenie kończyło się na ``threads`` jako
+            # CAŁOŚCI, a wartości w środku szły do ``plan_channel`` bez sprawdzenia. Wpis bez
+            # ``last_seen``, napis zamiast słownika albo ``null`` wywracały rundę
+            # (``KeyError``/``ValueError``/``TypeError``), a skutek był gorszy niż przy wariantach
+            # załatanych wyżej: wyjątek łapie ``except`` per kanał, po nim puls I TAK bije, a zapis
+            # stanu się udaje — kontener stoi „healthy", choć na tym kanale od restartu nie przeszła
+            # ani jedna wiadomość.
+            #
+            # Wpis nieczytelny NAPRAWIAMY, nie kasujemy — i to jest różnica, nie ozdoba.
+            # ``roots_to_poll`` bierze kandydatów z KLUCZY ``threads`` plus rootów nowszych niż
+            # ``since_roots``, więc skasowanie klucza wypycha wątek z odpytywania **na stałe**,
+            # jeśli jego root jest starszy niż znacznik: trwająca wielotura milknie bez śladu.
+            # Dawny komentarz obiecywał tu „licz od nowa, najwyżej ponowne przeczytanie" —
+            # ``plan_channel`` istotnie tak by zrobił (domyślne pola z epoki), ale nigdy nie
+            # dostaje szansy, bo wątek nie trafia już do listy. Znacznik startu procesu daje
+            # jedno i drugie: wątek zostaje śledzony, a odpowiedzi sprzed restartu nie wracają
+            # jako nowe (czyli bez ponownej odpowiedzi bota na to samo).
+            threads: dict[str, Any] = channel["threads"]
+            for root_id in [
+                rid
+                for rid, info in threads.items()
+                if not isinstance(info, dict)
+                or not isinstance(info.get("watermark"), str)
+                or not isinstance(info.get("last_seen"), str)
+            ]:
+                threads[root_id] = {"watermark": startup_iso, "last_seen": startup_iso}

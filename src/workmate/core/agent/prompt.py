@@ -53,9 +53,11 @@ so the reader can open the source. When the tools come back empty, say so plainl
 # `tools+system` dzieli się najwyżej na dwa — ten sam argument co przy akapicie o skrzynce
 # nadawczej w opisie `Bash`.
 #
-# Treść wariantu z powłoką powstała wobec DZISIEJSZEGO `docker-compose.yml` paczki wdrożeniowej,
-# nie wobec korpusu cytowanego w ADR 0005 — tamten wciąż niesie `/mnt/user/*`, a ten montaż
-# zdjęto 2026-08-06 razem z obietnicą w opisie `Bash`.
+# Treść wariantu z powłoką opisuje DZISIEJSZY `docker-compose.yml` paczki wdrożeniowej. Korpus
+# cytowany w decyzji 0005 PACZKI (`infra-docker-workmate/docs/decyzje/`, nie lokalne
+# `docs/adr/0005`, które jest o układzie katalogów notatek) wymienia jeszcze `/mnt/user/*`, ale
+# oznacza te wiersze jako nieaktualne od 2026-08-06 — wtedy montaż zdjęto, razem z obietnicą
+# w opisie `Bash`. Źródłem prawdy o montażach jest compose, nie ADR.
 _ENVIRONMENT_TOOLS = """\
 ## Environment
 

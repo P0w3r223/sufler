@@ -266,7 +266,12 @@ class ProjectsService:
             return 0, None, 0
         items = self._events.recent(project=key, limit=100)
         failing = sum(1 for e in items if e.kind == "ci_failure")
-        latest = items[0].occurred_at if items else None
+        # MAKSIMUM, nie pierwszy element. ``recent`` sortuje po ``id``, czyli po kolejności
+        # PRZYJĘCIA, a watermarki pollera są osobne per typ zasobu — komentarz z 10:00 potrafi
+        # wejść rundę po issue z 10:05. Pierwszy element okna zaniżał wtedy „ostatnią aktywność",
+        # a model buduje na tym polu zdania w rodzaju „ostatnio nic się nie działo".
+        # ``change_digest._group_by_project`` liczy to tak od początku.
+        latest = max((e.occurred_at for e in items), default=None)
         return len(items), latest, failing
 
 

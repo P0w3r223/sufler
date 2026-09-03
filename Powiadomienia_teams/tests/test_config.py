@@ -316,3 +316,17 @@ def test_szablony_env_opisuja_okno_wysylki():
             "POWIADOMIENIA_SEND_WINDOW_WEEKDAYS",
         ):
             assert re.search(rf"^{zmienna}=", tresc, re.M), (sciezka.name, zmienna)
+
+
+def test_pilotaz_normalizuje_guidy_takze_przy_budowie_wprost():
+    """``from_env`` normalizowało samodzielnie, więc filtr działał dla procesu i przestawał dla
+    każdego ``Settings(...)`` złożonego wprost. Awaria była cicha: GUID wielkimi literami nie
+    pasował do nikogo, więc podsumowanie mówiło „0 próśb" — jak spokojny tydzień."""
+    s = Settings(
+        client_id="c",
+        tenant_id="t",
+        team_id="team",
+        only_user_ids=("AB-CD", "Ef"),
+    )
+
+    assert s.only_user_ids == ("ab-cd", "ef")

@@ -16,9 +16,10 @@ from typing import Any
 import httpx
 
 from workmate.adapters.inbound.teams_graph.formatting import to_teams_html
+from workmate.adapters.outbound.graph_http import retry_after_s
+from workmate.core.errors import ThreadRootGone
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-_DEFAULT_RETRY_AFTER_S = 5
 # Twardy cap pobrania publicznego obrazu (GIF/emoji) — zewnętrzny host, którego nie kontrolujemy;
 # strumieniujemy i przerywamy powyżej, by nie wpuścić gigabajtów do RAM przed limitem materializera.
 _PUBLIC_FETCH_MAX_BYTES = 50 * 1024 * 1024
@@ -51,7 +52,7 @@ class HttpxGraphChannelClient:
             response = await self._client.get(url, params=params)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES:
                 attempts += 1
-                await asyncio.sleep(_retry_after(response))
+                await asyncio.sleep(retry_after_s(response))
                 continue
             # Przejściowy 401 to NIE wygaśnięcie (wtedy 401 dostałaby cała runda) — Graph
             # potrafi je zwrócić przy odświeżaniu tokenu albo lagu replik. Wymuszamy jedno
@@ -86,7 +87,7 @@ class HttpxGraphChannelClient:
             response = await self._client.get(url, follow_redirects=follow_redirects)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES:
                 attempts += 1
-                await asyncio.sleep(_retry_after(response))
+                await asyncio.sleep(retry_after_s(response))
                 continue
             if response.status_code == 401 and not refreshed:  # patrz ``_get``: 401-refresh raz
                 refreshed = True
@@ -190,7 +191,16 @@ class HttpxGraphChannelClient:
         self, team_id: str, channel_id: str, root_id: str, *, top: int
     ) -> list[dict[str, Any]]:
         url = f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{root_id}/replies"
-        return await self._get_all(url, params={"$top": str(top)})
+        try:
+            return await self._get_all(url, params={"$top": str(top)})
+        except httpx.HTTPStatusError as exc:
+            # 404 = root skasowany w Teams. Strona ZAPISU (``graph_thread_reply``) już podnosi
+            # tu ``ThreadRootGone``; strona odczytu dawała surowy ``HTTPStatusError``, więc poller
+            # nie umiał odróżnić „wątek zniknął" (samoleczenie: eksmituj) od awarii odczytu
+            # (przejściowa: nie ruszaj wątku). Nadajemy temu 404 to samo słownictwo.
+            if exc.response.status_code == 404:
+                raise ThreadRootGone(f"root wątku {root_id} nie istnieje") from exc
+            raise
 
     async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         """Wyślij odpowiedź w wątku; Markdown agenta renderujemy do HTML na wyjściu.
@@ -207,7 +217,7 @@ class HttpxGraphChannelClient:
             response = await self._client.post(url, json=payload)
             if response.status_code == 429 and attempts < _MAX_429_RETRIES:
                 attempts += 1
-                await asyncio.sleep(_retry_after(response))
+                await asyncio.sleep(retry_after_s(response))
                 continue
             if response.status_code == 401 and not refreshed:  # patrz ``_get``: 401-refresh raz
                 refreshed = True
@@ -231,9 +241,8 @@ def _encode_share_id(url: str) -> str:
     return f"u!{encoded}"
 
 
-def _retry_after(response: httpx.Response) -> int:
-    """Sekundy odczekania z nagłówka Retry-After (fallback, gdy brak/niepoprawny)."""
-    try:
-        return int(response.headers.get("Retry-After", _DEFAULT_RETRY_AFTER_S))
-    except ValueError:
-        return _DEFAULT_RETRY_AFTER_S
+# Czekanie po 429 liczy WSPÓLNA funkcja transportu (``graph_http.retry_after_s``) — ta sama, co
+# u klientów wychodzących Graph i Jiry. Lokalna wersja brała wartość z nagłówka bez sufitu, więc
+# serwer sterował długością snu pętli pollingu: przy `Retry-After: 300` pojedyncze
+# `list_root_messages` spało pięć minut bez bicia pulsu, a healthcheck floty restartował kontener
+# w połowie rundy. Reszta rodziny miała sufit i testy od początku — tu był rozjazd, nie decyzja.

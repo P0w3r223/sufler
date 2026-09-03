@@ -6,7 +6,235 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Do dokończenia
+
+- **Nocny bieg CI (`schedule`) — przygotowany, NIE wdrożony.** `.github/workflows/ci.yml` wymaga
+  zakresu `workflow` na tokenie, którego bot nie ma (`remote rejected … without workflow scope`),
+  więc zmiana została wycięta z gałęzi i czeka na wklejenie ręką. Dopóki tego nie ma, CI biega
+  wyłącznie na `Main`, `Dev` i PR-ach, czyli **bomba kalendarzowa dalej czeka na czyjś push** —
+  a to jest wada, przez którą #88 stało czerwone jedenaście dni, blokując budowę obrazu floty.
+
+  Do wklejenia w bloku `on:` pliku `.github/workflows/ci.yml`, po `pull_request:`:
+
+  ```yaml
+    schedule:
+      - cron: "17 4 * * *"   # 06:17 czasu warszawskiego: po północy UTC, przed pracą zespołu;
+                             # minuta nieokrągła, bo o pełnych godzinach kolejka GitHuba jest
+                             # najdłuższa. `schedule` odpala się TYLKO z gałęzi domyślnej (`Main`).
+    workflow_dispatch:       # ręczny bieg — sprawdzenie poprawki bez czekania do rana
+  ```
+
+  Odblokowanie po stronie tokenu: `gh auth refresh -s workflow`, potem zwykły `git push`.
+  Bramka złożoności (`C901`/`PLR0915`) z tej samej pary JEST już wdrożona — patrz „Dodane".
+
+
+### Odroczone
+
+- **Ponawianie `LLMError` na drzwiach Teams — WYJĘTE z tego wydania, wraca osobno z projektem
+  idempotencji.** Gałąź czyniła `LLMError` ponawialnym (`SafeResponder(..., ponawialne=(LLMError,))`),
+  żeby przejściowy błąd modelu dochodził do licznika prób pollera (ADR 0069) zamiast kończyć się
+  przeprosinami. Przegląd pokazał, że ponowienie w obecnym kształcie rodzi kilka ścieżek cichej
+  straty i zawisu: ponowna tura re-snapshotuje skrzynkę i **kasuje plik wyprodukowany przez model**;
+  `ponawialne=(LLMError,)` nie dzieli błędu przejściowego od trwałego (400/401 pali dwie tury
+  z podwójnymi skutkami ubocznymi); a zapisy mostu (`Activity(create_issue)`/`comment`) nie mają
+  klucza idempotencji, więc ponowienie może założyć duplikat issue. To funkcja wymagająca projektu,
+  nie łatka w partii utwardzeń. Opt-in usunięto; `LLMError` degraduje łagodnie w `SafeResponder`
+  jak dawniej. Ponawianie wróci razem z: nie-niszczącym snapshotem skrzynki przy powtórce, kluczem
+  z `source_message_id` na zapisach mostu i idempotentną metryką wywołań. Zostają — jako obrona
+  z wyprzedzeniem — token tury z `source_message_id` (wyżej) i sufit czasu klienta agenta (niżej),
+  bo oba są poprawne niezależnie od tego, czy pętla ponowień istnieje dziś.
+
+
 ### Naprawione
+
+- **Token tury domykał punkt kontrolny człowieka przy ponowieniu (mutacja notatek).** Token tury
+  był losowany przy budowie katalogu `File`, na przesłance „jedno wywołanie fabryki to jedna tura".
+  Przesłanka pękała, gdyby drzwi Teams ponawiały TĘ SAMĄ wiadomość: `record_run` nie zdążył pobiec,
+  historia rozmowy wygląda jak przed turą, model odtwarza tę samą prośbę `File(edit)`, klucz
+  zapowiedzi się zgadza, a świeży los zalicza się za człowieka — mutacja wchodziłaby w życie, choć
+  nikt nic nie napisał. Token wywodzi się teraz z `source_message_id` i jest WYMAGANYM argumentem
+  fabryki; drzwi bez identyfikatora wiadomości (CLI, Bot Framework) dostają wartość losową, bo nie
+  mają pętli ponowień. Decyzja: ADR 0065, amendment 2026-09-03. **Ponawianie `LLMError`, które było
+  bezpośrednim wyzwalaczem, zostało z tego wydania WYJĘTE** (patrz „Odroczone" niżej); poprawka
+  tokenu wchodzi mimo to jako obrona z wyprzedzeniem — jest tania, samodzielna i poprawna niezależnie
+  od tego, czy pętla ponowień istnieje dziś.
+
+- **Bramka „zdarzenia z drzwi nie trafiają do bazy wiedzy" stała po stronie, która ich nie
+  zapisuje.** `EventsSettings.validate()` egzekwuje ten inwariant tylko przy podanym `data_dir`,
+  a drzwi GitHub — jedyny proces zapisujący `events.db` — wołały ją bez argumentu; obie usługi
+  dzielą jeden plik, więc bramka po jednej stronie nie broniła niczego. Argument stracił wartość
+  domyślną: świadome `None` wolno podać, pominięcia nie da się już napisać.
+
+- **Awaria odczytu odpowiedzi wątku — rozróżniona po przyczynie, bez fałszywego zdrowia.** Wyjątek
+  z `list_replies` leciał PRZED `plan_channel`, więc pierwsza wersja poprawki łapała go szeroko
+  (`except Exception` → pusta lista, wątek wypada po `active_idle`). Przegląd pokazał, że to
+  ODTWARZA tryb „healthy, choć martwy": przy systemowej awarii Graph (500/429 na wszystkim)
+  `since_roots` idzie naprzód, `last_seen` stoi, więc po 24 h **każdy żywy wątek** wypada na zawsze,
+  a puls przez cały ten czas bije. Rozróżniamy teraz przyczynę:
+  - **404 (root skasowany w Teams)** — strona ODCZYTU podnosi `ThreadRootGone` (jak strona zapisu),
+    a poller eksmituje wątek OD RAZU (samoleczenie bez operatora), zamiast czekać `active_idle`.
+  - **Przejściowa awaria JEDNEGO wątku** (5xx/429/sieć) — wątek pomijany w rundzie, ale CHRONIONY
+    przed eksmisją: jego cisza jest nieznana, nie potwierdzona, więc `active_idle` go nie zmiata.
+  - **Systemowa awaria (wszystkie odpytywane wątki padły przejściowo)** — runda uznana za martwą:
+    puls WYGASZONY (`_read_failed`, tą samą regułą co porażka zapisu stanu, ADR 0069), stan kanału
+    nieprzesunięty. Healthcheck po wieku pulsu wznawia proces, zamiast pokazywać zdrowie.
+
+- **Nieczytelny wpis wątku wypychał wątek z odpytywania NA STAŁE.** `_seed` kasował uszkodzony
+  wpis, a komentarz obok obiecywał „licz od nowa, najwyżej ponowne przeczytanie odpowiedzi".
+  `plan_channel` rzeczywiście tak by zrobił, ale nigdy nie dostawał szansy: kandydatów do
+  odpytania bierze się z KLUCZY `threads` plus rootów nowszych niż watermark, więc wątek ze starym
+  postem początkowym znikał bez śladu — trwająca wielotura milkła. Wpis jest teraz NAPRAWIANY do
+  znacznika startu procesu: wątek zostaje śledzony, a odpowiedzi sprzed restartu nie wracają jako
+  nowe.
+
+- **`Powiadomienia_teams`: awaria wysyłki przy statusie terminalnym udawała awarię ODCZYTU.**
+  Nowa gałąź „dzień już wolny w grafiku" commitowała status `SELF_FILLED` razem z watermarkiem,
+  a dopiero potem wysyłała wiadomość — bez osłony. Wyjątek z Graph zostawiał wpis zamknięty na
+  zawsze, pracownika bez słowa, a jego odpowiedź za przesuniętym watermarkiem; przy okazji
+  doliczał się do licznika „nie da się odczytać czatu", więc alarm wskazywał operatorowi inną
+  usterkę niż ta, która zaszła. Osłona wzorem bliźniaczego `_close_self_filled` — na WSZYSTKICH
+  czterech wyjściach tej funkcji, także na gałęzi `decline`, gdzie status `DECLINED` jest równie
+  terminalny i wpis nigdy nie wraca do obsługi.
+
+- **`Powiadomienia_teams`: alert o nieudanym przebiegu wklejał surowy komunikat wyjątku na
+  webhook.** `_tresc_publiczna` istnieje dokładnie po to i dwa sąsiednie alerty już jej używają;
+  ten jeden był pominięty, a `except Exception` łapie też wyjątki z własną wersją publiczną.
+
+- **`Powiadomienia_teams`: lista pilotażu normalizowana tylko przy wczytaniu ze środowiska.**
+  Filtr casefolduje wyłącznie lewą stronę porównania, więc `Settings` zbudowany wprost cicho nie
+  trafiał w nikogo — dokładnie ta awaria, którą normalizacja miała zamykać. Inwariant przeniesiony
+  do `__post_init__`, czyli do klasy, a nie do jednego konstruktora.
+
+- **Data notatki wątkowej liczona w UTC.** `„zapisz to"` wysłane o 23:30 czasu warszawskiego
+  zakładało notatkę pod POPRZEDNIM dniem — data wchodzi do `build_note_id`, więc notatka dostawała
+  zarówno inny dzień w treści, jak i inny identyfikator, a notatki `-thr-` są niezmienne (korekta
+  wymaga założenia nowej). Bliźniacze drzwi digestu konwertują strefę od początku; tu był rozjazd,
+  nie decyzja. Doszło `WORKMATE_TEAMS_GRAPH_TZ` (domyślnie `Europe/Warsaw`, walidowane jak strefa
+  digestu); bez wstrzykniętej strefy zachowanie zostaje dawne.
+
+- **`Powiadomienia_teams`: bot obiecywał zapisać czas wolny, nie zapisywał nic i wysyłał
+  nieprawdziwe domknięcie.** Tekst potwierdzenia powstawał z PEŁNEJ listy dni wolnych, a odsianie
+  dni obecnych już w Shifts (`known_time_off_weekdays`) działo się dopiero przy zapisie. Gdy odsiew
+  zabierał wszystko, `_apply_confirmed_yes` wchodziło w gałąź „nie ma czego zapisać" i wysyłało
+  komunikat o MINIONYM TYGODNIU — w tym scenariuszu po prostu nieprawdziwy, bo tydzień dopiero
+  nadchodził. Wpis lądował w terminalnym `EXPIRED`.
+
+  Scenariusz był osiągalny wprost: nudge zaczepia osobę z urlopem CZĘŚCIOWYM i sam wymienia jej
+  dni wolne, więc pracownik odpisuje właśnie o nich. Odsiew przeniesiono PRZED tekst potwierdzenia
+  — tam, gdzie komentarz obok od początku obiecywał, że wiadomość zapowie „dokładnie to, co zostanie
+  zapisane". Gdy po odsiewie nie zostaje nic, wpis domyka się jako `SELF_FILLED` z komunikatem
+  mówiącym, co jest faktem: te dni są już w grafiku.
+
+- **`claude_summary`: commity znikały z raportu przez strefę czasu.** `git log --since/--until`
+  dostawało naiwny napis, który git interpretuje w strefie PROCESU, a `group_by_day` grupuje
+  w `CLAUDE_SUMMARY_TZ`. Na hoście w UTC — czyli w kontenerze i na maszynie CI — „2026-09-02
+  00:00:00" znaczyło 02:00 czasu warszawskiego, więc commity z pierwszych dwóch godzin pierwszej
+  doby zakresu nie trafiały do raportu i nikt się o tym nie dowiadywał. Granice idą teraz z offsetem.
+  Ten raport jest materiałem dowodowym dla worklogu Jira, więc zgubiony commit to zaniżony czas pracy.
+
+- **`Powiadomienia_teams`: GUID-y porównywane z uwzględnieniem wielkości liter.** `ONLY_USER_IDS`
+  wklejone WIELKIMI literami nie pasowało do niczego, `missing` schodziło do zera, a podsumowanie
+  dla administratora mówiło „0 próśb" — awaria konfiguracji wyglądała identycznie jak spokojny
+  tydzień. Ten sam rozjazd między `/me` a `/teams/{id}/members` sprawiał, że bot pisał sam do siebie.
+  `reminders/replies.py` casefoldował z dokładnie tego powodu; teraz robią to wszystkie trzy miejsca.
+
+- **`Powiadomienia_teams`: imiona pracowników przestały lecieć na zewnętrzny webhook.** Dwa alerty
+  wysyłały `member_name` prosto w ładunku, choć `_tresc_publiczna` i `AmbiguousAccountError.publiczny`
+  istnieją po to, żeby dane osobowe nie opuszczały organizacji tą drogą. Na webhook idzie liczba
+  i identyfikatory; imiona zostają w logu usługi.
+
+- **`claude_summary`: klient Anthropic bez limitu czasu.** Domyślne 10 minut SDK × 2 ponowienia na
+  wywołanie, a opis prozą leci raz na dzień zakresu — `--llm --since` sprzed miesiąca mogło zająć
+  kilkanaście godzin zegara ściennego bez wyjścia.
+
+- **Klient Anthropic AGENTA (drzwi Teams) bez limitu czasu.** Ten sam sufit co u rodzeństwa wyżej,
+  ale na kliencie, na którym najbardziej boli: domyślne 10 min SDK × 2 ponowienia = ~30 min zawisu
+  w JEDNEJ turze agenta. Puls bije PO całej turze (healthcheck `--max-age 180`), więc przez ten czas
+  nasłuch nie obsługuje nikogo, a proces wygląda na zdrowy. Żądanie jedzie strumieniem, więc sufit
+  (`timeout=60 s`, `max_retries=1`) działa jak górny limit przerwy między zdarzeniami — zdrowego
+  długiego strumienia nie tnie, tnie tylko zawis; 60 s × (1+1) = 120 s mieści się pod pulsem.
+
+- **Punkt kontrolny człowieka przenosił się między rozmowami.** Klucz zapowiedzi mutacji notatki
+  to `sha256(człowiek | rodzaj | notatka | treść)` — bez identyfikatora rozmowy. Rejestr powstaje
+  RAZ na proces, a token tury jest świeży co turę, więc zapowiedź wystawiona w wątku A przechodziła
+  jako potwierdzenie w wątku B, dopóki wpis nie wygasł. Argument z ADR 0065 („powtórzenie dowodzi,
+  że człowiek odezwał się po zobaczeniu, co się zmieni") tej ścieżki nie obejmował: człowiek widział
+  zapowiedź gdzie indziej albo wcale.
+
+  ADR 0065 §6 nazywa to „human checkpoint **in the Teams thread**", więc granicą jest para
+  (rozmowa, tura), nie sama tura. Zakres idzie z DOMKNIĘTEGO `scope` narzędzia `File`, czyli model
+  nie ma jak go podać ani podmienić. **To zmiana zachowania:** sonda
+  `…rests_on_the_turn_differing_not_on_where_it_was_written` twierdziła dotąd coś przeciwnego —
+  jej nazwę poprawiono kiedyś do treści, zamiast sprawdzić treść wobec decyzji.
+
+- **Uszkodzony wpis wątku wyłączał kanał na stałe, przy zielonym healthchecku.** Utwardzenie `_seed`
+  kończyło się na gałęzi `threads` jako CAŁOŚCI; wartości w środku szły do `plan_channel` surowe.
+  Wpis bez `last_seen`, napis zamiast słownika albo `null` wywracały rundę
+  (`KeyError`/`ValueError`/`TypeError` — wszystkie trzy odtworzone), a skutek był gorszy niż przy
+  wariantach załatanych wcześniej: wyjątek łapie `except` per kanał, po nim puls I TAK bije, a zapis
+  stanu się udaje. Kontener stał „healthy", choć na tym kanale od restartu nie przeszła ani jedna
+  wiadomość, a wyjściem było ręczne skasowanie pliku stanu.
+
+- **Tekst z ekstrakcji nie wchodził do żadnego budżetu.** Pliki ekstrahowane zaliczały do budżetu
+  zero, więc obie bramki bajtów je przepuszczały, a jedynym ogranicznikiem zostawał `max_count`
+  (20) razy 200 000 znaków — do czterech milionów znaków w jednej turze użytkownika. Granica, o którą
+  tu chodzi, to OKNO KONTEKSTU, nie rozmiar żądania, więc tekst dostał własny łączny sufit
+  (`max_total_text_chars`, domyślnie tyle, ile wolno pojedynczemu plikowi).
+
+- **`WORKMATE_TEAMS_DIGEST_DRY_RUN=ture` uzbrajało realną wysyłkę.** `_bool_from_env` mapuje
+  wszystko spoza listy prawdy na `False`, co dla bramek `enable_*` jest kierunkiem bezpiecznym.
+  To jedyna flaga o ODWRÓCONEJ polaryzacji, więc literówka zdejmowała tryb próbny i puszczała DM do
+  całej listy odbiorców; pole nie nazywa się `enable_*`, więc golden-test bramek go nie obejmuje.
+  Ma teraz parser ścisły — nierozpoznana wartość wywraca start.
+
+- **Async `/notatka` stawiał DWIE pule wątków.** Docstring `_build_thread_note_router` deklaruje
+  „async współdzieli pulę/poster", a obaj wołający liczyli `_build_async_note_dispatch` osobno.
+  Przy obu bramkach ON sufit równoległych łańcuchów transkrypt+Claude był faktycznie dwukrotnością
+  `meeting_note_async_workers`, a rejestracji `atexit` były cztery zamiast dwóch.
+
+- **Przy `OUTBOX_MAX_FILES=1` świeże pliki modelu były kasowane.** Rezerwacja `limit - 1` daje przy
+  jedynce zero miejsc, więc rozstrzygała sama kolejność — a ta stawiała ponowienia bezwzględnie
+  pierwsze. Pozycja ponawiana czeka turę i wraca; świeża wypchnięta za okno ginie razem z pracą
+  modelu, czyli dokładnie ta strata, którą rezerwacja miała zlikwidować.
+
+- **Porzucona wiadomość nie kończy się już CISZĄ.** Po wyczerpaniu licznika prób (ADR 0069) drzwi
+  Teams odpisują w wątku: co się nie udało, dlaczego i co z tym zrobić, plus identyfikator, pod
+  którym leży wpis w kwarantannie. Cisza była tu najgorszym wyjściem — człowiek napisał, widzi bota
+  odpowiadającego innym w tym samym kanale i nie dostaje nic, czyli objaw nieodróżnialny od
+  zignorowania.
+
+  Powód pochodzi z KLASY wyjątku i wyłącznie z niej. `_failure_reason` (kwarantanna, kanał
+  operatorski) sam nazywa się redukcją ekspozycji, nie granicą: komunikat wyjątku bywa sklejany
+  z danymi wejściowymi — `ValidationError` pydantica wypisuje `input_value`, czyli fragment treści
+  rozmówcy. Na kanał czytany przez zespół idzie więc tylko to, co niesie nazwa klasy. Wysyłka jest
+  ostatnim krokiem, po utrwaleniu stanu (inaczej awaria między wysyłką a zapisem dawałaby przy
+  restarcie drugie „nie udało mi się"), i nigdy nie wywraca rundy.
+
+- **Katalog roboczy wskazujący wolumen stanu kasował migawki notatek.** `WorkspaceSettings.validate`
+  broniło dwóch kierunków (korzeń systemu / katalog domowy, brudnopis nad bazą wiedzy), a komentarz
+  przy bramce wymieniał TRZECI — wolumen stanu — którego kod nie sprawdzał. Na flocie
+  `WORKMATE_WORKSPACE_DIR=/var/lib/workmate/workspace` i
+  `WORKMATE_NOTE_SNAPSHOTS_DIR=/var/lib/workmate/snapshots/notes` są rodzeństwem, więc zgubienie
+  ostatniego segmentu dawało ścieżkę przechodzącą walidację; sprzątacz TTL — bezwarunkowy przy
+  KAŻDYM starcie drzwi i schodzący dokładnie dwa poziomy — trafiał wtedy w `snapshots/notes`.
+
+  Ginęły migawki sprzed mutacji, czyli ta połowa odwracalności z ADR 0065, która działa w ciągu
+  doby (druga to nocna kopia). Bramka bierze teraz listę z `Settings.persistent_paths` — jedynego
+  miejsca, w którym spisano, co jest na wolumenie pisane — więc następna trwała ścieżka wchodzi
+  pod nią bez zmiany w `config/workspace.py`. Sonda jedzie przez `main` drzwi, bo bramka działa
+  wyłącznie wtedy, gdy drzwi ją tą listą karmią.
+
+- **Osiem sond `Powiadomienia_teams` padało w każdy weekend, blokując budowę obrazu.** `run_once`
+  przyjmowało moment parametrem, ale bramka godzin ciszy czytała zegar systemowy
+  (`datetime.now(_UTC)`). Domyślne okno wysyłki to pn-pt 8-18, a `Dockerfile` odpala
+  `pytest && touch /app/.testy-przeszly` — obraz pod-projektu przestawał się budować bez żadnej
+  zmiany w kodzie. Ta sama klasa wady co #88, tyle że wracająca co tydzień, nie raz.
+
+  `run_once` (i `_run_once_with_retry` / `_safe_run_once` / `_przebieg_i_podsumowanie`) przyjmuje
+  teraz `zegar` — wołany osobno przed KAŻDĄ wysyłką, bo dławienie Graph potrafi wypchnąć przebieg
+  poza okno. Bez wstrzyknięcia zachowanie jest dotychczasowe (czas na żywo), więc produkcja się nie
+  zmienia. `teraz` z `_przebieg_i_podsumowanie` świadomie NIE jedzie dalej jako zegar: stała
+  wartość zdejmowałaby bramkę okna w trakcie przebiegu, co wykryła sonda przerwanego przebiegu.
 
 - **Bramka obrazu floty stała czerwona od 1 września — z powodu kalendarza, nie kodu** (#88).
   `test_cli_app::test_history_...` miał asercję kosztu (`$0.0000`) wpisaną z palca, a rozmowę
@@ -21,6 +249,20 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   sonda po obu stronach przełącznika: przełącznik cennika nie miał dotąd ŻADNEGO testu na
   ścieżce CLI, więc gdyby ktoś policzył koszt dniem dzisiejszym zamiast dniem rozmowy, nic by
   tego nie złapało — a różnicę widać dopiero na rachunku.
+
+### Dodane
+
+- **Sufit funkcji egzekwowany maszynowo (`C901`, `PLR0915`).** Do tej pory żył wyłącznie w prozie
+  i w cudzej pamięci: rozbicie plików-monolitów (#76/#87) przeprowadzono ręcznie, więc nic nie
+  pilnowało, żeby funkcje urosły z powrotem — 36-parametrowa fabryka i 326-linijkowa metoda
+  przechodziły w ciszy. Bramka zapala się na znanym długu (sześć miejsc w `src`, cztery
+  w `Powiadomienia_teams`, jedno w `claude_summary`), a w `tests/` ani razu. Sprawdzone, że gryzie
+  także na NOWYM kodzie, nie tylko domyka stan zastany.
+
+  Wyjątki są PUNKTOWE (`noqa` przy funkcji), nie plikowe — mają zniknąć razem z długiem, zamiast
+  stać się cichym zwolnieniem modułu. Dwie klasy: dług do rozbicia oraz miejsca, w których długość
+  JEST kontraktem (sygnatura buildera narzędzia to schemat pokazywany modelowi, więc skrócenie
+  kosztowałoby zdolność).
 
 ### Zmienione
 

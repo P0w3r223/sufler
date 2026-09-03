@@ -17,6 +17,7 @@ from workmate.adapters.inbound.teams_graph.graph import (
     HttpxGraphChannelClient,
     _encode_share_id,
 )
+from workmate.core.errors import ThreadRootGone
 
 
 def test_encode_share_id_uses_u_prefix_urlsafe_base64_without_padding():
@@ -57,6 +58,42 @@ def test_post_reply_sends_rendered_html_not_plain_markdown():
     assert body["contentType"] == "html"
     assert "<strong>ważne</strong>" in body["content"]
     assert "**" not in body["content"]  # surowy Markdown nie wychodzi dosłownie
+
+
+def test_list_replies_raises_thread_root_gone_on_404():
+    """Root skasowany w Teams → 404. Strona ODCZYTU podnosi ``ThreadRootGone`` (jak strona
+    zapisu), żeby poller odróżnił „wątek zniknął" (eksmisja) od awarii odczytu (przejściowa)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": {"code": "NotFound"}})
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            await client.list_replies("team", "chan", "root-9", top=5)
+
+    with pytest.raises(ThreadRootGone, match="root-9"):
+        asyncio.run(run())
+
+
+def test_list_replies_propagates_other_http_errors_as_is():
+    """Kontrast: 500 to NIE „wątek zniknął" — leci dalej jako ``HTTPStatusError`` (nie
+    ``ThreadRootGone`` ani cichy sukces), więc poller liczy go jako awarię odczytu, nie eksmisję."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"code": "InternalServerError"}})
+
+    transport = httpx.MockTransport(handler)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            await client.list_replies("team", "chan", "root-9", top=5)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(run())
 
 
 def test_get_hosted_content_falls_back_to_listing_on_404():

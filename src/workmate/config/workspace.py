@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from workmate.config._env import (
     _bool_from_env,
@@ -61,12 +65,19 @@ class WorkspaceSettings:
             retention_days=_int_from_env("WORKMATE_WORKSPACE_RETENTION_DAYS", 30),
         )
 
-    def validate(self, *, data_dir: Path) -> None:
+    def validate(
+        self, *, data_dir: Path, persistent_paths: Sequence[tuple[Path, str, bool]] = ()
+    ) -> None:
         """Twardy błąd startu przy bezsensownych limitach albo złej lokalizacji katalogu roboczego.
 
         ``data_dir`` wstrzykiwany, by wymusić inwariant bezpieczeństwa z ADR 0018: katalog roboczy
         (scratch, pliki od niezaufanego modelu) MUSI leżeć POZA bazą wiedzy — inaczej poisoned
         artefakt trafiłby do notatek, które agent czyta (wzorzec ``TokenVerifier.from_file``).
+
+        ``persistent_paths`` to lista z ``Settings.persistent_paths`` — jedyne miejsce, w którym
+        spisano, co jest na wolumenie stanu pisane. Bramka niżej sprawdza wobec niej trzeci
+        kierunek pomyłki; przekazanie jej trzyma listę w jednym miejscu, zamiast powtarzać ją
+        tutaj i rozjeżdżać przy następnej ścieżce.
         """
         resolved_ws = self.workspace_dir.resolve()
         resolved_data = data_dir.resolve()
@@ -75,12 +86,10 @@ class WorkspaceSettings:
                 f"WORKMATE_WORKSPACE_DIR nie może leżeć wewnątrz katalogu danych ({resolved_data}) "
                 f"— katalog roboczy to scratch poza bazą wiedzy, jest: {resolved_ws}."
             )
-        # DRUGI kierunek, dopisany razem z bezwarunkowym sprzątaczem TTL. Dopóki sprzątanie
-        # wisiało na bramce narzędzi, wskazanie tu korzenia systemu, katalogu domowego albo
-        # wolumenu stanu było bezobjawową pomyłką konfiguracji. Od chwili, w której sprzątacz
-        # biegnie przy KAŻDYM starcie drzwi, ta sama pomyłka kasuje wszystko na drugim poziomie
-        # tej ścieżki, czego nikt nie tknął od `retention_days`. Kierunek pomyłki jest
-        # nieodwracalny, więc bramka stoi tam, gdzie wartość jest jeszcze konfiguracją.
+        # DRUGI i TRZECI kierunek, dopisane razem z bezwarunkowym sprzątaczem TTL. Sprzątacz
+        # biegnie przy KAŻDYM starcie drzwi i kasuje wszystko na drugim poziomie tej ścieżki,
+        # czego nikt nie tknął od `retention_days`. Kierunek pomyłki jest nieodwracalny, więc
+        # bramka stoi tam, gdzie wartość jest jeszcze konfiguracją.
         if resolved_ws in (Path(resolved_ws.anchor), Path.home().resolve()):
             raise ValueError(
                 "WORKMATE_WORKSPACE_DIR nie może być korzeniem systemu ani katalogiem domowym "
@@ -91,6 +100,20 @@ class WorkspaceSettings:
                 f"WORKMATE_WORKSPACE_DIR ({resolved_ws}) zawiera katalog danych ({resolved_data}) "
                 "— sprzątanie TTL sięgnęłoby bazy wiedzy."
             )
+        # TRZECI kierunek: wolumen stanu. Katalog roboczy i migawki notatek są na flocie
+        # RODZEŃSTWEM (`/var/lib/workmate/workspace` obok `/var/lib/workmate/snapshots/notes`),
+        # więc zgubienie ostatniego segmentu daje ścieżkę, która przechodziła obie kontrole wyżej
+        # i przy której sprzątacz trafiał dokładnie w `snapshots/notes`. Kasowało to migawki
+        # sprzed mutacji, czyli tę połowę odwracalności z ADR 0065, która działa w ciągu doby
+        # (druga to nocna kopia). Lista przychodzi z `Settings.persistent_paths`, więc następna
+        # trwała ścieżka wchodzi pod tę bramkę bez zmiany tutaj.
+        for chroniona, zmienna, _ in persistent_paths:
+            resolved_chroniona = chroniona.resolve()
+            if resolved_ws == resolved_chroniona or resolved_ws in resolved_chroniona.parents:
+                raise ValueError(
+                    f"WORKMATE_WORKSPACE_DIR ({resolved_ws}) zawiera trwałą ścieżkę "
+                    f"{zmienna} ({resolved_chroniona}) — sprzątanie TTL by ją skasowało."
+                )
         dangerous = set(self.allowed_ext) & _DANGEROUS_WORKSPACE_EXT
         if dangerous:
             raise ValueError(

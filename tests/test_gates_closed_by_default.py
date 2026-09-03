@@ -116,6 +116,32 @@ def test_refleksja_widzi_wszystkie_klasy_ustawien() -> None:
     )
 
 
+def test_kazda_klasa_ustawien_ma_validate() -> None:
+    """Konwencja: klasa ustawień sama orzeka o bezsensownych wartościach, przy STARCIE.
+
+    Wypadnięcie z niej jest ciche i kosztowne. ``RetrievalSettings`` nie miało ``validate``, więc
+    ``WORKMATE_RETRIEVAL_RRF_K=0`` przechodziło konfigurację i wywracało się dopiero w środku
+    wyszukiwania (``1.0 / (k + rank)``, ``rank`` od zera) — surowym ``ZeroDivisionError``, nie
+    błędem narzędzia. ``SkillsSettings`` po cichu ucinało listę procedur do zera.
+
+    ``Settings`` i ``GithubSettings``/``JiraSettings`` mają warianty nazwane inaczej
+    (``validate_worklog_limits``, ``validate_limits``), więc wystarczy DOWOLNA metoda ``validate*``.
+    """
+    bez_walidacji = sorted(
+        nazwa
+        for nazwa, cls in _klasy_ustawien().items()
+        if not any(
+            callable(getattr(cls, atrybut, None))
+            for atrybut in dir(cls)
+            if atrybut.startswith("validate")
+        )
+    )
+    assert bez_walidacji == [], (
+        f"klasy ustawień bez żadnej metody validate*: {bez_walidacji} — zła wartość wyjdzie "
+        "dopiero przy użyciu, a nie przy starcie"
+    )
+
+
 def test_kazde_pole_o_nazwie_bramki_jest_bool_albo_jawnie_trojstanowe() -> None:
     """Pole nazwane jak bramka, a nie ``bool``, musi stać w rejestrze i mieć własny test.
 

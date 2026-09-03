@@ -156,6 +156,18 @@ class Settings:
     # odpytywania. Wcześniejsze wyprowadzanie progu z `poll_max_interval_s` dawało 2 h.
     health_max_age_s: int = 900
 
+    def __post_init__(self) -> None:
+        """Normalizuj GUID-y pilotażu NIEZALEŻNIE od drogi budowy obiektu.
+
+        ``from_env`` robiło to samodzielnie, więc filtr działał dla procesu, a przestawał dla
+        każdego ``Settings(...)`` złożonego wprost — w testach i w kodzie, który kiedyś tę klasę
+        zbuduje inaczej. Awaria była przy tym CICHA: GUID wielkimi literami nie pasował do
+        niczego, ``missing`` schodziło do zera, a podsumowanie mówiło „0 próśb", czyli awaria
+        konfiguracji wyglądała jak spokojny tydzień. Inwariant należy do KLASY, nie do jednego
+        konstruktora — porównanie w ``app`` casefolduje wyłącznie lewą stronę.
+        """
+        object.__setattr__(self, "only_user_ids", tuple(v.casefold() for v in self.only_user_ids))
+
     @property
     def authority(self) -> str:
         return f"https://login.microsoftonline.com/{self.tenant_id}"
@@ -179,7 +191,7 @@ class Settings:
         """
         return self.state_path.with_name("heartbeat")
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # noqa: C901
         missing = [n for n in ("client_id", "tenant_id", "team_id") if not getattr(self, n)]
         if missing:
             raise ConfigError(f"Brak wymaganych ustawień: {', '.join(missing)}")
@@ -283,7 +295,7 @@ class Settings:
             send_window_end_hour=_int("SEND_WINDOW_END_HOUR", 18),
             send_window_weekdays=_int_list("SEND_WINDOW_WEEKDAYS", (0, 1, 2, 3, 4)),
             dry_run=_bool("DRY_RUN", True),
-            only_user_ids=_list("ONLY_USER_IDS"),
+            only_user_ids=tuple(_list("ONLY_USER_IDS")),  # normalizuje ``__post_init__``
             llm_model=_get("LLM_MODEL", "claude-haiku-4-5"),
             anthropic_api_key=(os.environ.get("ANTHROPIC_API_KEY") or _get("AGENT_API_KEY")),
             admin_user_id=_get("ADMIN_USER_ID"),
