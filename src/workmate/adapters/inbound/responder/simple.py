@@ -89,36 +89,17 @@ class SafeResponder:
 
     Analogicznie do granicy MCP (która zamienia błąd na ``{"error": ...}``) — ten szew
     daje tę granicę drzwiom async (Teams). Kontekst (nadawca, rozmowa) w logu.
-
-    ``ponawialne`` wskazuje klasy błędów, które mają PRZELECIEĆ zamiast degradować. Podaje je
-    wołający, bo tylko on wie, czy za tym szwem stoi ktoś, kto ponowi. Drzwi Teams mają licznik
-    prób z ADR 0069; dopóki ten dekorator łapał wszystko, licznik nie widział ani jednej porażki
-    obsługi, więc ponowienie działało wyłącznie dla awarii WYSYŁKI i śmierci procesu — a komentarz
-    przy liczniku wymieniał „timeout LLM" jako powód jego istnienia. Przejściowy błąd Claude API
-    kończył się wtedy przeprosinami i wiadomością znikającą ze strumienia bez wpisu do kwarantanny.
     """
 
     _FALLBACK = "Przepraszam, wystąpił chwilowy błąd po mojej stronie. Spróbuj ponownie za chwilę."
 
-    def __init__(
-        self,
-        inner: Responder,
-        *,
-        fallback: str = _FALLBACK,
-        ponawialne: tuple[type[BaseException], ...] = (),
-    ) -> None:
+    def __init__(self, inner: Responder, *, fallback: str = _FALLBACK) -> None:
         self._inner = inner
         self._fallback = fallback
-        self._ponawialne = ponawialne
 
     async def respond(self, message: InboundMessage) -> str:
         try:
             return await self._inner.respond(message)
-        except self._ponawialne:
-            # Bez logu: wołający NAZYWA wiadomość, mówi, która to próba i czy będzie następna
-            # (``ChannelPoller._poll_channel``). Log tutaj dawałby dwa wpisy o jednym zdarzeniu,
-            # z czego ten uboższy stałby pierwszy.
-            raise
         except WorkMateError as exc:
             logger.warning(
                 "Błąd obsługi wiadomości (nadawca=%r, rozmowa=%r): %s",

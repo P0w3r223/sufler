@@ -43,7 +43,6 @@ from workmate.config import (
     WorkspaceSettings,
     require_writable,
 )
-from workmate.core.errors import LLMError
 from workmate.core.ports.materialization import MaterializationLimits
 
 if TYPE_CHECKING:
@@ -378,10 +377,6 @@ def _build_responder(
         channel="teams_graph",
         enable_write=False,
         safe=True,
-        # Błąd rozmowy z modelem ma dojść do licznika prób pollera (ADR 0069), a nie skończyć się
-        # przeprosinami i wiadomością odhaczoną jako obsłużona. Te drzwi jako jedyne mają licznik,
-        # więc jako jedyne o to proszą; reszta błędów dalej degraduje łagodnie w ``SafeResponder``.
-        ponawialne=(LLMError,),
         enable_workspace=workspace_settings.enabled,
         workspace_settings=workspace_settings,
         shell_settings=shell_settings,

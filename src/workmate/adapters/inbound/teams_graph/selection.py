@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -294,6 +295,8 @@ def plan_channel(
     active_idle: timedelta,
     policy: ReplyPolicy | None = None,
     channel: tuple[str, str] = ("", ""),
+    unread_roots: Collection[str] = (),
+    gone_roots: Collection[str] = (),
 ) -> tuple[list[ChannelMessage], dict[str, Any]]:
     """Wybierz wiadomości do obsługi i policz nowy stan kanału (watermark + aktywne wątki).
 
@@ -302,6 +305,11 @@ def plan_channel(
     aktywności dłużej niż ``active_idle`` eksmitujemy, żeby nie odpytywać ich w
     nieskończoność. ``replied`` filtruje już odpisane (dedup), ale watermark i tak
     przesuwamy nad nimi. Wiadomości wracają posortowane chronologicznie.
+
+    ``unread_roots`` / ``gone_roots`` niosą wynik odczytu odpowiedzi z pollera: wątek, którego
+    odpowiedzi NIE dały się odczytać w tej rundzie (przejściowa awaria), jest CHRONIONY przed
+    eksmisją (jego cisza jest nieznana); wątek skasowany w Teams (404) jest eksmitowany OD RAZU.
+    Domyślnie puste — wołający bez tej wiedzy (testy, ścieżki bez awarii) zachowuje dawne działanie.
 
     ``policy``/``channel`` to bramka „czy w ogóle odpowiadać" (SZKIELET wielokanałowy):
     ``policy=None`` (domyślnie) pomija bramkę całkowicie — zachowanie identyczne jak przed
@@ -348,9 +356,17 @@ def plan_channel(
             )
         threads[root_id] = {"watermark": watermark, "last_seen": last_seen}
 
-    # 3) Eksmisja martwych wątków — bez aktywności dłużej niż active_idle.
+    # 3) Eksmisja wątków — z dwoma wyjątkami od reguły „stary last_seen ⇒ usuń":
+    #    - ``gone_roots`` (root skasowany w Teams, 404): usuwamy OD RAZU, nie czekając cutoff;
+    #    - ``unread_roots`` (odpowiedzi nieodczytane w tej rundzie): TRZYMAMY mimo starego
+    #      last_seen — cisza jest nieznana, nie potwierdzona. Bez tego systemowa awaria odczytu
+    #      zamiatałaby żywe wątki po active_idle (last_seen bez odczytu nie rusza).
     cutoff = now - active_idle
-    threads = {rid: info for rid, info in threads.items() if parse_iso(info["last_seen"]) >= cutoff}
+    threads = {
+        rid: info
+        for rid, info in threads.items()
+        if rid not in gone_roots and (rid in unread_roots or parse_iso(info["last_seen"]) >= cutoff)
+    }
 
     messages = _dedup_by_id(messages)
     messages.sort(key=lambda m: parse_iso(m.created))

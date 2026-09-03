@@ -30,7 +30,7 @@ from workmate.adapters.inbound.responder import (
 )
 from workmate.config import AgentSettings, ConversationSettings, Settings
 from workmate.core.domain.workspace import WorkspaceScope
-from workmate.core.errors import LLMError, NoteAuthorizationError
+from workmate.core.errors import NoteAuthorizationError
 from workmate.core.ports.llm import AttachmentQueue
 from workmate.core.ports.materialization import MaterializationLimits
 
@@ -197,7 +197,7 @@ def _conv_settings(tmp_path: Path) -> ConversationSettings:
     )
 
 
-def _build_responder(tmp_path, monkeypatch, *, safe: bool, ponawialne=()):
+def _build_responder(tmp_path, monkeypatch, *, safe: bool):
     monkeypatch.setattr(
         agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
     )
@@ -208,7 +208,6 @@ def _build_responder(tmp_path, monkeypatch, *, safe: bool, ponawialne=()):
         channel="telegram",
         enable_write=False,
         safe=safe,
-        ponawialne=ponawialne,
     )
 
 
@@ -217,14 +216,6 @@ def test_build_conversational_responder_wraps_in_saferesponder_when_safe(
 ):
     responder = _build_responder(tmp_path, monkeypatch, safe=True)
     assert isinstance(responder, SafeResponder)
-
-
-def test_lista_ponawialnych_dojezdza_do_saferespondera(tmp_path: Path, monkeypatch):
-    """Bez tej sondy ``ponawialne`` mogłoby wypaść po drodze i licznik prób pollera znów nie
-    widziałby porażek obsługi — czyli dokładnie stan sprzed poprawki, przy zielonym pakiecie."""
-    responder = _build_responder(tmp_path, monkeypatch, safe=True, ponawialne=(LLMError,))
-
-    assert responder._ponawialne == (LLMError,)
 
 
 def test_build_conversational_responder_returns_bare_when_not_safe(tmp_path: Path, monkeypatch):

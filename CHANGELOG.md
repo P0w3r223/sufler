@@ -28,18 +28,36 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   Bramka złożoności (`C901`/`PLR0915`) z tej samej pary JEST już wdrożona — patrz „Dodane".
 
 
+### Odroczone
+
+- **Ponawianie `LLMError` na drzwiach Teams — WYJĘTE z tego wydania, wraca osobno z projektem
+  idempotencji.** Gałąź czyniła `LLMError` ponawialnym (`SafeResponder(..., ponawialne=(LLMError,))`),
+  żeby przejściowy błąd modelu dochodził do licznika prób pollera (ADR 0069) zamiast kończyć się
+  przeprosinami. Przegląd pokazał, że ponowienie w obecnym kształcie rodzi kilka ścieżek cichej
+  straty i zawisu: ponowna tura re-snapshotuje skrzynkę i **kasuje plik wyprodukowany przez model**;
+  `ponawialne=(LLMError,)` nie dzieli błędu przejściowego od trwałego (400/401 pali dwie tury
+  z podwójnymi skutkami ubocznymi); a zapisy mostu (`Activity(create_issue)`/`comment`) nie mają
+  klucza idempotencji, więc ponowienie może założyć duplikat issue. To funkcja wymagająca projektu,
+  nie łatka w partii utwardzeń. Opt-in usunięto; `LLMError` degraduje łagodnie w `SafeResponder`
+  jak dawniej. Ponawianie wróci razem z: nie-niszczącym snapshotem skrzynki przy powtórce, kluczem
+  z `source_message_id` na zapisach mostu i idempotentną metryką wywołań. Zostają — jako obrona
+  z wyprzedzeniem — token tury z `source_message_id` (wyżej) i sufit czasu klienta agenta (niżej),
+  bo oba są poprawne niezależnie od tego, czy pętla ponowień istnieje dziś.
+
+
 ### Naprawione
 
-- **Ponowienie wiadomości samo domykało punkt kontrolny człowieka (mutacja notatek).** Token tury
+- **Token tury domykał punkt kontrolny człowieka przy ponowieniu (mutacja notatek).** Token tury
   był losowany przy budowie katalogu `File`, na przesłance „jedno wywołanie fabryki to jedna tura".
-  Przesłanka przestała być prawdziwa razem z ponawianiem `LLMError` (ADR 0069): po błędzie modelu
-  poller podaje TĘ SAMĄ wiadomość drugi raz, `record_run` nie zdążył pobiec, więc historia rozmowy
-  wygląda jak przed turą — model odtwarza tę samą prośbę `File(edit)`, klucz zapowiedzi się zgadza,
-  a świeży los zalicza się za człowieka. **Zmiana wchodziła w życie, choć nikt nic nie napisał.**
-  Token wywodzi się teraz z `source_message_id` i jest WYMAGANYM argumentem fabryki; drzwi bez
-  identyfikatora wiadomości (CLI, Bot Framework) dostają wartość losową, bo nie mają pętli
-  ponowień. Decyzja: ADR 0065, amendment 2026-09-03 — razem z konsekwencją, której ta poprawka
-  NIE zamyka: ponowienie powtarza też `Activity(create_issue)`/`comment` wykonane przed błędem.
+  Przesłanka pękała, gdyby drzwi Teams ponawiały TĘ SAMĄ wiadomość: `record_run` nie zdążył pobiec,
+  historia rozmowy wygląda jak przed turą, model odtwarza tę samą prośbę `File(edit)`, klucz
+  zapowiedzi się zgadza, a świeży los zalicza się za człowieka — mutacja wchodziłaby w życie, choć
+  nikt nic nie napisał. Token wywodzi się teraz z `source_message_id` i jest WYMAGANYM argumentem
+  fabryki; drzwi bez identyfikatora wiadomości (CLI, Bot Framework) dostają wartość losową, bo nie
+  mają pętli ponowień. Decyzja: ADR 0065, amendment 2026-09-03. **Ponawianie `LLMError`, które było
+  bezpośrednim wyzwalaczem, zostało z tego wydania WYJĘTE** (patrz „Odroczone" niżej); poprawka
+  tokenu wchodzi mimo to jako obrona z wyprzedzeniem — jest tania, samodzielna i poprawna niezależnie
+  od tego, czy pętla ponowień istnieje dziś.
 
 - **Bramka „zdarzenia z drzwi nie trafiają do bazy wiedzy" stała po stronie, która ich nie
   zapisuje.** `EventsSettings.validate()` egzekwuje ten inwariant tylko przy podanym `data_dir`,
@@ -47,12 +65,19 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   dzielą jeden plik, więc bramka po jednej stronie nie broniła niczego. Argument stracił wartość
   domyślną: świadome `None` wolno podać, pominięcia nie da się już napisać.
 
-- **Jeden padnięty wątek zabierał cały kanał.** Wyjątek z `list_replies` (root skasowany w Teams
-  daje 404) leciał PRZED `plan_channel`, czyli przed jedynym miejscem, które eksmituje martwe
-  wątki — wpis zostawał w stanie na zawsze, kanał był martwy przy bijącym pulsie, a wyjściem było
-  ręczne skasowanie pliku stanu. Wątek jest teraz pomijany w rundzie (log + pusta lista) i wypada
-  sam po `active_idle`. Ryzyko istniało wcześniej; naprawa wpisu wątku (niżej) zdjęła przypadkową
-  drogę ucieczki, więc trzeba je było domknąć jawnie.
+- **Awaria odczytu odpowiedzi wątku — rozróżniona po przyczynie, bez fałszywego zdrowia.** Wyjątek
+  z `list_replies` leciał PRZED `plan_channel`, więc pierwsza wersja poprawki łapała go szeroko
+  (`except Exception` → pusta lista, wątek wypada po `active_idle`). Przegląd pokazał, że to
+  ODTWARZA tryb „healthy, choć martwy": przy systemowej awarii Graph (500/429 na wszystkim)
+  `since_roots` idzie naprzód, `last_seen` stoi, więc po 24 h **każdy żywy wątek** wypada na zawsze,
+  a puls przez cały ten czas bije. Rozróżniamy teraz przyczynę:
+  - **404 (root skasowany w Teams)** — strona ODCZYTU podnosi `ThreadRootGone` (jak strona zapisu),
+    a poller eksmituje wątek OD RAZU (samoleczenie bez operatora), zamiast czekać `active_idle`.
+  - **Przejściowa awaria JEDNEGO wątku** (5xx/429/sieć) — wątek pomijany w rundzie, ale CHRONIONY
+    przed eksmisją: jego cisza jest nieznana, nie potwierdzona, więc `active_idle` go nie zmiata.
+  - **Systemowa awaria (wszystkie odpytywane wątki padły przejściowo)** — runda uznana za martwą:
+    puls WYGASZONY (`_read_failed`, tą samą regułą co porażka zapisu stanu, ADR 0069), stan kanału
+    nieprzesunięty. Healthcheck po wieku pulsu wznawia proces, zamiast pokazywać zdrowie.
 
 - **Nieczytelny wpis wątku wypychał wątek z odpytywania NA STAŁE.** `_seed` kasował uszkodzony
   wpis, a komentarz obok obiecywał „licz od nowa, najwyżej ponowne przeczytanie odpowiedzi".
@@ -121,6 +146,13 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 - **`claude_summary`: klient Anthropic bez limitu czasu.** Domyślne 10 minut SDK × 2 ponowienia na
   wywołanie, a opis prozą leci raz na dzień zakresu — `--llm --since` sprzed miesiąca mogło zająć
   kilkanaście godzin zegara ściennego bez wyjścia.
+
+- **Klient Anthropic AGENTA (drzwi Teams) bez limitu czasu.** Ten sam sufit co u rodzeństwa wyżej,
+  ale na kliencie, na którym najbardziej boli: domyślne 10 min SDK × 2 ponowienia = ~30 min zawisu
+  w JEDNEJ turze agenta. Puls bije PO całej turze (healthcheck `--max-age 180`), więc przez ten czas
+  nasłuch nie obsługuje nikogo, a proces wygląda na zdrowy. Żądanie jedzie strumieniem, więc sufit
+  (`timeout=60 s`, `max_retries=1`) działa jak górny limit przerwy między zdarzeniami — zdrowego
+  długiego strumienia nie tnie, tnie tylko zawis; 60 s × (1+1) = 120 s mieści się pod pulsem.
 
 - **Punkt kontrolny człowieka przenosił się między rozmowami.** Klucz zapowiedzi mutacji notatki
   to `sha256(człowiek | rodzaj | notatka | treść)` — bez identyfikatora rozmowy. Rejestr powstaje

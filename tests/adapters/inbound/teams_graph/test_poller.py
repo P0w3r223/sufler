@@ -18,6 +18,7 @@ import pytest
 
 from workmate.adapters.inbound.teams_graph import poller as poller_module
 from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
+from workmate.core.errors import ThreadRootGone
 from workmate.core.ports.llm import Attachment
 
 _ME = "me-bot"
@@ -113,6 +114,7 @@ def _make_poller(
     stop: Any = None,
     dead_letters: Any = None,
     persist: Any = None,
+    heartbeat: Any = None,
 ) -> tuple[ChannelPoller, list[int]]:
     persist_calls: list[int] = []
 
@@ -132,6 +134,7 @@ def _make_poller(
         clock=clock,
         stop=stop,
         dead_letters=dead_letters,
+        heartbeat=heartbeat,
     )
     return poller, persist_calls
 
@@ -483,7 +486,7 @@ def test_porzucona_wiadomosc_dostaje_WYJASNIENIE_a_nie_cisze():
     state: dict[str, Any] = {"attempts": {"root-1": poller_module._MAX_ATTEMPTS}}
     poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
     poller._seed(_STARTUP)
-    poller._last_cause["root-1"] = "model nie odpowiedział mimo ponowienia"
+    poller._last_cause["root-1"] = "model nie odpowiedział"
 
     asyncio.run(poller._poll_channel("team", "chan", _ME))
 
@@ -496,14 +499,16 @@ def test_porzucona_wiadomosc_dostaje_WYJASNIENIE_a_nie_cisze():
 
 def test_powod_dla_rozmowcy_idzie_z_KLASY_a_nie_z_komunikatu_wyjatku():
     """Granica ekspozycji: komunikat wyjątku bywa sklejany z danymi wejściowymi (``input_value``
-    pydantica to fragment treści rozmówcy), a ta wiadomość leci na kanał czytany przez zespół."""
-    from workmate.core.errors import LLMError
+    pydantica to fragment treści rozmówcy), a ta wiadomość leci na kanał czytany przez zespół.
 
+    Klasą sondującą jest ``ThreadRootGone`` (realnie dochodzi do gałęzi porzucenia); ``LLMError``
+    tu nie trafia, bo degraduje w ``SafeResponder`` — patrz komentarz przy ``_POWODY_DLA_ROZMOWCY``.
+    """
     poufne = "TAJNA TREŚĆ Z WIADOMOŚCI UŻYTKOWNIKA"
 
-    assert poufne not in poller_module._powod_dla_rozmowcy(LLMError(poufne))
+    assert poufne not in poller_module._powod_dla_rozmowcy(ThreadRootGone(poufne))
     assert poufne not in poller_module._powod_dla_rozmowcy(ValueError(poufne))
-    assert poller_module._powod_dla_rozmowcy(LLMError("x")) != poller_module._POWOD_DOMYSLNY
+    assert poller_module._powod_dla_rozmowcy(ThreadRootGone("x")) != poller_module._POWOD_DOMYSLNY
 
 
 def test_nieudana_wysylka_wyjasnienia_nie_zatrzymuje_kanalu(caplog):
@@ -748,25 +753,28 @@ def test_stare_odpowiedzi_naprawionego_watku_NIE_wracaja_jako_nowe():
     assert client.posted == []
 
 
-def test_padniety_watek_nie_zabiera_calego_kanalu():
-    """Wyjątek z ``list_replies`` leciał PRZED ``plan_channel``, czyli przed jedynym miejscem,
-    które eksmituje martwe wątki — root skasowany w Teams (404) zostawał w stanie na zawsze,
-    a kanał był martwy przy bijącym pulsie. Zdrowy wątek w tej samej rundzie ma przejść."""
+def test_skasowany_root_404_jest_eksmitowany_od_razu_a_zdrowy_watek_przechodzi():
+    """Root skasowany w Teams (404) → ``list_replies`` podnosi ``ThreadRootGone``. Wątek ma być
+    eksmitowany OD RAZU (nie po 24 h ``active_idle``), mimo świeżego ``last_seen``, a zdrowy wątek
+    w tej samej rundzie ma przejść. Wcześniej wyjątek leciał PRZED ``plan_channel`` i martwy wpis
+    zostawał w stanie na zawsze, przy bijącym pulsie."""
     zdrowy = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
     state: dict[str, Any] = {
         "channels": {
             "team/chan": {
                 "since_roots": _STARTUP,
+                # ``last_seen`` = _STARTUP jest PO cutoff (_NOW − 24 h), więc normalna eksmisja by
+                # go NIE ruszyła — usunięcie dowodzi, że to 404 eksmituje, nie upływ czasu.
                 "threads": {"root-9": {"watermark": _STARTUP, "last_seen": _STARTUP}},
             }
         }
     }
 
     class _PadaNaJednymWatku(FakeGraphClient):
-        async def list_replies(self, team_id, channel_id, root_id, top):  # noqa: ANN001, ANN201
+        async def list_replies(self, team_id, channel_id, root_id, *, top):  # noqa: ANN001, ANN201
             if root_id == "root-9":
-                raise RuntimeError("Graph 404 — wątek skasowany")
-            return await super().list_replies(team_id, channel_id, root_id, top)
+                raise ThreadRootGone("root wątku root-9 nie istnieje")
+            return await super().list_replies(team_id, channel_id, root_id, top=top)
 
     client = _PadaNaJednymWatku([{"roots": [zdrowy], "replies": {}}])
     poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
@@ -775,6 +783,75 @@ def test_padniety_watek_nie_zabiera_calego_kanalu():
     asyncio.run(poller._poll_channel("team", "chan", _ME))
 
     assert client.posted == [("team", "chan", "root-1", "odp")]
+    assert "root-9" not in poller._state["channels"]["team/chan"]["threads"]
+    assert poller._read_failed is False
+
+
+def test_przejsciowa_awaria_odczytu_chroni_watek_przed_eksmisja():
+    """Wątek, którego odpowiedzi NIE dały się odczytać przejściowo (5xx/429/sieć), NIE może zostać
+    eksmitowany po ``active_idle`` — jego cisza jest nieznana, nie potwierdzona. Bez tej ochrony
+    systemowa awaria odczytu zamiatała żywe wątki: ``last_seen`` bez odczytu nie rusza, więc po
+    24 h wpis wypadał na zawsze. Zdrowy wątek w tej samej rundzie ma przejść (kanał żyje)."""
+    stary = "2023-12-30T00:00:00Z"  # PRZED cutoff (_NOW − 24 h) → normalnie eksmitowany
+    zdrowy = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
+    state: dict[str, Any] = {
+        "channels": {
+            "team/chan": {
+                "since_roots": _STARTUP,
+                "threads": {"root-cichy": {"watermark": stary, "last_seen": stary}},
+            }
+        }
+    }
+
+    class _PadaPrzejsciowoNaJednym(FakeGraphClient):
+        async def list_replies(self, team_id, channel_id, root_id, *, top):  # noqa: ANN001, ANN201
+            if root_id == "root-cichy":
+                raise RuntimeError("Graph 503 — chwilowo niedostępne")
+            return await super().list_replies(team_id, channel_id, root_id, top=top)
+
+    client = _PadaPrzejsciowoNaJednym([{"roots": [zdrowy], "replies": {}}])
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+
+    poller._seed(_STARTUP)
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert client.posted == [("team", "chan", "root-1", "odp")]
+    assert "root-cichy" in poller._state["channels"]["team/chan"]["threads"]  # CHRONIONY
+    assert poller._read_failed is False
+
+
+def test_systemowa_awaria_odczytu_gasi_puls_i_nie_rusza_stanu():
+    """Gdy KAŻDY odpytywany wątek pada PRZEJŚCIOWO (żaden nie odczytany, żaden nie 404), runda
+    jest martwa: ``_read_failed`` gasi puls (jak porażka zapisu), a stan kanału NIE rusza. Inaczej
+    awaria Graph 500/429 na wszystkim dawała kontener ZDROWY, choć nic już nie przechodziło."""
+    stan_kanalu = {
+        "since_roots": _STARTUP,
+        "threads": {"root-9": {"watermark": _STARTUP, "last_seen": _STARTUP}},
+    }
+    state: dict[str, Any] = {"channels": {"team/chan": stan_kanalu}}
+
+    class _PadaNaWszystkim(FakeGraphClient):
+        async def list_replies(self, team_id, channel_id, root_id, *, top):  # noqa: ANN001, ANN201
+            raise RuntimeError("Graph 500 — systemowa awaria odczytu")
+
+    client = _PadaNaWszystkim([{"roots": [], "replies": {}}])
+    beats: list[int] = []
+    poller, _ = _make_poller(
+        client, RecordingHandler("odp"), state=state, heartbeat=lambda: beats.append(1)
+    )
+
+    poller._seed(_STARTUP)
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert poller._read_failed is True
+    assert client.posted == []
+    # Stan kanału nietknięty — wątek nie eksmitowany, watermark nieprzesunięty.
+    assert poller._state["channels"]["team/chan"]["threads"] == {
+        "root-9": {"watermark": _STARTUP, "last_seen": _STARTUP}
+    }
+    # Puls zgaszony: bezpośrednie wywołanie ``_beat`` nic nie robi, dopóki ``_read_failed``.
+    poller._beat()
+    assert beats == []
 
 
 def test_failed_handling_names_the_message_in_the_log(caplog):

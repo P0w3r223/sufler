@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from workmate.adapters.inbound.teams_graph import selection
 from workmate.adapters.inbound.teams_graph.selection import ChannelMessage, ReplyPolicy
-from workmate.core.errors import LLMError, ThreadRootGone
+from workmate.core.errors import ThreadRootGone
 
 if TYPE_CHECKING:
     from workmate.adapters.inbound.teams_graph.attachments import AttachmentMaterializer
@@ -52,8 +52,13 @@ _MAX_REASON_HEAD = 200
 # z danymi wejściowymi — ``ValidationError`` pydantica wypisuje ``input_value``, czyli fragment
 # treści rozmówcy. Na KANAŁ, gdzie czyta go cały zespół, może iść tylko to, co niesie sama nazwa
 # klasy. Ten sam argument co przy ``_tresc_publiczna`` w ``Powiadomienia_teams``.
+#
+# Są tu wyłącznie klasy, które REALNIE docierają do gałęzi porzucenia. ``LLMError`` do niej nie
+# dochodzi: ``SafeResponder`` łagodnie go degraduje (własny komunikat), więc nie przelatuje do
+# licznika prób pollera. Wróci tu razem z odroczonym ponawianiem ``LLMError`` (ADR 0065 amendment
+# 2026-09-03, „Odroczone" w CHANGELOG). ``ThreadRootGone`` dochodzi — podnosi je ``_post_reply``
+# przy 404 na wysyłce odpowiedzi.
 _POWODY_DLA_ROZMOWCY: tuple[tuple[type[BaseException], str], ...] = (
-    (LLMError, "model nie odpowiedział mimo ponowienia"),
     (ThreadRootGone, "wątek, w którym mam odpisać, już nie istnieje"),
 )
 _POWOD_DOMYSLNY = "obsługa wiadomości nie powiodła się"
@@ -229,6 +234,10 @@ class ChannelPoller:
         # Czy OSTATNI zapis stanu się nie udał — gasi puls, żeby healthcheck zobaczył wolumen,
         # który przestał przyjmować zapis (bez tego proces „żyje", nie robiąc nic).
         self._write_failed = False
+        # Czy w tej rundzie ODCZYT odpowiedzi padł SYSTEMOWO (wszystkie wątki kanału) — gasi puls
+        # tą samą regułą co ``_write_failed``. Inaczej awaria Graph 500/429 na wszystkim dawała
+        # kontener ZDROWY, choć żadna wiadomość nie mogła już przejść. Resetowany na rundę.
+        self._read_failed = False
 
     async def run(self) -> None:
         """Pętla główna: co ``poll_interval`` odpytaj każdy kanał i odpowiedz na nowe wpisy.
@@ -246,6 +255,8 @@ class ChannelPoller:
             me_id,
         )
         while not self._stopping():
+            # Nowa runda — status odczytu liczony od zera (jak `_write_failed` przy zapisie).
+            self._read_failed = False
             try:
                 await self._client.refresh_auth()
             except Exception:
@@ -299,12 +310,14 @@ class ChannelPoller:
     def _beat(self) -> None:
         """Odśwież puls żywotności, jeśli wstrzyknięto (R5). Bez callbacku — no-op (dev/testy).
 
-        Runda, w której stan NIE dał się utrwalić, pulsu nie bije — ta sama reguła co u notifiera
-        („bijemy po rundzie produktywnej", ADR 0067 §2). Bez tego wolumen zamontowany ``ro`` w
-        trakcie pracy dawał kontener ZDROWY, mimo że żadna wiadomość nie mogła już przejść:
-        licznik prób nie utrwala się, więc obsługa w ogóle nie rusza.
+        Runda, w której stan NIE dał się utrwalić (``_write_failed``) ALBO odczyt odpowiedzi padł
+        systemowo na całym kanale (``_read_failed``), pulsu nie bije — ta sama reguła co u notifiera
+        („bijemy po rundzie produktywnej", ADR 0067 §2). Bez pierwszej bramki wolumen zamontowany
+        ``ro`` w trakcie pracy dawał kontener ZDROWY, choć licznik prób nie utrwalał się, więc
+        obsługa w ogóle nie ruszała; bez drugiej awaria Graph 500/429 na WSZYSTKICH wątkach dawała
+        kontener ZDROWY, choć żadna wiadomość nie mogła już przejść.
         """
-        if self._heartbeat is not None and not self._write_failed:
+        if self._heartbeat is not None and not self._write_failed and not self._read_failed:
             self._heartbeat()
 
     def _stopping(self) -> bool:
@@ -328,21 +341,34 @@ class ChannelPoller:
 
         roots = await self._client.list_root_messages(team_id, channel_id, top=self._top_roots)
         replies_by_root: dict[str, list[dict[str, Any]]] = {}
-        for root_id in selection.roots_to_poll(roots, channel_state):
+        # Rooty, których odczyt padł PRZEJŚCIOWO (5xx/429/sieć) — chronione przed eksmisją: ich
+        # cisza jest NIEZNANA, nie potwierdzona. Osobno rooty skasowane w Teams (404) — eksmisja
+        # od razu. Rozróżnienie robi ``list_replies``, podnosząc ``ThreadRootGone`` na 404.
+        unread_roots: set[str] = set()
+        gone_roots: set[str] = set()
+        polled = selection.roots_to_poll(roots, channel_state)
+        for root_id in polled:
             try:
                 replies_by_root[root_id] = await self._client.list_replies(
                     team_id, channel_id, root_id, top=self._top_replies
                 )
+            except ThreadRootGone:
+                # Root skasowany w Teams (404). Samoleczenie bez operatora: pusta lista + eksmisja
+                # w TEJ rundzie (``gone_roots`` w ``plan_channel``), zamiast odpytywać martwy wątek
+                # co rundę aż do ``active_idle``.
+                logger.info(
+                    "Wątek %s/%s/%s już nie istnieje (404) — eksmituję z odpytywania",
+                    team_id,
+                    channel_id,
+                    root_id,
+                )
+                replies_by_root[root_id] = []
+                gone_roots.add(root_id)
             except Exception:
-                # Jeden wątek nie może zabrać CAŁEGO kanału. Root skasowany w Teams daje 404,
-                # a wyjątek leciał stąd PRZED ``plan_channel`` — czyli przed jedynym miejscem,
-                # które eksmituje martwe wątki. Wpis zostawał w stanie na zawsze, kanał był
-                # martwy przy bijącym pulsie, a wyjściem było ręczne skasowanie pliku stanu:
-                # dokładnie ta awaria, przed którą broni utwardzanie w ``_seed``.
-                #
-                # Pusta lista zamiast wyjątku: ``plan_channel`` nie zobaczy nowych odpowiedzi,
-                # ``last_seen`` nie ruszy, więc wątek wypada sam po ``active_idle``. Błąd
-                # PRZEJŚCIOWY kosztuje jedną rundę opóźnienia, a TRWAŁY leczy się bez operatora.
+                # Przejściowa awaria odczytu JEDNEGO wątku nie może zabrać całego kanału. Pusta
+                # lista + OCHRONA przed eksmisją: ``last_seen`` nie ruszy, ale wątku NIE usuwamy po
+                # ``active_idle`` — nie wiemy, że milczy, tylko że nie dało się go odczytać. Bez tej
+                # ochrony systemowa awaria odczytu zamiatała żywe wątki po 24 h przy bijącym pulsie.
                 logger.warning(
                     "Nie udało się pobrać odpowiedzi wątku %s/%s/%s — pomijam go w tej rundzie",
                     team_id,
@@ -351,6 +377,23 @@ class ChannelPoller:
                     exc_info=True,
                 )
                 replies_by_root[root_id] = []
+                unread_roots.add(root_id)
+
+        # Systemowa awaria odczytu: KAŻDY odpytywany wątek padł PRZEJŚCIOWO (żaden nie odczytany,
+        # żaden nie 404). Runda jest martwa — nie fałszujemy zdrowia: gasimy puls (jak przy porażce
+        # zapisu) i NIE ruszamy stanu kanału. Healthcheck po wieku pulsu wznowi proces. Mieszanka
+        # (część wątków odczytana albo 404) to kanał częściowo żywy — bijemy, a ``unread_roots``
+        # chroni te nieodczytane przed eksmisją do czasu, aż odczyt wróci.
+        if polled and unread_roots == set(polled):
+            self._read_failed = True
+            logger.error(
+                "Odczyt odpowiedzi padł na WSZYSTKICH %d wątkach kanału %s/%s — systemowa awaria "
+                "Graph; pulsu NIE odświeżam, stanu kanału nie przesuwam",
+                len(polled),
+                team_id,
+                channel_id,
+            )
+            return
 
         messages, new_channel_state = selection.plan_channel(
             roots,
@@ -362,6 +405,8 @@ class ChannelPoller:
             active_idle=self._active_idle,
             policy=self._policy,
             channel=(team_id, channel_id),
+            unread_roots=unread_roots,
+            gone_roots=gone_roots,
         )
 
         for msg in messages:

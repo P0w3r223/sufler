@@ -17,6 +17,7 @@ import httpx
 
 from workmate.adapters.inbound.teams_graph.formatting import to_teams_html
 from workmate.adapters.outbound.graph_http import retry_after_s
+from workmate.core.errors import ThreadRootGone
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Twardy cap pobrania publicznego obrazu (GIF/emoji) — zewnętrzny host, którego nie kontrolujemy;
@@ -190,7 +191,16 @@ class HttpxGraphChannelClient:
         self, team_id: str, channel_id: str, root_id: str, *, top: int
     ) -> list[dict[str, Any]]:
         url = f"{GRAPH}/teams/{team_id}/channels/{channel_id}/messages/{root_id}/replies"
-        return await self._get_all(url, params={"$top": str(top)})
+        try:
+            return await self._get_all(url, params={"$top": str(top)})
+        except httpx.HTTPStatusError as exc:
+            # 404 = root skasowany w Teams. Strona ZAPISU (``graph_thread_reply``) już podnosi
+            # tu ``ThreadRootGone``; strona odczytu dawała surowy ``HTTPStatusError``, więc poller
+            # nie umiał odróżnić „wątek zniknął" (samoleczenie: eksmituj) od awarii odczytu
+            # (przejściowa: nie ruszaj wątku). Nadajemy temu 404 to samo słownictwo.
+            if exc.response.status_code == 404:
+                raise ThreadRootGone(f"root wątku {root_id} nie istnieje") from exc
+            raise
 
     async def post_reply(self, team_id: str, channel_id: str, root_id: str, text: str) -> None:
         """Wyślij odpowiedź w wątku; Markdown agenta renderujemy do HTML na wyjściu.

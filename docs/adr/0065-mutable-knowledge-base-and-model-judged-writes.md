@@ -316,8 +316,23 @@ measuring a turn by the machinery that serves it rather than by the person who c
 person wrote after seeing the announcement, not that they agreed. A stronger proof still needs a
 channel outside the model.
 
-**Known consequence left open.** The same retry replays every *other* write the turn had already
-performed before the failure — `Activity(create_issue)` and `Activity(comment)` have no equivalent
-checkpoint, so a retried turn can open a duplicate issue. Before the retry landed, `SafeResponder`
-swallowed the error and the message was marked handled, so this could not happen. Whether the bridge
-writes need an idempotency key or the retry path needs to withhold them is **not decided here**.
+**Update (2026-09-03, later the same day) — the `LLMError` retry was pulled from this release.** A
+review of the retry branch found that making `LLMError` retryable created several silent-loss and
+hang paths beyond the one this amendment fixes: a retried turn re-snapshots the outbox and discards
+the file the model produced; the agent's Anthropic client had no time bound; `ponawialne=(LLMError,)`
+did not separate transient from permanent failures; and the duplicate bridge-write below. Rather than
+land a half-built retry, the retry opt-in (`SafeResponder(..., ponawialne=(LLMError,))` at the Teams
+door) was **removed**; `LLMError` degrades gracefully in `SafeResponder` as before. The retry returns
+in a dedicated change together with the idempotency design it needs (outbox non-destruction on
+replay, a `source_message_id`-derived key on bridge writes, and idempotent call metrics).
+
+**This turn-token fix ships anyway, as defense-in-depth ahead of that return.** Deriving the token
+from the message identity is correct regardless of whether a retry loop exists today; keeping it means
+the checkpoint is already safe when the retry comes back, and the fix is cheap and self-contained.
+
+**Known consequence — now deferred with the feature, not accepted in this release.** The retry would
+replay every *other* write the turn had already performed before the failure — `Activity(create_issue)`
+and `Activity(comment)` have no equivalent checkpoint, so a retried turn could open a duplicate issue.
+With the retry removed this cannot happen now. Re-enabling the retry is therefore gated on deciding
+whether the bridge writes carry an idempotency key or the retry path withholds them — **a precondition
+of the feature's return, not an open risk that ships**.

@@ -166,9 +166,7 @@ class Settings:
         konfiguracji wyglądała jak spokojny tydzień. Inwariant należy do KLASY, nie do jednego
         konstruktora — porównanie w ``app`` casefolduje wyłącznie lewą stronę.
         """
-        object.__setattr__(
-            self, "only_user_ids", tuple(v.casefold() for v in self.only_user_ids)
-        )
+        object.__setattr__(self, "only_user_ids", tuple(v.casefold() for v in self.only_user_ids))
 
     @property
     def authority(self) -> str:
