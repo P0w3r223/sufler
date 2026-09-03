@@ -28,6 +28,13 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   Bramka złożoności (`C901`/`PLR0915`) z tej samej pary JEST już wdrożona — patrz „Dodane".
 
 
+## [1.14.0] — 2026-09-03
+
+Pierwsze wydanie niosące rozbicie plików-monolitów (#76/#87) oraz partię poprawek z przeglądu
+całościowego (#94). Widoczna dla użytkownika zmiana zachowania (porzucona wiadomość dostaje
+wyjaśnienie zamiast ciszy, zawężenie punktu kontrolnego mutacji do pary rozmowa+tura) → MINOR.
+Ponawianie `LLMError` świadomie WYJĘTE — wraca osobno z projektem idempotencji (patrz niżej).
+
 ### Odroczone
 
 - **Ponawianie `LLMError` na drzwiach Teams — WYJĘTE z tego wydania, wraca osobno z projektem
