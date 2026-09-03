@@ -325,6 +325,13 @@ def test_ta_sama_wiadomosc_obsluzona_dwa_razy_dostaje_TEN_SAM_token_tury():
 
     Sonda jedzie przez respondera, nie przez samą funkcję: ponowienie odtwarza CAŁĄ obsługę,
     więc pytanie brzmi „co dostaje fabryka przy drugim przebiegu", a nie „co zwraca skrót".
+
+    Asercja KSZTAŁTU nie jest ozdobą i jest tu po przejściach: bez niej ta sonda przechodziła
+    na kodzie SPRZED poprawki. Responder podawał wtedy o jeden argument mniej, więc czwarty
+    parametr atrapy łapał klasę zaufania — dwa przebiegi widziały zgodnie ``"T1"``, równość
+    była spełniona trywialnie i sonda nazwana „regresją bezpieczeństwa" nie widziała dziury,
+    której pilnuje. Skrót ma 32 znaki szesnastkowe; sąsiednie napisy (``"T1"``, AAD nadawcy)
+    tego kształtu nie mają, więc przesunięcie argumentu czerwieni się natychmiast.
     """
     zebrane: list[str] = []
     responder, _ = _responder(
@@ -336,7 +343,8 @@ def test_ta_sama_wiadomosc_obsluzona_dwa_razy_dostaje_TEN_SAM_token_tury():
 
     pierwszy, drugi = zebrane
     assert pierwszy == drugi
-    assert pierwszy  # nigdy pusty — pusty token nie przeszedłby bramki NIGDY
+    assert len(pierwszy) == 32
+    assert set(pierwszy) <= set("0123456789abcdef")
 
 
 def test_kolejna_wiadomosc_czlowieka_dostaje_INNY_token_tury():

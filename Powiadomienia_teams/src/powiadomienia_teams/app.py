@@ -789,6 +789,11 @@ def _wyslij_po_domknieciu(client: GraphClient, pending: st.PendingReminder, html
     nie ma czego cofać tak, jak robi to gałąź ``AWAITING_CONFIRM`` przez ``_Migawka``. Zostaje
     log — utrata wiadomości jest wtedy widoczna, a nie przebrana za awarię odczytu.
 
+    Dwa wywołania dotyczą gałęzi NIETERMINALNYCH (prośba o doprecyzowanie). Tam skutek jest
+    łagodniejszy — wpis zostaje otwarty i wróci przy kolejnym cyklu — ale osłona i tak jest na
+    miejscu: watermark już ruszył, więc ponowienie i tak nie odzyskałoby tej wiadomości, a bez
+    osłony dochodziłby jeden fałszywy cykl ``UNKNOWN`` w liczniku „nie da się odczytać czatu".
+
     ``AuthExpiredError`` przelatuje: utrata sesji dotyczy całej usługi, nie tej wiadomości.
     """
     try:
@@ -1135,10 +1140,10 @@ def _interpret_and_confirm(
     elif decision.action == "decline":
         pending.status = st.DECLINED
         _commit(settings, state, pending, watermark, reply_text=text)
-        client.send_chat_message(pending.chat_id, to_html(DECLINED_TEXT))
+        _wyslij_po_domknieciu(client, pending, to_html(DECLINED_TEXT))
     else:
         _commit(settings, state, pending, watermark, reply_text=text)
-        client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
+        _wyslij_po_domknieciu(client, pending, to_html(UNCLEAR_TEXT))
 
 
 def _poll_delay(settings: Settings, outcome: PollOutcome | None, now: datetime) -> float:
@@ -1451,10 +1456,11 @@ def _safe_run_once(
         _alert(
             settings,
             "Przebieg powiadomień nie powiódł się",
-            # Przez `_tresc_publiczna`, bo to jest kanał ZEWNĘTRZNY: `except Exception` łapie
-            # też wyjątki niosące adresy e-mail kont z cache tokenu, a pełny komunikat szedł
-            # dotąd wprost na webhook. Ten sam powód, dla którego alert o nieodczytanym czacie
-            # wysyła identyfikatory zamiast imion.
+            # Przez `_tresc_publiczna`, bo to jest kanał ZEWNĘTRZNY. Reguła należy do ATRYBUTU
+            # `publiczny`, nie do jednej klasy wyjątku: dziś jedyny wyjątek z danymi osobowymi
+            # (`AmbiguousAccountError`) tędy NIE przechodzi, bo dziedziczy po `AuthExpiredError`
+            # i łapie go gałąź wyżej. Alert nie ma jednak prawa tego zakładać o każdym przyszłym
+            # wyjątku — dwa sąsiednie alerty stosują tę samą redakcję z tego samego powodu.
             f"Mimo ponowień: {_tresc_publiczna(blad)}. Nikt nie dostał prośby w tym tygodniu.",
         )
         return False

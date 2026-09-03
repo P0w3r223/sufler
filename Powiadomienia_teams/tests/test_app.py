@@ -3213,3 +3213,40 @@ def test_alert_o_nieudanym_przebiegu_redaguje_tresc_bledu(tmp_path: Path, monkey
 
     assert tresci and "ala@firma.pl" not in tresci[0] and "bot@firma.pl" not in tresci[0]
     assert "2 kont" in tresci[0]
+
+
+def test_nieudane_domkniecie_odmowy_tez_nie_udaje_awarii_odczytu(tmp_path: Path, caplog):
+    """Bliźniak sondy wyżej dla gałęzi ``decline`` — ta sama klasa błędu, trzy linie obok.
+
+    Poprawka pierwszej gałęzi ominęła tę, choć status ``DECLINED`` jest równie terminalny:
+    wpis wypada z ``open_items`` i nigdy nie wróci, więc licznik nierozstrzygniętych zostaje
+    zamrożony na wartości, którą podbiła awaria WYSYŁKI.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "nie, dziękuję")]})
+    llm = _FakeLlm('{"action":"decline","shifts":[]}')
+
+    with caplog.at_level("ERROR"):
+        poll_replies(_settings(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == DECLINED
+    assert po.unknown_count == 0
+    assert "Nie udało się wysłać domknięcia" in caplog.text

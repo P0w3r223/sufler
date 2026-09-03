@@ -627,10 +627,12 @@ class ConversationalResponder:
         tę samą prośbę — i drugi los zaliczał się za człowieka. Ta sama wiadomość musi więc
         dawać ten sam token; nowy token ma powstawać wtedy, gdy powstaje nowa wiadomość.
 
-        Skrót, nie samo ``source_message_id``: identyfikator zewnętrzny nie ma po co krążyć
-        po rdzeniu, a token jest wyłącznie kluczem porównania. Zwykły ``sha256`` wystarcza —
-        inaczej niż nonce koperty token NIGDY nie trafia do modelu, więc nieprzewidywalność
-        nie jest tu potrzebna (model i tak go nie poda: fabryka domyka go w katalogu).
+        Skrót, nie samo ``source_message_id``: token jest wyłącznie kluczem porównania, więc
+        nie ma powodu, żeby niósł cudzy identyfikator dalej, niż to konieczne. (To nie jest
+        reguła całego systemu — ``core/domain/paths`` buduje z tego samego id identyfikator
+        notatki wątkowej, bo tam id jest treścią, a nie kluczem.) Zwykły ``sha256`` wystarcza:
+        inaczej niż nonce koperty token NIGDY nie trafia do modelu — nie ma go ani w prompcie
+        sędziego, ani w logu — więc nieprzewidywalność nie jest tu do niczego potrzebna.
 
         Drzwi bez pojęcia identyfikatora wiadomości (CLI, Bot Framework) zostawiają pole puste
         i dostają wartość losową — nie mają pętli ponowień, więc jedno wywołanie to tam

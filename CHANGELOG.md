@@ -47,6 +47,13 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   dzielą jeden plik, więc bramka po jednej stronie nie broniła niczego. Argument stracił wartość
   domyślną: świadome `None` wolno podać, pominięcia nie da się już napisać.
 
+- **Jeden padnięty wątek zabierał cały kanał.** Wyjątek z `list_replies` (root skasowany w Teams
+  daje 404) leciał PRZED `plan_channel`, czyli przed jedynym miejscem, które eksmituje martwe
+  wątki — wpis zostawał w stanie na zawsze, kanał był martwy przy bijącym pulsie, a wyjściem było
+  ręczne skasowanie pliku stanu. Wątek jest teraz pomijany w rundzie (log + pusta lista) i wypada
+  sam po `active_idle`. Ryzyko istniało wcześniej; naprawa wpisu wątku (niżej) zdjęła przypadkową
+  drogę ucieczki, więc trzeba je było domknąć jawnie.
+
 - **Nieczytelny wpis wątku wypychał wątek z odpytywania NA STAŁE.** `_seed` kasował uszkodzony
   wpis, a komentarz obok obiecywał „licz od nowa, najwyżej ponowne przeczytanie odpowiedzi".
   `plan_channel` rzeczywiście tak by zrobił, ale nigdy nie dostawał szansy: kandydatów do
@@ -60,7 +67,9 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   a dopiero potem wysyłała wiadomość — bez osłony. Wyjątek z Graph zostawiał wpis zamknięty na
   zawsze, pracownika bez słowa, a jego odpowiedź za przesuniętym watermarkiem; przy okazji
   doliczał się do licznika „nie da się odczytać czatu", więc alarm wskazywał operatorowi inną
-  usterkę niż ta, która zaszła. Osłona wzorem bliźniaczego `_close_self_filled`.
+  usterkę niż ta, która zaszła. Osłona wzorem bliźniaczego `_close_self_filled` — na WSZYSTKICH
+  czterech wyjściach tej funkcji, także na gałęzi `decline`, gdzie status `DECLINED` jest równie
+  terminalny i wpis nigdy nie wraca do obsługi.
 
 - **`Powiadomienia_teams`: alert o nieudanym przebiegu wklejał surowy komunikat wyjątku na
   webhook.** `_tresc_publiczna` istnieje dokładnie po to i dwa sąsiednie alerty już jej używają;

@@ -329,9 +329,28 @@ class ChannelPoller:
         roots = await self._client.list_root_messages(team_id, channel_id, top=self._top_roots)
         replies_by_root: dict[str, list[dict[str, Any]]] = {}
         for root_id in selection.roots_to_poll(roots, channel_state):
-            replies_by_root[root_id] = await self._client.list_replies(
-                team_id, channel_id, root_id, top=self._top_replies
-            )
+            try:
+                replies_by_root[root_id] = await self._client.list_replies(
+                    team_id, channel_id, root_id, top=self._top_replies
+                )
+            except Exception:
+                # Jeden wątek nie może zabrać CAŁEGO kanału. Root skasowany w Teams daje 404,
+                # a wyjątek leciał stąd PRZED ``plan_channel`` — czyli przed jedynym miejscem,
+                # które eksmituje martwe wątki. Wpis zostawał w stanie na zawsze, kanał był
+                # martwy przy bijącym pulsie, a wyjściem było ręczne skasowanie pliku stanu:
+                # dokładnie ta awaria, przed którą broni utwardzanie w ``_seed``.
+                #
+                # Pusta lista zamiast wyjątku: ``plan_channel`` nie zobaczy nowych odpowiedzi,
+                # ``last_seen`` nie ruszy, więc wątek wypada sam po ``active_idle``. Błąd
+                # PRZEJŚCIOWY kosztuje jedną rundę opóźnienia, a TRWAŁY leczy się bez operatora.
+                logger.warning(
+                    "Nie udało się pobrać odpowiedzi wątku %s/%s/%s — pomijam go w tej rundzie",
+                    team_id,
+                    channel_id,
+                    root_id,
+                    exc_info=True,
+                )
+                replies_by_root[root_id] = []
 
         messages, new_channel_state = selection.plan_channel(
             roots,

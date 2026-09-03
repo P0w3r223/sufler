@@ -728,6 +728,55 @@ def test_naprawiony_watek_ZOSTAJE_odpytywany_choc_jego_root_jest_stary():
     assert client.posted == [("team", "chan", "root-9", "odp")]
 
 
+def test_stare_odpowiedzi_naprawionego_watku_NIE_wracaja_jako_nowe():
+    """Druga połowa obietnicy z ``_seed``: wątek zostaje śledzony, ale historia nie wraca.
+
+    Naprawa wpisu do znacznika STARTU (a nie do epoki) jest tym, co odróżnia „śledzimy dalej"
+    od „odpowiadamy jeszcze raz na wszystko, co ktoś napisał przed restartem".
+    """
+    stary_root = _raw(msg_id="root-9", created="2024-01-01T09:00:00Z")
+    stara_odpowiedz = _raw(msg_id="odp-0", created="2024-01-01T10:00:00Z", reply_to="root-9")
+    state: dict[str, Any] = {
+        "channels": {"team/chan": {"since_roots": _STARTUP, "threads": {"root-9": None}}}
+    }
+    client = FakeGraphClient([{"roots": [stary_root], "replies": {"root-9": [stara_odpowiedz]}}])
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+
+    poller._seed(_STARTUP)
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert client.posted == []
+
+
+def test_padniety_watek_nie_zabiera_calego_kanalu():
+    """Wyjątek z ``list_replies`` leciał PRZED ``plan_channel``, czyli przed jedynym miejscem,
+    które eksmituje martwe wątki — root skasowany w Teams (404) zostawał w stanie na zawsze,
+    a kanał był martwy przy bijącym pulsie. Zdrowy wątek w tej samej rundzie ma przejść."""
+    zdrowy = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
+    state: dict[str, Any] = {
+        "channels": {
+            "team/chan": {
+                "since_roots": _STARTUP,
+                "threads": {"root-9": {"watermark": _STARTUP, "last_seen": _STARTUP}},
+            }
+        }
+    }
+
+    class _PadaNaJednymWatku(FakeGraphClient):
+        async def list_replies(self, team_id, channel_id, root_id, top):  # noqa: ANN001, ANN201
+            if root_id == "root-9":
+                raise RuntimeError("Graph 404 — wątek skasowany")
+            return await super().list_replies(team_id, channel_id, root_id, top)
+
+    client = _PadaNaJednymWatku([{"roots": [zdrowy], "replies": {}}])
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+
+    poller._seed(_STARTUP)
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert client.posted == [("team", "chan", "root-1", "odp")]
+
+
 def test_failed_handling_names_the_message_in_the_log(caplog):
     """Log ma nazwać wiadomość i powiedzieć, czy będzie ponowienie — inaczej operator zgaduje."""
     root = _raw(msg_id="root-1", created="2024-01-01T11:30:00Z")
