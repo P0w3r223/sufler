@@ -28,13 +28,19 @@ class EventsSettings:
     def from_env(cls) -> EventsSettings:
         return cls(db_path=_path_from_env("WORKMATE_EVENTS_DB", _DEFAULT_EVENTS_DB))
 
-    def validate(self, *, data_dir: Path | None = None) -> None:
+    def validate(self, *, data_dir: Path | None) -> None:
         """Twardy błąd startu, gdy magazyn zdarzeń wskazuje katalog albo wnętrze bazy wiedzy.
 
         Ten sam inwariant, który ``WorkspaceSettings`` egzekwuje dla brudnopisu: zdarzenia
         przychodzą z drzwi i są treścią NIEZAUFANĄ, więc plik nie może wylądować w ``data/``,
-        które rdzeń indeksuje jako notatki. ``data_dir`` opcjonalny, bo klasa bywa czytana bez
-        pełnych ustawień rdzenia; wtedy zostaje sama kontrola kształtu ścieżki.
+        które rdzeń indeksuje jako notatki.
+
+        ``data_dir`` wolno podać jako ``None`` — klasa bywa czytana bez pełnych ustawień rdzenia
+        i wtedy zostaje sama kontrola kształtu ścieżki — ale NIE wolno go POMINĄĆ. Argument bez
+        wartości domyślnej jest tu bramką w typach: drzwi GitHub, czyli jedyny proces, który te
+        zdarzenia faktycznie ZAPISUJE, wołały ``validate()`` bez niczego i cały inwariant leciał
+        w próżnię. Bramka stojąca po jednej stronie wspólnego pliku nie broni niczego, a pominięcie
+        wyglądało dokładnie tak samo jak świadome ``None``.
 
         Zapisywalność sprawdza ``require_writable`` po stronie drzwi — tu nie ma efektów ubocznych.
         """

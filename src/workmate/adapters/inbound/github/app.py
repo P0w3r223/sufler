@@ -19,7 +19,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound import env
-from workmate.config import EventsSettings, GithubSettings, TeamsPushSettings, require_writable
+from workmate.config import (
+    EventsSettings,
+    GithubSettings,
+    Settings,
+    TeamsPushSettings,
+    require_writable,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,15 +49,20 @@ def main() -> None:
 
     settings = GithubSettings.from_env()
     settings.validate()
+    core_settings = Settings.from_env()
     events_settings = EventsSettings.from_env()
-    events_settings.validate()
+    # ``data_dir`` podajemy TU, choć te drzwi rdzenia poza tym nie potrzebują: to one ZAPISUJĄ
+    # zdarzenia, więc to one muszą sprawdzić, że plik nie leży w bazie wiedzy. Bramka wołana bez
+    # katalogu danych (jak było) kontrolowała sam kształt ścieżki, a inwariant — treść z drzwi nie
+    # trafia do notatek — nie miał tu żadnej mocy, mimo że drugie drzwi go egzekwowały.
+    events_settings.validate(data_dir=core_settings.data_dir)
     push_settings = TeamsPushSettings.from_env()
     push_settings.validate()
     # R/L1: watermark drzwi i wspólny events.db MUSZĄ być zapisywalne — inaczej stan leci w próżnię
     # na koncie kontenera z niezapisywalnym ~ (fail-fast na starcie, nie cichy crash-loop w pętli).
     require_writable(settings.state_path, "WORKMATE_GITHUB_STATE")
     require_writable(events_settings.db_path, "WORKMATE_EVENTS_DB")
-    asyncio.run(_run(settings, events_settings, push_settings))
+    asyncio.run(_run(settings, events_settings, push_settings, core_settings))
 
 
 def _resolve_project(registry_path: Path, owner: str, repo: str) -> str:
@@ -75,6 +86,7 @@ async def _run(
     settings: GithubSettings,
     events_settings: EventsSettings,
     push_settings: TeamsPushSettings,
+    core_settings: Settings,
 ) -> None:
     try:
         import httpx
@@ -85,12 +97,11 @@ async def _run(
     from workmate.adapters.inbound.heartbeat import heartbeat_path, write_heartbeat
     from workmate.adapters.outbound.github_api import HttpxGithubClient
     from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-    from workmate.config import Settings
     from workmate.core.application.events import EventService
 
     events = EventService(SqliteEventStore(events_settings.db_path))
     state = state_store.load(settings.state_path)
-    project = _resolve_project(Settings.from_env().projects_registry, settings.owner, settings.repo)
+    project = _resolve_project(core_settings.projects_registry, settings.owner, settings.repo)
 
     def persist(current: dict[str, Any]) -> None:
         state_store.save(settings.state_path, current)

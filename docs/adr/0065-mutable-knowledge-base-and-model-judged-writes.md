@@ -283,3 +283,41 @@ is the interesting part: it was once named `…does_not_transfer_between_convers
 noticed the name contradicted the assertions, and corrected **the name** to match the code instead of
 checking the code against this ADR. Under CLAUDE.md rule 10 an invariant change is an ADR before
 code, so the decision is recorded here rather than left implicit in a renamed test.
+
+## Amendment (2026-09-03) — a retried message is not a later turn
+
+Decision 6 rests on one sentence: the identical request returning "from a different turn" proves a
+person spoke, **because a turn only exists when someone writes**. The 2026-09-02 amendment above
+tightened *where* that has to happen. This one corrects the premise itself.
+
+The turn token was minted inside the `File` catalogue factory, on the reading that "one call to the
+factory is one turn". That reading held until the branch that made `LLMError` retryable
+(ADR 0069): the Teams door now hands the **same message** back to the responder after a transient
+model failure, and `record_run` never ran, so the conversation looks exactly as it did before the
+first attempt. The second attempt therefore rebuilt the catalogue, minted a **fresh** token, and the
+model — seeing an identical context — reissued the identical `File(edit)`. Same announcement key,
+different token: the gate opened. **No person wrote anything between the announcement and its
+execution.** The checkpoint had defeated itself, and the mechanism that did it was a retry designed
+to make the door *more* reliable.
+
+**Change.** The turn token is derived from the identity of the inbound **message**
+(`sha256(source_message_id)`) and passed into the factory as a required argument. Doors with no
+concept of a message id (CLI, the Bot Framework door) supply a random value; they have no retry loop,
+so one call there really is one utterance. The value is never empty — an empty token would compare
+equal to itself and refuse every mutation silently, which is safe but indistinguishable from a broken
+feature.
+
+**Why the fix belongs at the responder, not the factory.** Only the responder knows what a turn *is*.
+The factory sees a call; the poller sees a delivery; the message id is the sole thing that survives a
+retry unchanged. Minting the token where the catalogue is assembled is exactly the mistake of
+measuring a turn by the machinery that serves it rather than by the person who caused it.
+
+**What this does not change.** The strength of the proof is still what Decision 6 says it is — a
+person wrote after seeing the announcement, not that they agreed. A stronger proof still needs a
+channel outside the model.
+
+**Known consequence left open.** The same retry replays every *other* write the turn had already
+performed before the failure — `Activity(create_issue)` and `Activity(comment)` have no equivalent
+checkpoint, so a retried turn can open a duplicate issue. Before the retry landed, `SafeResponder`
+swallowed the error and the message was marked handled, so this could not happen. Whether the bridge
+writes need an idempotency key or the retry path needs to withhold them is **not decided here**.

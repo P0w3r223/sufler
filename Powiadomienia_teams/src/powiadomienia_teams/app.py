@@ -775,6 +775,30 @@ def _close_self_filled(
         )
 
 
+def _wyslij_po_domknieciu(client: GraphClient, pending: st.PendingReminder, html: str) -> None:
+    """Wyślij wiadomość, której commit JUŻ się utrwalił — awaria wysyłki nie może cofnąć czasu.
+
+    Wzorzec z ``_close_self_filled``: przy statusie TERMINALNYM kolejność jest „commit, potem
+    wysyłka", więc nieosłonięty wyjątek zostawiał wpis zamknięty NA ZAWSZE, pracownika bez
+    jednego słowa, a jego odpowiedź za przesuniętym watermarkiem — czyli nie do odzyskania.
+    Doliczał się przy tym do licznika „nie da się odczytać czatu" (izolacja per-osoba zapisuje
+    ``ReadOutcome.UNKNOWN``), więc alarm wskazywał operatorowi zupełnie inną awarię niż ta,
+    która zaszła.
+
+    Odwrotna kolejność (wysyłka przed commitem) jest tu niedostępna: przy statusie terminalnym
+    nie ma czego cofać tak, jak robi to gałąź ``AWAITING_CONFIRM`` przez ``_Migawka``. Zostaje
+    log — utrata wiadomości jest wtedy widoczna, a nie przebrana za awarię odczytu.
+
+    ``AuthExpiredError`` przelatuje: utrata sesji dotyczy całej usługi, nie tej wiadomości.
+    """
+    try:
+        client.send_chat_message(pending.chat_id, html)
+    except AuthExpiredError:
+        raise
+    except Exception:
+        logger.exception("Nie udało się wysłać domknięcia do %s", pending.member_name)
+
+
 def _commit(
     settings: Settings,
     state: dict[str, st.PendingReminder],
@@ -1079,15 +1103,16 @@ def _interpret_and_confirm(
                 # nie porażka. Status terminalny jak przy samodzielnym uzupełnieniu grafiku.
                 pending.status = st.SELF_FILLED
                 _commit(settings, state, pending, watermark, reply_text=text)
-                client.send_chat_message(
-                    pending.chat_id,
+                _wyslij_po_domknieciu(
+                    client,
+                    pending,
                     to_html(build_already_off_text(int(w["weekday"]) for w in juz_w_grafiku)),
                 )
                 return
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
             _commit(settings, state, pending, watermark, reply_text=text)
-            client.send_chat_message(pending.chat_id, to_html(UNCLEAR_TEXT))
+            _wyslij_po_domknieciu(client, pending, to_html(UNCLEAR_TEXT))
             return
         migawka = _Migawka.z_pendingu(pending)
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
@@ -1426,7 +1451,11 @@ def _safe_run_once(
         _alert(
             settings,
             "Przebieg powiadomień nie powiódł się",
-            f"Mimo ponowień: {blad}. Nikt nie dostał prośby w tym tygodniu.",
+            # Przez `_tresc_publiczna`, bo to jest kanał ZEWNĘTRZNY: `except Exception` łapie
+            # też wyjątki niosące adresy e-mail kont z cache tokenu, a pełny komunikat szedł
+            # dotąd wprost na webhook. Ten sam powód, dla którego alert o nieodczytanym czacie
+            # wysyła identyfikatory zamiast imion.
+            f"Mimo ponowień: {_tresc_publiczna(blad)}. Nikt nie dostał prośby w tym tygodniu.",
         )
         return False
 

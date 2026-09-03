@@ -616,8 +616,17 @@ class ChannelPoller:
             # (``KeyError``/``ValueError``/``TypeError``), a skutek był gorszy niż przy wariantach
             # załatanych wyżej: wyjątek łapie ``except`` per kanał, po nim puls I TAK bije, a zapis
             # stanu się udaje — kontener stoi „healthy", choć na tym kanale od restartu nie przeszła
-            # ani jedna wiadomość. Wpis nieczytelny kasujemy: brak wątku znaczy „licz od nowa",
-            # czyli najwyżej ponowne przeczytanie odpowiedzi, a nie ich utrata.
+            # ani jedna wiadomość.
+            #
+            # Wpis nieczytelny NAPRAWIAMY, nie kasujemy — i to jest różnica, nie ozdoba.
+            # ``roots_to_poll`` bierze kandydatów z KLUCZY ``threads`` plus rootów nowszych niż
+            # ``since_roots``, więc skasowanie klucza wypycha wątek z odpytywania **na stałe**,
+            # jeśli jego root jest starszy niż znacznik: trwająca wielotura milknie bez śladu.
+            # Dawny komentarz obiecywał tu „licz od nowa, najwyżej ponowne przeczytanie" —
+            # ``plan_channel`` istotnie tak by zrobił (domyślne pola z epoki), ale nigdy nie
+            # dostaje szansy, bo wątek nie trafia już do listy. Znacznik startu procesu daje
+            # jedno i drugie: wątek zostaje śledzony, a odpowiedzi sprzed restartu nie wracają
+            # jako nowe (czyli bez ponownej odpowiedzi bota na to samo).
             threads: dict[str, Any] = channel["threads"]
             for root_id in [
                 rid
@@ -626,4 +635,4 @@ class ChannelPoller:
                 or not isinstance(info.get("watermark"), str)
                 or not isinstance(info.get("last_seen"), str)
             ]:
-                del threads[root_id]
+                threads[root_id] = {"watermark": startup_iso, "last_seen": startup_iso}

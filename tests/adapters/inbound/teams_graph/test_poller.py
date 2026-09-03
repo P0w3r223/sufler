@@ -682,11 +682,12 @@ def test_seed_repairs_broken_thread_entries_not_only_the_threads_branch(nazwa: s
     asyncio.run(poller._poll_channel("team", "chan", _ME))
 
     assert client.posted == [("team", "chan", "root-1", "odp")], f"kanał stanął na: {nazwa}"
-    assert "root-9" not in state["channels"]["team/chan"]["threads"]
+    naprawiony = state["channels"]["team/chan"]["threads"]["root-9"]
+    assert naprawiony == {"watermark": _STARTUP, "last_seen": _STARTUP}, f"wariant: {nazwa}"
 
 
 def test_seed_zostawia_czytelny_wpis_watku():
-    """Kontrast do sondy wyżej: naprawa ma KASOWAĆ nieczytelne, nie czyścić całej gałęzi."""
+    """Kontrast do sondy wyżej: naprawa dotyka WYŁĄCZNIE nieczytelnych, nie czyści gałęzi."""
     dobry = {"watermark": "2024-01-01T10:00:00Z", "last_seen": "2024-01-01T10:00:00Z"}
     state: dict[str, Any] = {
         "channels": {
@@ -699,7 +700,32 @@ def test_seed_zostawia_czytelny_wpis_watku():
 
     poller._seed(_STARTUP)
 
-    assert state["channels"]["team/chan"]["threads"] == {"root-9": dobry}
+    assert state["channels"]["team/chan"]["threads"] == {
+        "root-9": dobry,
+        "root-8": {"watermark": _STARTUP, "last_seen": _STARTUP},
+    }
+
+
+def test_naprawiony_watek_ZOSTAJE_odpytywany_choc_jego_root_jest_stary():
+    """Regresja: nieczytelny wpis był KASOWANY, a to wypycha wątek z odpytywania na stałe.
+
+    ``roots_to_poll`` bierze kandydatów z KLUCZY ``threads`` plus rootów nowszych niż
+    ``since_roots``. Root sprzed startu procesu nie wraca żadną z tych dróg, więc po skasowaniu
+    klucza trwająca wielotura milkła bez śladu — a komentarz obok obiecywał „licz od nowa,
+    najwyżej ponowne przeczytanie odpowiedzi". Ta sonda pilnuje obietnicy, nie implementacji.
+    """
+    stary_root = _raw(msg_id="root-9", created="2024-01-01T09:00:00Z")
+    nowa_odpowiedz = _raw(msg_id="odp-1", created="2024-01-01T11:30:00Z", reply_to="root-9")
+    state: dict[str, Any] = {
+        "channels": {"team/chan": {"since_roots": _STARTUP, "threads": {"root-9": None}}}
+    }
+    client = FakeGraphClient([{"roots": [stary_root], "replies": {"root-9": [nowa_odpowiedz]}}])
+    poller, _ = _make_poller(client, RecordingHandler("odp"), state=state)
+
+    poller._seed(_STARTUP)
+    asyncio.run(poller._poll_channel("team", "chan", _ME))
+
+    assert client.posted == [("team", "chan", "root-9", "odp")]
 
 
 def test_failed_handling_names_the_message_in_the_log(caplog):

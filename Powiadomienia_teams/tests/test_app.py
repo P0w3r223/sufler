@@ -3139,3 +3139,77 @@ def test_przerwany_przebieg_wraca_jako_ODLOZONY_i_dosyla_reszte(tmp_path: Path, 
     assert wynik is WynikPrzebiegu.UDANY
     assert len(client.sent) == 2
     assert set(load_state(state_path)) == {"u1", "u2", "u3"}
+
+
+def test_nieudane_domkniecie_juz_wolnego_dnia_nie_udaje_awarii_ODCZYTU(tmp_path: Path, caplog):
+    """Regresja: przy statusie TERMINALNYM wysyłka szła bez osłony, PO utrwaleniu commitu.
+
+    Wyjątek z Graph zostawiał wtedy wpis zamknięty na zawsze, pracownika bez słowa i jego
+    odpowiedź za przesuniętym watermarkiem — a izolacja per-osoba zapisywała ``UNKNOWN``, więc
+    awaria WYSYŁKI doliczała się do licznika „nie da się odczytać czatu". Operator dostawał
+    alarm o zupełnie innej usterce niż ta, która zaszła. Bliźniacza ścieżka
+    (``_close_self_filled``) ten wyjątek łapie od początku.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                known_time_off_weekdays=[4],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "w piątek mam urlop")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[],"time_off":[{"weekday":4,"powod":"urlop"}]}')
+
+    with caplog.at_level("ERROR"):
+        poll_replies(_settings(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == SELF_FILLED  # domknięcie stoi — commit był PRZED wysyłką
+    assert po.unknown_count == 0  # NIE liczymy tego jako nieodczytanego czatu
+    assert "Nie udało się wysłać domknięcia" in caplog.text  # utrata wiadomości WIDOCZNA
+
+
+def test_alert_o_nieudanym_przebiegu_redaguje_tresc_bledu(tmp_path: Path, monkeypatch):
+    """Ostatni alert, który wklejał surowy komunikat wyjątku na webhook.
+
+    ``except Exception`` łapie także wyjątki z własną wersją PUBLICZNĄ, a webhook bywa poza
+    organizacją. ``_tresc_publiczna`` istnieje dokładnie po to i dwa sąsiednie alerty już go
+    używają; ten był pominięty. Wyjątek sondy jest zmyślony celowo — reguła dotyczy ATRYBUTU
+    ``publiczny``, nie jednej konkretnej klasy (``AmbiguousAccountError`` nie przejdzie tędy,
+    bo dziedziczy po ``AuthExpiredError`` i zatrzymuje całą usługę wcześniej).
+    """
+
+    class _ZDanymiOsobowymi(RuntimeError):
+        publiczny = "Cache tokenu zawiera 2 kont — usuń plik"
+
+    tresci: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.app.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: tresci.append(tresc) or True,
+    )
+
+    class _Zepsuty(_FakeClient):
+        def list_members(self, team_id: str):
+            raise _ZDanymiOsobowymi("Konta: ala@firma.pl, bot@firma.pl")
+
+    settings = _settings_bezobslugowe(tmp_path / "s.json", alert_webhook_url="https://hook")
+
+    assert (
+        _safe_run_once(settings, _Zepsuty({}), datetime.now(timezone.utc), sleep=lambda _s: None)
+        is False
+    )
+
+    assert tresci and "ala@firma.pl" not in tresci[0] and "bot@firma.pl" not in tresci[0]
+    assert "2 kont" in tresci[0]

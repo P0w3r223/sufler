@@ -92,13 +92,15 @@ class ConversationalResponder:
         shell_catalog_factory: Callable[[WorkspaceScope, str], list[ToolSpec]] | None = None,
         file_catalog_factory: (
             Callable[
-                # Przedostatni argument to SKAZA rozmowy: ``Callable`` zamiast ``bool``, bo
-                # fabryka czyta ją w chwili MUTACJI, nie budowy katalogu (ADR 0066) — patrz
-                # miejsce wywołania niżej. Ostatni to ujście werdyktu sędziego do wiersza audytu
-                # tej tury (ADR 0065 §8); ``None`` przy wyłączonym audycie.
+                # Czwarty argument to TOKEN TURY (patrz ``_turn_token``). Przedostatni to SKAZA
+                # rozmowy: ``Callable`` zamiast ``bool``, bo fabryka czyta ją w chwili MUTACJI,
+                # nie budowy katalogu (ADR 0066) — patrz miejsce wywołania niżej. Ostatni to
+                # ujście werdyktu sędziego do wiersza audytu tej tury (ADR 0065 §8); ``None``
+                # przy wyłączonym audycie.
                 [
                     WorkspaceScope,
                     AttachmentQueue,
+                    str,
                     str,
                     str,
                     Callable[[], bool],
@@ -437,6 +439,10 @@ class ConversationalResponder:
                         scope,
                         attachment_queue,
                         message.sender_id,
+                        # Token TURY liczony z TOŻSAMOŚCI WIADOMOŚCI, nie losowany w fabryce —
+                        # ponowienie tej samej wiadomości ma dostać ten sam token, inaczej samo
+                        # domyka punkt kontrolny człowieka (ADR 0065, amendment 2026-09-03).
+                        self._turn_token(message),
                         trust,
                         # LENIWA skaza: fabryka czyta ją w chwili MUTACJI, nie budowy katalogu.
                         # Wartość jest już poprawna w chwili budowy (zapalamy ją wyżej), więc to
@@ -609,6 +615,31 @@ class ConversationalResponder:
         except Exception:
             logger.warning("Nie odczytałem skazy rozmowy %r — zakładam skażoną", conversation_id)
             return True
+
+    @staticmethod
+    def _turn_token(message: InboundMessage) -> str:
+        """Token tury: wywodzi się z TOŻSAMOŚCI WIADOMOŚCI, nie z chwili wywołania.
+
+        Punkt kontrolny człowieka (ADR 0065) przepuszcza mutację, gdy ta sama prośba wraca
+        z INNYM tokenem — bo „inna tura znaczy, że ktoś napisał". Token losowany przy budowie
+        katalogu łamał to zdanie na jedynych drzwiach, które mają ponowienia: po ``LLMError``
+        ``record_run`` nie biegnie, poller podaje TĘ SAMĄ wiadomość drugi raz, model odtwarza
+        tę samą prośbę — i drugi los zaliczał się za człowieka. Ta sama wiadomość musi więc
+        dawać ten sam token; nowy token ma powstawać wtedy, gdy powstaje nowa wiadomość.
+
+        Skrót, nie samo ``source_message_id``: identyfikator zewnętrzny nie ma po co krążyć
+        po rdzeniu, a token jest wyłącznie kluczem porównania. Zwykły ``sha256`` wystarcza —
+        inaczej niż nonce koperty token NIGDY nie trafia do modelu, więc nieprzewidywalność
+        nie jest tu potrzebna (model i tak go nie poda: fabryka domyka go w katalogu).
+
+        Drzwi bez pojęcia identyfikatora wiadomości (CLI, Bot Framework) zostawiają pole puste
+        i dostają wartość losową — nie mają pętli ponowień, więc jedno wywołanie to tam
+        naprawdę jedna wypowiedź. Wartość jest zawsze NIEPUSTA: pusty token nie przeszedłby
+        bramki nigdy (``"" == ""``), czyli mutacja zawiodłaby cicho zamiast działać.
+        """
+        if not message.source_message_id:
+            return secrets.token_hex(16)
+        return hashlib.sha256(message.source_message_id.encode("utf-8")).hexdigest()[:32]
 
     def _trust_nonce(self, external_id: str) -> str:
         """Nonce koperty (ADR 0066): stały w obrębie ROZMOWY, nieprzewidywalny z treści.

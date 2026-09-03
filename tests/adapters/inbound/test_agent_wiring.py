@@ -848,7 +848,7 @@ def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
     (nazwa,) = stage(scope, (Attachment("document", "application/pdf", "umowa.pdf", "JVBERi0x"),))
 
     queue = AttachmentQueue(budget_bytes=1_000_000)
-    (spec,) = factory(scope, queue, "")
+    (spec,) = factory(scope, queue, "", "tura-1")
     result = spec.fn(action="read", name=nazwa)
 
     assert result["materialized"] is True
@@ -899,7 +899,7 @@ def test_staged_document_can_actually_be_read_back_by_the_tool(tmp_path: Path):
     (nazwa,) = stage(scope, (Attachment("text", "text/plain", "raport.docx", text="Treść umowy"),))
 
     queue = AttachmentQueue(budget_bytes=1_000_000)
-    (spec,) = factory(scope, queue, "")
+    (spec,) = factory(scope, queue, "", "tura-1")
     result = spec.fn(action="read", name=nazwa)
 
     assert result["materialized"] is True  # nie „nie jest zipem"
@@ -978,6 +978,7 @@ def test_the_file_factory_forwards_the_verdict_sink_to_the_catalog(tmp_path: Pat
         WorkspaceScope("teams_graph", "team/chan/root"),
         AttachmentQueue(budget_bytes=1024),
         "aad-1",
+        "tura-1",
         "T1",
         False,
         ujscie,
@@ -1035,7 +1036,7 @@ def test_without_the_mutation_gate_the_tool_is_read_only(tmp_path: Path):
 
     factory, _stage = _para_file_z_mutacja(tmp_path, mutations=None)
     (spec,) = factory(
-        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1", "t1"
     )
 
     assert _akcje(spec) == {"read"}
@@ -1048,7 +1049,7 @@ def test_mutation_gate_without_an_identity_map_stays_read_only(tmp_path: Path):
 
     factory, _stage = _para_file_z_mutacja(tmp_path, mutations=_StubMutations(), identities=None)
     (spec,) = factory(
-        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1", "t1"
     )
 
     assert _akcje(spec) == {"read"}
@@ -1062,7 +1063,10 @@ def test_unresolvable_sender_stays_read_only(tmp_path: Path):
         tmp_path, mutations=_StubMutations(), identities=_StubIdentities(person=None)
     )
     (spec,) = factory(
-        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-obcy"
+        WorkspaceScope("teams_graph", "t/c/r"),
+        AttachmentQueue(budget_bytes=10),
+        "aad-obcy",
+        "t1",
     )
 
     assert _akcje(spec) == {"read"}
@@ -1078,7 +1082,7 @@ def test_recognised_member_gets_the_mutating_actions(tmp_path: Path):
         tmp_path, mutations=_StubMutations(), identities=_StubIdentities(osoba)
     )
     (spec,) = factory(
-        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1", "t1"
     )
 
     assert _akcje(spec) == {"read", "edit", "delete"}
@@ -1107,7 +1111,7 @@ def test_member_without_read_authorization_cannot_mutate(tmp_path: Path):
         read_authorizer=_OdmawiajacyAutoryzator(),
     )
     (spec,) = factory(
-        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1"
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-1", "t1"
     )
 
     assert _akcje(spec) == {"read"}

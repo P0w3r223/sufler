@@ -30,6 +30,47 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **Ponowienie wiadomości samo domykało punkt kontrolny człowieka (mutacja notatek).** Token tury
+  był losowany przy budowie katalogu `File`, na przesłance „jedno wywołanie fabryki to jedna tura".
+  Przesłanka przestała być prawdziwa razem z ponawianiem `LLMError` (ADR 0069): po błędzie modelu
+  poller podaje TĘ SAMĄ wiadomość drugi raz, `record_run` nie zdążył pobiec, więc historia rozmowy
+  wygląda jak przed turą — model odtwarza tę samą prośbę `File(edit)`, klucz zapowiedzi się zgadza,
+  a świeży los zalicza się za człowieka. **Zmiana wchodziła w życie, choć nikt nic nie napisał.**
+  Token wywodzi się teraz z `source_message_id` i jest WYMAGANYM argumentem fabryki; drzwi bez
+  identyfikatora wiadomości (CLI, Bot Framework) dostają wartość losową, bo nie mają pętli
+  ponowień. Decyzja: ADR 0065, amendment 2026-09-03 — razem z konsekwencją, której ta poprawka
+  NIE zamyka: ponowienie powtarza też `Activity(create_issue)`/`comment` wykonane przed błędem.
+
+- **Bramka „zdarzenia z drzwi nie trafiają do bazy wiedzy" stała po stronie, która ich nie
+  zapisuje.** `EventsSettings.validate()` egzekwuje ten inwariant tylko przy podanym `data_dir`,
+  a drzwi GitHub — jedyny proces zapisujący `events.db` — wołały ją bez argumentu; obie usługi
+  dzielą jeden plik, więc bramka po jednej stronie nie broniła niczego. Argument stracił wartość
+  domyślną: świadome `None` wolno podać, pominięcia nie da się już napisać.
+
+- **Nieczytelny wpis wątku wypychał wątek z odpytywania NA STAŁE.** `_seed` kasował uszkodzony
+  wpis, a komentarz obok obiecywał „licz od nowa, najwyżej ponowne przeczytanie odpowiedzi".
+  `plan_channel` rzeczywiście tak by zrobił, ale nigdy nie dostawał szansy: kandydatów do
+  odpytania bierze się z KLUCZY `threads` plus rootów nowszych niż watermark, więc wątek ze starym
+  postem początkowym znikał bez śladu — trwająca wielotura milkła. Wpis jest teraz NAPRAWIANY do
+  znacznika startu procesu: wątek zostaje śledzony, a odpowiedzi sprzed restartu nie wracają jako
+  nowe.
+
+- **`Powiadomienia_teams`: awaria wysyłki przy statusie terminalnym udawała awarię ODCZYTU.**
+  Nowa gałąź „dzień już wolny w grafiku" commitowała status `SELF_FILLED` razem z watermarkiem,
+  a dopiero potem wysyłała wiadomość — bez osłony. Wyjątek z Graph zostawiał wpis zamknięty na
+  zawsze, pracownika bez słowa, a jego odpowiedź za przesuniętym watermarkiem; przy okazji
+  doliczał się do licznika „nie da się odczytać czatu", więc alarm wskazywał operatorowi inną
+  usterkę niż ta, która zaszła. Osłona wzorem bliźniaczego `_close_self_filled`.
+
+- **`Powiadomienia_teams`: alert o nieudanym przebiegu wklejał surowy komunikat wyjątku na
+  webhook.** `_tresc_publiczna` istnieje dokładnie po to i dwa sąsiednie alerty już jej używają;
+  ten jeden był pominięty, a `except Exception` łapie też wyjątki z własną wersją publiczną.
+
+- **`Powiadomienia_teams`: lista pilotażu normalizowana tylko przy wczytaniu ze środowiska.**
+  Filtr casefolduje wyłącznie lewą stronę porównania, więc `Settings` zbudowany wprost cicho nie
+  trafiał w nikogo — dokładnie ta awaria, którą normalizacja miała zamykać. Inwariant przeniesiony
+  do `__post_init__`, czyli do klasy, a nie do jednego konstruktora.
+
 - **Data notatki wątkowej liczona w UTC.** `„zapisz to"` wysłane o 23:30 czasu warszawskiego
   zakładało notatkę pod POPRZEDNIM dniem — data wchodzi do `build_note_id`, więc notatka dostawała
   zarówno inny dzień w treści, jak i inny identyfikator, a notatki `-thr-` są niezmienne (korekta

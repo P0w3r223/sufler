@@ -776,3 +776,17 @@ def test_file_materializer_builds_the_same_attachment_as_the_door():
     assert built is not None
     attachment, sent = built
     assert (attachment.kind, attachment.text, sent) == ("text", "tresc strony", 0)
+
+
+def test_laczny_sufit_tekstu_jest_ZWIAZANY_z_sufitem_pojedynczego_pliku():
+    """Komentarz przy ``max_total_text_chars`` obiecuje „tyle, ile wolno pojedynczemu plikowi",
+    ale liczba jest przepisana literałem w drugim module. Podniesienie sufitu per-plik bez tego
+    sprawiłoby, że JEDEN duży dokument przekracza łączny budżet wiadomości i degraduje do notki —
+    cicha utrata zdolności, nie błąd. Wiążemy obie liczby sondą, bo import stałej z modułu
+    ekstrakcji zrobiłby z sufitu wiadomości pochodną cudzej decyzji.
+    """
+    from workmate.adapters.inbound.document_text import _MAX_TEXT_CHARS
+
+    limity = AttachmentLimits(max_bytes=1, max_count=1, max_total_bytes=1)
+
+    assert limity.max_total_text_chars == _MAX_TEXT_CHARS
