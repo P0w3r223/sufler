@@ -5,6 +5,25 @@ on:
     branches: [Main, Dev]
   pull_request:
     branches: [Main, Dev]
+  # Bieg NOCNY. Bez niego bramka pada dopiero przy następnym pushu, a bywa, że nikt nic nie
+  # zepsuł: #88 stało czerwone JEDENAŚCIE DNI, bo wygasła cena wprowadzająca
+  # (`PRICING_SWITCH_DATE`) — kod się nie zmienił, zmienił się kalendarz. Przez ten czas nie dało
+  # się zbudować obrazu floty, bo Dockerfile odpala `pytest && touch /app/.tests-passed`.
+  # Druga instancja tej klasy (zegar systemowy w oknie wysyłki `Powiadomienia_teams`) wracała
+  # w KAŻDY weekend. Bieg raz na dobę zamienia oba przypadki z „wyjdzie przy następnym wydaniu"
+  # na „wiadomo następnego ranka".
+  #
+  # 04:17 UTC = 06:17 czasu warszawskiego: po północy UTC (zmiana doby zdążyła zajść) i przed
+  # początkiem pracy zespołu. Minuta nie jest okrągła świadomie — o pełnych godzinach kolejka
+  # GitHuba jest najdłuższa i biegi potrafią się opóźnić o kilkadziesiąt minut.
+  #
+  # GitHub odpala `schedule` WYŁĄCZNIE z gałęzi domyślnej (tu: `Main`), czyli dokładnie z tej,
+  # z której budowany jest obraz — to jest ta gałąź, o którą chodzi.
+  schedule:
+    - cron: "17 4 * * *"
+  # Ręczne uruchomienie: pozwala sprawdzić poprawkę bomby kalendarzowej bez czekania do rana
+  # i bez pustego commita.
+  workflow_dispatch:
 
 jobs:
   quality-gate:

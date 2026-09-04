@@ -19,27 +19,24 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   progu werdyktem jest *niezmierzone*, a data się przesuwa. **Nieużywanie nie falsyfikuje
   narzędzia, jeśli nie było użytkowników.**
 
-### Do dokończenia
+### Dodane
 
-- **Nocny bieg CI (`schedule`) — przygotowany, NIE wdrożony.** `.github/workflows/ci.yml` wymaga
-  zakresu `workflow` na tokenie, którego bot nie ma (`remote rejected … without workflow scope`),
-  więc zmiana została wycięta z gałęzi i czeka na wklejenie ręką. Dopóki tego nie ma, CI biega
-  wyłącznie na `Main`, `Dev` i PR-ach, czyli **bomba kalendarzowa dalej czeka na czyjś push** —
-  a to jest wada, przez którą #88 stało czerwone jedenaście dni, blokując budowę obrazu floty.
+- **Nocny bieg CI (`schedule` 04:17 UTC) i ręczne uruchomienie (`workflow_dispatch`).** CI biegało
+  wyłącznie na `Main`, `Dev` i PR-ach, więc bramka padała dopiero przy następnym pushu — a bywa,
+  że nikt nic nie zepsuł: #88 stało czerwone JEDENAŚCIE DNI, bo wygasła cena wprowadzająca, czyli
+  zmienił się kalendarz, a nie kod. Przez ten czas nie dało się zbudować obrazu floty, bo
+  `Dockerfile` odpala `pytest && touch /app/.tests-passed`. Bieg raz na dobę zamienia tę klasę
+  wady z „wyjdzie przy następnym wydaniu" na „wiadomo następnego ranka". 04:17 UTC = 06:17 czasu
+  warszawskiego: po zmianie doby UTC, przed początkiem pracy zespołu; minuta nieokrągła, bo
+  o pełnych godzinach kolejka GitHuba jest najdłuższa. `schedule` odpala się WYŁĄCZNIE z gałęzi
+  domyślnej (`Main`) — czyli z tej, z której budowany jest obraz.
 
-  Do wklejenia w bloku `on:` pliku `.github/workflows/ci.yml`, po `pull_request:`:
-
-  ```yaml
-    schedule:
-      - cron: "17 4 * * *"   # 06:17 czasu warszawskiego: po północy UTC, przed pracą zespołu;
-                             # minuta nieokrągła, bo o pełnych godzinach kolejka GitHuba jest
-                             # najdłuższa. `schedule` odpala się TYLKO z gałęzi domyślnej (`Main`).
-    workflow_dispatch:       # ręczny bieg — sprawdzenie poprawki bez czekania do rana
-  ```
-
-  Odblokowanie po stronie tokenu: `gh auth refresh -s workflow`, potem zwykły `git push`.
-  Bramka złożoności (`C901`/`PLR0915`) z tej samej pary JEST już wdrożona — patrz „Dodane".
-
+  *Dlaczego dopiero teraz i co to mówi o dokumentach.* Zmiana czekała od 2026-09-02 jako łatka
+  poza gitem, z powodem „token bota nie ma zakresu `workflow`". Powód wygasł, a zapis nie:
+  `gh auth status` pokazuje dziś `gist, read:org, repo, workflow, write:packages`. **Blokada
+  zniknęła i nikt tego nie zauważył, bo nikt nie sprawdził — punkt czekał na czynność, a nie na
+  pomiar.** To ta sama klasa rozjazdu, którą lista `pozostale-do-zrobienia.md` opisuje w rozdziale
+  o higienie dokumentów: stan zapisany starzeje się niezależnie od świata.
 
 ## [1.14.0] — 2026-09-03
 
