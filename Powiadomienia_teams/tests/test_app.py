@@ -2977,6 +2977,106 @@ def test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem(tmp_path: Path, monkeypatch)
     assert wyslane == ["Przypomnienia zablokowane na odczycie czatu"]
 
 
+def test_prog_w_tescie_zgadza_sie_ze_stala_w_kodzie():
+    """Sonda parzystości: bez niej dwa testy wyżej po cichu badałyby co innego.
+
+    Oba pętlą `_PROG_CYKLI_BEZ_ODCZYTU + 5` obiegów, gdzie stała jest LOKALNĄ kopią wartości
+    z `listener.py`. Podniesienie progu w kodzie do 9 zostawiłoby tu 3, więc „dokładnie jeden
+    alert" nadal by przechodziło — mierząc próg, którego kod już nie ma. Test przestałby chronić
+    cokolwiek, nie zapalając się na czerwono ani razu.
+    """
+    from powiadomienia_teams.runtime.listener import _PROG_CYKLI_BEZ_ODCZYTU as w_kodzie
+
+    assert w_kodzie == _PROG_CYKLI_BEZ_ODCZYTU
+
+
+def test_obcy_nadawca_NIE_podbija_licznika_nieudanych_odczytow(tmp_path: Path, monkeypatch):
+    """Rozdział `UNKNOWN`/`BLOCKED` musi być widoczny w LICZNIKU, nie tylko w enumie (ADR 0007).
+
+    Przy obcym nadawcy odczyt czatu SIĘ UDAŁ — nie ma awarii, którą licznik miałby mierzyć,
+    a operator został zawołany osobno przez `_zglos_obcych_raz`. Gdyby licznik rósł także tutaj,
+    wpis osoby, w której wątku ktoś napisał, doszedłby po sześciu dobach do sufitu i zostałby
+    zamknięty — czyli człowiek straciłby tydzień przez zachowanie kolegi.
+    """
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert", lambda url, tytul, tresc, **kw: True
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings_calodobowe(state_path), alert_webhook_url="https://hook")
+    # Odczyt się udaje, ale w wątku jest ktoś spoza pendingu — ścieżka BLOCKED.
+    client = _FakeClient({"chat1": [_msg("obcy", "2026-07-18T09:00:00Z", "cześć")]})
+
+    for _ in range(_PROG_CYKLI_BEZ_ODCZYTU + 2):
+        poll_replies(settings, client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.unknown_count == 0  # licznik dotyczy AWARII ODCZYTU, a odczyt działał
+    assert po.status == "awaiting_reply"  # i wpis dalej stoi otwarty
+
+
+def test_bledy_interpretacji_NIE_alarmuja_o_odczycie_czatu(tmp_path: Path, monkeypatch):
+    """Najcichsza z pułapek tej zmiany: dwa liczniki karmione z jednego wyjątku.
+
+    Wyjątek z `_process_pending` przechodzi przez `_record_failure` (rośnie `fail_count`), ale
+    dolatuje WYŻEJ do per-osobowego handlera w `poll_replies` i staje się tam `UNKNOWN` — czyli
+    podbija też `unknown_count`. Bez zerowania w `_commit` trzy deterministyczne błędy modelu
+    zapaliłyby alert „przypomnienia zablokowane na odczycie czatu" o czacie, który czyta się bez
+    zarzutu, i wysłały operatora szukać awarii Graph, której nie ma.
+
+    Właściwa sekwencja to 1, 2, (commit odpuszcza porcję → 0), 1, 2, … — próg 3 nieosiągalny.
+    """
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_with_reply(state_path)
+    settings = replace(_settings(state_path), alert_webhook_url="https://hook")
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-16T11:10:00Z", "czego model nie ogarnie")]})
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    for _ in range(_MAX_PENDING_FAILURES * 3):
+        poll_replies(settings, client, _RaisingLlm(), now=now)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].unknown_count < _PROG_CYKLI_BEZ_ODCZYTU
+    assert "Przypomnienia zablokowane na odczycie czatu" not in wyslane
+
+
+def test_powrot_odczytu_zglasza_sie_operatorowi(tmp_path: Path, monkeypatch):
+    """Alert powrotu ma DZIAŁAĆ, a nie tylko istnieć w kodzie.
+
+    `_commit` zeruje `unknown_count`, a krok 1.6 biegnie po nim — więc naiwna implementacja
+    porównywałaby licznik już wyzerowany i nie zgłosiła powrotu NIGDY. Alert byłby ozdobą:
+    operator dostawałby „zablokowane", nie dostawał nigdy „wróciło" i musiał sam zgadywać, czy
+    awaria trwa. Dlatego o powrocie sądzimy z migawki sprzed obiegu.
+    """
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings_calodobowe(state_path), alert_webhook_url="https://hook")
+
+    for _ in range(_PROG_CYKLI_BEZ_ODCZYTU):
+        poll_replies(settings, _OdczytPadaZawsze({}), _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+    assert wyslane == ["Przypomnienia zablokowane na odczycie czatu"]
+
+    # Czat wraca Z ODPOWIEDZIĄ, nie pusty — i to jest cała trudność tej sondy. Pusty czat daje
+    # `NOTHING_NEW`, przy którym `_commit` w ogóle nie biegnie, więc licznik dotrwałby do kroku 1.6
+    # nietknięty i naiwna implementacja też by przeszła. Dopiero prawdziwa wiadomość uruchamia
+    # `_commit`, który zeruje `unknown_count` PRZED krokiem 1.6 — czyli jedyny przypadek, w którym
+    # migawka sprzed obiegu robi różnicę. (Sprawdzone mutacją: bez migawki ten test pada.)
+    odpowiedz = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "poniedziałek 8-16")]})
+    poll_replies(settings, odpowiedz, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert wyslane[-1] == "Odczyt czatu wrócił"
+    assert load_state(state_path)["u1"].unknown_count == 0
+
+
 # --- Regresja: opóźnienie przed wyjściem tylko dla usługi --------------------
 
 
