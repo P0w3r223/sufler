@@ -28,7 +28,8 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
   Format to osobny krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check`; obejmuje tę samą listę katalogów, z `deploy` i `scripts` włącznie.
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`
 - Pod-projekty (własny venv): `cd Powiadomienia_teams|claude_summary && uv run pytest`
-  W `Powiadomienia_teams` wszystkie cztery bramki są zielone (403 passed, 10 xfailed). Każdy `xfail` ma `strict=True` i w `reason` opis ZWERYFIKOWANEJ usterki 0.2.19 — naprawa zapali XPASS i wymusi zdjęcie znacznika; nie kasuj ich bez przeczytania powodu.
+  W `Powiadomienia_teams` wszystkie cztery bramki są zielone. Każdy `xfail` ma `strict=True` i w `reason` opis ZWERYFIKOWANEJ usterki 0.2.19 wraz z numerami linii przyczyny — naprawa zapali XPASS i wymusi zdjęcie znacznika; nie kasuj ich bez przeczytania powodu. Liczby przechodzących i `xfailed` świadomie NIE ma tutaj: zmienia się przy każdej naprawie, więc byłaby rozjazdem z założenia — przelicz ją `uv run pytest`.
+  Kształtu szwu wysyłki pilnuje strażnik statyczny `tests/test_szew_wysylki.py` (AST po `runtime/`): szeroki `except` wokół wysyłki musi mieć przed sobą handler przepuszczający utratę sesji. Dopisany 2026-09-04, bo docstring `runtime/wysylka.py` powoływał się na niego od wydań, a on nie istniał.
   `src/` to artefakt odzyskany z obrazu i jest wyłączony z `ruff format` oraz z E501/C901/PLR0915/SIM105/SIM300 (`pyproject.toml`, z uzasadnieniem). Reguły łapiące USTERKI (F, B, UP, I) obowiązują tam normalnie. Kodu produkcyjnego nie naginaj pod linter — wierność wobec obrazu jest warta więcej niż zielony styl. Sprawdzenie na żywym tenancie: `--proba-nasluchu`.
 
 ## Reguły twarde (złamanie = regres)
