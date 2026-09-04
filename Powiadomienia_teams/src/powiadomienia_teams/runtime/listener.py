@@ -528,6 +528,73 @@ def _commit(
     st.save_state(settings.state_path, state)
 
 
+@dataclass(frozen=True)
+class _MigawkaCommitu:
+    """Pola `pending`, które `_commit` nadpisuje — zdjęte PRZED nim, na wypadek wycofania.
+
+    Frozen, żeby migawka nie mogła dryfować razem z obiektem, który opisuje: `pending` jest tym
+    samym obiektem, który trzyma słownik `state`, więc kopia płytka listy byłaby aliasem i cofnięcie
+    nie cofnęłoby niczego.
+    """
+
+    watermark: str
+    employee_memory: tuple[str, ...]
+    memory_started_at: str
+    fail_count: int
+    status: str
+    resolved: tuple[dict[str, Any], ...]
+    resolved_time_off: tuple[dict[str, Any], ...]
+
+
+def _migawka_commitu(pending: st.PendingReminder) -> _MigawkaCommitu:
+    """Zdejmij stan sprzed obsługi porcji. Wołać na WEJŚCIU, przed pierwszą zmianą `pending`.
+
+    `resolved` i `resolved_time_off` są w migawce, choć ustawia je wołający, a nie `_commit`:
+    po cofnięciu watermarku ta sama wiadomość wraca do interpretacji, a `propose.baza_interpretacji`
+    bierze `resolved` za bazę. Poprawka WZGLĘDNA („piątek godzinę później") naniosłaby się wtedy
+    drugi raz. Następny cykl odtworzy oba pola z tej samej wiadomości, więc cofnięcie nic nie kosztuje.
+    """
+    return _MigawkaCommitu(
+        watermark=pending.watermark,
+        employee_memory=tuple(pending.employee_memory),
+        memory_started_at=pending.memory_started_at,
+        fail_count=pending.fail_count,
+        status=pending.status,
+        resolved=tuple(pending.resolved),
+        resolved_time_off=tuple(pending.resolved_time_off),
+    )
+
+
+def _wycofaj_commit(pending: st.PendingReminder, migawka: _MigawkaCommitu) -> None:
+    """Cofnij skutki `_commit`, bo wiadomość, która je uzasadniała, NIE dotarła do pracownika.
+
+    **Sygnatura jest tu strażnikiem.** Brak `settings`, `state` i `client` znaczy, że ta funkcja
+    nie ma czym zrobić I/O — ani zapisać stanu, ani nic wysłać. To nie oszczędność, tylko warunek
+    poprawności: wycofanie biegnie z bloku ``finally``, czyli w trakcie odwijania stosu, często po
+    ``AuthExpiredError``. Zapis stanu rzuciłby tam po raz drugi i przykrył pierwotną przyczynę,
+    a wysyłka byłaby próbą napisania do człowieka MARTWYM tokenem — dokładnie ta klasa usterki,
+    którą zamknęła fala 1. Z tego samego powodu wycofania NIE prowadzimy przez ``_record_failure``,
+    choć kusi „sufitem pętli za darmo": ta funkcja zapisuje stan i wysyła. Sufit i tak mamy, bo
+    ``_process_pending`` woła ``_record_failure`` w swoim ``except Exception`` — wystarczy, że
+    wyjątek z wysyłki przestanie być połykany.
+
+    Stan trafi na dysk przy najbliższym `save_state` — obiekt jest współdzielony ze słownikiem
+    `state`, a przy wyjątku i tak zapisze go `_record_failure`.
+
+    ``awaiting_yes`` wraca twardo na ``False``, NIE z migawki: to bramka nieodwracalnego zapisu do
+    Shifts (N38), a wycofanie nigdy nie ma prawa ROZSZERZYĆ uprawnienia. Ta sama zasada, dla której
+    fala 2 zostawiła ``guards.ensure_single_owner`` ścisłym.
+    """
+    pending.watermark = migawka.watermark
+    pending.employee_memory = list(migawka.employee_memory)
+    pending.memory_started_at = migawka.memory_started_at
+    pending.fail_count = migawka.fail_count
+    pending.status = migawka.status
+    pending.resolved = [dict(z) for z in migawka.resolved]
+    pending.resolved_time_off = [dict(z) for z in migawka.resolved_time_off]
+    pending.awaiting_yes = False
+
+
 def _oznacz_wyslane(
     settings: Settings,
     state: dict[str, st.PendingReminder],
@@ -918,8 +985,11 @@ def _record_failure(
     # Odpuszczamy tę porcję — watermark rusza, więc rejestrujemy ją też w pamięci (raz),
     # spójnie z „co najwyżej raz". Wcześniejsze próby (1./2.) NIE ruszały watermarku ani pamięci.
     _commit(settings, state, pending, wiadomosci, status=wraca_do_odpowiedzi, awaiting_yes=False)
-    # Commit PRZED wysyłką (jak wszędzie): nieudana wysyłka nie może cofnąć decyzji o odpuszczeniu,
-    # bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy.
+    # Commit PRZED wysyłką i — WYJĄTKOWO — bez wycofania. Nawias „(jak wszędzie)" stał tu do fali 4
+    # i po niej przestał być prawdziwy: trzy miejsca w `_interpret_and_confirm` cofają teraz commit,
+    # gdy wiadomość nie dotarła. Tutaj cofnąć NIE WOLNO: nieudana wysyłka nie może cofnąć decyzji
+    # o odpuszczeniu porcji, bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy. Tam wycofanie
+    # ratuje odpowiedź pracownika, tu skasowałoby jedyny mechanizm, który tę pętlę domyka.
     try:
         _oznacz_wyslane(
             settings, state, pending,
@@ -1105,7 +1175,12 @@ def _interpret_and_confirm(
     ``history`` to wcześniejsze wiadomości pracownika (kontekst wieloturowy) — przekazywana do
     modelu; obsłużona porcja dojdzie do pamięci dopiero w ``_commit`` (nie trafia do własnej
     historii). Decyzję podejmujemy z OSTATNIEJ wiadomości porcji; wcześniejsze są już w ``history``.
+
+    Migawka zdejmowana jest TUTAJ, na samym wejściu, a nie tuż przed ``_commit``: `resolved`
+    i `resolved_time_off` ustawia ta funkcja niżej, więc migawka wzięta później zawierałaby już
+    wynik interpretacji, którą właśnie mielibyśmy wycofać.
     """
+    migawka = _migawka_commitu(pending)
     text = wiadomosci[-1][1]
     week_start = date.fromisoformat(pending.week_start)
     # Gotowiec (»jak w zeszłym tygodniu«) i BAZA (to, co zapiszemy bez dalszych poprawek) to dwie
@@ -1165,13 +1240,20 @@ def _interpret_and_confirm(
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
             _commit(settings, state, pending, wiadomosci, awaiting_yes=False)
-            _oznacz_wyslane(
-                settings, state, pending,
-                do_pracownika(
+            # `try/finally` BEZ `except`: propagacja zostaje dokładnie taka jak dotąd (nic tu nie
+            # było łapane), dochodzi wyłącznie wycofanie commitu. Szeroki handler byłby nowym
+            # miejscem do pilnowania przez strażnika szwu, a nie jest do niczego potrzebny.
+            dostarczono = False
+            try:
+                sent_at = do_pracownika(
                     settings, client, pending.chat_id,
                     to_html(build_unclear_text("brak_powodu_wolnego")), teraz=now,
-                ),
-            )
+                )
+                dostarczono = True  # patrz komentarz przy prośbie o potwierdzenie niżej
+                _oznacz_wyslane(settings, state, pending, sent_at)
+            finally:
+                if not dostarczono:
+                    _wycofaj_commit(pending, migawka)
             return
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
         pending.resolved_time_off = resolved_time_off
@@ -1190,8 +1272,11 @@ def _interpret_and_confirm(
         # porażek wyzerował, więc żaden kolejny obieg tego nie naprawiał. Późniejsze samo
         # „ok" — choćby o czymś zupełnie innym — trafiało wtedy w szybką ścieżkę
         # i zapisywało do Shifts komplet, którego pracownik nigdy nie widział.
-        # `resolved` ZOSTAJE jako baza (`propose.baza_interpretacji`), więc uzgodnienia
-        # z rozmowy nie przepadają — wróci po nie reinterpretacja przy kolejnej wiadomości.
+        # `resolved` jest COFANE razem z resztą — i to jest zmiana wobec poprzedniego brzmienia
+        # tego komentarza. Dopóki watermark szedł naprzód, zostawienie `resolved` jako bazy było
+        # słuszne: wracała po nie reinterpretacja KOLEJNEJ wiadomości. Odkąd cofamy watermark,
+        # wraca TA SAMA wiadomość, a `propose.baza_interpretacji` bierze `resolved` za bazę —
+        # więc poprawka względna („piątek godzinę później") naniosłaby się drugi raz.
         #
         # NAPRAWA STANU obowiązuje przy KAŻDEJ awarii wysyłki, także tej, która propaguje
         # (`wysylka.NIE_POLYKAJ`): o tym, czy pracownik zobaczył prośbę, nie decyduje typ
@@ -1200,26 +1285,33 @@ def _interpret_and_confirm(
         # którym broni ta gałąź. Stąd `finally`, a nie `isinstance` w jednej gałęzi: tamten
         # kształt był poprawny, ale NIEWIDOCZNY dla strażnika czytającego nazwy wyjątków,
         # więc to miejsce wyglądało dla niego na połykające utratę sesji.
-        naprawiono = False
+        dostarczono = False
         try:
-            _oznacz_wyslane(
-                settings, state, pending,
-                do_pracownika(settings, client, pending.chat_id, to_html(confirm), teraz=now),
+            sent_at = do_pracownika(
+                settings, client, pending.chat_id, to_html(confirm), teraz=now
             )
-            naprawiono = True  # wysyłka się udała — nie ma czego naprawiać
+            # Flaga wstaje TU, a nie po `_oznacz_wyslane` — i to nie jest kosmetyka.
+            # `_oznacz_wyslane` woła `save_state`, więc `StateWriteError` z niego znaczy, że
+            # prośba JUŻ JEST u pracownika. Cofnięcie commitu w tym miejscu kazałoby kolejnemu
+            # cyklowi wysłać ją drugi raz — czyli wymieniłoby zgubioną wiadomość na zdublowaną.
+            dostarczono = True
+            _oznacz_wyslane(settings, state, pending, sent_at)
         except NIE_POLYKAJ:
             raise
         except Exception:
             logger.exception(
-                "Nie udało się poprosić %s o potwierdzenie — wracam do oczekiwania na odpowiedź",
+                "Nie udało się poprosić %s o potwierdzenie — cofam obsługę tej wiadomości",
                 etykiety.osoba(pending, settings),
             )
+            # PROPAGUJEMY, zamiast połykać. Wyjątek dolatuje do `_process_pending`, ten woła
+            # `_record_failure` i dopiero on daje sufit pętli. Połknięcie zwracało `HANDLED`,
+            # co resetowało backoff do 10 s — trzy próby wyczerpywałyby się w pół minuty,
+            # zanim przejściowy 503 zdążyłby minąć. Teraz wynikiem obiegu jest `UNKNOWN`,
+            # odstęp rośnie ku `poll_max_interval_s`, a trzy próby to około trzech godzin.
+            raise
         finally:
-            if not naprawiono:
-                _commit(
-                    settings, state, pending, (),
-                    status=st.AWAITING_REPLY, awaiting_yes=False,
-                )
+            if not dostarczono:
+                _wycofaj_commit(pending, migawka)
     elif decision.action == "decline":
         _commit(settings, state, pending, wiadomosci, status=st.DECLINED, awaiting_yes=False)
         try:
@@ -1239,10 +1331,19 @@ def _interpret_and_confirm(
         _commit(settings, state, pending, wiadomosci, awaiting_yes=False)
         # Prośba o doprecyzowanie KONKRETNEJ rzeczy (enum z `agent.schema`, nie tekst modelu):
         # pracownik, który nie wie, co było niejasne, odpisuje to samo i okno wygasa.
-        _oznacz_wyslane(
-            settings, state, pending,
-            do_pracownika(
+        #
+        # Wycofanie jest tu najdotkliwsze z trzech: gdy ta prośba nie dotrze, watermark bez
+        # cofnięcia przesuwałby się za wiadomość, której bot NIE ZROZUMIAŁ. Pracownik nie dostaje
+        # pytania, jego tekst nie wraca do interpretacji, a po terminie słyszy „nie dostałem
+        # odpowiedzi" — chociaż odpisał, a to my nie umieliśmy ani zrozumieć, ani zapytać.
+        dostarczono = False
+        try:
+            sent_at = do_pracownika(
                 settings, client, pending.chat_id,
                 to_html(build_unclear_text(decision.powod_niejasnosci)), teraz=now,
-            ),
-        )
+            )
+            dostarczono = True
+            _oznacz_wyslane(settings, state, pending, sent_at)
+        finally:
+            if not dostarczono:
+                _wycofaj_commit(pending, migawka)

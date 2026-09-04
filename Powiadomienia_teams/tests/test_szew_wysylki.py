@@ -144,21 +144,18 @@ def test_zadna_wysylka_nie_omija_szwu():
     assert not naruszenia, "wysyłka z pominięciem szwu:\n  " + "\n  ".join(naruszenia)
 
 
-def test_dokladnie_dwie_wysylki_stoja_poza_blokiem_try():
-    """Znana luka, PRZYPIĘTA liczbowo — nie „niepusto".
+def test_zadna_wysylka_nie_stoi_poza_blokiem_try():
+    """Po fali 4 (C3) niechronionych wysyłek ma być ZERO — asercja pusta listą, nie liczbą.
 
-    Dwie wysyłki w `_interpret_and_confirm` (gałęzie „brak powodu wolnego" i „unclear") nie mają
-    wokół siebie żadnego `try`, więc nie chroni ich ani polityka `NIE_POLYKAJ`, ani rekompensata
-    w `finally`. Domykane razem z watermarkiem w fali 3.
+    Do fali 4 ten test przypinał LICZBĘ dwa: gałęzie „brak powodu wolnego" i `unclear` wołały
+    `_commit` i zaraz po nim wysyłkę, bez żadnego `try`. Równość, a nie `not poza`, była wtedy
+    świadoma — przy „niepusto" trzecia niechroniona wysyłka wpadałaby w tę samą znaną lukę
+    i wyglądała na oczekiwaną. Zadziałało zgodnie z projektem: naprawa fali 4 zapaliła ten test
+    na czerwono i wymusiła aktualizację.
 
-    Asercja jest RÓWNOŚCIĄ, a nie `not poza`, z konkretnego powodu: przy „niepusto" trzecia
-    niechroniona wysyłka wpadałaby w tę samą znaną lukę i wyglądała na oczekiwaną. Po naprawie
-    fali 3 ten test zapali się na czerwono i wymusi aktualizację — dokładnie jak `strict=True`
-    przy `xfail`.
+    Teraz luki nie ma, więc pusta lista jest mocniejsza od każdej liczby — każda nowa wysyłka poza
+    `try` zapali test, bez pytania, czy „mieści się w znanym limicie".
     """
-    # Porównanie po (plik, linia), NIE po `id()` węzła: `_bloki_z_wysylka` i `_moduly` parsują
-    # źródła osobno, więc obiekty AST z obu przebiegów nigdy nie byłyby tożsame — test xfailowałby
-    # zawsze, także po naprawie, i wskazywałby wszystkie wysyłki zamiast dwóch niechronionych.
     chronione = {
         (nazwa, w.lineno)
         for nazwa, blok in _bloki_z_wysylka()
@@ -169,8 +166,36 @@ def test_dokladnie_dwie_wysylki_stoja_poza_blokiem_try():
     for nazwa, drzewo in _moduly():
         for wolanie in _wysylki(drzewo):
             if (nazwa, wolanie.lineno) not in chronione:
-                poza.append(f"{nazwa}:{_nazwa_wolania(wolanie)}")
-    # Liczba PRZYPIĘTA, nie samo „niepusto". Bez tego trzecia niechroniona wysyłka wpadałaby
-    # w istniejący `xfail` i byłaby raportowana jako oczekiwana — czyli nowa usterka wyglądałaby
-    # dokładnie jak znana.
-    assert sorted(poza) == ["listener.py:do_pracownika", "listener.py:do_pracownika"], poza
+                poza.append(f"{nazwa}:{_nazwa_wolania(wolanie)}:{wolanie.lineno}")
+    assert poza == [], poza
+
+
+def test_wycofanie_commitu_stoi_wylacznie_w_finally():
+    """Druga reguła, dopisana w fali 4: `_wycofaj_commit` MUSI stać w `finally`.
+
+    Reguła wyżej sprawdza samą OBUDOWĘ — czy wysyłka ma wokół siebie `try`. Po fali 4 niezmiennik
+    jest mocniejszy: niedoręczona wiadomość ma COFNĄĆ commit. Wycofanie w `body` wykonałoby się
+    także po udanej wysyłce (cofając poprawną obsługę), a w `except` ominęłoby wyjątki, które
+    świadomie propagują bez handlera — `NIE_POLYKAJ` w miejscu prośby o potwierdzenie oraz
+    wszystko w dwóch pozostałych miejscach, które handlera nie mają wcale.
+
+    `finally` jest jedynym kształtem wykonującym się na KAŻDEJ drodze wyjścia, a o tym, czy
+    pracownik zobaczył wiadomość, nie decyduje typ awarii. Ta sama zasada, dla której miejsce
+    prośby o potwierdzenie wybrało `finally` zamiast `isinstance` w jednej gałęzi.
+    """
+    w_finally: set[tuple[str, int]] = set()
+    wszystkie: set[tuple[str, int]] = set()
+    for nazwa, drzewo in _moduly():
+        for wezel in ast.walk(drzewo):
+            if isinstance(wezel, ast.Try):
+                for gałąź in wezel.finalbody:
+                    for w in ast.walk(gałąź):
+                        if isinstance(w, ast.Call) and _nazwa_wolania(w) == "_wycofaj_commit":
+                            w_finally.add((nazwa, w.lineno))
+            if isinstance(wezel, ast.Call) and _nazwa_wolania(wezel) == "_wycofaj_commit":
+                wszystkie.add((nazwa, wezel.lineno))
+
+    # Kontrola pozytywna: gdyby wycofanie zniknęło z kodu, pusty zbiór przechodziłby oba warunki
+    # i strażnik pilnowałby niczego. Trzy miejsca to trzy wołania.
+    assert len(wszystkie) == 3, sorted(wszystkie)
+    assert wszystkie == w_finally, sorted(wszystkie - w_finally)

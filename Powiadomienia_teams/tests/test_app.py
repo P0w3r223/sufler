@@ -2787,18 +2787,6 @@ def test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge(tmp_path: Path):
 # --- Regresja: nieudana prośba o potwierdzenie ------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19 (nie testu): `_commit` przesuwa watermark BEZWARUNKOWO (listener.py:527), "
-        "także wtedy, gdy prośba o potwierdzenie nie została doręczona. Status wraca do "
-        "AWAITING_REPLY, ale wiadomość pracownika jest już oznaczona jako obsłużona, więc "
-        "kolejny cykl jej nie zobaczy: pracownik czeka na pytanie, które nigdy nie padło, "
-        "a po terminie dostaje nieprawdziwe 'nie dostałem odpowiedzi'. Własny docstring "
-        "`_commit` (listener.py:485) deklaruje coś przeciwnego: 'nieudane przetworzenie "
-        "zostawia watermark nietknięty'. To niespójność, nie decyzja."
-    ),
-)
 def test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm(tmp_path: Path):
     """Bez cofnięcia commitu pracownik dostawał po 48 h zarzut o milczenie, którego nie było.
 
@@ -2840,16 +2828,6 @@ def test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm(t
     assert po.fail_count == 1  # próba policzona, więc pętla ma sufit
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'LUKA 0.2.19, DRUGIE z trzech miejsc: gałąź „brak powodu wolnego" w '
-        "`_interpret_and_confirm` woła `_commit` i zaraz po nim wysyłkę — BEZ ŻADNEGO `try`. "
-        "Nieudana wysyłka zostawia więc watermark przesunięty za wiadomość, o której pracownik "
-        "nie usłyszał ani słowa. Strażnik statyczny `test_szew_wysylki.py` przypina to liczbowo "
-        "jako jedną z DWÓCH wysyłek stojących poza blokiem `try`."
-    ),
-)
 def test_nieudana_prosba_o_powod_wolnego_nie_zjada_wiadomosci(tmp_path: Path):
     """Miejsce 2 z trzech. Ta sama usterka co przy prośbie o potwierdzenie, inny kształt.
 
@@ -2890,15 +2868,6 @@ def test_nieudana_prosba_o_powod_wolnego_nie_zjada_wiadomosci(tmp_path: Path):
     assert po.employee_memory == []  # pamięć też cofnięta — bez duplikatu przy ponowieniu
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19, TRZECIE z trzech miejsc: gałąź `unclear` w `_interpret_and_confirm` woła "
-        "`_commit` i zaraz po nim wysyłkę — BEZ ŻADNEGO `try`, tak samo jak gałąź „brak powodu "
-        'wolnego". Nieudana prośba o doprecyzowanie kasuje wiadomość, której nie zrozumieliśmy: '
-        "pracownik nie dostaje pytania, a jego tekst nie wróci już do interpretacji."
-    ),
-)
 def test_nieudana_prosba_o_doprecyzowanie_nie_zjada_wiadomosci(tmp_path: Path):
     """Miejsce 3 z trzech — i najbardziej dotkliwe, bo dotyczy wiadomości NIEZROZUMIANEJ.
 
