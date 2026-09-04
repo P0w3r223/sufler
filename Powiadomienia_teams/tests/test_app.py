@@ -400,10 +400,10 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     assert pending.watermark == "2026-07-15T10:00:00Z"
     # Stara wiadomość SPRZED nudge'a jest ignorowana dzięki watermarkowi.
     stale = [_msg("u1", "2026-07-15T09:30:00Z", "OK, rozumiem")]
-    assert incoming_after(stale, "me", pending.watermark) == []
+    assert incoming_after(stale, "me", pending.watermark, nadawca="u1") == []
     # Nowa wiadomość PO nudge'u jest brana pod uwagę.
     fresh = [_msg("u1", "2026-07-15T10:05:00Z", "ok")]
-    assert incoming_after(fresh, "me", pending.watermark) != []
+    assert incoming_after(fresh, "me", pending.watermark, nadawca="u1") != []
 
 
 def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):
@@ -892,6 +892,307 @@ def test_expired_pending_closed_and_notified_once(tmp_path: Path):
     assert len(client.sent) == 1  # terminalny → nic więcej nie dosyła ani nie odpytuje
 
 
+def test_obcy_nadawca_NIE_pozwala_wygasic_wpisu(tmp_path: Path, monkeypatch):
+    """Sedno bezpieczeństwa fali 2: cudza treść daje UNKNOWN, nie „pracownik milczy".
+
+    Sam odsiew obcego nadawcy nie wystarczy. `incoming_after` zwracające pustą listę znaczy
+    u wołającego `NOTHING_NEW`, a to JEDYNA przesłanka uprawniająca do wygaszenia
+    (`lifecycle.should_expire`). Bez tego rozróżnienia każde odrzucenie kończyłoby się
+    nieprawdziwym „nie dostałem odpowiedzi" wysłanym pracownikowi i TERMINALNYM zamknięciem
+    tematu — na podstawie naszego własnego nieporozumienia, nie jego zachowania.
+
+    Scenariusz jest dokładnie ten sam co w `test_expired_pending_closed_and_notified_once`
+    (termin minął, brak odpowiedzi pracownika) — RÓŻNI SIĘ wyłącznie tym, że w czacie leży
+    wiadomość kogoś spoza rozmowy. Tam wpis wygasa, tu MUSI zostać otwarty.
+    """
+    state_path = tmp_path / "state.json"
+    old = "2026-07-14T10:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
+            )
+        },
+    )
+    # Dławienie alertu żyje tyle, co proces — a pytest to JEDEN proces. Bez izolacji ten test
+    # zależałby od kolejności: wcześniejszy test na tym samym czacie zabrałby mu alert.
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    settings = _settings_calodobowe(state_path)
+    # Wątek przestał być 1:1 — pisze ktoś, kogo prośba nie dotyczy.
+    client = _FakeClient({"chat1": [_msg("obcy", "2026-07-19T18:00:00Z", "w piątek 10-20")]})
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == "awaiting_reply"  # NIE wygasł — brak dowodu, nie dowód braku
+    assert po.watermark == old  # cudza treść nie rusza watermarku
+    assert client.sent == []  # i nie poszło żadne „nie dostałem odpowiedzi"
+    assert alerty == ["Obcy nadawca w rozmowie o grafiku"]  # operator zawołany
+
+
+def test_obcy_nadawca_NIE_blokuje_odpowiedzi_pracownika(tmp_path: Path, monkeypatch):
+    """Regresja pierwszej wersji tej zmiany, która była GORSZA od naprawianej usterki.
+
+    Blokowanie obiegu przy każdym obcym nadawcy — przed odczytem — zatrzymywało wpis NA ZAWSZE:
+    nigdy nie był czytany, nigdy nie wygasał i nigdy nie doczekał sprawdzenia samodzielnego
+    uzupełnienia, bo każda z tych ścieżek wymaga innego wyniku niż `UNKNOWN`. Jedna cudza
+    wiadomość kasowała komuś tydzień grafiku bez śladu poza jednym alertem na proces.
+
+    Cudzy nadawca ma znaczenie WYŁĄCZNIE tam, gdzie bez niego orzeklibyśmy ciszę pracownika.
+    Gdy pracownik odpisał, jego odpowiedź MUSI zostać obsłużona normalnie.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    client = _FakeClient(
+        {
+            "chat1": [
+                _msg("obcy", "2026-07-19T17:30:00Z", "wtrącam się"),
+                _msg("u1", "2026-07-19T18:00:00Z", "ok"),  # PRAWDZIWA odpowiedź pracownika
+            ]
+        }
+    )
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == AWAITING_CONFIRM  # odpowiedź OBSŁUŻONA mimo obcego w wątku
+    assert po.watermark == "2026-07-19T18:00:00Z"  # watermark przesunięty za obie wiadomości
+    assert len(client.sent) == 1  # prośba o potwierdzenie wyszła
+    assert "wtrącam" not in client.sent[0][1]  # cudza treść NIE weszła do rozmowy
+
+
+def test_stary_obcy_przestaje_ciazyc_po_przesunieciu_watermarku(tmp_path: Path, monkeypatch):
+    """Granica czasowa: cudza wiadomość SPRZED watermarku nie blokuje już orzekania o ciszy.
+
+    Bez niej jeden natręt z przeszłości trzymałby wpis w `UNKNOWN` dopóki nie wypchnie go
+    stronicowanie Graph — czyli w praktyce bez końca.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark="2026-07-19T19:00:00Z",  # PO wiadomości obcego
+                nudged_at="2026-07-14T10:00:00Z",
+            )
+        },
+    )
+    client = _FakeClient({"chat1": [_msg("obcy", "2026-07-19T18:00:00Z", "stare wtrącenie")]})
+
+    poll_replies(_settings_calodobowe(state_path), client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == "expired"  # cisza orzeczona, temat domknięty
+
+
+def test_dlawienie_zwalnia_sie_gdy_czat_wroci_do_porzadku(tmp_path: Path, monkeypatch):
+    """Dławienie ma tłumić POWTÓRKI tej samej sytuacji, nie kolejne wystąpienia.
+
+    `_ZGLOSZONE_OBCE` żyje tyle, co proces. Gdyby nigdy się nie zwalniało, operator dostawałby
+    alert o pierwszym intruzie i już nigdy o żadnym następnym w tej rozmowie — a przy usłudze
+    chodzącej tygodniami to znaczy „nigdy". Zwolnienie następuje wtedy, gdy obieg znów potrafi
+    czytać rozmowę: skoro pracownik odpisał, poprzednie zgłoszenie przestało opisywać stan.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings_calodobowe(state_path)
+    czat = [_msg("obcy", "2026-07-19T17:30:00Z", "wtrącam się")]
+    client = _FakeClient({"chat1": czat})
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+
+    # 1. Sam obcy w wątku — operator zawołany, wpis NIE wygasa.
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+    assert len(alerty) == 1
+    assert load_state(state_path)["u1"].status == AWAITING_REPLY
+
+    # 2. Pracownik odpisuje — rozmowa znów czytelna, zgłoszenie przestaje opisywać stan.
+    czat.append(_msg("u1", "2026-07-19T18:00:00Z", "ok"))
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+    assert len(alerty) == 1  # samo odczytanie nie alarmuje
+    assert load_state(state_path)["u1"].watermark == "2026-07-19T18:00:00Z"
+
+    # 3. NAWRÓT po powrocie do porządku — musi zawołać operatora PONOWNIE.
+    czat.append(_msg("obcy", "2026-07-19T18:30:00Z", "znowu ja"))
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+    assert len(alerty) == 2, alerty
+
+
+def test_obcy_nadawca_alertuje_RAZ_a_nie_przy_kazdym_odpytaniu(tmp_path: Path, monkeypatch):
+    """Nasłuch odpytuje czat co ~10 s, a cudza wiadomość zostaje w wątku na zawsze.
+
+    Bez dławienia byłoby to kilkaset alertów na godzinę w jedynym kanale, jaki operator ma —
+    ten sam problem, który `_puls_sesji` rozwiązuje progiem.
+    """
+    state_path = tmp_path / "state.json"
+    old = "2026-07-14T10:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat-dlawienie",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
+            )
+        },
+    )
+    # Dławienie alertu żyje tyle, co proces — a pytest to JEDEN proces. Bez izolacji ten test
+    # zależałby od kolejności: wcześniejszy test na tym samym czacie zabrałby mu alert.
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat-dlawienie": [_msg("obcy", "2026-07-19T18:00:00Z", "cokolwiek")]})
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+
+    for _ in range(3):
+        poll_replies(settings, client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    assert len(alerty) == 1, alerty
+
+
+def test_dlawienie_alertu_o_obcych_nie_wycisza_INNEGO_czatu(tmp_path: Path, monkeypatch):
+    """Dławienie ma tłumić powtórki, nie drugą osobę.
+
+    Klucz dławienia obejmuje czat, więc dwie osoby z obcym w wątku dają dwa alerty. Gdyby klucz
+    był globalny, pierwszy przypadek wyciszyłby wszystkie następne — a operator dowiedziałby się
+    o jednej rozmowie i nigdy o reszcie.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    old = "2026-07-14T10:00:00Z"
+    save_state(
+        state_path,
+        {
+            osoba: PendingReminder(
+                member_id=osoba,
+                member_name=osoba.upper(),
+                chat_id=f"chat-{osoba}",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
+            )
+            for osoba in ("u1", "u2")
+        },
+    )
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient(
+        {
+            "chat-u1": [_msg("obcy", "2026-07-19T18:00:00Z", "x")],
+            "chat-u2": [_msg("obcy", "2026-07-19T18:00:00Z", "x")],
+        }
+    )
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tresc) or True,
+    )
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    assert len(alerty) == 2, alerty  # osobny alert na każdą rozmowę
+    assert any("u1" in t for t in alerty) and any("u2" in t for t in alerty)
+
+
+def test_utrata_sesji_przy_zapisie_WSKAZUJE_kogo_i_ktorego_tygodnia(tmp_path: Path, caplog):
+    """Alert o utracie sesji nie niesie tej informacji — musi ją zostawić log.
+
+    Wyjątek propaguje wyżej i tam jest już tylko „utracono uwierzytelnienie". A w tym momencie
+    status wpisu to `APPLYING`: terminalny i nigdy niewznawiany, czyli u klienta został grafik
+    zapisany w POŁOWIE. Bez tej linii operator dostaje alert i żadnego wskazania, w czyim grafiku
+    i którego tygodnia szukać dziury.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                awaiting_yes=True,
+                resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _SesjaPadaPrzyZapisie(_FakeClient):
+        def create_shift(self, team_id: str, shift: Any) -> str:
+            raise AuthExpiredError("AADSTS50173: grant cofnięty")
+
+    client = _SesjaPadaPrzyZapisie({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
+
+    with caplog.at_level("CRITICAL"), pytest.raises(AuthExpiredError):
+        poll_replies(_settings_calodobowe(state_path), client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert "u1" in caplog.text  # kto
+    assert "2026-07-20" in caplog.text  # którego tygodnia
+    assert "APPLYING" in caplog.text  # i że zapis został przerwany w połowie
+
+
 def test_pending_within_window_is_processed_not_expired(tmp_path: Path):
     state_path = tmp_path / "state.json"
     recent = "2026-07-16T10:00:00Z"  # 2h przed now — w oknie
@@ -1368,7 +1669,9 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
     assert saved["u1"].watermark == "2026-07-17T16:00:00Z"
     assert saved["u1"].status == "awaiting_reply"
     # Dowód, że odpowiedź jest wciąż widoczna dla listenera.
-    assert incoming_after(client.messages["chat-u1"], "me", saved["u1"].watermark) != []
+    assert (
+        incoming_after(client.messages["chat-u1"], "me", saved["u1"].watermark, nadawca="u1") != []
+    )
 
 
 class _RaisingLlm(_PortLlm):
@@ -2349,6 +2652,23 @@ def _sciezka_bez_zapisu(tmp_path: Path) -> Path:
     przeszkoda = tmp_path / "nie-katalog"
     przeszkoda.write_text("x", encoding="utf-8")
     return przeszkoda / "state.json"
+
+
+def test_proba_na_sucho_TEZ_wykrywa_niezapisywalny_wolumen(tmp_path: Path):
+    """Sedno sondy: ma działać w trybie próbnym, bo po to ten tryb jest w runbooku.
+
+    `deploy/README-docker.md` stawia przebieg na sucho PRZED wejściem na żywo właśnie po to, żeby
+    wyłapać problemy wolumenu. Sonda oparta na `save_state` byłaby wtedy pominięta — w trybie
+    próbnym stanu nie zapisujemy — więc wolumen tylko-do-odczytu wyszedłby dopiero na przebiegu,
+    który pisze do ośmiu prawdziwych osób. Dlatego sonda pisze i kasuje plik OBOK stanu.
+    """
+    settings = replace(_settings_calodobowe(_sciezka_bez_zapisu(tmp_path)), dry_run=True)
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    with pytest.raises(StateWriteError):
+        run_once(settings, client, now=_SRODA_W_OKNIE, teraz=_w_oknie())  # type: ignore[arg-type]
+
+    assert client.sent == []  # w trybie próbnym i tak nic nie wychodzi — liczy się WYKRYCIE
 
 
 def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path: Path):

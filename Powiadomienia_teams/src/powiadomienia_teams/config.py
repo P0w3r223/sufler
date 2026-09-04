@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# `domain.tozsamosc` nie importuje niczego z projektu, więc cyklu tu nie ma.
+from powiadomienia_teams.domain.tozsamosc import znormalizuj
+
 _PREFIX = "POWIADOMIENIA_"
 
 # Delegowane scope Graph — wszystkie nadane i potwierdzone na żywo (Smoke #1, 2026-07-14).
@@ -399,6 +402,35 @@ class Settings:
         do_poniedzialku = (7 - self.run_weekday) * 24 - self.run_hour - self.run_minute / 60
         return do_poniedzialku + self.reply_deadline_offset_h
 
+    def __post_init__(self) -> None:
+        """Normalizacja identyfikatorów pilotażu — RAZ, na granicy konfiguracji.
+
+        `ONLY_USER_IDS` wypełnia człowiek, czasem kopiując z portalu Azure, czyli w klamrach albo
+        wielkimi literami. Filtr w `runtime.nudge` porównywał to z `m.user_id` z Graph znak w znak,
+        więc taki wpis nie pasował do NIKOGO: pilotaż milczał, a podsumowanie mówiło „0 próśb" —
+        nieodróżnialnie od spokojnego tygodnia.
+
+        Normalizujemy tutaj, a nie w `from_env`, bo `Settings` bywa budowany wprost (testy, kod
+        wołający). I normalizujemy WARTOŚĆ, nie tylko porównanie — w odróżnieniu od identyfikatorów
+        z Graph, `only_user_ids` nie trafia ani do pliku stanu, ani do żadnego `POST`-a: służy
+        wyłącznie do testu przynależności i do wypisania w alercie startowym. Dzięki temu nowe
+        miejsce porównania nie musi pamiętać o `casefold` po tej stronie.
+
+        `frozen=True`, więc przez `object.__setattr__` — jedyna droga i celowo widoczna.
+
+        Uwaga na skutek uboczny: `operator.opis_kregu_odbiorcow` wypisuje tę listę w alercie
+        startowym, więc przestaje ona być DOSŁOWNĄ kopią wpisu z `env`. Alert mówi o tym wprost.
+        """
+        # Deduplikacja PO normalizacji: „AB-CD" i „ab-cd" to jedna osoba, a bez tego alert
+        # startowy mówiłby „na liście: 2" i operator szukałby drugiej. `admin_user_ids` przechodzi
+        # przez `_bez_dubli` z tego samego powodu.
+        znormalizowane: list[str] = []
+        for surowy in self.only_user_ids:
+            kanoniczny = znormalizuj(surowy)
+            if kanoniczny not in znormalizowane:
+                znormalizowane.append(kanoniczny)
+        object.__setattr__(self, "only_user_ids", tuple(znormalizowane))
+
     @property
     def webhook_alertow(self) -> str:
         """Adres, na który realnie idą alerty — pusty, gdy alertowanie wyłączono świadomie.
@@ -494,6 +526,21 @@ class Settings:
                 f"{_PREFIX}PILOTAZ=true wymaga niepustego {_PREFIX}ONLY_USER_IDS — pusta lista "
                 f"znaczy »wszyscy«, więc pilotaż wysłałby wiadomości do CAŁEGO zespołu. "
                 f"Identyfikatory wypisze scripts/lista_czlonkow.py"
+            )
+        # Wpis, który po normalizacji nie jest już żadnym identyfikatorem — np. same klamry
+        # albo sam biały znak. ZATRZYMUJEMY START, zamiast go po cichu wyrzucić, bo wyrzucenie
+        # jest tu groźniejsze niż zostawienie: pusta lista znaczy „wszyscy", więc literówka
+        # zamieniłaby ciszę pilotażu w wysyłkę do CAŁEGO zespołu. Zostawiony pusty napis też nie
+        # jest wyjściem — nie pasuje do nikogo, a `PILOTAZ` widzi listę jako niepustą, więc
+        # pilotaż milczy z własnego powodu i wygląda to jak spokojny tydzień. To ta sama klasa
+        # cichej awarii, którą normalizacja miała zamknąć.
+        puste = sum(1 for i in self.only_user_ids if not i)
+        if puste:
+            raise ConfigError(
+                f"{_PREFIX}ONLY_USER_IDS zawiera {puste} pozycji, które po normalizacji nie są "
+                f"identyfikatorem (same klamry albo białe znaki). Taki wpis nie pasuje do NIKOGO, "
+                f"a lista wygląda na niepustą — pilotaż milczałby, wyglądając na spokojny tydzień. "
+                f"Popraw wpis albo usuń go. Identyfikatory wypisze scripts/lista_czlonkow.py"
             )
         if not self.dry_run and not self.scheduling_group_id:
             raise ConfigError(

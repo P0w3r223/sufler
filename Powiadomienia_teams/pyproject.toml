@@ -52,9 +52,18 @@ max-complexity = 15
 # sprostać. Naginanie go teraz kosztowałoby jedyną własność, dla której import w ogóle powstał:
 # możliwość porównania repo z tym, co realnie pisze do ludzi i zapisuje grafik klienta.
 #
-# Wyciszone są WYŁĄCZNIE trzy reguły kosmetyczne. F (błędy), B (pułapki), SIM, UP, I zostają
-# aktywne — one łapią usterki, a nie długość linii. Dług znika razem z odtworzeniem zestawu
-# testowego: bez testów nie ma jak bezpiecznie przepisać 326-linijkowych funkcji.
+# Wyciszone jest PIĘĆ reguł: E501 (długość linii), C901 i PLR0915 (sufit funkcji) oraz SIM105
+# i SIM300 — dwie stylistyczne z rodziny SIM. F (błędy), B (pułapki), UP, I i RESZTA SIM zostają
+# aktywne.
+#
+# `SIM105` (`contextlib.suppress` zamiast `try/except/pass`) wyciszamy z zastrzeżeniem: w kodzie,
+# którego centralną klasą usterki są POŁKNIĘTE WYJĄTKI, nie jest to reguła czysto kosmetyczna.
+# Jedyne jej wystąpienie (`runtime/przeglad.py`) dotyczy `OSError` przy odczycie pliku w raporcie
+# diagnostycznym, czyli miejsca bez skutków ubocznych. Kształtu szwu wysyłki pilnuje osobno
+# `tests/test_szew_wysylki.py`, i to tam mieszka realna bramka na połykanie.
+#
+# Dług znika razem z falami naprawczymi — od pierwszej z nich repo NIE jest już tożsame z obrazem,
+# więc argument „wierność wobec artefaktu" wygasa i wyłączenia trzeba będzie zdjąć.
 [tool.ruff.lint.per-file-ignores]
 "src/**" = ["E501", "C901", "PLR0915", "SIM105", "SIM300"]
 

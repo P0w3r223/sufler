@@ -84,7 +84,9 @@ def opis_kregu_odbiorcow(settings: Settings) -> str:
         else "POWIADOMIENIA_PILOTAZ nie jest włączone — lista i tak obowiązuje"
     )
     return (
-        f"Krąg odbiorców ZAWĘŻONY ({flaga}). Na liście: {len(settings.only_user_ids)} — "
+        f"Krąg odbiorców ZAWĘŻONY ({flaga}). Na liście: {len(settings.only_user_ids)} "
+        f"(identyfikatory znormalizowane — małe litery, bez klamr, więc mogą wyglądać inaczej "
+        f"niż wpis w env) — "
         + ", ".join(widoczne)
         + ogon
         + ". Zawężenie dotyczy NOWYCH próśb; rozmowy otwarte w pliku stanu są dokańczane."

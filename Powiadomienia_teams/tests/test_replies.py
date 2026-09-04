@@ -1,9 +1,8 @@
-import pytest
-
 # 0.2.19 zastąpiło `newest_incoming` (jedna najnowsza wiadomość WSKAZANEJ osoby) przez
-# `incoming_after` (WSZYSTKIE wiadomości spoza bota, od najstarszej). Zmiana jest celowa
-# i naprawia realny błąd: pracownik piszący w dwóch dymkach był interpretowany tylko z drugiego.
-# Zabrała jednak ze sobą dwa zabezpieczenia — patrz `xfail` na końcu pliku.
+# `incoming_after` (WSZYSTKIE wiadomości od najstarszej). Zmiana jest celowa i naprawia realny
+# błąd: pracownik piszący w dwóch dymkach był interpretowany tylko z drugiego. Zabrała jednak
+# ze sobą dwa zabezpieczenia — tożsamość nadawcy i odporność na wielkość liter — PRZYWRÓCONE
+# w fali 2 (`domain/tozsamosc.py`, wymagany parametr `nadawca`).
 from powiadomienia_teams.reminders.replies import (
     MEMORY_CAP,
     MEMORY_WINDOW,
@@ -12,6 +11,7 @@ from powiadomienia_teams.reminders.replies import (
     incoming_after,
     is_pure_affirmation,
     message_text,
+    obcy_nadawcy,
 )
 
 
@@ -34,12 +34,12 @@ def test_incoming_after_ignores_own_and_old():
         _msg("u1", "2026-07-19T17:00:00Z", "stara"),  # przed watermarkiem
         _msg("u1", "2026-07-19T18:00:00Z", "nowa"),
     ]
-    nowe = incoming_after(messages, me, after_iso="2026-07-19T17:30:00Z")
+    nowe = incoming_after(messages, me, after_iso="2026-07-19T17:30:00Z", nadawca="u1")
     assert [message_text(m) for m in nowe] == ["nowa"]
 
 
 def test_incoming_after_empty_when_only_own():
-    assert incoming_after([_msg("me", "2026-07-19T18:00:00Z")], "me") == []
+    assert incoming_after([_msg("me", "2026-07-19T18:00:00Z")], "me", nadawca="u1") == []
 
 
 def test_incoming_after_bierze_CALA_porcje_od_najstarszej():
@@ -52,7 +52,7 @@ def test_incoming_after_bierze_CALA_porcje_od_najstarszej():
         _msg("u1", "2026-07-19T18:00:00Z", "pon-pt 8-16"),
         _msg("u1", "2026-07-19T18:00:30Z", "w piątek mnie nie będzie"),
     ]
-    nowe = incoming_after(messages, "me")
+    nowe = incoming_after(messages, "me", nadawca="u1")
     assert [message_text(m) for m in nowe] == ["pon-pt 8-16", "w piątek mnie nie będzie"]
 
 
@@ -62,14 +62,14 @@ def test_incoming_after_compares_parsed_time_not_string():
         _msg("u1", "2026-07-19T18:00:00.500Z", "nowsza"),
         _msg("u1", "2026-07-19T18:00:00Z", "starsza"),
     ]
-    nowe = incoming_after(msgs, "me", after_iso="2026-07-19T18:00:00Z")
+    nowe = incoming_after(msgs, "me", after_iso="2026-07-19T18:00:00Z", nadawca="u1")
     assert [message_text(m) for m in nowe] == ["nowsza"]
 
 
 def test_incoming_after_pomija_wiadomosci_systemowe_bez_nadawcy():
     """Graph wstawia do wątku wpisy bez `from` — nie są odpowiedzią i nie mogą ruszyć watermarku."""
     messages = [{"createdDateTime": "2026-07-19T18:00:00Z", "body": {"content": "dołączono"}}]
-    assert incoming_after(messages, "me") == []
+    assert incoming_after(messages, "me", nadawca="u1") == []
 
 
 def test_is_pure_affirmation_accepts_clean_yes():
@@ -149,27 +149,86 @@ def test_memory_window_is_one_hour():
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
-# Dwa zabezpieczenia, których kod produkcji 0.2.19 NIE MA.
+# Dwa zabezpieczenia, których obraz 0.2.19 NIE MIAŁ — przywrócone w fali 2.
 #
 # Linia repozytorium napisała je 2026-08-18 wraz z opisem incydentu; obraz produkcyjny zbudowano
-# 2026-08-20 z drzewa, w którym ich nigdy nie było (rozwidlenie, nie cofnięcie). `incoming_after`
-# przyjmuje KAŻDEGO nadawcę różnego od bota i porównuje identyfikatory dokładnie co do znaku.
+# 2026-08-20 z drzewa, w którym ich nigdy nie było (rozwidlenie, nie cofnięcie). Stały tu jako
+# `xfail(strict=True)`, dopóki kodu nie było; XPASS zapalił CI dokładnie wtedy, gdy naprawa
+# weszła, i wymusił zdjęcie markerów. To są dziś zwykłe testy przechodzące.
 #
-# Zostają jako `xfail(strict=True)`, a nie jako skasowane testy, z dwóch powodów: zapis wymagania
-# nie ginie razem z implementacją, a gdy ktoś to zabezpieczenie dopisze, XPASS zapali CI na czerwono
-# i wymusi zdjęcie markera. Skasowanie zamieniłoby brak w niewiedzę.
+# Zostawiamy je razem z tym opisem, bo zapis wymagania jest wart tyle samo co jego spełnienie:
+# kto zobaczy `nadawca` w sygnaturze, ma tu znaleźć powód, dla którego jest WYMAGANY.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0.2.19: incoming_after nie filtruje po nadawcy — bierze każdego poza botem. "
-        "PRZYCZYNA: jedyny warunek na nadawcę to `sender is None or sender == me_id` "
-        "(replies.py:77); przynależność do `pending` nie jest sprawdzana nigdzie."
-    ),
-)
-def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
+def test_kazda_wiadomosc_trafia_do_DOKLADNIE_JEDNEJ_z_dwoch_klasyfikacji():
+    """Szew między `incoming_after` a `obcy_nadawcy`: żadnej szczeliny, żadnego nakładania.
+
+    Obie funkcje klasyfikują nadawcę niezależnie, a `_process_pending` pyta o drugą dopiero wtedy,
+    gdy pierwsza nic nie zwróciła. Dziś reguła jest ta sama, więc szczeliny nie ma — ale to dwie
+    kopie jednego rozstrzygnięcia i nic nie pilnowało ich zgodności. Zmiana w jednej (np. lista
+    dopuszczonych kont drugiego bota) po cichu otwierałaby lukę, którą ta para miała zamknąć:
+    wiadomość nieprzypisana do nikogo znika bez śladu, a wpis wygasa jako „pracownik milczy".
+    """
+    guid = "AAAA1111-BBBB-2222-CCCC-333344445555"
+    wiadomosci = [
+        _msg(guid.upper(), "2026-07-19T18:00:00Z", "bot"),  # bot, inna wielkość liter
+        _msg("u1", "2026-07-19T18:01:00Z", "pracownik"),
+        _msg("U1", "2026-07-19T18:02:00Z", "pracownik, inaczej zapisany"),
+        _msg("obcy", "2026-07-19T18:03:00Z", "intruz"),
+        {"createdDateTime": "2026-07-19T18:04:00Z", "body": {"content": "systemowa"}},
+        _msg("u1", "2026-07-19T17:00:00Z", "sprzed watermarku"),
+    ]
+    po = "2026-07-19T17:30:00Z"
+
+    moje = incoming_after(wiadomosci, guid, po, nadawca="u1")
+    cudze = obcy_nadawcy(wiadomosci, guid, po, nadawca="u1")
+
+    tresci_moich = {message_text(m) for m in moje}
+    assert tresci_moich == {"pracownik", "pracownik, inaczej zapisany"}
+    assert cudze == ["obcy"]
+    # Rozłączność: nikt nie jest jednocześnie adresatem i obcym.
+    nadawcy_moich = {m["from"]["user"]["id"] for m in moje}
+    assert not (nadawcy_moich & set(cudze))
+
+
+def test_obcy_nadawcy_zbiera_wszystkich_bez_powtorzen():
+    """Raport dla operatora: kto pisze w tym wątku poza rozmową — każdy RAZ.
+
+    Jeden natręt piszący pięć razy nie ma dawać pięciu pozycji w alercie; dwie różne osoby mają
+    dać dwie. Zwracamy postać SUROWĄ, bo operator ma zobaczyć dokładnie to, co przyszło z Graph,
+    nawet jeśli porównywaliśmy znormalizowane.
+    """
+    messages = [
+        _msg("Obcy-A", "2026-07-19T18:00:00Z", "raz"),
+        _msg("obcy-a", "2026-07-19T18:01:00Z", "dwa"),  # ten sam, inna wielkość liter
+        _msg("obcy-B", "2026-07-19T18:02:00Z", "trzy"),
+        _msg("u1", "2026-07-19T18:03:00Z", "to ja"),  # adresat — nie jest obcy
+        _msg("me", "2026-07-19T18:04:00Z", "bot"),  # bot — nie jest obcy
+    ]
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == ["Obcy-A", "obcy-B"]
+
+
+def test_obcy_nadawcy_pomija_wiadomosci_systemowe():
+    """Wpis bez `from` (Graph wstawia je przy zmianach w wątku) nie jest obcym nadawcą.
+
+    Gdyby był, KAŻDY wątek, w którym ktoś kiedyś zmienił nazwę, wisiałby w `UNKNOWN` na zawsze
+    i nigdy nie dałoby się go domknąć.
+    """
+    messages = [{"createdDateTime": "2026-07-19T18:00:00Z", "body": {"content": "dołączono"}}]
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == []
+
+
+def test_obcy_nadawcy_milczy_gdy_wszystko_w_porzadku():
+    """Sonda w drugą stronę: zwykła rozmowa NIE może zapalać alertu."""
+    messages = [
+        _msg("u1", "2026-07-19T18:00:00Z", "pon-pt 8-16"),
+        _msg("me", "2026-07-19T18:01:00Z", "potwierdzam?"),
+    ]
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == []
+
+
+def test_incoming_after_odrzuca_nadawce_spoza_pendingu():
     """Nadawcą MUSI być ta osoba, o której grafik pytamy — nie „ktokolwiek poza botem".
 
     Warunek „nie bot" wygląda równoważnie tylko dopóki czat jest 1:1, a tworzy go
@@ -182,19 +241,13 @@ def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
     do wątku, który przestał być 1:1. To jest założenie, nie gwarancja typu.
     """
     messages = [_msg("obcy", "2026-07-19T18:00:00Z", "w piątek 10-20")]
-    assert incoming_after(messages, "me") == []
+    assert incoming_after(messages, "me", nadawca="u1") == []
+    # …i wołający MUSI się o tym dowiedzieć, bo pusta lista znaczy u niego „pracownik milczy",
+    # a to jedyna przesłanka wygaszenia. Stąd osobna funkcja, nie sam odsiew.
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == ["obcy"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0.2.19: porównanie nadawcy z me_id jest wrażliwe na wielkość liter. "
-        "PRZYCZYNA: `sender == me_id` (replies.py:77) — zwykłe porównanie napisów, bez "
-        "casefold. Graph potrafi zwrócić ten sam GUID w innej wielkości liter, a wtedy bot "
-        "bierze WŁASNĄ wiadomość za odpowiedź pracownika."
-    ),
-)
-def test_incoming_after_powinno_rozpoznac_wlasna_wiadomosc_niezaleznie_od_wielkosci_liter():
+def test_incoming_after_rozpoznaje_wlasna_wiadomosc_niezaleznie_od_wielkosci_liter():
     """GUID-y z Graph bywają w różnej wielkości liter, a `sender == me_id` porównuje znak w znak.
 
     Skutek rozjazdu jest gorszy niż zignorowanie wiadomości: bot bierze WŁASNY komunikat za
@@ -202,4 +255,6 @@ def test_incoming_after_powinno_rozpoznac_wlasna_wiadomosc_niezaleznie_od_wielko
     """
     guid = "AAAA1111-BBBB-2222-CCCC-333344445555"
     messages = [_msg(guid.lower(), "2026-07-19T18:00:00Z", "nasza")]
-    assert incoming_after(messages, guid) == []
+    assert incoming_after(messages, guid, nadawca="u1") == []
+    # To NASZA wiadomość, nie cudza — nie wolno jej zgłaszać jako obcego nadawcy.
+    assert obcy_nadawcy(messages, guid, nadawca="u1") == []

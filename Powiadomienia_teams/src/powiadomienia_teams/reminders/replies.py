@@ -7,6 +7,7 @@ from html import unescape
 from typing import Any
 
 from powiadomienia_teams.domain.czas import parse_graph_datetime
+from powiadomienia_teams.domain.tozsamosc import ten_sam, znormalizuj
 
 _TAGS = re.compile(r"<[^>]+>")
 
@@ -49,9 +50,9 @@ def _created_at(message: dict[str, Any]) -> datetime | None:
 
 
 def incoming_after(
-    messages: list[dict[str, Any]], me_id: str, after_iso: str = ""
+    messages: list[dict[str, Any]], me_id: str, after_iso: str = "", *, nadawca: str
 ) -> list[dict[str, Any]]:
-    """WSZYSTKIE wiadomości pracownika nowsze niż `after_iso`, od NAJSTARSZEJ do najnowszej.
+    """WSZYSTKIE wiadomości ADRESATA nowsze niż `after_iso`, od NAJSTARSZEJ do najnowszej.
 
     Wcześniej brana była wyłącznie najnowsza, a watermark przeskakiwał na nią — więc pozostałe
     ginęły bezpowrotnie, nie trafiając nawet do pamięci rozmowy. To nie była wąska krawędź:
@@ -63,6 +64,20 @@ def incoming_after(
 
     Porównanie po sparsowanym czasie (nie leksykograficznie po napisie), żeby różnice
     w precyzji ułamka sekundy z Graph nie przestawiały kolejności.
+
+    ``nadawca`` (id pracownika, o którego grafik pytamy) jest WYMAGANY i wyłącznie nazwany.
+    Wymagany, bo warunek „nie bot" wygląda równoważnie tylko dopóki czat jest 1:1: gdy wątek
+    przestanie nim być, cudza treść staje się „odpowiedzią pracownika", idzie do modelu, przesuwa
+    watermark i może skończyć ZAPISEM W GRAFIKU tej osoby. Nazwany, bo ``after_iso`` jest trzecim
+    argumentem pozycyjnym i tak bywa wołany — parametr wstawiony przed nim po cichu przyjąłby
+    watermark jako tożsamość. Brak argumentu ma być głośnym ``TypeError``.
+
+    Tożsamości porównujemy przez ``domain.tozsamosc``, nie ``==``: Graph nie obiecuje tej samej
+    wielkości liter w ``/me``, ``list_members`` i ``list_chat_messages``, a przy rozjeździe bot
+    brał WŁASNY komunikat za odpowiedź pracownika.
+
+    Wiadomość odrzucona jako cudza NIE jest tym samym co „pracownik milczy" — patrz
+    ``obcy_nadawcy`` i wołający, który musi z tego zrobić ``UNKNOWN``, a nie ``NOTHING_NEW``.
     """
     after: datetime | None = None
     if after_iso:
@@ -74,7 +89,9 @@ def incoming_after(
     incoming: list[tuple[datetime, dict[str, Any]]] = []
     for message in messages:
         sender = ((message.get("from") or {}).get("user") or {}).get("id")
-        if sender is None or sender == me_id:
+        if sender is None or ten_sam(str(sender), me_id):
+            continue
+        if not ten_sam(str(sender), nadawca):
             continue
         created = _created_at(message)
         if created is None or (after is not None and created <= after):
@@ -82,6 +99,58 @@ def incoming_after(
         incoming.append((created, message))
 
     return [message for _, message in sorted(incoming, key=lambda pair: pair[0])]
+
+
+def obcy_nadawcy(
+    messages: list[dict[str, Any]], me_id: str, after_iso: str = "", *, nadawca: str
+) -> list[str]:
+    """Nadawcy, którzy nie są ani botem, ani adresatem — czyli powód, by NIE orzekać o ciszy.
+
+    Istnieje osobno od ``incoming_after`` z jednego powodu: pusta lista wiadomości znaczy
+    u wołającego ``NOTHING_NEW``, a to JEDYNA przesłanka uprawniająca do wygaszenia wpisu
+    (``lifecycle.should_expire``). Gdyby odsianie cudzej treści zlewało się z ciszą, każde
+    błędne odrzucenie kończyłoby się nieprawdziwym „nie dostałem odpowiedzi" wysłanym
+    pracownikowi i terminalnym zamknięciem tematu — czyli skutkiem nieodwracalnym.
+
+    Czat, w którym leży wiadomość, której nie umiemy przypisać, to nie „cisza pracownika",
+    tylko „nie rozumiem tego wątku". Wołający robi z tego ``UNKNOWN`` i woła operatora.
+
+    ``after_iso`` zawęża do wiadomości NOWSZYCH niż watermark — z tego samego powodu, dla którego
+    robi to ``incoming_after``. Bez tej granicy jeden stary natręt ciążyłby wpisowi bez końca:
+    obieg nie mógłby orzec ciszy, a więc ani wygasić wpisu, ani sprawdzić samodzielnego
+    uzupełnienia. Po przesunięciu watermarku stara cudza treść przestaje mieć znaczenie.
+
+    Zwraca id w postaci SUROWEJ (do logu i alertu), choć porównuje znormalizowane — operator ma
+    zobaczyć dokładnie to, co przyszło z Graph.
+    """
+    after: datetime | None = None
+    if after_iso:
+        try:
+            after = parse_graph_datetime(after_iso)
+        except ValueError:
+            after = None
+
+    obcy: list[str] = []
+    widziane: set[str] = set()
+    for message in messages:
+        sender = ((message.get("from") or {}).get("user") or {}).get("id")
+        if sender is None:
+            continue
+        if ten_sam(str(sender), me_id) or ten_sam(str(sender), nadawca):
+            continue
+        # Deduplikacja po TOŻSAMOŚCI, nie po napisie: ta sama osoba w dwóch pisowniach to nadal
+        # jedna osoba, a alert wymieniający ją dwa razy każe operatorowi szukać drugiego intruza.
+        # Zachowujemy pierwszą napotkaną postać surową — operator ma zobaczyć to, co przyszło
+        # z Graph, nie nasz wynik normalizacji.
+        created = _created_at(message)
+        if created is None or (after is not None and created <= after):
+            continue
+        kanoniczny = znormalizuj(str(sender))
+        if kanoniczny in widziane:
+            continue
+        widziane.add(kanoniczny)
+        obcy.append(str(sender))
+    return obcy
 
 
 def is_pure_affirmation(text: str) -> bool:

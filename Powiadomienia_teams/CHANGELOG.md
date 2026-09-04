@@ -8,6 +8,60 @@ Numeracja wersji śledzi **tagi obrazu Dockera** (`powiadomienia-teams:X.Y.Z`) �
 prawdy o iteracji na produkcji; metadane wewnątrz obrazu (`pyproject.toml`) bywały z nimi
 rozjechane.
 
+## [Nieopublikowane] — naprawy usterek 0.2.19, fala 2: tożsamość
+
+Trzy usterki jednej klasy: identyfikatory AAD porównywane znak w znak. Graph nie obiecuje tej
+samej wielkości liter w `/me`, `list_members` i `list_chat_messages`, a czwarte źródło —
+`ONLY_USER_IDS` — wypełnia człowiek, czasem kopiując z portalu, czyli w klamrach.
+
+### Naprawione
+
+- **Bot nie bierze już własnej wiadomości za odpowiedź pracownika.** Przy rozjeździe wielkości
+  liter `sender == me_id` nie rozpoznawało własnego komunikatu: szedł do modelu i przesuwał
+  watermark, a prawdziwa odpowiedź pracownika — starsza — znikała za nim na zawsze.
+- **Nadawcą musi być adresat, nie „ktokolwiek poza botem".** Warunek „nie bot" wygląda
+  równoważnie tylko dopóki czat jest 1:1. Gdy wątek przestanie nim być, cudza treść stawała się
+  „odpowiedzią pracownika" i mogła skończyć ZAPISEM W JEGO GRAFIKU. `incoming_after` dostaje
+  wymagany, wyłącznie nazwany argument `nadawca`.
+- **GUID wielkimi literami nie wypada już z pilotażu.** Taki wpis nie pasował do nikogo — pilotaż
+  milczał, a podsumowanie mówiło „0 próśb", nieodróżnialnie od spokojnego tygodnia.
+
+### Rozstrzygnięcia projektowe
+
+- **Normalizacja PRZY PORÓWNANIU, nie podmiana identyfikatora.** Klucze w pliku stanu to surowe id
+  z Graph sprzed tygodni, a `member_id` trafia stamtąd wprost do `POST`-a tworzącego zmianę
+  w Shifts. Znormalizowanie „żywej" strony rozminęłoby `state.get(member.user_id)` z istniejącym
+  wpisem: osoba z otwartą rozmową dostałaby DRUGĄ prośbę, a obok powstałby drugi wpis o ten sam
+  tydzień. Wyjątkiem jest `only_user_ids` — pochodzi wyłącznie z `env`, nie trafia ani do stanu,
+  ani do Graph, więc normalizuje się je RAZ, w `Settings.__post_init__`.
+- **Obcy nadawca daje `UNKNOWN`, nie `NOTHING_NEW`.** Sam odsiew nie wystarczy: pusta lista znaczy
+  u wołającego „pracownik milczy", a to jedyna przesłanka wygaszenia. Bez tego rozróżnienia każde
+  błędne odrzucenie kończyłoby się nieprawdziwym „nie dostałem odpowiedzi" i TERMINALNYM
+  zamknięciem tematu — na podstawie naszego nieporozumienia, nie jego zachowania. Wpis zostaje
+  otwarty, operator dostaje alert. Odwracalne.
+- **`guards.ensure_single_owner` świadomie BEZ normalizacji.** To jedyne miejsce, gdzie
+  rozluźnienie porównania OSŁABIA zabezpieczenie: stoi na granicy nieodwracalnego zapisu do
+  grafiku, a kierunek błędu przy ścisłości jest tam bezpieczny (odmowa zapisu). Komentarz w kodzie
+  mówi to wprost, żeby nikt nie „dokończył" normalizacji.
+- **Nowy parametr jest wyłącznie nazwany.** `after_iso` jest trzecim argumentem pozycyjnym i tak
+  bywa wołany — parametr wstawiony przed nim po cichu przyjąłby watermark jako tożsamość.
+  Brak argumentu to głośny `TypeError`.
+
+### Dodane
+
+- `domain/tozsamosc.py` — `znormalizuj` i `ten_sam`, jedno miejsce zamiast dziesięciu `==`.
+  Wzorzec z `domain/powody.py`, gdzie ten sam zabieg obowiązuje dla nazw powodów nieobecności.
+- Filtr konta bota w `nudge.run_once` (`m.user_id != me_id`) też porównuje teraz przez tożsamość —
+  ta sama klasa usterki, ten sam skutek (bot pisze sam do siebie), a żaden strażnik jej nie pilnował.
+
+### Skutki uboczne
+
+- Alert startowy wypisuje identyfikatory w postaci znormalizowanej, więc przestaje być DOSŁOWNĄ
+  kopią wpisu z `env` — a jego docstring mówi, że służy właśnie do porównania. Alert mówi o tym
+  teraz wprost.
+- Krąg odbiorców może się wyłącznie POSZERZYĆ, nigdy zawęzić. W instalacji u klienta sprawdzone:
+  wszystkie 8 identyfikatorów jest już w postaci kanonicznej, więc krąg **nie zmieni się wcale**.
+
 ## [Nieopublikowane] — naprawy usterek 0.2.19, fala 1
 
 Pierwsze zmiany w kodzie odzyskanym z obrazu. Od tego miejsca repo NIE jest już tożsame
