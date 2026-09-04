@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from powiadomienia_teams import state as st_modul
+
 # 0.2.19 rozbiło monolit `app.py` na `runtime/{nudge,listener,service,operator}` + `cli`.
 # `app` został fasadą re-eksportu, więc prywatne nazwy bierzemy z modułów, w których teraz żyją.
 from powiadomienia_teams.agent.interpreter import OdpowiedzLlm
@@ -2349,17 +2351,6 @@ def _sciezka_bez_zapisu(tmp_path: Path) -> Path:
     return przeszkoda / "state.json"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19 (nie testu): obraz NIE MA sondy zapisywalności stanu przed przebiegiem — "
-        "`grep -rn 'writable\\|zapisywaln' src/` daje pusto. Przebieg najpierw PISZE do ludzi, "
-        "a dopiero potem próbuje utrwalić stan. Gdy plik stanu jest niezapisywalny, prośby "
-        "wychodzą i nie zostaje po nich ślad, więc następny przebieg wysyła je DRUGI RAZ — "
-        "a idempotencja opiera się WYŁĄCZNIE na tym pliku (komentarz w docker-compose.yml). "
-        "strict=True: naprawa zapali XPASS i wymusi zdjęcie znacznika."
-    ),
-)
 def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path: Path):
     """Kolejność „wyślij, potem utrwal" jest bezpieczna tylko wtedy, gdy utrwalanie działa.
 
@@ -2402,10 +2393,25 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
     wyjść jednym błędem, a nie trzema prośbami do tej samej osoby (a przez okno łaski — kilkoma
     dziesiątkami).
     """
-    settings = _settings_calodobowe(_sciezka_bez_zapisu(tmp_path))
-    # 0.2.19 NIE ma sondy zapisywalności przed zapisem — nie ma bramki do obejścia.
+    settings = _settings_calodobowe(tmp_path / "state.json")
     client = _FakeClient({}, members=(Member("u1", "Ala"), Member("u2", "Bok")), shifts=())
     spane: list[float] = []
+
+    # Dysk zapełnia się PO sondzie: pierwszy zapis (sonda przed pętlą) przechodzi, drugi — ten
+    # utrwalający pierwszą wysłaną prośbę — pada. Sonda z założenia tego nie łapie; jej zadaniem
+    # jest przypadek TRWAŁY (wolumen tylko-do-odczytu), a nie wyścig z zapełniającym się dyskiem.
+    # Test pilnuje więc tego, co pozostaje jej zadaniem: awaria utrwalania kończy przebieg JEDNYM
+    # błędem, a nie trzema prośbami do tej samej osoby.
+    prawdziwy_zapis = st_modul.save_state
+    zapisy = {"n": 0}
+
+    def _drugi_zapis_pada(sciezka, stan):
+        zapisy["n"] += 1
+        if zapisy["n"] == 1:
+            return prawdziwy_zapis(sciezka, stan)
+        raise StateWriteError("Nie udało się zapisać stanu: brak miejsca na urządzeniu")
+
+    monkeypatch.setattr(st_modul, "save_state", _drugi_zapis_pada)
 
     with pytest.raises(StateWriteError):
         _run_once_with_retry(
@@ -2416,6 +2422,7 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
             teraz=_w_oknie(),
         )
 
+    assert zapisy["n"] == 2  # sonda przeszła, dopiero utrwalenie po wysyłce padło
     assert len(client.sent) == 1  # jedna wysyłka, potem stop — bez ponowień
     assert spane == []  # backoff ponowień w ogóle nie wszedł
 
@@ -2423,22 +2430,6 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
 # --- Regresja: utrata sesji przy zapisie grafiku -----------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "USTERKA 0.2.19 (nie testu): szeroki `except Exception` w `_apply_confirmed_yes` "
-        "(listener.py:819) łapie AuthExpiredError, zanim dojdzie ona do strażnika w "
-        "`_process_pending` (listener.py:623). Utrata sesji przy zapisie na SZYBKIEJ ŚCIEŻCE "
-        "(czyste 'tak') jest wtedy raportowana jako zwykła awaria zapisu do Shifts, pracownik "
-        "dostaje 'uzupełnij ręcznie' (nieprawda — winna jest sesja, nie Shifts), a usługa "
-        "NIE zatrzymuje się, więc nie rusza ścieżka alert + AUTH_FAILURE_EXIT_DELAY_S + restart "
-        "do `--login`. Martwy token żyje wtedy do najbliższego pulsu, czyli do HEARTBEAT_"
-        "INTERVAL_H (domyślnie 24 h). Kontrakt 'utrata tokenu zatrzymuje usługę' jest w tym "
-        "samym pliku wypisany trzy razy (linie 195, 346, 623) — to niespójność, nie decyzja. "
-        "strict=True: gdy usterka zostanie naprawiona, ten test zapali się XPASS i wymusi "
-        "zdjęcie znacznika."
-    ),
-)
 def test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge(tmp_path: Path):
     """`AuthExpiredError` w gałęzi ogólnej dawał zły log i nieprawdziwą wiadomość.
 

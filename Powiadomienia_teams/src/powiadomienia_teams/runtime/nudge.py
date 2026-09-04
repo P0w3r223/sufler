@@ -144,6 +144,25 @@ def run_once(
     state = prune_terminal(
         state, now, settings.terminal_retain_hours, biezacy_tydzien=week_start_iso
     )
+    # DOWÓD ZAPISYWALNOŚCI, zanim ktokolwiek dostanie wiadomość.
+    #
+    # Kolejność „wyślij, potem utrwal" niżej jest ŚWIADOMA (patrz docstring): pending bez
+    # wiadomości byłby najgorszym wariantem. Ale ma cenę — przy niezapisywalnym wolumenie prośby
+    # wychodziły do ludzi i nie zostawał po nich ślad, więc następny przebieg startował od
+    # `load_state`, który ich nie widział, i wysyłał je DRUGI RAZ. Idempotencja opiera się
+    # WYŁĄCZNIE na tym pliku.
+    #
+    # Ten zapis nie jest nową maszynerią: to dokładnie ten sam `save_state`, który i tak stoi na
+    # końcu funkcji („utrwal prune nawet gdy nic nie wysłano"), przesunięty tak, żeby padł PRZED
+    # pierwszą wysyłką. `StateWriteError` ma już właściwą obsługę — `_run_once_with_retry`
+    # przepuszcza go bez ponowień, bo ponawianie przebiegu z zepsutym zapisem wysyła tę samą
+    # prośbę tyle razy, ile jest prób.
+    #
+    # Sonda nie daje gwarancji: dysk może zapełnić się między nią a właściwym zapisem. Zabiera
+    # jednak przypadek TRWAŁY (wolumen tylko-do-odczytu, brak katalogu, złe prawa), czyli ten,
+    # który powtarzałby się w każdym przebiegu.
+    if not settings.dry_run:
+        st.save_state(settings.state_path, state)
     sent = 0
     for member in missing:
         existing = state.get(member.user_id)

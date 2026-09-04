@@ -816,6 +816,25 @@ def _apply_confirmed_yes(
         )
         powiadom_o_nieudanym_zapisie(settings, client, pending, now)
         return
+    except AuthExpiredError:
+        # Utrata sesji dotyczy CAŁEJ usługi, nie tego jednego zapisu — ten sam kontrakt, co
+        # w `_odsiej_juz_zapisane` (:195), `poll_replies` (:346) i `_process_pending` (:623).
+        # Bez tej gałęzi `except Exception` niżej łapał ją PRZED tamtymi strażnikami: martwy
+        # token był raportowany jako zwykła awaria Shifts, pracownik dostawał nieprawdziwe
+        # „uzupełnij ręcznie", a ścieżka alert + `AUTH_FAILURE_EXIT_DELAY_S` + restart do
+        # `--login` nie ruszała. Token zostawał martwy do najbliższego pulsu, czyli do doby.
+        #
+        # `logger.critical` PRZED `raise`, bo wyżej wyjątek nie niesie już informacji, KOGO
+        # i którego tygodnia dotyczył przerwany zapis — a status jest w tym momencie `APPLYING`,
+        # czyli terminalny i nigdy niewznawiany. Bez tej linii operator dostaje alert o utracie
+        # sesji i żadnego wskazania, w czyim grafiku szukać dziury.
+        logger.critical(
+            "Utracono sesję przy zapisie grafiku dla %s (tydzień od %s) — zapis przerwany "
+            "w stanie APPLYING, wymaga ręcznego sprawdzenia",
+            etykiety.osoba(pending, settings),
+            pending.week_start,
+        )
+        raise
     except Exception as blad:
         logger.exception("Zapis grafiku dla %s nie powiódł się", etykiety.osoba(pending, settings))
         operator.alert(
