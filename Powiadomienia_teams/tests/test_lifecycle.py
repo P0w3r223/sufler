@@ -11,6 +11,7 @@ from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     is_expired,
     prune_terminal,
+    przekroczyl_sufit,
     ready_for_self_fill_check,
     should_expire,
     still_writable,
@@ -151,6 +152,64 @@ def test_evidence_alone_does_not_expire_before_deadline():
     # Kontrola w drugą stronę: dowód bez upływu terminu też nie wygasza.
     p = _pending(nudged_at=_iso(NOW - timedelta(hours=1)))
     assert should_expire(p, NOW, OKNO, read=ReadOutcome.NOTHING_NEW) is False
+
+
+def test_obcy_nadawca_tez_blokuje_wygaszenie():
+    """`BLOCKED` musi zachowywać się przy wygaszaniu DOKŁADNIE jak `UNKNOWN`.
+
+    Rozdział na dwie wartości (ADR 0007) dotyczy licznika i sufitu, nie bezpieczeństwa. Gdyby
+    `should_expire` przepuściło `BLOCKED`, cudza wiadomość w wątku kończyłaby się komunikatem
+    „nie dostałem odpowiedzi" wysłanym pracownikowi, którego czatu nawet nie odczytaliśmy do końca
+    — czyli dokładnie tym, czemu ADR 0003 ma zapobiegać.
+    """
+    p = _pending(nudged_at=_iso(NOW))
+    assert should_expire(p, _PO_TERMINIE, OKNO, read=ReadOutcome.BLOCKED) is False
+
+
+def test_kazdy_read_outcome_ma_rozstrzygniete_zachowanie_przy_wygaszaniu():
+    """Strażnik na PRZYSZŁE wartości enuma, nie na obecne.
+
+    `should_expire` jest napisane jako „wszystko poza NOTHING_NEW blokuje", więc piąta wartość
+    dodana kiedyś przez kogoś odziedziczy zachowanie bezpieczne w ciszy — i to jest właściwy
+    kierunek. Ten test pilnuje, żeby ta własność była ZAPISANA, a nie przypadkowa: gdyby ktoś
+    przepisał funkcję na jawną listę dozwolonych wartości, nowa wartość musi tu zapalić czerwono.
+    """
+    p = _pending(nudged_at=_iso(NOW))
+    przepuszczone = {
+        outcome for outcome in ReadOutcome if should_expire(p, _PO_TERMINIE, OKNO, read=outcome)
+    }
+    assert przepuszczone == {ReadOutcome.NOTHING_NEW}
+
+
+# --- przekroczyl_sufit: twardy sufit wieku wpisu (ADR 0007) ---------------------------------
+
+
+def test_sufit_liczy_od_kotwicy_a_nie_od_terminu():
+    """Sufit mierzy BEZRUCH rozmowy, więc kotwicą jest ostatnia aktywność, nie tydzień docelowy."""
+    p = _pending(nudged_at=_iso(NOW))
+    assert przekroczyl_sufit(p, NOW + timedelta(hours=143, minutes=59), 144) is False
+    assert przekroczyl_sufit(p, NOW + timedelta(hours=144), 144) is True
+
+
+def test_sufit_przesuwa_sie_z_ostatnia_wiadomoscia_bota():
+    """Rozmowa żywa nie starzeje się: prośba bota jest kotwicą, więc odsuwa sufit.
+
+    Bez tego sufit liczony od `nudged_at` zamykałby wpisy, w których bot dopiero co o coś prosił —
+    a to są rozmowy W TOKU, nie martwe.
+    """
+    p = _pending(nudged_at=_iso(NOW))
+    p.bot_last_message_at = _iso(NOW + timedelta(hours=100))
+    assert przekroczyl_sufit(p, NOW + timedelta(hours=150), 144) is False
+
+
+def test_sufit_bez_kotwicy_nie_zamyka():
+    """Brak kotwicy = nie znamy wieku wpisu. Kierunek bezpieczny to zostawić go otwartym.
+
+    Ta sama zasada co w `prune_terminal` i co w domyślnym `UNKNOWN` przy wygaszaniu: niewiedza
+    usługi nigdy nie działa na niekorzyść pracownika.
+    """
+    p = _pending(nudged_at="")
+    assert przekroczyl_sufit(p, NOW + timedelta(days=365), 144) is False
 
 
 # --- still_writable: użyteczność zapisu ma własny termin (ADR 0003) -------------------------

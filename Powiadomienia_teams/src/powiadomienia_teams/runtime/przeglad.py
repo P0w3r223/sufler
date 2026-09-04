@@ -334,8 +334,13 @@ def _lista_wpisow(
     linie = [
         "WPISY (od najbliższych terminu)",
         "",
+        # `bez odcz.` obok `błędy`, bo to DWA różne liczniki i mylenie ich kosztuje: `błędy` to
+        # nieudane INTERPRETACJE (pracownik coś napisał, my nie zrozumieliśmy), `bez odcz.` to
+        # obiegi, w których czatu nie dało się w ogóle przeczytać. Po alercie z ADR 0007 operator
+        # przychodzi tutaj sprawdzić, ile wpisów stoi i jak blisko sufitu są — bez tej kolumny
+        # miałby alert bez sposobu jego sprawdzenia.
         f"  {'osoba':<{szer}}  {'status':<18} {'tydzień od':<12} {'termin':<18} "
-        f"{'kotwica':>9}  {'błędy':>5}",
+        f"{'kotwica':>9}  {'błędy':>5}  {'bez odcz.':>9}",
     ]
     for pending in wpisy:
         uwagi = []
@@ -349,7 +354,8 @@ def _lista_wpisow(
         linie.append(
             f"  {nazwa[pending.member_id]:<{szer}}  {pending.status:<18} {pending.week_start:<12} "
             f"{_termin(pending, okno):<18} "
-            f"{_wiek(pending, teraz):>9}  {pending.fail_count:>5}{ogon}"
+            f"{_wiek(pending, teraz):>9}  {pending.fail_count:>5}  "
+            f"{pending.unknown_count:>9}{ogon}"
         )
     return linie
 

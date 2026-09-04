@@ -5,6 +5,12 @@ Temat kończy się na cztery różne sposoby i KAŻDY musi powiedzieć prawdę. 
 kto uzupełnił grafik sam — podziękowanie. Wspólny komunikat byłby dla pracownika bezużyteczny,
 a dla części z nich po prostu nieprawdziwy.
 
+Sposób PIĄTY (``zamknij_cicho_nierozstrzygniete``, ADR 0007) nie mówi pracownikowi NIC — i to jest
+ta sama zasada, nie wyjątek od niej. Wpis schodzi z obiegu, bo jego czatu nie dało się odczytać
+w serii obiegów, a od ostatniej aktywności minął sufit; o zachowaniu człowieka nie ustaliliśmy
+wtedy niczego, więc każde zdanie na jego temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą treścią, jaką mamy. Dowiaduje się
+operator, nie pracownik.
+
 Wzorzec utrwalania jest jeden dla wszystkich ścieżek: status terminalny NAJPIERW, wysyłka POTEM.
 To jest cena semantyki „co najwyżej raz" — proces ubity między jednym a drugim zostawia temat
 zamknięty bez wiadomości, a nie wiadomość bez zamknięcia (czyli nie zapętla się na kolejnym
@@ -46,8 +52,17 @@ def do_domkniecia(
 
     Reguła siedzi TUTAJ, a nie u wołającego, bo stała u niego jako dwa ręcznie dopisane warunki —
     a pozycja **D5** planu (wznowienie rozmowy) dokłada kolejną ścieżkę piszącą do milczących.
-    Nowa funkcja domykająca dziedziczy więc bramkę zamiast jej potrzebować, a strażnik statyczny
-    w `test_cisza.py` pilnuje, że każda z nich bierze `okno_domkniec` w sygnaturze.
+    Nowa funkcja domykająca dziedziczy więc bramkę zamiast jej potrzebować.
+
+    Sprostowanie: zdanie o „strażniku statycznym w `test_cisza.py`", który miałby pilnować, że
+    każda funkcja domykająca bierze `okno_domkniec` w sygnaturze, było NIEPRAWDZIWE — takiego
+    strażnika nigdy nie napisano (jedyny `ast.parse` w `tests/` mieszka w `test_szew_wysylki.py`).
+    Zdjęte, bo obietnica strażnika działa gorzej niż jego brak: usypia czujność przy dopisywaniu
+    kolejnej ścieżki.
+
+    Jawny wyjątek od tej reguły: ``zamknij_cicho_nierozstrzygniete`` (ADR 0007) `okno_domkniec`
+    NIE bierze i brać nie powinno. Cisza odkłada WIADOMOŚCI do pracownika, a tam żadna wiadomość
+    nie powstaje — bramka na wysyłkę, której nie ma, tylko odsuwałaby w czasie zamknięcie wpisu.
 
     Odłożenie NICZEGO nie kosztuje: termin i tak minął, wpis czeka nietknięty, a pętla usługi
     orzeka wygaśnięcie po ciszy. Log dopiero po policzeniu wpisów — zdanie „odkładam wygaszenia"
@@ -87,6 +102,40 @@ def zamknij_bez_zapisu(
     st.save_state(settings.state_path, state)
     if settings.send_expiry_message:
         _powiadom_o_zamknieciu(settings, client, closed, text, teraz, powod)
+
+
+def zamknij_cicho_nierozstrzygniete(
+    settings: Settings,
+    state: dict[str, st.PendingReminder],
+    closed: list[st.PendingReminder],
+) -> None:
+    """Zamknij wpisy, których NIE DA SIĘ rozstrzygnąć — bez jednego słowa do pracownika (ADR 0007).
+
+    Piąta ścieżka domykająca i jedyna niema. Powód zamknięcia leży po NASZEJ stronie: odczyt czatu
+    tej osoby padł w serii kolejnych obiegów ORAZ od ostatniej aktywności minęło więcej niż
+    `sufit_wpisu_bez_odczytu_h`, więc wpis blokowałby jej przypomnienie w każdym kolejnym tygodniu
+    (klucz stanu to `member_id`). Obie przesłanki są konieczne — sam wiek nie wystarcza, bo po
+    dłuższym przestoju WSZYSTKIE wpisy są starsze niż sufit, a jeden 429 z Graph zamykałby je
+    razem z odpowiedziami czekającymi w czatach.
+
+    O tym, czy pracownik odpisał, nie wiemy NIC — i dlatego nie wolno tu użyć `zamknij_bez_zapisu`:
+    tamta wysyła `EXPIRED_TEXT` („Nie dostałem odpowiedzi"), czyli zarzut postawiony na podstawie
+    naszej własnej awarii.
+
+    Brak `client` w sygnaturze jest zamierzony i jest tu strażnikiem: bez niego nie ma czym wysłać
+    wiadomości, więc „ciche" nie zależy od tego, czy ktoś o tym pamiętał. Z tego samego powodu nie
+    ma `okno_domkniec` — cisza odkłada wiadomości, a wiadomości nie ma (patrz `do_domkniecia`).
+
+    Status terminalny + `awaiting_yes=False` jak w `zamknij_bez_zapisu` (N38). Jeden zapis na całą
+    porcję. O zamknięciu woła operatora WOŁAJĄCY — alert niesie liczbę i etykiety, których ta
+    funkcja nie ma po co znać.
+    """
+    if not closed:
+        return
+    for pending in closed:
+        pending.status = st.EXPIRED
+        pending.awaiting_yes = False
+    st.save_state(settings.state_path, state)
 
 
 def _powiadom_o_zamknieciu(

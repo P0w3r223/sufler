@@ -335,6 +335,13 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 | Zmiana przez północ znika | `22:00–06:00` traci informację o przejściu doby i jest po cichu pomijana | Nie dotyczy tego zespołu (brak nocek); wymaga poprawki kodu, gdy się pojawią |
 | Pracownik nie dostał prośby o potwierdzenie | Nieudana wysyłka nie jest ponawiana; status już zmieniony | Napisz do niego ręcznie |
 | `--login` przy działającej usłudze | Omija blokadę jednej instancji i pisze do cache równolegle | Zawsze `docker compose stop` przed logowaniem (krok 4) |
+| Wpis zniknął, a pracownik nie dostał ŻADNEJ wiadomości | Odczyt czatu padł w serii kolejnych obiegów, a od ostatniej aktywności minęło ponad `SUFIT_WPISU_BEZ_ODCZYTU_H` (144 h) — wpis zamknięto po cichu (ADR 0007). Same 144 h nie wystarczą: pojedyncza awaria odczytu wpisu NIE zamyka | To zamierzone: nie wiemy, czy odpisał, więc nie wolno mu zarzucić milczenia. Alert „Przypomnienia zablokowane na odczycie czatu" mówi kogo dotyczy; grafik ustal z tymi osobami ręcznie |
+
+**Nie szukaj wysłanego domknięcia w ostatnim przypadku — nie ma go i nie powinno być.** Wcześniej
+(do 0.2.19 włącznie) taki wpis nie znikał wcale: wisiał otwarty bez końca, blokując przypomnienie
+tej osoby w każdym kolejnym tygodniu, a jedynym śladem był `logger.exception` w logu kontenera.
+Operator dostaje teraz alert po trzech obiegach bez odczytu, czyli na długo przed sufitem;
+kolumna `bez odcz.` w `--stan` pokazuje, ile obiegów stoi za każdym wpisem.
 
 Naprawione w 0.2.0, wcześniej wymienione jako ograniczenia: brak timeoutu Anthropica,
 `Retry-After` bez sufitu, stan nadpisywany bez kopii, ciche ucięcie paginacji, JSON złego kształtu

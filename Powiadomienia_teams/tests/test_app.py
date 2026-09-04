@@ -372,7 +372,7 @@ def test_write_failure_is_at_most_once(tmp_path: Path):
     poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
     after = load_state(state_path)["u1"]
     # 0.2.19: commit ustawia APPLYING PRZED zapisem i NIE cofa go po awarii. `APPLYING` jest
-    # terminalny i nigdy nie wznawiany (state.py:43, listener.py:484) — i to właśnie realizuje
+    # terminalny i nigdy nie wznawiany (state.py:43, listener.py:497) — i to właśnie realizuje
     # gwarancję „co najwyżej raz". `APPLIED` znaczyłoby zapis potwierdzony, którego nie było.
     assert after.status == APPLYING
 
@@ -747,7 +747,7 @@ def test_dzien_juz_wolny_w_grafiku_nie_jest_obiecywany_ani_falszywie_domykany(tm
 
     tresc = "".join(html for _chat, html in client.sent)
     # 0.2.19 NIE skraca tu drogi: prośba o potwierdzenie idzie normalnie, a dzień już zaznaczony
-    # jako wolny odsiewa dopiero `_odsiej_juz_zapisane` przy ZAPISIE (listener.py:762) — pracownik
+    # jako wolny odsiewa dopiero `_odsiej_juz_zapisane` przy ZAPISIE (listener.py:912) — pracownik
     # dostaje wtedy `build_nic_do_zapisania_text`. Linia repozytorium zamykała temat wcześniej,
     # jednym komunikatem „już zaznaczone jako wolne". Różnica jest w liczbie wiadomości, nie
     # w tym, co ostatecznie trafia do grafiku: podwójnego urlopu nie powstaje w żadnym wariancie.
@@ -2790,12 +2790,12 @@ def test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge(tmp_path: Path):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "LUKA 0.2.19 (nie testu): `_commit` przesuwa watermark BEZWARUNKOWO (listener.py:511), "
+        "LUKA 0.2.19 (nie testu): `_commit` przesuwa watermark BEZWARUNKOWO (listener.py:527), "
         "także wtedy, gdy prośba o potwierdzenie nie została doręczona. Status wraca do "
         "AWAITING_REPLY, ale wiadomość pracownika jest już oznaczona jako obsłużona, więc "
         "kolejny cykl jej nie zobaczy: pracownik czeka na pytanie, które nigdy nie padło, "
         "a po terminie dostaje nieprawdziwe 'nie dostałem odpowiedzi'. Własny docstring "
-        "`_commit` (listener.py:462-469) deklaruje coś przeciwnego: 'nieudane przetworzenie "
+        "`_commit` (listener.py:485) deklaruje coś przeciwnego: 'nieudane przetworzenie "
         "zostawia watermark nietknięty'. To niespójność, nie decyzja."
     ),
 )
@@ -2934,17 +2934,6 @@ def test_trwale_nieodczytywalny_czat_nie_wygasa_i_nie_gubi_odpowiedzi(tmp_path: 
     assert po.watermark == "2026-07-17T09:00:00Z"  # odpowiedź wciąż widoczna dla listenera
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0.2.19: brak licznika cykli bez odczytu i brak alertu — wpis wisi otwarty bez końca. "
-        "PRZYCZYNA: `list_chat_messages` woła się w `_read_new` (listener.py:561), czyli PRZED "
-        "`_record_failure` (listener.py:654). Wyjątek leci więc do per-osobowego "
-        "`except Exception` w `poll_replies` (listener.py:363) → `ReadOutcome.UNKNOWN`: "
-        "`fail_count` nie rośnie, watermark nie rusza, a `should_expire` słusznie odmawia "
-        "wygaszenia bez dowodu z udanego odczytu."
-    ),
-)
 def test_nierozstrzygniete_cykle_powinny_alarmowac_po_progu(tmp_path: Path, monkeypatch):
     """Druga połowa, której brakuje: eksploatacja nie ma jak się dowiedzieć.
 
@@ -2967,17 +2956,6 @@ def test_nierozstrzygniete_cykle_powinny_alarmowac_po_progu(tmp_path: Path, monk
     assert len(wyslane) == 1  # DOKŁADNIE raz — trwała awaria nie ma prawa powtarzać alarmu
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19 (nie testu): obraz nie ma twardego sufitu wieku wpisu. Trwale "
-        "nieodczytywalny czat rzuca PRZED `_record_failure`, więc `fail_count` nie rośnie, "
-        "watermark nie rusza, a `should_expire` słusznie odmawia wygaszenia bez dowodu z "
-        "udanego odczytu — wpis zostaje otwarty w NIESKOŃCZONOŚĆ, co tydzień blokując ponowny "
-        "nudge dla tej osoby, a jedynym śladem jest `logger.exception` w kontenerze. Patrz "
-        "sąsiedni xfail `test_nierozstrzygniete_cykle_powinny_alarmowac_po_progu`."
-    ),
-)
 def test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem(tmp_path: Path, monkeypatch):
     """Zamknięcie z sufitu nie może wysłać „nie dostałem odpowiedzi" — dowodu nadal nie ma."""
     wyslane: list[str] = []
@@ -2992,11 +2970,120 @@ def test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem(tmp_path: Path, monkeypatch)
     # 3 × okno odpowiedzi (48 h) po nudge'u — sufit przekroczony.
     po_suficie = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
-    poll_replies(settings, client, _FakeLlm("{}"), now=po_suficie)  # type: ignore[arg-type]
+    # PĘTLA, nie jeden obieg — i to jest różnica między naprawą a regresem. Sufit wymaga OBU
+    # przesłanek: wieku ponad sufit ORAZ serii nieudanych odczytów. Wersja zamykająca wpis po
+    # PIERWSZYM nieudanym odczycie przechodziła ten test i była gorsza od 0.2.19: po przestoju
+    # dłuższym niż sufit wszystkie wpisy są stare, więc jeden 429 z Graph przy pierwszym obiegu
+    # po powrocie zamykał je razem z odpowiedziami czekającymi w czatach. Liczba obiegów nigdy
+    # nie była tu przedmiotem ochrony — jest nim ciche zamknięcie z alertem — ale jeden obieg
+    # zamrażał zachowanie, którego ADR 0007 nie chce.
+    for _ in range(_PROG_CYKLI_BEZ_ODCZYTU):
+        poll_replies(settings, client, _FakeLlm("{}"), now=po_suficie)  # type: ignore[arg-type]
 
     assert load_state(state_path)["u1"].status == EXPIRED  # wpis zszedł z obiegu
     assert client.sent == []  # ale pracownik NIE dostał zarzutu o milczenie
     assert wyslane == ["Przypomnienia zablokowane na odczycie czatu"]
+
+
+def test_prog_w_tescie_zgadza_sie_ze_stala_w_kodzie():
+    """Sonda parzystości: bez niej dwa testy wyżej po cichu badałyby co innego.
+
+    Oba pętlą `_PROG_CYKLI_BEZ_ODCZYTU + 5` obiegów, gdzie stała jest LOKALNĄ kopią wartości
+    z `listener.py`. Podniesienie progu w kodzie do 9 zostawiłoby tu 3, więc „dokładnie jeden
+    alert" nadal by przechodziło — mierząc próg, którego kod już nie ma. Test przestałby chronić
+    cokolwiek, nie zapalając się na czerwono ani razu.
+    """
+    from powiadomienia_teams.runtime.listener import _PROG_CYKLI_BEZ_ODCZYTU as w_kodzie
+
+    assert w_kodzie == _PROG_CYKLI_BEZ_ODCZYTU
+
+
+def test_obcy_nadawca_NIE_podbija_licznika_nieudanych_odczytow(tmp_path: Path, monkeypatch):
+    """Rozdział wyników odczytu musi być widoczny w LICZNIKU, nie tylko w enumie (ADR 0007).
+
+    Przy obcym nadawcy odczyt czatu SIĘ UDAŁ — nie ma awarii, którą licznik miałby mierzyć,
+    a operator został zawołany osobno przez `_zglos_obcych_raz`. Gdyby licznik rósł także tutaj,
+    wpis osoby, w której wątku ktoś napisał, doszedłby po sześciu dobach do sufitu i zostałby
+    zamknięty — czyli człowiek straciłby tydzień przez zachowanie kolegi.
+    """
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert", lambda url, tytul, tresc, **kw: True
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings_calodobowe(state_path), alert_webhook_url="https://hook")
+    # Odczyt się udaje, ale w wątku jest ktoś spoza pendingu — ścieżka BLOCKED.
+    client = _FakeClient({"chat1": [_msg("obcy", "2026-07-18T09:00:00Z", "cześć")]})
+
+    for _ in range(_PROG_CYKLI_BEZ_ODCZYTU + 2):
+        poll_replies(settings, client, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.unknown_count == 0  # licznik dotyczy AWARII ODCZYTU, a odczyt działał
+    assert po.status == "awaiting_reply"  # i wpis dalej stoi otwarty
+
+
+def test_bledy_interpretacji_NIE_alarmuja_o_odczycie_czatu(tmp_path: Path, monkeypatch):
+    """Najcichsza z pułapek tej zmiany: dwa liczniki karmione z jednego wyjątku.
+
+    Błąd interpretacji leci przez `_record_failure` (rośnie `fail_count`), ale dolatuje WYŻEJ do
+    per-osobowego handlera w `poll_replies`. Dopóki wszystko to było jednym `UNKNOWN`, podbijało
+    też licznik odczytu — i trzy deterministyczne błędy modelu zapalały alert „przypomnienia
+    zablokowane na odczycie czatu" o czacie, który czyta się bez zarzutu, wysyłając operatora
+    szukać awarii Graph, której nie ma.
+
+    Po rozdzieleniu wyniku (ADR 0007) licznik rusza WYŁĄCZNIE na `READ_FAILED`, czyli na wyjątku
+    z samego `list_chat_messages`. Tutaj odczyt się udaje, więc licznik stoi na zerze — i ten test
+    pilnuje, żeby granica między „czat nie odpowiada" a „nie zrozumieliśmy odpowiedzi" nie zatarła
+    się przy kolejnej zmianie w `_process_pending`.
+    """
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_with_reply(state_path)
+    settings = replace(_settings(state_path), alert_webhook_url="https://hook")
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-16T11:10:00Z", "czego model nie ogarnie")]})
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    for _ in range(_MAX_PENDING_FAILURES * 3):
+        poll_replies(settings, client, _RaisingLlm(), now=now)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].unknown_count < _PROG_CYKLI_BEZ_ODCZYTU
+    assert "Przypomnienia zablokowane na odczycie czatu" not in wyslane
+
+
+def test_powrot_odczytu_zglasza_sie_operatorowi(tmp_path: Path, monkeypatch):
+    """Alert powrotu ma DZIAŁAĆ, a nie tylko istnieć w kodzie.
+
+    Operator, który dostał „czat nie odpowiada", musi dostać też wiadomość, że awaria minęła —
+    inaczej sam zgaduje, czy sprawa jest wciąż otwarta, a przy ośmiu osobach zgaduje osiem razy.
+    """
+    wyslane: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
+    )
+    state_path = tmp_path / "state.json"
+    _pending_bez_odczytu(state_path)
+    settings = replace(_settings_calodobowe(state_path), alert_webhook_url="https://hook")
+
+    for _ in range(_PROG_CYKLI_BEZ_ODCZYTU):
+        poll_replies(settings, _OdczytPadaZawsze({}), _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+    # Wpis ma 71 h, czyli jest DALEKO od sufitu — pada alert progowy, nie ten o zamknięciu.
+    # Tytuły są rozdzielone celowo: oba mogą paść w jednym obiegu i mówią rzeczy przeciwne.
+    assert wyslane == ["Czat nie odpowiada — przypomnienia wstrzymane"]
+
+    # Czat wraca Z ODPOWIEDZIĄ, nie pusty: ścieżka `HANDLED` przechodzi przez `_commit`, czyli
+    # przez najwięcej kodu między odczytem a krokiem 1.6. Pusty czat (`NOTHING_NEW`) też by tu
+    # przeszedł, ale badałby mniej.
+    odpowiedz = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "poniedziałek 8-16")]})
+    poll_replies(settings, odpowiedz, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
+
+    assert wyslane[-1] == "Odczyt czatu wrócił"
+    assert load_state(state_path)["u1"].unknown_count == 0
 
 
 # --- Regresja: opóźnienie przed wyjściem tylko dla usługi --------------------
@@ -3372,7 +3459,7 @@ def test_nieudane_domkniecie_juz_wolnego_dnia_nie_udaje_awarii_ODCZYTU(tmp_path:
     # 0.2.19 nie domyka tu tematu jako SELF_FILLED: najpierw wysyła prośbę o potwierdzenie
     # (patrz test wyżej), a gdy ta wysyłka padnie, status wraca do AWAITING_REPLY — pracownik ma
     # usłyszeć „nie dostałem odpowiedzi", a nie „nie potwierdziłeś" prośby, której nikt nie
-    # doręczył (listener.py:694). Domknięcie SELF_FILLED to była ścieżka linii repozytorium.
+    # doręczył (listener.py:723). Domknięcie SELF_FILLED to była ścieżka linii repozytorium.
     assert po.status == AWAITING_REPLY
     assert "Nie udało się poprosić" in caplog.text  # utrata wiadomości WIDOCZNA
 

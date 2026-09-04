@@ -358,3 +358,63 @@ def test_pilotaz_normalizuje_guidy_takze_przy_budowie_wprost():
     )
 
     assert s.only_user_ids == ("ab-cd", "ef")
+
+
+# --- Twardy sufit wpisu nie do rozstrzygnięcia (ADR 0007) --------------------
+
+
+def test_sufit_wpisu_ma_domyslna_wartosc_144h(monkeypatch):
+    """Domyślna wartość jest częścią decyzji, nie szczegółem — patrz ADR 0007.
+
+    144 h = doba KRÓCEJ niż cykl tygodniowy. Gdyby ktoś podniósł domyślną do 168, sufit zacząłby
+    ścigać się z przebiegiem tygodniowym, a przegrana tego wyścigu daje operatorowi alert
+    o uzgodnieniu, którego nigdy nie było.
+    """
+    _set_required(monkeypatch)
+    assert Settings.from_env().sufit_wpisu_bez_odczytu_h == 144
+
+
+def test_sufitu_NIE_da_sie_wylaczyc_zerem(monkeypatch):
+    """Zero nie znaczy „bez sufitu" — znaczy odmowę startu.
+
+    Wyłączony sufit przywraca dokładnie tę usterkę, którą ADR 0007 zamyka (wpis wisi bez końca,
+    blokując osobę co tydzień), i robi to bezgłośnie. Konfiguracja, która po cichu cofa naprawę,
+    jest gorsza niż brak opcji.
+    """
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_SUFIT_WPISU_BEZ_ODCZYTU_H", "0")
+    with pytest.raises(ConfigError, match="sufit_wpisu_bez_odczytu_h"):
+        Settings.from_env().validate()
+
+
+def test_sufit_ponizej_kurtuazji_odmawia_startu(monkeypatch):
+    """Sufit krótszy niż kurtuazja zamykałby rozmowy, w których bot DOPIERO CO o coś poprosił.
+
+    Kotwica sufitu obejmuje ostatnią wiadomość bota, a `reply_min_hours` to dolna granica terminu
+    liczona od tej samej chwili. Sufit poniżej niej wygrywałby z kurtuazją — czyli polityka
+    zaprzeczałaby sama sobie, zamiast się uzupełniać.
+    """
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_REPLY_MIN_HOURS", "24")
+    monkeypatch.setenv("POWIADOMIENIA_SUFIT_WPISU_BEZ_ODCZYTU_H", "24")
+    with pytest.raises(ConfigError, match="reply_min_hours"):
+        Settings.from_env().validate()
+
+
+def test_sufit_dluzszy_niz_tydzien_odmawia_startu(monkeypatch):
+    """Powyżej 168 h sufit wypada dopiero PO kolejnym przebiegu, który wpis nadpisze."""
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_SUFIT_WPISU_BEZ_ODCZYTU_H", "169")
+    with pytest.raises(ConfigError, match="168"):
+        Settings.from_env().validate()
+
+
+def test_sufit_rowno_tydzien_jeszcze_przechodzi(monkeypatch):
+    """Granica jest domknięta z góry: 168 to konfiguracja legalna, choć nierekomendowana.
+
+    Kontrola do testu wyżej — bez niej „> 168 odmawia" przechodziłoby także wtedy, gdyby ktoś
+    zaostrzył warunek do `>= 168` i po cichu odebrał operatorowi legalną wartość brzegową.
+    """
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_SUFIT_WPISU_BEZ_ODCZYTU_H", "168")
+    Settings.from_env().validate()

@@ -74,6 +74,26 @@ class PendingReminder:
     # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
     # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``runtime.listener._record_failure``).
     fail_count: int = 0
+    # Obiegi Z RZĘDU, w których ODCZYT CZATU tej osoby rzucił wyjątkiem (ADR 0007). Liczy wyłącznie
+    # awarię odczytu i to jest egzekwowane konstrukcją, nie dyscypliną: `ReadOutcome.READ_FAILED`
+    # powstaje w JEDNYM miejscu, w wąskim `try` obejmującym samo wywołanie `list_chat_messages`,
+    # i tylko ten wynik podbija licznik. Każdy inny — `BLOCKED` (obcy w wątku), `UNKNOWN` (obsługa
+    # wywróciła się PO odczycie), `HANDLED`, `NOTHING_NEW` — znaczy, że czat ODPOWIEDZIAŁ, więc
+    # licznik wraca do zera.
+    #
+    # Pierwsza wersja tej zmiany liczyła każdy `UNKNOWN` i przez to twierdziła nieprawdę: ucięty
+    # odczyt GRAFIKU (`GraphTruncatedReadError` omija `_record_failure` świadomie) podbijał licznik
+    # „czat nie odpowiada" dla czatu, który czytał się bez zarzutu, a alert kierował operatora do
+    # złego podsystemu.
+    #
+    # OSOBNE pole, a nie wspólne z `fail_count`, i to nie jest kosmetyka: przekroczenie progu
+    # `fail_count` wysyła pracownikowi „Nie do końca zrozumiałem" DO CZATU — czyli dokładnie tam,
+    # gdzie z definicji nie mamy dostępu. Zlanie liczników zamieniłoby alert dla operatora na
+    # wiadomość wysyłaną w próżnię.
+    #
+    # Pole opcjonalne — stare pliki stanu bez niego dostają 0, a starszy obraz odsieje nieznany
+    # klucz przez `_FIELDS`, więc cofnięcie po tagu obrazu zostaje bezpieczne w obie strony.
+    unknown_count: int = 0
     # Pamięć rozmowy: WYŁĄCZNIE wiadomości pracownika (nie bota), od najstarszej do najnowszej,
     # przycięta do ostatnich 10 (``replies.MEMORY_CAP``). Kontekst wieloturowy dla interpretera.
     # Pole opcjonalne — stare pliki stanu bez niego dostają pustą listę.

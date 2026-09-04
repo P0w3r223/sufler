@@ -8,6 +8,89 @@ Numeracja wersji śledzi **tagi obrazu Dockera** (`powiadomienia-teams:X.Y.Z`) �
 prawdy o iteracji na produkcji; metadane wewnątrz obrazu (`pyproject.toml`) bywały z nimi
 rozjechane.
 
+**Numery linii w sekcji [0.2.19] opisują ODZYSKANE DRZEWO z obrazu, nie bieżący `HEAD`.** Od fali 1
+repozytorium nie jest już tożsame z obrazem, więc te wskaźniki rozjeżdżają się z każdą naprawą — są
+zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wskaźniki, które mają
+prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
+która je przesuwa.
+
+## [Nieopublikowane] — naprawy usterek 0.2.19, fala 3: wpis nie do rozstrzygnięcia
+
+Wpis, którego czatu nie da się odczytać, przestaje wisieć w nieskończoność (ADR 0007).
+
+### Przyczyna
+
+`list_chat_messages` woła się PRZED `_record_failure`, więc wyjątek z odczytu leci do
+per-osobowego `except Exception` w `poll_replies` i staje się `ReadOutcome.UNKNOWN`: `fail_count`
+nie rośnie, watermark nie rusza, a `should_expire` **słusznie** odmawia wygaszenia bez dowodu.
+Skutek: wpis zostaje otwarty na zawsze i — bo kluczem stanu jest `member_id` — blokuje
+przypomnienie tej osoby w KAŻDYM kolejnym tygodniu. Jedynym śladem był `logger.exception`
+w kontenerze, a proces żył, puls bił i healthcheck świecił na zielono, czyli z zewnątrz wyglądało
+to dokładnie jak spokojny tydzień.
+
+### Dodane
+
+- Pole stanu `PendingReminder.unknown_count` — obiegi z rzędu, w których padł ODCZYT CZATU.
+  Wstecznie **i wprzód** zgodne (`state._FIELDS` odsiewa nieznane klucze), więc cofnięcie po tagu
+  obrazu zostaje bezpieczne. Trzymane OSOBNO od `fail_count`: przekroczenie progu `fail_count`
+  wysyła „Nie do końca zrozumiałem" DO CZATU, czyli tam, gdzie z definicji nie ma dostępu.
+- Alert progowy dla operatora po trzech obiegach bez odczytu — raz, przy równości progowi, plus
+  osobny alert powrotu wagi INFO. Ten sam wzorzec co `_PULS_PROG_ALERTU`. Alert progowy i alert
+  o zamknięciu mają RÓŻNE tytuły: mogą paść w tym samym obiegu i mówią rzeczy przeciwne.
+- `POWIADOMIENIA_SUFIT_WPISU_BEZ_ODCZYTU_H` (domyślnie 144 h): twardy sufit wieku wpisu. Po nim
+  wpis schodzi z obiegu **po cichu** — status `EXPIRED`, ZERO wiadomości do pracownika, alert do
+  operatora. Nie da się wyłączyć zerem; walidacja żąda `> REPLY_MIN_HOURS` i `<= 168`.
+  **Sufit wymaga OBU przesłanek: wieku ORAZ serii nieudanych odczytów.** Sam wiek nie wystarcza —
+  po przestoju dłuższym niż sufit wszystkie wpisy są stare, więc jeden 429 z Graph przy pierwszym
+  obiegu po powrocie zamykałby je razem z odpowiedziami czekającymi w czatach.
+- Kolumna `bez odcz.` w `--stan`, obok `błędy` — bo to dwa różne liczniki, a operator wywołany
+  alertem musi mieć czym go sprawdzić.
+- `ReadOutcome.READ_FAILED` i `ReadOutcome.BLOCKED` — dwie nowe wartości, wyłącznie w pamięci.
+  Rozbijają `UNKNOWN`, który znaczył naraz trzy różne rzeczy: awarię odczytu czatu (liczoną),
+  obcego nadawcę w wątku (operator już zawołany) i awarię obsługi PO udanym odczycie (czat
+  odpowiada). `READ_FAILED` powstaje w jednym miejscu, w wąskim `try` wokół `list_chat_messages`,
+  więc „licznik mierzy dostępność czatu" jest własnością konstrukcji, nie dyscypliny.
+
+### Cena, świadomie zaakceptowana
+
+Wpis może teraz zostać zamknięty **bez** dowodu z udanego odczytu, czyli ADR 0003 zostaje
+osłabiony. Dopuszczalne wyłącznie dzięki ciszy: ADR 0003 nie zakazuje zamykania, tylko twierdzenia
+o zachowaniu pracownika bez dowodu — zamknięcie, które nie wysyła zdania, nie wypowiada
+twierdzenia. Dlatego ścieżka NIE idzie przez `zamknij_bez_zapisu` (ta wysyła „Nie dostałem
+odpowiedzi"). W podsumowaniu tygodniowym takie zamknięcie wpada do rubryki „zamknięte bez zapisu",
+więc przyczyna ginie — osobnego statusu dodać nie wolno (N34), zostaje alert i kolumna w `--stan`.
+
+### Poza listą usterek — sprostowania obietnic bez pokrycia
+
+- Komentarz przy `_ZGLOSZONE_OBCE` zapowiadał, że dławienie alertu „docelowo przejmie licznik
+  obiegów `UNKNOWN`". Od tej zmiany to nieprawda i nie ma być planem — `unknown_count` liczy
+  wyłącznie awarie odczytu.
+- Docstring `do_domkniecia` powoływał się na strażnika statycznego w `test_cisza.py`, który
+  **nigdy nie powstał** (jedyny `ast.parse` w `tests/` mieszka w `test_szew_wysylki.py`, dopisanym
+  w fali 1). Zdjęte. To druga taka martwa obietnica znaleziona w tym pliku — pierwsza dotyczyła
+  szwu wysyłki i kosztowała usterkę, której nikt nie zauważył.
+- Cytowanie `listener.py:462-469` w `reason` ocalałego `xfail` wskazywało na sygnaturę funkcji,
+  a nie na zdanie, które cytowało. Poprawione na linię niosącą tę obietnicę.
+
+### Znalezione przeglądem tej fali, przed scaleniem
+
+Pierwsza wersja tej zmiany miała dwie usterki własne, obie w nowym kroku pętli nasłuchu:
+
+- **Sufit pytał wyłącznie o wiek wpisu**, więc pojedynczy 429 z Graph na wpisie starszym niż
+  144 h zamykał go po cichu razem z odpowiedzią pracownika czekającą w czacie — REGRES wobec
+  0.2.19, w którym wpis zostawał otwarty i kolejny obieg tę odpowiedź czytał. Naprawione
+  koniunkcją; strażnik `test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem` dostał pętlę, bo
+  pojedynczy obieg zamrażał wadliwe zachowanie.
+- **`unknown_count` nie liczył tego, co deklarował.** Krok liczący widział `ReadOutcome.UNKNOWN`,
+  a ten powstawał dla KAŻDEGO wyjątku z obsługi — także dla uciętego odczytu GRAFIKU, który
+  świadomie omija `_record_failure`. Alert „czat nie odpowiada" potrafił więc paść dla czatu
+  czytanego bez zarzutu i skierować operatora do złego podsystemu. Naprawione rozdzieleniem
+  wyniku odczytu (`READ_FAILED`).
+
+Przy okazji odpadła nieudokumentowana zależność między `_MAX_PENDING_FAILURES`
+a `_PROG_CYKLI_BEZ_ODCZYTU` (progi musiały być równe, żeby licznik nie fałszował) oraz zerowanie
+`unknown_count` w `_commit`, które po rozdzieleniu przestało być potrzebne.
+
 ## [Nieopublikowane] — naprawy usterek 0.2.19, fala 2: tożsamość
 
 Trzy usterki jednej klasy: identyfikatory AAD porównywane znak w znak. Graph nie obiecuje tej
