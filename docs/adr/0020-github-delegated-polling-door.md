@@ -4,7 +4,9 @@ Date: 2026-07-15
 Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0015-teams-delegated-graph-polling.md, docs/adr/0006-write-capability-gate-2.md,
-  docs/adr/0019-shared-event-store.md, docs/roadmap.md (Phase 3)
+  docs/adr/0019-shared-event-store.md, docs/roadmap.md (Phase 3),
+  docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md — narrows the self-skip
+  introduced here: it filtered by ACCOUNT on a premise that turned out to be false
 
 ---
 

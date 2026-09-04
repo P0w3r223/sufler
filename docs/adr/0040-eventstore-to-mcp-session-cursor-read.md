@@ -6,7 +6,10 @@ Author: P0w3r223
 Related to: [ADR 0019](0019-shared-event-store.md) (the shared EventStore),
   [ADR 0008](0008-agent-runtime-and-tool-catalog.md) (single-source tool catalog + frozen MCP surface),
   [ADR 0022](0022-proactive-dual-target-teams-push.md) (out-of-band Teams push),
-  `docs/research/mcp-server-to-session-push.md` (the research this decision rests on)
+  `docs/research/mcp-server-to-session-push.md` (the research this decision rests on),
+[ADR 0071](0071-issue-closures-and-what-self-skip-was-actually-skipping.md) — changes the ordering
+`recent()` returns and therefore how bootstrap must derive its cursor; the ascending-by-id contract
+stated here is KEPT, not amended
 
 ---
 
