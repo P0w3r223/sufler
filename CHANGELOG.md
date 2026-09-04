@@ -8,6 +8,19 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Opis `Project` przestaje odsyłać do narzędzia `File` — odesłanie było MARTWE na jedynych
+  drzwiach, które ten akapit emitują.** Akapit akcji `save` mówił „a istniejącą zmienia
+  `File(edit)`". Zmierzone 2026-09-04: `enable_write=True` podaje wyłącznie CLI
+  (`cli/app.py:116`), a CLI **nie buduje `File` w ogóle** — nie podaje
+  `enable_file_tool`/`supports_attachments`/`workspace_settings`, więc warunek
+  w `agent_wiring/__init__.py:355-360` nie zachodzi. Drzwi Teams mają `enable_write=False` zaszyte
+  (ADR 0006), więc tam akapit `save` nie jedzie wcale. Model dostawał więc nazwę narzędzia,
+  którego w swoim katalogu nie widział — ta sama klasa co dawna obietnica `/mnt/user/outputs`.
+  Rozstrzygnięcie symetryczne do tego po drugiej stronie: `File` przestał obiecywać „zapisz jako
+  nową notatkę", bo nie zna profilu zapisu `Project`; `Project` nie ma jak zapytać, czy `File`
+  w ogóle istnieje na tych drzwiach. Powierzchnia agenta: 7428 → **7418 B** z powłoką,
+  7683 → **7673 B** bez niej (zapas 327 B).
+
 - **ADR 0064 dostaje pomiar pośredni (2026-09-04) i warunek do biegu z ~2026-09-20.** `audit.db`
   ma już liczby, których follow-up żądał: 62 wywołania, 10 rozmów, jeden aktor, `File` = 1,
   `Bash` = 40. Czytane wprost, wskazywałoby to na `File` jako narzędzie do usunięcia. Rozkład dzienny
@@ -20,6 +33,20 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   narzędzia, jeśli nie było użytkowników.**
 
 ### Dodane
+
+- **Bramka redakcyjna: opis narzędzia nie obiecuje AKCJI, której na tych drzwiach nie ma.**
+  Istniejąca bramka odesłań pilnowała NAZW narzędzi; ta schodzi piętro niżej, na akcje. Trzy
+  sondy w `tests/core/test_tool_descriptions.py`, wszystkie liczące repertuar akcji
+  z sygnatur (`inspect.signature(..., eval_str=True)` → `Literal`), a nie z listy pisanej ręką —
+  lista pisana ręką rozjeżdża się z katalogiem i wycisza bramkę, co ten plik przerabiał już raz.
+  Sondy jadą po profilach konfiguracji bramek zdolności, bo martwa obietnica powstaje tam, gdzie
+  bramka jest ZAMKNIĘTA, a wariant najbogatszy — ten, którym mierzy się sufity bajtów —
+  z definicji nie ma akcji nieobecnych.
+
+  Reguła żyła dotąd wyłącznie w komentarzu w `tools/project.py`, czyli dokładnie w tym stanie,
+  w którym była, gdy `File` obiecywał „poprawki zapisuj jako nową notatkę" przy wyłączonym
+  `Project(save)`. Tamto zdanie zdjął `d989a64` razem z sondą na TO JEDNO zdanie; ta bramka
+  uogólnia ją na repertuar akcji wszystkich narzędzi.
 
 - **Nocny bieg CI (`schedule` 04:17 UTC) i ręczne uruchomienie (`workflow_dispatch`).** CI biegało
   wyłącznie na `Main`, `Dev` i PR-ach, więc bramka padała dopiero przy następnym pushu — a bywa,

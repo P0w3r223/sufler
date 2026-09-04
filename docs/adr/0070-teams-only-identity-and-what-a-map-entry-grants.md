@@ -159,7 +159,7 @@ change note reads in the agent's tool loop. It changes:
 
 - the `/szukaj`, `/projekty` and `/status <project>` commands, the brief and the digest. **Three
   commands, not two:** `_status` with an argument runs through `_read_authz_refusal`
-  (`adapters/inbound/commands.py:190-193`) because a project status is a synthesis over division
+  (`adapters/inbound/commands.py:191-200`) because a project status is a synthesis over division
   notes — the same content `/szukaj` returns. The comment at `commands.py:101-104` still says
   `/status` sits *outside* the gate; it is stale, and the first draft of this ADR repeated it. Both
   are corrected in the same change;
