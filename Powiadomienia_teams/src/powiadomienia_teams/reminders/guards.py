@@ -24,6 +24,13 @@ def ensure_single_owner(
     ten niezmiennik na granicy nieodwracalnego zapisu, nawet gdyby przyszły refaktor przypadkiem
     przepuścił cudze `user_id`. Nie da się więc czyjąkolwiek odpowiedzią wpisać nic innej osobie.
     """
+    # ŚWIADOMIE bez `domain.tozsamosc.ten_sam`, w odróżnieniu od `replies.incoming_after`
+    # i `nudge.run_once`. Tam porównanie ścisłe daje FAŁSZYWY NEGATYW (bot nie rozpoznaje własnej
+    # wiadomości, osoba wypada z pilotażu) i normalizacja je naprawia. Tutaj kierunek jest
+    # odwrotny: ścisłość daje fałszywy POZYTYW strażnika, czyli odmowę zapisu — a to jedyne
+    # miejsce stojące na granicy nieodwracalnego zapisu do grafiku klienta. Rozluźnienie
+    # porównania POSZERZYŁOBY to, co strażnik przepuszcza. Obie strony pochodzą tu dziś z jednej
+    # wartości (`build_schedule(pending.member_id, ...)`), więc nie zapala się przypadkiem.
     foreign = sorted(
         {s.user_id for s in schedule.shifts if s.user_id != member_id}
         | {t.user_id for t in time_offs if t.user_id != member_id}

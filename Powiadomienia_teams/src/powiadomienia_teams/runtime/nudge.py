@@ -17,6 +17,7 @@ from powiadomienia_teams.agent.interpreter import schedule_to_intervals
 from powiadomienia_teams.config import Settings
 from powiadomienia_teams.domain.czas import to_graph_iso
 from powiadomienia_teams.domain.models import Member
+from powiadomienia_teams.domain.tozsamosc import ten_sam, znormalizuj
 from powiadomienia_teams.graph.client import GraphClient
 from powiadomienia_teams.messages import build_nudge_text, to_html
 from powiadomienia_teams.reminders.detect import members_without_shifts, off_weekdays_by_member
@@ -100,7 +101,7 @@ def run_once(
     # innego (potwierdzone na żywo — „Virtual WorkMate" trafiło na listę braków). Filtr w KODZIE,
     # nie tylko w `ONLY_USER_IDS`, bo pusta lista odbiorców oznacza „wszyscy" i wtedy konfiguracja
     # nie chroni przed niczym.
-    members = [m for m in client.list_members(ctx.team_id) if m.user_id != me_id]
+    members = [m for m in client.list_members(ctx.team_id) if not ten_sam(m.user_id, me_id)]
 
     prior_monday, target_monday, target_end = week_windows(now, tz)
 
@@ -123,7 +124,10 @@ def run_once(
         # i jest kierunkowo bezpieczne — nic nie wychodzi — ale operator pilotażu nie ma
         # się z czego dowiedzieć, że jego pilotaż milczy z jego własnego powodu.
         przed = len(missing)
-        missing = [m for m in missing if m.user_id in settings.only_user_ids]
+        # `only_user_ids` jest już znormalizowane przy budowie `Settings`; normalizujemy więc
+        # drugą stronę — tę z Graph. Porównanie, NIE podmiana: `m.user_id` idzie dalej surowe,
+        # bo staje się kluczem stanu i `userId` w zapisie do Shifts.
+        missing = [m for m in missing if znormalizuj(m.user_id) in settings.only_user_ids]
         logger.info(
             "Zakres pilotażowy: %d z %d osób bez grafiku (lista ma %d pozycji)",
             len(missing), przed, len(settings.only_user_ids),

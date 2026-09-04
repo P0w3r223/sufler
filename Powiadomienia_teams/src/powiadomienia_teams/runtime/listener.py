@@ -72,6 +72,7 @@ from powiadomienia_teams.reminders.replies import (
     incoming_after,
     is_pure_affirmation,
     message_text,
+    obcy_nadawcy,
 )
 from powiadomienia_teams.reminders.timeoff import resolve_time_off
 from powiadomienia_teams.runtime import etykiety, operator
@@ -539,6 +540,32 @@ def _oznacz_wyslane(
     st.save_state(settings.state_path, state)
 
 
+# Alert o obcym nadawcy MUSI być dławiony: nasłuch odpytuje czat co `poll_interval_s` (domyślnie
+# 10 s), a cudza wiadomość zostaje w wątku na zawsze — bez dławienia byłoby to kilkaset alertów
+# na godzinę w jedynym kanale, jaki operator ma. Pamięć żyje tyle, co proces; po restarcie alert
+# pójdzie raz jeszcze i to jest właściwy kompromis (restart bywa właśnie reakcją na alert).
+# Docelowo przejmie to licznik obiegów `UNKNOWN` z progiem — ten sam wzorzec co `_PULS_PROG_ALERTU`.
+_ZGLOSZONE_OBCE: set[tuple[str, str]] = set()
+
+
+def _zglos_obcych_raz(
+    settings: Settings, pending: st.PendingReminder, obcy: list[str]
+) -> None:
+    """Zawołaj operatora RAZ na proces dla danej pary (czat, zestaw obcych nadawców)."""
+    klucz = (pending.chat_id, ",".join(sorted(obcy)))
+    if klucz in _ZGLOSZONE_OBCE:
+        return
+    _ZGLOSZONE_OBCE.add(klucz)
+    operator.alert(
+        settings,
+        "Obcy nadawca w rozmowie o grafiku",
+        f"W czacie z {etykiety.osoba(pending, settings)} pisze ktoś spoza rozmowy "
+        f"({', '.join(obcy)}). Jego treść NIE jest interpretowana ani zapisywana, ale dopóki tam "
+        f"jest, nie orzekamy o odpowiedzi tej osoby — jej temat zostaje otwarty. Sprawdź, czy "
+        f"wątek nie przestał być rozmową 1:1.",
+    )
+
+
 def _process_pending(
     settings: Settings,
     client: GraphClient,
@@ -558,7 +585,24 @@ def _process_pending(
     JEDYNĄ przesłanką uprawniającą do wygaszenia (patrz ``lifecycle.should_expire``). Wyjątek
     oznacza ``UNKNOWN`` i jest nadawany w miejscu wywołania.
     """
-    nowe = incoming_after(client.list_chat_messages(pending.chat_id), me_id, pending.watermark)
+    wiadomosci_czatu = client.list_chat_messages(pending.chat_id)
+    obcy = obcy_nadawcy(wiadomosci_czatu, me_id, nadawca=pending.member_id)
+    if obcy:
+        # Wątek przestał być 1:1 (ktoś dodany, migracja czatu). Cudza treść NIE pójdzie do modelu
+        # ani do grafiku — ale nie wolno też orzec, że pracownik milczy: `NOTHING_NEW` jest jedyną
+        # przesłanką wygaszenia (`lifecycle.should_expire`), a wygaszenie wysyła mu „nie dostałem
+        # odpowiedzi" i zamyka temat TERMINALNIE. To byłoby kłamstwo o cudzym zachowaniu, oparte
+        # na naszym własnym nieporozumieniu. `UNKNOWN` zostawia wpis otwarty — odwracalnie.
+        logger.error(
+            "Czat %s ma nadawców spoza rozmowy (%s) — nie orzekam o odpowiedzi tej osoby",
+            etykiety.osoba(pending, settings),
+            ", ".join(obcy),
+        )
+        _zglos_obcych_raz(settings, pending, obcy)
+        return ReadOutcome.UNKNOWN
+    nowe = incoming_after(
+        wiadomosci_czatu, me_id, pending.watermark, nadawca=pending.member_id
+    )
     if not nowe:
         return ReadOutcome.NOTHING_NEW
     # Cała porcja nowych wiadomości, od najstarszej. Decyzję podejmujemy z OSTATNIEJ, ale

@@ -1,5 +1,3 @@
-import pytest
-
 # 0.2.19 zastąpiło `newest_incoming` (jedna najnowsza wiadomość WSKAZANEJ osoby) przez
 # `incoming_after` (WSZYSTKIE wiadomości spoza bota, od najstarszej). Zmiana jest celowa
 # i naprawia realny błąd: pracownik piszący w dwóch dymkach był interpretowany tylko z drugiego.
@@ -12,6 +10,7 @@ from powiadomienia_teams.reminders.replies import (
     incoming_after,
     is_pure_affirmation,
     message_text,
+    obcy_nadawcy,
 )
 
 
@@ -34,12 +33,12 @@ def test_incoming_after_ignores_own_and_old():
         _msg("u1", "2026-07-19T17:00:00Z", "stara"),  # przed watermarkiem
         _msg("u1", "2026-07-19T18:00:00Z", "nowa"),
     ]
-    nowe = incoming_after(messages, me, after_iso="2026-07-19T17:30:00Z")
+    nowe = incoming_after(messages, me, after_iso="2026-07-19T17:30:00Z", nadawca="u1")
     assert [message_text(m) for m in nowe] == ["nowa"]
 
 
 def test_incoming_after_empty_when_only_own():
-    assert incoming_after([_msg("me", "2026-07-19T18:00:00Z")], "me") == []
+    assert incoming_after([_msg("me", "2026-07-19T18:00:00Z")], "me", nadawca="u1") == []
 
 
 def test_incoming_after_bierze_CALA_porcje_od_najstarszej():
@@ -52,7 +51,7 @@ def test_incoming_after_bierze_CALA_porcje_od_najstarszej():
         _msg("u1", "2026-07-19T18:00:00Z", "pon-pt 8-16"),
         _msg("u1", "2026-07-19T18:00:30Z", "w piątek mnie nie będzie"),
     ]
-    nowe = incoming_after(messages, "me")
+    nowe = incoming_after(messages, "me", nadawca="u1")
     assert [message_text(m) for m in nowe] == ["pon-pt 8-16", "w piątek mnie nie będzie"]
 
 
@@ -62,14 +61,14 @@ def test_incoming_after_compares_parsed_time_not_string():
         _msg("u1", "2026-07-19T18:00:00.500Z", "nowsza"),
         _msg("u1", "2026-07-19T18:00:00Z", "starsza"),
     ]
-    nowe = incoming_after(msgs, "me", after_iso="2026-07-19T18:00:00Z")
+    nowe = incoming_after(msgs, "me", after_iso="2026-07-19T18:00:00Z", nadawca="u1")
     assert [message_text(m) for m in nowe] == ["nowsza"]
 
 
 def test_incoming_after_pomija_wiadomosci_systemowe_bez_nadawcy():
     """Graph wstawia do wątku wpisy bez `from` — nie są odpowiedzią i nie mogą ruszyć watermarku."""
     messages = [{"createdDateTime": "2026-07-19T18:00:00Z", "body": {"content": "dołączono"}}]
-    assert incoming_after(messages, "me") == []
+    assert incoming_after(messages, "me", nadawca="u1") == []
 
 
 def test_is_pure_affirmation_accepts_clean_yes():
@@ -161,15 +160,7 @@ def test_memory_window_is_one_hour():
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0.2.19: incoming_after nie filtruje po nadawcy — bierze każdego poza botem. "
-        "PRZYCZYNA: jedyny warunek na nadawcę to `sender is None or sender == me_id` "
-        "(replies.py:77); przynależność do `pending` nie jest sprawdzana nigdzie."
-    ),
-)
-def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
+def test_incoming_after_odrzuca_nadawce_spoza_pendingu():
     """Nadawcą MUSI być ta osoba, o której grafik pytamy — nie „ktokolwiek poza botem".
 
     Warunek „nie bot" wygląda równoważnie tylko dopóki czat jest 1:1, a tworzy go
@@ -182,19 +173,13 @@ def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
     do wątku, który przestał być 1:1. To jest założenie, nie gwarancja typu.
     """
     messages = [_msg("obcy", "2026-07-19T18:00:00Z", "w piątek 10-20")]
-    assert incoming_after(messages, "me") == []
+    assert incoming_after(messages, "me", nadawca="u1") == []
+    # …i wołający MUSI się o tym dowiedzieć, bo pusta lista znaczy u niego „pracownik milczy",
+    # a to jedyna przesłanka wygaszenia. Stąd osobna funkcja, nie sam odsiew.
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == ["obcy"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0.2.19: porównanie nadawcy z me_id jest wrażliwe na wielkość liter. "
-        "PRZYCZYNA: `sender == me_id` (replies.py:77) — zwykłe porównanie napisów, bez "
-        "casefold. Graph potrafi zwrócić ten sam GUID w innej wielkości liter, a wtedy bot "
-        "bierze WŁASNĄ wiadomość za odpowiedź pracownika."
-    ),
-)
-def test_incoming_after_powinno_rozpoznac_wlasna_wiadomosc_niezaleznie_od_wielkosci_liter():
+def test_incoming_after_rozpoznaje_wlasna_wiadomosc_niezaleznie_od_wielkosci_liter():
     """GUID-y z Graph bywają w różnej wielkości liter, a `sender == me_id` porównuje znak w znak.
 
     Skutek rozjazdu jest gorszy niż zignorowanie wiadomości: bot bierze WŁASNY komunikat za
@@ -202,4 +187,6 @@ def test_incoming_after_powinno_rozpoznac_wlasna_wiadomosc_niezaleznie_od_wielko
     """
     guid = "AAAA1111-BBBB-2222-CCCC-333344445555"
     messages = [_msg(guid.lower(), "2026-07-19T18:00:00Z", "nasza")]
-    assert incoming_after(messages, guid) == []
+    assert incoming_after(messages, guid, nadawca="u1") == []
+    # To NASZA wiadomość, nie cudza — nie wolno jej zgłaszać jako obcego nadawcy.
+    assert obcy_nadawcy(messages, guid, nadawca="u1") == []

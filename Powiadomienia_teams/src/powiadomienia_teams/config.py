@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# `domain.tozsamosc` nie importuje niczego z projektu, więc cyklu tu nie ma.
+from powiadomienia_teams.domain.tozsamosc import znormalizuj
+
 _PREFIX = "POWIADOMIENIA_"
 
 # Delegowane scope Graph — wszystkie nadane i potwierdzone na żywo (Smoke #1, 2026-07-14).
@@ -398,6 +401,29 @@ class Settings:
         """
         do_poniedzialku = (7 - self.run_weekday) * 24 - self.run_hour - self.run_minute / 60
         return do_poniedzialku + self.reply_deadline_offset_h
+
+    def __post_init__(self) -> None:
+        """Normalizacja identyfikatorów pilotażu — RAZ, na granicy konfiguracji.
+
+        `ONLY_USER_IDS` wypełnia człowiek, czasem kopiując z portalu Azure, czyli w klamrach albo
+        wielkimi literami. Filtr w `runtime.nudge` porównywał to z `m.user_id` z Graph znak w znak,
+        więc taki wpis nie pasował do NIKOGO: pilotaż milczał, a podsumowanie mówiło „0 próśb" —
+        nieodróżnialnie od spokojnego tygodnia.
+
+        Normalizujemy tutaj, a nie w `from_env`, bo `Settings` bywa budowany wprost (testy, kod
+        wołający). I normalizujemy WARTOŚĆ, nie tylko porównanie — w odróżnieniu od identyfikatorów
+        z Graph, `only_user_ids` nie trafia ani do pliku stanu, ani do żadnego `POST`-a: służy
+        wyłącznie do testu przynależności i do wypisania w alercie startowym. Dzięki temu nowe
+        miejsce porównania nie musi pamiętać o `casefold` po tej stronie.
+
+        `frozen=True`, więc przez `object.__setattr__` — jedyna droga i celowo widoczna.
+
+        Uwaga na skutek uboczny: `operator.opis_kregu_odbiorcow` wypisuje tę listę w alercie
+        startowym, więc przestaje ona być DOSŁOWNĄ kopią wpisu z `env`. Alert mówi o tym wprost.
+        """
+        object.__setattr__(
+            self, "only_user_ids", tuple(znormalizuj(i) for i in self.only_user_ids)
+        )
 
     @property
     def webhook_alertow(self) -> str:
