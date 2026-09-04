@@ -18,11 +18,20 @@ class Person(BaseModel):
     ``source_id`` to klucz wpisu w mapie tożsamości, ``aad_user_id`` adresuje konto Teams/Entra,
     ``jira_user`` (e-mail albo accountId) to konto Jiry tej osoby.
 
+    ``aad_user_id`` jest WYMAGANE, bo to ono ADRESUJE człowieka: każda bramka autoryzacji
+    rozstrzyga po nim (odczyt bazy wiedzy, notatka ze spotkania, powłoka, mutacja notatek).
+    Wpis bez niego nie autoryzowałby niczego i byłby cichym niebytem — osoba „jest w mapie",
+    a każda bramka ją odrzuca.
+
+    ``jira_user`` jest OPCJONALNE (ADR 0070 §1). Puste znaczy **osoba nie ma konta Jira**, a nie
+    „konto nieznane" — to stan trwały i legalny, nie wpis do uzupełnienia. Taka osoba jest pełnym
+    członkiem pionu, ale narzędzia ``Jira`` nie dostaje w ogóle (ADR 0070 §3).
+
     Mapowanie jest jawną konfiguracją, nie dopasowaniem po nazwisku: zły ``jira_user`` pokazałby
     czyjeś zadania komuś innemu.
     """
 
     source_id: str
     aad_user_id: str
-    jira_user: str
+    jira_user: str = ""
     display_name: str = ""

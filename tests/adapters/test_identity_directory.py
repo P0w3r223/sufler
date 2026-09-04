@@ -4,6 +4,10 @@
 i ``resolve_by_git_email``/``git_email`` zniknęły razem z modułem kart czasu, który był ich
 jedynym konsumentem (ADR 0055) — dziś jest tylko wariant plikowy, współdzielony przez autoryzację
 notatki ze spotkania i "moje zadania" Jira.
+
+Od ADR 0070 mapa przyjmuje wpis „tylko Teams" — bez ``jira_user``. Wymagane zostaje wyłącznie
+``aad_user_id``; testy niżej trzymają OBIE strony tego progu, bo rozluźnienie w złą stronę daje
+wpis, który nie autoryzuje niczego, a zaostrzenie z powrotem odcina człowieka od bazy wiedzy.
 """
 
 from __future__ import annotations
@@ -50,10 +54,51 @@ def test_missing_identity_file_fails_at_startup(tmp_path: Path) -> None:
         YamlIdentityDirectory(tmp_path / "nie-ma.yaml")
 
 
-def test_entry_without_jira_user_fails_at_startup(tmp_path: Path) -> None:
-    """Niekompletna mapa = ktoś po cichu nie dostanie nic. Padamy przy starcie, nie przy pytaniu."""
-    with pytest.raises(ValueError, match="jira_user"):
-        YamlIdentityDirectory(_identities(tmp_path, "EMP-1:\n  aad_user_id: a\n"))
+def test_entry_without_jira_user_is_a_teams_only_member(tmp_path: Path) -> None:
+    """Wpis bez ``jira_user`` to osoba BEZ konta Jira — pełny członek pionu (ADR 0070 §1).
+
+    Test ODWRÓCONY 2026-09-04, nie dopisany: do tego dnia nazywał się
+    ``test_entry_without_jira_user_fails_at_startup`` i zamrażał regułę „oba pola wymagane".
+    Ta reguła trzymała bramkę odczytu bazy wiedzy (ADR 0062) wyłączoną od kiedy powstała, bo
+    w pionie jest osoba bez konta Jira, a bramka jest fail-closed — jej włączenie odcięłoby ją
+    od notatek. Zostawiam ten akapit, bo inaczej po latach wygląda to na rozluźnienie walidacji.
+    """
+    directory = YamlIdentityDirectory(_identities(tmp_path, "EMP-1:\n  aad_user_id: a\n"))
+
+    person = directory.resolve_by_aad_user_id("a")
+    assert person is not None
+    assert person.source_id == "EMP-1"
+    assert person.jira_user == ""
+
+
+def test_entry_without_aad_user_id_fails_at_startup(tmp_path: Path) -> None:
+    """``aad_user_id`` zostaje WYMAGANE — i to jest druga połowa ADR 0070 §1.
+
+    Pomyłka do popełnienia brzmi: „skoro jedno pole zrobiliśmy opcjonalnym, to drugie też".
+    Wpis bez ``aad_user_id`` nie autoryzuje NICZEGO (``_by_aad`` po prostu go pomija), więc
+    zamiast twardego błędu startu dostalibyśmy cichy niebyt: osoba jest w mapie, a każda bramka
+    ją odrzuca. To dokładnie ta klasa awarii, przed którą fail-fast tego modułu ma chronić.
+    """
+    with pytest.raises(ValueError, match="aad_user_id"):
+        YamlIdentityDirectory(_identities(tmp_path, "EMP-1:\n  jira_user: a@example.com\n"))
+
+
+def test_two_people_without_a_jira_account_both_load(tmp_path: Path) -> None:
+    """Dwoje ludzi bez konta Jira to NIE jest konto współdzielone (ADR 0070 §2).
+
+    Bez pominięcia pustych wartości w ``_reject_shared_identifiers`` DRUGA taka osoba kładłaby
+    start błędem „jira_user='' występuje u dwóch osób" — zatrzymanie fail-closed spowodowane tym,
+    że dwoje ludzi poprawnie nie ma niczego. Pion ma dziś jedną taką osobę; ten test broni dnia,
+    w którym pojawi się druga, bo wtedy awaria dotknie CAŁEJ mapy, nie tylko jej wpisu.
+    """
+    bez_jiry = "EMP-1:\n  aad_user_id: aad-1\nEMP-2:\n  aad_user_id: aad-2\n"
+
+    directory = YamlIdentityDirectory(_identities(tmp_path, bez_jiry))
+
+    pierwsza = directory.resolve_by_aad_user_id("aad-1")
+    druga = directory.resolve_by_aad_user_id("aad-2")
+    assert pierwsza is not None and pierwsza.source_id == "EMP-1"
+    assert druga is not None and druga.source_id == "EMP-2"
 
 
 def test_two_people_sharing_a_jira_account_fail_at_startup(tmp_path: Path) -> None:
