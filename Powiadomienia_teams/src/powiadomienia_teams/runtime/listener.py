@@ -62,6 +62,7 @@ from powiadomienia_teams.reminders.detect import (
 from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
+    przekroczyl_sufit,
     ready_for_self_fill_check,
     should_expire,
     still_writable,
@@ -82,6 +83,7 @@ from powiadomienia_teams.runtime.cisza import najblizsza_dozwolona, wolno_pisac
 from powiadomienia_teams.runtime.domkniecia import (
     powiadom_o_nieudanym_zapisie,
     zamknij_bez_zapisu,
+    zamknij_cicho_nierozstrzygniete,
     zamknij_samodzielnie_uzupelnione,
 )
 from powiadomienia_teams.runtime.snapshot import SnapshotGrafiku
@@ -341,6 +343,11 @@ def poll_replies(
     #    faktycznie udało się przeczytać, a bez niej krok 2 wygaszał także tych, których właśnie
     #    obsłużono albo których czatu nie dało się odczytać.
     outcomes: dict[str, ReadOutcome] = {}
+    # Migawka licznika nieudanych odczytów SPRZED obiegu — potrzebna wyłącznie po to, by dało się
+    # zauważyć POWRÓT czatu do zdrowia. Bez niej alert powrotu byłby ozdobą: `_commit` zeruje
+    # `unknown_count` (i musi, patrz tam), a krok 1.6 biegnie PO nim, więc widziałby już zero
+    # i nigdy nie odróżniłby „czat wrócił po trzech dobach" od „czat nigdy nie szwankował".
+    licznik_przed = {p.member_id: p.unknown_count for p in open_items}
     for pending in open_items:
         try:
             outcomes[pending.member_id] = _process_pending(
@@ -407,6 +414,12 @@ def poll_replies(
             zamknij_samodzielnie_uzupelnione(
                 settings, client, state, samodzielni, tz, now, okno_domkniec=okno_pierwotne,
             )
+
+    # 1.6. Wpisy, których CZATU NIE DA SIĘ ODCZYTAĆ (ADR 0007). Krok PO samouzupełnieniu i PRZED
+    #    wygaszaniem, więc niezmiennik z kroku 1.5 rozszerza się spójnie: odpowiedź > sprawdzenie
+    #    grafiku > SUFIT > wygaszenie. Kolejność ma znaczenie — kto uzupełnił grafik sam, ma dostać
+    #    podziękowanie, a nie ciche zamknięcie, choćby jego czat milczał od tygodnia.
+    _dogladaj_nierozstrzygniete(settings, state, outcomes, licznik_przed, now)
 
     # 2. Wygaś te, które PO odczycie wciąż są otwarte, minął im termin I MAMY NA TO DOWÓD: udany
     #    odczyt, który nic nie przyniósł. Domyślne UNKNOWN dla braku wpisu w `outcomes` to
@@ -513,6 +526,14 @@ def _commit(
     pending.employee_memory, pending.memory_started_at = pamiec, kotwica
     pending.watermark = wiadomosci[-1][0]
     pending.fail_count = 0  # ta porcja obsłużona — licznik prób startuje od zera
+    # Licznik nieudanych ODCZYTÓW też, i to nie jest symetria dla symetrii. Wyjątek z
+    # `_process_pending` przechodzi przez `_record_failure` (rośnie `fail_count`), ale dolatuje
+    # WYŻEJ do per-osobowego `except Exception` w `poll_replies` i staje się tam `UNKNOWN`. Bez tej
+    # linii `_MAX_PENDING_FAILURES` deterministycznych błędów INTERPRETACJI zapaliłoby alert
+    # „przypomnienia zablokowane na odczycie czatu" o czacie, który czyta się bez zarzutu.
+    # Z nią sekwencja wygląda 1, 2, (commit → 0) 1, 2, … i progu nie osiąga nigdy.
+    # ADR 0007 zapisuje to jako warunek dla C3, który opakuje w `try` kolejne wysyłki.
+    pending.unknown_count = 0
     # Na ścieżkach domykających temat (`_apply_confirmed_yes` ustawia APPLYING PRZED tym
     # wywołaniem) dopisana wyżej pamięć zostanie odsiana przy samym zapisie — patrz
     # `state._do_zapisu`. To nie przeoczenie: obiekt w pamięci procesu ma zostać spójny
@@ -546,7 +567,12 @@ def _oznacz_wyslane(
 # 10 s), a cudza wiadomość zostaje w wątku na zawsze — bez dławienia byłoby to kilkaset alertów
 # na godzinę w jedynym kanale, jaki operator ma. Pamięć żyje tyle, co proces; po restarcie alert
 # pójdzie raz jeszcze i to jest właściwy kompromis (restart bywa właśnie reakcją na alert).
-# Docelowo przejmie to licznik obiegów `UNKNOWN` z progiem — ten sam wzorzec co `_PULS_PROG_ALERTU`.
+#
+# Sprostowanie: zdanie „docelowo przejmie to licznik obiegów `UNKNOWN` z progiem" jest od ADR 0007
+# NIEPRAWDZIWE i nie ma być planem. `unknown_count` liczy wyłącznie awarie ODCZYTU, a obcy nadawca
+# daje `ReadOutcome.BLOCKED` i tego licznika nie rusza — właśnie po to, żeby sufit nie zamykał
+# komuś tygodnia dlatego, że kolega napisał w jego wątku. Przeniesienie dławienia do pliku stanu
+# (żeby przeżyło restart) pozostaje możliwe, ale jest OSOBNĄ decyzją, nie skutkiem ubocznym tej.
 _ZGLOSZONE_OBCE: set[str] = set()
 
 
@@ -612,7 +638,10 @@ def _process_pending(
                 ", ".join(obcy),
             )
             _zglos_obcych_raz(settings, pending, obcy)
-            return ReadOutcome.UNKNOWN
+            # BLOCKED, nie UNKNOWN: dla wygaszania znaczy to samo (`should_expire` przepuszcza
+            # wyłącznie NOTHING_NEW), ale licznik i sufit z ADR 0007 tej ścieżki nie obejmują —
+            # operator został właśnie zawołany linijkę wyżej, więc awaria nie jest cicha.
+            return ReadOutcome.BLOCKED
         return ReadOutcome.NOTHING_NEW
     # Wątek wrócił do porządku (albo nigdy go nie stracił) — zwolnij dławienie, żeby ewentualny
     # nawrót zawołał operatora ponownie zamiast milczeć do restartu procesu.
@@ -704,7 +733,128 @@ def _process_pending(
     return ReadOutcome.HANDLED
 
 
+def _dogladaj_nierozstrzygniete(
+    settings: Settings,
+    state: dict[str, st.PendingReminder],
+    outcomes: dict[str, ReadOutcome],
+    licznik_przed: dict[str, int],
+    now: datetime,
+) -> None:
+    """Krok 1.6: policz obiegi bez odczytu, zawołaj operatora po progu, zamknij po suficie (ADR 0007).
+
+    Źródłem prawdy jest ``outcomes``, a NIE ``state``: wpisu, którego w tym obiegu nie zbadaliśmy,
+    nie wolno zamknąć — nie wiemy o nim nic nowego. To ta sama zasada, co domyślne ``UNKNOWN``
+    w kroku 2, tylko w drugą stronę.
+
+    Status czytamy ze ``state`` już po kroku 1.5, bo ten mógł część wpisów domknąć jako
+    ``SELF_FILLED``. Zamknięcie wpisu terminalnego byłoby cichym nadpisaniem cudzego domknięcia —
+    i to dosłownie cichym, bo ta ścieżka nikomu nic nie wysyła.
+
+    ``BLOCKED`` (obcy nadawca) NIE jest tu liczony ani zamykany: to nie ta awaria. Operator został
+    o nim zawołany osobno, a zamknięcie znaczyłoby zamknięcie komuś tygodnia dlatego, że kolega
+    napisał w jego wątku.
+
+    Alerty są ZBIORCZE, jeden na obieg. Instalacja ma ośmioro ludzi, a awaria Graph dotyka ich
+    naraz — osiem osobnych powiadomień w jedynym kanale operatora nauczyłoby go ten kanał
+    ignorować. Ogon listy zwija się w liczbę, jak w ``service._MAX_ZAWIESZONYCH_W_ALERCIE``.
+    """
+    do_zamkniecia: list[st.PendingReminder] = []
+    progowe: list[st.PendingReminder] = []
+    powroty: list[st.PendingReminder] = []
+    zmiana = False
+
+    for member_id, outcome in outcomes.items():
+        pending = state.get(member_id)
+        if pending is None or pending.status not in (st.AWAITING_REPLY, st.AWAITING_CONFIRM):
+            continue
+        if outcome is not ReadOutcome.UNKNOWN:
+            # Cokolwiek poza awarią odczytu znaczy, że czat ODPOWIADA — nawet `BLOCKED`, bo tam
+            # odczyt się powiódł. Licznik wraca do zera; o powrocie sądzimy z migawki sprzed
+            # obiegu, bo `_commit` mógł już wyzerować pole.
+            if licznik_przed.get(member_id, 0) >= _PROG_CYKLI_BEZ_ODCZYTU:
+                powroty.append(pending)
+            if pending.unknown_count:
+                pending.unknown_count = 0
+                zmiana = True
+            continue
+        if przekroczyl_sufit(pending, now, settings.sufit_wpisu_bez_odczytu_h):
+            # Wpis i tak schodzi z obiegu, więc licznika NIE podbijamy i progu nie ruszamy —
+            # inaczej ostatni obieg potrafiłby wysłać dwa alerty o tej samej osobie naraz.
+            do_zamkniecia.append(pending)
+            continue
+        pending.unknown_count += 1
+        zmiana = True
+        # Przy RÓWNOŚCI, nie przy przekroczeniu — wzorzec `_PULS_PROG_ALERTU`. Trwała awaria ma
+        # zawołać operatora raz, a nie co godzinę aż do sufitu.
+        if pending.unknown_count == _PROG_CYKLI_BEZ_ODCZYTU:
+            progowe.append(pending)
+
+    if do_zamkniecia:
+        zamknij_cicho_nierozstrzygniete(settings, state, do_zamkniecia)
+        operator.alert(
+            settings,
+            "Przypomnienia zablokowane na odczycie czatu",
+            f"ZAMKNIĘTE BEZ SŁOWA DO PRACOWNIKA: {len(do_zamkniecia)} "
+            f"{'wpis' if len(do_zamkniecia) == 1 else 'wpisów'} zszedł z obiegu po "
+            f"{settings.sufit_wpisu_bez_odczytu_h} h bez ani jednego udanego odczytu czatu. "
+            f"Nikt z tych osób NIE dostał wiadomości — nie mamy podstaw twierdzić, że nie "
+            f"odpisały (ADR 0007). Grafik na ten tydzień trzeba z nimi ustalić ręcznie.\n"
+            + _lista_osob(settings, do_zamkniecia),
+        )
+    elif zmiana:
+        # Zamknięcie zapisało stan samo; poza nim zapisujemy TYLKO gdy licznik realnie drgnął.
+        # Bezwarunkowy zapis znaczyłby plik stanu przepisywany co `poll_interval_s` (10 s) razem
+        # z `fsync` i kopią, przy każdej otwartej rozmowie.
+        st.save_state(settings.state_path, state)
+
+    if progowe:
+        operator.alert(
+            settings,
+            "Przypomnienia zablokowane na odczycie czatu",
+            f"{_PROG_CYKLI_BEZ_ODCZYTU} obiegi z rzędu bez udanego odczytu czatu dla "
+            f"{len(progowe)} {'osoby' if len(progowe) == 1 else 'osób'}. Wpis zostaje OTWARTY "
+            f"(nie wiemy, czy ktoś odpisał), ale blokuje przypomnienie tej osoby w kolejnych "
+            f"tygodniach. Po {settings.sufit_wpisu_bez_odczytu_h} h od ostatniej aktywności "
+            f"zostanie zamknięty po cichu.\n" + _lista_osob(settings, progowe),
+        )
+    if powroty:
+        operator.alert(
+            settings,
+            "Odczyt czatu wrócił",
+            f"Czat znów daje się odczytać dla {len(powroty)} "
+            f"{'osoby' if len(powroty) == 1 else 'osób'}.\n" + _lista_osob(settings, powroty),
+            waga=alerts.INFO,
+        )
+
+
+def _lista_osob(settings: Settings, wpisy: list[st.PendingReminder]) -> str:
+    """Etykiety osób do treści alertu, z ogonem zwiniętym w liczbę (alert czyta się na telefonie).
+
+    Etykieta idzie przez ``etykiety.osoba``, czyli przez bramkę ``LOGUJ_NAZWISKA`` — webhook alertów
+    bywa poza organizacją (ADR 0006). Treści wyjątku tu nie ma celowo: przyczyna jest w logu.
+    """
+    widoczne = wpisy[:_MAX_OSOB_W_ALERCIE]
+    wiersze = [f"• {etykiety.osoba(p, settings)} (tydzień {p.week_start})" for p in widoczne]
+    if len(wpisy) > _MAX_OSOB_W_ALERCIE:
+        wiersze.append(f"• …i {len(wpisy) - _MAX_OSOB_W_ALERCIE} więcej")
+    return "\n".join(wiersze)
+
+
 _MAX_PENDING_FAILURES = 3
+
+# Ogon listy w alercie zwija się w liczbę — ta sama wartość i ten sam powód co
+# `service._MAX_ZAWIESZONYCH_W_ALERCIE` i `operator._MAX_ID_W_ALERCIE`: operator ma się uczyć
+# jednego języka alertów, nie trzech.
+_MAX_OSOB_W_ALERCIE = 10
+
+# Po ilu obiegach Z RZĘDU z nieudanym ODCZYTEM czatu zawołać operatora (ADR 0007). Nie jest to
+# pokrętło konfiguracji, tak samo jak `_PULS_PROG_ALERTU` i `_PROG_ALERTU_PRZEKROCZEN`: „po ilu
+# awariach zawołać człowieka" nie jest decyzją, którą ktokolwiek podejmuje w `env`, a każdy klucz
+# to kolejna pozycja w `env.example`, w `validate()` i kolejna okazja do rozjazdu.
+#
+# Trzy obiegi to w produkcji około trzech GODZIN, nie trzydziestu sekund: bez `HANDLED` backoff
+# rozciąga odstęp do `poll_max_interval_s` (1 h), więc próg nie zapala się przy chwilowym 5xx.
+_PROG_CYKLI_BEZ_ODCZYTU = 3
 
 
 def _record_failure(

@@ -258,6 +258,12 @@ def alias_klucza_zignorowany() -> bool:
     return bool(_sekret(NAZWA_KLUCZA_MODELU)) and bool(_sekret(ALIAS_KLUCZA_MODELU))
 
 
+# Długość cyklu, wokół którego kręci się cała ta usługa: jeden przebieg tygodniowy. Nazwana, bo
+# `sufit_wpisu_bez_odczytu_h` jest z niej WYPROWADZONY (ADR 0007) — goła `168` w warunku walidacji
+# wyglądałaby na dowolnie dobrany limit, a jest granicą wyścigu z kolejnym przebiegiem.
+_GODZIN_W_TYGODNIU = 7 * 24
+
+
 @dataclass(frozen=True)
 class Settings:
     client_id: str
@@ -300,6 +306,21 @@ class Settings:
     # by wykryć samodzielne uzupełnienie grafiku. -1 wyłącza funkcję; 0 = sprawdzaj co cichy cykl.
     self_fill_check_min_idle_s: int = 3600
     catchup_grace_hours: int = 6  # jak długo po minionym terminie wolno nadrobić przebieg (0=off)
+    # Twardy sufit WIEKU wpisu, którego nie da się rozstrzygnąć, bo czat nie daje się odczytać
+    # (ADR 0007). Liczony od kotwicy `lifecycle._anchor` („jak dawno cokolwiek się tu działo"),
+    # NIE od `week_start` — mierzymy bezruch rozmowy, nie odległość od tygodnia docelowego.
+    #
+    # 144 h = 6 dób, czyli doba KRÓCEJ niż cykl tygodniowy (168 h), i ta doba nie jest zapasem
+    # „na wszelki wypadek". Kotwicą stojącego wpisu jest w najgorszym razie `nudged_at` ustawiony
+    # w trakcie przebiegu, więc sufit 168 h wypadałby dokładnie w chwili kolejnego przebiegu.
+    # Przegrana tego wyścigu nie jest niewinna: `run_once` wchodzi wtedy w gałąź nadpisania, która
+    # alarmuje operatora, że uzgodnienie nie trafiło do grafiku — a uzgodnienia nigdy nie było.
+    # Doba pokrywa okno łaski (`catchup_grace_hours`, 6 h), odłożenie obiegu na godziny ciszy
+    # (do 11 h przy 20–7) i dryf DST (1 h): razem 18 h.
+    #
+    # Nazwa świadomie POZA rodziną `REPLY_*` — `REPLY_WINDOW_HOURS` leży na `USUNIETE_NAZWY`
+    # właśnie za zwinięcie dwóch różnych ról w jedną liczbę.
+    sufit_wpisu_bez_odczytu_h: int = 144
     dry_run: bool = True
     only_user_ids: tuple[str, ...] = ()  # pusty = wszyscy; ustawiony = tryb pilotażowy
     # Deklaracja ZAMIARU ograniczenia odbiorców, niezależna od samej listy. Pusta `only_user_ids`
@@ -508,6 +529,28 @@ class Settings:
             )
         if self.catchup_grace_hours < 0:
             raise ConfigError(f"catchup_grace_hours < 0 niedozwolone: {self.catchup_grace_hours}")
+        # Sufitu NIE da się wyłączyć zerem — wyłączony przywraca dokładnie tę usterkę, którą
+        # ADR 0007 zamyka (wpis wisi bez końca, blokując osobę co tydzień), i robi to bezgłośnie.
+        if self.sufit_wpisu_bez_odczytu_h <= 0:
+            raise ConfigError(
+                f"sufit_wpisu_bez_odczytu_h musi być > 0 (nie da się wyłączyć — ADR 0007): "
+                f"{self.sufit_wpisu_bez_odczytu_h}"
+            )
+        # Poniżej kurtuazji sufit zamykałby rozmowy W TOKU: `reply_min_hours` to dolna granica
+        # terminu liczona od ostatniej prośby bota, a kotwica sufitu tę prośbę obejmuje.
+        if self.sufit_wpisu_bez_odczytu_h <= self.reply_min_hours:
+            raise ConfigError(
+                f"sufit_wpisu_bez_odczytu_h ({self.sufit_wpisu_bez_odczytu_h} h) musi być > "
+                f"reply_min_hours ({self.reply_min_hours} h) — inaczej sufit zamykałby rozmowy, "
+                f"w których bot dopiero co o coś poprosił"
+            )
+        # Powyżej tygodnia sufit ściga się z kolejnym przebiegiem — patrz komentarz przy polu.
+        if self.sufit_wpisu_bez_odczytu_h > _GODZIN_W_TYGODNIU:
+            raise ConfigError(
+                f"sufit_wpisu_bez_odczytu_h ({self.sufit_wpisu_bez_odczytu_h} h) > "
+                f"{_GODZIN_W_TYGODNIU} h: sufit dłuższy niż cykl tygodniowy wypada dopiero po "
+                f"kolejnym przebiegu, który nadpisze wpis i zaalarmuje o nieistniejącym uzgodnieniu"
+            )
         if self.heartbeat_interval_h <= 0:
             raise ConfigError(f"heartbeat_interval_h musi być > 0: {self.heartbeat_interval_h}")
         if self.health_max_age_s <= 0:
@@ -604,6 +647,7 @@ class Settings:
             poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 3600),
             self_fill_check_min_idle_s=_int("SELF_FILL_CHECK_MIN_IDLE_S", 3600),
             catchup_grace_hours=_int("CATCHUP_GRACE_HOURS", 6),
+            sufit_wpisu_bez_odczytu_h=_int("SUFIT_WPISU_BEZ_ODCZYTU_H", 144),
             dry_run=_bool("DRY_RUN", True),
             only_user_ids=_list("ONLY_USER_IDS"),
             pilotaz=_bool("PILOTAZ", False),

@@ -38,6 +38,16 @@ class ReadOutcome(Enum):
     # Nic pewnego nie ustaliliśmy: odczyt czatu padł ALBO obsługa wywróciła się w połowie. Jedno
     # i drugie znaczy to samo dla wygaszania — nie ma podstaw, by twierdzić „nie odpisał".
     UNKNOWN = "unknown"
+    # Odczyt się UDAŁ, ale wątek przestał być rozmową 1:1 — jest w nim ktoś obcy, więc o TEJ osobie
+    # nie orzekamy. Dla wygaszania znaczy dokładnie to samo co `UNKNOWN` (patrz ``should_expire``),
+    # ale jest osobną wartością, bo licznik i sufit z ADR 0007 celowo tej ścieżki NIE obejmują:
+    # tam operator jest już zawołany (``listener._zglos_obcych_raz``), więc awaria nie jest cicha,
+    # a zamknięcie wpisu znaczyłoby zamknięcie komuś tygodnia dlatego, że kolega napisał w wątku.
+    #
+    # Czwarta wartość enuma mimo N34: N34 chroni wartości ZAPISYWANE NA DYSK, żeby cofnięcie obrazu
+    # było samą podmianą wersji. `ReadOutcome` żyje wyłącznie w pamięci jednego obiegu i nigdy nie
+    # jest serializowany, więc powód stojący za N34 tu nie sięga.
+    BLOCKED = "blocked"
 
 
 def _najpozniejszy(*znaczniki: str) -> datetime | None:
@@ -217,6 +227,27 @@ def should_expire(
     if read is not ReadOutcome.NOTHING_NEW:
         return False
     return is_expired(pending, now, okno)
+
+
+def przekroczyl_sufit(pending: PendingReminder, now: datetime, sufit_h: int) -> bool:
+    """Czy wpis jest STARSZY niż twardy sufit wieku (ADR 0007) — kandydat do CICHEGO zamknięcia.
+
+    Osobny predykat obok ``should_expire``, w tym samym pliku, i to jest celowe: ADR 0003 umieścił
+    politykę wygaszania tutaj, „żeby niezmiennik dało się przeczytać w jednym miejscu". Sufit ten
+    niezmiennik OSŁABIA — zamyka wpis BEZ dowodu z udanego odczytu — więc musi być czytelny obok
+    reguły, którą nadwyręża, a nie schowany w orkiestratorze.
+
+    **Ta funkcja nie uprawnia do ŻADNEJ wiadomości do pracownika.** Mówi wyłącznie „ten wpis stoi
+    tak długo, że przestaje być użyteczny". O zachowaniu człowieka nadal nic nie wiemy, więc
+    zamknięcie z sufitu jest ciche (``domkniecia.zamknij_cicho_nierozstrzygniete``); przepuszczenie
+    go przez ``zamknij_bez_zapisu`` wysłałoby „Nie dostałem odpowiedzi", czyli zdanie, którego nie
+    mamy prawa wypowiedzieć.
+
+    Bez kotwicy → ``False``: nie znamy wieku wpisu, a kierunek bezpieczny to zostawić go otwartym
+    (tak samo jak ``prune_terminal``). ``>=``, bo tak porównuje ``is_expired``.
+    """
+    wiek = wiek_kotwicy(pending, now)
+    return wiek is not None and wiek >= timedelta(hours=sufit_h)
 
 
 def ready_for_self_fill_check(

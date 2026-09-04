@@ -74,6 +74,18 @@ class PendingReminder:
     # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
     # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``runtime.listener._record_failure``).
     fail_count: int = 0
+    # Obiegi Z RZĘDU, w których ODCZYT CZATU tej osoby rzucił wyjątkiem (zeruje `_commit`, tak jak
+    # `fail_count`). Liczy wyłącznie awarię odczytu: wątek z obcym nadawcą daje `ReadOutcome.BLOCKED`
+    # i tego licznika NIE rusza (ADR 0007), bo tam operator jest już zawołany osobno.
+    #
+    # OSOBNE pole, a nie wspólne z `fail_count`, i to nie jest kosmetyka: przekroczenie progu
+    # `fail_count` wysyła pracownikowi „Nie do końca zrozumiałem" DO CZATU — czyli dokładnie tam,
+    # gdzie z definicji nie mamy dostępu. Zlanie liczników zamieniłoby alert dla operatora na
+    # wiadomość wysyłaną w próżnię.
+    #
+    # Pole opcjonalne — stare pliki stanu bez niego dostają 0, a starszy obraz odsieje nieznany
+    # klucz przez `_FIELDS`, więc cofnięcie po tagu obrazu zostaje bezpieczne w obie strony.
+    unknown_count: int = 0
     # Pamięć rozmowy: WYŁĄCZNIE wiadomości pracownika (nie bota), od najstarszej do najnowszej,
     # przycięta do ostatnich 10 (``replies.MEMORY_CAP``). Kontekst wieloturowy dla interpretera.
     # Pole opcjonalne — stare pliki stanu bez niego dostają pustą listę.
