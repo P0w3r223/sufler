@@ -80,4 +80,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "-q"
+# `-rxX` wypisuje POWÓD każdego xfail i xpass. Bez tego `-q` pokazuje samo `x`, a te znaczniki
+# niosą tu opisy zweryfikowanych usterek 0.2.19 — informację, dla której w ogóle istnieją.
+# Liczy się zwłaszcza przy biegu nocnym: `xfail(strict=True)` zapala się CZERWONO dokładnie
+# wtedy, gdy ktoś usterkę NAPRAWI i nie zdejmie znacznika. To zamierzone, ale bez powodu w logu
+# wygląda o 6 rano jak regresja zamiast jak zaproszenie do skasowania jednej linijki.
+addopts = "-q -rxX"
