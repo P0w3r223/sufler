@@ -1,14 +1,20 @@
 from datetime import datetime, timedelta, timezone
 
+from zoneinfo import ZoneInfo
+
+from powiadomienia_teams.config import OknoOdpowiedzi
 from powiadomienia_teams.domain.models import TimeOff
+# 0.2.19 zamieniło OKNO liczone od ostatniej aktywności na TERMIN KALENDARZOWY
+# (`OknoOdpowiedzi`: początek tygodnia + offset, z dolną granicą kurtuazji od prośby BOTA).
+# `past_hard_ceiling` zniknął razem z polityką kotwicy — patrz komentarz na końcu pliku.
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     is_expired,
-    past_hard_ceiling,
     prune_terminal,
     ready_for_self_fill_check,
     should_expire,
     still_writable,
+    termin_odpowiedzi,
 )
 from powiadomienia_teams.state import (
     APPLIED,
@@ -19,7 +25,11 @@ from powiadomienia_teams.state import (
 )
 
 UTC = timezone.utc
-NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)  # czwartek przed tygodniem docelowym
+WAW = ZoneInfo("Europe/Warsaw")
+# Wartości domyślne z `config.from_env`: termin w poniedziałek 05:00 lokalnie, kurtuazja 24 h.
+OKNO = OknoOdpowiedzi(offset_h=5, min_h=24, tz=WAW)
+TERMIN = datetime(2026, 7, 20, 5, 0, tzinfo=WAW)  # week_start 2026-07-20 + 5 h
 
 
 def _iso(dt: datetime) -> str:
@@ -38,32 +48,58 @@ def _pending(status=AWAITING_REPLY, watermark="", nudged_at=""):
     )
 
 
-def test_is_expired_past_window():
-    p = _pending(nudged_at=_iso(NOW - timedelta(hours=49)))
-    assert is_expired(p, NOW, 48) is True
+def test_termin_bierze_sie_z_KALENDARZA_a_nie_z_wieku_wpisu():
+    """Sedno zmiany 0.2.13: termin wisi na tygodniu docelowym, nie na ostatniej aktywności.
+
+    Okno liczone od aktywności zamykało się przy przebiegu w piątek już w NIEDZIELĘ — przed
+    początkiem tygodnia, którego dotyczyło — więc człowiek siadający do grafiku w poniedziałek
+    rano był po terminie, choć zachował się normalnie.
+    """
+    assert termin_odpowiedzi(_pending(nudged_at=_iso(NOW)), OKNO) == TERMIN
 
 
-def test_not_expired_within_window():
-    p = _pending(nudged_at=_iso(NOW - timedelta(hours=47)))
-    assert is_expired(p, NOW, 48) is False
+def test_po_terminie_kalendarzowym_wpis_jest_wygasly():
+    p = _pending(nudged_at=_iso(NOW - timedelta(hours=200)))
+    assert is_expired(p, TERMIN + timedelta(minutes=1), OKNO) is True
 
 
-def test_watermark_extends_window_over_nudge():
-    # Rozmowa w toku: nudge dawno, ale ostatnia aktywność świeża → okno liczone od aktywności.
-    p = _pending(
-        watermark=_iso(NOW - timedelta(hours=1)),
-        nudged_at=_iso(NOW - timedelta(hours=100)),
+def test_przed_terminem_wpis_nie_jest_wygasly():
+    assert is_expired(_pending(nudged_at=_iso(NOW)), NOW, OKNO) is False
+
+
+def test_aktywnosc_PRACOWNIKA_nie_przedluza_terminu():
+    """Drugi defekt polityki kotwicy: okno przedłużało się własnym ogonem.
+
+    Kotwicą było `max(watermark, bot_last_message_at, nudged_at)`, a bot odzywa się w otwartym
+    temacie przy każdym doprecyzowaniu — więc rozmowa dożywała kolejnego piątku i zostawała
+    nadpisana razem z uzgodnionym grafikiem. Kurtuazja liczy się dziś WYŁĄCZNIE od prośby bota.
+    """
+    swiezy_watermark = _pending(
+        watermark=_iso(TERMIN + timedelta(hours=1)), nudged_at=_iso(NOW - timedelta(hours=200))
     )
-    assert is_expired(p, NOW, 48) is False
+    assert termin_odpowiedzi(swiezy_watermark, OKNO) == TERMIN
+    assert is_expired(swiezy_watermark, TERMIN + timedelta(hours=2), OKNO) is True
 
 
-def test_legacy_record_without_nudged_at_uses_watermark():
-    p = _pending(watermark=_iso(NOW - timedelta(hours=49)))  # nudged_at="" (stary wpis)
-    assert is_expired(p, NOW, 48) is True
+def test_prosba_BOTA_odsuwa_termin_o_kurtuazje():
+    """Jedyne, co zostało z kotwicy: nie zamykamy tematu zaraz po tym, jak bot o coś poprosił.
+
+    Bez tego pending obsłużony po przestoju dłuższym niż tydzień dostawał prośbę o potwierdzenie
+    i wygasał w kolejnym cyklu — po kilkunastu sekundach, bo obsłużona odpowiedź resetuje backoff.
+    """
+    prosba = TERMIN + timedelta(hours=10)
+    p = _pending(nudged_at=_iso(prosba))
+    assert termin_odpowiedzi(p, OKNO) == prosba + timedelta(hours=OKNO.min_h)
+    assert is_expired(p, prosba + timedelta(hours=23), OKNO) is False
+    assert is_expired(p, prosba + timedelta(hours=25), OKNO) is True
 
 
-def test_record_without_anchor_never_expires():
-    assert is_expired(_pending(), NOW, 48) is False  # watermark="" i nudged_at=""
+def test_nieczytelny_week_start_znaczy_ze_wpis_NIE_wygasa():
+    """Brak wyznaczalnego terminu jest tak samo bezpieczny jak dawny brak kotwicy."""
+    p = _pending()
+    p.week_start = "nie-data"
+    assert termin_odpowiedzi(p, OKNO) is None
+    assert is_expired(p, datetime(2030, 1, 1, tzinfo=UTC), OKNO) is False
 
 
 def test_prune_drops_old_terminal_keeps_fresh_and_open():
@@ -90,31 +126,31 @@ def test_prune_returns_new_dict_without_mutating_input():
 
 # --- should_expire: termin to za mało, potrzebny DOWÓD (ADR 0003) ---------------------------
 
-_PO_TERMINIE = _iso(NOW - timedelta(hours=49))
+_PO_TERMINIE = TERMIN + timedelta(hours=1)
 
 
 def test_should_expire_only_on_successful_read_finding_nothing():
-    p = _pending(nudged_at=_PO_TERMINIE)
-    assert should_expire(p, NOW, 48, read=ReadOutcome.NOTHING_NEW) is True
+    p = _pending(nudged_at=_iso(NOW))
+    assert should_expire(p, _PO_TERMINIE, OKNO, read=ReadOutcome.NOTHING_NEW) is True
 
 
 def test_handled_reply_blocks_expiry_even_after_deadline():
     # Przestój dłuższy niż okno: odpowiedź czekała w czacie i właśnie została obsłużona. Wygaszenie
     # w tym samym przebiegu wysłałoby prośbę o potwierdzenie i zaraz po niej „brak odpowiedzi".
-    p = _pending(nudged_at=_PO_TERMINIE)
-    assert should_expire(p, NOW, 48, read=ReadOutcome.HANDLED) is False
+    p = _pending(nudged_at=_iso(NOW))
+    assert should_expire(p, _PO_TERMINIE, OKNO, read=ReadOutcome.HANDLED) is False
 
 
 def test_failed_read_blocks_expiry_even_after_deadline():
     # Brak dowodu to nie dowód braku — awaria odczytu nie może kosztować pracownika grafiku.
-    p = _pending(nudged_at=_PO_TERMINIE)
-    assert should_expire(p, NOW, 48, read=ReadOutcome.UNKNOWN) is False
+    p = _pending(nudged_at=_iso(NOW))
+    assert should_expire(p, _PO_TERMINIE, OKNO, read=ReadOutcome.UNKNOWN) is False
 
 
 def test_evidence_alone_does_not_expire_before_deadline():
     # Kontrola w drugą stronę: dowód bez upływu terminu też nie wygasza.
     p = _pending(nudged_at=_iso(NOW - timedelta(hours=1)))
-    assert should_expire(p, NOW, 48, read=ReadOutcome.NOTHING_NEW) is False
+    assert should_expire(p, NOW, OKNO, read=ReadOutcome.NOTHING_NEW) is False
 
 
 # --- still_writable: użyteczność zapisu ma własny termin (ADR 0003) -------------------------
@@ -212,68 +248,28 @@ def test_ready_for_self_fill_check_watermark_extends_like_expiry():
     assert ready_for_self_fill_check(p, NOW, 3600) is False
 
 
-def test_twardy_sufit_domyka_wpis_ktory_nigdy_nie_dostal_dowodu():
-    """Wpis, którego czatu trwale nie da się odczytać, musi kiedyś zejść ze stanu.
+# --- Twardy sufit: czego 0.2.19 NIE ma i czym to zastąpiło ---------------------------------
+#
+# Linia repozytorium miała `past_hard_ceiling` (3 × okno) na jeden konkretny problem: `should_expire`
+# słusznie odmawia wygaszenia bez udanego odczytu („brak dowodu ≠ dowód braku"), więc wpis, którego
+# czatu trwale nie da się odczytać, nigdy nie stawał się terminalny, nigdy nie podlegał
+# `prune_terminal`, a `run_once` co tydzień omijał tę osobę, bo jej wpis „istniał".
+#
+# W 0.2.19 sufitu nie ma, ale dziura jest domknięta z drugiej strony i wcześniej: po
+# `listener._MAX_PENDING_FAILURES` nieudanych obiegach `_record_failure` PRZESUWA watermark
+# i zamyka bramkę zapisu, więc kolejny obieg widzi `NOTHING_NEW` i termin kalendarzowy może
+# orzec wygaśnięcie. Zamiast liczyć wielokrotność okna, liczymy nieudane próby — bliżej przyczyny.
+#
+# Testy tego mechanizmu należą do `test_app.py` (ścieżka listenera), nie tutaj: `lifecycle` jest
+# czystą arytmetyką terminu i o nieudanych odczytach nic nie wie.
 
-    `should_expire` słusznie odmawia wygaszenia bez udanego odczytu („brak dowodu ≠ dowód
-    braku"). Gdy odczyt pada TRWALE, ta odmowa jest wieczna: wpis nigdy nie jest terminalny,
-    nigdy nie podlega `prune_terminal`, a `run_once` co tydzień omija tę osobę, bo jej wpis
-    „istnieje". Sufit domyka to od góry.
+
+def test_termin_kalendarzowy_sam_z_siebie_nie_wisi_na_kotwicy():
+    """Kontrola pozostała po `past_hard_ceiling`: sam upływ terminu nie zależy od stanu rozmowy.
+
+    Wpis bez jednego znacznika czasu (żadnej aktywności, żadnej prośby) i tak ma termin, bo bierze
+    go z tygodnia docelowego. W polityce kotwicy taki wpis nie wygasał NIGDY.
     """
-    nudge = "2026-07-17T09:00:00Z"
-    pending = PendingReminder(
-        member_id="u1",
-        member_name="Ala",
-        chat_id="c1",
-        week_start="2026-07-20",
-        status="awaiting_reply",
-        watermark=nudge,
-        nudged_at=nudge,
-    )
-    kotwica = datetime(2026, 7, 17, 9, 0, tzinfo=timezone.utc)
-    # Zwykłe okno (48 h) już minęło, ale sufit (3 × 48 h) jeszcze nie.
-    assert not past_hard_ceiling(pending, kotwica + timedelta(hours=100), 48)
-    assert past_hard_ceiling(pending, kotwica + timedelta(hours=145), 48)
-
-
-def test_twardy_sufit_nie_dziala_bez_kotwicy():
-    """Bez znacznika czasu nie znamy wieku wpisu — zgadywanie byłoby gorsze od czekania."""
-    pending = PendingReminder(
-        member_id="u1",
-        member_name="Ala",
-        chat_id="c1",
-        week_start="2026-07-20",
-        status="awaiting_reply",
-    )
-    assert not past_hard_ceiling(pending, datetime(2030, 1, 1, tzinfo=timezone.utc), 48)
-
-
-def test_prune_zostawia_wpis_z_niewyslana_wiadomoscia():
-    """Godziny ciszy PRZESUWAJĄ wysyłkę, nie kasują jej — GC nie może zjeść wpisu z kolejki.
-
-    Domknięcie odłożone w piątek wieczorem czeka do poniedziałku rana, czyli dłużej niż typowe
-    `retain_hours`. Bez tego wyjątku tygodniowe GC kasowałoby wpis razem z niewysłaną wiadomością.
-    """
-    stary = "2026-07-01T09:00:00Z"
-    z_kolejka = PendingReminder(
-        member_id="u1",
-        member_name="Ala",
-        chat_id="c1",
-        week_start="2026-07-06",
-        status=EXPIRED,
-        watermark=stary,
-        nudged_at=stary,
-        odlozona_wiadomosc="<p>domknięcie</p>",
-    )
-    bez_kolejki = PendingReminder(
-        member_id="u2",
-        member_name="Bok",
-        chat_id="c2",
-        week_start="2026-07-06",
-        status=EXPIRED,
-        watermark=stary,
-        nudged_at=stary,
-    )
-    stan = {"u1": z_kolejka, "u2": bez_kolejki}
-    zostalo = prune_terminal(stan, datetime(2026, 8, 1, tzinfo=timezone.utc), 48)
-    assert set(zostalo) == {"u1"}
+    goly = _pending()  # watermark="" i nudged_at=""
+    assert termin_odpowiedzi(goly, OKNO) == TERMIN
+    assert is_expired(goly, TERMIN + timedelta(seconds=1), OKNO) is True

@@ -6,31 +6,29 @@ from typing import Any
 
 import pytest
 
-from powiadomienia_teams.app import (
-    _MAX_CYKLI_UNKNOWN,
-    _MAX_PENDING_FAILURES,
-    CrossUserWriteError,
+# 0.2.19 rozbiło monolit `app.py` na `runtime/{nudge,listener,service,operator}` + `cli`.
+# `app` został fasadą re-eksportu, więc prywatne nazwy bierzemy z modułów, w których teraz żyją.
+from powiadomienia_teams.app import poll_replies, run_once
+from powiadomienia_teams.cli import _ensure_authenticated
+from powiadomienia_teams.runtime.operator import zglos_utrate_sesji
+from powiadomienia_teams.healthcheck import odswiez_puls
+from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
+from powiadomienia_teams.runtime.listener import _MAX_PENDING_FAILURES
+from powiadomienia_teams.runtime.service import (
     StanPulsu,
-    WynikPrzebiegu,
     _catchup_due,
-    _ensure_authenticated,
-    _handle_auth_loss,
     _przebieg_i_podsumowanie,
     _puls_sesji,
     _run_once_with_retry,
     _safe_run_once,
     _send_summary,
-    _spij_z_pulsem,
-    _touch_heartbeat,
-    ensure_single_owner,
-    poll_replies,
-    run_once,
-    week_windows,
+    spij_z_pulsem,
 )
+from powiadomienia_teams.scheduler.weekly import week_windows
 from powiadomienia_teams.config import Settings
 from powiadomienia_teams.domain.models import Member, Shift, TimeOff, WeekSchedule
 from powiadomienia_teams.graph.auth import AmbiguousAccountError, AuthExpiredError
-from powiadomienia_teams.reminders.replies import newest_incoming
+from powiadomienia_teams.reminders.replies import incoming_after
 from powiadomienia_teams.reminders.timeoff import TeamReasons
 from powiadomienia_teams.state import (
     APPLIED,
@@ -331,7 +329,7 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     client = _FakeClient({}, members=(member,), shifts=())  # brak zmian → luka na przyszły tydzień
     now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)  # LOKALNY zegar wcześniejszy niż serwer
 
-    run_once(settings, client, now=now, zegar=_w_oknie)  # type: ignore[arg-type]
+    run_once(settings, client, now=now, teraz=_w_oknie())  # type: ignore[arg-type]
 
     pending = load_state(state_path)["u1"]
     assert pending.status == "awaiting_reply"
@@ -340,10 +338,10 @@ def test_run_once_sets_watermark_so_stale_messages_are_ignored(tmp_path: Path):
     assert pending.watermark == "2026-07-15T10:00:00Z"
     # Stara wiadomość SPRZED nudge'a jest ignorowana dzięki watermarkowi.
     stale = [_msg("u1", "2026-07-15T09:30:00Z", "OK, rozumiem")]
-    assert newest_incoming(stale, "me", "u1", pending.watermark) is None
+    assert incoming_after(stale, "me", pending.watermark) == []
     # Nowa wiadomość PO nudge'u jest brana pod uwagę.
     fresh = [_msg("u1", "2026-07-15T10:05:00Z", "ok")]
-    assert newest_incoming(fresh, "me", "u1", pending.watermark) is not None
+    assert incoming_after(fresh, "me", pending.watermark) != []
 
 
 def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):
@@ -355,11 +353,11 @@ def test_run_once_is_idempotent_across_reruns_same_week(tmp_path: Path):
     now = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)  # piątek
     settings = _settings(state_path)  # dry_run=False
 
-    run_once(settings, client, now=now, zegar=_w_oknie)
+    run_once(settings, client, now=now, teraz=_w_oknie())
     assert len(client.sent) == 1
     assert load_state(state_path)["u1"].status == "awaiting_reply"
 
-    run_once(settings, client, now=now, zegar=_w_oknie)  # ponowienie tego samego tygodnia
+    run_once(settings, client, now=now, teraz=_w_oknie())  # ponowienie tego samego tygodnia
     assert len(client.sent) == 1  # brak drugiej wysyłki
 
 
@@ -387,7 +385,7 @@ def test_run_once_does_not_renudge_declined_member_same_week(tmp_path: Path):
     now = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)  # piątek, ten sam tydzień docelowy
     settings = _settings(state_path)
 
-    run_once(settings, client, now=now, zegar=_w_oknie)
+    run_once(settings, client, now=now, teraz=_w_oknie())
 
     assert client.sent == []  # żadnego ponownego nudge'a
     assert load_state(state_path)["u1"].status == DECLINED  # stan odmowy zachowany
@@ -414,7 +412,7 @@ def test_run_once_with_retry_succeeds_after_transient_failures(tmp_path: Path):
         attempts=3,
         backoff_s=0,
         sleep=lambda s: None,
-        zegar=_w_oknie,
+        teraz=_w_oknie(),
     )
     assert calls["n"] == 3 and len(client.sent) == 1  # dwie porażki + sukces, jedna wysyłka
 
@@ -432,7 +430,7 @@ def test_run_once_with_retry_reraises_after_exhausting(tmp_path: Path):
             attempts=2,
             backoff_s=0,
             sleep=lambda s: None,
-            zegar=_w_oknie,
+            teraz=_w_oknie(),
         )
 
 
@@ -452,7 +450,7 @@ def test_run_once_with_retry_does_not_retry_auth_error(tmp_path: Path):
             attempts=3,
             backoff_s=0,
             sleep=lambda s: None,
-            zegar=_w_oknie,
+            teraz=_w_oknie(),
         )
     assert calls["n"] == 1  # AuthExpiredError nie jest ponawiany
 
@@ -516,7 +514,7 @@ def test_run_once_isolates_per_member_send_failure(tmp_path: Path):
             return f"chat-{target_user_id}"
 
     client = _OneFails({}, members=members, shifts=())
-    run_once(_settings(state_path), client, now=_FRI_16, zegar=_w_oknie)
+    run_once(_settings(state_path), client, now=_FRI_16, teraz=_w_oknie())
     state = load_state(state_path)
     assert set(state) == {"u1", "u3"}  # u2 pominięty (bez pendingu), reszta wysłana
     assert len(client.sent) == 2
@@ -1221,7 +1219,7 @@ def test_run_once_skips_member_on_time_off(tmp_path: Path):
     client = _FakeClient({}, members=(on_leave, without), shifts=(), time_offs=(vacation,))
     now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
 
-    missing = run_once(settings, client, now=now, zegar=_w_oknie)  # type: ignore[arg-type]
+    missing = run_once(settings, client, now=now, teraz=_w_oknie())  # type: ignore[arg-type]
 
     assert [m.user_id for m in missing] == ["u2"]
     assert "u1" not in load_state(state_path)
@@ -1232,7 +1230,7 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
 
     `pending` to ten sam obiekt, który trzyma słownik `state`, więc przesunięcie watermarku z góry
     sprawiłoby, że `save_state` wywołane dla u2 zserializuje też zaawansowany watermark u1 —
-    a wtedy `newest_incoming` odsieje jego odpowiedź na zawsze i po 48 h dostanie nieprawdziwe
+    a wtedy `incoming_after` odsieje jego odpowiedź na zawsze i po 48 h dostanie nieprawdziwe
     „nie dostałem odpowiedzi".
     """
     state_path = tmp_path / "state.json"
@@ -1286,7 +1284,7 @@ def test_failed_pending_does_not_lose_reply_when_neighbour_saves(tmp_path: Path)
     assert saved["u1"].status == "awaiting_reply"
     # Dowód, że odpowiedź jest wciąż widoczna dla listenera.
     assert (
-        newest_incoming(client.messages["chat-u1"], "me", "u1", saved["u1"].watermark) is not None
+        incoming_after(client.messages["chat-u1"], "me", saved["u1"].watermark) != []
     )
 
 
@@ -1459,7 +1457,7 @@ def _settings_bezobslugowe(state_path: Path, **kwargs: Any) -> Settings:
 def test_heartbeat_tworzy_plik_obok_stanu(tmp_path: Path):
     """Puls musi wylądować na wolumenie stanu — reszta obrazu jest tylko do odczytu."""
     settings = _settings_bezobslugowe(tmp_path / "podkatalog" / "state.json")
-    _touch_heartbeat(settings)
+    odswiez_puls(settings)
     assert (tmp_path / "podkatalog" / "heartbeat").exists()
 
 
@@ -1510,7 +1508,7 @@ def test_trwala_awaria_pulsu_alarmuje_DOKLADNIE_RAZ(tmp_path: Path, monkeypatch)
     """
     wyslane: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: wyslane.append((tytul, kw.get("waga", ""))) or True,
     )
     settings = _settings_bezobslugowe(
@@ -1532,7 +1530,7 @@ def test_powrot_pulsu_jest_zglaszany(tmp_path: Path, monkeypatch):
     """Operator musi wiedzieć, że nie ma już nic do zrobienia."""
     wyslane: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
     )
     settings = _settings_bezobslugowe(
@@ -1562,7 +1560,7 @@ def test_startowa_utrata_sesji_alarmuje_i_odczekuje(tmp_path: Path, monkeypatch)
     """
     wyslane: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: wyslane.append((tytul, kw.get("waga", ""))) or True,
     )
     monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
@@ -1588,7 +1586,7 @@ def test_utrata_sesji_czeka_przed_wyjsciem(tmp_path: Path):
     """Przy `restart: unless-stopped` brak opóźnienia = restart kontenera co sekundę."""
     settings = _settings_bezobslugowe(tmp_path / "s.json", auth_failure_exit_delay_s=600)
     spane: list[float] = []
-    _handle_auth_loss(settings, AuthExpiredError("AADSTS50173"), spane.append)
+    zglos_utrate_sesji(settings, AuthExpiredError("AADSTS50173"), spane.append)
     assert spane == [600.0]
 
 
@@ -1620,7 +1618,7 @@ def test_podsumowanie_liczy_statusy_i_idzie_do_administratora(tmp_path: Path):
             ),
         },
     )
-    settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
+    settings = _settings_bezobslugowe(state_path, admin_user_ids=("admin-1",))
     client = _FakeClient({})
 
     _send_summary(settings, client, datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
@@ -1637,7 +1635,7 @@ def test_podsumowanie_liczy_statusy_i_idzie_do_administratora(tmp_path: Path):
 
 
 def test_podsumowanie_pomijane_bez_administratora(tmp_path: Path):
-    settings = _settings_bezobslugowe(tmp_path / "state.json")  # admin_user_id pusty
+    settings = _settings_bezobslugowe(tmp_path / "state.json")  # admin_user_ids puste
     client = _FakeClient({})
     _send_summary(settings, client, datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
     assert client.sent == []
@@ -1650,7 +1648,7 @@ def test_awaria_podsumowania_nie_przewraca_uslugi(tmp_path: Path):
         def get_me(self) -> str:
             raise RuntimeError("Graph niedostępny")
 
-    settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_id="admin-1")
+    settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_ids=("admin-1",))
     _send_summary(settings, _Zepsuty({}), datetime(2026, 7, 31, 14, 0, tzinfo=timezone.utc))
 
 
@@ -1679,7 +1677,7 @@ def test_podsumowanie_w_dry_run_tylko_loguje(tmp_path: Path, caplog):
         team_id="T",
         state_path=state_path,
         dry_run=True,
-        admin_user_id="admin-1",
+        admin_user_ids=("admin-1",),
     )
     client = _FakeClient({})
     with caplog.at_level("INFO"):
@@ -1728,7 +1726,7 @@ def test_podsumowanie_idzie_takze_po_przebiegu_nadrobionym(tmp_path: Path):
             )
         },
     )
-    settings = _settings_bezobslugowe(state_path, admin_user_id="admin-1")
+    settings = _settings_bezobslugowe(state_path, admin_user_ids=("admin-1",))
     client = _FakeClient({})
 
     # `teraz` JAWNIE (środa 11:00 lokalnie): bez tego wynik testu zależałby od pory uruchomienia
@@ -1748,7 +1746,7 @@ def test_podsumowanie_idzie_takze_po_NIEUDANYM_przebiegu(tmp_path: Path):
         def list_members(self, team_id: str):
             raise RuntimeError("Graph dławi")
 
-    settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_id="admin-1")
+    settings = _settings_bezobslugowe(tmp_path / "state.json", admin_user_ids=("admin-1",))
     client = _Zepsuty({})
 
     wynik = _przebieg_i_podsumowanie(
@@ -1773,7 +1771,7 @@ def test_puls_bije_czesciej_niz_odstep_odpytywania(tmp_path: Path):
 
     modul._touch_heartbeat = liczacy
     try:
-        _spij_z_pulsem(settings, 600.0, lambda _s: None)  # 10 minut czekania
+        spij_z_pulsem(settings, 600.0, lambda _s: None)  # 10 minut czekania
     finally:
         modul._touch_heartbeat = prawdziwy
 
@@ -1800,7 +1798,7 @@ def test_bot_nie_zagaduje_sam_siebie(tmp_path: Path):
     client = _FakeClient({}, members=(bot, czlowiek))
 
     brakujacy = run_once(
-        settings, client, now=datetime(2026, 7, 21, tzinfo=timezone.utc), zegar=_w_oknie
+        settings, client, now=datetime(2026, 7, 21, tzinfo=timezone.utc), teraz=_w_oknie()
     )
 
     assert [m.display_name for m in brakujacy] == ["Ala"]
@@ -2149,7 +2147,7 @@ def test_run_once_partial_time_off_still_nudges_and_excludes_that_day(tmp_path: 
     client = _FakeClient({}, members=(member,), shifts=last_week_shifts, time_offs=(friday_off,))
     now = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
 
-    missing = run_once(settings, client, now=now, zegar=_w_oknie)  # type: ignore[arg-type]
+    missing = run_once(settings, client, now=now, teraz=_w_oknie())  # type: ignore[arg-type]
 
     assert [m.user_id for m in missing] == ["u1"]  # nadal na liście — urlop tylko częściowy
     pending = load_state(state_path)["u1"]
@@ -2259,7 +2257,7 @@ def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path
     client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
 
     with pytest.raises(StateWriteError):
-        run_once(settings, client, now=_SRODA_W_OKNIE, zegar=_w_oknie)  # type: ignore[arg-type]
+        run_once(settings, client, now=_SRODA_W_OKNIE, teraz=_w_oknie())  # type: ignore[arg-type]
 
     assert client.sent == []  # ANI JEDNEJ wiadomości
 
@@ -2306,7 +2304,7 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
             client,  # type: ignore[arg-type]
             now=_SRODA_W_OKNIE,
             sleep=spane.append,
-            zegar=_w_oknie,
+            teraz=_w_oknie(),
         )
 
     assert len(client.sent) == 1  # jedna wysyłka, potem stop — bez ponowień
@@ -2464,7 +2462,7 @@ def test_nierozstrzygniete_cykle_sa_liczone_i_alarmuja_po_progu(tmp_path: Path, 
     """
     wyslane: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
     )
     state_path = tmp_path / "state.json"
@@ -2488,7 +2486,7 @@ def test_alert_o_nieodczytanym_czacie_nie_niesie_imienia_na_webhook(tmp_path: Pa
     """
     tresci: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: tresci.append(tresc) or True,
     )
     state_path = tmp_path / "state.json"
@@ -2520,7 +2518,7 @@ def test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem(tmp_path: Path, monkeypatch)
     """Zamknięcie z sufitu nie może wysłać „nie dostałem odpowiedzi" — dowodu nadal nie ma."""
     wyslane: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: wyslane.append(tytul) or True,
     )
     state_path = tmp_path / "state.json"
@@ -2548,7 +2546,7 @@ def test_polecenie_jednorazowe_nie_czeka_przed_wyjsciem(tmp_path: Path):
     """
     settings = _settings_bezobslugowe(tmp_path / "s.json", auth_failure_exit_delay_s=600)
     spane: list[float] = []
-    _handle_auth_loss(settings, AuthExpiredError("AADSTS50173"), spane.append, zwloka=False)
+    zglos_utrate_sesji(settings, AuthExpiredError("AADSTS50173"), spane.append, zwloka=False)
     assert spane == []
 
 
@@ -2573,7 +2571,7 @@ def test_alert_o_utracie_sesji_nie_wypuszcza_adresow_kont(tmp_path: Path, monkey
     """Webhook alertów bywa POZA organizacją — nie wolno mu podawać adresów pracowników."""
     tresci: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: tresci.append(tresc) or True,
     )
     settings = _settings_bezobslugowe(
@@ -2585,7 +2583,7 @@ def test_alert_o_utracie_sesji_nie_wypuszcza_adresow_kont(tmp_path: Path, monkey
         cache_path=tmp_path / "c.bin",
     )
 
-    _handle_auth_loss(settings, blad, lambda _s: None)
+    zglos_utrate_sesji(settings, blad, lambda _s: None)
 
     assert tresci and "ala@firma.pl" not in tresci[0] and "bot@firma.pl" not in tresci[0]
     assert "2 kont" in tresci[0]
@@ -2722,7 +2720,6 @@ def test_cotygodniowy_przebieg_w_oknie_wysyla_normalnie(tmp_path: Path):
         _SRODA_W_OKNIE,
         lambda _s: None,
         teraz=_SRODA_W_OKNIE,
-        zegar=_w_oknie,
     )
 
     assert udany is WynikPrzebiegu.UDANY
@@ -3020,7 +3017,7 @@ def test_odlozony_przebieg_dostaje_PELNY_budzet_ponowien_po_otwarciu_okna(
     """
     alerty: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
     )
     import powiadomienia_teams.app as modul
@@ -3054,7 +3051,7 @@ def test_odlozenie_jest_zglaszane_operatorowi_dokladnie_raz(tmp_path: Path, monk
     """
     alerty: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: alerty.append((tytul, kw.get("waga", ""))) or True,
     )
     import powiadomienia_teams.app as modul
@@ -3196,7 +3193,7 @@ def test_alert_o_nieudanym_przebiegu_redaguje_tresc_bledu(tmp_path: Path, monkey
 
     tresci: list[str] = []
     monkeypatch.setattr(
-        "powiadomienia_teams.app.alerts.send_alert",
+        "powiadomienia_teams.alerts.send_alert",
         lambda url, tytul, tresc, **kw: tresci.append(tresc) or True,
     )
 

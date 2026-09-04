@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.domain.models import Member, Shift, WeekSchedule
 from powiadomienia_teams.messages import (
+    LiczbyTygodnia,
     build_confirm_text,
     build_nudge_text,
     build_self_filled_text,
@@ -116,26 +117,41 @@ def test_nudge_with_proposal_and_off_weekdays_still_lists_shifts():
     assert "piątek" in text  # wspomniane jako dzień wolny
 
 
+# 0.2.19 rozbija podsumowanie PO TYGODNIU DOCELOWYM (`LiczbyTygodnia`) zamiast podawać jedną
+# zbiorczą sumę. Powód: suma mieszała świeże `awaiting_reply` z tygodnia właśnie otwartego
+# z terminalnymi resztkami tygodnia zamykanego, więc „oczekuje: 4" nie mówiło administratorowi
+# tego jednego, po co czyta ten raport — czy poprzedni tydzień się domknął.
+
+
 def test_summary_text_includes_self_filled_count():
     text = build_summary_text(
-        oczekuje=1,
-        do_potwierdzenia=0,
-        zapisane=2,
-        odmowy=0,
-        wygasle=0,
+        tygodnie=[LiczbyTygodnia(week_start="2026-07-20", oczekuje=1, zapisane=2, samodzielne=3)],
         nastepny_przebieg="2026-07-24 16:00",
-        samodzielne=3,
     )
     assert "uzupełnione samodzielnie: 3" in text
 
 
 def test_summary_text_self_filled_defaults_to_zero():
     text = build_summary_text(
-        oczekuje=0,
-        do_potwierdzenia=0,
-        zapisane=0,
-        odmowy=0,
-        wygasle=0,
+        tygodnie=[LiczbyTygodnia(week_start="2026-07-20")],
         nastepny_przebieg="2026-07-24 16:00",
     )
     assert "uzupełnione samodzielnie: 0" in text
+
+
+def test_summary_text_rozbija_liczby_po_tygodniach_od_najnowszego():
+    """Sedno zmiany: dwa tygodnie w toku mają być dwoma blokami, a nie jedną sumą."""
+    text = build_summary_text(
+        tygodnie=[
+            LiczbyTygodnia(week_start="2026-07-13", zapisane=5),
+            LiczbyTygodnia(week_start="2026-07-20", oczekuje=2),
+        ],
+        nastepny_przebieg="2026-07-24 16:00",
+    )
+    assert text.index("2026-07-20") < text.index("2026-07-13")  # najnowszy pierwszy
+
+
+def test_summary_text_pusty_stan_jest_INFORMACJA_a_nie_brakiem_wiadomosci():
+    """Cisza znaczy „usługa nie żyje"; „zero spraw" musi wyglądać inaczej niż brak raportu."""
+    text = build_summary_text(tygodnie=[], nastepny_przebieg="2026-07-24 16:00")
+    assert "nikogo nie trzeba było zagadnąć" in text

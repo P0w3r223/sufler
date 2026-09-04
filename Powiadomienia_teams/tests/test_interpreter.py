@@ -2,7 +2,10 @@ import logging
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
+from typing import Any
+
 from powiadomienia_teams.agent.interpreter import (
+    OdpowiedzLlm,
     ReplyDecision,
     _coerce_weekday,
     build_schedule,
@@ -15,26 +18,59 @@ UTC = timezone.utc
 WAW = ZoneInfo("Europe/Warsaw")
 
 
+# Port modelu w 0.2.19 to `LlmClient.rozmawiaj` zwracające `OdpowiedzLlm` (tura z ewentualnymi
+# wywołaniami narzędzi), a nie `complete()` zwracające napis. `OdpowiedzLlm` jest celowo niezależne
+# od SDK dostawcy, więc atrapa nie potrzebuje pakietu `anthropic` — patrz docstring tej klasy.
 class _FakeLlm:
     def __init__(self, response: str) -> None:
         self._response = response
 
-    def complete(self, system: str, user: str) -> str:
-        return self._response
+    def rozmawiaj(
+        self,
+        *,
+        system: str,
+        wiadomosci: list[dict[str, Any]],
+        narzedzia: list[dict[str, Any]],
+        schemat: dict[str, Any],
+    ) -> OdpowiedzLlm:
+        return OdpowiedzLlm(tekst=self._response, zatrzymanie="end_turn", tokeny_wyjscia=1)
 
 
-class _RecordingLlm:
+class _RecordingLlm(_FakeLlm):
     """Atrapa, która zapamiętuje ostatnie wywołanie — do sprawdzania, co trafia w payloadzie."""
 
     def __init__(self, response: str) -> None:
-        self._response = response
+        super().__init__(response)
         self.last_system: str | None = None
-        self.last_user: str | None = None
+        self.last_wiadomosci: list[dict[str, Any]] | None = None
+        self.last_narzedzia: list[dict[str, Any]] | None = None
 
-    def complete(self, system: str, user: str) -> str:
+    def rozmawiaj(
+        self,
+        *,
+        system: str,
+        wiadomosci: list[dict[str, Any]],
+        narzedzia: list[dict[str, Any]],
+        schemat: dict[str, Any],
+    ) -> OdpowiedzLlm:
         self.last_system = system
-        self.last_user = user
-        return self._response
+        self.last_wiadomosci = wiadomosci
+        self.last_narzedzia = narzedzia
+        return super().rozmawiaj(
+            system=system, wiadomosci=wiadomosci, narzedzia=narzedzia, schemat=schemat
+        )
+
+    @property
+    def last_user(self) -> str:
+        """Cała treść tury użytkownika — zszyta, bo payload jest teraz listą bloków, nie napisem."""
+        czesci: list[str] = []
+        for wiadomosc in self.last_wiadomosci or []:
+            tresc = wiadomosc.get("content")
+            if isinstance(tresc, str):
+                czesci.append(tresc)
+            elif isinstance(tresc, list):
+                czesci += [str(blok.get("text", "")) for blok in tresc if isinstance(blok, dict)]
+        return "\n".join(czesci)
 
 
 def _proposal() -> WeekSchedule:
@@ -90,20 +126,38 @@ def test_decline_has_no_schedule():
     assert decision.schedule is None
 
 
-def test_invalid_interval_falls_back_to_unclear():
-    # koniec przed początkiem → interwał odrzucony → pusty grafik → unclear
+def test_koniec_przed_poczatkiem_to_zmiana_NOCNA_a_nie_blad():
+    """20:00→08:00 znaczy „przez północ", nie „interwał odwrócony".
+
+    Linia repozytorium odrzucała taki wpis i degradowała całą odpowiedź do »unclear«. W pracy
+    zmianowej — czyli w jedynym zastosowaniu tej usługi — nocka jest normą, więc odrzucenie
+    kasowało poprawny grafik i kazało pracownikowi tłumaczyć się drugi raz.
+    """
     llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":0,"start":"20:00","end":"08:00"}]}')
-    decision = interpret_reply(_proposal(), "bez sensu", tz=WAW, group_id=None, llm=llm)
-    assert decision.action == "unclear"
-    assert decision.schedule is None
+    decision = interpret_reply(_proposal(), "nocka w poniedziałek", tz=WAW, group_id=None, llm=llm)
+    assert decision.action == "modify"
+    assert decision.schedule is not None
+    (zmiana,) = decision.schedule.shifts
+    assert zmiana.start.astimezone(WAW).hour == 20
+    assert zmiana.end.astimezone(WAW).hour == 8
+    assert zmiana.end.astimezone(WAW).day == zmiana.start.astimezone(WAW).day + 1
 
 
-def test_json_wrapped_in_prose_is_extracted():
+def test_json_owiniety_proza_degraduje_do_unclear():
+    """0.2.19 NIE wyłuskuje już JSON-a z prozy — i to jest świadome, nie przeoczenie.
+
+    Kształt wyjścia gwarantuje `output_config.format` (wyjście strukturalne), więc model nie ma
+    czym owinąć odpowiedzi; luźne wyszukiwanie nawiasów było siatką pod problem, którego API już
+    nie dopuszcza, a samo potrafiło trafić w JSON zacytowany przez PRACOWNIKA.
+
+    Zależność jest jednak realna: gdyby ktoś zdjął `output_config.format`, ten test zacznie
+    opisywać awarię, a nie kontrakt — dlatego stoi tu jawnie, a nie został skasowany.
+    """
     llm = _FakeLlm(
         'Jasne! {"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]} gotowe'
     )
     decision = interpret_reply(_proposal(), "ok", tz=WAW, group_id=None, llm=llm)
-    assert decision.action == "confirm"
+    assert decision.action == "unclear"
 
 
 def test_build_schedule_respects_local_time():
@@ -511,4 +565,9 @@ def test_zly_json_nie_wypuszcza_calego_wyjscia_modelu_do_logu(caplog):
     zapis = caplog.text
     assert wrazliwe not in zapis
     assert "x" * 200 not in zapis  # skrót, nie 200-znakowy wycinek jak dotąd
-    assert str(len(surowe)) in zapis  # długość zostaje — po niej poznaje się awarię modelu
+    # 0.2.19 idzie dalej niż wymagał ten test: do logu nie trafia Z WYJŚCIA MODELU NIC — ani
+    # wycinek, ani długość. Diagnostykę „model systematycznie psuje JSON" niesie druga gałąź
+    # (`stop_reason` + liczba tokenów wyjścia przy pustym tekście), więc wymaganie jest spełnione
+    # innym środkiem, a nie porzucone.
+    assert "nie zwrócił poprawnego JSON" in zapis
+    assert surowe[:40] not in zapis

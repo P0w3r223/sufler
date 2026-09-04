@@ -126,7 +126,11 @@ def test_zapis_nigdy_nie_usuwa_pliku_stanu(tmp_path, monkeypatch):
 
     def replace_z_awaria(src, dst):
         prawdziwy(src, dst)
-        raise KeyboardInterrupt("proces ubity tuz po podmianie")
+        # Ubijamy proces WYŁĄCZNIE po podmianie pliku GŁÓWNEGO. Od 0.2.16 `save_state` woła
+        # `os.replace` dwa razy: najpierw dla kopii `.bak`, potem dla stanu. Podmiana globalna
+        # trafiała więc w kopię i test badał inne okno, niż opisuje.
+        if os.fspath(dst) == os.fspath(sciezka):
+            raise KeyboardInterrupt("proces ubity tuz po podmianie")
 
     monkeypatch.setattr(os, "replace", replace_z_awaria)
 

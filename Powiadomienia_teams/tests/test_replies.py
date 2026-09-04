@@ -1,11 +1,17 @@
+import pytest
+
+# 0.2.19 zastąpiło `newest_incoming` (jedna najnowsza wiadomość WSKAZANEJ osoby) przez
+# `incoming_after` (WSZYSTKIE wiadomości spoza bota, od najstarszej). Zmiana jest celowa
+# i naprawia realny błąd: pracownik piszący w dwóch dymkach był interpretowany tylko z drugiego.
+# Zabrała jednak ze sobą dwa zabezpieczenia — patrz `xfail` na końcu pliku.
 from powiadomienia_teams.reminders.replies import (
     MEMORY_CAP,
     MEMORY_WINDOW,
     advance_memory,
     history_for_llm,
+    incoming_after,
     is_pure_affirmation,
     message_text,
-    newest_incoming,
 )
 
 
@@ -21,32 +27,49 @@ def test_message_text_strips_html():
     assert message_text(_msg("u1", "t", "<p>w piątek <b>10-20</b></p>")) == "w piątek  10-20"
 
 
-def test_newest_incoming_ignores_own_and_old():
+def test_incoming_after_ignores_own_and_old():
     me = "me"
     messages = [
         _msg("me", "2026-07-19T16:00:00Z"),  # nasze — pominięte
         _msg("u1", "2026-07-19T17:00:00Z", "stara"),  # przed watermarkiem
         _msg("u1", "2026-07-19T18:00:00Z", "nowa"),
     ]
-    picked = newest_incoming(messages, me, "u1", after_iso="2026-07-19T17:30:00Z")
-    assert picked is not None
-    assert message_text(picked) == "nowa"
+    nowe = incoming_after(messages, me, after_iso="2026-07-19T17:30:00Z")
+    assert [message_text(m) for m in nowe] == ["nowa"]
 
 
-def test_newest_incoming_none_when_only_own():
-    picked = newest_incoming([_msg("me", "2026-07-19T18:00:00Z")], "me", "u1")
-    assert picked is None
+def test_incoming_after_empty_when_only_own():
+    assert incoming_after([_msg("me", "2026-07-19T18:00:00Z")], "me") == []
 
 
-def test_newest_incoming_compares_parsed_time_not_string():
+def test_incoming_after_bierze_CALA_porcje_od_najstarszej():
+    """Sedno zmiany wobec `newest_incoming`: dwa dymki pod rząd to jedna wypowiedź.
+
+    Wcześniej brana była wyłącznie najnowsza, a watermark przeskakiwał na nią — więc „pon-pt 8-16"
+    wysłane chwilę przed „w piątek mnie nie będzie" ginęło bezpowrotnie i bot zapisywał sam urlop.
+    """
+    messages = [
+        _msg("u1", "2026-07-19T18:00:00Z", "pon-pt 8-16"),
+        _msg("u1", "2026-07-19T18:00:30Z", "w piątek mnie nie będzie"),
+    ]
+    nowe = incoming_after(messages, "me")
+    assert [message_text(m) for m in nowe] == ["pon-pt 8-16", "w piątek mnie nie będzie"]
+
+
+def test_incoming_after_compares_parsed_time_not_string():
     # '.' (0x2E) < 'Z' (0x5A) leksykograficznie przestawiłby te dwie w tej samej sekundzie
     msgs = [
-        _msg("u1", "2026-07-19T18:00:00Z", "starsza"),
         _msg("u1", "2026-07-19T18:00:00.500Z", "nowsza"),
+        _msg("u1", "2026-07-19T18:00:00Z", "starsza"),
     ]
-    picked = newest_incoming(msgs, "me", "u1", after_iso="2026-07-19T18:00:00Z")
-    assert picked is not None
-    assert message_text(picked) == "nowsza"
+    nowe = incoming_after(msgs, "me", after_iso="2026-07-19T18:00:00Z")
+    assert [message_text(m) for m in nowe] == ["nowsza"]
+
+
+def test_incoming_after_pomija_wiadomosci_systemowe_bez_nadawcy():
+    """Graph wstawia do wątku wpisy bez `from` — nie są odpowiedzią i nie mogą ruszyć watermarku."""
+    messages = [{"createdDateTime": "2026-07-19T18:00:00Z", "body": {"content": "dołączono"}}]
+    assert incoming_after(messages, "me") == []
 
 
 def test_is_pure_affirmation_accepts_clean_yes():
@@ -125,44 +148,49 @@ def test_memory_window_is_one_hour():
     assert timedelta(hours=1) == MEMORY_WINDOW
 
 
-def test_newest_incoming_odrzuca_nadawce_spoza_pendingu():
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Dwa zabezpieczenia, których kod produkcji 0.2.19 NIE MA.
+#
+# Linia repozytorium napisała je 2026-08-18 wraz z opisem incydentu; obraz produkcyjny zbudowano
+# 2026-08-20 z drzewa, w którym ich nigdy nie było (rozwidlenie, nie cofnięcie). `incoming_after`
+# przyjmuje KAŻDEGO nadawcę różnego od bota i porównuje identyfikatory dokładnie co do znaku.
+#
+# Zostają jako `xfail(strict=True)`, a nie jako skasowane testy, z dwóch powodów: zapis wymagania
+# nie ginie razem z implementacją, a gdy ktoś to zabezpieczenie dopisze, XPASS zapali CI na czerwono
+# i wymusi zdjęcie markera. Skasowanie zamieniłoby brak w niewiedzę.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="0.2.19: incoming_after nie filtruje po nadawcy — bierze każdego poza botem",
+)
+def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
     """Nadawcą MUSI być ta osoba, o której grafik pytamy — nie „ktokolwiek poza botem".
 
-    Warunek „nie bot" wygląda równoważnie tylko dopóki czat jest 1:1. Graph wstawia do wątku
-    wiadomości systemowe i wpisy innych tożsamości (aplikacje, konto dodane do rozmowy, migracja
-    czatu na grupowy). Każda z nich stawała się „odpowiedzią pracownika": szła do modelu,
-    przesuwała watermark i mogła skończyć ZAPISEM W GRAFIKU pracownika na podstawie cudzej
-    treści, a jego prawdziwa odpowiedź (starsza od przesuniętego watermarku) znikała na zawsze.
+    Warunek „nie bot" wygląda równoważnie tylko dopóki czat jest 1:1, a tworzy go
+    `graph.client.ensure_chat` jako `oneOnOne`. Gdy wątek stanie się grupowy (ktoś dodany,
+    migracja czatu), cudza treść staje się „odpowiedzią pracownika": idzie do modelu, przesuwa
+    watermark i może skończyć ZAPISEM W GRAFIKU tej osoby, a jej prawdziwa odpowiedź — starsza od
+    przesuniętego watermarku — znika na zawsze.
+
+    Wiadomości systemowe są dziś odsiewane (brak `from` → pominięte), więc realne ryzyko zawęża się
+    do wątku, który przestał być 1:1. To jest założenie, nie gwarancja typu.
     """
     messages = [_msg("obcy", "2026-07-19T18:00:00Z", "w piątek 10-20")]
-    assert newest_incoming(messages, "me", "u1") is None
+    assert incoming_after(messages, "me") == []
 
 
-def test_newest_incoming_bierze_najnowsza_od_wlasciwej_osoby_mimo_szumu():
-    messages = [
-        _msg("obcy", "2026-07-19T18:30:00Z", "cudza i nowsza"),
-        _msg("u1", "2026-07-19T18:00:00Z", "moja"),
-    ]
-    picked = newest_incoming(messages, "me", "u1")
-    assert picked is not None
-    assert message_text(picked) == "moja"
+@pytest.mark.xfail(
+    strict=True,
+    reason="0.2.19: porównanie nadawcy z me_id jest wrażliwe na wielkość liter",
+)
+def test_incoming_after_powinno_rozpoznac_wlasna_wiadomosc_niezaleznie_od_wielkosci_liter():
+    """GUID-y z Graph bywają w różnej wielkości liter, a `sender == me_id` porównuje znak w znak.
 
-
-def test_newest_incoming_porownuje_guid_bez_wzgledu_na_wielkosc_liter():
-    """GUID-y z Graph bywają w różnej wielkości liter — rozjazd uciszałby pracownika na zawsze.
-
-    Ten sam identyfikator zapisany wielkimi literami w stanie (albo w `ONLY_USER_IDS`) i małymi
-    w wiadomości odsiewałby KAŻDĄ jego odpowiedź, cicho, aż do nieprawdziwego „nie dostałem
-    odpowiedzi" po 48 h.
+    Skutek rozjazdu jest gorszy niż zignorowanie wiadomości: bot bierze WŁASNY komunikat za
+    odpowiedź pracownika, podaje go modelowi do interpretacji i przesuwa na nim watermark.
     """
-    guid = "3F2504E0-4F89-11D3-9A0C-0305E82C3301"
-    messages = [_msg(guid.lower(), "2026-07-19T18:00:00Z", "w piątek 10-20")]
-    picked = newest_incoming(messages, "me", guid)
-    assert picked is not None
-    assert message_text(picked) == "w piątek 10-20"
-
-
-def test_newest_incoming_rozpoznaje_wlasna_wiadomosc_bez_wzgledu_na_wielkosc_liter():
     guid = "AAAA1111-BBBB-2222-CCCC-333344445555"
     messages = [_msg(guid.lower(), "2026-07-19T18:00:00Z", "nasza")]
-    assert newest_incoming(messages, guid, guid) is None
+    assert incoming_after(messages, guid) == []
