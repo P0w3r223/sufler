@@ -193,8 +193,11 @@ with a moving anchor and with no anchor at all. `tests/test_config.py` covers re
 ## Amendment, 2026-09-04 — C3 landed as anticipated
 
 The watermark fix (wave 4) shipped, and the expectation recorded above held: the two sends it
-wrapped now raise into the per-person handler as `UNKNOWN`, not `READ_FAILED`, so the read counter
-does not move and no entry is pushed towards this ceiling by a failed **send**. No coupling between
+wrapped now raise into the per-person handler as `UNKNOWN`, not `READ_FAILED`. The read counter is
+therefore **reset, never incremented** — the chat was read, so a run of failed reads has demonstrably
+ended — and no entry is pushed towards this ceiling by a failed **send**. (An earlier wording here
+said the counter "does not move"; measured, it goes to zero. The conclusion is unchanged, the
+sentence was not.) No coupling between
 the two changes was needed, and none was added.
 
 One correction to the note above: it says the rollback would go through `_record_failure`. It does

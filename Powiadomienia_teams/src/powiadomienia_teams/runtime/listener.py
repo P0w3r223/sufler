@@ -578,8 +578,15 @@ def _wycofaj_commit(pending: st.PendingReminder, migawka: _MigawkaCommitu) -> No
     ``_process_pending`` woła ``_record_failure`` w swoim ``except Exception`` — wystarczy, że
     wyjątek z wysyłki przestanie być połykany.
 
-    Stan trafi na dysk przy najbliższym `save_state` — obiekt jest współdzielony ze słownikiem
-    `state`, a przy wyjątku i tak zapisze go `_record_failure`.
+    **Ta funkcja NIE utrwala niczego — i to nie wystarcza samo z siebie.** Pierwsza wersja fali 4
+    zakładała, że resztę załatwi `_record_failure`, i to założenie było FAŁSZYWE dla wyjątków,
+    które `_process_pending` przepuszcza przed nim (utrata sesji, limit czasu przebiegu — oba
+    osiągalne wprost z `do_pracownika`, bo `_sprawdz_czas` i `refresh_auth` stoją w każdym żądaniu
+    Graph). `_commit` zdążył już zapisać, wycofanie zostawało w pamięci, a proces ją porzucał:
+    na dysku zostawał `awaiting_yes=True` i przesunięty watermark, więc późniejsze samo „ok"
+    wpadało w szybką ścieżkę i zapisywało do Shifts grafik, którego pracownik nigdy nie widział.
+    Regres wobec stanu sprzed fali 4, w którym `finally` wołało `_commit` — a ten zapisuje.
+    Utrwalenie robi `_utrwal_wycofanie` u wołającego.
 
     ``awaiting_yes`` wraca twardo na ``False``, NIE z migawki: to bramka nieodwracalnego zapisu do
     Shifts (N38), a wycofanie nigdy nie ma prawa ROZSZERZYĆ uprawnienia. Ta sama zasada, dla której
@@ -593,6 +600,37 @@ def _wycofaj_commit(pending: st.PendingReminder, migawka: _MigawkaCommitu) -> No
     pending.resolved = [dict(z) for z in migawka.resolved]
     pending.resolved_time_off = [dict(z) for z in migawka.resolved_time_off]
     pending.awaiting_yes = False
+
+
+def _utrwal_wycofanie(
+    settings: Settings, state: dict[str, st.PendingReminder], pending: st.PendingReminder
+) -> None:
+    """Zapisz stan przed wypuszczeniem wyjątku, który omija ``_record_failure``.
+
+    Rozdział ról jest tu celowy i jest odpowiedzią na własny błąd: ``_wycofaj_commit`` zostaje BEZ
+    I/O (sygnatura bez `settings`/`state`/`client` czyni to własnością konstrukcji), a utrwalenie
+    stoi osobno, u wołającego, gdzie zapis jest bezpieczny.
+
+    Pierwsza wersja fali 4 rezygnowała z jednego i drugiego naraz, na podstawie zdania „nie wołać
+    z ``finally`` funkcji robiącej I/O". To było ZA SZEROKIE. Groźna jest WYSYŁKA martwym tokenem
+    (`do_pracownika`, usterka zamknięta w fali 1), a nie zapis lokalnego pliku stanu — ten nie
+    dotyka Graph i przy wygasłej sesji działa tak samo dobrze jak zawsze.
+
+    Wyjątek z samego zapisu jest tłumiony i tylko logowany: jedyna realna obiekcja wobec I/O
+    w trakcie odwijania stosu to przykrycie pierwotnej przyczyny, a tłumienie ją usuwa. Utrata
+    sesji ma dojść do `_handle_auth_loss` nienaruszona.
+
+    ``StateWriteError`` świadomie NIE przechodzi tędy (patrz handler w ``_process_pending``):
+    powtórzenie zapisu, który właśnie padł, nie ma jak się udać.
+    """
+    try:
+        st.save_state(settings.state_path, state)
+    except Exception:
+        logger.exception(
+            "Nie udało się utrwalić wycofania obsługi dla %s — wpis może zostać otwarty "
+            "z przesuniętym watermarkiem",
+            etykiety.osoba(pending, settings),
+        )
 
 
 def _oznacz_wyslane(
@@ -775,19 +813,39 @@ def _process_pending(
                 settings, client, llm, ctx, pending, tz, state, wiadomosci, history, now, snapshot
             )
     except AuthExpiredError:
-        raise  # utrata tokenu dotyczy całej usługi, nie tej jednej wiadomości
+        # Utrata tokenu dotyczy całej usługi, nie tej jednej wiadomości — ale WYCOFANIE commitu,
+        # jeśli jakieś się wydarzyło niżej, musi trafić na dysk PRZED wyjściem. Patrz `_utrwal_wycofanie`.
+        _utrwal_wycofanie(settings, state, pending)
+        raise
     except PrzebiegPrzekroczylCzasError:
         # PRZED `_record_failure`: ta rozmowa niczym nie zawiniła, skończył się czas obiegu.
         # Doliczenie porażki byłoby karą za cudzy problem — po `_MAX_PENDING_FAILURES` obiegach
         # przerwanych limitem pracownik zostałby porzucony, choć nikt nawet nie przeczytał jego
         # odpowiedzi.
+        #
+        # ŚWIADOMY BRAK SUFITU, ujawniony przeglądem fali 4. Odkąd niedoręczona wiadomość cofa
+        # commit, ta ścieżka potrafi wracać w każdym obiegu: watermark wraca na miejsce, więc ta
+        # sama wiadomość jest interpretowana ponownie, a licznik prób nie rośnie. Pętla jest
+        # ograniczona oknem odpowiedzi (po terminie wpis wygasa) i kosztuje jedno wywołanie modelu
+        # na obieg. Zostaje bez licznika ŚWIADOMIE: policzenie tej próby odwróciłoby decyzję wyżej,
+        # a po trzech takich obiegach `_record_failure` przesunąłby watermark i próbował wysłać
+        # „Nie do końca zrozumiałem" — tą samą wysyłką, która przed chwilą nie zmieściła się
+        # w czasie. Sam limit czasu przebiegu jest osobnym sygnałem operacyjnym i to on jest
+        # właściwym miejscem na reakcję, nie licznik porażek pojedynczej rozmowy.
+        _utrwal_wycofanie(settings, state, pending)
         raise
     except LlmNiedostepnyError:
         # Z dokładnie tego samego powodu: usługa modelu nie działa dla NIKOGO, więc dopisanie tej
         # rozmowie porażki (a po trzech — „Nie do końca zrozumiałem" i przesunięcie watermarku)
         # obwiniałoby pracownika o cudzą awarię i kasowałoby jego odpowiedź bezpowrotnie.
+        _utrwal_wycofanie(settings, state, pending)
         raise
     except (GraphTruncatedReadError, st.StateWriteError):
+        # `StateWriteError` NIE dostaje `_utrwal_wycofanie`: to wyjątek mówiący „nie umiem utrwalić
+        # stanu", więc kolejny zapis padłby tak samo, a jedyne, co by dołożył, to przykrycie
+        # pierwotnej przyczyny. `GraphTruncatedReadError` idzie razem z nim, bo dzieli handler;
+        # jego wycofanie utrwali zwykły zapis w kolejnym obiegu, a wpis pozostaje otwarty.
+        #
         # Trzeci przypadek tej samej klasy — i najbardziej mylący, bo oba wyjątki istnieją PO TO,
         # żeby powiedzieć „dane są niepełne" / „nie umiem utrwalić stanu". Doliczone do licznika
         # porażek kończyły się po trzech obiegach odrzuceniem potwierdzenia pracownika i wysłanym
@@ -1299,9 +1357,16 @@ def _interpret_and_confirm(
         except NIE_POLYKAJ:
             raise
         except Exception:
+            # Treść zależy od `dostarczono`, bo `try` obejmuje TAKŻE `_oznacz_wyslane`. Gdy padnie
+            # ono, prośba JEST u pracownika i `finally` nic nie cofa — bezwarunkowe „cofam obsługę"
+            # byłoby wtedy zdaniem nieprawdziwym w logu, czyli dokładnie tą klasą rozjazdu, którą
+            # ta fala kasuje w trzech innych miejscach.
             logger.exception(
-                "Nie udało się poprosić %s o potwierdzenie — cofam obsługę tej wiadomości",
+                "Nie udało się poprosić %s o potwierdzenie — %s",
                 etykiety.osoba(pending, settings),
+                "prośba doszła, nie udało się utrwalić znacznika wysyłki"
+                if dostarczono
+                else "cofam obsługę tej wiadomości",
             )
             # PROPAGUJEMY, zamiast połykać. Wyjątek dolatuje do `_process_pending`, ten woła
             # `_record_failure` i dopiero on daje sufit pętli. Połknięcie zwracało `HANDLED`,

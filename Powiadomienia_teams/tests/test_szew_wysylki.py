@@ -170,32 +170,144 @@ def test_zadna_wysylka_nie_stoi_poza_blokiem_try():
     assert poza == [], poza
 
 
-def test_wycofanie_commitu_stoi_wylacznie_w_finally():
-    """Druga reguła, dopisana w fali 4: `_wycofaj_commit` MUSI stać w `finally`.
+def _funkcje_kompensujace() -> list[tuple[str, ast.FunctionDef]]:
+    """Funkcje, w których niedoręczona wiadomość MUSI cofnąć commit (ADR 0007, fala 4).
 
-    Reguła wyżej sprawdza samą OBUDOWĘ — czy wysyłka ma wokół siebie `try`. Po fali 4 niezmiennik
-    jest mocniejszy: niedoręczona wiadomość ma COFNĄĆ commit. Wycofanie w `body` wykonałoby się
-    także po udanej wysyłce (cofając poprawną obsługę), a w `except` ominęłoby wyjątki, które
-    świadomie propagują bez handlera — `NIE_POLYKAJ` w miejscu prośby o potwierdzenie oraz
-    wszystko w dwóch pozostałych miejscach, które handlera nie mają wcale.
-
-    `finally` jest jedynym kształtem wykonującym się na KAŻDEJ drodze wyjścia, a o tym, czy
-    pracownik zobaczył wiadomość, nie decyduje typ awarii. Ta sama zasada, dla której miejsce
-    prośby o potwierdzenie wybrało `finally` zamiast `isinstance` w jednej gałęzi.
+    Zakres po funkcji, a nie po całym ``runtime/``, bo są miejsca, które kompensować NIE MOGĄ
+    i to jest zamierzone: gałąź ``decline`` ustawia status TERMINALNY (cofnięcie otwierałoby
+    domkniętą decyzję), a ``_record_failure`` cofnięciem skasowałby jedyny mechanizm domykający
+    pętlę deterministycznego błędu. Wspólne dla objętych: `_commit` utrwala obsługę wiadomości
+    pracownika, wpis ZOSTAJE w obiegu, a jedynym powodem, dla którego ruszył do przodu, jest
+    wiadomość, która właśnie nie doszła.
     """
-    w_finally: set[tuple[str, int]] = set()
-    wszystkie: set[tuple[str, int]] = set()
+    wynik = []
     for nazwa, drzewo in _moduly():
         for wezel in ast.walk(drzewo):
-            if isinstance(wezel, ast.Try):
-                for gałąź in wezel.finalbody:
-                    for w in ast.walk(gałąź):
-                        if isinstance(w, ast.Call) and _nazwa_wolania(w) == "_wycofaj_commit":
-                            w_finally.add((nazwa, w.lineno))
-            if isinstance(wezel, ast.Call) and _nazwa_wolania(wezel) == "_wycofaj_commit":
-                wszystkie.add((nazwa, wezel.lineno))
+            if isinstance(wezel, ast.FunctionDef) and wezel.name == "_interpret_and_confirm":
+                wynik.append((nazwa, wezel))
+    return wynik
 
-    # Kontrola pozytywna: gdyby wycofanie zniknęło z kodu, pusty zbiór przechodziłby oba warunki
-    # i strażnik pilnowałby niczego. Trzy miejsca to trzy wołania.
-    assert len(wszystkie) == 3, sorted(wszystkie)
-    assert wszystkie == w_finally, sorted(wszystkie - w_finally)
+
+# Statusy, po których wpis jest TERMINALNY — `state.TERMINALNE`, powtórzone tu jako nazwy, bo
+# strażnik czyta drzewo składni, a nie importuje modułu. Wysyłka po `_commit` z takim statusem
+# NIE kompensuje i nie powinna: cofnięcie otwierałoby decyzję już domkniętą, a przy `APPLYING`
+# — zapis do Shifts, który mógł się już wydarzyć.
+_STATUSY_TERMINALNE = {"DECLINED", "APPLIED", "EXPIRED", "SELF_FILLED", "APPLYING"}
+
+
+def _commit_przed(galezie: list[ast.stmt], blok: ast.Try) -> ast.Call | None:
+    """Ostatnie wołanie `_commit` stojące w tej samej gałęzi PRZED danym `try`."""
+    znaleziony = None
+    for instrukcja in galezie:
+        if instrukcja is blok:
+            return znaleziony
+        for w in ast.walk(instrukcja):
+            if isinstance(w, ast.Call) and _nazwa_wolania(w) == "_commit":
+                znaleziony = w
+    return znaleziony
+
+
+def _status_terminalny(wolanie: ast.Call | None) -> bool:
+    """Czy `_commit` ustawia status terminalny — wtedy kompensacja jest ZAKAZANA, nie wymagana."""
+    if wolanie is None:
+        return False
+    for kw in wolanie.keywords:
+        if kw.arg == "status" and isinstance(kw.value, ast.Attribute):
+            return kw.value.attr in _STATUSY_TERMINALNE
+    return False
+
+
+def _wycofania_warunkowe(blok: ast.Try) -> list[ast.Call]:
+    """Wołania `_wycofaj_commit` w `finalbody`, stojące pod warunkiem `if not <flaga>`.
+
+    Warunek jest częścią niezmiennika, nie stylem: bezwarunkowe wycofanie w `finally` wykonałoby
+    się także po UDANEJ wysyłce i skasowałoby poprawną obsługę przy każdej odpowiedzi pracownika.
+    To dokładnie ten skutek, dla którego odrzuciliśmy `body` — a w `finally` przechodził
+    niezauważony, dopóki ta reguła liczyła same wołania.
+    """
+    znalezione = []
+    for gałąź in blok.finalbody:
+        for w in ast.walk(gałąź):
+            if not isinstance(w, ast.If) or not isinstance(w.test, ast.UnaryOp):
+                continue
+            if not isinstance(w.test.op, ast.Not):
+                continue
+            for c in ast.walk(w):
+                if isinstance(c, ast.Call) and _nazwa_wolania(c) == "_wycofaj_commit":
+                    znalezione.append(c)
+    return znalezione
+
+
+def test_kazda_wysylka_wymagajaca_kompensacji_ja_ma():
+    """Reguła iteruje po WYSYŁKACH, nie po kompensacjach — i to jest jej najważniejsza własność.
+
+    Pierwsza wersja tej reguły (fala 4) chodziła po wołaniach `_wycofaj_commit` i sprawdzała, czy
+    każde stoi w `finally`, z kontrolą pozytywną `len(...) == 3`. Zieleniała na dwa sposoby, oba
+    potwierdzone mutacją: przy CZWARTEJ wysyłce dopisanej bez kompensacji (nowych wołań nie ma,
+    więc trójka się zgadza) oraz przy zdjęciu warunku `if not dostarczono` (wołanie nadal jest
+    w `finally`). Strzegła zbioru, który się nie rozszerza, wyglądając na strażnika kompletu.
+
+    Kierunek iteracji jest tu więc całą różnicą: chodzimy po rzeczach CHRONIONYCH, więc nowa
+    wysyłka wpada pod regułę bez niczyjej pamięci — tak samo jak w regule wyżej, która była
+    zbudowana dobrze od początku.
+    """
+    braki = []
+    zbedne = []
+    wysylek = 0
+    for nazwa, funkcja in _funkcje_kompensujace():
+        for rodzic in ast.walk(funkcja):
+            galezie = getattr(rodzic, "body", None)
+            if not isinstance(galezie, list):
+                continue
+            for wezel in galezie:
+                if not isinstance(wezel, ast.Try):
+                    continue
+                w_body = [w for b in wezel.body for w in _wysylki(b)]
+                if not w_body:
+                    continue
+                terminalny = _status_terminalny(_commit_przed(galezie, wezel))
+                ma = bool(_wycofania_warunkowe(wezel))
+                gdzie = f"{nazwa}:{funkcja.name}:try@{wezel.lineno}"
+                if terminalny:
+                    # Kontrola w DRUGĄ stronę: po statusie terminalnym kompensacja jest zakazana.
+                    # Bez niej reguła pilnowałaby tylko jednego kierunku błędu.
+                    if ma:
+                        zbedne.append(gdzie)
+                    continue
+                wysylek += len(w_body)
+                if not ma:
+                    braki.append(gdzie)
+
+    # Kontrola pozytywna BEZ przypiętej liczby: pilnuje, że przedmiot ochrony nie wyparował,
+    # ale nie zamraża jego liczności — inaczej sama stałaby się tym, co ta reguła naprawia.
+    assert wysylek > 0, "brak wysyłek w funkcjach kompensujących — reguła straciła przedmiot"
+    assert braki == [], braki
+    assert zbedne == [], zbedne
+
+
+def test_zadne_wycofanie_nie_stoi_poza_finally():
+    """Dopełnienie w drugą stronę: kompensacja poza `finally` nie chroni na każdej drodze wyjścia.
+
+    W `body` wykonałaby się tylko po sukcesie, w `except` ominęłaby wyjątki propagujące bez
+    handlera — `NIE_POLYKAJ` przy prośbie o potwierdzenie i wszystko w dwóch pozostałych miejscach,
+    które handlera nie mają wcale.
+    """
+    poza = []
+    for nazwa, drzewo in _moduly():
+        w_finally = {
+            id(c)
+            for wezel in ast.walk(drzewo)
+            if isinstance(wezel, ast.Try)
+            for gałąź in wezel.finalbody
+            for w in ast.walk(gałąź)
+            if isinstance(w, ast.Call) and _nazwa_wolania(w) == "_wycofaj_commit"
+            for c in [w]
+        }
+        for wezel in ast.walk(drzewo):
+            if (
+                isinstance(wezel, ast.Call)
+                and _nazwa_wolania(wezel) == "_wycofaj_commit"
+                and id(wezel) not in w_finally
+            ):
+                poza.append(f"{nazwa}:{wezel.lineno}")
+    assert poza == [], poza

@@ -26,6 +26,7 @@ from powiadomienia_teams.reminders.timeoff import TeamReasons
 # Moduł, NIE pojedyncze nazwy: `service` importuje `odswiez_puls` przez `from ... import`, więc
 # podmiana w `healthcheck` nie ma jak zadziałać — trzeba podmienić nazwę tam, gdzie jest związana.
 from powiadomienia_teams.runtime import service as _serwis
+from powiadomienia_teams.runtime.budzet import PrzebiegPrzekroczylCzasError
 from powiadomienia_teams.runtime.cisza import CiszaWstrzymalaPrzebieg
 from powiadomienia_teams.runtime.listener import _MAX_PENDING_FAILURES
 from powiadomienia_teams.runtime.operator import zglos_utrate_sesji
@@ -2905,6 +2906,99 @@ def test_nieudana_prosba_o_doprecyzowanie_nie_zjada_wiadomosci(tmp_path: Path):
     po = load_state(state_path)["u1"]
     assert po.watermark == nudge  # niezrozumiana wiadomość wraca do interpretacji
     assert po.employee_memory == []
+
+
+def _pending_do_potwierdzenia(state_path: Path, nudge: str = "2026-07-19T17:00:00Z") -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "blad",
+    [AuthExpiredError("AADSTS50173"), PrzebiegPrzekroczylCzasError("limit obiegu")],
+    ids=["utrata_sesji", "limit_czasu_przebiegu"],
+)
+def test_wycofanie_commitu_TRAFIA_NA_DYSK_takze_gdy_wyjatek_omija_licznik(
+    tmp_path: Path, blad: Exception
+):
+    """Wycofanie w pamięci nie wystarcza — te dwa wyjątki omijają `_record_failure`.
+
+    Pierwsza wersja fali 4 cofała commit wyłącznie w pamięci, licząc na to, że utrwali go
+    `_record_failure`. Dla utraty sesji i limitu czasu przebiegu to nieprawda: oba są przepuszczane
+    WCZEŚNIEJ, a oba są osiągalne wprost z wysyłki (`_sprawdz_czas` i `refresh_auth` stoją w każdym
+    żądaniu Graph). `_commit` zdążył już zapisać, więc na dysku zostawał `awaiting_yes=True`
+    i przesunięty watermark.
+
+    Skutek był GORSZY niż naprawiana usterka i mierzalny: po restarcie samo „ok" pracownika wpadało
+    w szybką ścieżkę i zapisywało do Shifts komplet, którego nigdy nie widział — czyli regres
+    niezmiennika N38, i to na wpisie, o którym nikt go nie zapytał.
+    """
+    state_path = tmp_path / "state.json"
+    _pending_do_potwierdzenia(state_path)
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise blad
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    with pytest.raises(type(blad)):
+        poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == "2026-07-19T17:00:00Z"  # NA DYSKU, nie tylko w pamięci
+    assert po.awaiting_yes is False  # bramka N38 zamknięta — inaczej samo „ok" zapisze do Shifts
+    assert po.status == AWAITING_REPLY
+    assert po.resolved == []
+
+
+@pytest.mark.parametrize(
+    "blad",
+    [AuthExpiredError("AADSTS50173"), PrzebiegPrzekroczylCzasError("limit obiegu")],
+    ids=["utrata_sesji", "limit_czasu_przebiegu"],
+)
+def test_po_wycofaniu_samo_ok_NIE_zapisuje_do_grafiku(tmp_path: Path, blad: Exception):
+    """Kontrola skutkowa do testu wyżej: sprawdza SZKODĘ, nie pole w pliku.
+
+    Test wyżej pilnuje `awaiting_yes`. Ten pilnuje tego, po co ta flaga istnieje — żeby po awarii
+    wysyłki i restarcie usługi kolejne „ok" pracownika nie stało się nieodwracalnym zapisem do
+    grafiku klienta. Pole da się kiedyś przemianować; szkoda zostaje ta sama.
+    """
+    state_path = tmp_path / "state.json"
+    _pending_do_potwierdzenia(state_path)
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise blad
+
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    with pytest.raises(type(blad)):
+        poll_replies(
+            _settings_calodobowe(state_path),
+            _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]}),
+            llm,
+            now=_NIEDZIELA_19,
+        )  # type: ignore[arg-type]
+
+    # Awaria minęła, pracownik pisze samo „ok" — po prośbie, której NIGDY nie dostał.
+    zdrowy = _FakeClient({"chat1": [_msg("u1", "2026-07-19T19:30:00Z", "ok")]})
+    poll_replies(_settings_calodobowe(state_path), zdrowy, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert zdrowy.created == []  # ANI JEDNEJ zmiany w grafiku klienta
+    assert load_state(state_path)["u1"].status != APPLIED
 
 
 def test_powtarzajaca_sie_awaria_prosby_konczy_sie_prosba_o_doprecyzowanie(tmp_path: Path):
