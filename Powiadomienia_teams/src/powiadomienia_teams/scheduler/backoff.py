@@ -3,7 +3,6 @@
 Czysta funkcja (wstrzykiwany ``now``/``last_activity``), jak ``next_run`` — w pełni testowalna.
 Operuje na elapsed-seconds w UTC, więc jest niewrażliwa na zmianę czasu (DST).
 """
-
 from __future__ import annotations
 
 from datetime import datetime

@@ -1,9 +1,8 @@
-from powiadomienia_teams.reminders.timeoff import (
-    TeamReasons,
-    display_name,
-    normalize,
-    resolve_time_off,
-)
+# `display_name`/`normalize`/`TeamReasons` przeniesiono do `domain.powody` (rozcięcie cyklu
+# graph → reminders → graph). `reminders.timeoff` re-eksportuje TeamReasons, resztę bierzemy
+# z miejsca, w którym teraz mieszka — test ma świadczyć o obecnej strukturze, nie o poprzedniej.
+from powiadomienia_teams.domain.powody import TeamReasons, display_name, normalize
+from powiadomienia_teams.reminders.timeoff import resolve_time_off
 
 
 def _reasons() -> TeamReasons:

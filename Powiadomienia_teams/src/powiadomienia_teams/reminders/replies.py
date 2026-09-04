@@ -1,5 +1,4 @@
 """Parsowanie odpowiedzi pracownika z wiadomości czatu (czysta logika)."""
-
 from __future__ import annotations
 
 import re
@@ -7,33 +6,29 @@ from datetime import datetime, timedelta
 from html import unescape
 from typing import Any
 
-from powiadomienia_teams.graph.mapping import parse_graph_datetime
+from powiadomienia_teams.domain.czas import parse_graph_datetime
 
 _TAGS = re.compile(r"<[^>]+>")
 
 # Pamięć rozmowy interpretera: sufit liczby zapamiętanych wiadomości pracownika oraz STAŁE okno
 # liczone od PIERWSZEJ zapamiętanej wiadomości (po jego upływie pamięć się zeruje). Patrz
-# ``PendingReminder.employee_memory``/``memory_started_at`` i ``app._commit``.
+# ``PendingReminder.employee_memory``/``memory_started_at`` i ``runtime.listener._commit``.
 MEMORY_CAP = 10
 MEMORY_WINDOW = timedelta(hours=1)
 _AFFIRM = {
-    "tak",
-    "ok",
-    "okej",
-    "okey",
-    "spoko",
-    "potwierdzam",
-    "zgoda",
-    "pasuje",
-    "dokładnie",
-    "git",
-    "zgadza",
-    "jasne",
-    "super",
+    "tak", "ok", "okej", "okey", "spoko", "potwierdzam", "zgoda",
+    "pasuje", "dokładnie", "git", "zgadza", "jasne", "super",
 }
 # Uprzejmości dopuszczalne obok potwierdzenia (nie są poprawką grafiku).
 _FILLER = {"", "no", "dzięki", "dzieki", "dziękuję", "dziekuje", "wielkie", "i", "też"}
+# Interpunkcja nienosząca treści: po jej obcięciu token ma być samym słowem.
 _STRIP = ".,!?…:;-–„”\"'()"
+# Ta sama lista BEZ pytajnika — obowiązuje wyłącznie przy bramce nieodwracalnego zapisu
+# (``is_pure_affirmation``). ``?`` jest jedynym znakiem z ``_STRIP``, który ODWRACA sens
+# wypowiedzi: „tak!" to zgoda, „tak?" to pytanie o zgodę. Zawężenie stoi tutaj, a nie w samym
+# ``_STRIP``, bo tamta stała opisuje interpunkcję ozdobną w ogóle, a bramka zapisu jest jedynym
+# miejscem, w którym „prawie na pewno tak" jest za mało (pozycja B8 planu rozwoju).
+_STRIP_BRAMKA_ZAPISU = _STRIP.replace("?", "")
 
 
 def message_text(message: dict[str, Any]) -> str:
@@ -53,20 +48,21 @@ def _created_at(message: dict[str, Any]) -> datetime | None:
         return None
 
 
-def newest_incoming(
-    messages: list[dict[str, Any]], me_id: str, member_id: str, after_iso: str = ""
-) -> dict[str, Any] | None:
-    """Najnowsza wiadomość OD ``member_id``, nie od nas, nowsza niż ``after_iso``; inaczej None.
+def incoming_after(
+    messages: list[dict[str, Any]], me_id: str, after_iso: str = ""
+) -> list[dict[str, Any]]:
+    """WSZYSTKIE wiadomości pracownika nowsze niż `after_iso`, od NAJSTARSZEJ do najnowszej.
+
+    Wcześniej brana była wyłącznie najnowsza, a watermark przeskakiwał na nią — więc pozostałe
+    ginęły bezpowrotnie, nie trafiając nawet do pamięci rozmowy. To nie była wąska krawędź:
+    ``next_poll_delay`` rozciąga odstęp odpytywania geometrycznie, więc po godzinie ciszy od
+    nudge'a bot zagląda na czat raz na ``poll_max_interval_s``. Pracownik piszący dwa dymki pod
+    rząd („pon–pt 8–16", a chwilę później „w piątek mnie nie będzie") był interpretowany wyłącznie
+    z drugiego: bot potwierdzał sam urlop i po »tak« zapisywał do Shifts jeden dzień wolny i zero
+    zmian. Pisanie w kilku dymkach jest w czacie normą, więc to przypadek typowy, nie brzegowy.
 
     Porównanie po sparsowanym czasie (nie leksykograficznie po napisie), żeby różnice
     w precyzji ułamka sekundy z Graph nie przestawiały kolejności.
-
-    Nadawca musi być DOKŁADNIE tą osobą, o której grafik pytamy. Warunek „ktokolwiek poza botem"
-    wyglądał równoważnie tylko dopóki czat jest 1:1: Graph wstawia do wątku także wiadomości
-    systemowe i wpisy innych tożsamości (aplikacje, konto dodane do rozmowy, migracja czatu na
-    grupowy). Każda z nich stawała się „odpowiedzią pracownika" — szła do modelu, przesuwała
-    watermark i mogła doprowadzić do zapisu W GRAFIKU PRACOWNIKA na podstawie cudzej treści,
-    a prawdziwa odpowiedź pracownika (starsza niż przesunięty watermark) nie była już czytana.
     """
     after: datetime | None = None
     if after_iso:
@@ -75,28 +71,17 @@ def newest_incoming(
         except ValueError:
             after = None
 
-    # GUID-y z Graph bywają zapisane różną wielkością liter (inny endpoint, inna wersja API, ręcznie
-    # wpisane `ONLY_USER_IDS`). Porównanie wrażliwe na wielkość liter przy takim rozjeździe odsiewa
-    # KAŻDĄ odpowiedź pracownika — cicho i na zawsze. `casefold` po obu stronach kosztuje tyle co
-    # nic.
-    nasze = me_id.casefold()
-    pracownik = member_id.casefold()
     incoming: list[tuple[datetime, dict[str, Any]]] = []
     for message in messages:
         sender = ((message.get("from") or {}).get("user") or {}).get("id")
-        if sender is None:
-            continue
-        nadawca = str(sender).casefold()
-        if nadawca == nasze or nadawca != pracownik:
+        if sender is None or sender == me_id:
             continue
         created = _created_at(message)
         if created is None or (after is not None and created <= after):
             continue
         incoming.append((created, message))
 
-    if not incoming:
-        return None
-    return max(incoming, key=lambda pair: pair[0])[1]
+    return [message for _, message in sorted(incoming, key=lambda pair: pair[0])]
 
 
 def is_pure_affirmation(text: str) -> bool:
@@ -107,8 +92,12 @@ def is_pure_affirmation(text: str) -> bool:
     bezpieczny: gdy pojawi się JAKIEKOLWIEK słowo spoza potwierdzeń/uprzejmości, wolimy
     reinterpretować (najwyżej dodatkowe wywołanie modelu), niż zapisać niezmieniony grafik mimo
     prośby o zmianę. Zastępuje wcześniejszą kruchą heurystykę »są cyfry«.
+
+    »tak?« NIE jest tu potwierdzeniem (0.2.13, B8): pytajnik zostaje przy tokenie, więc token
+    wypada ze słownika i porcja idzie do reinterpretacji — tą samą drogą co »taak«. Reszta
+    interpunkcji jest obcinana bez zmian, bo tylko pytajnik zamienia zgodę w pytanie o zgodę.
     """
-    tokens = [t.strip(_STRIP) for t in text.lower().split()]
+    tokens = [t.strip(_STRIP_BRAMKA_ZAPISU) for t in text.lower().split()]
     if not any(t in _AFFIRM for t in tokens):
         return False
     allowed = _AFFIRM | _FILLER
@@ -138,8 +127,7 @@ def history_for_llm(
 
     Zwraca ``[]``, gdy stałe okno minęło (kontekst startuje od nowa) lub gdy brak historii.
     ``current_at`` to createdDateTime bieżącej wiadomości — decyzja o resecie jest wspólna z
-    ``advance_memory`` (obie wołają ``_window_reset``), więc prompt i utrwalony stan nie
-    rozjadą się.
+    ``advance_memory`` (obie wołają ``_window_reset``), więc prompt i utrwalony stan nie rozjadą się.
     """
     if _window_reset(started_at, current_at, window):
         return []
@@ -158,7 +146,7 @@ def advance_memory(
     """Nowa (pamięć, kotwica) PO zapisaniu bieżącej wiadomości pracownika.
 
     Wyliczane z niezmienionych wejść (nie akumulowane na miejscu), więc ponowienie z tymi samymi
-    argumentami daje identyczny wynik — idempotencja wymagana przez ``app._commit`` (ta sama
+    argumentami daje identyczny wynik — idempotencja wymagana przez ``runtime.listener._commit`` (ta sama
     wiadomość nie może się zdublować przy ponownej obsłudze). Po upływie okna zeruje pamięć i
     zakotwicza ją na bieżącej wiadomości; sufit ``cap`` przycina od najstarszej, ale kotwicy NIE
     rusza (okno pozostaje liczone od pierwszej interakcji, nie kroczące).

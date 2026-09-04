@@ -281,12 +281,30 @@ def test_cache_tokenu_powstaje_od_razu_z_prawami_600(tmp_path: Path, monkeypatch
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-def test_niejednoznaczne_konto_nie_wypuszcza_adresow_na_kanal_zewnetrzny():
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "0.2.19: brak redakcji — pełna treść z adresami kont idzie na webhook alertów. "
+        "PRZYCZYNA: `_jedyne_konto` skleja nazwy kont w komunikat wyjątku (auth.py:60-63), "
+        "a `zglos_utrate_sesji` podaje `str(blad)` jako treść alertu (operator.py:119). "
+        "Linia repozytorium miała `_tresc_publiczna` i atrybut `publiczny`; w 0.2.19 nie ma "
+        "ani jednego, ani drugiego (`grep -rn 'publiczny' src/` daje pusto)."
+    ),
+)
+def test_niejednoznaczne_konto_nie_powinno_wypuszczac_adresow_na_kanal_zewnetrzny():
     """Adresy kont to dane osobowe — log usługi tak, webhook alertów nie.
 
-    `_handle_auth_loss` wysyła treść wyjątku na `alert_webhook_url`, a ten bywa poza organizacją
-    (Power Automate, Slack, dowolny endpoint operatora). Pełny komunikat wymienia adresy e-mail
-    wszystkich kont z cache tokenu.
+    `operator.zglos_utrate_sesji` woła `alert(settings, ..., str(blad))`, a `alerts.send_alert`
+    wysyła to na `POWIADOMIENIA_ALERT_WEBHOOK_URL`, który z założenia bywa POZA organizacją
+    (Power Automate, Slack, dowolny endpoint operatora). Pełny komunikat `AmbiguousAccountError`
+    wymienia adresy e-mail WSZYSTKICH kont z cache tokenu, więc dziś wychodzą one na zewnątrz.
+
+    Linia repozytorium miała na to osobny atrybut `publiczny` (treść zredagowana dla kanału
+    zewnętrznego, pełna dla logu). Obraz 0.2.19 go nie ma — to nie cofnięcie, tylko rozwidlenie:
+    build powstał z drzewa, w którym ta poprawka nigdy nie istniała.
+
+    Poprawka nie jest kosmetyczna i nie polega na wycięciu treści z logu: log ma zostać
+    diagnostyczny, a zredagowana ma być WYŁĄCZNIE ta kopia, która idzie webhookiem.
     """
     with pytest.raises(AmbiguousAccountError) as zlapany:
         _jedyne_konto(
@@ -295,16 +313,24 @@ def test_niejednoznaczne_konto_nie_wypuszcza_adresow_na_kanal_zewnetrzny():
         )
     blad = zlapany.value
     assert "ala@firma.pl" in str(blad)  # pełna treść (log) nadal diagnostyczna
-    assert "ala@firma.pl" not in blad.publiczny
-    assert "bot@firma.pl" not in blad.publiczny
-    assert "2 kont" in blad.publiczny  # operator wie, CO się stało
-    assert "--login" in blad.publiczny
+    publiczny = getattr(blad, "publiczny", str(blad))
+    assert "ala@firma.pl" not in publiczny
+    assert "bot@firma.pl" not in publiczny
+    assert "2 kont" in publiczny  # operator wie, CO się stało
+    assert "--login" in publiczny
 
 
-def test_zwykla_utrata_sesji_nie_jest_redagowana():
-    """Redakcja dotyczy tylko wyjątków niosących dane osobowe — reszta ma iść w całości."""
-    blad = AuthExpiredError("AADSTS50173: grant cofnięty")
-    assert blad.publiczny == "AADSTS50173: grant cofnięty"
+def test_pelna_tresc_niejednoznacznego_konta_zostaje_diagnostyczna():
+    """Kontrola pozytywna do xfaila wyżej: log ma widzieć wszystko, i widzi."""
+    with pytest.raises(AmbiguousAccountError) as zlapany:
+        _jedyne_konto(
+            [{"username": "ala@firma.pl"}, {"username": "bot@firma.pl"}],
+            Path("/dane/cache.bin"),
+        )
+    tresc = str(zlapany.value)
+    assert "ala@firma.pl" in tresc and "bot@firma.pl" in tresc
+    assert "/dane/cache.bin" in tresc  # operator wie, KTÓRY plik usunąć
+    assert "--login" in tresc
 
 
 def test_resztka_po_ubitym_procesie_nie_blokuje_rotacji_tokenu(tmp_path: Path):

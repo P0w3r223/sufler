@@ -4,7 +4,6 @@ Wzorzec jak w WorkMate (`src/workmate/config.py`). Prefiks zmiennych: `POWIADOMI
 Sekrety (klucz Claude) mają `repr=False`. Domyślnie `dry_run=True` — nic nie wysyła ani
 nie zapisuje, dopóki nie zostanie jawnie wyłączone.
 """
-
 from __future__ import annotations
 
 import os
@@ -49,8 +48,61 @@ class TeamContext:
     scheduling_group_id: str | None = None
 
 
+@dataclass(frozen=True)
+class OknoOdpowiedzi:
+    """Polityka TERMINU odpowiedzi — trzy liczby, które razem odpowiadają „do kiedy wolno czekać".
+
+    Wydzielone z ``Settings`` z tego samego powodu co ``TeamContext``: ``reminders.lifecycle`` jest
+    czystą logiką czasu i nie ma prawa znać całej konfiguracji, a składanie tych trzech wartości
+    u każdego wołającego z osobna kończyło się w A7 warstwą, której skasowanie nie psuło ani
+    jednego testu. Mieszka TUTAJ, nie w ``lifecycle``, bo to projekcja konfiguracji — kierunek
+    zależności jest ``lifecycle`` → ``config`` i taki musi zostać (``config`` nie wolno importować
+    z ``reminders/``, inaczej powstanie cykl).
+
+    ``offset_h`` liczy się od LOKALNEJ PÓŁNOCY PONIEDZIAŁKU tygodnia docelowego i wolno mu być
+    ujemny (termin przed początkiem tygodnia). ``min_h`` to dolna granica kurtuazji od ostatniej
+    prośby bota — patrz ``lifecycle.termin_odpowiedzi``.
+    """
+
+    offset_h: int
+    min_h: int
+    tz: ZoneInfo
+
+
+@dataclass(frozen=True)
+class OknoCiszy:
+    """Godziny, w których usługa NIE pisze do pracowników. Reguła produktowa, nie techniczna.
+
+    Nie jest niezmiennikiem i nie ma za sobą awarii: wiadomość o 23:40 na czacie prywatnym jest
+    wtargnięciem, choćby była uprzejma, i to jest cały powód istnienia tego okna.
+
+    Godziny są LOKALNE (strefa zespołu) i pełne — granica zawsze wypada „o którejś". Okno wolno
+    zapętlić przez północ (``od_h=20``, ``do_h=7``); równe wartości znaczą „bez ciszy" i to jedyny
+    sposób jej wyłączenia, bo osobna flaga dawałaby dwa źródła prawdy o tej samej rzeczy.
+    """
+
+    od_h: int
+    do_h: int
+    tz: ZoneInfo
+
+    @property
+    def wylaczone(self) -> bool:
+        return self.od_h == self.do_h
+
+
 def _get(name: str, default: str = "") -> str:
-    return os.environ.get(_PREFIX + name, default)
+    """Wartość tekstowa ze środowiska — obcięta z białych znaków, pusta znaczy „domyślnie".
+
+    Obcinanie obowiązuje WSZYSTKIE wartości tekstowe, nie tylko sekret. `env` edytowany na Windows
+    i przeniesiony na serwer niesie CRLF, a `_get` był jedynym czytnikiem w tym pliku, który tego
+    nie zdejmował (`_bool`, `_int` i `_list` zdejmują od zawsze). Cena była różna, ale nigdzie
+    zerowa: adres webhooka z doklejonym `\\r` przechodzi kontrolę `https://`, po czym `httpx`
+    odrzuca go przy wysyłce, a `send_alert` łyka wyjątek — czyli jedyny kanał niezależny od AAD
+    milczy i zostaje po nim wyłącznie WARNING w logu, którego w instalacji bezobsługowej nikt nie
+    czyta. Przy `LLM_MODEL` skutek jest jeszcze cichszy: 404 z API nie jest niedostępnością
+    granicy, więc wyjątek gaśnie w izolacji per-osoba.
+    """
+    return _sekret(_PREFIX + name) or default
 
 
 _PRAWDA = frozenset({"1", "true", "yes", "on", "tak"})
@@ -58,14 +110,16 @@ _FALSZ = frozenset({"0", "false", "no", "off", "nie"})
 
 
 def _bool(name: str, default: bool) -> bool:
-    """Wartość logiczna z otoczenia; nierozpoznana treść to BŁĄD KONFIGURACJI, nie „domyślnie".
+    """Wartość logiczna ze środowiska — nierozpoznana treść to BŁĄD, nie ciche `False`.
 
-    Wcześniejsze „cokolwiek spoza listy prawd znaczy fałsz" było fail-open dla NAJWAŻNIEJSZEJ
-    bramki w tym projekcie: `POWIADOMIENIA_DRY_RUN`. Literówka (`fasle`), cudzysłowy zostawione
-    przez `docker run -e DRY_RUN="true"`, polskie `prawda` albo ucięte `tru` dawały cicho
-    `dry_run=False`, czyli tryb NA ŻYWO — wysyłkę do całego zespołu i zapis do grafiku klienta.
-    Operator nie miał jak tego zauważyć przed pierwszą wiadomością. Zachowanie jak w `_int`:
-    nieznana wartość zatrzymuje start z jednym czytelnym zdaniem.
+    Wcześniej wszystko spoza zbioru prawdy schodziło do `False`, więc literówka w WARTOŚCI
+    zmiennej wyłączała ochronę bezgłośnie: `DRY_RUN=ture` znaczyło „pracuj na serio", choć operator
+    napisał to, myśląc odwrotnie — a krok 7 runbooka każe wpisać tę wartość ręcznie. Ta sama klasa
+    błędu dotyczy `PILOTAZ` i `ALERTY_WYLACZONE`: obie są bramkami, a bramka wyłączana literówką
+    nie jest bramką. Sąsiedni `_int` fail-fastuje od zawsze — to była niespójność w jednym pliku.
+
+    Pusta wartość nadal znaczy „domyślnie": `ZMIENNA=` w `env` to typowy sposób zapisania
+    „zostawiam jak jest", a nie pomyłka.
     """
     raw = os.environ.get(_PREFIX + name)
     if raw is None or not raw.strip():
@@ -76,8 +130,8 @@ def _bool(name: str, default: bool) -> bool:
     if wartosc in _FALSZ:
         return False
     raise ConfigError(
-        f"{_PREFIX}{name} musi być wartością logiczną "
-        f"({'/'.join(sorted(_PRAWDA))} albo {'/'.join(sorted(_FALSZ))}): {raw!r}"
+        f"{_PREFIX}{name} musi być wartością logiczną: {raw!r}. "
+        f"Dozwolone: {', '.join(sorted(_PRAWDA))} / {', '.join(sorted(_FALSZ))}"
     )
 
 
@@ -92,8 +146,17 @@ def _int(name: str, default: int) -> int:
 
 
 def _path(name: str, default: Path) -> Path:
-    raw = os.environ.get(_PREFIX + name)
-    return Path(raw).expanduser() if raw else default
+    """Ścieżka ze środowiska — obcięta z białych znaków, jak każda inna wartość tekstowa.
+
+    Do 0.2.12 `_path` był jedynym czytnikiem w tym pliku, który brał wartość surową. Cena tego
+    wyjątku jest wyższa niż gdzie indziej: `STATE_PATH` z doklejonym `\\r` (`env` edytowany na
+    Windows) albo ze spacją na końcu wskazuje na Linuksie INNY, całkowicie legalny plik. Usługa
+    startuje wtedy z pustym stanem — czyli uzna wszystkich za nienagabywanych i **wyśle prośby
+    drugi raz do całego zespołu**, a otwarte rozmowy przepadną. To ta sama awaria, przed którą
+    broni cała maszyneria kopii stanu (A3), wywołana literówką niewidoczną w edytorze.
+    """
+    wartosc = _sekret(_PREFIX + name)
+    return Path(wartosc).expanduser() if wartosc else default
 
 
 def _list(name: str) -> tuple[str, ...]:
@@ -101,16 +164,95 @@ def _list(name: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
-def _int_list(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
-    raw = os.environ.get(_PREFIX + name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        return tuple(int(item.strip()) for item in raw.split(",") if item.strip())
-    except ValueError as exc:
-        raise ConfigError(
-            f"{_PREFIX}{name} musi być listą liczb całkowitych po przecinku: {raw!r}"
-        ) from exc
+def _bez_dubli(pozycje: tuple[str, ...]) -> tuple[str, ...]:
+    """Zachowuje kolejność PIERWSZEGO wystąpienia. Dla adresatów duplikat = druga ta sama wiadomość."""
+    widziane: dict[str, None] = dict.fromkeys(pozycje)
+    return tuple(widziane)
+
+
+# Klucz do API modelu: JEDNA nazwa kanoniczna i jeden alias sprzed tej zmiany. Alias jest BEZ
+# prefiksu, bo `ANTHROPIC_API_KEY` to konwencja SDK — dlatego słownik niżej trzyma nazwy PEŁNE,
+# a nie doklejane do prefiksu.
+NAZWA_KLUCZA_MODELU = _PREFIX + "AGENT_API_KEY"
+ALIAS_KLUCZA_MODELU = "ANTHROPIC_API_KEY"
+
+# Zmienne wycofywane: stara PEŁNA nazwa → nowa. Czytane nadal (ciche zignorowanie zabrałoby
+# działającej instalacji funkcję bez śladu), ale start ma o tym powiedzieć — inaczej migracja
+# nigdy się nie kończy, bo nic o niej nie przypomina.
+PRZESTARZALE_NAZWY = {
+    _PREFIX + "ADMIN_USER_ID": _PREFIX + "ADMIN_USER_IDS",
+    ALIAS_KLUCZA_MODELU: NAZWA_KLUCZA_MODELU,
+}
+
+# Zmienne USUNIĘTE: nazwa nadal rozpoznawana, ale wartość NIE MA już żadnego znaczenia — inaczej
+# niż w `PRZESTARZALE_NAZWY`, gdzie wartość działa i trzeba ją tylko przenieść. Tu nie ma czego
+# przenosić: „48 h ciszy" nie przekłada się ani na termin kalendarzowy, ani na retencję, bo to były
+# dwie różne role zwinięte w jedną liczbę. Ciche zignorowanie jest tu najgroźniejszym wariantem:
+# operator, który wpisał `REPLY_WINDOW_HOURS=72`, ma prawo myśleć, że wydłużył ludziom czas, a nie
+# zmienił nic. Zdanie na starcie jest jedynym miejscem, w którym może się o tym dowiedzieć.
+USUNIETE_NAZWY = {
+    _PREFIX + "REPLY_WINDOW_HOURS": (
+        f"okno odpowiedzi przestało być liczbą godzin ciszy — termin jest teraz kalendarzowy "
+        f"({_PREFIX}REPLY_DEADLINE_OFFSET_H, {_PREFIX}REPLY_MIN_HOURS), a retencja wpisów "
+        f"terminalnych ma własną zmienną ({_PREFIX}TERMINAL_RETAIN_HOURS)"
+    ),
+}
+
+
+def uzyte_usuniete_nazwy() -> list[tuple[str, str]]:
+    """Pary (nazwa, powód) dla zmiennych USUNIĘTYCH obecnych w środowisku — do logu startowego."""
+    return [
+        (nazwa, powod)
+        for nazwa, powod in USUNIETE_NAZWY.items()
+        if os.environ.get(nazwa, "").strip()
+    ]
+
+
+def uzyte_przestarzale_nazwy() -> list[tuple[str, str]]:
+    """Pary (stara, nowa) dla zmiennych wycofywanych obecnych w środowisku — do logu startowego."""
+    return [
+        (stara, nowa)
+        for stara, nowa in PRZESTARZALE_NAZWY.items()
+        if os.environ.get(stara, "").strip()
+    ]
+
+
+def _sekret(nazwa_pelna: str) -> str:
+    """Wartość spod PEŁNEJ nazwy zmiennej, obcięta z białych znaków. Podstawa `_get`.
+
+    Osobno od `_get`, bo alias klucza modelu (`ANTHROPIC_API_KEY`) nie ma prefiksu — nie ma jak
+    zapytać o niego przez nazwę skróconą.
+
+    Obcinanie nie jest kosmetyką. Klucz API nigdy nie ma białych znaków na brzegach, a wklejenie
+    go z konsoli dostawcy razem z końcem linii daje wartość, która przechodzi walidację startową
+    (niepusta), po czym KAŻDA interpretacja odpowiedzi kończy się 401 — po cichu, bo wyjątek łapie
+    izolacja per-osoba. To ta sama klasa błędu co literówka w wartości logicznej (patrz `_bool`).
+
+    Skutkiem ubocznym jest to, że wartość pusta albo złożona z samych spacji znaczy „nie ustawiono",
+    dzięki czemu `POWIADOMIENIA_AGENT_API_KEY=` (typowe „zostawiam jak jest") nie wygasza aliasu.
+    """
+    return os.environ.get(nazwa_pelna, "").strip()
+
+
+def klucz_modelu() -> str:
+    """Klucz do API modelu — kanoniczna nazwa WYGRYWA, alias działa dalej.
+
+    Do 0.2.12 pierwszeństwo miał alias, więc instalacja z obiema nazwami brała tę, której operator
+    nie uważał za obowiązującą. Jedna rzecz ma jedną nazwę: `POWIADOMIENIA_AGENT_API_KEY`. Alias
+    zostaje, bo obraz u klienta ma dziś właśnie jego, a ciche zignorowanie zatrzymałoby nasłuch
+    komunikatem o brakującym kluczu, który przecież jest ustawiony.
+    """
+    return _sekret(NAZWA_KLUCZA_MODELU) or _sekret(ALIAS_KLUCZA_MODELU)
+
+
+def alias_klucza_zignorowany() -> bool:
+    """Czy ustawiono obie nazwy klucza naraz — wtedy wartość aliasu NIE jest używana.
+
+    Osobno od `uzyte_przestarzale_nazwy()`, bo to inna sytuacja: tam wartość działa i trzeba ją
+    kiedyś przenieść, tu wartość jest ignorowana już teraz. Bez tego rozróżnienia rotacja klucza
+    wpisana pod starą nazwą wyglądałaby na wykonaną, a usługa dalej używałaby poprzedniego.
+    """
+    return bool(_sekret(NAZWA_KLUCZA_MODELU)) and bool(_sekret(ALIAS_KLUCZA_MODELU))
 
 
 @dataclass(frozen=True)
@@ -126,7 +268,28 @@ class Settings:
     run_hour: int = 16
     run_minute: int = 0
     timezone: str = "Europe/Warsaw"
-    reply_window_hours: int = 48  # po tylu h ciszy zamknij okno odpowiedzi (status EXPIRED)
+    # Termin odpowiedzi = północ poniedziałku tygodnia DOCELOWEGO + tyle godzin. Domyślnie +5,
+    # czyli poniedziałek 05:00: grafik musi być w Shifts przed pierwszą zmianą (typowo 6:00), a to
+    # jest rozstrzygnięcie klienta (plan §4.2/1), nie liczba techniczna. Wolno ujemny — termin przed
+    # początkiem tygodnia. Świadoma cena tej wartości: odpowiedź z poniedziałku po 05:00 jest już po
+    # terminie — godzinę przed pierwszą zmianą i trzy godziny przed typowym początkiem dnia
+    # biurowego (na tej drugiej liczbie stoi test). Patrz `plan-rozwoju.md` B1.
+    reply_deadline_offset_h: int = 5
+    # Dolna granica kurtuazji: nigdy nie zamykaj tematu wcześniej niż tyle godzin po OSTATNIEJ
+    # prośbie bota. Jedyne, co zostało z kotwicy N10 — bez tego pending obsłużony po przestoju
+    # dostaje prośbę o potwierdzenie i wygasa w kolejnym cyklu, bo termin kalendarzowy już minął.
+    reply_min_hours: int = 24
+    # Retencja wpisów TERMINALNYCH — osobna liczba, nie okno odpowiedzi. Do 0.2.12 obie role brała
+    # jedna zmienna, więc każda zmiana terminu przestawiała po cichu strażnika N15 („jedna prośba
+    # na osobę na tydzień"), a skutkiem było ponowne zaczepienie osoby, której bot obiecał
+    # „kończę przypominanie".
+    terminal_retain_hours: int = 48
+    # Godziny ciszy: nie pisz do PRACOWNIKÓW między `cisza_od_h` a `cisza_do_h` (lokalnie).
+    # Alerty operatorskie i cotygodniowe podsumowanie dla administratora idą zawsze — dotyczą
+    # stanu USŁUGI, a podsumowanie jest dead man's switchem, w którym brak wiadomości JEST
+    # sygnałem. Równe wartości wyłączają ciszę (patrz `OknoCiszy`).
+    cisza_od_h: int = 20
+    cisza_do_h: int = 7
     send_expiry_message: bool = True  # przy wygaśnięciu wyślij uprzejme domknięcie do pracownika
     poll_interval_s: int = 10  # bazowy (minimalny) odstęp odpytywania; backoff go wydłuża
     poll_max_interval_s: int = 3600  # górny limit odstępu przy długiej ciszy (1 h)
@@ -134,39 +297,47 @@ class Settings:
     # by wykryć samodzielne uzupełnienie grafiku. -1 wyłącza funkcję; 0 = sprawdzaj co cichy cykl.
     self_fill_check_min_idle_s: int = 3600
     catchup_grace_hours: int = 6  # jak długo po minionym terminie wolno nadrobić przebieg (0=off)
-    # --- Okno wysyłki wiadomości INICJOWANYCH przez bota (godziny ciszy) ---
-    # Dotyczy cotygodniowej prośby, domknięcia po wygaśnięciu i podziękowania za samodzielne
-    # uzupełnienie grafiku. NIE dotyczy odpowiedzi na wiadomość pracownika — rozmowę zaczął on.
-    # Godziny lokalne zespołu (`timezone`), przedział [start, end): 8..18 = 8:00–17:59.
-    send_window_start_hour: int = 8
-    send_window_end_hour: int = 18
-    send_window_weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)  # 0=poniedziałek … 6=niedziela
     dry_run: bool = True
     only_user_ids: tuple[str, ...] = ()  # pusty = wszyscy; ustawiony = tryb pilotażowy
+    # Deklaracja ZAMIARU ograniczenia odbiorców, niezależna od samej listy. Pusta `only_user_ids`
+    # znaczy „wszyscy", więc literówka w nazwie zmiennej (`ONLY_USER_ID`, `ONLYUSERIDS`, zły
+    # prefiks) zamienia pilotaż na pięciu osobach w wysyłkę do całego zespołu — bezgłośnie, bo
+    # konfiguracja z literówką jest nieodróżnialna od konfiguracji świadomie pustej. Wysyłki nie
+    # da się cofnąć. Dwie zmienne muszą się tu zgadzać, żeby cokolwiek wyszło.
+    pilotaz: bool = False
     llm_model: str = "claude-haiku-4-5"
+    # Czytane z `POWIADOMIENIA_AGENT_API_KEY` (kanoniczna) albo `ANTHROPIC_API_KEY` (alias) —
+    # patrz `klucz_modelu`.
     anthropic_api_key: str = field(default="", repr=False)
     # --- Praca bezobsługowa ---
-    admin_user_id: str = ""  # AAD id administratora — odbiorca cotygodniowego podsumowania
+    # AAD id administratorów — odbiorcy cotygodniowego podsumowania. LISTA, nie skalar: to
+    # podsumowanie jest dead man's switchem, a w instalacji bez monitoringu brak wiadomości
+    # w piątek bywa jedynym sygnałem awarii. Przy jednym odbiorcy przełącznik jest martwy przez
+    # cały jego urlop — czyli dokładnie wtedy, gdy nie ma komu zauważyć awarii, nie ma też komu
+    # zauważyć jej braku. Stara skalarna wartość `ADMIN_USER_ID` nadal działa (patrz `from_env`).
+    admin_user_ids: tuple[str, ...] = ()
     # URL webhooka bywa sekretem (potrafi zawierać token w ścieżce) → repr=False jak klucz API.
     alert_webhook_url: str = field(default="", repr=False)
+    # Jawna rezygnacja z alertowania przy `dry_run=false`. Furtka, nie domyślność: bez niej
+    # instalacja produkcyjna, w której ktoś przeoczył webhooka przy wypełnianiu `env`, wygląda
+    # dokładnie tak samo jak instalacja, w której zrezygnowano z alertów świadomie.
+    alerty_wylaczone: bool = False
+    # Czy logi i alerty mają nazywać pracownika nazwiskiem, czy identyfikatorem (A10).
+    # Domyślnie identyfikator: alert zostaje w kanale Teams bezterminowo i jest przeszukiwalny,
+    # a logi kontenera podlegają rotacji, nie polityce retencji. Operator rozwiąże identyfikator
+    # na nazwisko `scripts/lista_czlonkow.py` — na żądanie i bez zostawiania śladu.
+    # Włączenie jest świadomym poszerzeniem tego, co opuszcza instalację, nie ustawieniem
+    # wygody: patrz README → „Jakie dane opuszczają instalację".
+    loguj_nazwiska: bool = False
     heartbeat_interval_h: int = 24  # co ile godzin sprawdzać sesję poza przebiegiem tygodniowym
     auth_failure_exit_delay_s: int = 600  # ile czekać przed wyjściem po utracie sesji
     # Po jakim czasie bez pulsu healthcheck uznaje pętlę za martwą. NIEZALEŻNE od sufitu nasłuchu:
-    # puls bije co minutę (`app._spij_z_pulsem`), więc próg nie musi rosnąć razem z odstępem
+    # puls bije co minutę (`runtime.service.spij_z_pulsem`), więc próg nie musi rosnąć razem z odstępem
     # odpytywania. Wcześniejsze wyprowadzanie progu z `poll_max_interval_s` dawało 2 h.
     health_max_age_s: int = 900
-
-    def __post_init__(self) -> None:
-        """Normalizuj GUID-y pilotażu NIEZALEŻNIE od drogi budowy obiektu.
-
-        ``from_env`` robiło to samodzielnie, więc filtr działał dla procesu, a przestawał dla
-        każdego ``Settings(...)`` złożonego wprost — w testach i w kodzie, który kiedyś tę klasę
-        zbuduje inaczej. Awaria była przy tym CICHA: GUID wielkimi literami nie pasował do
-        niczego, ``missing`` schodziło do zera, a podsumowanie mówiło „0 próśb", czyli awaria
-        konfiguracji wyglądała jak spokojny tydzień. Inwariant należy do KLASY, nie do jednego
-        konstruktora — porównanie w ``app`` casefolduje wyłącznie lewą stronę.
-        """
-        object.__setattr__(self, "only_user_ids", tuple(v.casefold() for v in self.only_user_ids))
+    # Sufit czasu na JEDEN przebieg (tygodniowy albo obieg nasłuchu). Jedyny limit obejmujący
+    # więcej niż jedno żądanie — patrz `runtime.budzet`. 0 wyłącza.
+    run_deadline_s: int = 1800
 
     @property
     def authority(self) -> str:
@@ -182,6 +353,64 @@ class Settings:
         return ZoneInfo(self.timezone)
 
     @property
+    def okno_odpowiedzi(self) -> OknoOdpowiedzi:
+        """Polityka terminu odpowiedzi dla ``reminders.lifecycle`` — jedno miejsce jej składania."""
+        return OknoOdpowiedzi(
+            offset_h=self.reply_deadline_offset_h,
+            min_h=self.reply_min_hours,
+            tz=self.tz,
+        )
+
+    @property
+    def okno_ciszy(self) -> OknoCiszy:
+        """Godziny ciszy dla `runtime.cisza` — jedno miejsce składania tej polityki."""
+        return OknoCiszy(od_h=self.cisza_od_h, do_h=self.cisza_do_h, tz=self.tz)
+
+    @property
+    def godzina_przebiegu_w_ciszy(self) -> bool:
+        """Czy zaplanowana godzina przebiegu wypada w oknie ciszy — do ostrzeżenia startowego.
+
+        Konfiguracja legalna (`validate()` sprawdza tylko zakresy), a kosztowna: przebieg jest
+        wtedy odkładany CO TYDZIEŃ do końca ciszy. Kosztuje tydzień wyłącznie w złożeniu
+        z `catchup_grace_hours == 0`, bo zero wyłącza nadrabianie w ogóle — okno łaski NIE liczy
+        godzin ciszy (`_catchup_due` odejmuje `cisza_pomiedzy`), więc każda wartość dodatnia
+        wystarcza. Zdanie o „krótkim oknie łaski" stało tu do 0.2.13 i wysyłało po niewłaściwą
+        dźwignię: kazało podnosić liczbę, która niczego nie blokowała.
+
+        Liczone bez zegara, bo zależy wyłącznie od dwóch par liczb w konfiguracji.
+        """
+        if self.okno_ciszy.wylaczone:
+            return False
+        if self.cisza_od_h < self.cisza_do_h:
+            return self.cisza_od_h <= self.run_hour < self.cisza_do_h
+        return self.run_hour >= self.cisza_od_h or self.run_hour < self.cisza_do_h
+
+    @property
+    def godzin_od_przebiegu_do_terminu(self) -> float:
+        """Ile godzin ma pracownik od przebiegu tygodniowego do TERMINU kalendarzowego.
+
+        Przebieg celuje zawsze w poniedziałek NASTĘPNEGO tygodnia (``scheduler.weekly.week_windows``),
+        więc odstęp wynika wprost z konfiguracji i da się go policzyć bez zegara. Liczba jest tu, a nie
+        w warstwie ostrzeżeń, bo to arytmetyka na ustawieniach — i dlatego daje się sprawdzić testem
+        bez uruchamiania startu usługi.
+
+        Dryf DST (±1 h) świadomie pomijamy: to wejście do PROGU ostrzeżenia, nie do terminu.
+        """
+        do_poniedzialku = (7 - self.run_weekday) * 24 - self.run_hour - self.run_minute / 60
+        return do_poniedzialku + self.reply_deadline_offset_h
+
+    @property
+    def webhook_alertow(self) -> str:
+        """Adres, na który realnie idą alerty — pusty, gdy alertowanie wyłączono świadomie.
+
+        Jedno miejsce rozstrzygające, że jawne wyłączenie WYGRYWA z ustawionym adresem. Gdyby
+        pierwszeństwo żyło w komunikacie na starcie, a `operator.alert` sięgał po surowe pole,
+        log mówiłby „alerty nie będą wysyłane", a webhook dostawałby ruch — czyli sprzeczna
+        konfiguracja dawałaby sprzeczne zachowanie zamiast jednego, przewidywalnego.
+        """
+        return "" if self.alerty_wylaczone else self.alert_webhook_url
+
+    @property
     def heartbeat_path(self) -> Path:
         """Plik pulsu obok stanu — czyta go HEALTHCHECK obrazu.
 
@@ -191,10 +420,25 @@ class Settings:
         """
         return self.state_path.with_name("heartbeat")
 
-    def validate(self) -> None:  # noqa: C901
+    def validate_dostep(self) -> None:
+        """Minimum potrzebne, żeby SIĘ ZALOGOWAĆ i ODCZYTAĆ roster — nic ponadto.
+
+        Wydzielone z ``validate()``, bo pełna lista kontrolna jest listą warunków **wysyłki**,
+        a dwie czynności przygotowawcze wysyłki nie robią: ``--login`` i ``scripts/lista_czlonkow.py``.
+        Bez tego podziału powstaje zakleszczenie: bramka pilotażu żąda identyfikatorów, a jedyne
+        narzędzie, które je wypisuje, sama blokuje. Operator dostawał instrukcję naprawy, której
+        nie da się wykonać w tym samym ``env``.
+        """
         missing = [n for n in ("client_id", "tenant_id", "team_id") if not getattr(self, n)]
         if missing:
             raise ConfigError(f"Brak wymaganych ustawień: {', '.join(missing)}")
+        try:
+            _ = self.tz  # walidacja nazwy strefy
+        except Exception as exc:
+            raise ConfigError(f"Nieznana strefa czasowa: {self.timezone!r}") from exc
+
+    def validate(self) -> None:
+        self.validate_dostep()
         if not 0 <= self.run_weekday <= 6:
             raise ConfigError(f"run_weekday poza zakresem 0..6: {self.run_weekday}")
         if not 0 <= self.run_hour <= 23:
@@ -208,8 +452,23 @@ class Settings:
                 f"poll_max_interval_s ({self.poll_max_interval_s}) musi być ≥ poll_interval_s "
                 f"({self.poll_interval_s})"
             )
-        if self.reply_window_hours <= 0:
-            raise ConfigError(f"reply_window_hours musi być > 0: {self.reply_window_hours}")
+        # Termin poza tygodniem docelowym nie jest terminem odpowiedzi, tylko literówką: offset
+        # liczony w godzinach łatwo pomylić z dniami (`REPLY_DEADLINE_OFFSET_H=5` kontra `=120`).
+        if not -168 <= self.reply_deadline_offset_h <= 168:
+            raise ConfigError(
+                f"reply_deadline_offset_h poza zakresem -168..168 (tydzień w każdą stronę): "
+                f"{self.reply_deadline_offset_h}"
+            )
+        # 0 wyłączyłoby dolną granicę kurtuazji, czyli JEDYNĄ pozostałość kotwicy N10 — a to nie
+        # jest ustawienie, które ktokolwiek wybiera świadomie przez wpisanie zera.
+        if self.reply_min_hours < 1:
+            raise ConfigError(f"reply_min_hours musi być ≥ 1 h: {self.reply_min_hours}")
+        for nazwa in ("cisza_od_h", "cisza_do_h"):
+            godzina = getattr(self, nazwa)
+            if not 0 <= godzina <= 23:
+                raise ConfigError(f"{nazwa} poza zakresem 0..23: {godzina}")
+        if self.terminal_retain_hours <= 0:
+            raise ConfigError(f"terminal_retain_hours musi być > 0: {self.terminal_retain_hours}")
         if self.self_fill_check_min_idle_s < -1:
             raise ConfigError(
                 f"self_fill_check_min_idle_s musi być ≥ -1 (-1 wyłącza): "
@@ -217,44 +476,24 @@ class Settings:
             )
         if self.catchup_grace_hours < 0:
             raise ConfigError(f"catchup_grace_hours < 0 niedozwolone: {self.catchup_grace_hours}")
-        if not 0 <= self.send_window_start_hour <= 23:
-            raise ConfigError(
-                f"send_window_start_hour poza zakresem 0..23: {self.send_window_start_hour}"
-            )
-        if not self.send_window_start_hour < self.send_window_end_hour <= 24:
-            raise ConfigError(
-                f"send_window_end_hour ({self.send_window_end_hour}) musi być > "
-                f"send_window_start_hour ({self.send_window_start_hour}) i ≤ 24"
-            )
-        if not self.send_window_weekdays:
-            # Pusta lista znaczyłaby „nigdy nie wolno wysłać" — usługa milczałaby, wyglądając
-            # na sprawną. Wyłączenie okna to pełny tydzień (0,1,2,3,4,5,6), nie brak dni.
-            raise ConfigError("send_window_weekdays nie może być puste (0..6 po przecinku)")
-        poza = [d for d in self.send_window_weekdays if not 0 <= d <= 6]
-        if poza:
-            raise ConfigError(f"send_window_weekdays poza zakresem 0..6: {poza}")
-        # Walidacja KRZYŻOWA: termin przebiegu musi mieścić się w oknie wysyłki. Bez niej
-        # `run_hour=20` przechodził bez słowa, a usługa nie wysyłała już nigdy nic w terminie —
-        # każdy przebieg odbijał się od godzin ciszy i przesuwał na następny dzień roboczy, więc
-        # jedynym śladem był wpis INFO w logu. Cisza wygląda identycznie jak sprawna praca.
-        if self.run_weekday not in self.send_window_weekdays:
-            raise ConfigError(
-                f"run_weekday ({self.run_weekday}) jest poza dniami okna wysyłki "
-                f"{list(self.send_window_weekdays)} — przebieg nigdy nie wypadłby w oknie"
-            )
-        if not self.send_window_start_hour <= self.run_hour < self.send_window_end_hour:
-            raise ConfigError(
-                f"run_hour ({self.run_hour}) jest poza oknem wysyłki "
-                f"[{self.send_window_start_hour}, {self.send_window_end_hour}) — przebieg "
-                f"tygodniowy byłby odkładany do najbliższego otwarcia okna zamiast biec w terminie"
-            )
         if self.heartbeat_interval_h <= 0:
             raise ConfigError(f"heartbeat_interval_h musi być > 0: {self.heartbeat_interval_h}")
         if self.health_max_age_s <= 0:
             raise ConfigError(f"health_max_age_s musi być > 0: {self.health_max_age_s}")
+        if self.run_deadline_s < 0:
+            raise ConfigError(f"run_deadline_s < 0 niedozwolone (0 wyłącza): {self.run_deadline_s}")
         if self.auth_failure_exit_delay_s < 0:
             raise ConfigError(
                 f"auth_failure_exit_delay_s < 0 niedozwolone: {self.auth_failure_exit_delay_s}"
+            )
+        # Sprawdzane ZAWSZE, nie tylko przy dry_run=false. Sekwencja wdrożenia każe przećwiczyć
+        # pilotaż najpierw w trybie próbnym (docs/wdrozenie.md) — gdyby bramka milczała w dry_run,
+        # próba nie sprawdzałaby dokładnie tego, co ma ochronić przy przełączeniu na serio.
+        if self.pilotaz and not self.only_user_ids:
+            raise ConfigError(
+                f"{_PREFIX}PILOTAZ=true wymaga niepustego {_PREFIX}ONLY_USER_IDS — pusta lista "
+                f"znaczy »wszyscy«, więc pilotaż wysłałby wiadomości do CAŁEGO zespołu. "
+                f"Identyfikatory wypisze scripts/lista_czlonkow.py"
             )
         if not self.dry_run and not self.scheduling_group_id:
             raise ConfigError(
@@ -265,13 +504,36 @@ class Settings:
         # per-osoba. Bot wysyłałby prośby, na które nigdy nie odpowiada. Fail-fast na starcie.
         if not self.dry_run and not self.anthropic_api_key:
             raise ConfigError(
-                "anthropic_api_key jest wymagane, gdy dry_run=false (interpretacja odpowiedzi)"
+                "anthropic_api_key jest wymagane, gdy dry_run=false (interpretacja odpowiedzi). "
+                f"Ustaw {NAZWA_KLUCZA_MODELU}"
             )
-        try:
-            _ = self.tz  # walidacja nazwy strefy
-        except Exception as exc:
-            raise ConfigError(f"Nieznana strefa czasowa: {self.timezone!r}") from exc
-
+        # Webhook to JEDYNY kanał niezależny od Graph i od AAD, a najważniejsze alerty powstają
+        # dokładnie wtedy, gdy tamte nie działają: utrata sesji, tripwire cross-user, nieudany
+        # zapis do grafiku, sufit stronicowania. Bez adresu `send_alert` zwraca `False` i nie
+        # zostawia nawet śladu w logu — cała konstrukcja alertowania degraduje się do zera po
+        # cichu. Rezygnacja ma być JAWNA, bo inaczej nie da się jej odróżnić od przeoczenia.
+        if not self.dry_run and not self.alert_webhook_url and not self.alerty_wylaczone:
+            raise ConfigError(
+                "alert_webhook_url jest wymagane, gdy dry_run=false (alerty o awariach usługi). "
+                f"Świadoma rezygnacja: {_PREFIX}ALERTY_WYLACZONE=true"
+            )
+        # Sprawdzane ZAWSZE, nie tylko przy dry_run=false: alerty celowo działają także w trybie
+        # próbnym (patrz `runtime.service._send_summary`), więc adres po `http` wystawiłby token
+        # w ścieżce jawnym tekstem również tam. W komunikacie tylko schemat — reszta bywa sekretem.
+        if self.alert_webhook_url and not self.alert_webhook_url.startswith("https://"):
+            # Do komunikatu trafia WYŁĄCZNIE schemat, i to tylko wtedy, gdy adres w ogóle go ma.
+            # Poprzednia wersja robiła `split('://')[0]`, co przy adresie bez schematu (typowa
+            # literówka: `przyklad.com/hook?token=…`) zwracało CAŁY adres — czyli wypisywała
+            # sekret do `docker compose logs` dokładnie tam, gdzie miała go chronić.
+            schemat = (
+                self.alert_webhook_url.split("://", 1)[0]
+                if "://" in self.alert_webhook_url
+                else "brak schematu"
+            )
+            raise ConfigError(
+                f"alert_webhook_url musi zaczynać się od https:// (adres bywa sekretem): "
+                f"{schemat!r}"
+            )
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
@@ -285,22 +547,33 @@ class Settings:
             run_hour=_int("RUN_HOUR", 16),
             run_minute=_int("RUN_MINUTE", 0),
             timezone=_get("TIMEZONE", "Europe/Warsaw"),
-            reply_window_hours=_int("REPLY_WINDOW_HOURS", 48),
+            reply_deadline_offset_h=_int("REPLY_DEADLINE_OFFSET_H", 5),
+            reply_min_hours=_int("REPLY_MIN_HOURS", 24),
+            terminal_retain_hours=_int("TERMINAL_RETAIN_HOURS", 48),
+            cisza_od_h=_int("CISZA_OD_H", 20),
+            cisza_do_h=_int("CISZA_DO_H", 7),
             send_expiry_message=_bool("SEND_EXPIRY_MESSAGE", True),
             poll_interval_s=_int("POLL_INTERVAL_S", 10),
             poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 3600),
             self_fill_check_min_idle_s=_int("SELF_FILL_CHECK_MIN_IDLE_S", 3600),
             catchup_grace_hours=_int("CATCHUP_GRACE_HOURS", 6),
-            send_window_start_hour=_int("SEND_WINDOW_START_HOUR", 8),
-            send_window_end_hour=_int("SEND_WINDOW_END_HOUR", 18),
-            send_window_weekdays=_int_list("SEND_WINDOW_WEEKDAYS", (0, 1, 2, 3, 4)),
             dry_run=_bool("DRY_RUN", True),
-            only_user_ids=tuple(_list("ONLY_USER_IDS")),  # normalizuje ``__post_init__``
+            only_user_ids=_list("ONLY_USER_IDS"),
+            pilotaz=_bool("PILOTAZ", False),
             llm_model=_get("LLM_MODEL", "claude-haiku-4-5"),
-            anthropic_api_key=(os.environ.get("ANTHROPIC_API_KEY") or _get("AGENT_API_KEY")),
-            admin_user_id=_get("ADMIN_USER_ID"),
+            anthropic_api_key=klucz_modelu(),
+            # Obie nazwy SIĘ SUMUJĄ (nie nadpisują): pozycje z `ADMIN_USER_IDS` idą pierwsze,
+            # duplikaty odpadają. Stara skalarna `ADMIN_USER_ID` musi nadal działać, bo instalacja
+            # u klienta ma dziś właśnie ją, a jej ciche zignorowanie zgasiłoby dead man's switch
+            # bez śladu — czyli zepsułoby dokładnie to, co ta zmiana miała wzmocnić. Deduplikacja,
+            # bo migracja przechodzi przez stan z obiema zmiennymi, a duplikat na liście adresatów
+            # to druga identyczna wiadomość.
+            admin_user_ids=_bez_dubli(_list("ADMIN_USER_IDS") + _list("ADMIN_USER_ID")),
             alert_webhook_url=_get("ALERT_WEBHOOK_URL"),
+            alerty_wylaczone=_bool("ALERTY_WYLACZONE", False),
+            loguj_nazwiska=_bool("LOGUJ_NAZWISKA", False),
             heartbeat_interval_h=_int("HEARTBEAT_INTERVAL_H", 24),
             auth_failure_exit_delay_s=_int("AUTH_FAILURE_EXIT_DELAY_S", 600),
             health_max_age_s=_int("HEALTH_MAX_AGE_S", 900),
+            run_deadline_s=_int("RUN_DEADLINE_S", 1800),
         )

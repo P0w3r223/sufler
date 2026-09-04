@@ -1,14 +1,15 @@
-"""Wyznaczanie kolejnego terminu uruchomienia (domyślnie piątek 16:00 Europe/Warsaw).
+"""Wyznaczanie kolejnego terminu uruchomienia w strefie zespołu.
+
+Domyślne wartości w sygnaturach (`weekday=6`, `hour=16`) NIE są domyślną konfiguracją produktu.
+Ta mówi **piątek 16:00** (`config.Settings.run_weekday = 4`, `run_hour = 16`), a obaj wołający
+przekazują wartości z `Settings` wprost (`runtime.service._kolejny_termin` woła `next_run`,
+`runtime.service._catchup_due` woła `previous_run`), więc defaulty stąd nie są w produkcji
+wykonywane. Zostają dla czytelności testów — ale czytane
+jako polityka produktu mówią nieprawdę o dniu tygodnia.
 
 `next_run` jest czysta (wstrzykiwany `now`) i odporna na zmianę czasu (DST): wall-clock
 budowany jest przez `datetime.combine(..., tzinfo=tz)`, więc 16:00 zawsze oznacza lokalne 16:00.
-
-Domyślne `weekday`/`hour` są tu WYŁĄCZNIE wygodą dla testów kalendarzowych — jedynym źródłem
-prawdy jest `config.Settings` (`run_weekday`/`run_hour`/`run_minute`), które orkiestracja podaje
-jawnie. Trzymamy je zgodne z tamtymi, bo rozjazd był mylący: moduł deklarował niedzielę, której
-walidacja krzyżowa `Settings.validate` nie przepuszcza przy domyślnym oknie wysyłki (pn–pt).
 """
-
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, tzinfo
@@ -39,7 +40,7 @@ def next_run(
     now: datetime,
     *,
     tz: ZoneInfo,
-    weekday: int = 4,
+    weekday: int = 6,
     hour: int = 16,
     minute: int = 0,
 ) -> datetime:
@@ -62,7 +63,7 @@ def previous_run(
     now: datetime,
     *,
     tz: ZoneInfo,
-    weekday: int = 4,
+    weekday: int = 6,
     hour: int = 16,
     minute: int = 0,
 ) -> datetime:

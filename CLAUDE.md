@@ -28,6 +28,8 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
   Format to osobny krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check`; obejmuje tę samą listę katalogów, z `deploy` i `scripts` włącznie.
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`
 - Pod-projekty (własny venv): `cd Powiadomienia_teams|claude_summary && uv run pytest`
+  W `Powiadomienia_teams` wszystkie cztery bramki są zielone (403 passed, 10 xfailed). Każdy `xfail` ma `strict=True` i w `reason` opis ZWERYFIKOWANEJ usterki 0.2.19 — naprawa zapali XPASS i wymusi zdjęcie znacznika; nie kasuj ich bez przeczytania powodu.
+  `src/` to artefakt odzyskany z obrazu i jest wyłączony z `ruff format` oraz z E501/C901/PLR0915/SIM105/SIM300 (`pyproject.toml`, z uzasadnieniem). Reguły łapiące USTERKI (F, B, UP, I) obowiązują tam normalnie. Kodu produkcyjnego nie naginaj pod linter — wierność wobec obrazu jest warta więcej niż zielony styl. Sprawdzenie na żywym tenancie: `--proba-nasluchu`.
 
 ## Reguły twarde (złamanie = regres)
 1. `core/` nie importuje z `workmate.adapters` — pilnuje import-linter (`uv run lint-imports`, krok CI).
@@ -43,6 +45,7 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 
 ## Pod-projekty
 `Powiadomienia_teams/` (Shifts) i `claude_summary/` — samodzielne venv-y uv, każdy z własnym `PLAN.md`; czytaj przy pracy nad nimi. Oba mają zdolność ZAPISU za bramkami, więc ich niezmienniki bierz z `PLAN.md`, nie stąd.
+`Powiadomienia_teams/src/` to źródła ODZYSKANE Z OBRAZU produkcyjnego 0.2.19 (2026-09-04) — build powstał z drzewa, które nigdy nie trafiło do gita, więc historia tego kodu zaczyna się od tego importu. Wersję bierz z tagu obrazu Docker, nie z `pyproject.toml`. Listę kluczy konfiguracji utrzymuje WYŁĄCZNIE `Powiadomienia_teams/deploy/env.example`.
 
 ## Konwencje
 Opisy narzędzi: słowa kluczowe na początku, nazwa oddaje ZAWARTOŚĆ, jedna konwencja (PascalCase) na powierzchni agenta — ADR 0068. Sufit 2048 B per narzędzie i 8000 B na całą powierzchnię pilnuje `tests/core/test_tool_descriptions.py`; realna powierzchnia to 7428 B z powłoką i 7683 B bez niej, czyli **317 B zapasu** (pomiar po przeglądzie 2026-09-02) — nowa akcja mieści się kosztem istniejącej prozy, a liczbę przelicz tym testem, bo każde wydanie ją przesuwa. Instrukcje prezentacji wyniku idą polem `note` w kopercie, nie w opisie.

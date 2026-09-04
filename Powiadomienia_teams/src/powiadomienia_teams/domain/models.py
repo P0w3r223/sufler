@@ -3,11 +3,11 @@
 Czyste, niemutowalne struktury bez I/O. Logika przypomnień operuje na tych typach,
 a warstwa Graph tłumaczy JSON ↔ te modele. Wszystkie czasy są tz-aware (UTC).
 """
-
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import NamedTuple
 
 _MAX_SHIFT = timedelta(hours=24)
 
@@ -25,8 +25,9 @@ class Member:
     """Członek zespołu — kandydat do powiadomienia."""
 
     user_id: str
-    display_name: str
-    email: str | None = None
+    # Poza `repr` — patrz `state.PendingReminder.member_name` (N28).
+    display_name: str = field(repr=False)
+    email: str | None = field(default=None, repr=False)
     roles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -39,6 +40,11 @@ class Shift:
     """Pojedyncza zmiana (odczytana z Shifts lub proponowana do zapisu).
 
     `start`/`end` muszą być tz-aware (przechowujemy w UTC).
+
+    Zmiana MOŻE przechodzić przez północ (nocka 22:00–06:00) — wtedy `end` wypada następnego dnia
+    kalendarzowego, a zmiana należy do dnia, w którym się ZACZYNA. Ten niezmiennik obowiązuje
+    w całym projekcie; buduje go `agent.interpreter.build_schedule` (patrz tam) i zakładają go
+    okienkowanie odczytu, wykrywanie luk oraz propozycja »jak w zeszłym tygodniu«.
     """
 
     user_id: str
@@ -102,3 +108,32 @@ class WeekSchedule:
     @property
     def is_empty(self) -> bool:
         return not self.shifts
+
+
+class DaneTygodnia(NamedTuple):
+    """Wszystko, co jeden przebieg wie o grafiku zespołu w JEDNYM tygodniu.
+
+    Wypełnia to ``runtime.snapshot.SnapshotGrafiku``, ale TYP mieszka tutaj, bo czytają go dwie
+    warstwy naraz: ``runtime`` (świeżość przed zapisem, wykrywanie samouzupełnienia) i ``agent``
+    (czytnik narzędzia modelu). Gdyby typ został w ``runtime``, ``agent`` musiałby go stamtąd
+    zaimportować — a ``runtime`` importuje ``agent``, więc powstałby cykl między pakietami.
+    Domena jest miejscem na wspólne słownictwo dokładnie dla takich przypadków.
+
+    ``NamedTuple``, a nie zwykła krotka, od chwili gdy pól zrobiło się więcej niż dwa: rozpakowanie
+    pozycyjne ``a, b = dane`` przy trzecim polu pada głośno, ale ``dane[0]``/``dane[1]`` u drugiego
+    konsumenta milczy i podaje co innego, niż nazwa sugeruje.
+
+    ``wolne_dni`` (mapa dni per osoba) i ``wolne`` (surowe wpisy) NIE są duplikatem: pierwsze
+    odpowiada na „czy ten dzień jest już pokryty", drugie niesie ``reason_id``, bez którego nie da
+    się powiedzieć, JAKI to czas wolny. Mapa liczy się raz, przy pobraniu, zamiast u każdego
+    wołającego osobno.
+
+    ``poniedzialek`` to lokalna północ poniedziałku tego tygodnia — JEDYNE miejsce, w którym ta
+    granica powstaje. Wcześniej liczyły ją dwa moduły osobno (snapshot i czytnik narzędzia), a dwa
+    wyliczenia tej samej granicy rozjeżdżają się przy pierwszej zmianie definicji doby.
+    """
+
+    zmiany: tuple[Shift, ...]
+    wolne_dni: dict[str, frozenset[int]]
+    wolne: tuple[TimeOff, ...]
+    poniedzialek: datetime

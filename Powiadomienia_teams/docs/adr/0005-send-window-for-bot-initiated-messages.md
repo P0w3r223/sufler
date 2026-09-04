@@ -1,11 +1,30 @@
 # Send window for bot-initiated messages, and a start that refuses a silent schedule
 
 Date: 2026-08-17
-Status: accepted
+Status: accepted, **NOT SHIPPED** — see "Production status" below
 Author: P0w3r223
 Related to: ADR 0002 (adaptive listener — reply-window lifecycle), ADR 0003 (expiry requires
 evidence), ADR 0004 (self-fill detection and reply memory), `scheduler/send_window.py`,
 `config.py`, `app.py`
+
+---
+
+## Production status (added 2026-09-04)
+
+This decision was accepted and implemented on the repository line, but it **never reached the
+production image**. The image running at the client, `powiadomienia-teams:0.2.19` (built
+2026-08-20), contains no `scheduler/send_window.py` and reads none of `SEND_WINDOW_START_HOUR`,
+`SEND_WINDOW_END_HOUR`, `SEND_WINDOW_WEEKDAYS`.
+
+The two lines had diverged: production replaced the duration-based reply window
+(`REPLY_WINDOW_HOURS`) with a **calendar deadline** (`REPLY_DEADLINE_OFFSET_H` +
+`REPLY_MIN_HOURS`) and added quiet hours (`CISZA_OD_H` / `CISZA_DO_H`), which cover part of the
+problem this ADR describes. Every reference to `reply_window_hours` in this document therefore
+describes the repository line, not the deployed system.
+
+This note is a correction of the record, not a reversal of the decision. Reviving the send window
+means porting it onto the current production sources — the hard-ceiling arithmetic in this ADR is
+expressed in a config key production does not have.
 
 ---
 

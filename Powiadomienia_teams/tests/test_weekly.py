@@ -90,21 +90,30 @@ def test_week_windows_from_friday_targets_next_working_week():
     assert target.weekday() == 0  # poniedziałek
 
 
-def test_domyslny_termin_modulu_zgadza_sie_z_ustawieniami():
-    """Domyślne `weekday`/`hour` MUSZĄ odpowiadać `Settings` — inaczej moduł kłamie.
+def test_produkcja_podaje_termin_z_USTAWIEN_a_nie_z_domyslnych_modulu():
+    """Niezmiennik, który naprawdę chroni: wołający MUSI przekazać `weekday` z `Settings`.
 
-    Docstring i domyślne `weekday=6` mówiły „niedziela 16:00", czyli konfigurację, której
-    walidacja krzyżowa `Settings.validate` nie przepuszcza przy domyślnym oknie wysyłki (pn–pt).
-    Jedynym źródłem prawdy jest `Settings`; te domyślne są wygodą testów kalendarzowych i nie
-    wolno im się z nim rozjechać.
+    To NIE jest test domyślnych wartości w sygnaturze `next_run`/`previous_run`. Te są celowo
+    inne niż konfiguracja produktu i moduł mówi o tym wprost (`scheduler/weekly.py:3-8`):
+    „defaulty stąd nie są w produkcji wykonywane", bo obaj wołający podają wartości z `Settings`.
+    Wcześniejszy strażnik żądał ich zgodności i był oznaczony jako usterka 0.2.19 — mylił
+    udokumentowaną decyzję z luką.
+
+    Chronić trzeba czegoś innego: gdyby `_kolejny_termin` przestało przekazywać `weekday`,
+    default z sygnatury (niedziela, 6) wszedłby po cichu i CAŁY ZESPÓŁ dostawałby prośbę
+    w niedzielę zamiast w piątek — bez błędu, bez logu, bez padniętego testu. Ta sonda mierzy
+    właśnie ten szew, a nie kształt sygnatury.
     """
-    import inspect
-
     from powiadomienia_teams.config import Settings
+    from powiadomienia_teams.runtime.service import _kolejny_termin
 
-    domyslne = Settings(client_id="c", tenant_id="t", team_id="T")
-    for funkcja in (next_run, previous_run):
-        podpis = inspect.signature(funkcja).parameters
-        assert podpis["weekday"].default == domyslne.run_weekday, funkcja.__name__
-        assert podpis["hour"].default == domyslne.run_hour, funkcja.__name__
-        assert podpis["minute"].default == domyslne.run_minute, funkcja.__name__
+    settings = Settings(client_id="c", tenant_id="t", team_id="T")
+    assert settings.run_weekday == 4  # piątek — konfiguracja produktu
+
+    # środa, więc najbliższy piątek jest jednoznaczny
+    teraz = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+    termin = _kolejny_termin(settings, teraz).astimezone(settings.tz)
+
+    assert termin.weekday() == settings.run_weekday
+    assert (termin.hour, termin.minute) == (settings.run_hour, settings.run_minute)
+    assert termin.weekday() != 6, "wszedł default modułu (niedziela) zamiast wartości z Settings"

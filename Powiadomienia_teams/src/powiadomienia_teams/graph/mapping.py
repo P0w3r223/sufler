@@ -4,13 +4,15 @@ Wydzielone od klienta HTTP, żeby dało się je testować na utrwalonych odpowie
 Wszystkie mappery zwracają ``None`` dla wpisów, których nie da się bezpiecznie zinterpretować
 (brak wymaganych pól, zła data, niepoprawny zakres) — warstwa wyżej je pomija.
 """
-
 from __future__ import annotations
 
-import re
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import Any
 
+# Znaczniki czasu parsuje ``domain.czas``: te same napisy czyta czysta logika przypomnień
+# (watermark, `createdDateTime`), a import adaptera przez `reminders` domykał cykl na
+# poziomie pakietów.
+from powiadomienia_teams.domain.czas import parse_graph_datetime
 from powiadomienia_teams.domain.models import (
     InvalidShift,
     InvalidTimeOff,
@@ -19,30 +21,7 @@ from powiadomienia_teams.domain.models import (
     TimeOff,
 )
 
-_FRACTION = re.compile(r"\.(\d+)")
 _UTC = timezone.utc
-
-
-def parse_graph_datetime(value: str) -> datetime:
-    """ISO 8601 z Graph (``…Z``) → tz-aware ``datetime`` (UTC).
-
-    Znosi ułamek sekundy dłuższy niż 6 cyfr (Graph bywa 7-cyfrowy, a ``fromisoformat``
-    poniżej Pythona 3.11 tego nie przyjmuje).
-    """
-    v = value.strip()
-    if v.endswith("Z"):
-        v = v[:-1] + "+00:00"
-    v = _FRACTION.sub(lambda m: "." + m.group(1)[:6], v)
-    return datetime.fromisoformat(v)
-
-
-def to_graph_iso(dt: datetime) -> str:
-    """tz-aware ``datetime`` → ISO 8601 UTC z sufiksem ``Z`` (format oczekiwany przez Graph).
-
-    Odwrotność ``parse_graph_datetime``. Wspólny formatter dla klienta Graph (ciała żądań) i
-    watermarku przypomnień — jedno źródło formatu, brak rozjazdu między adapterem a orkiestracją.
-    """
-    return dt.astimezone(_UTC).isoformat().replace("+00:00", "Z")
 
 
 def member_from_json(raw: dict[str, Any]) -> Member | None:

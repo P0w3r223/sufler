@@ -2,7 +2,7 @@
 
 Bez tego `docker compose ps` pokazuje „Up" także dla procesu, który stoi — a to najgorszy stan
 dla usługi bezobsługowej, bo wygląda jak zdrowie. Sprawdzamy wiek pliku pulsu, który pętla
-odświeża przy każdej pobudce (``app._touch_heartbeat``).
+odświeża przy każdej pobudce (``odswiez_puls`` niżej — pisze i czyta go ten sam moduł).
 
 Świadomie jako moduł, a nie jednolinijkowiec w ``Dockerfile``: ścieżka i próg wyprowadzają się
 z tej samej konfiguracji co reszta programu, więc nie mogą się z nią rozjechać, a całość daje się
@@ -14,13 +14,34 @@ WSZYSTKICH trzech klientach HTTP procesu: Graph (`httpx.Client(timeout=30)`), An
 (`_TIMEOUT_S`) oraz MSAL (`_MSAL_TIMEOUT_S`). Ten ostatni był długo pominięty, przez co samo
 zdanie powyżej bywało nieprawdziwe — bez niego blackhole sieciowy wieszał pętlę bezterminowo.
 """
-
 from __future__ import annotations
 
+import logging
 import sys
 import time
 
 from powiadomienia_teams.config import Settings
+
+logger = logging.getLogger(__name__)
+
+
+def odswiez_puls(settings: Settings) -> None:
+    """Odśwież znacznik czasu pliku pulsu — źródło prawdy dla HEALTHCHECK obrazu.
+
+    Wołane przy KAŻDEJ pobudce pętli, więc wiek pliku odpowiada temu, jak dawno usługa naprawdę
+    coś robiła. Bez tego `docker compose ps` pokazuje „Up" także dla procesu, który stoi.
+
+    Mieszka w tym module razem z ``zdrowy``, bo obie funkcje mówią o TYM SAMYM pliku: jedna go
+    pisze, druga czyta i orzeka na jego podstawie. Rozdzielone (puls w orkiestracji, próg tutaj)
+    dawały dwa miejsca, w których dało się niezależnie zmienić ścieżkę albo znaczenie znacznika.
+    """
+    try:
+        sciezka = settings.heartbeat_path
+        sciezka.parent.mkdir(parents=True, exist_ok=True)
+        sciezka.touch()
+    except OSError:
+        # Puls jest diagnostyką, nie funkcją — jego awaria nie może zatrzymać powiadomień.
+        logger.warning("Nie udało się odświeżyć pliku pulsu", exc_info=True)
 
 
 def zdrowy(*, now: float | None = None) -> tuple[bool, str]:
@@ -29,7 +50,7 @@ def zdrowy(*, now: float | None = None) -> tuple[bool, str]:
     Próg pochodzi z ``health_max_age_s`` i jest NIEZALEŻNY od sufitu nasłuchu. Wcześniej był
     z niego wyprowadzany, więc podniesienie sufitu do godziny przesunęło wykrywanie stojącej
     pętli na dwie godziny. Puls bije co minutę niezależnie od tempa odpytywania Graph
-    (``app._spij_z_pulsem``), więc próg może być krótki.
+    (``runtime.service.spij_z_pulsem``), więc próg może być krótki.
     """
     settings = Settings.from_env()
     sciezka = settings.heartbeat_path

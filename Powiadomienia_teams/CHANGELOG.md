@@ -8,9 +8,112 @@ Numeracja wersji śledzi **tagi obrazu Dockera** (`powiadomienia-teams:X.Y.Z`) �
 prawdy o iteracji na produkcji; metadane wewnątrz obrazu (`pyproject.toml`) bywały z nimi
 rozjechane.
 
-## [Unreleased]
+## [0.2.19] — 2026-08-20 (obraz produkcyjny; źródła odzyskane 2026-09-04)
 
-Scalone po 0.2.6, jeszcze bez podbicia tagu obrazu.
+Wersja DZIAŁAJĄCA u klienta. Źródła zostały odzyskane z obrazu `powiadomienia-teams:0.2.19`, bo
+build powstał z drzewa roboczego, którego nigdy nie zacommitowano — ścieżki `runtime/`, `cli.py`,
+`agent/tools.py`, `domain/czas.py` nie występują w żadnym commicie ani na jednym z 37 refów.
+
+**Czego tu NIE ma:** wpisów dla 0.2.7–0.2.18. Tych obrazów nie da się zdiffować źródło-po-źródle,
+bo ich źródeł nie ma — spisanie ich osobno byłoby zgadywaniem. Poniżej wyłącznie delta 0.2.6 →
+0.2.19 ustalona maszynowo z odzyskanego kodu.
+
+**Testów tej wersji nie ma.** Bramka jakości obrazu zaliczyła 792 testy (`/app/.testy-przeszly`),
+ale zestawu nie zachowano. `tests/` w repo pochodzi od starszej linii: 44 testy padają, 6 modułów
+się nie importuje.
+
+### Zmienione — termin odpowiedzi przestał być liczbą godzin
+
+- `REPLY_WINDOW_HOURS` **zniknął**. Zastąpiły go `REPLY_DEADLINE_OFFSET_H` (domyślnie 5) —
+  termin kalendarzowy liczony od północy poniedziałku tygodnia DOCELOWEGO — oraz
+  `REPLY_MIN_HOURS` (24), dolna granica kurtuazji od ostatniej prośby bota. Termin liczony jako
+  `max(termin_kalendarzowy, teraz + min_h)` nie wypada już w przeszłości przy ujemnym przesunięciu.
+- Treść prośby MÓWI o terminie. Wcześniej obietnica w wiadomości i zachowanie runtime'u mogły się
+  rozjechać bez śladu, a rozjazd wychodził dopiero wtedy, gdy ktoś tracił tydzień grafiku.
+
+### Dodane
+
+- **Godziny ciszy** `CISZA_OD_H` (20) / `CISZA_DO_H` (7) — kiedy bot nie pisze do pracowników.
+  Cisza PRZESUWA nadrabianie, a nie unieważnia go: `cisza_pomiedzy` odejmuje ciszę od okna łaski,
+  bo inaczej usługa wstająca po awarii w piątek o 21:00 nie nadrobiłaby przebiegu nigdy.
+  Odmowa z powodu ciszy ma własny wyjątek (`CiszaWstrzymalaPrzebieg`), bo pusty wynik był
+  nierozróżnialny od „nikomu nie brakuje grafiku" i odhaczał termin jako obsłużony.
+- **`PILOTAZ`** — deklaracja ZAMIARU zawężenia odbiorców, niezależna od samej listy. Pusta
+  `ONLY_USER_IDS` znaczy „wszyscy", więc literówka w nazwie zmiennej zamieniała pilotaż w wysyłkę
+  do całego zespołu, bezgłośnie. `PILOTAZ=true` przy pustej liście zatrzymuje start.
+- **`ADMIN_USER_IDS`** — lista zamiast skalara. Podsumowanie jest dead man's switchem, a przy
+  jednym odbiorcy jest martwe przez cały jego urlop. Stara `ADMIN_USER_ID` działa i SUMUJE SIĘ
+  z listą (duplikaty odpadają), z ostrzeżeniem przy starcie.
+- **`ALERTY_WYLACZONE`** — jawna rezygnacja z alertów przy `DRY_RUN=false`. Bez niej instalacja
+  z przeoczonym webhookiem wygląda identycznie jak taka, w której zrezygnowano świadomie; teraz
+  brak obu zatrzymuje start.
+- **`LOGUJ_NAZWISKA`** (domyślnie `false`) — logi i alerty nazywają pracownika identyfikatorem,
+  bo alert zostaje w kanale Teams bezterminowo i jest przeszukiwalny (A10).
+- **`TERMINAL_RETAIN_HOURS`** (48) — jak długo trzymać wpisy zamknięte.
+- **`RUN_DEADLINE_S`** (1800) — sufit czasu na JEDEN przebieg, jedyny limit obejmujący więcej niż
+  jedno żądanie (`runtime/budzet.py`). `0` wyłącza.
+- **`POWIADOMIENIA_AGENT_API_KEY`** jako nazwa kanoniczna klucza modelu; `ANTHROPIC_API_KEY`
+  zostaje aliasem konwencji SDK, z ostrzeżeniem przy starcie.
+- **Polecenia diagnostyczne:** `--stan` (raport stanu bez sieci i bez blokady instancji),
+  `--proba-nasluchu` (obieg nasłuchu na żywym tenancie z odciętymi metodami zapisu i wysyłki),
+  `--ignoruj-cisze` (nadrabianie po awarii w godzinach ciszy).
+
+### Struktura
+
+Rozbicie monolitu `app.py` na pakiet `runtime/` (`service`, `listener`, `wysylka`, `nudge`,
+`domkniecia`, `przeglad`, `snapshot`, `budzet`, `cisza`, `etykiety`, `operator`) oraz wydzielenie
+`cli.py`, `domain/czas.py`, `domain/powody.py`, `graph/tylko_odczyt.py`, `reminders/wzorzec.py`,
+`agent/{tools,schema,kalendarz,odczyt}.py`. Z 28 plików źródłowych zrobiło się 48.
+
+### Znane usterki tej wersji
+
+- `--proba-nasluchu` bierze blokadę na PRODUKCYJNYM pliku stanu, mimo że pisze do osobnego.
+  Przy działającej usłudze kończy się „Inna instancja już działa" — a dokumentacja stawia ją
+  w sekwencji wdrożenia. Obejście: uruchomić na kopii wolumenu w osobnym kontenerze.
+- Klient HTTP loguje URL żądania na poziomie INFO, więc `ALERT_WEBHOOK_URL` (bywa sekretem —
+  token w ścieżce) trafia do logów kontenera.
+- **Utrata sesji na szybkiej ścieżce zapisu NIE zatrzymuje usługi.** Szeroki `except Exception`
+  w `_apply_confirmed_yes` (`listener.py:819`) łapie `AuthExpiredError`, zanim dojdzie ona do
+  strażnika w `_process_pending` (`listener.py:623`). Skutek: martwy token jest raportowany jako
+  zwykła awaria zapisu do Shifts, pracownik dostaje „uzupełnij ręcznie" (nieprawda — winna jest
+  sesja), a ścieżka alert + `AUTH_FAILURE_EXIT_DELAY_S` + restart do `--login` nie rusza. Token
+  zostaje martwy do najbliższego pulsu, czyli nawet 24 h. Ten sam plik deklaruje przeciwny
+  kontrakt trzy razy (linie 195, 346, 623) — to niespójność, nie decyzja.
+  Strażnik: `test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge` (`xfail(strict=True)`).
+- **Nieudana prośba o potwierdzenie zjada odpowiedź pracownika.** `_commit` przesuwa watermark
+  BEZWARUNKOWO (`listener.py:511`), także gdy prośba nie została doręczona. Status wraca do
+  `AWAITING_REPLY`, ale wiadomość jest już oznaczona jako obsłużona, więc kolejny cykl jej nie
+  zobaczy: pracownik czeka na pytanie, które nigdy nie padło, a po terminie dostaje nieprawdziwe
+  „nie dostałem odpowiedzi". Docstring `_commit` (`listener.py:462-469`) obiecuje coś odwrotnego.
+  Strażnik: `test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm`.
+- **Brak sondy zapisywalności stanu przed przebiegiem.** Przebieg najpierw PISZE do ludzi, potem
+  próbuje utrwalić stan. Przy niezapisywalnym pliku prośby wychodzą bez śladu, więc następny
+  przebieg wysyła je DRUGI RAZ — a idempotencja opiera się wyłącznie na tym pliku.
+  Strażnik: `test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka`.
+- **Trwale nieodczytywalny czat blokuje osobę w nieskończoność.** Odczyt rzuca PRZED
+  `_record_failure`, więc `fail_count` nie rośnie, watermark nie rusza, a `should_expire` słusznie
+  odmawia wygaszenia bez dowodu. Wpis zostaje otwarty na zawsze, co tydzień blokując ponowny nudge,
+  a jedynym śladem jest `logger.exception`. Linia repozytorium miała na to twardy sufit wieku.
+  Strażnik: `test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem`.
+- **Alerty nie mają redakcji treści.** `zglos_utrate_sesji` podaje `str(blad)` żywcem, a
+  `graph.auth._jedyne_konto` wkleja w komunikat nazwy kont z cache'u MSAL (`auth.py:60-63`).
+  Adresy kont trafiają więc na webhook alertów — u klienta jest nim kanał Discorda, czyli poza
+  organizacją. Linia repozytorium miała `_tresc_publiczna` i atrybut `publiczny`; w 0.2.19 nie ma
+  ani jednego, ani drugiego. Strażniki opisują stan faktyczny:
+  `test_alert_o_utracie_sesji_WYPUSZCZA_adresy_kont_na_webhook`,
+  `test_alert_o_nieudanym_przebiegu_WKLEJA_surowy_komunikat_wyjatku`.
+- **Odpowiedź pracownika NIE jest zwolniona z godzin ciszy.** `wysylka.do_pracownika` odmawia
+  bezwarunkowo, więc kto odpisze o 22:00, nie dostanie potwierdzenia do 7:00. Wpis czeka
+  nietknięty (odpowiedź nie przepada). Zmiana wobec linii repozytorium, która rozmowę zaczętą
+  przez pracownika z ciszy zwalniała. Strażnik: `test_odpowiedz_pracownikowi_TEZ_czeka_na_koniec_ciszy`.
+
+## [Unreleased] — LINIA REPOZYTORIUM, NIEWDROŻONA
+
+Scalone po 0.2.6 na gałęzi repozytorium i **nigdy niewydane jako obraz**. Ta linia rozwidliła się
+z produkcyjną: opisane niżej okno wysyłki nie istnieje w 0.2.19, a arytmetyka sufitu jest tu
+wyrażona przez `REPLY_WINDOW_HOURS` — klucz, którego produkcja nie czyta (zastąpiony terminem
+kalendarzowym, patrz 0.2.19). Zachowane jako zapis zamiaru; przeniesienie na obecne źródła wymaga
+przepisania, nie merge'a. Patrz ADR 0005, sekcja „Production status".
 
 ### Dodane
 

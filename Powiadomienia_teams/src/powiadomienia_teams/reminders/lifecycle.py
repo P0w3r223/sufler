@@ -1,21 +1,28 @@
-"""Cykl życia przypomnienia: wygaśnięcie po oknie odpowiedzi i sprzątanie wpisów terminalnych.
+"""Cykl życia przypomnienia: termin odpowiedzi i sprzątanie wpisów terminalnych.
 
 Czysta logika (wstrzykiwany ``now``), operuje na ``PendingReminder`` w pamięci — bez I/O, w pełni
-testowalna. Wygaśnięcie mierzymy od OSTATNIEJ AKTYWNOŚCI (watermark), a nie od sztywnego nudge'a,
-żeby nie zamykać okna komuś w środku rozmowy.
-"""
+testowalna.
 
+Termin odpowiedzi jest **kalendarzowy**: liczy się od początku tygodnia, którego dotyczy prośba,
+a nie od ostatniej aktywności w rozmowie. Do 0.2.12 było odwrotnie (okno ``N`` godzin ciszy od
+kotwicy) i dawało dwa defekty naraz — patrz ``termin_odpowiedzi``.
+"""
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from enum import Enum
 from typing import Protocol, TypeVar
 
-from powiadomienia_teams.graph.mapping import parse_graph_datetime
-from powiadomienia_teams.state import APPLIED, DECLINED, EXPIRED, SELF_FILLED, PendingReminder
+from powiadomienia_teams.config import OknoOdpowiedzi
+from powiadomienia_teams.domain.czas import parse_graph_datetime
+from powiadomienia_teams.state import APPLYING, PendingReminder
+from powiadomienia_teams.state import TERMINALNE as _TERMINAL
 
-_TERMINAL = frozenset({APPLIED, DECLINED, EXPIRED, SELF_FILLED})
+# ``_TERMINAL`` mieszka w ``state`` obok samych statusów, bo ma DWÓCH odbiorców: sprzątanie stanu
+# tutaj (``prune_terminal``) i wygaszanie pamięci rozmowy przy zapisie (``state._do_zapisu``).
+# Sprzątanie wpisów ``APPLYING`` jest sprzątaniem śladu po awarii — patrz ``prune_terminal``
+# i osobna pozycja w podsumowaniu dla administratora.
 
 
 class ReadOutcome(Enum):
@@ -33,41 +40,174 @@ class ReadOutcome(Enum):
     UNKNOWN = "unknown"
 
 
-def _anchor(pending: PendingReminder) -> datetime | None:
-    """Czas odniesienia = ostatnia aktywność (``watermark``) z fallbackiem na czas nudge'a.
+def _najpozniejszy(*znaczniki: str) -> datetime | None:
+    """Najpóźniejszy z podanych znaczników ISO; nieparsowalne i puste pomijamy, brak → ``None``.
 
-    Dopóki pracownik nie odpisał, ``watermark == nudged_at`` (okno liczone od powiadomienia). Po
-    pierwszej odpowiedzi ``watermark`` się przesuwa, więc mierzymy CISZĘ — nie wygaszamy nikogo w
-    trakcie dialogu, a odpowiedź „na styk" naturalnie przedłuża okno. Brak obu → ``None`` (nie znamy
-    wieku wpisu, więc traktujemy jako niewygasalny — samo się naprawi przy kolejnym nudge'u).
+    Pomijanie, a nie wyjątek: plik stanu przeżywa wydania i jeden uszkodzony znacznik nie może
+    unieruchomić rozmowy. Kierunek jest bezpieczny w obu miejscach użycia — mniej znaczników znaczy
+    wcześniejszy termin przy kurtuazji i wcześniejsze sprzątnięcie przy retencji, nigdy odwrotnie.
     """
-    for iso in (pending.watermark, pending.nudged_at):
-        if iso:
-            try:
-                return parse_graph_datetime(iso)
-            except ValueError:
-                continue
-    return None
+    kandydaci = []
+    for iso in znaczniki:
+        if not iso:
+            continue
+        try:
+            kandydaci.append(parse_graph_datetime(iso))
+        except ValueError:
+            continue
+    return max(kandydaci) if kandydaci else None
 
 
-def is_expired(pending: PendingReminder, now: datetime, window_hours: int) -> bool:
-    """Czy minął TERMIN okna (brak aktywności przez ``window_hours``). Bez kotwicy → False.
+def _anchor(pending: PendingReminder) -> datetime | None:
+    """Czas OSTATNIEJ AKTYWNOŚCI w temacie (obie strony rozmowy), z fallbackiem na nudge.
+
+    Od 0.2.13 kotwica **nie wyznacza już terminu odpowiedzi** (patrz ``termin_odpowiedzi``) — została
+    dwóm zastosowaniom, w których naprawdę chodzi o „jak dawno cokolwiek się tu działo":
+    ``ready_for_self_fill_check`` (czy bot już dość długo czeka, by zajrzeć do Shifts) i
+    ``prune_terminal`` (wiek wpisu terminalnego). Trzecim czytelnikiem jest diagnostyka
+    (``wiek_kotwicy`` → ``--stan``).
+
+    Liczą się obie strony: ``watermark`` (ostatnia wiadomość pracownika) i ``bot_last_message_at``
+    (ostatnia wiadomość bota w otwartym temacie); dopóki nikt nie napisał, kotwicą jest nudge.
+
+    Brak wszystkich znaczników → ``None`` (nie znamy wieku wpisu).
+    """
+    return _najpozniejszy(pending.watermark, pending.bot_last_message_at, pending.nudged_at)
+
+
+def _poczatek_tygodnia(week_start: str, tz: tzinfo) -> datetime | None:
+    """Lokalna północ poniedziałku, którego dotyczy prośba. Nieczytelna data → ``None``.
+
+    Ta sama technika co w ``scheduler.weekly``: ``tzinfo`` wstrzykiwane do konstruktora, więc
+    „północ" znaczy północ zegara ściennego także w tygodniu ze zmianą czasu.
+    """
+    try:
+        dzien = date.fromisoformat(week_start)
+    except ValueError:
+        return None
+    return datetime(dzien.year, dzien.month, dzien.day, tzinfo=tz)
+
+
+def termin_kalendarzowy(week_start: str, okno: OknoOdpowiedzi) -> datetime | None:
+    """Termin z KALENDARZA (bez dolnej granicy kurtuazji): początek tygodnia + ``offset_h``.
+
+    Publiczna, bo tę samą wartość musi znać TREŚĆ prośby (``messages.build_nudge_text``, pozycja B7
+    planu). Prośba wysyłana jest przed powstaniem wpisu, więc nie ma jeszcze znaczników bota i nie
+    da się policzyć pełnego terminu — ale kurtuazja termin wyłącznie ODDALA, więc data podana
+    pracownikowi jest obietnicą, której runtime nie złamie w drugą stronę. Gdyby treść liczyła to po
+    swojemu, rozjazd byłby niewidoczny do chwili, w której ktoś traci tydzień grafiku.
+    """
+    poczatek = _poczatek_tygodnia(week_start, okno.tz)
+    return None if poczatek is None else poczatek + timedelta(hours=okno.offset_h)
+
+
+def termin_dla_nowej_prosby(
+    week_start: str, teraz: datetime, okno: OknoOdpowiedzi
+) -> datetime | None:
+    """Termin, który wolno OBIECAĆ w prośbie wysyłanej TERAZ. Nigdy późniejszy od faktycznego.
+
+    ``max(kalendarz, teraz + min_h)`` — ta sama reguła co w ``termin_odpowiedzi``, tylko z ``teraz``
+    w miejscu znaczników bota, których w chwili wysyłki jeszcze nie ma. Faktyczny termin policzy się
+    od ``sent_at``, a ``sent_at >= teraz``, więc obietnica jest DOLNĄ granicą: runtime nie zamknie
+    tematu wcześniej, niż powiedział.
+
+    Sam termin kalendarzowy tu nie wystarcza. Offset wolno ustawić ujemny (do −168 h, tydzień przed
+    początkiem tygodnia docelowego), a wtedy prośba podawałaby pracownikowi datę Z PRZESZŁOŚCI —
+    zdanie bez sensu, choć konfiguracja legalna i zgłoszona ostrzeżeniem startowym.
+    """
+    kalendarz = termin_kalendarzowy(week_start, okno)
+    if kalendarz is None:
+        return None
+    return max(kalendarz, teraz + timedelta(hours=okno.min_h))
+
+
+def termin_odpowiedzi(pending: PendingReminder, okno: OknoOdpowiedzi) -> datetime | None:
+    """DO KIEDY wolno czekać na odpowiedź: termin kalendarzowy, nie budżet ciszy.
+
+    ``termin = max(początek_tygodnia + offset_h, ostatnia_prośba_bota + min_h)``
+
+    Pierwszy składnik to sedno zmiany. Okno liczone od ostatniej aktywności dawało dwa defekty naraz:
+
+    1. Przy przebiegu w piątek i oknie 48 h termin zamykał się w NIEDZIELĘ, przed początkiem
+       tygodnia, którego dotyczył — a człowiek, który siadł do grafiku w poniedziałek rano, był po
+       terminie, choć zachował się normalnie.
+    2. Kotwicą było ``max(watermark, bot_last_message_at, nudged_at)``, a bot odzywa się w otwartym
+       temacie przy każdym doprecyzowaniu i przy prośbie o potwierdzenie. Okno przedłużało się
+       własnym ogonem — o CAŁE 48 h za każdym razem — aż rozmowa dożywała kolejnego piątku
+       i zostawała nadpisana razem z uzgodnionym już grafikiem (``runtime.nudge`` alertuje o tym
+       zderzeniu, ale uzgodnienie jest już wtedy stracone).
+
+    Drugi składnik to dolna granica kurtuazji i JEDYNE, co zostało z kotwicy N10: nie zamykamy tematu
+    zaraz po tym, jak bot o coś poprosił. Bez niego pending obsłużony po przestoju dłuższym niż
+    tydzień (utrata sesji czeka na ręczne ``--login``) dostawał prośbę o potwierdzenie i wygasał
+    w kolejnym cyklu — po dziesięciu sekundach, bo obsłużona odpowiedź resetuje backoff — zdaniem
+    „nie doczekałem się potwierdzenia". Wpis stawał się terminalny, więc »tak« pracownika nie było
+    już nigdy czytane.
+
+    Liczy się WYŁĄCZNIE ostatnia prośba BOTA (``nudged_at``/``bot_last_message_at``), nie wiadomość
+    pracownika: kurtuazja jest odpowiedzią na to, o co poprosiliśmy, a nie nagrodą za aktywność.
+    Ogon zostaje więc przycięty do ``min_h`` na jedno pytanie bota — zamiast pełnego okna — i rośnie
+    tylko wtedy, gdy pracownik naprawdę pisze. Sufitu świadomie NIE ma: ograniczenie terminu z góry
+    przywracałoby defekt N10 przy długim przestoju, a to awaria cicha i po stronie pracownika,
+    podczas gdy zderzenie z kolejnym piątkiem jest alertowane.
+
+    ``None`` znaczy „nie da się wyznaczyć terminu, więc wpis nie wygasa" — tak samo bezpiecznie jak
+    brak kotwicy dotąd. Osiągalne tylko przy nieczytelnym ``week_start``, czyli przy uszkodzonym
+    wpisie stanu; najbliższy przebieg tygodniowy nadpisze go z alertem.
+
+    **Termin jest zarazem godziną, o której wychodzi domknięcie** („nie dostałem odpowiedzi"):
+    wygaszenie następuje w pierwszym cichym obiegu po terminie. Przy domyślnym offsecie termin
+    wypada w poniedziałek o 05:00, czyli WEWNĄTRZ godzin ciszy — a te odkładają cały obieg, więc
+    orzeczenie i wiadomość wychodzą dopiero o 07:00 (**B5**, od 0.2.13). Daje to dwie godziny
+    łaski, których nikt nie projektował, i jest opisane w ``docs/runbook.md``. Instalacja, dla
+    której nawet to jest wtargnięciem, wyłącza samo domknięcie (``SEND_EXPIRY_MESSAGE=false``);
+    przesunięcie godziny robi się przez ``CISZA_DO_H`` albo ``REPLY_DEADLINE_OFFSET_H``.
+
+    **Zegar ścienny dotyczy północy, nie sumy z offsetem.** Przy dużym offsecie ujemnym suma może
+    wypaść na godzinie lokalnie nieistniejącej (Warszawa, przejście na czas letni): ``astimezone``
+    rozstrzyga to wtedy przez ``fold=0``, czyli termin przesuwa się o godzinę względem intencji.
+    Osiągalne dopiero przy ``offset_h ≤ -21``, więc świadomie tego nie komplikujemy.
+    """
+    termin = termin_kalendarzowy(pending.week_start, okno)
+    if termin is None:
+        return None
+    prosba = _najpozniejszy(pending.nudged_at, pending.bot_last_message_at)
+    if prosba is not None:
+        termin = max(termin, prosba + timedelta(hours=okno.min_h))
+    return termin
+
+
+def wiek_kotwicy(pending: PendingReminder, now: datetime) -> timedelta | None:
+    """Ile czasu minęło od kotwicy okna; ``None``, gdy wpis kotwicy nie ma (patrz ``_anchor``).
+
+    Publiczna, bo diagnostyka (``--stan``) pokazuje tę wielkość obok terminu odpowiedzi. Od 0.2.13
+    kotwica NIE rozstrzyga już o wygaśnięciu (rozstrzyga ``termin_odpowiedzi``), więc raport podaje
+    obie liczby: kotwica odpowiada na „jak dawno cokolwiek się tu działo", termin na „do kiedy
+    czekamy". Zwinięcie ich w jedną kolumnę kazałoby operatorowi zgadywać, którą z dwóch polityk
+    właśnie widzi — a po tę kolumnę sięga się wtedy, gdy trzeba zrozumieć zachowanie usługi.
+    """
+    anchor = _anchor(pending)
+    return None if anchor is None else now - anchor
+
+
+def is_expired(pending: PendingReminder, now: datetime, okno: OknoOdpowiedzi) -> bool:
+    """Czy minął TERMIN odpowiedzi. Bez wyznaczalnego terminu → False.
 
     Czysty predykat czasu — sam w sobie NIE wystarcza do wygaszenia; patrz ``should_expire``.
     """
-    anchor = _anchor(pending)
-    return anchor is not None and now >= anchor + timedelta(hours=window_hours)
+    termin = termin_odpowiedzi(pending, okno)
+    return termin is not None and now >= termin
 
 
 def should_expire(
-    pending: PendingReminder, now: datetime, window_hours: int, *, read: ReadOutcome
+    pending: PendingReminder, now: datetime, okno: OknoOdpowiedzi, *, read: ReadOutcome
 ) -> bool:
     """Czy wolno ORZEC wygaśnięcie: minął termin ORAZ mamy na to dowód z udanego odczytu.
 
-    Sam termin nie wystarcza, bo mierzymy go znacznikami czasu wiadomości (czas serwera Graph),
-    a orzekamy o czymś innym: że pracownik miał szansę odpowiedzieć i tego nie zrobił. Te dwie
-    rzeczy rozjeżdżają się, gdy usługa NIE SŁUCHAŁA — po przestoju dłuższym niż okno (utrata
-    sesji czeka na ręczne ``--login``) budżet ciszy jest wypalony, choć nikt nie milczał.
+    Sam termin nie wystarcza, bo jest liczbą z kalendarza i z konfiguracji, a orzekamy o czymś
+    innym: że pracownik miał szansę odpowiedzieć i tego nie zrobił. Te dwie rzeczy rozjeżdżają
+    się, gdy usługa NIE SŁUCHAŁA — po przestoju sięgającym za termin (utrata sesji czeka na ręczne
+    ``--login``) termin jest przekroczony, choć nikt nie milczał.
 
     Bez tego warunku pierwszy przebieg po przestoju wysyłał w JEDNYM cyklu prośbę o potwierdzenie
     i zaraz po niej „Nie dostałem odpowiedzi", a pending lądował w terminalnym ``EXPIRED`` — więc
@@ -76,46 +216,17 @@ def should_expire(
     """
     if read is not ReadOutcome.NOTHING_NEW:
         return False
-    return is_expired(pending, now, window_hours)
+    return is_expired(pending, now, okno)
 
 
-# Ile OKIEN ODPOWIEDZI może przeżyć wpis nieterminalny, zanim zamkniemy go bez dowodu.
-# Wielokrotność,
-# a nie osobna liczba godzin: sufit ma być jawnie LUŹNIEJSZY niż zwykłe wygaśnięcie, żeby zadziałał
-# wyłącznie tam, gdzie normalna droga (`should_expire`) jest trwale zablokowana.
-HARD_CEILING_MULTIPLIER = 3
-
-
-def past_hard_ceiling(
-    pending: PendingReminder,
-    now: datetime,
-    window_hours: int,
-    *,
-    multiplier: int = HARD_CEILING_MULTIPLIER,
+def ready_for_self_fill_check(
+    pending: PendingReminder, now: datetime, min_idle_s: int
 ) -> bool:
-    """Czy wpis nieterminalny przekroczył TWARDY sufit wieku — zamykamy go bez dowodu odczytu.
-
-    ``should_expire`` słusznie odmawia wygaszenia bez udanego odczytu czatu („brak dowodu ≠ dowód
-    braku"). Ale gdy odczyt pada TRWALE (czat usunięty, pracownik wyłączony z tenanta, `chat_id`
-    z czasów innej instalacji), ta odmowa jest wieczna: wpis nigdy nie staje się terminalny, nigdy
-    nie podlega ``prune_terminal`` i nigdy nie znika ze stanu — a `run_once` co tydzień omija tę
-    osobę, bo jej wpis „istnieje". Sufit domyka ten przypadek od góry.
-
-    Zamknięcie z sufitu jest CICHE (patrz ``app._close_bez_dowodu``): nie wolno wysłać „nie
-    dostałem odpowiedzi" komuś, o kim nadal nic nie wiemy. Operator dostaje alert, pracownik nie
-    dostaje nieprawdziwego zarzutu.
-    """
-    anchor = _anchor(pending)
-    return anchor is not None and now >= anchor + timedelta(hours=window_hours * multiplier)
-
-
-def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_s: int) -> bool:
     """Czy wolno zajrzeć do Shifts, bo pracownik MILCZY od dłuższej chwili (nie odpisuje na czacie).
 
     Ciszę mierzymy tą samą kotwicą co wygaśnięcie (``_anchor``: ostatnia aktywność, potem czas
     nudge'a) — sprawdzamy grafik dopiero, gdy bot NAPRAWDĘ już czeka, a nie zaraz po nudge'u.
-    ``min_idle_s < 0`` wyłącza funkcję; ``0`` sprawdza przy każdym cichym cyklu. Bez kotwicy →
-    False.
+    ``min_idle_s < 0`` wyłącza funkcję; ``0`` sprawdza przy każdym cichym cyklu. Bez kotwicy → False.
     """
     if min_idle_s < 0:
         return False
@@ -150,21 +261,46 @@ def still_writable(items: Iterable[_T], now: datetime) -> tuple[_T, ...]:
 
 
 def prune_terminal(
-    state: dict[str, PendingReminder], now: datetime, retain_hours: int
+    state: dict[str, PendingReminder],
+    now: datetime,
+    retain_hours: int,
+    *,
+    biezacy_tydzien: str = "",
 ) -> dict[str, PendingReminder]:
-    """Usuń wpisy TERMINALNE (applied/declined/expired/self_filled) starsze niż ``retain_hours``.
+    """Usuń wpisy TERMINALNE starsze niż ``retain_hours``, ale NIGDY strażnika bieżącego tygodnia.
 
-    Wpisy otwarte oraz świeże terminalne zostają. ``retain_hours`` powinno być ≥ oknu odpowiedzi,
-    żeby nie ruszać idempotencji zapisu w aktywnym oknie. Wpis terminalny bez kotwicy zostawiamy
-    (nie znamy jego wieku). Zwraca NOWY słownik (niemutujący wejścia).
+    Wpis terminalny pełni podwójną rolę: jest śladem po zakończonym temacie i STRAŻNIKIEM
+    idempotencji ``run_once``, która porównuje ``week_start`` — czyli działa per TYDZIEŃ. Sama
+    retencja godzinowa te dwie role rozjeżdżała: wpis ``DECLINED`` z piątku 16:05 znikał w niedzielę
+    po 16:05, choć tydzień docelowy był wciąż ten sam. Operatorskie ``--once`` w niedzielę wieczorem
+    (polecenie z README) albo ``CATCHUP_GRACE_HOURS`` większe od retencji zaczepiało wtedy
+    ponownie osobę, której bot obiecał „kończę przypominanie".
 
-    Wpis z NIEWYSŁANĄ wiadomością odłożoną na okno wysyłki zostaje niezależnie od wieku: godziny
-    ciszy przesuwają wysyłkę, nie kasują jej, a domknięcie odłożone w piątek wieczorem czeka do
-    poniedziałku rana — czyli dłużej niż typowe ``retain_hours``.
+    ``retain_hours`` idzie z ``TERMINAL_RETAIN_HOURS`` i jest to liczba WŁASNA tej funkcji. Do
+    0.2.12 przychodził tu ``reply_window_hours``, czyli ta sama wartość, która wyznaczała okno
+    odpowiedzi — więc każda zmiana terminu przestawiała po cichu strażnika N15, którego nie
+    zamierzała dotykać, a skutkiem było ponowne zaczepienie osoby, której bot obiecał „kończę
+    przypominanie".
+
+    ``biezacy_tydzien`` to ISO poniedziałku tygodnia docelowego. Wpisy dotyczące jego albo
+    późniejszego tygodnia zostają niezależnie od wieku; pusty napis wyłącza tę ochronę (zgodność
+    wsteczna dla wywołań, które tygodnia nie znają). Wpis terminalny bez kotwicy zostawiamy (nie
+    znamy jego wieku). Zwraca NOWY słownik (niemutujący wejścia).
     """
     kept: dict[str, PendingReminder] = {}
     for key, pending in state.items():
-        if pending.status in _TERMINAL and not pending.odlozona_wiadomosc:
+        if pending.status == APPLYING:
+            # DOWÓD, nie ślad. `APPLYING` znaczy „potwierdzone, ale zapis nie domknął się" —
+            # jedyny status wymagający ręcznego sprawdzenia grafiku klienta. Retencja godzinowa
+            # kasowała go, zanim ktokolwiek zdążył zareagować: alert startowy mógł nie dolecieć,
+            # a cotygodniowe podsumowanie liczy statusy PO tym sprzątaniu, więc pokazywało zero.
+            # Wpis zostaje do ręcznego uprzątnięcia; jeden na incydent, więc stan nie puchnie.
+            kept[key] = pending
+            continue
+        if pending.status in _TERMINAL:
+            if biezacy_tydzien and pending.week_start >= biezacy_tydzien:
+                kept[key] = pending  # strażnik wciąż chroni bieżący tydzień
+                continue
             anchor = _anchor(pending)
             if anchor is not None and now >= anchor + timedelta(hours=retain_hours):
                 continue  # dość stary wpis terminalny — wyrzuć

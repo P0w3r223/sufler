@@ -89,11 +89,17 @@ def test_invalid_timezone_fails_validation(monkeypatch):
 
 
 def _set_live(monkeypatch):
-    """Komplet ustawień dla trybu na żywo (dry_run=false) — wszystkie bramki spełnione."""
+    """Komplet ustawień dla trybu na żywo (dry_run=false) — wszystkie bramki spełnione.
+
+    0.2.19 dołożyło do tej listy KANAŁ ALERTÓW: webhook jest jedyną drogą powiadomienia
+    niezależną od Graph i od AAD, a najważniejsze alerty powstają właśnie wtedy, gdy tamte nie
+    działają. Bez adresu `send_alert` zwraca `False` po cichu — rezygnacja ma być jawna.
+    """
     _set_required(monkeypatch)
     monkeypatch.setenv("POWIADOMIENIA_DRY_RUN", "false")
     monkeypatch.setenv("POWIADOMIENIA_SCHEDULING_GROUP_ID", "TAG")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("POWIADOMIENIA_ALERT_WEBHOOK_URL", "https://przyklad.invalid/hook")
 
 
 def test_scheduling_group_required_when_not_dry_run(monkeypatch):
@@ -205,80 +211,67 @@ def test_rozpoznane_prawdy_wlaczaja_tryb_probny(monkeypatch, wartosc):
     assert Settings.from_env().dry_run is True
 
 
-# --- Okno wysyłki (godziny ciszy) ---------------------------------------------
+# --- Godziny ciszy -------------------------------------------------------------
+#
+# 0.2.19 nie ma `SEND_WINDOW_*` (ADR 0005, status NOT SHIPPED). Ten sam problem — „nie pisz do
+# ludzi o nieludzkich porach" — rozwiązuje okno ciszy `CISZA_OD_H`/`CISZA_DO_H`, z jedną istotną
+# różnicą polityki: godzina przebiegu wpadająca w ciszę jest OSTRZEŻENIEM, nie błędem startu.
 
 
-def test_okno_wysylki_ma_domyslnie_dni_robocze_8_18(monkeypatch):
+def test_cisza_ma_domyslnie_okno_20_7(monkeypatch):
     _set_required(monkeypatch)
     s = Settings.from_env()
     s.validate()
-    assert (s.send_window_start_hour, s.send_window_end_hour) == (8, 18)
-    assert s.send_window_weekdays == (0, 1, 2, 3, 4)
+    assert (s.cisza_od_h, s.cisza_do_h) == (20, 7)
+    assert s.okno_ciszy.wylaczone is False
 
 
-def test_okno_wysylki_da_sie_przestawic_zmiennymi(monkeypatch):
+def test_cisza_da_sie_przestawic_zmiennymi(monkeypatch):
     _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_START_HOUR", "6")
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_END_HOUR", "22")
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_WEEKDAYS", "0,1,2,3,4,5,6")
+    monkeypatch.setenv("POWIADOMIENIA_CISZA_OD_H", "22")
+    monkeypatch.setenv("POWIADOMIENIA_CISZA_DO_H", "6")
     s = Settings.from_env()
     s.validate()
-    assert (s.send_window_start_hour, s.send_window_end_hour) == (6, 22)
-    assert s.send_window_weekdays == (0, 1, 2, 3, 4, 5, 6)
+    assert (s.cisza_od_h, s.cisza_do_h) == (22, 6)
 
 
-def test_odwrocone_okno_wysylki_jest_bledem(monkeypatch):
+def test_rowne_godziny_wylaczaja_cisze(monkeypatch):
+    """Jedyny sposób wyłączenia — osobna flaga dawałaby dwa źródła prawdy o tej samej rzeczy."""
     _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_START_HOUR", "18")
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_END_HOUR", "8")
-    with pytest.raises(ConfigError, match="send_window_end_hour"):
+    monkeypatch.setenv("POWIADOMIENIA_CISZA_OD_H", "0")
+    monkeypatch.setenv("POWIADOMIENIA_CISZA_DO_H", "0")
+    s = Settings.from_env()
+    s.validate()
+    assert s.okno_ciszy.wylaczone is True
+    assert s.godzina_przebiegu_w_ciszy is False
+
+
+def test_godzina_ciszy_poza_zakresem_jest_bledem(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POWIADOMIENIA_CISZA_OD_H", "24")
+    with pytest.raises(ConfigError, match="cisza_od_h"):
         Settings.from_env().validate()
 
 
-def test_puste_dni_okna_wysylki_sa_bledem(monkeypatch):
-    """Pusta lista znaczyłaby „nigdy nie wysyłaj" — usługa milczałaby, wyglądając na sprawną."""
-    _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_WEEKDAYS", " , ")
-    with pytest.raises(ConfigError, match="send_window_weekdays"):
-        Settings.from_env().validate()
+def test_termin_w_godzinach_ciszy_jest_OSTRZEZENIEM_a_nie_bledem_startu(monkeypatch):
+    """Zmiana polityki wobec linii repozytorium — i ma uzasadnienie, nie jest złagodzeniem.
 
-
-def test_dzien_spoza_zakresu_jest_bledem(monkeypatch):
-    _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_WEEKDAYS", "0,7")
-    with pytest.raises(ConfigError, match="send_window_weekdays"):
-        Settings.from_env().validate()
-
-
-def test_termin_poza_godzinami_okna_wysylki_jest_bledem_startu(monkeypatch):
-    """Konfiguracja, przy której przebieg NIGDY nie wypadnie w oknie, ma paść na starcie.
-
-    `run_hour=20` przechodził bez słowa: każdy przebieg odbijał się od godzin ciszy i przesuwał
-    na najbliższe otwarcie okna, więc usługa nie wysyłała już nic w terminie, a jedynym śladem
-    był wpis INFO w logu. Cisza wygląda identycznie jak sprawna praca.
+    Taka konfiguracja jest legalna, ale kosztowna: przebieg jest odkładany co tydzień do końca
+    ciszy. Tydzień kosztuje wyłącznie w złożeniu z `catchup_grace_hours == 0`, bo okno łaski NIE
+    liczy godzin ciszy (`_catchup_due` odejmuje `cisza_pomiedzy`). Dlatego zamiast blokować start
+    usługa sygnalizuje to ostrzeżeniem — a `godzina_przebiegu_w_ciszy` jest tym, co je wyzwala.
     """
     _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_RUN_HOUR", "20")
-    with pytest.raises(ConfigError, match="run_hour"):
-        Settings.from_env().validate()
+    monkeypatch.setenv("POWIADOMIENIA_RUN_HOUR", "22")  # wewnątrz domyślnego okna 20–7
+    s = Settings.from_env()
+    s.validate()  # bez wyjątku
+    assert s.godzina_przebiegu_w_ciszy is True
 
 
-def test_termin_w_dniu_spoza_okna_wysylki_jest_bledem_startu(monkeypatch):
-    """Termin w sobotę przy oknie pn–pt to ta sama pułapka, tylko liczona dniami."""
+def test_godzina_przebiegu_poza_cisza_nie_ostrzega(monkeypatch):
     _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_RUN_WEEKDAY", "5")  # sobota
-    with pytest.raises(ConfigError, match="run_weekday"):
-        Settings.from_env().validate()
-
-
-def test_termin_poza_oknem_przechodzi_gdy_okno_zostalo_poszerzone(monkeypatch):
-    """Walidacja krzyżowa nie może blokować świadomej konfiguracji — sprawdza SPÓJNOŚĆ, nie gust."""
-    _set_required(monkeypatch)
-    monkeypatch.setenv("POWIADOMIENIA_RUN_WEEKDAY", "5")
-    monkeypatch.setenv("POWIADOMIENIA_RUN_HOUR", "20")
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_WEEKDAYS", "0,1,2,3,4,5,6")
-    monkeypatch.setenv("POWIADOMIENIA_SEND_WINDOW_END_HOUR", "22")
-    Settings.from_env().validate()  # bez wyjątku
+    monkeypatch.setenv("POWIADOMIENIA_RUN_HOUR", "16")
+    assert Settings.from_env().godzina_przebiegu_w_ciszy is False
 
 
 def test_oba_szablony_env_maja_te_same_zmienne():
@@ -302,26 +295,39 @@ def test_oba_szablony_env_maja_te_same_zmienne():
     assert lokalne - wdrozeniowe == set(), sorted(lokalne - wdrozeniowe)
 
 
-def test_szablony_env_opisuja_okno_wysylki():
-    """Godziny ciszy są decyzją właściciela — muszą być widoczne w obu szablonach."""
+def test_szablony_env_opisuja_godziny_ciszy():
+    """Godziny ciszy są decyzją właściciela — muszą być widoczne w szablonie wdrożeniowym."""
     import re
     from pathlib import Path
 
     korzen = Path(__file__).resolve().parent.parent
-    for sciezka in (korzen / ".env.example", korzen / "deploy" / "env.example"):
-        tresc = sciezka.read_text(encoding="utf-8")
-        for zmienna in (
-            "POWIADOMIENIA_SEND_WINDOW_START_HOUR",
-            "POWIADOMIENIA_SEND_WINDOW_END_HOUR",
-            "POWIADOMIENIA_SEND_WINDOW_WEEKDAYS",
-        ):
-            assert re.search(rf"^{zmienna}=", tresc, re.M), (sciezka.name, zmienna)
+    # Listę kluczy utrzymuje WYŁĄCZNIE `deploy/env.example` (CLAUDE.md); `.env.example` niesie
+    # tylko RÓŻNICE wobec serwera, więc nie wolno od niego wymagać kompletu.
+    tresc = (korzen / "deploy" / "env.example").read_text(encoding="utf-8")
+    for zmienna in ("POWIADOMIENIA_CISZA_OD_H", "POWIADOMIENIA_CISZA_DO_H"):
+        assert re.search(rf"^{zmienna}=", tresc, re.M), zmienna
 
 
-def test_pilotaz_normalizuje_guidy_takze_przy_budowie_wprost():
-    """``from_env`` normalizowało samodzielnie, więc filtr działał dla procesu i przestawał dla
-    każdego ``Settings(...)`` złożonego wprost. Awaria była cicha: GUID wielkimi literami nie
-    pasował do nikogo, więc podsumowanie mówiło „0 próśb" — jak spokojny tydzień."""
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "0.2.19: only_user_ids nie są normalizowane, a filtr pilotażu porównuje znak w znak. "
+        "PRZYCZYNA: `only_user_ids=_list('ONLY_USER_IDS')` bez casefold (config.py:561), "
+        "a filtr to `m.user_id in settings.only_user_ids` (nudge.py:126). GUID wklejony "
+        "wielkimi literami albo w klamrach cicho wypada z pilotażu — osoba nie dostaje prośby, "
+        "a log liczy ją jako świadomie pominiętą."
+    ),
+)
+def test_pilotaz_powinien_normalizowac_guidy_takze_przy_budowie_wprost():
+    """Trzeci przypadek tej samej luki co w `incoming_after` — porównanie identyfikatorów AAD.
+
+    GUID wpisany wielkimi literami w `ONLY_USER_IDS` nie pasuje do nikogo, więc pilotaż milczy,
+    a podsumowanie mówi „0 próśb" — nieodróżnialnie od spokojnego tygodnia. 0.2.19 łagodzi to
+    logiem podającym OBIE liczby (`runtime.nudge`: ile osób bez grafiku przed filtrem i po), więc
+    operator MOŻE się zorientować — ale musi czytać logi kontenera, a to nie jest zabezpieczenie.
+
+    `strict=True`, więc dodanie normalizacji zapali CI i wymusi zdjęcie markera.
+    """
     s = Settings(
         client_id="c",
         tenant_id="t",
