@@ -1019,6 +1019,59 @@ def test_stary_obcy_przestaje_ciazyc_po_przesunieciu_watermarku(tmp_path: Path, 
     assert load_state(state_path)["u1"].status == "expired"  # cisza orzeczona, temat domknięty
 
 
+def test_dlawienie_zwalnia_sie_gdy_czat_wroci_do_porzadku(tmp_path: Path, monkeypatch):
+    """Dławienie ma tłumić POWTÓRKI tej samej sytuacji, nie kolejne wystąpienia.
+
+    `_ZGLOSZONE_OBCE` żyje tyle, co proces. Gdyby nigdy się nie zwalniało, operator dostawałby
+    alert o pierwszym intruzie i już nigdy o żadnym następnym w tej rozmowie — a przy usłudze
+    chodzącej tygodniami to znaczy „nigdy". Zwolnienie następuje wtedy, gdy obieg znów potrafi
+    czytać rozmowę: skoro pracownik odpisał, poprzednie zgłoszenie przestało opisywać stan.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings_calodobowe(state_path)
+    czat = [_msg("obcy", "2026-07-19T17:30:00Z", "wtrącam się")]
+    client = _FakeClient({"chat1": czat})
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+
+    # 1. Sam obcy w wątku — operator zawołany, wpis NIE wygasa.
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+    assert len(alerty) == 1
+    assert load_state(state_path)["u1"].status == AWAITING_REPLY
+
+    # 2. Pracownik odpisuje — rozmowa znów czytelna, zgłoszenie przestaje opisywać stan.
+    czat.append(_msg("u1", "2026-07-19T18:00:00Z", "ok"))
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+    assert len(alerty) == 1  # samo odczytanie nie alarmuje
+    assert load_state(state_path)["u1"].watermark == "2026-07-19T18:00:00Z"
+
+    # 3. NAWRÓT po powrocie do porządku — musi zawołać operatora PONOWNIE.
+    czat.append(_msg("obcy", "2026-07-19T18:30:00Z", "znowu ja"))
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+    assert len(alerty) == 2, alerty
+
+
 def test_obcy_nadawca_alertuje_RAZ_a_nie_przy_kazdym_odpytaniu(tmp_path: Path, monkeypatch):
     """Nasłuch odpytuje czat co ~10 s, a cudza wiadomość zostaje w wątku na zawsze.
 
