@@ -2625,7 +2625,14 @@ def test_trwale_nieodczytywalny_czat_nie_wygasa_i_nie_gubi_odpowiedzi(tmp_path: 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="0.2.19: brak licznika cykli bez odczytu i brak alertu — wpis wisi otwarty bez końca",
+    reason=(
+        "0.2.19: brak licznika cykli bez odczytu i brak alertu — wpis wisi otwarty bez końca. "
+        "PRZYCZYNA: `list_chat_messages` woła się w `_read_new` (listener.py:561), czyli PRZED "
+        "`_record_failure` (listener.py:654). Wyjątek leci więc do per-osobowego "
+        "`except Exception` w `poll_replies` (listener.py:363) → `ReadOutcome.UNKNOWN`: "
+        "`fail_count` nie rośnie, watermark nie rusza, a `should_expire` słusznie odmawia "
+        "wygaszenia bez dowodu z udanego odczytu."
+    ),
 )
 def test_nierozstrzygniete_cykle_powinny_alarmowac_po_progu(tmp_path: Path, monkeypatch):
     """Druga połowa, której brakuje: eksploatacja nie ma jak się dowiedzieć.

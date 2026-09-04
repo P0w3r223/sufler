@@ -163,7 +163,11 @@ def test_memory_window_is_one_hour():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="0.2.19: incoming_after nie filtruje po nadawcy — bierze każdego poza botem",
+    reason=(
+        "0.2.19: incoming_after nie filtruje po nadawcy — bierze każdego poza botem. "
+        "PRZYCZYNA: jedyny warunek na nadawcę to `sender is None or sender == me_id` "
+        "(replies.py:77); przynależność do `pending` nie jest sprawdzana nigdzie."
+    ),
 )
 def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
     """Nadawcą MUSI być ta osoba, o której grafik pytamy — nie „ktokolwiek poza botem".
@@ -183,7 +187,12 @@ def test_incoming_after_powinno_odrzucac_nadawce_spoza_pendingu():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="0.2.19: porównanie nadawcy z me_id jest wrażliwe na wielkość liter",
+    reason=(
+        "0.2.19: porównanie nadawcy z me_id jest wrażliwe na wielkość liter. "
+        "PRZYCZYNA: `sender == me_id` (replies.py:77) — zwykłe porównanie napisów, bez "
+        "casefold. Graph potrafi zwrócić ten sam GUID w innej wielkości liter, a wtedy bot "
+        "bierze WŁASNĄ wiadomość za odpowiedź pracownika."
+    ),
 )
 def test_incoming_after_powinno_rozpoznac_wlasna_wiadomosc_niezaleznie_od_wielkosci_liter():
     """GUID-y z Graph bywają w różnej wielkości liter, a `sender == me_id` porównuje znak w znak.

@@ -310,7 +310,13 @@ def test_szablony_env_opisuja_godziny_ciszy():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="0.2.19: only_user_ids nie są normalizowane, a filtr pilotażu porównuje znak w znak",
+    reason=(
+        "0.2.19: only_user_ids nie są normalizowane, a filtr pilotażu porównuje znak w znak. "
+        "PRZYCZYNA: `only_user_ids=_list('ONLY_USER_IDS')` bez casefold (config.py:561), "
+        "a filtr to `m.user_id in settings.only_user_ids` (nudge.py:126). GUID wklejony "
+        "wielkimi literami albo w klamrach cicho wypada z pilotażu — osoba nie dostaje prośby, "
+        "a log liczy ją jako świadomie pominiętą."
+    ),
 )
 def test_pilotaz_powinien_normalizowac_guidy_takze_przy_budowie_wprost():
     """Trzeci przypadek tej samej luki co w `incoming_after` — porównanie identyfikatorów AAD.
