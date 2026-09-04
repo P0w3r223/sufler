@@ -44,12 +44,20 @@ zdrowia czy fazy."""
 # Akapit zapisu wchodzi WYŁĄCZNIE razem z wariantem ``Literal`` zawierającym `save`. Opis
 # obiecujący zapis przy nieczynnej akcji byłby tym samym defektem co dawna obietnica
 # ``/mnt/user/outputs``: model dostaje instrukcję, po którą nie ma jak sięgnąć.
+#
+# Ta sama zasada w drugą stronę i MIĘDZY narzędziami: akapit nie odsyła do `File(edit)`, choć
+# odesłanie było trafne. ``build_project_catalog`` nie zna profilu mutacji sąsiedniego narzędzia
+# (bramka `File` siedzi w ustawieniach drzwi), a złożenie „zapis notatek ON + mutacje OFF" jest
+# budowalne — wtedy `File` ma sam `read` i odesłanie stawało się martwe. Symetryczne do decyzji
+# po drugiej stronie: `File` przestał obiecywać „zapisz jako nową notatkę" dokładnie dlatego, że
+# nie zna profilu zapisu `Project` (`tests/core/test_file_tool.py`). Milczenie jest tu tańsze niż
+# odesłanie prawdziwe w jednej konfiguracji i fałszywe w drugiej.
 _PROJECT_SAVE = """
 
 Akcja `save` — dopisz NOWĄ notatkę ze spotkania do tego projektu (ZAPIS). Wymaga: `project`,
 `title`, `date` (YYYY-MM-DD), `body`. Opcjonalnie: `participants`, `decisions`, `action_items`,
 `open_questions`, `tags`. Miejsce zapisu wylicza się z metadanych (firma z rejestru →
-projekt → data-slug); ta akcja TWORZY nową notatkę, a istniejącą zmienia `File(edit)`.
+projekt → data-slug); ta akcja TWORZY nową notatkę i nie zmienia istniejącej.
 Użyj wyłącznie na wprost wyrażoną prośbę człowieka."""
 
 # Podpowiedź przy braku klucza jest BEZ ścieżek i bez nazw narzędzi. Układ ścieżek mieszka
