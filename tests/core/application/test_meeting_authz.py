@@ -62,3 +62,26 @@ def test_can_write_meeting_note_membership_only():
     assert can_write_meeting_note(actor, project="scada-integration") is True
     assert can_write_meeting_note(actor, project="inny-projekt") is True
     assert can_write_meeting_note(None, project="scada-integration") is False
+
+
+# --- ADR 0070 §3: wpis „tylko Teams" to PEŁNE członkostwo -------------------------
+
+_TADEUSZ = Person(
+    source_id="EMP-51",
+    aad_user_id="aad-tadek",
+    jira_user="",  # osoba bez konta Jira — stan trwały i legalny (ADR 0070 §1)
+    display_name="Tadeusz Anonimowski",
+)
+
+
+def test_member_without_jira_account_may_write_a_meeting_note():
+    """Dwoje drzwi zapisu (``/notatka`` i przechwycenie „zapisz to") pyta tego samego autoryzatora.
+
+    ADR 0070 §3 wylicza zapis notatki wśród zdolności, które wpis w mapie NADAJE — bez tej bramki
+    zdanie z ADR-u nie ma nic, co by je trzymało.
+    """
+    authz = MeetingNoteAuthorizer(_FakeLookup({"aad-tadek": _TADEUSZ}))
+
+    actor = authz.authorize("aad-tadek", project="scada-integration")
+
+    assert actor == Actor(aad_user_id="aad-tadek", display_name="Tadeusz Anonimowski")

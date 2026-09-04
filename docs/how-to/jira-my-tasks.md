@@ -66,7 +66,14 @@ WORKMATE_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
 mikolaj:
   aad_user_id: 712020-...
   jira_user: mikolaj@example.org        # e-mail (Cloud) albo login/accountId (Server/DC)
+
+tadeusz:
+  aad_user_id: 4c7d90-...          # jira_user POMINIĘTE: osoba bez konta Jira (ADR 0070)
 ```
+
+Wymagane jest wyłącznie `aad_user_id`. Wpis bez `jira_user` to pełny członek pionu, który nie
+dostaje narzędzia `Jira` — ani „moich zadań", ani pytań o zadania innych osób. Nie uzupełniaj
+takiego wpisu cudzym kontem: pokazałoby mu CUDZE zgłoszenia.
 
 Na kanale/w czacie:
 
@@ -98,14 +105,21 @@ Read-only skrypt operatorski — zastąpił stary, poller-owy preflight (poz. 11
 
 ```powershell
 uv run --no-sync python deploy/jira/preflight.py
+uv run --no-sync python deploy/jira/preflight.py --aad <aad-user-id>   # + sprawdzenie tożsamości
 ```
 
 Sprawdza:
 
 1. **Auth** — połączenie i ważność tokenu (`authenticated_account` / `GET /myself`).
 2. **Próbne `search_issues`** — realne zapytanie JQL o otwarte zadania, bez zapisu.
-3. **Opcjonalna weryfikacja tożsamości AAD** — jeśli podano `WORKMATE_TEAMS_GRAPH_IDENTITIES`,
-   sprawdza, że `jira_user` z mapy faktycznie rozwiązuje się do konta w Jirze.
+3. **Opcjonalna weryfikacja tożsamości AAD** — **wyłącznie gdy podasz `--aad <aad-user-id>`**;
+   sama zmienna `WORKMATE_TEAMS_GRAPH_IDENTITIES` tego nie uruchamia, więc wywołanie bez flagi
+   kończy się kodem `0`, nie zajrzawszy do mapy. Sprawdza, że AAD id rozwiązuje się w MAPIE
+   do osoby z niepustym `jira_user`. Preflight
+   **nie pyta o to konto Jiry** — to sprostowanie, nie zmiana: nigdy tego nie robił, a zdanie
+   obiecujące inaczej stało tu od początku. Trzy wyniki: nieznane AAD id → `1`; członek bez
+   konta Jira (ADR 0070) → `1` wraz z wyjaśnieniem, że to stan legalny i mapy NIE należy
+   uzupełniać; pełny wpis → `0`.
 
 Wynik: `0` = auth + odczyt OK; `!= 0` = konfiguracja/auth odrzucone (szczegóły na stderr).
 

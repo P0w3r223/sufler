@@ -1153,3 +1153,26 @@ def test_read_services_key_includes_the_retrieval_configuration(
     po = agent_wiring._read_services(settings)
 
     assert przed[0] is not po[0]
+
+
+def test_member_without_jira_account_still_gets_the_mutating_actions(tmp_path: Path):
+    """Mutacja notatek jedzie po ``source_id`` osoby, nie po jej koncie Jira (ADR 0070 §3).
+
+    Bliźniak ``test_recognised_member_gets_the_mutating_actions`` dla wpisu „tylko Teams".
+    Ta ścieżka jest jedną z dwóch, które ADR nazywa NIEODWRACALNYMI w skutkach (druga to
+    powłoka), więc jej zależność od pustego pola nie może zostać bez bramki — a że mutacja
+    jest już włączona na flocie, pomyłka byłaby widoczna dopiero na produkcji.
+    """
+    from workmate.core.domain.identity import Person
+    from workmate.core.domain.workspace import WorkspaceScope
+    from workmate.core.ports.llm import AttachmentQueue
+
+    osoba = Person(source_id="EMP-51", display_name="Tadeusz", aad_user_id="aad-tadek")
+    factory, _stage = _para_file_z_mutacja(
+        tmp_path, mutations=_StubMutations(), identities=_StubIdentities(osoba)
+    )
+    (spec,) = factory(
+        WorkspaceScope("teams_graph", "t/c/r"), AttachmentQueue(budget_bytes=10), "aad-tadek", "t1"
+    )
+
+    assert _akcje(spec) == {"read", "edit", "delete"}

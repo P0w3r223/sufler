@@ -98,3 +98,40 @@ def test_labelling_returns_a_class_instead_of_refusing():
     assert authorizer.trust_class("ktokolwiek") == "T2"
     with pytest.raises(NoteAuthorizationError):
         authorizer.authorize("ktokolwiek")  # ta sama osoba, druga oś: zdolność ODMÓWIONA
+
+
+# --- ADR 0070 §3: wpis „tylko Teams" to PEŁNE członkostwo -------------------------
+
+_TADEUSZ = Person(
+    source_id="EMP-51",
+    aad_user_id="aad-tadek",
+    jira_user="",  # osoba bez konta Jira — stan trwały i legalny (ADR 0070 §1)
+    display_name="Tadeusz Anonimowski",
+)
+
+
+def test_member_without_jira_account_may_read_notes():
+    """Brak konta Jira NIE odbiera członkostwa — to jest cała teza ADR 0070 §3.
+
+    Ta bramka istnieje, bo naprawa idzie w kierunku, w którym łatwo przesadzić: ktoś czytający
+    „pusty ``jira_user``" jako „niekompletna tożsamość" dopisze warunek do autoryzatora i odetnie
+    człowieka od bazy wiedzy — czyli odtworzy dokładnie ten stan, dla którego usunięcia ADR
+    powstał. Autoryzacja rozstrzyga po ``aad_user_id`` i po niczym więcej.
+    """
+    authz = NoteReadAuthorizer(_FakeLookup({"aad-tadek": _TADEUSZ}))
+
+    assert authz.authorize("aad-tadek") == Actor(
+        aad_user_id="aad-tadek", display_name="Tadeusz Anonimowski"
+    )
+
+
+def test_member_without_jira_account_is_trust_class_t1():
+    """Rozszczepienie T1/T2 (ADR 0066) jedzie za tym samym rozwiązaniem tożsamości.
+
+    Gdyby brak konta Jira spychał do ``T2``, treść od pełnoprawnego członka pionu byłaby
+    etykietowana jak treść z zewnątrz — i to bez śladu w odmowie, bo ``trust_class`` niczego
+    nie odmawia, tylko opisuje pochodzenie.
+    """
+    authz = NoteReadAuthorizer(_FakeLookup({"aad-tadek": _TADEUSZ}))
+
+    assert authz.trust_class("aad-tadek") == "T1"

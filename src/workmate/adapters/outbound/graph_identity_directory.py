@@ -7,12 +7,20 @@ używane też do autoryzacji ``/notatka``) i ``jira_user`` (e-mail albo ``accoun
 **Fail-closed.** Nieznany ``aad_user_id`` → ``None``: brak autoryzacji notatki, brak listy zadań.
 Nigdy nie dopasowujemy po nazwisku.
 
+**Wymagane jest wyłącznie ``aad_user_id``** (ADR 0070 §1). Wpis bez ``jira_user`` to osoba, która
+NIE MA konta Jira — pełny członek pionu, bez narzędzia ``Jira``. Nie jest to wpis niekompletny do
+uzupełnienia: dopisanie tam cudzego konta pokazałoby tej osobie CUDZE zadania.
+
 Format ``identities.yaml``::
 
     EMP-042:
       aad_user_id: 8a1f-...
       jira_user: mikolaj@example.org
       display_name: Mikołaj Anonimowicz   # opcjonalnie
+
+    EMP-051:
+      aad_user_id: 4c7d-...
+      display_name: Tadeusz Anonimowski  # bez konta Jira: ``jira_user`` pominięte (ADR 0070)
 """
 
 from __future__ import annotations
@@ -52,10 +60,14 @@ class YamlIdentityDirectory:
 
 
 def _load_map(path: Path) -> dict[str, Person]:
-    """Wczytaj mapę tożsamości; brak pliku albo brak wymaganego pola = TWARDY błąd startu.
+    """Wczytaj mapę tożsamości; brak pliku albo brak ``aad_user_id`` = TWARDY błąd startu.
 
     Fail-fast przy starcie, nie przy pierwszym użyciu: niekompletna mapa oznacza, że część
     ludzi po cichu nie dostanie nic, a to najgorszy rodzaj awarii — niewidoczny.
+
+    Wymagane jest TYLKO ``aad_user_id`` (ADR 0070 §1). Brak ``jira_user`` jest legalnym wpisem
+    osoby bez konta Jira, nie brakiem danych — do 2026-09-04 wywracał start, i to trzymało bramkę
+    odczytu bazy wiedzy wyłączoną, bo jej włączenie odcięłoby taką osobę od notatek.
     """
     import yaml
 
@@ -72,17 +84,32 @@ def _load_map(path: Path) -> dict[str, Person]:
     for source_id, entry in raw.items():
         if not isinstance(entry, dict):
             raise ValueError(f"wpis {source_id!r} w {path} musi być słownikiem.")
-        missing = [field for field in ("aad_user_id", "jira_user") if not entry.get(field)]
-        if missing:
-            raise ValueError(f"wpis {source_id!r} w {path} nie ma pól: {', '.join(missing)}.")
+        if not entry.get("aad_user_id"):
+            raise ValueError(
+                f"wpis {source_id!r} w {path} nie ma pola 'aad_user_id' — to ono adresuje "
+                "człowieka i po nim rozstrzyga każda bramka autoryzacji. Pole 'jira_user' jest "
+                "opcjonalne (ADR 0070 §1), 'aad_user_id' nie."
+            )
         people[str(source_id)] = Person(
             source_id=str(source_id),
             aad_user_id=str(entry["aad_user_id"]),
-            jira_user=str(entry["jira_user"]),
+            jira_user=str(entry.get("jira_user") or ""),
             display_name=str(entry.get("display_name") or ""),
         )
     _reject_shared_identifiers(people, path)
     logger.info("Mapa tożsamości %s: %d osób.", path, len(people))
+    tylko_teams = sorted(sid for sid, person in people.items() if not person.jira_user)
+    if tylko_teams:
+        # Wpis w mapie NADAJE zdolności — bazę wiedzy, notatki ze spotkań, POWŁOKĘ i mutację
+        # notatek (ADR 0070 §3) — i robi to niezależnie od flagi odczytu. Wpis „tylko Teams"
+        # różni się od pozostałych wyłącznie brakiem narzędzia Jira, więc bez tej linii jego
+        # obecność nie zostawiałaby przy starcie żadnego śladu.
+        logger.info(
+            "Mapa tożsamości %s: %d bez konta Jira (%s) — pełne członkostwo, bez narzędzia Jira.",
+            path,
+            len(tylko_teams),
+            ", ".join(tylko_teams),
+        )
     return people
 
 
@@ -92,11 +119,29 @@ def _reject_shared_identifiers(people: dict[str, Person], path: Path) -> None:
     Skopiowany w YAML-u blok bez podmiany ``jira_user`` sprawiłby, że lista zadań drugiej osoby
     pokazuje CUDZE zgłoszenia; współdzielony ``aad_user_id`` autoryzowałby notatkę pod cudzym
     imieniem albo pokazał komuś cudzą listę zadań.
+
+    Puste wartości są POMIJANE (ADR 0070 §2): brak konta Jira to nie jest konto współdzielone.
+    Bez tego pominięcia DRUGA osoba bez Jiry kładłaby start błędem o zdublowanym identyfikatorze —
+    zatrzymaniem fail-closed spowodowanym tym, że dwoje ludzi poprawnie nie ma niczego. Pominięcie
+    musi dotyczyć WARTOŚCI, nie całego pola: ``continue`` na polu zdjęłoby ochronę przed dwiema
+    osobami o tym samym, niepustym ``jira_user``, czyli przed usterką z akapitu wyżej. Dla
+    ``aad_user_id`` gałąź pominięcia jest dziś NIEOSIĄGALNA z ``_load_map`` (puste pole odrzuca
+    walidacja wpisu wcześniej) — stoi tam dla symetrii pętli, nie jako czynna ochrona.
+
+    **Zakres tej ochrony jest węższy, niż brzmi: porównujemy IDENTYCZNE napisy.** Zmierzone:
+    ``X@e.pl`` obok ``x@e.pl`` oraz ``' x@e.pl'`` obok ``'x@e.pl'`` przechodzą jako dwa różne
+    konta, choć Jira Cloud dopasowuje e-maile bez rozróżniania wielkości liter. To luka SPRZED
+    ADR 0070, świadomie tu nie domykana: normalizacja klucza porównania bez normalizacji
+    ``_by_aad`` dałaby naprawę ASYMETRYCZNĄ — a to jest w tym projekcie znany sposób na drugą
+    usterkę zamiast jednej. Domknięcie wymaga przejścia WSZYSTKICH punktów porównania
+    identyfikatorów naraz, czyli własnego kroku.
     """
     for field in ("aad_user_id", "jira_user"):
         seen: dict[str, str] = {}
         for person in people.values():
             value = getattr(person, field)
+            if not value:
+                continue
             if value in seen:
                 raise ValueError(
                     f"mapa tożsamości {path}: {field}={value!r} występuje u dwóch osób "

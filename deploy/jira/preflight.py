@@ -12,6 +12,11 @@ Uruchomienie (w środowisku projektu, z wypełnionym ``.env``)::
 
 Bez ``--account`` używane jest ``WORKMATE_JIRA_MY_ACCOUNT`` (principal serwera MCP, ADR 0054).
 Kody wyjścia: ``0`` = auth + odczyt OK; ``1`` = konfiguracja/auth/odczyt odrzucone (stderr).
+
+Zakres sprawdzenia ``--aad`` jest węższy, niż bywał opisywany: rozwiązuje AAD id przez plik mapy
+i NIE pyta o to konto Jiry. Osoba zmapowana bez ``jira_user`` (wpis „tylko Teams", ADR 0070) daje
+kod ``1`` — bo ``--aad`` jest pytaniem „czy ta osoba dostanie Jirę", a odpowiedź brzmi „nie".
+Nie jest to wezwanie do uzupełnienia mapy: patrz komunikat w ``_check_identity``.
 """
 
 from __future__ import annotations
@@ -89,6 +94,22 @@ def _check_identity(aad_user_id: str, identities_path: Any) -> bool:
     person = directory.resolve_by_aad_user_id(aad_user_id)
     if person is None:
         _log("  !! Nie znaleziono (fail-closed) — /moje-zadania odpowie odmową temu AAD id.")
+        return False
+    if not person.jira_user:
+        # Wpis „tylko Teams" (ADR 0070 §1). Do 2026-09-04 ta gałąź była nieosiągalna, bo mapa
+        # nie wpuszczała pustego pola — i bez niej ten preflight meldowałby OK z kodem 0 oraz
+        # `jira_user=''`, bo `_mask("")` zwraca pusty napis. Fałszywa ZIELEŃ narzędzia
+        # weryfikacyjnego jest gorsza od jego braku: `deploy/` jest poza `mypy` (files=["src"])
+        # i nie ma tu żadnej innej bramki.
+        _log(
+            f"  !! {person.display_name!r} JEST rozpoznanym członkiem pionu, ale NIE MA konta "
+            "Jira — /moje-zadania odmówi, a narzędzie Jira nie wejdzie do katalogu tej osoby "
+            "(ADR 0070 §3)."
+        )
+        _log(
+            "     To stan LEGALNY, nie błąd konfiguracji: NIE dopisuj 'jira_user' do jej wpisu. "
+            "Cudze konto pokazałoby jej CUDZE zadania (ADR 0070 §4)."
+        )
         return False
     _log(f"  OK: rozwiązano na jira_user={_mask(person.jira_user)!r} ({person.display_name!r}).")
     return True

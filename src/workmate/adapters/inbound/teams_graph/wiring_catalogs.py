@@ -68,6 +68,13 @@ def _build_my_jira_tasks_factory(
     rozwiązanej tożsamości albo bez ``jira_user`` dostaje pustą listę narzędzi (fail-closed, zero
     domysłów) — router komend i responder degradują to do czytelnej odmowy, nie do błędu.
 
+    Te dwa przypadki różnią się tym, czego są objawem, i od ADR 0070 tylko pierwszy jest brakiem.
+    Nadawca ZMAPOWANY, ale bez ``jira_user``, to osoba bez konta Jira — stan TRWAŁY i legalny, nie
+    mapa do uzupełnienia. Jest pełnym członkiem pionu (czyta bazę wiedzy, pisze notatki, dostaje
+    powłokę), a narzędzia ``Jira`` nie dostaje w ogóle — traci przez to także pytania o zadania
+    INNYCH ludzi, co z jej własnym brakiem konta nie ma nic wspólnego. Ta asymetria jest w ADR
+    0070 §3 nazwana i przyjęta; pusta lista NIE jest tu więc miejscem do „naprawy".
+
     Zawężenie do WŁASNEGO konta dzieje się TU, przy budowie ``MyJiraTasksService``, i to jest
     jedyne miejsce, gdzie ono żyje (ADR 0054). Od kroku 5.3 (ADR 0009 paczki wdrożeniowej) sześć
     dawnych narzędzi jest jednym ``Jira(action=…)``, więc pole ``member`` STOI w tym samym

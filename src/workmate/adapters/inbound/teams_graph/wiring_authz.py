@@ -54,6 +54,12 @@ def _build_shell_authorizer(
     bramkowany", bez okna otwartego. Składa authorizer nad ``YamlIdentityDirectory`` (fail-closed).
     Wpinany w ``_build_responder``; egzekwuje per-turową fabrykę powłoki po nadawcy. Drzwi MCP i CLI
     (jeden zaufany operator, brak ``sender_id``) są POZA zakresem, jak w ADR 0042/0062.
+
+    **Nowy wiersz w mapie tożsamości = powłoka dla tej osoby** (ADR 0070 §3). Mapa jest rosterem
+    członkostwa pionu, nie katalogiem kont Jiry, a przy ``ENABLE_SHELL=true`` członkostwo niesie
+    uruchamianie kodu w wykonawcy. Bramka nie czeka na żadną flagę odczytu — czyta mapę wprost.
+    Rozdzielenie „kto jest członkiem" od „kto ma powłokę" zostało w ADR 0070 §3 rozważone
+    i ODRZUCONE na koszt; odwrócenie tego wymaga własnego ADR-a o modelu uprawnień.
     """
     if not shell_settings.enabled:
         return None
