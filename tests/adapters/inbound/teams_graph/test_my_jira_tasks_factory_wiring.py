@@ -15,11 +15,12 @@ _JIRA = JiraSettings(base_url="https://jira.example.org", token="pat-secret")
 
 
 def _identities_file(tmp_path, *, aad_user_id="aad-123", jira_user="mikolaj@example.org"):
+    """``jira_user=None`` pomija pole — wpis „tylko Teams" (ADR 0070 §1)."""
     path = tmp_path / "identities.yaml"
-    path.write_text(
-        f"EMP-1:\n  aad_user_id: {aad_user_id}\n  jira_user: {jira_user}\n",
-        encoding="utf-8",
-    )
+    wpis = f"EMP-1:\n  aad_user_id: {aad_user_id}\n"
+    if jira_user is not None:
+        wpis += f"  jira_user: {jira_user}\n"
+    path.write_text(wpis, encoding="utf-8")
     return path
 
 
@@ -76,3 +77,24 @@ def test_sender_mapped_to_a_different_person_gets_no_tool(tmp_path) -> None:
     assert factory is not None
     # Sender inny niż zmapowany — fail-closed, brak narzędzia.
     assert factory("aad-not-mapped") == []
+
+
+def test_mapped_sender_without_a_jira_account_gets_no_tool(tmp_path) -> None:
+    """Druga strona ADR 0070 §3: pełne członkostwo NIE znaczy pełnej powierzchni narzędzi.
+
+    Osoba bez konta Jira nie dostaje ``Jira`` z pustym ``assignee`` — nie dostaje go WCALE, więc
+    traci też ``task``, ``search`` i pytania o zadania INNYCH ludzi, które z jej własnym brakiem
+    konta nie mają nic wspólnego. To konsekwencja braku konta, nie mapy; ADR nazywa ją wprost,
+    żeby nie została później odkryta jako usterka.
+
+    Do 2026-09-04 ta ścieżka była NIEOSIĄGALNA — ładowarka nie wpuszczała pustego ``jira_user``,
+    więc straż ``person.jira_user`` w fabryce stała nieprzetestowana. Dziś jest jedyną rzeczą
+    między „bez konta" a serwisem domkniętym na pustym koncie, czyli listą zadań, która
+    milcząco nie jest niczyja.
+    """
+    mapa = _identities_file(tmp_path, jira_user=None)
+    settings = TeamsGraphSettings(meeting_note_identities=mapa)
+    factory = _build_my_jira_tasks_factory(settings, _JIRA)
+
+    assert factory is not None  # sama fabryka powstaje — mapa jest poprawna
+    assert factory("aad-123") == []

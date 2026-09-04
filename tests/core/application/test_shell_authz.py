@@ -57,3 +57,27 @@ def test_empty_sender_resolves_none_without_resolve():
     authz = ShellAuthorizer(_FakeLookup({"aad-anna": _ANNA}))
 
     assert authz.resolve("") is None
+
+
+# --- ADR 0070 §3: wpis „tylko Teams" to PEŁNE członkostwo -------------------------
+
+_TADEUSZ = Person(
+    source_id="EMP-51",
+    aad_user_id="aad-tadek",
+    jira_user="",  # osoba bez konta Jira — stan trwały i legalny (ADR 0070 §1)
+    display_name="Tadeusz Anonimowski",
+)
+
+
+def test_member_without_jira_account_gets_the_shell():
+    """Najcięższa konsekwencja z ADR 0070 §3 — i jedyna, która URUCHAMIA KOD.
+
+    ``WORKMATE_ENABLE_SHELL=true`` na flocie, więc dopisanie wiersza do pliku YAML wręcza tej
+    osobie wykonawcę. To jest świadoma decyzja właściciela z 2026-09-04, nie skutek uboczny
+    odblokowania bramki odczytu — i dlatego ma tu stać test, a nie samo zdanie w dokumencie.
+    """
+    authz = ShellAuthorizer(_FakeLookup({"aad-tadek": _TADEUSZ}))
+
+    assert authz.resolve("aad-tadek") == Actor(
+        aad_user_id="aad-tadek", display_name="Tadeusz Anonimowski"
+    )
