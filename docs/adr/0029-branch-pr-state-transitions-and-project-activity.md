@@ -5,7 +5,9 @@ Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0019-shared-event-store.md, docs/adr/0020-github-delegated-polling-door.md,
   docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md,
-  docs/adr/0028-project-repo-jira-mapping-and-event-dimension.md
+  docs/adr/0028-project-repo-jira-mapping-and-event-dimension.md,
+  docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md — applies this ADR's
+  transition pattern to issues, and names the latent flaw in the `pr_closed` dedup key
 
 ---
 
