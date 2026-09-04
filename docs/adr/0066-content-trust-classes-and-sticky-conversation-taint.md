@@ -11,7 +11,9 @@ Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (sender member
   [ADR 0062](0062-note-read-authorization.md) / [ADR 0063](0063-shell-membership-gate-and-conversation-isolation.md)
   (capability membership gates — the pattern this ADR sits *beside*, not *inside*);
   siblings: ADR 0064 (`File`/read-materialization), ADR 0065 (mutable knowledge base + Sonnet judge);
-  upstream: `infra-docker-workmate/plan-workmate-2.0.md` §Faza 3, `docs/decyzje/0007`
+  upstream: `infra-docker-workmate/plan-workmate-2.0.md` §Faza 3, `docs/decyzje/0007`,
+**[ADR 0070](0070-teams-only-identity-and-what-a-map-entry-grants.md) — what an entry in the
+identity map GRANTS beyond this gate; §3 states the membership semantics this ADR relies on**
 
 ---
 

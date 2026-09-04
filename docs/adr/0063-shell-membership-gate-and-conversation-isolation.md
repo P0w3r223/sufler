@@ -8,7 +8,9 @@ Related to: [ADR 0057](0057-shell-executor-container-without-network.md) (the ex
 [ADR 0042](0042-meeting-note-sender-authorization.md) (write-side membership gate),
 [ADR 0054](0054-reduce-jira-to-read-only-my-tasks.md) (build-time fail-closed omission),
 infra `docs/decyzje/0010` (conversation isolation in the shell — the deferred per-conversation mount),
-infra `docs/decyzje/0006` (workspace write model)
+infra `docs/decyzje/0006` (workspace write model),
+**[ADR 0070](0070-teams-only-identity-and-what-a-map-entry-grants.md) — what an entry in the
+identity map GRANTS beyond this gate; §3 states the membership semantics this ADR relies on**
 
 ---
 

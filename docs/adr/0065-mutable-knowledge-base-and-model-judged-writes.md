@@ -11,7 +11,9 @@ Related to: [ADR 0003](0003-note-schema.md) (note schema, create-only),
   [ADR 0048](0048-thread-note-capture-from-teams-mention.md),
   [ADR 0057](0057-shell-executor-container-without-network.md) (security by lack, not by filtering);
   upstream: `docs/decyzje/0008-odwracalnosc-bazy-wiedzy.md` (reversibility = volume backup)
-Sibling: ADR 0064 (`File` tool + read-materialization). This ADR owns the `write`/`edit`-into-notes half.
+Sibling: ADR 0064 (`File` tool + read-materialization). This ADR owns the `write`/`edit`-into-notes half.,
+**[ADR 0070](0070-teams-only-identity-and-what-a-map-entry-grants.md) — what an entry in the
+identity map GRANTS beyond this gate; §3 states the membership semantics this ADR relies on**
 
 ---
 
