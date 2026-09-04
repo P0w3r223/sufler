@@ -5,6 +5,7 @@ repozytorium, której obraz 0.2.19 nigdy nie dostał (ADR 0005, status NOT SHIPP
 rozwiązuje ten sam problem inaczej — oknem ciszy z `CISZA_OD_H`/`CISZA_DO_H` — i nie miała ani
 jednego testu, mimo że rozstrzyga, czy bot wolno się w ogóle odezwać do człowieka.
 """
+
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -27,18 +28,24 @@ def _t(dzien: int, godzina: int, minuta: int = 0) -> datetime:
     return datetime(2026, 9, dzien, godzina, minuta, tzinfo=TZ)
 
 
-@pytest.mark.parametrize("godzina, wolno", [(19, True), (20, False), (23, False), (6, False), (7, True)])
+@pytest.mark.parametrize(
+    "godzina, wolno", [(19, True), (20, False), (23, False), (6, False), (7, True)]
+)
 def test_okno_przez_polnoc_zamyka_sie_o_od_h_i_otwiera_o_do_h(godzina, wolno):
     assert wolno_pisac(_t(4, godzina), NOCNE) is wolno
 
 
-@pytest.mark.parametrize("godzina, wolno", [(0, True), (1, False), (4, False), (5, True), (12, True)])
+@pytest.mark.parametrize(
+    "godzina, wolno", [(0, True), (1, False), (4, False), (5, True), (12, True)]
+)
 def test_okno_w_obrebie_doby(godzina, wolno):
     assert wolno_pisac(_t(4, godzina), DZIENNE) is wolno
 
 
 def test_rowne_godziny_znacza_brak_ciszy_o_kazdej_porze():
-    """Jedyny sposób wyłączenia okna — osobna flaga dawałaby dwa źródła prawdy (config.OknoCiszy)."""
+    """Jedyny sposób wyłączenia okna — osobna flaga dawałaby dwa źródła prawdy
+    (config.OknoCiszy).
+    """
     assert all(wolno_pisac(_t(4, h), WYLACZONE) for h in range(24))
     assert WYLACZONE.wylaczone
 

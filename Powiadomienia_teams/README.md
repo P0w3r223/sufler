@@ -17,10 +17,10 @@ Pełny zamysł: **[PLAN.md](PLAN.md)**.
 > z drzewa roboczego, które nigdy nie trafiło do gita. Dwie konsekwencje, o których trzeba
 > wiedzieć przed pracą tutaj:
 >
-> - **Testów tego kodu nie ma.** Bramka jakości obrazu zaliczyła 792 testy, ale zestaw testowy nie
->   został zachowany. Katalog `tests/` pochodzi od starszej, rozwidlonej linii kodu: wobec
->   obecnych źródeł 44 testy nie przechodzą, a 6 modułów nie importuje się w ogóle.
->   `pytest` NIE jest tu dziś bramką jakości — patrz „Uruchamianie zadań deweloperskich".
+> - **Oryginalnych testów 0.2.19 nie ma.** Bramka jakości obrazu zaliczyła 792 testy, ale zestawu
+>   nie zachowano. Obecny `tests/` został przepisany pod odzyskane źródła i przechodzi w całości
+>   (403 passed, 10 xfailed) — nie jest to jednak ten sam zestaw co przy buildzie, więc nie
+>   dowodzi zgodności z 0.2.19 w takim stopniu, w jakim dowodziłby oryginalny.
 > - **Numeracja wersji śledzi tagi obrazu Docker**, nie `pyproject.toml`. Gdy jedno rozjedzie się
 >   z drugim, obowiązuje tag obrazu.
 
@@ -89,13 +89,16 @@ uv run --directory Powiadomienia_teams mypy            # typy
 uv run --directory Powiadomienia_teams pytest -q       # PATRZ NIŻEJ — dziś nie przechodzi
 ```
 
-`mypy` przechodzi czysto (48 plików). `ruff check src` zgłasza 85 uwag — to NIE regres: sufit
-funkcji (`C901`, `PLR0915`) i limit linii zaostrzono na linii repo 2026-09-02, czyli już po buildzie
-0.2.19. Kodu produkcyjnego pod nie nie naginano, żeby import pozostał wierny obrazowi; to dług do
-spłacenia razem z odtworzeniem testów, nie przed nim.
+Wszystkie cztery bramki są zielone: **403 passed, 10 xfailed**, `mypy` czysto na 48 plikach.
 
-`pytest` nie jest dziś wiarygodną bramką: `tests/` pochodzi od starszej linii kodu niż źródła
-w `src/`. Zanim zestaw testowy zostanie odtworzony pod obecny kod, jedynym sprawdzeniem na żywym
+**Dziesięć `xfail` to nie pominięte testy, tylko UDOKUMENTOWANE usterki 0.2.19.** Każdy ma
+`strict=True`, więc naprawa usterki zapali XPASS i wymusi zdjęcie znacznika — nie da się jej
+przeoczyć. Powody czytaj w `reason`; najważniejsze są też w CHANGELOG (0.2.19, „Znane usterki").
+
+`src/` jest wyłączone z `ruff format` i z reguł kosmetycznych (E501, C901, PLR0915, SIM105,
+SIM300) — uzasadnienie w `pyproject.toml`. Reguły łapiące USTERKI (F, B, UP, I) obowiązują tam
+normalnie. To artefakt odzyskany z obrazu: naginanie go pod linter kosztowałoby jedyną własność,
+dla której import powstał. Zanim zestaw testowy zostanie odtworzony pod obecny kod, jedynym sprawdzeniem na żywym
 tenancie jest `--proba-nasluchu` (z zastrzeżeniami wyżej) i `scripts/lista_czlonkow.py`
 (czysty odczyt, weryfikuje sesję Graph).
 

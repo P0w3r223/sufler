@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta, timezone
-
 from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.config import OknoOdpowiedzi
 from powiadomienia_teams.domain.models import TimeOff
+
 # 0.2.19 zamieniło OKNO liczone od ostatniej aktywności na TERMIN KALENDARZOWY
 # (`OknoOdpowiedzi`: początek tygodnia + offset, z dolną granicą kurtuazji od prośby BOTA).
 # `past_hard_ceiling` zniknął razem z polityką kotwicy — patrz komentarz na końcu pliku.
@@ -250,7 +250,8 @@ def test_ready_for_self_fill_check_watermark_extends_like_expiry():
 
 # --- Twardy sufit: czego 0.2.19 NIE ma i czym to zastąpiło ---------------------------------
 #
-# Linia repozytorium miała `past_hard_ceiling` (3 × okno) na jeden konkretny problem: `should_expire`
+# Linia repozytorium miała `past_hard_ceiling` (3 × okno) na jeden konkretny problem:
+# `should_expire`
 # słusznie odmawia wygaszenia bez udanego odczytu („brak dowodu ≠ dowód braku"), więc wpis, którego
 # czatu trwale nie da się odczytać, nigdy nie stawał się terminalny, nigdy nie podlegał
 # `prune_terminal`, a `run_once` co tydzień omijał tę osobę, bo jej wpis „istniał".

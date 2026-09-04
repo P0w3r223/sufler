@@ -28,7 +28,8 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
   Format to osobny krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check`; obejmuje tę samą listę katalogów, z `deploy` i `scripts` włącznie.
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`
 - Pod-projekty (własny venv): `cd Powiadomienia_teams|claude_summary && uv run pytest`
-  UWAGA: w `Powiadomienia_teams` `pytest` NIE jest dziś bramką — `tests/` pochodzi od starszej linii kodu niż `src/` (44 testy padają, 6 modułów się nie importuje). Zieloną bramką jest tam dziś tylko `mypy` (48 plików, czysto). `ruff check src` zgłasza 85 uwag (77 × E501, 2 × C901, 3 × PLR0915, 3 stylistyczne) — nie regres, tylko sufit funkcji i limit linii zaostrzone na linii repo 2026-09-02, JUŻ PO buildzie 0.2.19; kodu produkcyjnego świadomie pod nie nie naginano, żeby import pozostał wierny obrazowi. Sprawdzenie na żywym tenancie: `--proba-nasluchu`.
+  W `Powiadomienia_teams` wszystkie cztery bramki są zielone (403 passed, 10 xfailed). Każdy `xfail` ma `strict=True` i w `reason` opis ZWERYFIKOWANEJ usterki 0.2.19 — naprawa zapali XPASS i wymusi zdjęcie znacznika; nie kasuj ich bez przeczytania powodu.
+  `src/` to artefakt odzyskany z obrazu i jest wyłączony z `ruff format` oraz z E501/C901/PLR0915/SIM105/SIM300 (`pyproject.toml`, z uzasadnieniem). Reguły łapiące USTERKI (F, B, UP, I) obowiązują tam normalnie. Kodu produkcyjnego nie naginaj pod linter — wierność wobec obrazu jest warta więcej niż zielony styl. Sprawdzenie na żywym tenancie: `--proba-nasluchu`.
 
 ## Reguły twarde (złamanie = regres)
 1. `core/` nie importuje z `workmate.adapters` — pilnuje import-linter (`uv run lint-imports`, krok CI).

@@ -94,7 +94,9 @@ def test_week_windows_from_friday_targets_next_working_week():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="0.2.19: domyślne `weekday` w scheduler.weekly to niedziela (6), a Settings ma piątek (4)",
+    reason=(
+        "0.2.19: domyślne `weekday` w scheduler.weekly to niedziela (6), a Settings ma piątek (4)"
+    ),
 )
 def test_domyslny_termin_modulu_zgadza_sie_z_ustawieniami():
     """Domyślne `weekday`/`hour` MUSZĄ odpowiadać `Settings` — inaczej moduł kłamie.

@@ -72,6 +72,40 @@ Rozbicie monolitu `app.py` na pakiet `runtime/` (`service`, `listener`, `wysylka
   w sekwencji wdrożenia. Obejście: uruchomić na kopii wolumenu w osobnym kontenerze.
 - Klient HTTP loguje URL żądania na poziomie INFO, więc `ALERT_WEBHOOK_URL` (bywa sekretem —
   token w ścieżce) trafia do logów kontenera.
+- **Utrata sesji na szybkiej ścieżce zapisu NIE zatrzymuje usługi.** Szeroki `except Exception`
+  w `_apply_confirmed_yes` (`listener.py:819`) łapie `AuthExpiredError`, zanim dojdzie ona do
+  strażnika w `_process_pending` (`listener.py:623`). Skutek: martwy token jest raportowany jako
+  zwykła awaria zapisu do Shifts, pracownik dostaje „uzupełnij ręcznie" (nieprawda — winna jest
+  sesja), a ścieżka alert + `AUTH_FAILURE_EXIT_DELAY_S` + restart do `--login` nie rusza. Token
+  zostaje martwy do najbliższego pulsu, czyli nawet 24 h. Ten sam plik deklaruje przeciwny
+  kontrakt trzy razy (linie 195, 346, 623) — to niespójność, nie decyzja.
+  Strażnik: `test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge` (`xfail(strict=True)`).
+- **Nieudana prośba o potwierdzenie zjada odpowiedź pracownika.** `_commit` przesuwa watermark
+  BEZWARUNKOWO (`listener.py:511`), także gdy prośba nie została doręczona. Status wraca do
+  `AWAITING_REPLY`, ale wiadomość jest już oznaczona jako obsłużona, więc kolejny cykl jej nie
+  zobaczy: pracownik czeka na pytanie, które nigdy nie padło, a po terminie dostaje nieprawdziwe
+  „nie dostałem odpowiedzi". Docstring `_commit` (`listener.py:462-469`) obiecuje coś odwrotnego.
+  Strażnik: `test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm`.
+- **Brak sondy zapisywalności stanu przed przebiegiem.** Przebieg najpierw PISZE do ludzi, potem
+  próbuje utrwalić stan. Przy niezapisywalnym pliku prośby wychodzą bez śladu, więc następny
+  przebieg wysyła je DRUGI RAZ — a idempotencja opiera się wyłącznie na tym pliku.
+  Strażnik: `test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka`.
+- **Trwale nieodczytywalny czat blokuje osobę w nieskończoność.** Odczyt rzuca PRZED
+  `_record_failure`, więc `fail_count` nie rośnie, watermark nie rusza, a `should_expire` słusznie
+  odmawia wygaszenia bez dowodu. Wpis zostaje otwarty na zawsze, co tydzień blokując ponowny nudge,
+  a jedynym śladem jest `logger.exception`. Linia repozytorium miała na to twardy sufit wieku.
+  Strażnik: `test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem`.
+- **Alerty nie mają redakcji treści.** `zglos_utrate_sesji` podaje `str(blad)` żywcem, a
+  `graph.auth._jedyne_konto` wkleja w komunikat nazwy kont z cache'u MSAL (`auth.py:60-63`).
+  Adresy kont trafiają więc na webhook alertów — u klienta jest nim kanał Discorda, czyli poza
+  organizacją. Linia repozytorium miała `_tresc_publiczna` i atrybut `publiczny`; w 0.2.19 nie ma
+  ani jednego, ani drugiego. Strażniki opisują stan faktyczny:
+  `test_alert_o_utracie_sesji_WYPUSZCZA_adresy_kont_na_webhook`,
+  `test_alert_o_nieudanym_przebiegu_WKLEJA_surowy_komunikat_wyjatku`.
+- **Odpowiedź pracownika NIE jest zwolniona z godzin ciszy.** `wysylka.do_pracownika` odmawia
+  bezwarunkowo, więc kto odpisze o 22:00, nie dostanie potwierdzenia do 7:00. Wpis czeka
+  nietknięty (odpowiedź nie przepada). Zmiana wobec linii repozytorium, która rozmowę zaczętą
+  przez pracownika z ciszy zwalniała. Strażnik: `test_odpowiedz_pracownikowi_TEZ_czeka_na_koniec_ciszy`.
 
 ## [Unreleased] — LINIA REPOZYTORIUM, NIEWDROŻONA
 

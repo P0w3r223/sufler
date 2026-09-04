@@ -1,8 +1,7 @@
 import logging
 from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
-
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.agent.interpreter import (
     OdpowiedzLlm,

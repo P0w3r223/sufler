@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from powiadomienia_teams.graph.auth import AuthExpiredError
+
 # 0.2.19 nie ma osobnej klasy `GraphResponseError` — brak wymaganego pola w odpowiedzi Graph
 # jest zgłaszany gołym `RuntimeError`. Gwarancja („pusty wynik jest błędem, nie danymi") ta sama,
 # typ słabszy: wołający nie odróżni tego od dowolnej innej awarii środowiska uruchomieniowego.
@@ -437,9 +438,7 @@ def test_sufit_czasu_przebiegu_ogranicza_CALE_stronicowanie_a_nie_pojedyncze_zad
         )
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    gc = GraphClient(
-        http, lambda: "tok", sleep=lambda s: spane.append(s), sprawdz_czas=sprawdz
-    )
+    gc = GraphClient(http, lambda: "tok", sleep=lambda s: spane.append(s), sprawdz_czas=sprawdz)
     gc.refresh_auth()
 
     with pytest.raises(_OknoZamkniete):
