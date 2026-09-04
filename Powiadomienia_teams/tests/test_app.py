@@ -2716,18 +2716,16 @@ def test_start_uslugi_nadal_czeka_przed_wyjsciem(tmp_path: Path, monkeypatch):
     assert spane == [600.0]
 
 
-def test_alert_o_utracie_sesji_WYPUSZCZA_adresy_kont_na_webhook(tmp_path: Path, monkeypatch):
-    """0.2.19 wysyła `str(blad)` ŻYWCEM — razem z adresami kont z cache'u MSAL.
+def test_alert_o_utracie_sesji_NIE_wypuszcza_adresow_kont_na_webhook(tmp_path: Path, monkeypatch):
+    """Adresy kont zostają w logu; na webhook idzie liczba i plik do usunięcia (ADR 0006).
 
-    Test opisuje stan FAKTYCZNY i jest strażnikiem regresji W DRUGĄ STRONĘ: gdy ktoś doda
-    redakcję, ten test padnie i każe zaktualizować opis zamiast przemilczeć zmianę.
+    Webhook alertów jest z założenia niezależny od Graph — i dlatego leży POZA granicą tożsamości
+    organizacji; w tej instalacji jest nim Discord. `graph.auth._jedyne_konto` skleja w komunikat
+    służbowe adresy e-mail, a `zglos_utrate_sesji` podawał `str(blad)` żywcem.
 
-    Dlaczego to ma znaczenie: `graph.auth._jedyne_konto` wkleja nazwy kont w treść wyjątku
-    (`auth.py:60-63`), a `runtime.operator.zglos_utrate_sesji` podaje `str(blad)` jako treść
-    alertu (`operator.py:119`). Webhook alertów bywa POZA organizacją — w instalacji u klienta
-    jest nim kanał Discorda. Linia repozytorium miała na to `_tresc_publiczna` i atrybut
-    `publiczny`; w obrazie 0.2.19 nie ma ANI JEDNEGO, ani drugiego (`grep -rn "publiczny" src/`
-    daje pusto). Odnotowane w CHANGELOG (0.2.19, „Znane usterki").
+    Redakcja jest OPT-IN, nie hurtowa: wyjątek deklaruje `publiczny`, a `operator.tresc_publiczna`
+    go preferuje. Instrukcja dla operatora („usuń ten plik, potem --login") zostaje nietknięta,
+    więc jego następny krok się nie zmienia — znikają wyłącznie adresy.
     """
     tresci: list[str] = []
     monkeypatch.setattr(
@@ -2738,24 +2736,25 @@ def test_alert_o_utracie_sesji_WYPUSZCZA_adresy_kont_na_webhook(tmp_path: Path, 
         tmp_path / "s.json", alert_webhook_url="https://hook", auth_failure_exit_delay_s=0
     )
     blad = AmbiguousAccountError(
-        "Cache tokenu zawiera 2 kont (ala@firma.pl, bot@firma.pl) — usuń plik"
+        "Cache tokenu zawiera 2 kont (ala@firma.pl, bot@firma.pl) — usuń plik /c.bin"
     )
+    blad.publiczny = "Cache tokenu zawiera 2 kont — usuń plik /c.bin, a potem --login"
 
     zglos_utrate_sesji(settings, blad, lambda _s: None)
 
     assert tresci, "alert w ogóle nie poszedł — to byłaby INNA usterka niż opisana"
-    assert "ala@firma.pl" in tresci[0]  # stan faktyczny 0.2.19, nie stan pożądany
-    assert "bot@firma.pl" in tresci[0]
+    assert "ala@firma.pl" not in tresci[0]
+    assert "bot@firma.pl" not in tresci[0]
+    assert "2 kont" in tresci[0]  # skala zostaje
+    assert "/c.bin" in tresci[0]  # i instrukcja, co zrobić
 
 
 # --- Godziny ciszy: wiadomości inicjowane przez bota -------------------------
 
-# Sobota 12:00 lokalnie — poza oknem (dni robocze 8:00–18:00).
 # 0.2.19 nie ma okna wysyłki (ADR 0005 NOT SHIPPED) — porę „nie wolno pisać" wyznacza CISZA.
-# Sobota 10:00 była poza oknem pn–pt; dziś odpowiednikiem jest godzina wewnątrz okna 20–7.
+# Odpowiednikiem dawnego „poza oknem pn–pt" jest dziś godzina wewnątrz okna 20–7.
 _W_CISZY = datetime(2026, 7, 24, 20, 30, tzinfo=timezone.utc)  # piątek 22:30 w Warszawie
-# Poniedziałek 10:00 lokalnie — w oknie.
-_PONIEDZIALEK_W_OKNIE = datetime(2026, 7, 27, 8, 0, tzinfo=timezone.utc)
+_PONIEDZIALEK_W_OKNIE = datetime(2026, 7, 27, 8, 0, tzinfo=timezone.utc)  # pon. 10:00 lokalnie
 
 
 def _do_wygaszenia(state_path: Path) -> None:
@@ -3058,15 +3057,18 @@ def test_nieudane_domkniecie_juz_wolnego_dnia_nie_udaje_awarii_ODCZYTU(tmp_path:
     assert "Nie udało się poprosić" in caplog.text  # utrata wiadomości WIDOCZNA
 
 
-def test_alert_o_nieudanym_przebiegu_WKLEJA_surowy_komunikat_wyjatku(tmp_path: Path, monkeypatch):
-    """Ta sama luka, drugie miejsce: alert „przebieg nieudany" niesie surowy tekst wyjątku.
+def test_alert_o_nieudanym_przebiegu_niesie_tresc_wyjatku_gdy_ten_nie_prosil_o_redakcje(
+    tmp_path: Path, monkeypatch
+):
+    """Wyjątek BEZ `publiczny` idzie na webhook w całości — i to jest decyzja, nie przeoczenie.
 
-    Linia repozytorium rozróżniała treść wewnętrzną od PUBLICZNEJ (atrybut `publiczny`
-    + `_tresc_publiczna`). Obraz 0.2.19 nie zna tego rozróżnienia, więc cokolwiek znajdzie się
-    w komunikacie wyjątku — a bywają tam dane z Graph — trafia na webhook bez filtra.
+    ADR 0006: redakcja jest OPT-IN. Hurtowe czyszczenie każdego alertu do „coś padło, zajrzyj
+    do logu" wymieniłoby wyciek na ciszę, a w instalacji bez monitoringu webhook jest jedynym
+    kanałem operatora — alert bez treści przestaje być czytany. `operator` i tak nie rozpozna
+    adresu e-mail w zwykłym `RuntimeError`; wie o tym wyłącznie miejsce, które go wkleiło.
 
-    Jak wyżej: asercja opisuje stan FAKTYCZNY, żeby dodanie redakcji było widoczną zmianą,
-    a nie cichą.
+    Ten test pilnuje więc, żeby nikt nie „naprawił" tego hurtowym filtrem. Znany limit: nic nie
+    wymusza, by nowy wyjątek z danymi osobowymi zadeklarował `publiczny` — spisane w ADR 0006.
     """
 
     class _ZDanymiOsobowymi(RuntimeError):

@@ -840,8 +840,8 @@ def _apply_confirmed_yes(
         operator.alert(
             settings,
             "Nieudany zapis grafiku po potwierdzeniu",
-            f"{etykiety.osoba(pending, settings)} potwierdził zmiany, ale zapis do Shifts padł: {blad}. "
-            f"Grafik wymaga ręcznego uzupełnienia.",
+            f"{etykiety.osoba(pending, settings)} potwierdził zmiany, ale zapis do Shifts padł: "
+            f"{operator.tresc_publiczna(blad)}. Grafik wymaga ręcznego uzupełnienia.",
         )
         powiadom_o_nieudanym_zapisie(settings, client, pending, now)
         return

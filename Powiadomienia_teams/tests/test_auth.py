@@ -281,17 +281,7 @@ def test_cache_tokenu_powstaje_od_razu_z_prawami_600(tmp_path: Path, monkeypatch
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0.2.19: brak redakcji — pełna treść z adresami kont idzie na webhook alertów. "
-        "PRZYCZYNA: `_jedyne_konto` skleja nazwy kont w komunikat wyjątku (auth.py:60-63), "
-        "a `zglos_utrate_sesji` podaje `str(blad)` jako treść alertu (operator.py:119). "
-        "Linia repozytorium miała `_tresc_publiczna` i atrybut `publiczny`; w 0.2.19 nie ma "
-        "ani jednego, ani drugiego (`grep -rn 'publiczny' src/` daje pusto)."
-    ),
-)
-def test_niejednoznaczne_konto_nie_powinno_wypuszczac_adresow_na_kanal_zewnetrzny():
+def test_niejednoznaczne_konto_nie_wypuszcza_adresow_na_kanal_zewnetrzny():
     """Adresy kont to dane osobowe — log usługi tak, webhook alertów nie.
 
     `operator.zglos_utrate_sesji` woła `alert(settings, ..., str(blad))`, a `alerts.send_alert`

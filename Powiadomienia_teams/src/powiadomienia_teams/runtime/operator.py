@@ -104,6 +104,29 @@ def odczekaj_przed_wyjsciem(settings: Settings, sleep: Callable[[float], None]) 
         sleep(float(settings.auth_failure_exit_delay_s))
 
 
+def tresc_publiczna(blad: Exception) -> str:
+    """Treść wyjątku bezpieczna dla kanału POZA organizacją (patrz ADR 0006).
+
+    Webhook alertów jest z założenia niezależny od Graph — najważniejszy alert powstaje wtedy, gdy
+    token do Graph przestał działać. Ta niezależność znaczy jednak także, że kanał leży POZA
+    granicą tożsamości organizacji: w tej instalacji jest nim Discord. Co tam trafi, opuszcza
+    tenant, zostaje u osoby trzeciej bezterminowo i jest przeszukiwalne.
+
+    Domyślnie zwracamy `str(blad)` BEZ ZMIAN. Hurtowe czyszczenie każdego alertu do zdania „coś
+    padło, zajrzyj do logu" wymieniłoby wyciek na ciszę — a cisza jest tu gorsza: w instalacji bez
+    monitoringu webhook jest jedynym kanałem, jaki operator ma, i alert bez treści szybko przestaje
+    być czytany. Redakcja jest więc OPT-IN: wyjątek, który WIE, że niesie dane osobowe, deklaruje
+    atrybut `publiczny`, a my go tu preferujemy.
+
+    Wiedza siedzi po właściwej stronie: `operator` nie rozpozna adresu e-mail w `RuntimeError`,
+    ale `graph.auth._jedyne_konto` wie dokładnie, co przed chwilą wkleił w komunikat.
+
+    Log dostaje pełną treść zawsze — logi rotują i leżą na hoście, do którego operator i tak ma
+    dostęp. Redakcja dotyczy KANAŁU, nie faktu.
+    """
+    return getattr(blad, "publiczny", "") or str(blad)
+
+
 def zglos_utrate_sesji(
     settings: Settings, blad: Exception, sleep: Callable[[float], None]
 ) -> None:
@@ -116,5 +139,5 @@ def zglos_utrate_sesji(
     """
     logger.critical("Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)",
                     blad)
-    alert(settings, "Utracono uwierzytelnienie", str(blad), waga=alerts.KRYTYCZNY)
+    alert(settings, "Utracono uwierzytelnienie", tresc_publiczna(blad), waga=alerts.KRYTYCZNY)
     odczekaj_przed_wyjsciem(settings, sleep)

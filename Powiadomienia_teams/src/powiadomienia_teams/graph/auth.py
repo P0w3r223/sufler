@@ -45,7 +45,13 @@ class AmbiguousAccountError(AuthExpiredError):
     Wydzielony z ``AuthExpiredError``, bo naprawa jest INNA: ponowne logowanie nie pomaga,
     tylko dokłada kolejne konto do cache. Jedyne wyjście to usunięcie pliku cache przez
     człowieka, dlatego ścieżka startowa nie może na to odpowiedzieć device-flow.
+
+    ``publiczny`` — treść bez nazw kont, dla kanału poza organizacją (ADR 0006). Zadeklarowana
+    na klasie, bo to jedyny wyjątek w tym projekcie, który dziś jej potrzebuje; konwencja jest
+    jednak ogólna i `operator.tresc_publiczna` czyta ją przez `getattr`.
     """
+
+    publiczny: str = ""
 
 
 def _jedyne_konto(accounts: list[Any], cache_path: Path) -> None:
@@ -58,10 +64,18 @@ def _jedyne_konto(accounts: list[Any], cache_path: Path) -> None:
     if len(accounts) <= 1:
         return
     nazwy = ", ".join(sorted(str(a.get("username", "?")) for a in accounts))
-    raise AmbiguousAccountError(
+    blad = AmbiguousAccountError(
         f"Cache tokenu zawiera {len(accounts)} kont ({nazwy}) — nie wiadomo, którą tożsamością "
         f"pisać. Usuń plik {cache_path}, a potem zaloguj się ponownie: --login"
     )
+    # Nazwy kont to służbowe adresy e-mail. Pełna treść idzie do LOGU (host, rotacja), ale alert
+    # wychodzi webhookiem POZA organizację — patrz ADR 0006. Wersja publiczna niesie liczbę i plik
+    # do usunięcia, czyli wszystko, czego operator potrzebuje do następnego kroku, bez adresów.
+    blad.publiczny = (
+        f"Cache tokenu zawiera {len(accounts)} kont — nie wiadomo, którą tożsamością pisać. "
+        f"Usuń plik {cache_path}, a potem zaloguj się ponownie: --login"
+    )
+    raise blad
 
 
 def _load_cache(cache_path: Path) -> Any:

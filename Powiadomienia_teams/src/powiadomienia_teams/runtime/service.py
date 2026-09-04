@@ -574,8 +574,12 @@ def _safe_run_once(
         # awaria dawała inaczej alert co `_PONOWIENIE_PRZEBIEGU_S`, czyli kilkanaście wiadomości
         # zamiast jednej — dokładnie ten sam problem, który `_puls_sesji` rozwiązuje progiem.
         if alertuj:
-            operator.alert(settings, "Przebieg powiadomień nie powiódł się",
-                   f"Mimo ponowień: {blad}. Nikt nie dostał prośby w tym tygodniu.")
+            operator.alert(
+                settings,
+                "Przebieg powiadomień nie powiódł się",
+                f"Mimo ponowień: {operator.tresc_publiczna(blad)}. "
+                f"Nikt nie dostał prośby w tym tygodniu.",
+            )
         return False
 
 
