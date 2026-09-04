@@ -21,18 +21,19 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   **Wpis w mapie to PEŁNE członkostwo** — baza wiedzy, notatki ze spotkań dwojgiem drzwi, klasa
   zaufania T1, mutacja notatek i **powłoka** (`ENABLE_SHELL=true` na flocie), niezależnie od flagi
   odczytu. Dopisanie wiersza wręcza więc uruchamianie kodu; to świadoma decyzja właściciela
-  (ADR 0070 §3), nie skutek uboczny odblokowania bramki. Sześć testów trzyma to zdanie, bo do tej
-  pory nie trzymało go nic. Asymetria przyjęta razem z decyzją: osoba bez konta Jira nie dostaje
+  (ADR 0070 §3), nie skutek uboczny odblokowania bramki. Pięć testów trzyma to zdanie, a szósty —
+  przyjętą razem z nim asymetrię; do tej pory nie trzymało ich nic. Asymetria przyjęta razem z decyzją: osoba bez konta Jira nie dostaje
   narzędzia `Jira` **wcale**, więc traci też pytania o zadania innych ludzi.
   Sam merge nie zmienia zachowania floty — zdolności nadaje dopiero wpis w `identities.yaml`,
   który leży poza repozytorium.
 
 - **Preflight Jiry potrafił zameldować `OK` osobie, która narzędzia `Jira` nie dostanie.**
   Usterka odkryta przy powyższym, nienazwana w ADR-ze — który twierdzi, że surowość mapy „żyje
-  w dokładnie jednym miejscu, w ładowarce". Konsumentów pola `jira_user` jest **siedem, nie
-  sześć**: czwarty odczyt produkcyjny siedzi w `deploy/jira/preflight.py`, poza wyliczeniem ADR-u.
-  Po zmianie wypisywałby `OK: rozwiązano na jira_user=''` z kodem `0`, a `_mask("")` zwraca pusty
-  napis, więc nie było nawet widać, że pole jest puste. Nic by tego nie złapało: `deploy/` jest
+  w dokładnie jednym miejscu, w ładowarce". Konsumentów **mapy tożsamości** jest **siedem, nie
+  sześć**: czwarty odczyt samego pola `jira_user` siedzi w `deploy/jira/preflight.py`, poza
+  wyliczeniem ADR-u. Po zmianie wypisywałby `OK: rozwiązano na jira_user=''` z kodem `0` —
+  pusta wartość była w komunikacie WIDOCZNA, ale kod wyjścia i tak mówił „gotowe", a to on jest
+  odpowiedzią, którą czyta procedura. Nic by tego nie złapało: `deploy/` jest
   poza `mypy` (`files = ["src"]`), a skrypt nie miał ani jednego testu. Dziś odmawia i wprost
   ZABRANIA uzupełniania mapy — fałszywa czerwień popychająca do „naprawy" byłaby gorsza od
   fałszywej zieleni, bo cudze konto w tym wpisie pokazałoby tej osobie cudze zadania.

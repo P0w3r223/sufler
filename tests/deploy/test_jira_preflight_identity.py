@@ -4,8 +4,9 @@ Ten plik istnieje z powodu, który warto nazwać: preflight jest narzędziem WER
 operatora, a do 2026-09-04 nie miał ani jednego testu i nie jest objęty ``mypy``
 (``pyproject.toml``: ``files = ["src"]``). Kiedy ADR 0070 uczynił ``jira_user`` opcjonalnym,
 jedyna linia sukcesu w ``_check_identity`` zaczęła meldować ``OK: rozwiązano na jira_user=''``
-z kodem wyjścia ``0`` dla osoby, która narzędzia ``Jira`` nie dostanie w ogóle — a ``_mask("")``
-zwraca pusty napis, więc nawet nie było widać, że pole jest puste.
+z kodem wyjścia ``0`` dla osoby, która narzędzia ``Jira`` nie dostanie w ogóle. Pustka była
+w komunikacie WIDOCZNA (``!r`` renderuje ją jako ``''``) — zawodził kod wyjścia, a to on jest
+odpowiedzią, którą czyta procedura wdrożeniowa i człowiek spieszący się do następnego kroku.
 
 **Fałszywa zieleń narzędzia weryfikacyjnego jest gorsza niż jego brak**: weryfikacja, która nie
 umie odpowiedzieć „nie", nie jest weryfikacją. To ta sama klasa braku, co menedżer wykonawców

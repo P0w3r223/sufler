@@ -124,7 +124,17 @@ def _reject_shared_identifiers(people: dict[str, Person], path: Path) -> None:
     Bez tego pominięcia DRUGA osoba bez Jiry kładłaby start błędem o zdublowanym identyfikatorze —
     zatrzymaniem fail-closed spowodowanym tym, że dwoje ludzi poprawnie nie ma niczego. Pominięcie
     musi dotyczyć WARTOŚCI, nie całego pola: ``continue`` na polu zdjęłoby ochronę przed dwiema
-    osobami o tym samym, niepustym ``jira_user``, czyli przed usterką z akapitu wyżej.
+    osobami o tym samym, niepustym ``jira_user``, czyli przed usterką z akapitu wyżej. Dla
+    ``aad_user_id`` gałąź pominięcia jest dziś NIEOSIĄGALNA z ``_load_map`` (puste pole odrzuca
+    walidacja wpisu wcześniej) — stoi tam dla symetrii pętli, nie jako czynna ochrona.
+
+    **Zakres tej ochrony jest węższy, niż brzmi: porównujemy IDENTYCZNE napisy.** Zmierzone:
+    ``X@e.pl`` obok ``x@e.pl`` oraz ``' x@e.pl'`` obok ``'x@e.pl'`` przechodzą jako dwa różne
+    konta, choć Jira Cloud dopasowuje e-maile bez rozróżniania wielkości liter. To luka SPRZED
+    ADR 0070, świadomie tu nie domykana: normalizacja klucza porównania bez normalizacji
+    ``_by_aad`` dałaby naprawę ASYMETRYCZNĄ — a to jest w tym projekcie znany sposób na drugą
+    usterkę zamiast jednej. Domknięcie wymaga przejścia WSZYSTKICH punktów porównania
+    identyfikatorów naraz, czyli własnego kroku.
     """
     for field in ("aad_user_id", "jira_user"):
         seen: dict[str, str] = {}

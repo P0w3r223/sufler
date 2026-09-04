@@ -121,8 +121,14 @@ Procedura pełna: [`jira-my-tasks.md`](jira-my-tasks.md).
 - **Krok (preflight):** ustaw `WORKMATE_JIRA_BASE_URL`/`_TOKEN` (Cloud: + `_EMAIL`), uruchom
   `uv run --no-sync python deploy/jira/preflight.py`.
 - **Oczekiwane (preflight):** auth OK (`authenticated_account`), próbne `search_issues` zwraca listę
-  bez błędu, a gdy podano `WORKMATE_TEAMS_GRAPH_IDENTITIES` — AAD id rozwiązuje się w mapie do
-  osoby z niepustym `jira_user`. Kod wyjścia `0`.
+  bez błędu. Kod wyjścia `0`.
+- **Krok (tożsamość) — OSOBNE uruchomienie, bo bez `--aad` sprawdzenia NIE MA:**
+  `uv run --no-sync python deploy/jira/preflight.py --aad <aad-user-id>`.
+  Wyzwalaczem jest flaga, nie zmienna `WORKMATE_TEAMS_GRAPH_IDENTITIES` (`preflight.py`:
+  `if aad_user_id:`). Komenda bez `--aad` kończy się `Preflight OK` i kodem `0`, **nie zajrzawszy
+  do mapy ani razu** — a operator odczyta to jako „tożsamość zweryfikowana".
+- **Oczekiwane (tożsamość):** AAD id rozwiązuje się w mapie do osoby z niepustym `jira_user`,
+  kod wyjścia `0`.
 - **Trzeci wynik, i to POPRAWNY:** dla członka pionu bez konta Jira (wpis „tylko Teams",
   [ADR 0070](../adr/0070-teams-only-identity-and-what-a-map-entry-grants.md)) preflight kończy się
   kodem `1` i mówi, dlaczego. To nie jest usterka konfiguracji i **nie wolno tego „naprawiać"
