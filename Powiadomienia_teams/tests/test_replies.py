@@ -160,6 +160,42 @@ def test_memory_window_is_one_hour():
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
+def test_obcy_nadawcy_zbiera_wszystkich_bez_powtorzen():
+    """Raport dla operatora: kto pisze w tym wątku poza rozmową — każdy RAZ.
+
+    Jeden natręt piszący pięć razy nie ma dawać pięciu pozycji w alercie; dwie różne osoby mają
+    dać dwie. Zwracamy postać SUROWĄ, bo operator ma zobaczyć dokładnie to, co przyszło z Graph,
+    nawet jeśli porównywaliśmy znormalizowane.
+    """
+    messages = [
+        _msg("Obcy-A", "2026-07-19T18:00:00Z", "raz"),
+        _msg("obcy-a", "2026-07-19T18:01:00Z", "dwa"),  # ten sam, inna wielkość liter
+        _msg("obcy-B", "2026-07-19T18:02:00Z", "trzy"),
+        _msg("u1", "2026-07-19T18:03:00Z", "to ja"),  # adresat — nie jest obcy
+        _msg("me", "2026-07-19T18:04:00Z", "bot"),  # bot — nie jest obcy
+    ]
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == ["Obcy-A", "obcy-B"]
+
+
+def test_obcy_nadawcy_pomija_wiadomosci_systemowe():
+    """Wpis bez `from` (Graph wstawia je przy zmianach w wątku) nie jest obcym nadawcą.
+
+    Gdyby był, KAŻDY wątek, w którym ktoś kiedyś zmienił nazwę, wisiałby w `UNKNOWN` na zawsze
+    i nigdy nie dałoby się go domknąć.
+    """
+    messages = [{"createdDateTime": "2026-07-19T18:00:00Z", "body": {"content": "dołączono"}}]
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == []
+
+
+def test_obcy_nadawcy_milczy_gdy_wszystko_w_porzadku():
+    """Sonda w drugą stronę: zwykła rozmowa NIE może zapalać alertu."""
+    messages = [
+        _msg("u1", "2026-07-19T18:00:00Z", "pon-pt 8-16"),
+        _msg("me", "2026-07-19T18:01:00Z", "potwierdzam?"),
+    ]
+    assert obcy_nadawcy(messages, "me", nadawca="u1") == []
+
+
 def test_incoming_after_odrzuca_nadawce_spoza_pendingu():
     """Nadawcą MUSI być ta osoba, o której grafik pytamy — nie „ktokolwiek poza botem".
 

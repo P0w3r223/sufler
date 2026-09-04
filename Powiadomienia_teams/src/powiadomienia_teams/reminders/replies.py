@@ -7,7 +7,7 @@ from html import unescape
 from typing import Any
 
 from powiadomienia_teams.domain.czas import parse_graph_datetime
-from powiadomienia_teams.domain.tozsamosc import ten_sam
+from powiadomienia_teams.domain.tozsamosc import ten_sam, znormalizuj
 
 _TAGS = re.compile(r"<[^>]+>")
 
@@ -117,14 +117,22 @@ def obcy_nadawcy(messages: list[dict[str, Any]], me_id: str, *, nadawca: str) ->
     zobaczyć dokładnie to, co przyszło z Graph.
     """
     obcy: list[str] = []
+    widziane: set[str] = set()
     for message in messages:
         sender = ((message.get("from") or {}).get("user") or {}).get("id")
         if sender is None:
             continue
         if ten_sam(str(sender), me_id) or ten_sam(str(sender), nadawca):
             continue
-        if str(sender) not in obcy:
-            obcy.append(str(sender))
+        # Deduplikacja po TOŻSAMOŚCI, nie po napisie: ta sama osoba w dwóch pisowniach to nadal
+        # jedna osoba, a alert wymieniający ją dwa razy każe operatorowi szukać drugiego intruza.
+        # Zachowujemy pierwszą napotkaną postać surową — operator ma zobaczyć to, co przyszło
+        # z Graph, nie nasz wynik normalizacji.
+        kanoniczny = znormalizuj(str(sender))
+        if kanoniczny in widziane:
+            continue
+        widziane.add(kanoniczny)
+        obcy.append(str(sender))
     return obcy
 
 

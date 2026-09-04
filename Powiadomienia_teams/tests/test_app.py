@@ -981,6 +981,88 @@ def test_obcy_nadawca_alertuje_RAZ_a_nie_przy_kazdym_odpytaniu(tmp_path: Path, m
     assert len(alerty) == 1, alerty
 
 
+def test_dlawienie_alertu_o_obcych_nie_wycisza_INNEGO_czatu(tmp_path: Path, monkeypatch):
+    """Dławienie ma tłumić powtórki, nie drugą osobę.
+
+    Klucz dławienia obejmuje czat, więc dwie osoby z obcym w wątku dają dwa alerty. Gdyby klucz
+    był globalny, pierwszy przypadek wyciszyłby wszystkie następne — a operator dowiedziałby się
+    o jednej rozmowie i nigdy o reszcie.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    old = "2026-07-14T10:00:00Z"
+    save_state(
+        state_path,
+        {
+            osoba: PendingReminder(
+                member_id=osoba,
+                member_name=osoba.upper(),
+                chat_id=f"chat-{osoba}",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=old,
+                nudged_at=old,
+            )
+            for osoba in ("u1", "u2")
+        },
+    )
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient(
+        {
+            "chat-u1": [_msg("obcy", "2026-07-19T18:00:00Z", "x")],
+            "chat-u2": [_msg("obcy", "2026-07-19T18:00:00Z", "x")],
+        }
+    )
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tresc) or True,
+    )
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    assert len(alerty) == 2, alerty  # osobny alert na każdą rozmowę
+    assert any("u1" in t for t in alerty) and any("u2" in t for t in alerty)
+
+
+def test_utrata_sesji_przy_zapisie_WSKAZUJE_kogo_i_ktorego_tygodnia(tmp_path: Path, caplog):
+    """Alert o utracie sesji nie niesie tej informacji — musi ją zostawić log.
+
+    Wyjątek propaguje wyżej i tam jest już tylko „utracono uwierzytelnienie". A w tym momencie
+    status wpisu to `APPLYING`: terminalny i nigdy niewznawiany, czyli u klienta został grafik
+    zapisany w POŁOWIE. Bez tej linii operator dostaje alert i żadnego wskazania, w czyim grafiku
+    i którego tygodnia szukać dziury.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                awaiting_yes=True,
+                resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _SesjaPadaPrzyZapisie(_FakeClient):
+        def create_shift(self, team_id: str, shift: Any) -> str:
+            raise AuthExpiredError("AADSTS50173: grant cofnięty")
+
+    client = _SesjaPadaPrzyZapisie({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
+
+    with caplog.at_level("CRITICAL"), pytest.raises(AuthExpiredError):
+        poll_replies(_settings_calodobowe(state_path), client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert "u1" in caplog.text  # kto
+    assert "2026-07-20" in caplog.text  # którego tygodnia
+    assert "APPLYING" in caplog.text  # i że zapis został przerwany w połowie
+
+
 def test_pending_within_window_is_processed_not_expired(tmp_path: Path):
     state_path = tmp_path / "state.json"
     recent = "2026-07-16T10:00:00Z"  # 2h przed now — w oknie

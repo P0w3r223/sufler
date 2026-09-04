@@ -308,6 +308,38 @@ def test_szablony_env_opisuja_godziny_ciszy():
         assert re.search(rf"^{zmienna}=", tresc, re.M), zmienna
 
 
+def test_wpis_ktory_po_normalizacji_nie_jest_identyfikatorem_ZATRZYMUJE_start():
+    """Same klamry albo biały znak nie są identyfikatorem — i nie wolno tego przemilczeć.
+
+    Kierunek reakcji jest tu istotniejszy od samego wykrycia. Wyrzucenie takiego wpisu byłoby
+    GROŹNIEJSZE niż zostawienie: pusta lista znaczy „wszyscy", więc literówka zamieniłaby ciszę
+    pilotażu w wysyłkę do CAŁEGO zespołu. Zostawienie pustego napisu też nie jest wyjściem — nie
+    pasuje do nikogo, a `PILOTAZ` widzi listę jako niepustą, więc pilotaż milczy z własnego powodu
+    i wygląda to jak spokojny tydzień. Jedyne bezpieczne wyjście to zatrzymać start.
+
+    To ta sama klasa cichej awarii, którą normalizacja miała zamknąć — łatwa do wprowadzenia
+    RAZEM z nią, jeśli ktoś doda `if kanoniczny:` przy filtrowaniu.
+    """
+    for wpis in ("{}", "   ", "{ }"):
+        s = Settings(
+            client_id="c", tenant_id="t", team_id="team", only_user_ids=(wpis,), pilotaz=True
+        )
+        with pytest.raises(ConfigError, match="nie są identyfikatorem"):
+            s.validate()
+
+
+def test_normalizacja_scala_ten_sam_identyfikator_zapisany_roznie():
+    """„AB-CD" i „ab-cd" to jedna osoba — alert startowy nie może mówić, że dwie.
+
+    Bez deduplikacji operator czytałby „Na liście: 2" i szukał drugiej osoby, której nie ma.
+    `admin_user_ids` przechodzi przez `_bez_dubli` z dokładnie tego powodu.
+    """
+    s = Settings(
+        client_id="c", tenant_id="t", team_id="team", only_user_ids=("AB-CD", "ab-cd", "{AB-CD}")
+    )
+    assert s.only_user_ids == ("ab-cd",)
+
+
 def test_pilotaz_normalizuje_guidy_takze_przy_budowie_wprost():
     """Trzeci przypadek tej samej luki co w `incoming_after` — porównanie identyfikatorów AAD.
 

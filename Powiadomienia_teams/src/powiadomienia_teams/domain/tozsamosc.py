@@ -39,7 +39,10 @@ def znormalizuj(identyfikator: str) -> str:
     Klamry `{...}` schodzą, bo portal Azure kopiuje id właśnie w tej postaci, a Graph nigdy jej
     nie zwraca — bez tego wklejenie z portalu cicho wypada z pilotażu.
     """
-    return identyfikator.strip().strip("{}").casefold()
+    # Białe znaki obcinamy DWA RAZY — przed klamrami i po nich. Klamra potrafi opakowywać spację
+    # (`"{ }"`), a wtedy jednokrotne obcięcie zostawia napis niepusty, który nie pasuje do nikogo:
+    # dokładnie ta cicha awaria, którą ten moduł ma zamykać.
+    return identyfikator.strip().strip("{}").strip().casefold()
 
 
 def ten_sam(a: str, b: str) -> bool:
