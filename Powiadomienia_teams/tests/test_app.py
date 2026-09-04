@@ -2840,6 +2840,104 @@ def test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm(t
     assert po.fail_count == 1  # próba policzona, więc pętla ma sufit
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        'LUKA 0.2.19, DRUGIE z trzech miejsc: gałąź „brak powodu wolnego" w '
+        "`_interpret_and_confirm` woła `_commit` i zaraz po nim wysyłkę — BEZ ŻADNEGO `try`. "
+        "Nieudana wysyłka zostawia więc watermark przesunięty za wiadomość, o której pracownik "
+        "nie usłyszał ani słowa. Strażnik statyczny `test_szew_wysylki.py` przypina to liczbowo "
+        "jako jedną z DWÓCH wysyłek stojących poza blokiem `try`."
+    ),
+)
+def test_nieudana_prosba_o_powod_wolnego_nie_zjada_wiadomosci(tmp_path: Path):
+    """Miejsce 2 z trzech. Ta sama usterka co przy prośbie o potwierdzenie, inny kształt.
+
+    Tu nie ma nawet `finally` cofającego status — wysyłka stoi naga. Pracownik zgłasza urlop,
+    zespół nie ma takiego powodu w Shifts, więc bot chce poprosić o doprecyzowanie; wysyłka pada,
+    a jego wiadomość zostaje oznaczona jako obsłużona. Kolejny cykl jej nie zobaczy.
+    """
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "w poniedziałek urlop")]})
+    # Pusty grafik i pusty czas wolny → gałąź „brak powodu wolnego".
+    llm = _FakeLlm('{"action":"modify","shifts":[],"time_off":[]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == nudge  # ta sama wiadomość wróci w kolejnym cyklu
+    assert po.employee_memory == []  # pamięć też cofnięta — bez duplikatu przy ponowieniu
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "LUKA 0.2.19, TRZECIE z trzech miejsc: gałąź `unclear` w `_interpret_and_confirm` woła "
+        "`_commit` i zaraz po nim wysyłkę — BEZ ŻADNEGO `try`, tak samo jak gałąź „brak powodu "
+        'wolnego". Nieudana prośba o doprecyzowanie kasuje wiadomość, której nie zrozumieliśmy: '
+        "pracownik nie dostaje pytania, a jego tekst nie wróci już do interpretacji."
+    ),
+)
+def test_nieudana_prosba_o_doprecyzowanie_nie_zjada_wiadomosci(tmp_path: Path):
+    """Miejsce 3 z trzech — i najbardziej dotkliwe, bo dotyczy wiadomości NIEZROZUMIANEJ.
+
+    Watermark przesuwa się za tekst, którego bot nie pojął, a pytanie o doprecyzowanie do
+    pracownika nie dociera. Po terminie usłyszy „nie dostałem odpowiedzi" — chociaż odpisał,
+    a to my nie umieliśmy ani zrozumieć, ani zapytać.
+    """
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "no wiesz, jakoś tak")]})
+    llm = _FakeLlm('{"action":"unclear","shifts":[]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == nudge  # niezrozumiana wiadomość wraca do interpretacji
+    assert po.employee_memory == []
+
+
 def test_powtarzajaca_sie_awaria_prosby_konczy_sie_prosba_o_doprecyzowanie(tmp_path: Path):
     """Cofnięcie commitu nie może dać pętli w nieskończoność — `_record_failure` ją domyka."""
     state_path = tmp_path / "state.json"
