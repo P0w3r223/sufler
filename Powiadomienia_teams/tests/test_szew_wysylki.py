@@ -16,8 +16,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 # Wywołania, po których stan bywa już utrwalony, a skutek jest nieodwracalny: wiadomość
 # u pracownika albo wpis w grafiku klienta. To wokół nich obowiązuje polityka `NIE_POLYKAJ`.
 _WYSYLKOWE = {"do_pracownika", "_apply_schedule"}
@@ -93,27 +91,71 @@ def test_kazdy_try_wokol_wysylki_przepuszcza_utrate_sesji():
         szerokie = [i for i, n in enumerate(nazwy) if n & {"Exception", "BaseException", "<bare>"}]
         if not szerokie:
             continue
-        przed = nazwy[: szerokie[0]]
-        if not any(n & _PRZEPUSZCZAJACE for n in przed):
+        strazniku = [
+            h
+            for h, n in zip(blok.handlers[: szerokie[0]], nazwy[: szerokie[0]], strict=True)
+            if n & _PRZEPUSZCZAJACE
+        ]
+        if not strazniku:
             luki.append(f"{nazwa}:{blok.lineno} — handlery: {[sorted(n) for n in nazwy]}")
+            continue
+        # Sama OBECNOŚĆ handlera nie wystarcza: `except NIE_POLYKAJ: logger.exception(...)`
+        # przechodziłby tę sondę, jednocześnie przywracając usterkę, dla której ten plik istnieje.
+        #
+        # Kryterium to „KOŃCZY SIĘ `raise` i nie ma `return`", nie „jest samym `raise`":
+        # logowanie przed przekazaniem dalej bywa konieczne (w `_apply_confirmed_yes` to jedyne
+        # miejsce, gdzie da się jeszcze powiedzieć, KOGO i którego tygodnia dotyczył przerwany
+        # zapis — wyżej wyjątek już tego nie niesie). Zakazane jest POŁKNIĘCIE, nie kontekst.
+        for h in strazniku:
+            konczy_raise = bool(h.body) and isinstance(h.body[-1], ast.Raise)
+            ma_return = any(isinstance(w, ast.Return) for w in ast.walk(h))
+            if not konczy_raise or ma_return:
+                luki.append(
+                    f"{nazwa}:{h.lineno} — strażnik utraty sesji NIE przekazuje jej dalej "
+                    f"(ciało nie kończy się `raise` albo zawiera `return`)"
+                )
     assert not luki, "szeroki `except` przed strażnikiem utraty sesji:\n  " + "\n  ".join(luki)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19 (nie testu): dwie wysyłki w `_interpret_and_confirm` nie mają wokół siebie "
-        "ŻADNEGO `try` — gałąź 'brak powodu wolnego' i gałąź 'unclear'. Nie chroni ich więc ani "
-        "polityka `NIE_POLYKAJ`, ani rekompensata w `finally`, którą ma sąsiednia gałąź prośby "
-        "o potwierdzenie. Wyjątek z wysyłki leci do `_process_pending`, gdzie `_record_failure` "
-        "podbija licznik — a `_commit` przesunął już watermark, więc wiadomość pracownika jest "
-        "za nim i kolejny cykl jej nie zobaczy. To ten sam problem co xfail "
-        "`test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm` i domykamy "
-        "go razem z nim (PR C: watermark). strict=True — naprawa zapali XPASS."
-    ),
-)
-def test_kazda_wysylka_stoi_w_bloku_try():
-    """Wysyłka bez `try` nie ma jak podlegać polityce `NIE_POLYKAJ` — jest poza szwem."""
+# Wołania, które MUSZĄ iść przez szew — poza dwoma miejscami, które ten szew stanowią.
+_NA_SKROTY = {"send_chat_message", "create_shift", "create_time_off"}
+_WOLNO_NA_SKROTY = {
+    ("wysylka.py", "send_chat_message"),
+    ("listener.py", "create_shift"),
+    ("listener.py", "create_time_off"),
+}
+
+
+def test_zadna_wysylka_nie_omija_szwu():
+    """Autorytet strażnika stoi na zdaniu „wszystkie punkty wysyłki idą TĘDY" — sprawdźmy je.
+
+    Sonda wyżej zna tylko dwie nazwy wołań. `client.send_chat_message(...)` wstawione wprost
+    do `runtime/` ominęłoby ją, a razem z nią bramkę godzin ciszy i politykę `NIE_POLYKAJ` —
+    przy wszystkich testach nadal zielonych.
+    """
+    naruszenia = []
+    for nazwa, drzewo in _moduly():
+        for wezel in ast.walk(drzewo):
+            if not isinstance(wezel, ast.Call):
+                continue
+            wolanie = _nazwa_wolania(wezel)
+            if wolanie in _NA_SKROTY and (nazwa, wolanie) not in _WOLNO_NA_SKROTY:
+                naruszenia.append(f"{nazwa}:{wezel.lineno} — {wolanie}")
+    assert not naruszenia, "wysyłka z pominięciem szwu:\n  " + "\n  ".join(naruszenia)
+
+
+def test_dokladnie_dwie_wysylki_stoja_poza_blokiem_try():
+    """Znana luka, PRZYPIĘTA liczbowo — nie „niepusto".
+
+    Dwie wysyłki w `_interpret_and_confirm` (gałęzie „brak powodu wolnego" i „unclear") nie mają
+    wokół siebie żadnego `try`, więc nie chroni ich ani polityka `NIE_POLYKAJ`, ani rekompensata
+    w `finally`. Domykane razem z watermarkiem w fali 3.
+
+    Asercja jest RÓWNOŚCIĄ, a nie `not poza`, z konkretnego powodu: przy „niepusto" trzecia
+    niechroniona wysyłka wpadałaby w tę samą znaną lukę i wyglądała na oczekiwaną. Po naprawie
+    fali 3 ten test zapali się na czerwono i wymusi aktualizację — dokładnie jak `strict=True`
+    przy `xfail`.
+    """
     # Porównanie po (plik, linia), NIE po `id()` węzła: `_bloki_z_wysylka` i `_moduly` parsują
     # źródła osobno, więc obiekty AST z obu przebiegów nigdy nie byłyby tożsame — test xfailowałby
     # zawsze, także po naprawie, i wskazywałby wszystkie wysyłki zamiast dwóch niechronionych.
@@ -127,5 +169,8 @@ def test_kazda_wysylka_stoi_w_bloku_try():
     for nazwa, drzewo in _moduly():
         for wolanie in _wysylki(drzewo):
             if (nazwa, wolanie.lineno) not in chronione:
-                poza.append(f"{nazwa}:{wolanie.lineno} — {_nazwa_wolania(wolanie)}")
-    assert not poza, "wysyłka poza jakimkolwiek `try`:\n  " + "\n  ".join(poza)
+                poza.append(f"{nazwa}:{_nazwa_wolania(wolanie)}")
+    # Liczba PRZYPIĘTA, nie samo „niepusto". Bez tego trzecia niechroniona wysyłka wpadałaby
+    # w istniejący `xfail` i byłaby raportowana jako oczekiwana — czyli nowa usterka wyglądałaby
+    # dokładnie jak znana.
+    assert sorted(poza) == ["listener.py:do_pracownika", "listener.py:do_pracownika"], poza

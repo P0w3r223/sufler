@@ -101,7 +101,9 @@ def incoming_after(
     return [message for _, message in sorted(incoming, key=lambda pair: pair[0])]
 
 
-def obcy_nadawcy(messages: list[dict[str, Any]], me_id: str, *, nadawca: str) -> list[str]:
+def obcy_nadawcy(
+    messages: list[dict[str, Any]], me_id: str, after_iso: str = "", *, nadawca: str
+) -> list[str]:
     """Nadawcy, którzy nie są ani botem, ani adresatem — czyli powód, by NIE orzekać o ciszy.
 
     Istnieje osobno od ``incoming_after`` z jednego powodu: pusta lista wiadomości znaczy
@@ -113,9 +115,21 @@ def obcy_nadawcy(messages: list[dict[str, Any]], me_id: str, *, nadawca: str) ->
     Czat, w którym leży wiadomość, której nie umiemy przypisać, to nie „cisza pracownika",
     tylko „nie rozumiem tego wątku". Wołający robi z tego ``UNKNOWN`` i woła operatora.
 
+    ``after_iso`` zawęża do wiadomości NOWSZYCH niż watermark — z tego samego powodu, dla którego
+    robi to ``incoming_after``. Bez tej granicy jeden stary natręt ciążyłby wpisowi bez końca:
+    obieg nie mógłby orzec ciszy, a więc ani wygasić wpisu, ani sprawdzić samodzielnego
+    uzupełnienia. Po przesunięciu watermarku stara cudza treść przestaje mieć znaczenie.
+
     Zwraca id w postaci SUROWEJ (do logu i alertu), choć porównuje znormalizowane — operator ma
     zobaczyć dokładnie to, co przyszło z Graph.
     """
+    after: datetime | None = None
+    if after_iso:
+        try:
+            after = parse_graph_datetime(after_iso)
+        except ValueError:
+            after = None
+
     obcy: list[str] = []
     widziane: set[str] = set()
     for message in messages:
@@ -128,6 +142,9 @@ def obcy_nadawcy(messages: list[dict[str, Any]], me_id: str, *, nadawca: str) ->
         # jedna osoba, a alert wymieniający ją dwa razy każe operatorowi szukać drugiego intruza.
         # Zachowujemy pierwszą napotkaną postać surową — operator ma zobaczyć to, co przyszło
         # z Graph, nie nasz wynik normalizacji.
+        created = _created_at(message)
+        if created is None or (after is not None and created <= after):
+            continue
         kanoniczny = znormalizuj(str(sender))
         if kanoniczny in widziane:
             continue

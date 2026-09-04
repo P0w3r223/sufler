@@ -8,6 +8,7 @@ uszkodzony plik → pusty stan) — bo ten plik chroni przed podwójnym zapisem 
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -222,6 +223,36 @@ class StateWriteError(RuntimeError):
     dostaje tę samą prośbę w każdej próbie. Przyczyna jest zwykle trwała, więc trzy próby to trzy
     identyczne wiadomości u pracownika. Orkiestracja wyłącza ten błąd z pętli ponowień.
     """
+
+
+def sprawdz_zapisywalnosc(path: Path) -> None:
+    """Udowodnij, że stan DA SIĘ zapisać — zanim ktokolwiek dostanie wiadomość.
+
+    Przebieg wysyła prośbę, a dopiero potem utrwala pending (kolejność świadoma: pending bez
+    wiadomości byłby najgorszym wariantem). Cena jest taka, że przy niezapisywalnym wolumenie
+    prośby wychodzą do ludzi i nie zostaje po nich ślad — następny przebieg startuje od
+    ``load_state``, nie widzi ich i wysyła DRUGI RAZ. Idempotencja opiera się wyłącznie na tym pliku.
+
+    Sonda pisze i kasuje plik OBOK stanu, zamiast zapisywać sam stan, z jednego powodu: musi
+    działać także w trybie próbnym. Runbook wdrożenia stawia próbę na sucho właśnie po to, żeby
+    wyłapać takie rzeczy przed wejściem na żywo — a zapis stanu jest wtedy zakazany, więc sonda
+    oparta na ``save_state`` sprawdzałaby wszystko OPRÓCZ przebiegu, dla którego istnieje.
+
+    Nie daje gwarancji: dysk może zapełnić się między sondą a właściwym zapisem. Zabiera przypadek
+    TRWAŁY — wolumen tylko-do-odczytu, brak katalogu, złe prawa — czyli ten, który powtarzałby się
+    w każdym przebiegu. Ten sam ``StateWriteError``, więc ta sama obsługa: bez ponowień.
+    """
+    sonda = path.with_name(path.name + ".sonda")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _zapisz_tresc(sonda, "")
+    except OSError as exc:
+        raise StateWriteError(f"Magazyn stanu {path.parent} nie przyjmuje zapisu: {exc}") from exc
+    finally:
+        # Nieudane sprzątanie nie jest awarią przebiegu: plik ma zero bajtów, leży obok stanu
+        # i zostanie nadpisany przy następnej sondzie.
+        with contextlib.suppress(OSError):
+            sonda.unlink()
 
 
 def save_state(path: Path, state: dict[str, PendingReminder]) -> None:

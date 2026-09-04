@@ -5,6 +5,7 @@ from collections.abc import Collection, Iterable, Mapping
 from datetime import datetime, timedelta, tzinfo
 
 from powiadomienia_teams.domain.models import Member, Shift, TimeOff
+from powiadomienia_teams.domain.tozsamosc import ten_sam, znormalizuj
 
 # Tydzień roboczy = poniedziałek–piątek. Tylko pełne pokrycie tych dni urlopem uznajemy za
 # „nie ma o co pytać"; urlop w części dni NIE wycisza prośby o pozostałe dni.
@@ -29,7 +30,12 @@ def off_weekdays_by_member(
     for t in time_offs:
         days = _dni_pokryte(t, target_monday)
         if days:
-            result.setdefault(t.user_id, set()).update(days)
+            # Klucz ZNORMALIZOWANY: mapa jest odczytywana przez `member_id` z pliku stanu,
+            # a `t.user_id` przychodzi z `read_time_off` — to dwa różne wywołania Graph, więc
+            # dwie różne pisownie tego samego GUID-a. Rozjazd dawał puste pokrycie, a puste
+            # pokrycie znaczy „nic jeszcze nie zapisano" i kończy się DRUGIM kompletem zmian
+            # w grafiku klienta. Wartości (`user_id` w obiektach) zostają surowe.
+            result.setdefault(znormalizuj(t.user_id), set()).update(days)
     return {uid: frozenset(days) for uid, days in result.items()}
 
 
@@ -63,7 +69,7 @@ def off_reason_by_weekday(
     """
     dni: dict[int, str] = {}
     for t in time_offs:
-        if t.user_id != member_id:
+        if not ten_sam(t.user_id, member_id):
             continue
         for d in _dni_pokryte(t, target_monday):
             dni.setdefault(d, t.reason_id)
@@ -80,7 +86,7 @@ def member_filled_week(
     ``shifts`` są zawężone wcześniej do docelowego tygodnia; ``off_days`` to dni tej osoby pokryte
     urlopem (z ``off_weekdays_by_member``).
     """
-    return any(s.user_id == member_id for s in shifts) or _WORKING_WEEK <= off_days
+    return any(ten_sam(s.user_id, member_id) for s in shifts) or _WORKING_WEEK <= off_days
 
 
 def shift_weekdays(member_id: str, shifts: Iterable[Shift], tz: tzinfo) -> frozenset[int]:
@@ -89,7 +95,9 @@ def shift_weekdays(member_id: str, shifts: Iterable[Shift], tz: tzinfo) -> froze
     Dzień liczony jest ROZPOCZĘCIEM zmiany — zgodnie z niezmiennikiem dnia startu, który obowiązuje
     w całym projekcie (nocka piątek→sobota jest zmianą piątkową; patrz ``interpreter.build_schedule``).
     """
-    return frozenset(s.start.astimezone(tz).weekday() for s in shifts if s.user_id == member_id)
+    return frozenset(
+        s.start.astimezone(tz).weekday() for s in shifts if ten_sam(s.user_id, member_id)
+    )
 
 
 def drop_already_covered(
@@ -141,9 +149,9 @@ def members_without_shifts(
     (deterministyczna).
     """
     off_by_member = off_by_member or {}
-    covered_by_shift = {s.user_id for s in shifts}
+    covered_by_shift = {znormalizuj(s.user_id) for s in shifts}
     covered_by_full_off = {
         uid for uid, days in off_by_member.items() if _WORKING_WEEK <= days
     }
     covered = covered_by_shift | covered_by_full_off
-    return [m for m in members if m.user_id not in covered]
+    return [m for m in members if znormalizuj(m.user_id) not in covered]

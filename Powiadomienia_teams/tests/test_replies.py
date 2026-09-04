@@ -1,7 +1,8 @@
 # 0.2.19 zastąpiło `newest_incoming` (jedna najnowsza wiadomość WSKAZANEJ osoby) przez
-# `incoming_after` (WSZYSTKIE wiadomości spoza bota, od najstarszej). Zmiana jest celowa
-# i naprawia realny błąd: pracownik piszący w dwóch dymkach był interpretowany tylko z drugiego.
-# Zabrała jednak ze sobą dwa zabezpieczenia — patrz `xfail` na końcu pliku.
+# `incoming_after` (WSZYSTKIE wiadomości od najstarszej). Zmiana jest celowa i naprawia realny
+# błąd: pracownik piszący w dwóch dymkach był interpretowany tylko z drugiego. Zabrała jednak
+# ze sobą dwa zabezpieczenia — tożsamość nadawcy i odporność na wielkość liter — PRZYWRÓCONE
+# w fali 2 (`domain/tozsamosc.py`, wymagany parametr `nadawca`).
 from powiadomienia_teams.reminders.replies import (
     MEMORY_CAP,
     MEMORY_WINDOW,
@@ -148,16 +149,47 @@ def test_memory_window_is_one_hour():
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
-# Dwa zabezpieczenia, których kod produkcji 0.2.19 NIE MA.
+# Dwa zabezpieczenia, których obraz 0.2.19 NIE MIAŁ — przywrócone w fali 2.
 #
 # Linia repozytorium napisała je 2026-08-18 wraz z opisem incydentu; obraz produkcyjny zbudowano
-# 2026-08-20 z drzewa, w którym ich nigdy nie było (rozwidlenie, nie cofnięcie). `incoming_after`
-# przyjmuje KAŻDEGO nadawcę różnego od bota i porównuje identyfikatory dokładnie co do znaku.
+# 2026-08-20 z drzewa, w którym ich nigdy nie było (rozwidlenie, nie cofnięcie). Stały tu jako
+# `xfail(strict=True)`, dopóki kodu nie było; XPASS zapalił CI dokładnie wtedy, gdy naprawa
+# weszła, i wymusił zdjęcie markerów. To są dziś zwykłe testy przechodzące.
 #
-# Zostają jako `xfail(strict=True)`, a nie jako skasowane testy, z dwóch powodów: zapis wymagania
-# nie ginie razem z implementacją, a gdy ktoś to zabezpieczenie dopisze, XPASS zapali CI na czerwono
-# i wymusi zdjęcie markera. Skasowanie zamieniłoby brak w niewiedzę.
+# Zostawiamy je razem z tym opisem, bo zapis wymagania jest wart tyle samo co jego spełnienie:
+# kto zobaczy `nadawca` w sygnaturze, ma tu znaleźć powód, dla którego jest WYMAGANY.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def test_kazda_wiadomosc_trafia_do_DOKLADNIE_JEDNEJ_z_dwoch_klasyfikacji():
+    """Szew między `incoming_after` a `obcy_nadawcy`: żadnej szczeliny, żadnego nakładania.
+
+    Obie funkcje klasyfikują nadawcę niezależnie, a `_process_pending` pyta o drugą dopiero wtedy,
+    gdy pierwsza nic nie zwróciła. Dziś reguła jest ta sama, więc szczeliny nie ma — ale to dwie
+    kopie jednego rozstrzygnięcia i nic nie pilnowało ich zgodności. Zmiana w jednej (np. lista
+    dopuszczonych kont drugiego bota) po cichu otwierałaby lukę, którą ta para miała zamknąć:
+    wiadomość nieprzypisana do nikogo znika bez śladu, a wpis wygasa jako „pracownik milczy".
+    """
+    guid = "AAAA1111-BBBB-2222-CCCC-333344445555"
+    wiadomosci = [
+        _msg(guid.upper(), "2026-07-19T18:00:00Z", "bot"),  # bot, inna wielkość liter
+        _msg("u1", "2026-07-19T18:01:00Z", "pracownik"),
+        _msg("U1", "2026-07-19T18:02:00Z", "pracownik, inaczej zapisany"),
+        _msg("obcy", "2026-07-19T18:03:00Z", "intruz"),
+        {"createdDateTime": "2026-07-19T18:04:00Z", "body": {"content": "systemowa"}},
+        _msg("u1", "2026-07-19T17:00:00Z", "sprzed watermarku"),
+    ]
+    po = "2026-07-19T17:30:00Z"
+
+    moje = incoming_after(wiadomosci, guid, po, nadawca="u1")
+    cudze = obcy_nadawcy(wiadomosci, guid, po, nadawca="u1")
+
+    tresci_moich = {message_text(m) for m in moje}
+    assert tresci_moich == {"pracownik", "pracownik, inaczej zapisany"}
+    assert cudze == ["obcy"]
+    # Rozłączność: nikt nie jest jednocześnie adresatem i obcym.
+    nadawcy_moich = {m["from"]["user"]["id"] for m in moje}
+    assert not (nadawcy_moich & set(cudze))
 
 
 def test_obcy_nadawcy_zbiera_wszystkich_bez_powtorzen():

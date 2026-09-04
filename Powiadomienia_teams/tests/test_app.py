@@ -942,6 +942,83 @@ def test_obcy_nadawca_NIE_pozwala_wygasic_wpisu(tmp_path: Path, monkeypatch):
     assert alerty == ["Obcy nadawca w rozmowie o grafiku"]  # operator zawołany
 
 
+def test_obcy_nadawca_NIE_blokuje_odpowiedzi_pracownika(tmp_path: Path, monkeypatch):
+    """Regresja pierwszej wersji tej zmiany, która była GORSZA od naprawianej usterki.
+
+    Blokowanie obiegu przy każdym obcym nadawcy — przed odczytem — zatrzymywało wpis NA ZAWSZE:
+    nigdy nie był czytany, nigdy nie wygasał i nigdy nie doczekał sprawdzenia samodzielnego
+    uzupełnienia, bo każda z tych ścieżek wymaga innego wyniku niż `UNKNOWN`. Jedna cudza
+    wiadomość kasowała komuś tydzień grafiku bez śladu poza jednym alertem na proces.
+
+    Cudzy nadawca ma znaczenie WYŁĄCZNIE tam, gdzie bez niego orzeklibyśmy ciszę pracownika.
+    Gdy pracownik odpisał, jego odpowiedź MUSI zostać obsłużona normalnie.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    client = _FakeClient(
+        {
+            "chat1": [
+                _msg("obcy", "2026-07-19T17:30:00Z", "wtrącam się"),
+                _msg("u1", "2026-07-19T18:00:00Z", "ok"),  # PRAWDZIWA odpowiedź pracownika
+            ]
+        }
+    )
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == AWAITING_CONFIRM  # odpowiedź OBSŁUŻONA mimo obcego w wątku
+    assert po.watermark == "2026-07-19T18:00:00Z"  # watermark przesunięty za obie wiadomości
+    assert len(client.sent) == 1  # prośba o potwierdzenie wyszła
+    assert "wtrącam" not in client.sent[0][1]  # cudza treść NIE weszła do rozmowy
+
+
+def test_stary_obcy_przestaje_ciazyc_po_przesunieciu_watermarku(tmp_path: Path, monkeypatch):
+    """Granica czasowa: cudza wiadomość SPRZED watermarku nie blokuje już orzekania o ciszy.
+
+    Bez niej jeden natręt z przeszłości trzymałby wpis w `UNKNOWN` dopóki nie wypchnie go
+    stronicowanie Graph — czyli w praktyce bez końca.
+    """
+    monkeypatch.setattr("powiadomienia_teams.runtime.listener._ZGLOSZONE_OBCE", set())
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark="2026-07-19T19:00:00Z",  # PO wiadomości obcego
+                nudged_at="2026-07-14T10:00:00Z",
+            )
+        },
+    )
+    client = _FakeClient({"chat1": [_msg("obcy", "2026-07-19T18:00:00Z", "stare wtrącenie")]})
+
+    poll_replies(_settings_calodobowe(state_path), client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == "expired"  # cisza orzeczona, temat domknięty
+
+
 def test_obcy_nadawca_alertuje_RAZ_a_nie_przy_kazdym_odpytaniu(tmp_path: Path, monkeypatch):
     """Nasłuch odpytuje czat co ~10 s, a cudza wiadomość zostaje w wątku na zawsze.
 
@@ -2522,6 +2599,23 @@ def _sciezka_bez_zapisu(tmp_path: Path) -> Path:
     przeszkoda = tmp_path / "nie-katalog"
     przeszkoda.write_text("x", encoding="utf-8")
     return przeszkoda / "state.json"
+
+
+def test_proba_na_sucho_TEZ_wykrywa_niezapisywalny_wolumen(tmp_path: Path):
+    """Sedno sondy: ma działać w trybie próbnym, bo po to ten tryb jest w runbooku.
+
+    `deploy/README-docker.md` stawia przebieg na sucho PRZED wejściem na żywo właśnie po to, żeby
+    wyłapać problemy wolumenu. Sonda oparta na `save_state` byłaby wtedy pominięta — w trybie
+    próbnym stanu nie zapisujemy — więc wolumen tylko-do-odczytu wyszedłby dopiero na przebiegu,
+    który pisze do ośmiu prawdziwych osób. Dlatego sonda pisze i kasuje plik OBOK stanu.
+    """
+    settings = replace(_settings_calodobowe(_sciezka_bez_zapisu(tmp_path)), dry_run=True)
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=())
+
+    with pytest.raises(StateWriteError):
+        run_once(settings, client, now=_SRODA_W_OKNIE, teraz=_w_oknie())  # type: ignore[arg-type]
+
+    assert client.sent == []  # w trybie próbnym i tak nic nie wychodzi — liczy się WYKRYCIE
 
 
 def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path: Path):

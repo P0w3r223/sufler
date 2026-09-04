@@ -165,6 +165,10 @@ def run_once(
     # Sonda nie daje gwarancji: dysk może zapełnić się między nią a właściwym zapisem. Zabiera
     # jednak przypadek TRWAŁY (wolumen tylko-do-odczytu, brak katalogu, złe prawa), czyli ten,
     # który powtarzałby się w każdym przebiegu.
+    # Sonda działa w OBU trybach — patrz `state.sprawdz_zapisywalnosc`. Próba na sucho, którą
+    # runbook wdrożenia stawia przed wejściem na żywo, ma wyłapać właśnie tę klasę awarii;
+    # sonda oparta na `save_state` byłaby wtedy pominięta, bo w trybie próbnym stanu nie piszemy.
+    st.sprawdz_zapisywalnosc(settings.state_path)
     if not settings.dry_run:
         st.save_state(settings.state_path, state)
     sent = 0
@@ -198,7 +202,7 @@ def run_once(
                 existing.week_start, existing.status,
                 etykiety.czlonek(member, settings), week_start_iso,
             )
-        member_off = off_by_member.get(member.user_id, frozenset())
+        member_off = off_by_member.get(znormalizuj(member.user_id), frozenset())
         proposal = proposal_from_last_week(
             member.user_id, prior_shifts, target_monday.date(), tz=tz, skip_weekdays=member_off
         )

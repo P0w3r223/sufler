@@ -39,6 +39,7 @@ from powiadomienia_teams.agent.odczyt import (
 from powiadomienia_teams.config import Settings, TeamContext
 from powiadomienia_teams.domain.czas import parse_graph_datetime, to_graph_iso
 from powiadomienia_teams.domain.models import TimeOff, WeekSchedule
+from powiadomienia_teams.domain.tozsamosc import znormalizuj
 from powiadomienia_teams.graph.auth import AuthExpiredError
 from powiadomienia_teams.graph.client import GraphClient, GraphTruncatedReadError
 from powiadomienia_teams.messages import (
@@ -214,8 +215,9 @@ def _odsiej_juz_zapisane(
         )
         return schedule, time_offs, ()
 
+    # Mapa `wolne_dni` jest kluczowana ZNORMALIZOWANYM id (patrz `detect.off_weekdays_by_member`).
     pokryte = shift_weekdays(pending.member_id, dane.zmiany, tz) | dane.wolne_dni.get(
-        pending.member_id, frozenset()
+        znormalizuj(pending.member_id), frozenset()
     )
     zostaje, wolne, odsiane = drop_already_covered(
         schedule.shifts, time_offs, covered=pokryte, tz=tz
@@ -398,7 +400,7 @@ def poll_replies(
             for p in kandydaci
             if (dane := tygodnie.get(p.week_start)) is not None
             and member_filled_week(
-                p.member_id, dane.zmiany, dane.wolne_dni.get(p.member_id, frozenset())
+                p.member_id, dane.zmiany, dane.wolne_dni.get(znormalizuj(p.member_id), frozenset())
             )
         ]
         if samodzielni:
@@ -545,17 +547,16 @@ def _oznacz_wyslane(
 # na godzinę w jedynym kanale, jaki operator ma. Pamięć żyje tyle, co proces; po restarcie alert
 # pójdzie raz jeszcze i to jest właściwy kompromis (restart bywa właśnie reakcją na alert).
 # Docelowo przejmie to licznik obiegów `UNKNOWN` z progiem — ten sam wzorzec co `_PULS_PROG_ALERTU`.
-_ZGLOSZONE_OBCE: set[tuple[str, str]] = set()
+_ZGLOSZONE_OBCE: set[str] = set()
 
 
 def _zglos_obcych_raz(
     settings: Settings, pending: st.PendingReminder, obcy: list[str]
 ) -> None:
     """Zawołaj operatora RAZ na proces dla danej pary (czat, zestaw obcych nadawców)."""
-    klucz = (pending.chat_id, ",".join(sorted(obcy)))
-    if klucz in _ZGLOSZONE_OBCE:
+    if pending.chat_id in _ZGLOSZONE_OBCE:
         return
-    _ZGLOSZONE_OBCE.add(klucz)
+    _ZGLOSZONE_OBCE.add(pending.chat_id)
     operator.alert(
         settings,
         "Obcy nadawca w rozmowie o grafiku",
@@ -586,25 +587,36 @@ def _process_pending(
     oznacza ``UNKNOWN`` i jest nadawany w miejscu wywołania.
     """
     wiadomosci_czatu = client.list_chat_messages(pending.chat_id)
-    obcy = obcy_nadawcy(wiadomosci_czatu, me_id, nadawca=pending.member_id)
-    if obcy:
-        # Wątek przestał być 1:1 (ktoś dodany, migracja czatu). Cudza treść NIE pójdzie do modelu
-        # ani do grafiku — ale nie wolno też orzec, że pracownik milczy: `NOTHING_NEW` jest jedyną
-        # przesłanką wygaszenia (`lifecycle.should_expire`), a wygaszenie wysyła mu „nie dostałem
-        # odpowiedzi" i zamyka temat TERMINALNIE. To byłoby kłamstwo o cudzym zachowaniu, oparte
-        # na naszym własnym nieporozumieniu. `UNKNOWN` zostawia wpis otwarty — odwracalnie.
-        logger.error(
-            "Czat %s ma nadawców spoza rozmowy (%s) — nie orzekam o odpowiedzi tej osoby",
-            etykiety.osoba(pending, settings),
-            ", ".join(obcy),
-        )
-        _zglos_obcych_raz(settings, pending, obcy)
-        return ReadOutcome.UNKNOWN
-    nowe = incoming_after(
-        wiadomosci_czatu, me_id, pending.watermark, nadawca=pending.member_id
-    )
+    nowe = incoming_after(wiadomosci_czatu, me_id, pending.watermark, nadawca=pending.member_id)
     if not nowe:
+        # Cudzy nadawca ma znaczenie WYŁĄCZNIE tutaj — czyli tam, gdzie bez niego orzeklibyśmy
+        # ciszę pracownika. Gdy pracownik odpisał, cudza treść jest bez znaczenia: `incoming_after`
+        # już ją odsiał, a watermark zaraz przesunie się za nią.
+        #
+        # Pierwsza wersja tej zmiany blokowała obieg przy KAŻDYM obcym nadawcy, przed odczytem.
+        # Skutek był gorszy od naprawianej usterki: jedna cudza wiadomość zatrzymywała wpis NA
+        # ZAWSZE — nigdy nie był czytany, nigdy nie wygasał i nigdy nie doczekał sprawdzenia
+        # samodzielnego uzupełnienia, bo każda z tych ścieżek wymaga innego wyniku niż `UNKNOWN`.
+        # Granica po watermarku dokłada drugie zabezpieczenie: stary natręt przestaje ciążyć,
+        # gdy tylko obieg ruszy do przodu.
+        obcy = obcy_nadawcy(wiadomosci_czatu, me_id, pending.watermark, nadawca=pending.member_id)
+        if obcy:
+            # Nie wolno orzec, że pracownik milczy: `NOTHING_NEW` jest jedyną przesłanką
+            # wygaszenia (`lifecycle.should_expire`), a wygaszenie wysyła mu „nie dostałem
+            # odpowiedzi" i zamyka temat TERMINALNIE. To byłoby twierdzenie o JEGO zachowaniu
+            # oparte na NASZYM nieporozumieniu. `UNKNOWN` zostawia wpis otwarty — odwracalnie.
+            logger.error(
+                "Czat %s (%s) ma nadawców spoza rozmowy (%s) — nie orzekam o odpowiedzi tej osoby",
+                pending.chat_id,
+                etykiety.osoba(pending, settings),
+                ", ".join(obcy),
+            )
+            _zglos_obcych_raz(settings, pending, obcy)
+            return ReadOutcome.UNKNOWN
         return ReadOutcome.NOTHING_NEW
+    # Wątek wrócił do porządku (albo nigdy go nie stracił) — zwolnij dławienie, żeby ewentualny
+    # nawrót zawołał operatora ponownie zamiast milczeć do restartu procesu.
+    _ZGLOSZONE_OBCE.discard(pending.chat_id)
     # Cała porcja nowych wiadomości, od najstarszej. Decyzję podejmujemy z OSTATNIEJ, ale
     # wcześniejsze z tej samej porcji wchodzą do kontekstu i do pamięci — inaczej pracownik piszący
     # w dwóch dymkach byłby interpretowany wyłącznie z drugiego (patrz ``incoming_after``).
