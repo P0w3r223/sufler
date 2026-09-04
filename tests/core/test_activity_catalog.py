@@ -245,11 +245,36 @@ def test_przefiltrowany_widok_zdarzen_niesie_slad_po_filtrze() -> None:
     assert "ZAWĘŻONY" in wynik["note"]
 
 
-def test_niefiltrowany_widok_zdarzen_nie_dokleja_notki() -> None:
-    # Zdanie jedzie TYLKO w turach, których dotyczy — inaczej opłacamy je w każdej.
+def test_niefiltrowany_widok_zdarzen_TEZ_niesie_notke_warstwy() -> None:
+    """ODWRÓCONY 2026-09-04 (ADR 0071 decyzja 10). Do tego dnia brzmiał „nie dokleja notki".
+
+    Stara reguła — „zdanie jedzie TYLKO w turach, których dotyczy" — była oszczędnością na
+    właściwym zdaniu. Notka o ZAWĘŻENIU faktycznie dotyczy tylko tur zawężonych, ale notka
+    o tym, czym ta warstwa JEST, dotyczy każdej: 2026-09-04 pytanie o otwarte zgłoszenia
+    dostało tabelę dziesięciu, wszystkich zamkniętych, przy widoku, który NIE był zawężony.
+    Kompletność widoku nie czyni go odpowiedzią na zadane pytanie.
+    """
     fn = build_activity_catalog(events=_FakeEvents())[0].fn
 
-    assert "note" not in fn(action="events")
+    wynik = fn(action="events")
+
+    assert "HISTORIA" in wynik["note"]
+    assert "ZAWĘŻONY" not in wynik["note"]  # ta druga tylko przy realnym zawężeniu
+
+
+def test_zawezony_widok_niesie_OBIE_notki_zlozone() -> None:
+    """Składanie, nie zastępowanie — obie notki mówią co innego i obie są potrzebne naraz.
+
+    Po dołożeniu zamknięć i backfillu pytanie BEZ filtru zacznie regularnie dobijać do okna 20,
+    więc ten przypadek przestanie być rzadki. Zastąpienie jednej notki drugą kasowałoby połowę
+    odpowiedzi w dokładnie tych turach, w których obie są potrzebne.
+    """
+    fn = build_activity_catalog(events=_FakeEvents())[0].fn
+
+    notka = fn(action="events", source="github")["note"]
+
+    assert "HISTORIA" in notka
+    assert "ZAWĘŻONY" in notka
 
 
 def test_opis_zdarzen_mowi_ze_source_to_drzwi_a_nie_system() -> None:
@@ -259,7 +284,23 @@ def test_opis_zdarzen_mowi_ze_source_to_drzwi_a_nie_system() -> None:
     opis = build_activity_catalog(events=_FakeEvents())[0].description
 
     assert "DRZWI" in opis
-    assert "BEZ `source`" in opis
+    # ODWRÓCONE 2026-09-04: do tego dnia ten test WYMUSZAŁ obecność zdania „o stan GitHuba pytaj
+    # BEZ `source`" — czyli bramka trzymała przy życiu obietnicę, której warstwa nie umie spełnić.
+    # Zdjęcie filtru pokazuje pełną HISTORIĘ mostu, a nie stan GitHuba (ADR 0071 decyzja 10).
+    assert "BEZ `source`" not in opis
+    assert "HISTORIA" in opis
+
+
+def test_podsumowanie_tez_niesie_notke_warstwy() -> None:
+    """``summary`` nie miał pola ``note`` NIGDY, a stoi na tej samej warstwie co ``events``.
+
+    Ma zawsze filtr ``project`` (pole wymagane), więc pod starą regułą „notka przy zawężeniu"
+    i tak powinien był ją nieść. Podsumowanie „przebiegu prac" bez tego zdania czyta się jak
+    stan projektu, a jest stanem tego, co most zdążył zapisać.
+    """
+    fn = build_activity_catalog(events=_FakeEvents())[0].fn
+
+    assert "HISTORIA" in fn(action="summary", project="workmate")["note"]
 
 
 def test_okno_limitu_tez_jest_zawezeniem() -> None:
@@ -282,3 +323,25 @@ def test_okno_limitu_tez_jest_zawezeniem() -> None:
     wynik = build_activity_catalog(events=_Pelne())[0].fn(action="events", limit=20)
 
     assert "limit=20" in wynik["note"]
+
+
+def test_notatka_warstwy_klamie_gdy_zamkniecia_juz_sa() -> None:
+    """Notka ma mówić prawdę o TYM, co most zapisuje — bramka wymuszająca, nie opisowa.
+
+    Zdanie „zamknięć zgłoszeń nie zapisuje w ogóle" jest dziś prawdziwe i jest jedynym powodem,
+    dla którego warstwa nie odpowiada na pytanie o otwarte zgłoszenia. Przestanie być prawdziwe
+    w chwili, gdy mapper zacznie emitować ``issue_closed`` (ADR 0071 decyzja 1) — a wtedy notka
+    zaczęłaby zaniżać zdolność zamiast ją zawyżać. Obie pomyłki są tej samej klasy: opis niezgodny
+    ze zdolnością.
+
+    Asercja jest RÓWNOWAŻNOŚCIĄ, nie warunkiem — dzięki temu nie jest pusta ani dziś, ani po
+    dołożeniu zamknięć: zrywa się w obie strony. Rodzaj zdarzenia czytamy z etykiet notifiera,
+    bo to jedyne miejsce, gdzie repertuar rodzajów jest wyliczony jawnie.
+    """
+    from workmate.core.application.notifier import _KIND_LABELS
+    from workmate.core.application.tools.spec import _EVENTS_LAYER_NOTE
+
+    zamkniecia_sa_zapisywane = "issue_closed" in _KIND_LABELS
+    notka_mowi_ze_nie_sa = "Zamknięć zgłoszeń nie zapisuje" in _EVENTS_LAYER_NOTE
+
+    assert zamkniecia_sa_zapisywane != notka_mowi_ze_nie_sa

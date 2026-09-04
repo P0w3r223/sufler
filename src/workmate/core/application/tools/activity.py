@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from workmate.core.application.events import EventService
 from workmate.core.application.tools.spec import (
     _EVENTS_FILTERED_NOTE,
+    _EVENTS_LAYER_NOTE,
     ToolSpec,
     _brakuje_pol,
     _DateField,
@@ -26,9 +27,9 @@ from workmate.core.errors import WorkMateError
 
 _ACTIVITY_AKCJE: dict[str, str] = {
     "events": (
-        "`events` — ostatnie zdarzenia z warstwy spajającej, najnowsze pierwsze. Opcjonalnie: "
-        "`source` — DRZWI, które zdarzenie zapisały ('github', 'teams'), nie system, którego "
-        "dotyczy; o stan GitHuba pytaj BEZ `source`. `project` (klucz z rejestru), `limit` (20)."
+        "`events` — HISTORIA zdarzeń zapisanych przez most, najnowsze pierwsze; NIE stan "
+        "GitHuba. Opcjonalnie: `source` — DRZWI, które zdarzenie zapisały ('github', 'teams'), "
+        "nie system, którego dotyczy. `project` (klucz z rejestru), `limit` (20)."
     ),
     "summary": (
         "`summary` — podsumowanie PRZEBIEGU prac projektu ze zdarzeń: liczniki wg typu, czas "
@@ -146,9 +147,14 @@ def build_activity_catalog(  # noqa: C901, PLR0915
                 )
                 if wartosc
             )
+            # SKŁADAMY, nie zastępujemy. Notka o zawężeniu mówi „ten widok jest ucięty",
+            # notka warstwy — „nawet pełny widok nie zna stanu GitHuba". Po dołożeniu zamknięć
+            # i backfillu pytanie BEZ filtru zacznie regularnie dobijać do domyślnego okna 20,
+            # więc obie będą jechać razem; zastąpienie jednej drugą kasowałoby pół odpowiedzi.
+            notatki = [_EVENTS_LAYER_NOTE]
             if filtry:
-                return {**wynik, "note": _EVENTS_FILTERED_NOTE.format(filtry=filtry)}
-            return wynik
+                notatki.append(_EVENTS_FILTERED_NOTE.format(filtry=filtry))
+            return {**wynik, "note": " ".join(notatki)}
 
         return _envelope(build)
 
@@ -174,6 +180,11 @@ def build_activity_catalog(  # noqa: C901, PLR0915
                 "by_kind": by_kind,
                 "latest_activity_at": najnowsze.isoformat() if najnowsze else None,
                 "recent": [e.model_dump(mode="json") for e in items[:20]],
+                # `summary` nie miał pola `note` NIGDY — a stoi na tej samej warstwie co
+                # `events` i ma zawsze filtr `project` (pole wymagane). Podsumowanie „przebiegu
+                # prac" bez tego zdania czyta się jak stan projektu, a jest stanem tego, co most
+                # zdążył zapisać.
+                "note": _EVENTS_LAYER_NOTE,
             }
 
         return _envelope(build)

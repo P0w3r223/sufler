@@ -74,6 +74,16 @@ Zasady:
 - **zaktualizuj baseline** (`tests/adapters/tool_surface_baseline.json`) — wyłącznie o nowy wpis;
   zmiana albo usunięcie istniejącego to złamanie zamrożonego kontraktu, nie aktualizacja.
 
+> **Wyjątek, który nie jest furtką (dopisany 2026-09-04).** Zdarza się, że zamrożony wpis niesie
+> zdanie NIEPRAWDZIWE — wtedy zamrożenie utrwala usterkę, a nie kontrakt. Poprawka istniejącego
+> wpisu jest dopuszczalna wyłącznie gdy: (1) stoi za nią ADR, (2) idzie OSOBNYM commitem, którego
+> komunikat mówi, co i dlaczego się zmieniło, (3) `parameters` zostają **bajt w bajt** — zmiana
+> sygnatury to już nie poprawka opisu i tu nie należy, (4) regenerujesz JEDEN wpis, z sortowaniem
+> kluczy (`json.dumps(..., indent=2, sort_keys=True)`), żeby diff pokazywał zmianę, a nie
+> przetasowanie pliku. Precedens: 1.13.0 (odświeżony opis `read_events_since`) i ADR 0071
+> decyzja 10. Bez punktu (4) diff ma kilkanaście linii i recenzent nie widzi, co naprawdę uległo
+> zmianie — sprawdzone na własnej skórze przy tej właśnie poprawce.
+
 ## 3b. Narzędzie dla runtime'u agenta — wzorzec `action=…`
 
 Powierzchnia agenta jest budżetem wyboru, nie katalogiem zdolności: każde narzędzie kosztuje

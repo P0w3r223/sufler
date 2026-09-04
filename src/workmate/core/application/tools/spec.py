@@ -57,6 +57,23 @@ _EVENTS_FILTERED_NOTE = (
     "że czegoś nie ma albo co jest najnowsze, powtórz odczyt bez filtru."
 )
 
+# Notka BEZWARUNKOWA — o tym, czym ta warstwa JEST, a nie o tym, jak ją zawężono. Jedzie w KAŻDEJ
+# odpowiedzi, także pełnej, bo poprzednia wersja opisu odsyłała po stan GitHuba do widoku, który
+# stanu nie zna: 2026-09-04 na pytanie o otwarte zgłoszenia padła tabela dziesięciu, wszystkich
+# zamkniętych, a jedyne otwarte nie mogło się w niej pojawić. Notka o zawężeniu tego nie łapała,
+# bo widok NIE BYŁ zawężony — był kompletny i mimo to nie odpowiadał na zadane pytanie.
+# Idzie polem ``note`` w kopercie (ADR 0068 §5), nie w opisie: tam nie ma sufitu bajtów.
+#
+# UWAGA przy ADR 0071 decyzja 1: zdanie o niezapisywaniu zamknięć przestanie być prawdziwe
+# w chwili, gdy mapper zacznie emitować ``issue_closed``. Pilnuje tego sonda
+# ``test_notatka_warstwy_klamie_gdy_zamkniecia_juz_sa`` — nie da się dodać rodzaju zdarzenia
+# i zostawić tej notki, bo bramka zerwie się w tym samym commicie.
+_EVENTS_LAYER_NOTE = (
+    "Ta warstwa to HISTORIA tego, co most ZAPISAŁ — nie stan GitHuba. Zamknięć zgłoszeń nie "
+    "zapisuje w ogóle, więc nie odpowiada na pytanie, co jest dziś otwarte. Zanim powiesz, że "
+    "czegoś nie ma albo co jest najnowsze, powiedz, w co zajrzałeś."
+)
+
 
 def _envelope(
     build: Callable[[], dict[str, Any]],

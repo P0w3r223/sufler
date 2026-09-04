@@ -8,6 +8,26 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Warstwa zdarzeń przestaje obiecywać, że odpowiada o stan GitHuba — bo nie odpowiada.**
+  2026-09-04 na kanale padło pytanie o otwarte zgłoszenia; bot pokazał tabelę dziesięciu.
+  **Wszystkie dziesięć jest zamkniętych, a jedyne faktycznie otwarte nie mogło się w niej
+  pojawić** — zero trafnych wierszy na dziesięć. Bot nie zmyślił: dołożył zastrzeżenie, że to
+  widok warstwy zdarzeń, a nie stan repozytorium, tak jak nauczyła go poprawka z 1.13.0.
+  Zastrzeżenie było jednak WĘŻSZE od prawdy — mówiło „chyba że zgłoszenie zamknięto poza
+  oknem”, podczas gdy zamknięć nie zapisujemy w ogóle.
+  Winne było zdanie w opisie narzędzia: odsyłało po stan systemu zewnętrznego do widoku, który
+  stanu nie zna — zdjęcie filtru daje pełną HISTORIĘ mostu, nie stan GitHuba. To ta sama klasa
+  co martwa obietnica `/mnt/user/outputs`: opis każe modelowi sięgnąć po zdolność, której nie
+  ma. Zdanie znika z OBU powierzchni (agenta i MCP), a na jego miejsce wchodzi to, czym warstwa
+  jest ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md)
+  decyzja 10).
+  **Notka w kopercie jest teraz BEZWARUNKOWA i SKŁADA SIĘ z notką o zawężeniu**, zamiast być
+  przez nią zastępowana. Poprzednia jechała wyłącznie przy widoku zawężonym — a incydent
+  zdarzył się na widoku KOMPLETNYM: kompletność nie czyni widoku odpowiedzią na zadane pytanie.
+  `summary` dostaje tę notkę po raz pierwszy (nie miał pola `note` nigdy), choć stoi na tej
+  samej warstwie i ma zawsze filtr `project`.
+  Powierzchnia agenta: 7418 → **7400 B** z powłoką, 7673 → **7655 B** bez niej (zapas 345 B).
+
 - **Zbiór wyzwalaczy skazy przestaje być listą napisów w adapterze — odpowiedź jedzie z narzędziem**
   ([ADR 0073](docs/adr/0073-guards-iterate-over-the-protected-surface.md)). `ToolSpec` dostaje
   `taints`: czy WYNIK tego narzędzia niesie treść spoza bramek zdolności (pytanie ADR 0066 R2).
@@ -168,6 +188,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   więc `Bash` z trzeciej rundy jest faktem, zanim `File(edit)` z rundy piątej do sędziego dotrze.
   To jest odczyt, który leniwe `tainted` obiecywało od początku; kierunek zmiany jest
   ostrożniejszy, nie luźniejszy. Docstring `File` mówił dotąd odwrotnie — poprawiony.
+
+### Uwagi wdrożeniowe
+
+- **Zamrożony baseline MCP zmieniony ŚWIADOMIE, jeden wpis** (`read_events_since`): to samo
+  fałszywe zdanie stało na drzwiach MCP, a naprawa jednych drzwi z dwojga zostawiłaby je tam,
+  gdzie o stan repozytorium pyta się najczęściej. `parameters` bajt w bajt, diff to dokładnie
+  jedna linia. `docs/how-to/add-a-tool.md` zabraniał dotąd zmiany istniejącego wpisu BEZ
+  wyjątku — dopisany jest warunek, pod którym poprawka NIEPRAWDZIWEGO opisu jest dopuszczalna,
+  bo inaczej zamrożenie utrwala usterkę zamiast kontraktu. Cztery warunki, w tym sortowanie
+  kluczy przy regeneracji: bez niego diff ma kilkanaście linii przetasowania i recenzent nie
+  widzi, co się naprawdę zmieniło (sprawdzone na własnej skórze przy tej poprawce).
 
 ## [1.14.0] — 2026-09-03
 

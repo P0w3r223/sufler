@@ -243,3 +243,8 @@ def test_source_description_says_it_is_the_recording_door():
 
     assert "DRZWI" in spec.description
     assert "recenzje" not in spec.description
+    # ADR 0071 decyzja 10: to samo fałszywe zdanie stało na OBU powierzchniach. „Pytaj BEZ
+    # filtru" odsyłało po stan GitHuba do widoku, który stanu nie zna — zdjęcie filtru daje
+    # pełną historię mostu, nie stan systemu zewnętrznego.
+    assert "BEZ tego filtru" not in spec.description
+    assert "HISTORIA" in spec.description
