@@ -1,6 +1,6 @@
 [project]
 name = "powiadomienia-teams"
-version = "0.2.6"
+version = "0.2.19"
 description = "Cotygodniowe przypomnienia o uzupełnianiu zmian w Microsoft Shifts (Teams)."
 requires-python = ">=3.10"
 dependencies = [
@@ -16,7 +16,8 @@ powiadomienia-teams = "powiadomienia_teams.app:main"
 [project.optional-dependencies]
 # Etap 4 — interpretacja odpowiedzi naturalnym językiem
 agent = [
-    "anthropic>=0.40",
+    # Przypięte dokładnie do wersji z obrazu 0.2.19 — patrz METADATA w /app/.venv.
+    "anthropic==0.120.2",
 ]
 
 [build-system]

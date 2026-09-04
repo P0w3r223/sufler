@@ -6,56 +6,76 @@ prywatną wiadomość 1:1 z gotowcem „jak w zeszłym tygodniu"; po odpowiedzi 
 bot — po jawnym „tak" — wpisuje zmiany do Shifts za pracownika. Pracownik może też **odmówić**
 („nie chcę zmian w tym tygodniu", „pomiń mnie") — bot nic nie zapisuje i kończy przypominanie.
 Potem **nasłuchuje na odpowiedź** z adaptacyjnym odstępem (gęsto tuż po nudge'u, wolniej w ciszy),
-a po oknie `reply_window_hours` bez reakcji uprzejmie zamyka temat. Pełny zamysł: **[PLAN.md](PLAN.md)**.
+a po upływie **terminu kalendarzowego** bez reakcji uprzejmie zamyka temat.
+Pełny zamysł: **[PLAN.md](PLAN.md)**.
 
 > Samodzielny pod-projekt (własny `pyproject.toml`, środowisko `uv`). Reużywa wzorców
 > uwierzytelniania z drzwi `teams_graph` głównego repo WorkMate.
+
+> **Wersja i pochodzenie źródeł.** Ten katalog odpowiada obrazowi **0.2.19** — temu, który
+> działa u klienta. Źródła zostały **odzyskane z obrazu** 2026-09-04, bo build 0.2.19 powstał
+> z drzewa roboczego, które nigdy nie trafiło do gita. Dwie konsekwencje, o których trzeba
+> wiedzieć przed pracą tutaj:
 >
-> **Status kopii.** Ten katalog jest kopią referencyjną — pod-projekt jest wdrażany i utrzymywany
-> osobno (Docker + systemd na serwerze docelowym). Źródłem prawdy o wersji produkcyjnej jest to
-> środowisko, nie ten katalog; treść tutaj może od niego odbiegać.
+> - **Testów tego kodu nie ma.** Bramka jakości obrazu zaliczyła 792 testy, ale zestaw testowy nie
+>   został zachowany. Katalog `tests/` pochodzi od starszej, rozwidlonej linii kodu: wobec
+>   obecnych źródeł 44 testy nie przechodzą, a 6 modułów nie importuje się w ogóle.
+>   `pytest` NIE jest tu dziś bramką jakości — patrz „Uruchamianie zadań deweloperskich".
+> - **Numeracja wersji śledzi tagi obrazu Docker**, nie `pyproject.toml`. Gdy jedno rozjedzie się
+>   z drugim, obowiązuje tag obrazu.
 
-## Stan prac
+## Obieg
 
-- **Rdzeń gotowy:** konfiguracja (`config.py`), model domenowy (`domain/models.py`), czysta
-  logika (`reminders/`, `scheduler/`), warstwa Graph (`graph/`), interpretacja odpowiedzi przez
-  Claude (`agent/interpreter.py`), stan i idempotencja (`state.py`), pełny obieg w `app.py`.
-- **Nasłuch (ADR 0002):** adaptacyjny backoff (`scheduler/backoff.py`), wygasanie okna odpowiedzi
-  i sprzątanie stanu (`reminders/lifecycle.py`), odporny na długie działanie provider tokenu
-  (silent-only, `--login` tylko ze startu). Wielozespołowość zaprojektowana (ADR 0001), odłożona.
+- **Przebieg tygodniowy** (`RUN_WEEKDAY`/`RUN_HOUR`): wykrycie braków, prośba 1:1, zapis stanu.
+- **Nasłuch** z adaptacyjnym backoffem (`scheduler/backoff.py`); obsłużona odpowiedź natychmiast
+  wraca do odstępu bazowego.
 - **Wygaszanie po dowodzie (ADR 0003):** temat zamyka się dopiero po UDANYM odczycie czatu, który
-  nic nie przyniósł — przestój usługi ani awaria Graph nie wypalają już cudzego okna odpowiedzi
-  i nie kończą się nieprawdziwym „nie dostałem odpowiedzi". Potwierdzenie w trakcie tygodnia
-  docelowego zapisuje tę część tygodnia, która jeszcze przed nami; dni zakończone są odsiewane,
-  żeby nie wpisywać do grafiku przeszłości.
-- **Self-fill, pamięć rozmowy, dni urlopowe (ADR 0004, 0.2.6):** wykrywanie, że pracownik sam
-  uzupełnił Shifts (bot dziękuje zamiast dalej nagabywać); interpreter Claude pamięta do 10
-  ostatnich wiadomości z ostatniej godziny (odpowiedzi wieloturowe); częściowy urlop w tygodniu
-  nie wycisza już całej prośby — pomija tylko dni już objęte urlopem.
+  nic nie przyniósł — przestój usługi ani awaria Graph nie wypalają cudzego okna odpowiedzi.
+  Potwierdzenie w trakcie tygodnia docelowego zapisuje tę część tygodnia, która jeszcze przed
+  nami; dni zakończone są odsiewane, żeby nie wpisywać do grafiku przeszłości.
+- **Self-fill, pamięć rozmowy, dni urlopowe (ADR 0004):** wykrywanie, że pracownik sam uzupełnił
+  Shifts (bot dziękuje zamiast dalej nagabywać); interpreter pamięta ostatnie wiadomości
+  (odpowiedzi wieloturowe); częściowy urlop pomija tylko dni już objęte urlopem.
+- **Podsumowanie dla administratorów** po KAŻDYM przebiegu — dead man's switch: w instalacji bez
+  monitoringu brak tej wiadomości w piątek wieczorem jest jedynym sygnałem awarii. Dlatego
+  `ADMIN_USER_IDS` to lista i powinny być w niej **co najmniej dwie** osoby.
+- **Heartbeat sesji** (`HEARTBEAT_INTERVAL_H`) poza przebiegiem tygodniowym: bez niego utrata
+  sesji w poniedziałek wyszłaby dopiero w piątek o 16:00.
 
 ## Uruchomienie na żywo
 
 ```bash
-uv run --directory Powiadomienia_teams powiadomienia-teams --login   # jednorazowe logowanie (device-code)
-uv run --directory Powiadomienia_teams powiadomienia-teams           # usługa: pętla tygodniowa + nasłuch
-uv run --directory Powiadomienia_teams powiadomienia-teams --once    # jeden przebieg powiadomień i wyjście
+uv run --directory Powiadomienia_teams powiadomienia-teams --login    # jednorazowe logowanie (device-code)
+uv run --directory Powiadomienia_teams powiadomienia-teams            # usługa: pętla tygodniowa + nasłuch
+uv run --directory Powiadomienia_teams powiadomienia-teams --once     # jeden przebieg powiadomień i wyjście
+uv run --directory Powiadomienia_teams powiadomienia-teams --poll-once # jedno sprawdzenie odpowiedzi i wyjście
+uv run --directory Powiadomienia_teams powiadomienia-teams --stan     # raport stanu (bez sieci, bez blokady)
 ```
+
+Dwa polecenia diagnostyczne warte osobnej uwagi:
+
+- `--proba-nasluchu` — jeden obieg nasłuchu na ŻYWYM tenancie i modelu, z odciętymi metodami
+  zapisu i wysyłki (nie flagą, tylko brakiem tych metod w kliencie). Pisze do osobnego pliku
+  stanu `<state>-proba.json`.
+  **Uwaga:** bierze blokadę na PRODUKCYJNYM pliku stanu, więc przy działającej usłudze kończy się
+  „Inna instancja już działa". Żeby użyć jej bez przestoju, uruchom ją na kopii wolumenu stanu
+  w osobnym kontenerze. Próba przy braku otwartych rozmów kończy się bez ani jednego zapytania do
+  Graph — mówi to wtedy wprost i **nie jest dowodem sprawności ścieżki zapisu**.
+- `--ignoruj-cisze` — pozwala `--once` pisać w godzinach ciszy (nadrabianie po awarii).
 
 Realne działanie wymaga `POWIADOMIENIA_DRY_RUN=false`. Bez ważnego tokenu usługa nie wystartuje
 (w terminalu poprosi o logowanie; bez terminala wychodzi z instrukcją `--login` — nie zawiesza się).
 
 > **Uruchamiaj tylko JEDNĄ instancję.** Blokada pliku (`<state>.lock`) uniemożliwia równoczesny
-> start drugiego procesu (np. `--poll-once` obok działającej usługi) — chroni przed podwójnym
-> zapisem do Shifts. Nieudany przebieg jest ponawiany (backoff), a start w oknie łaski po minionym
-> terminie nadrabia zaległe powiadomienia (`POWIADOMIENIA_CATCHUP_GRACE_HOURS`).
+> start drugiego procesu — chroni przed podwójnym zapisem do Shifts. Nieudany przebieg jest
+> ponawiany (backoff), a start w oknie łaski po minionym terminie nadrabia zaległe powiadomienia
+> (`POWIADOMIENIA_CATCHUP_GRACE_HOURS`). Godziny ciszy okna łaski NIE zjadają — przesuwają
+> nadrabianie, a nie unieważniają je.
 
 ## Wdrożenie na serwer
 
 Obowiązująca ścieżka: **[deploy/README-docker.md](deploy/README-docker.md)** — obraz Docker
 budowany na serwerze z paczki źródłowej (`scripts/pack.sh` → scp → `scripts/build-image.sh`).
-Testy biegną w trakcie budowania, więc obraz nie powstanie z niesprawnego kodu.
-
-Wariant zapasowy bez Dockera (systemd): [deploy/README-serwer.md](deploy/README-serwer.md).
 
 Konto »głosu« bota i lista odbiorców to **konfiguracja, nie kod**: konto = to, którym wykonasz
 `--login`; odbiorcy = `POWIADOMIENIA_ONLY_USER_IDS` (zmiana + restart, bez przebudowy).
@@ -63,46 +83,47 @@ Identyfikatory AAD wypisze `scripts/lista_czlonkow.py`.
 
 ## Uruchamianie zadań deweloperskich
 
-Z katalogu głównego repo (uv utworzy środowisko podprojektu przy pierwszym uruchomieniu):
-
 ```bash
-uv run --directory Powiadomienia_teams pytest -q       # testy
 uv run --directory Powiadomienia_teams ruff check .    # lint
 uv run --directory Powiadomienia_teams mypy            # typy
+uv run --directory Powiadomienia_teams pytest -q       # PATRZ NIŻEJ — dziś nie przechodzi
 ```
+
+`mypy` przechodzi czysto (48 plików). `ruff check src` zgłasza 85 uwag — to NIE regres: sufit
+funkcji (`C901`, `PLR0915`) i limit linii zaostrzono na linii repo 2026-09-02, czyli już po buildzie
+0.2.19. Kodu produkcyjnego pod nie nie naginano, żeby import pozostał wierny obrazowi; to dług do
+spłacenia razem z odtworzeniem testów, nie przed nim.
+
+`pytest` nie jest dziś wiarygodną bramką: `tests/` pochodzi od starszej linii kodu niż źródła
+w `src/`. Zanim zestaw testowy zostanie odtworzony pod obecny kod, jedynym sprawdzeniem na żywym
+tenancie jest `--proba-nasluchu` (z zastrzeżeniami wyżej) i `scripts/lista_czlonkow.py`
+(czysty odczyt, weryfikuje sesję Graph).
 
 ## Konfiguracja
 
-Skopiuj `.env.example` → `.env` i uzupełnij. Zmienne mają prefiks `POWIADOMIENIA_`. Kluczowe:
+Pełna lista kluczy z wartościami domyślnymi i uzasadnieniem: **[deploy/env.example](deploy/env.example)**
+— jedyne miejsce, w którym ta lista jest utrzymywana i weryfikowana wobec `config.py`.
+Do uruchomienia lokalnego: `.env.example` → `.env` (tylko różnice wobec serwera).
 
-- `CLIENT_ID`, `TENANT_ID`, `TEAM_ID` — wymagane (tożsamość aplikacji + zespół).
-- **`ONLY_USER_IDS`** — wybór osób: lista AAD user-id po przecinku (puste = wszyscy bez zmian).
-- `RUN_WEEKDAY` (domyślnie `4` = piątek), `RUN_HOUR` (16), `TIMEZONE` (`Europe/Warsaw`).
-- `REPLY_WINDOW_HOURS` (48) — po tylu h ciszy zamknij okno (liczone od ostatniej aktywności,
-  a zamknięcie wymaga UDANEGO odczytu czatu — ADR 0003); `SEND_EXPIRY_MESSAGE` (true) — czy
-  wysłać wtedy uprzejme domknięcie.
-- `POLL_INTERVAL_S` (10, bazowy odstęp nasłuchu) i `POLL_MAX_INTERVAL_S` (3600, górny limit
-  backoffu — nieobecny pracownik = sprawdzanie czatu raz na godzinę; obsłużona odpowiedź
-  natychmiast wraca do odstępu bazowego).
-- `CATCHUP_GRACE_HOURS` (6) — ile h po minionym terminie wolno nadrobić zaległy przebieg (0 = off).
-- `SEND_WINDOW_START_HOUR` (8), `SEND_WINDOW_END_HOUR` (18), `SEND_WINDOW_WEEKDAYS` (`0,1,2,3,4`)
-  — okno wysyłki wiadomości INICJOWANYCH przez bota (prośba tygodniowa, domknięcie, podziękowanie),
-  w czasie lokalnym zespołu, przedział `[start, end)`. Poza oknem wiadomość CZEKA na najbliższe
-  otwarcie; status terminalny utrwalany jest od razu, a zaległy przebieg tygodniowy przeżywa
-  wygaśnięcie okna łaski (`CATCHUP_GRACE_HOURS`) i rusza przy otwarciu okna. Nieudana wysyłka już
-  odłożonego domknięcia nie jest ponawiana — to uprzejmość, nie zapis, a ponawianie groziłoby serią.
-  **Czekanie ma własny sufit**: `3 × REPLY_WINDOW_HOURS` od ostatniej aktywności wpisu — po nim
-  odłożone domknięcie jest porzucane (log ostrzegawczy; status terminalny i tak już utrwalony), bo
-  spóźniona o kilka dni uprzejmość jest dla pracownika zagadką, a wpis z niewysłaną wiadomością
-  zostaje poza zasięgiem sprzątania. Przy domyślnych 48 h sufit to 144 h i weekend go nie dosięga;
-  przy `REPLY_WINDOW_HOURS=8` sufit to 24 h, a odłożenie z piątku 19:00 na poniedziałek 8:00 to
-  ~62 h — wtedy domknięcie przepada. Skracając okno odpowiedzi, licz się z tym.
-  Odpowiedź na wiadomość pracownika idzie zawsze — rozmowę zaczął on.
-  Termin przebiegu (`RUN_WEEKDAY`/`RUN_HOUR`) MUSI mieścić się w oknie — inaczej start pada błędem
-  konfiguracji, zamiast po cichu przestać wysyłać cokolwiek.
-- `DRY_RUN` (domyślnie `true`) — nic nie jest wysyłane ani zapisywane, dopóki nie ustawisz `false`.
-  Wartość musi być rozpoznana (`1/true/yes/on/tak` albo `0/false/no/off/nie`) — literówka zatrzymuje
-  start błędem konfiguracji, zamiast po cichu włączyć tryb na żywo.
+Zmienne mają prefiks `POWIADOMIENIA_`. Rzeczy, o które najczęściej się potyka:
+
+- **`DRY_RUN` domyślnie `true`.** Nic nie jest wysyłane ani zapisywane, dopóki nie ustawisz `false`.
+  Wartość musi być rozpoznana — literówka (`fasle`, `prawda`, `"true"` w cudzysłowach) **zatrzymuje
+  start** błędem konfiguracji, zamiast po cichu włączyć tryb na żywo.
+- **`ONLY_USER_IDS` puste = WSZYSCY.** Dlatego zamiar zawężenia deklaruje się osobno przez
+  `PILOTAZ=true`; włączony `PILOTAZ` przy pustej liście zatrzymuje start. Dwie zmienne muszą się
+  zgadzać, bo literówka w nazwie listy zamienia pilotaż na wysyłkę do całego zespołu — bezgłośnie.
+- **Termin odpowiedzi jest KALENDARZOWY**, nie „liczbą godzin ciszy": północ poniedziałku tygodnia
+  docelowego + `REPLY_DEADLINE_OFFSET_H` (domyślnie 5 → poniedziałek 05:00), nie wcześniej niż
+  `REPLY_MIN_HOURS` (24) od ostatniej prośby bota.
+- **Godziny ciszy** `CISZA_OD_H` (20) / `CISZA_DO_H` (7) — kiedy bot nie pisze do pracowników.
+  `RUN_HOUR` wpadający w ciszę jest konfiguracją legalną, ale usługa ostrzega o tym przy starcie.
+- **`ALERT_WEBHOOK_URL` bywa sekretem** (token w URL-u) i **trafia do logów kontenera** — klient
+  HTTP loguje URL żądania na poziomie INFO. Traktuj logi jak miejsce przechowywania tego sekretu.
+  Przy `DRY_RUN=false` brak webhooka i brak jawnego `ALERTY_WYLACZONE=true` zatrzymuje start.
+- **`LOGUJ_NAZWISKA` domyślnie `false`** — logi i alerty nazywają pracownika identyfikatorem, bo
+  alert zostaje w kanale Teams bezterminowo i jest przeszukiwalny. Włączenie to świadome
+  poszerzenie tego, co opuszcza instalację.
 
 ## Uprawnienia (Microsoft Graph, delegowane, admin consent)
 

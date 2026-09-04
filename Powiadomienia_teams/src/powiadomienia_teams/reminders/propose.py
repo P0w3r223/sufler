@@ -1,12 +1,43 @@
 """Budowa propozycji »jak w zeszłym tygodniu« (czysta logika)."""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.domain.models import Shift, WeekSchedule
+
+
+def baza_interpretacji(
+    proposal: list[dict[str, Any]],
+    resolved: list[dict[str, Any]],
+    resolved_time_off: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Grafik, na który nanosi się KOLEJNA poprawka pracownika: ustalony, a gdy go nie ma — gotowiec.
+
+    Semantyka w jednym zdaniu: to grafik, który zapiszemy, jeśli pracownik nie poprosi o zmianę.
+    Na początku rozmowy jest nim gotowiec »jak w zeszłym tygodniu«, po pierwszej poprawce — to,
+    co już uzgodniono.
+
+    Bez tego rozróżnienia każda kolejna poprawka była nanoszona na ORYGINAŁ, a pierwsza przeżywała
+    wyłącznie dzięki pamięci rozmowy, która ma twarde okno godziny liczone od pierwszej wiadomości
+    (``replies.MEMORY_WINDOW``). Po jego upływie pracownik poprawiający środę, a potem czwartek,
+    dostawał do potwierdzenia tydzień bez środy — i nie miał powodu podejrzewać, że coś zniknęło.
+    Rozmowa dłuższa niż godzina zamieniała się w pętlę.
+
+    Czysta i celowo trywialna: wartość tej funkcji leży w NAZWIE i w tym, że jest jedno miejsce,
+    które o tym rozstrzyga, a nie w obliczeniu.
+
+    ``resolved_time_off`` NIE wchodzi do wyniku — bazą są dni PRACUJĄCE. Rozstrzyga natomiast
+    o fallbacku, bo sama pusta lista zmian nie odróżnia „nic nie uzgodniono" od „uzgodniono, że
+    pracownik ma wolne przez cały tydzień". Bez tego rozróżnienia odpowiedź „biorę urlop na cały
+    tydzień", a potem „a w piątek jednak przyjdę" wracała do grafiku z zeszłego tygodnia i cicho
+    przywracała cztery dni pracy, których pracownik już nie chciał.
+    """
+    if resolved or resolved_time_off:
+        return resolved
+    return proposal
 
 
 def _plus_one_week_local(dt: datetime, tz: ZoneInfo) -> datetime:
@@ -42,7 +73,8 @@ def proposal_from_last_week(
         (
             s
             for s in last_week_shifts
-            if s.user_id == member_id and s.start.astimezone(tz).weekday() not in skip_weekdays
+            if s.user_id == member_id
+            and s.start.astimezone(tz).weekday() not in skip_weekdays
         ),
         key=lambda s: s.start,
     )

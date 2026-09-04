@@ -151,6 +151,33 @@ docker run --rm -v powiadomienia-teams-stan:/s alpine \
 
 Sprawdź: wiadomości dotarły w Teams, a stan zawiera wpisy `awaiting_reply` z niepustym watermarkiem.
 
+### 5c-bis. Próba nasłuchu na żywym tenancie (bez skutków)
+
+`--proba-nasluchu` przechodzi jeden obieg nasłuchu na PRAWDZIWYM Graphie i modelu, mając odcięte
+metody zapisu i wysyłki — obietnica „nic nie wyjdzie" stoi na braku tych metod w kliencie, nie na
+fladze. Pisze do osobnego pliku stanu `<state>-proba.json`.
+
+Dwa zastrzeżenia, bez których ten krok wprowadza w błąd:
+
+1. **Bierze blokadę na PRODUKCYJNYM pliku stanu**, mimo że do niego nie pisze. Przy działającej
+   usłudze kończy się `Inna instancja już działa`. Żeby uruchomić ją bez przestoju, zrób to na
+   kopii wolumenu:
+
+   ```bash
+   docker volume create proba-stan-tmp
+   docker run --rm -v powiadomienia-teams-stan:/src:ro -v proba-stan-tmp:/dst alpine \
+     sh -c 'cp -a /src/. /dst/ && rm -f /dst/powiadomienia_state.json.lock'
+   docker run --rm --env-file /opt/teams-shifts-reminder/env \
+     -v proba-stan-tmp:/var/lib/powiadomienia-teams \
+     powiadomienia-teams:0.2.19 --proba-nasluchu
+   docker volume rm proba-stan-tmp
+   ```
+
+2. **Brak otwartych rozmów = próba niczego nie dowodzi.** Kończy się wtedy bez ani jednego
+   zapytania do Graph i mówi to wprost. Sesję Graph sprawdza wtedy osobno czysty odczyt:
+   `docker run --rm --env-file /opt/teams-shifts-reminder/env -v powiadomienia-teams-stan:/var/lib/powiadomienia-teams \
+   --entrypoint python powiadomienia-teams:0.2.19 /app/scripts/lista_czlonkow.py`
+
 ### 5d. Test pełnego obiegu
 
 Odpisz z konta testowego, potem:

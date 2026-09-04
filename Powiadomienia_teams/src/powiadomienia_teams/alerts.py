@@ -11,10 +11,11 @@ więc wiązanie się z jednym formatem szybko by się zdezaktualizowało. Ładun
 
 Wysyłka jest ZAWSZE best-effort: alert, który wywraca usługę, jest gorszy niż brak alertu.
 """
-
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -22,6 +23,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_S = 10.0
+# Ponowienia dotyczą wyłącznie alertów, po których ktoś ma coś zrobić (BLAD/KRYTYCZNY).
+# Trzy próby z rosnącym odstępem odsiewają typową awarię bramki webhooka (502/504,
+# przeciążenie Power Automate), nie zamieniając kanału alertowego w generator ruchu.
+_PROBY_WAZNEGO = 3
+_ODSTEP_PONOWIENIA_S = 2.0
 
 # Wagi alertów — sterują tylko prefiksem w treści, żeby odbiorca widział rangę bez czytania całości.
 INFO = "info"
@@ -38,15 +44,39 @@ def send_alert(
     *,
     waga: str = BLAD,
     client: httpx.Client | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
     """Wyślij alert na webhook. Zwraca, czy się udało — NIGDY nie rzuca.
 
     Brak ``webhook_url`` oznacza świadomą rezygnację z alertowania (konfiguracja opcjonalna),
     więc nie jest błędem i nie generuje ruchu sieciowego.
+
+    Alerty wagi ``BLAD`` i ``KRYTYCZNY`` są PONAWIANE. Powód nie jest kosmetyczny: tym kanałem
+    idą zdania, po których ktoś ma pójść sprawdzić grafik klienta („zapis przerwany w połowie",
+    „zapis cudzą tożsamością", „nieudany zapis po potwierdzeniu"), a nadawca nie sprawdzał nawet
+    wyniku wysyłki. Jedno 502 z bramki webhooka kasowało cały ślad zdarzenia — tor zapasowy
+    (licznik w cotygodniowym podsumowaniu) też bywał pusty, bo ``prune_terminal`` zdążył wpis
+    usunąć. ``INFO`` nie jest ponawiane: jego utrata nic nie kosztuje, a pobudki bywają częste.
     """
     if not webhook_url:
         return False
 
+    proby = _PROBY_WAZNEGO if waga in (BLAD, KRYTYCZNY) else 1
+    for numer in range(1, proby + 1):
+        if _jedna_proba(webhook_url, tytul, tresc, waga, client):
+            return True
+        if numer < proby:
+            sleep(_ODSTEP_PONOWIENIA_S * numer)
+    if proby > 1:
+        # Ostatnia deska: log. Jeśli i on nie zostanie przeczytany, zdarzenie przepada — dlatego
+        # zgłoszenia zastanych zapisów `APPLYING` powtarzają się przy każdym przebiegu.
+        logger.error("Nie udało się dostarczyć alertu %r po %d próbach", tytul, proby)
+    return False
+
+
+def _jedna_proba(
+    webhook_url: str, tytul: str, tresc: str, waga: str, client: httpx.Client | None
+) -> bool:
     ladunek: dict[str, Any] = {
         "text": f"{_PREFIKS.get(waga, '')} **{tytul}**\n\n{tresc}".strip(),
         "tytul": tytul,

@@ -1,5 +1,10 @@
 # Do wykonania, zanim obraz zadziała na serwerze
 
+> **DOKUMENT HISTORYCZNY (2026-07-22).** Wersje i liczby testów poniżej dotyczą 0.2.1.
+> Na produkcji działa dziś **0.2.19**, a podane niżej „259 testów w trakcie budowania" nie opisuje
+> obecnego stanu — zestawu testowego 0.2.19 nie zachowano. Aktualna konfiguracja: `deploy/env.example`.
+> Zostawione jako zapis zadań po stronie tenanta, nie jako instrukcja wdrożenia.
+
 Stan na 2026-07-22. Aktualna wersja to **0.2.1** — obraz `0.2.0` z 21.07 jest NIEAKTUALNY i nie
 należy go uruchamiać (ADR 0003: wygaszanie bez dowodu; szczegóły w README-docker.md, „Znane
 ograniczenia"). Obraz 0.2.1 buduje się na serwerze z nowej paczki źródłowej; 259 testów biegnie

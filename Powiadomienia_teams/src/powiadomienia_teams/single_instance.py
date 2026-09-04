@@ -2,10 +2,14 @@
 
 Idempotencja zapisu do Shifts opiera się na sekwencji „commit stanu PRZED zapisem" W OBRĘBIE
 jednego procesu — dwa procesy czytające ten sam pending obeszłyby ją i podwójnie zapisały do Shifts.
-Blokada jest advisory na dedykowanym pliku ``<state>.lock``; system zwalnia ją przy zakończeniu
-procesu (także po awarii), więc nie zostają zawieszone blokady po martwym procesie.
-"""
+Blokada siedzi na dedykowanym pliku ``<state>.lock``; system zwalnia ją przy zakończeniu procesu
+(także po awarii), więc nie zostają zawieszone blokady po martwym procesie.
 
+Siła blokady RÓŻNI SIĘ między platformami i to widać w testach: POSIX-owe ``flock`` jest doradcze
+(chroni przed instancjami tego programu, nie przed dowolnym zapisem z zewnątrz), a windowsowe
+``msvcrt.locking`` jest obowiązkowe — właściciel nie wpuszcza do zablokowanego bajtu nawet
+czytającego z tego samego procesu. Wspólny mianownik, na którym wolno polegać, to ten pierwszy.
+"""
 from __future__ import annotations
 
 import logging

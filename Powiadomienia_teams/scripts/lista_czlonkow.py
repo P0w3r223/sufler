@@ -1,7 +1,9 @@
 """Wypisz członków zespołu z ich AAD user-id — do ustawienia ONLY_USER_IDS i wyboru konta bota.
 
-Potrzebny, bo dry-run loguje tylko `display_name` i `email`, a `POWIADOMIENIA_ONLY_USER_IDS`
-wymaga identyfikatorów AAD. Z wyniku wybierasz:
+Potrzebny podwójnie. Po pierwsze `POWIADOMIENIA_ONLY_USER_IDS` wymaga identyfikatorów AAD.
+Po drugie od A10 **logi i alerty nie wypisują nazwisk** — to jest miejsce, w którym operator
+rozwiązuje identyfikator na człowieka: na żądanie, na własnym terminalu, bez zostawiania śladu
+w kanale z retencją. Z wyniku wybierasz:
   - konto kierownicze, którym bot będzie pisał (musi mieć rolę `owner` — zapis do Shifts
     jest menedżerski); to konto logujesz przez `powiadomienia-teams --login`,
   - odbiorców przypomnień → `POWIADOMIENIA_ONLY_USER_IDS` (lista po przecinku).
@@ -15,7 +17,6 @@ Na serwerze:
     sudo -u powiadomienia /opt/teams-shifts-reminder/.venv/bin/python \
         /opt/teams-shifts-reminder/scripts/lista_czlonkow.py
 """
-
 from __future__ import annotations
 
 import sys
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import httpx
 
-from powiadomienia_teams.config import Settings
+from powiadomienia_teams.config import ConfigError, Settings
 from powiadomienia_teams.graph.auth import AuthExpiredError, build_token_provider
 from powiadomienia_teams.graph.client import GraphClient
 
@@ -51,8 +52,16 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     _load_env()
-    settings = Settings.from_env()
-    settings.validate()
+    # Węższa walidacja: ten skrypt wyłącznie CZYTA roster, więc nie ma powodu wymagać od niego
+    # kompletu warunków wysyłki. Bramka pilotażu żąda identyfikatorów, które wypisuje właśnie ten
+    # skrypt — pełne `validate()` zamykałoby operatora w kółku. Błąd konfiguracji to jedno zdanie,
+    # nie ślad stosu: `from_env()` też potrafi go zgłosić (literówka w wartości logicznej).
+    try:
+        settings = Settings.from_env()
+        settings.validate_dostep()
+    except ConfigError as blad:
+        print(f"Błąd konfiguracji: {blad}", file=sys.stderr)
+        return 2
 
     provider = build_token_provider(settings)
     try:

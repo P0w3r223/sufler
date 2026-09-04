@@ -1,0 +1,210 @@
+"""Domykanie tematów: co bot mówi, gdy przestaje pytać — i w jakiej kolejności to utrwala.
+
+Temat kończy się na cztery różne sposoby i KAŻDY musi powiedzieć prawdę. Kto nie odpisał, słyszy
+„nie dostałem odpowiedzi"; kto odpisał, ale nie potwierdził — „nie doczekałem się potwierdzenia";
+kto uzupełnił grafik sam — podziękowanie. Wspólny komunikat byłby dla pracownika bezużyteczny,
+a dla części z nich po prostu nieprawdziwy.
+
+Wzorzec utrwalania jest jeden dla wszystkich ścieżek: status terminalny NAJPIERW, wysyłka POTEM.
+To jest cena semantyki „co najwyżej raz" — proces ubity między jednym a drugim zostawia temat
+zamknięty bez wiadomości, a nie wiadomość bez zamknięcia (czyli nie zapętla się na kolejnym
+przebiegu). Nieudana wysyłka jest wyłącznie logowana: status jest już terminalny, więc ponowienia
+i tak nie będzie. Wyjątkiem jest utrata sesji — dotyczy całej usługi, nie tej jednej wiadomości,
+i propaguje dalej.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from powiadomienia_teams import state as st
+from powiadomienia_teams.config import OknoCiszy, Settings
+from powiadomienia_teams.graph.client import GraphClient
+from powiadomienia_teams.messages import WRITE_FAILED_TEXT, build_self_filled_text, to_html
+from powiadomienia_teams.runtime import etykiety
+from powiadomienia_teams.runtime.cisza import najblizsza_dozwolona, wolno_pisac
+from powiadomienia_teams.runtime.wysylka import NIE_POLYKAJ, do_pracownika
+
+logger = logging.getLogger(__name__)
+
+
+def do_domkniecia(
+    wpisy: list[st.PendingReminder],
+    teraz: datetime,
+    okno_domkniec: OknoCiszy,
+    czego: str,
+) -> list[st.PendingReminder]:
+    """Które tematy wolno TERAZ domknąć — w godzinach ciszy żaden.
+
+    **To jest szew, nie warunek do zapamiętania.** Domknięcie idzie do człowieka, który w tej
+    rozmowie NIC nie napisał, więc obowiązuje go cisza nawet wtedy, gdy wołający ją świadomie
+    pominął: `--poll-once` wyłącza ciszę po to, żeby ODPOWIEDZIEĆ tym, którzy właśnie napisali.
+    Przy domyślnym terminie (poniedziałek 05:00, wewnątrz ciszy) i sekwencji wdrożenia stawiającej
+    to polecenie wśród kroków weryfikacyjnych operator zawiadamiał o wygaśnięciu milczących
+    pracowników o piątej rano.
+
+    Reguła siedzi TUTAJ, a nie u wołającego, bo stała u niego jako dwa ręcznie dopisane warunki —
+    a pozycja **D5** planu (wznowienie rozmowy) dokłada kolejną ścieżkę piszącą do milczących.
+    Nowa funkcja domykająca dziedziczy więc bramkę zamiast jej potrzebować, a strażnik statyczny
+    w `test_cisza.py` pilnuje, że każda z nich bierze `okno_domkniec` w sygnaturze.
+
+    Odłożenie NICZEGO nie kosztuje: termin i tak minął, wpis czeka nietknięty, a pętla usługi
+    orzeka wygaśnięcie po ciszy. Log dopiero po policzeniu wpisów — zdanie „odkładam wygaszenia"
+    przy pustym stanie mówiłoby o pracy, której nie było.
+    """
+    if wolno_pisac(teraz, okno_domkniec) or not wpisy:
+        return wpisy
+    logger.info(
+        "Godziny ciszy — %d %s odkładam do %s (odpowiadam tylko tym, którzy napisali)",
+        len(wpisy), czego, najblizsza_dozwolona(teraz, okno_domkniec).isoformat(),
+    )
+    return []
+
+
+def zamknij_bez_zapisu(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    closed: list[st.PendingReminder],
+    text: str,
+    teraz: datetime,
+    powod: str,
+    *,
+    okno_domkniec: OknoCiszy,
+) -> None:
+    """Zamknij tematy terminalnie: status EXPIRED utrwalony PRZED wysyłką (»co najwyżej raz«)."""
+    closed = do_domkniecia(closed, teraz, okno_domkniec, "wygaszeń")
+    if not closed:
+        return
+    for pending in closed:
+        pending.status = st.EXPIRED
+        # Temat domknięty — bramka szybkiej ścieżki zapisu przestaje obowiązywać (N38).
+        # Dziś wpis terminalny i tak nie wchodzi do `open_items`, ale pozycja **D5** planu
+        # (wznowienie rozmowy) tę własność zdejmie — i wtedy zostawiona otwarta flaga
+        # znaczyłaby zapis po samym »tak«, którego nikt o nic nie pytał.
+        pending.awaiting_yes = False
+    st.save_state(settings.state_path, state)
+    if settings.send_expiry_message:
+        _powiadom_o_zamknieciu(settings, client, closed, text, teraz, powod)
+
+
+def _powiadom_o_zamknieciu(
+    settings: Settings,
+    client: GraphClient,
+    closed: list[st.PendingReminder],
+    text: str,
+    teraz: datetime,
+    powod: str,
+) -> None:
+    """Wyślij uprzejme domknięcie osobom z zamkniętym tematem (stan EXPIRED już utrwalony).
+
+    Izolacja per-osoba; nieudana wysyłka jest tylko logowana — status jest już terminalny, więc
+    ani nie ponowimy zapisu, ani nie zdublujemy wiadomości przy kolejnym przebiegu. Treść jest
+    parametrem, bo powody domknięcia są różne i KAŻDY komunikat musi być prawdziwy: „nie dostałem
+    odpowiedzi" wolno napisać tylko temu, kto faktycznie nie odpisał.
+    """
+    for pending in closed:
+        try:
+            do_pracownika(settings, client, pending.chat_id, to_html(text), teraz=teraz)
+            logger.info("Zamknięto temat dla %s (%s)", etykiety.osoba(pending, settings), powod)
+        # Patrz `wysylka.NIE_POLYKAJ`. Tutaj utrata sesji kosztuje najwięcej: przebieg, w którym
+        # WSZYSTKIE tematy były domykane, kończyłby się po połknięciu cicho, a utrata tokenu
+        # wyszłaby dopiero z pulsu — do 24 h później. Status jest już utrwalony, więc wyjście
+        # w tym miejscu niczego nie psuje.
+        except NIE_POLYKAJ:
+            raise
+        except Exception:
+            logger.exception("Nie udało się wysłać domknięcia do %s", etykiety.osoba(pending, settings))
+
+
+def zamknij_samodzielnie_uzupelnione(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    closed: list[st.PendingReminder],
+    tz: ZoneInfo,
+    teraz: datetime,
+    *,
+    okno_domkniec: OknoCiszy,
+) -> None:
+    """Zamknij tematy osób, które SAME uzupełniły grafik: status SELF_FILLED utrwalony PRZED wysyłką.
+
+    Wzorzec „co najwyżej raz" jak w ``zamknij_bez_zapisu``: najpierw commit terminalnego statusu (jeden zapis dla
+    wszystkich), potem podziękowania. Podziękowanie leci BEZWARUNKOWO (nie zależy od
+    ``send_expiry_message``, inaczej niż wygaśnięcie) — reaguje na działanie pracownika, więc
+    milczenie byłoby gorsze niż uprzejme domknięcie (jak przy ``STALE_WEEK_TEXT``).
+
+    Podziękowanie też idzie do kogoś, kto NIC nie napisał na czacie — stąd ta sama bramka co przy
+    wygaszaniu (``do_domkniecia``).
+    """
+    closed = do_domkniecia(closed, teraz, okno_domkniec, "podziękowań za samouzupełnienie")
+    if not closed:
+        return
+    for pending in closed:
+        pending.status = st.SELF_FILLED
+        # Temat domknięty — bramka szybkiej ścieżki zapisu przestaje obowiązywać (N38).
+        # Dziś wpis terminalny i tak nie wchodzi do `open_items`, ale pozycja **D5** planu
+        # (wznowienie rozmowy) tę własność zdejmie — i wtedy zostawiona otwarta flaga
+        # znaczyłaby zapis po samym »tak«, którego nikt o nic nie pytał.
+        pending.awaiting_yes = False
+    st.save_state(settings.state_path, state)
+    for pending in closed:
+        podziekuj_za_samodzielne_uzupelnienie(settings, client, pending, tz, teraz)
+
+
+def podziekuj_za_samodzielne_uzupelnienie(
+    settings: Settings,
+    client: GraphClient,
+    pending: st.PendingReminder,
+    tz: ZoneInfo,
+    teraz: datetime,
+) -> None:
+    """Podziękuj za grafik, który uzupełnił się bez nas. Stan MUSI być już utrwalony.
+
+    Do tego samego domknięcia dochodzi się DWIEMA drogami i każda utrwala stan inaczej: milczący
+    pracownik zamykany hurtem (``zamknij_samodzielnie_uzupelnione`` → jeden ``save_state`` dla wszystkich) oraz
+    ten, który powiedział „tak" na komplet już obecny w grafiku (``_apply_confirmed_yes`` →
+    ``_commit`` z porcją wiadomości). Różni je WYŁĄCZNIE sposób zapisu, więc wspólna jest dokładnie
+    ta część: etykieta tygodnia, treść i izolacja nieudanej wysyłki.
+
+    Utrata sesji propaguje — dotyczy całej usługi, nie tej jednej wiadomości. Zwykła awaria wysyłki
+    jest tylko logowana: status jest już terminalny, więc ponowienia i tak nie będzie, a wyjątek
+    stąd zostałby wyżej zaraportowany jako „nie udało się obsłużyć odpowiedzi", która została
+    obsłużona (ta sama pułapka, którą zamyka ``_powiadom_o_nieudanym_zapisie``).
+    """
+    monday = datetime.fromisoformat(pending.week_start).replace(tzinfo=tz)
+    week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
+    try:
+        do_pracownika(
+            settings, client, pending.chat_id,
+            to_html(build_self_filled_text(week_label)), teraz=teraz,
+        )
+        logger.info(
+            "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)", etykiety.osoba(pending, settings)
+        )
+    # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
+    except NIE_POLYKAJ:
+        raise
+    except Exception:
+        logger.exception("Nie udało się wysłać podziękowania do %s", etykiety.osoba(pending, settings))
+
+
+def powiadom_o_nieudanym_zapisie(
+    settings: Settings, client: GraphClient, pending: st.PendingReminder, teraz: datetime
+) -> None:
+    """Powiedz pracownikowi, że zapis padł — we własnym ``try``, spójnie z resztą wysyłek.
+
+    Bez tego opakowania awaria TEJ wysyłki leciała do ``_process_pending``, gdzie ``_record_failure``
+    podbijał licznik prób na wpisie już terminalnym i logował mylące „nie udało się obsłużyć
+    odpowiedzi" dla odpowiedzi, która została obsłużona.
+    """
+    try:
+        do_pracownika(settings, client, pending.chat_id, to_html(WRITE_FAILED_TEXT), teraz=teraz)
+    # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
+    except NIE_POLYKAJ:
+        raise
+    except Exception:
+        logger.exception(
+            "Zapis dla %s padł i nie udało się o tym powiadomić pracownika", etykiety.osoba(pending, settings)
+        )
