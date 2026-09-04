@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from powiadomienia_teams import state as st_modul
+
 # 0.2.19 rozbiło monolit `app.py` na `runtime/{nudge,listener,service,operator}` + `cli`.
 # `app` został fasadą re-eksportu, więc prywatne nazwy bierzemy z modułów, w których teraz żyją.
 from powiadomienia_teams.agent.interpreter import OdpowiedzLlm
@@ -2349,17 +2351,6 @@ def _sciezka_bez_zapisu(tmp_path: Path) -> Path:
     return przeszkoda / "state.json"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19 (nie testu): obraz NIE MA sondy zapisywalności stanu przed przebiegiem — "
-        "`grep -rn 'writable\\|zapisywaln' src/` daje pusto. Przebieg najpierw PISZE do ludzi, "
-        "a dopiero potem próbuje utrwalić stan. Gdy plik stanu jest niezapisywalny, prośby "
-        "wychodzą i nie zostaje po nich ślad, więc następny przebieg wysyła je DRUGI RAZ — "
-        "a idempotencja opiera się WYŁĄCZNIE na tym pliku (komentarz w docker-compose.yml). "
-        "strict=True: naprawa zapali XPASS i wymusi zdjęcie znacznika."
-    ),
-)
 def test_niezapisywalny_stan_zatrzymuje_przebieg_PRZED_pierwsza_wysylka(tmp_path: Path):
     """Kolejność „wyślij, potem utrwal" jest bezpieczna tylko wtedy, gdy utrwalanie działa.
 
@@ -2402,10 +2393,25 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
     wyjść jednym błędem, a nie trzema prośbami do tej samej osoby (a przez okno łaski — kilkoma
     dziesiątkami).
     """
-    settings = _settings_calodobowe(_sciezka_bez_zapisu(tmp_path))
-    # 0.2.19 NIE ma sondy zapisywalności przed zapisem — nie ma bramki do obejścia.
+    settings = _settings_calodobowe(tmp_path / "state.json")
     client = _FakeClient({}, members=(Member("u1", "Ala"), Member("u2", "Bok")), shifts=())
     spane: list[float] = []
+
+    # Dysk zapełnia się PO sondzie: pierwszy zapis (sonda przed pętlą) przechodzi, drugi — ten
+    # utrwalający pierwszą wysłaną prośbę — pada. Sonda z założenia tego nie łapie; jej zadaniem
+    # jest przypadek TRWAŁY (wolumen tylko-do-odczytu), a nie wyścig z zapełniającym się dyskiem.
+    # Test pilnuje więc tego, co pozostaje jej zadaniem: awaria utrwalania kończy przebieg JEDNYM
+    # błędem, a nie trzema prośbami do tej samej osoby.
+    prawdziwy_zapis = st_modul.save_state
+    zapisy = {"n": 0}
+
+    def _drugi_zapis_pada(sciezka, stan):
+        zapisy["n"] += 1
+        if zapisy["n"] == 1:
+            return prawdziwy_zapis(sciezka, stan)
+        raise StateWriteError("Nie udało się zapisać stanu: brak miejsca na urządzeniu")
+
+    monkeypatch.setattr(st_modul, "save_state", _drugi_zapis_pada)
 
     with pytest.raises(StateWriteError):
         _run_once_with_retry(
@@ -2416,6 +2422,7 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
             teraz=_w_oknie(),
         )
 
+    assert zapisy["n"] == 2  # sonda przeszła, dopiero utrwalenie po wysyłce padło
     assert len(client.sent) == 1  # jedna wysyłka, potem stop — bez ponowień
     assert spane == []  # backoff ponowień w ogóle nie wszedł
 
@@ -2423,22 +2430,6 @@ def test_awaria_zapisu_stanu_nie_jest_ponawiana_przez_petle_przebiegu(tmp_path: 
 # --- Regresja: utrata sesji przy zapisie grafiku -----------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "USTERKA 0.2.19 (nie testu): szeroki `except Exception` w `_apply_confirmed_yes` "
-        "(listener.py:819) łapie AuthExpiredError, zanim dojdzie ona do strażnika w "
-        "`_process_pending` (listener.py:623). Utrata sesji przy zapisie na SZYBKIEJ ŚCIEŻCE "
-        "(czyste 'tak') jest wtedy raportowana jako zwykła awaria zapisu do Shifts, pracownik "
-        "dostaje 'uzupełnij ręcznie' (nieprawda — winna jest sesja, nie Shifts), a usługa "
-        "NIE zatrzymuje się, więc nie rusza ścieżka alert + AUTH_FAILURE_EXIT_DELAY_S + restart "
-        "do `--login`. Martwy token żyje wtedy do najbliższego pulsu, czyli do HEARTBEAT_"
-        "INTERVAL_H (domyślnie 24 h). Kontrakt 'utrata tokenu zatrzymuje usługę' jest w tym "
-        "samym pliku wypisany trzy razy (linie 195, 346, 623) — to niespójność, nie decyzja. "
-        "strict=True: gdy usterka zostanie naprawiona, ten test zapali się XPASS i wymusi "
-        "zdjęcie znacznika."
-    ),
-)
 def test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge(tmp_path: Path):
     """`AuthExpiredError` w gałęzi ogólnej dawał zły log i nieprawdziwą wiadomość.
 
@@ -2725,18 +2716,16 @@ def test_start_uslugi_nadal_czeka_przed_wyjsciem(tmp_path: Path, monkeypatch):
     assert spane == [600.0]
 
 
-def test_alert_o_utracie_sesji_WYPUSZCZA_adresy_kont_na_webhook(tmp_path: Path, monkeypatch):
-    """0.2.19 wysyła `str(blad)` ŻYWCEM — razem z adresami kont z cache'u MSAL.
+def test_alert_o_utracie_sesji_NIE_wypuszcza_adresow_kont_na_webhook(tmp_path: Path, monkeypatch):
+    """Adresy kont zostają w logu; na webhook idzie liczba i plik do usunięcia (ADR 0006).
 
-    Test opisuje stan FAKTYCZNY i jest strażnikiem regresji W DRUGĄ STRONĘ: gdy ktoś doda
-    redakcję, ten test padnie i każe zaktualizować opis zamiast przemilczeć zmianę.
+    Webhook alertów jest z założenia niezależny od Graph — i dlatego leży POZA granicą tożsamości
+    organizacji; w tej instalacji jest nim Discord. `graph.auth._jedyne_konto` skleja w komunikat
+    służbowe adresy e-mail, a `zglos_utrate_sesji` podawał `str(blad)` żywcem.
 
-    Dlaczego to ma znaczenie: `graph.auth._jedyne_konto` wkleja nazwy kont w treść wyjątku
-    (`auth.py:60-63`), a `runtime.operator.zglos_utrate_sesji` podaje `str(blad)` jako treść
-    alertu (`operator.py:119`). Webhook alertów bywa POZA organizacją — w instalacji u klienta
-    jest nim kanał Discorda. Linia repozytorium miała na to `_tresc_publiczna` i atrybut
-    `publiczny`; w obrazie 0.2.19 nie ma ANI JEDNEGO, ani drugiego (`grep -rn "publiczny" src/`
-    daje pusto). Odnotowane w CHANGELOG (0.2.19, „Znane usterki").
+    Redakcja jest OPT-IN, nie hurtowa: wyjątek deklaruje `publiczny`, a `operator.tresc_publiczna`
+    go preferuje. Instrukcja dla operatora („usuń ten plik, potem --login") zostaje nietknięta,
+    więc jego następny krok się nie zmienia — znikają wyłącznie adresy.
     """
     tresci: list[str] = []
     monkeypatch.setattr(
@@ -2747,24 +2736,25 @@ def test_alert_o_utracie_sesji_WYPUSZCZA_adresy_kont_na_webhook(tmp_path: Path, 
         tmp_path / "s.json", alert_webhook_url="https://hook", auth_failure_exit_delay_s=0
     )
     blad = AmbiguousAccountError(
-        "Cache tokenu zawiera 2 kont (ala@firma.pl, bot@firma.pl) — usuń plik"
+        "Cache tokenu zawiera 2 kont (ala@firma.pl, bot@firma.pl) — usuń plik /c.bin"
     )
+    blad.publiczny = "Cache tokenu zawiera 2 kont — usuń plik /c.bin, a potem --login"
 
     zglos_utrate_sesji(settings, blad, lambda _s: None)
 
     assert tresci, "alert w ogóle nie poszedł — to byłaby INNA usterka niż opisana"
-    assert "ala@firma.pl" in tresci[0]  # stan faktyczny 0.2.19, nie stan pożądany
-    assert "bot@firma.pl" in tresci[0]
+    assert "ala@firma.pl" not in tresci[0]
+    assert "bot@firma.pl" not in tresci[0]
+    assert "2 kont" in tresci[0]  # skala zostaje
+    assert "/c.bin" in tresci[0]  # i instrukcja, co zrobić
 
 
 # --- Godziny ciszy: wiadomości inicjowane przez bota -------------------------
 
-# Sobota 12:00 lokalnie — poza oknem (dni robocze 8:00–18:00).
 # 0.2.19 nie ma okna wysyłki (ADR 0005 NOT SHIPPED) — porę „nie wolno pisać" wyznacza CISZA.
-# Sobota 10:00 była poza oknem pn–pt; dziś odpowiednikiem jest godzina wewnątrz okna 20–7.
+# Odpowiednikiem dawnego „poza oknem pn–pt" jest dziś godzina wewnątrz okna 20–7.
 _W_CISZY = datetime(2026, 7, 24, 20, 30, tzinfo=timezone.utc)  # piątek 22:30 w Warszawie
-# Poniedziałek 10:00 lokalnie — w oknie.
-_PONIEDZIALEK_W_OKNIE = datetime(2026, 7, 27, 8, 0, tzinfo=timezone.utc)
+_PONIEDZIALEK_W_OKNIE = datetime(2026, 7, 27, 8, 0, tzinfo=timezone.utc)  # pon. 10:00 lokalnie
 
 
 def _do_wygaszenia(state_path: Path) -> None:
@@ -3067,15 +3057,18 @@ def test_nieudane_domkniecie_juz_wolnego_dnia_nie_udaje_awarii_ODCZYTU(tmp_path:
     assert "Nie udało się poprosić" in caplog.text  # utrata wiadomości WIDOCZNA
 
 
-def test_alert_o_nieudanym_przebiegu_WKLEJA_surowy_komunikat_wyjatku(tmp_path: Path, monkeypatch):
-    """Ta sama luka, drugie miejsce: alert „przebieg nieudany" niesie surowy tekst wyjątku.
+def test_alert_o_nieudanym_przebiegu_niesie_tresc_wyjatku_gdy_ten_nie_prosil_o_redakcje(
+    tmp_path: Path, monkeypatch
+):
+    """Wyjątek BEZ `publiczny` idzie na webhook w całości — i to jest decyzja, nie przeoczenie.
 
-    Linia repozytorium rozróżniała treść wewnętrzną od PUBLICZNEJ (atrybut `publiczny`
-    + `_tresc_publiczna`). Obraz 0.2.19 nie zna tego rozróżnienia, więc cokolwiek znajdzie się
-    w komunikacie wyjątku — a bywają tam dane z Graph — trafia na webhook bez filtra.
+    ADR 0006: redakcja jest OPT-IN. Hurtowe czyszczenie każdego alertu do „coś padło, zajrzyj
+    do logu" wymieniłoby wyciek na ciszę, a w instalacji bez monitoringu webhook jest jedynym
+    kanałem operatora — alert bez treści przestaje być czytany. `operator` i tak nie rozpozna
+    adresu e-mail w zwykłym `RuntimeError`; wie o tym wyłącznie miejsce, które go wkleiło.
 
-    Jak wyżej: asercja opisuje stan FAKTYCZNY, żeby dodanie redakcji było widoczną zmianą,
-    a nie cichą.
+    Ten test pilnuje więc, żeby nikt nie „naprawił" tego hurtowym filtrem. Znany limit: nic nie
+    wymusza, by nowy wyjątek z danymi osobowymi zadeklarował `publiczny` — spisane w ADR 0006.
     """
 
     class _ZDanymiOsobowymi(RuntimeError):

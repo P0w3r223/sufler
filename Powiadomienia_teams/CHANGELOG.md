@@ -8,6 +8,51 @@ Numeracja wersji śledzi **tagi obrazu Dockera** (`powiadomienia-teams:X.Y.Z`) �
 prawdy o iteracji na produkcji; metadane wewnątrz obrazu (`pyproject.toml`) bywały z nimi
 rozjechane.
 
+## [Nieopublikowane] — naprawy usterek 0.2.19, fala 1
+
+Pierwsze zmiany w kodzie odzyskanym z obrazu. Od tego miejsca repo NIE jest już tożsame
+z `powiadomienia-teams:0.2.19` — źródłem prawdy staje się repozytorium, a obraz wymaga
+przebudowy. Cztery z dziewięciu udokumentowanych usterek; pozostałe pięć nadal ma strażników
+`xfail(strict=True)` z dowodem.
+
+### Naprawione
+
+- **Utrata sesji na szybkiej ścieżce zapisu zatrzymuje usługę.** Szeroki `except Exception`
+  w `_apply_confirmed_yes` łapał `AuthExpiredError` przed strażnikami w `_odsiej_juz_zapisane`,
+  `poll_replies` i `_process_pending`. Martwy token był raportowany jako zwykła awaria Shifts,
+  pracownik dostawał nieprawdziwe „uzupełnij ręcznie", a ścieżka alert +
+  `AUTH_FAILURE_EXIT_DELAY_S` + restart do `--login` nie ruszała — token żył do doby.
+  Dodatkowo `logger.critical` przed `raise`: wyżej wyjątek nie niesie już informacji, w czyim
+  grafiku i którego tygodnia szukać dziury po przerwanym zapisie (status jest wtedy `APPLYING`,
+  czyli terminalny i nigdy niewznawiany).
+- **Przebieg dowodzi zapisywalności stanu PRZED pierwszą wiadomością.** Dotąd prośby wychodziły
+  do ludzi, a dopiero potem próbowaliśmy utrwalić stan; przy niezapisywalnym wolumenie nie
+  zostawał po nich ślad i następny przebieg wysyłał je DRUGI RAZ. Kolejności „wyślij, potem
+  utrwal" nie odwrócono — jest świadoma i chroni przed pendingiem bez wiadomości. Zamiast tego
+  ten sam `save_state`, który i tak stał na końcu funkcji, wykonuje się też przed pętlą.
+  Sonda nie daje gwarancji (dysk może zapełnić się po niej), ale zabiera przypadek TRWAŁY.
+- **Alerty nie wypuszczają adresów kont poza organizację** (ADR 0006). `_jedyne_konto` sklejało
+  służbowe adresy e-mail w komunikat wyjątku, a `zglos_utrate_sesji` podawał `str(blad)` żywcem
+  na webhook — u klienta jest nim kanał Discorda. Redakcja jest **opt-in**: wyjątek deklaruje
+  `publiczny`, a `operator.tresc_publiczna` go preferuje. Log zachowuje pełną treść, instrukcja
+  dla operatora („usuń ten plik, potem `--login`") zostaje nietknięta — znikają tylko adresy.
+  Hurtowego filtra świadomie NIE ma: wymieniłby wyciek na ciszę.
+
+### Dodane
+
+- **Strażnik statyczny szwu wysyłki** (`tests/test_szew_wysylki.py`, AST po `runtime/`).
+  `runtime/wysylka.py` powoływał się na niego od wydań — i było to NIEPRAWDĄ: odsyłał do
+  `tests/test_cisza.py`, gdzie takiego strażnika nigdy nie było (w całym `tests/` nie występował
+  ani jeden `ast.parse`). Dlatego jedno pominięcie `NIE_POLYKAJ` wśród jedenastu punktów wysyłki
+  mogło przeżyć wydanie. Strażnik sprawdzony na kodzie sprzed naprawy: wskazuje dokładnie to
+  miejsce. Odsyłacz w docstringu poprawiony.
+
+### Znane, nienaprawione w tej fali
+
+Strażnik wykrył dwie wysyłki w `_interpret_and_confirm` bez ŻADNEGO `try` (gałęzie „brak powodu
+wolnego" i „unclear") — nie podlegają polityce `NIE_POLYKAJ` w ogóle. Domykane razem
+z watermarkiem w fali 3. Oznaczone `xfail(strict=True)`.
+
 ## [0.2.19] — 2026-08-20 (obraz produkcyjny; źródła odzyskane 2026-09-04)
 
 Wersja DZIAŁAJĄCA u klienta. Źródła zostały odzyskane z obrazu `powiadomienia-teams:0.2.19`, bo

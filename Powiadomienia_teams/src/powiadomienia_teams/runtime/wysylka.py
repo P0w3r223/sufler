@@ -23,7 +23,10 @@ kiedyś bez tej wiedzy (pozycja D5 planu dokłada przypomnienia i wznowienia roz
 położy testy, zamiast napisać do kogoś w środku nocy.
 
 Że wszystkie punkty wysyłki idą TĘDY, pilnuje strażnik statyczny czytający `runtime/` drzewem
-składni (`tests/test_cisza.py`) — dokładnie tak, jak N28 pilnuje nazwisk w logach. Trzynaście
+składni (`tests/test_szew_wysylki.py`) — dokładnie tak, jak N28 pilnuje nazwisk w logach.
+Do 0.2.19 to zdanie było NIEPRAWDĄ: odsyłało do `tests/test_cisza.py`, gdzie takiego strażnika
+nigdy nie było (w całym `tests/` nie występował ani jeden `ast.parse`). Dlatego szeroki
+`except Exception` w `_apply_confirmed_yes` mógł połknąć utratę sesji i przeżyć wydanie. Trzynaście
 rozproszonych warunków to kształt odrzucony świadomie w N14 i tutaj obowiązuje ta sama zasada:
 wygaszanie stoi przy wysyłce, a nie w pięciu miejscach, które o niej pamiętają.
 """
