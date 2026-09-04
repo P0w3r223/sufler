@@ -49,7 +49,7 @@ zdrowia czy fazy."""
 # Odsyłał — i było to odesłanie MARTWE, na jedynych drzwiach, które ten akapit w ogóle emitują.
 # Zmierzone 2026-09-04: `enable_write=True` podaje wyłącznie CLI (`cli/app.py:116`), a CLI nie
 # buduje `File` W OGÓLE, bo nie podaje `enable_file_tool`/`supports_attachments`/
-# `workspace_settings` (warunek w `agent_wiring/__init__.py:353-360`). Drzwi Teams mają
+# `workspace_settings` (warunek w `agent_wiring/__init__.py:355-360`). Drzwi Teams mają
 # `enable_write=False` zaszyte (ADR 0006), więc tam akapit `save` nie jedzie wcale. Model
 # dostawał więc nazwę narzędzia, którego w swoim katalogu nie widział.
 #

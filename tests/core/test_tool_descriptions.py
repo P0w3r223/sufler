@@ -28,9 +28,16 @@ Sondy AKCYJNE (dolna część pliku) jadą nie po jednej powierzchni, tylko po t
 — bo martwa obietnica powstaje w konfiguracji z ZAMKNIĘTĄ bramką, a najbogatszy wariant, którym
 mierzy się sufity, żadnej zamkniętej nie ma. Tabela i wzorce, na których te sondy stoją, mają
 własne bramki: ``test_profile_drzwi_pokrywaja_kazda_bramke_powierzchni`` pilnuje, żeby każda
-bramka zdolności padła w jakimś profilu, a trójka ``test_wzorzec_*`` — żeby kształty cytowania
-i ogłaszania akcji nie zwęziły się z powrotem do tych, które akurat są dziś w ``src/``. Wzorzec
-zwężony nie psuje niczego widocznego: bramka po prostu przechodzi.
+bramka ODWZOROWANA w ``_powierzchnia_agenta`` padła w jakimś profilu, a czwórka
+``test_wzorzec_*`` — żeby kształty cytowania i ogłaszania nie zwęziły się z powrotem do tych,
+które akurat są dziś w ``src/``. Wzorzec zwężony nie psuje niczego widocznego: bramka po prostu
+przechodzi.
+
+Granica tej pierwszej jest warta nazwania, bo łatwo ją przeczytać szerzej, niż sięga: sonda
+porównuje spis z SYGNATURĄ ``_powierzchnia_agenta``, więc bramka istniejąca w ``adapters/inbound``
+i nieodwzorowana tutaj jest dla niej NIEWIDZIALNA. Tak właśnie przepadło ``enable_file_tool``:
+każdy profil miał ``File``, więc odesłanie do nieobecnego NARZĘDZIA — nie akcji — przechodziło
+na zielono, choć bramka odesłań istnieje od dawna i złapałaby je bez żadnej nowej maszynerii.
 """
 
 from __future__ import annotations
@@ -322,6 +329,7 @@ def _powierzchnia_agenta(
     zapis_github: bool = True,
     worklog: bool = True,
     mutacje: str = "z kasowaniem",
+    narzedzie_pliku: bool = True,
     katalog_roboczy: bool = True,
     odpowiedz_plikiem: bool = True,
     dostawa_1_1: bool = True,
@@ -363,7 +371,14 @@ def _powierzchnia_agenta(
         ),
         *build_jira_catalog(_FakeMyJira(), _FakeJiraRead(), lambda name: "konto"),
         *build_schedule_catalog(_FakeSchedule()),
-        *build_file_catalog(
+    ]
+    # ``File`` ma WŁASNĄ bramkę (`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL`) i nie wchodzi na dwoje
+    # z trojga drzwi: `cli/app.py` i `teams/app.py` nie podają ani `enable_file_tool`, ani
+    # `supports_attachments`, ani `workspace_settings`, więc warunek w `agent_wiring/__init__.py`
+    # nie zachodzi. Bez tej bramki KAŻDY profil miał `File`, a wtedy odesłanie do NIEOBECNEGO
+    # narzędzia — czyli dokładnie defekt, który zdjęto z opisu `Project` — przechodziło na zielono.
+    if narzedzie_pliku:
+        katalog += build_file_catalog(
             scope,
             WorkspaceService(repo),
             _PustyMaterializer(),
@@ -374,8 +389,7 @@ def _powierzchnia_agenta(
             mutator,
             "u-anna",
             shell_available=shell,
-        ),
-    ]
+        )
     if shell:
         katalog += build_shell_catalog(
             scope, _FakeRunner(), workspace_root="/home/scratchpad", outbox_enabled=True
@@ -596,11 +610,13 @@ _PROFILE_DRZWI: tuple[tuple[str, dict[str, object]], ...] = (
         "Teams: bez mostu GitHub i bez worklogu",
         {"shell": True, "zapis_notatek": False, "zapis_github": False, "worklog": False},
     ),
-    # Złożenie, którego dziś nie buduje żadne drzwi (Teams zaszywa `enable_write=False`), ale
-    # które jest budowalne: `Project` z zapisem obok `File` bez mutacji. Stoi tu, bo to jedyny
-    # profil, w którym odesłanie MIĘDZY narzędziami może umrzeć — a bramka ma pilnować sprzężenia,
-    # nie tylko dzisiejszej konfiguracji.
-    ("CLI: zapis notatek ON, mutacje OFF", {"shell": True, "mutacje": "brak"}),
+    # Złożenie HIPOTETYCZNE — żadne drzwi go nie budują. Teams zaszywa `enable_write=False`
+    # (ADR 0006), a CLI, jedyne z `enable_write=True`, nie buduje `File` W OGÓLE. Etykieta mówi
+    # „hipotetyczne", bo nazwanie tego „CLI" dawałoby poczucie pokrycia drzwi, które są JEDYNYMI
+    # emitującymi akapit `save` — a to jest dokładnie ten rodzaj fałszywego komfortu, który ta
+    # bramka zwalcza w opisach. Profil zostaje: to jedyne złożenie, w którym odesłanie MIĘDZY
+    # narzędziami może umrzeć na AKCJI, a nie na nazwie.
+    ("hipotetyczny: zapis notatek ON, mutacje OFF", {"shell": True, "mutacje": "brak"}),
     # Cztery profile BEZ powłoki dopisane po pomiarze bramek w ``adapters/inbound``. Pierwsza
     # wersja tabeli miała ``shell=False`` wyłącznie w wariancie z pełnymi mutacjami, więc cały
     # świat bez powłoki — ten DOMYŚLNY, bo ``WORKMATE_ENABLE_SHELL`` jest domyślnie wyłączona —
@@ -608,7 +624,7 @@ _PROFILE_DRZWI: tuple[tuple[str, dict[str, object]], ...] = (
     # z braku powłoki INNY akapit (`ReadFile`/`ListFiles` zamiast `cat`), więc każda para
     # „bramka × brak powłoki" to inny tekst, nie ten sam tekst w innej konfiguracji.
     (
-        "Teams domyślny: wszystkie bramki wykonawcze zamknięte",
+        "Teams: File ON, katalog roboczy OFF, bez powłoki",
         {
             "shell": False,
             "zapis_notatek": False,
@@ -628,9 +644,29 @@ _PROFILE_DRZWI: tuple[tuple[str, dict[str, object]], ...] = (
         "Teams: bez powłoki, mutacje bez kasowania",
         {"shell": False, "zapis_notatek": False, "mutacje": "bez kasowania"},
     ),
-    # CLI składa drzwi z ``enable_write=True`` (``adapters/inbound/cli/app.py``), a powłoki NIE
-    # włącza — więc to jest realne złożenie tych drzwi, nie hipoteza jak jego siostra z powłoką.
-    ("CLI: bez powłoki, zapis notatek ON, mutacje OFF", {"shell": False, "mutacje": "brak"}),
+    # To NIE jest CLI, choć poprzednia redakcja tak je nazywała. Realne CLI ma CZTERY narzędzia
+    # (`Project`, `SearchNotes`, `GetNote`, `ListProjects`): nie podaje `extra_catalog`, więc nie
+    # ma `Activity`/`Jira`/`Schedule`, nie buduje `File` i nie ma dostawy. Profil niżej odwzorowuje
+    # tamto drzwi w części, która dla tej bramki jest istotna — brak `File` przy WŁĄCZONYM zapisie
+    # notatek, czyli jedyne drzwi emitujące akapit `save`.
+    (
+        "hipotetyczny: bez powłoki, zapis notatek ON, mutacje OFF",
+        {"shell": False, "mutacje": "brak"},
+    ),
+    # PROFIL, KTÓREGO BRAK PRZEPUŚCIŁ DEFEKT. Opis `Project` odsyłał do narzędzia `File` na
+    # drzwiach, gdzie `File` nie istnieje pod ŻADNĄ akcją — martwa NAZWA, nie martwa akcja. Bramka
+    # odesłań (`test_opis_nie_odsyla_do_narzedzia_spoza_tej_konfiguracji`) złapałaby to bez żadnej
+    # nowej maszynerii; nie złapała, bo KAŻDY profil miał `File`.
+    (
+        "CLI: zapis notatek ON, narzędzia plików BRAK",
+        {
+            "shell": False,
+            "narzedzie_pliku": False,
+            "katalog_roboczy": False,
+            "odpowiedz_plikiem": False,
+            "dostawa_1_1": False,
+        },
+    ),
     ("najbogatsza z powłoką", {"shell": True}),
     ("najbogatsza bez powłoki", {"shell": False}),
 )
@@ -645,6 +681,7 @@ _WARTOSCI_BRAM: dict[str, frozenset[object]] = {
     "zapis_github": frozenset({True, False}),
     "worklog": frozenset({True, False}),
     "mutacje": frozenset({"brak", "bez kasowania", "z kasowaniem"}),
+    "narzedzie_pliku": frozenset({True, False}),
     "katalog_roboczy": frozenset({True, False}),
     "odpowiedz_plikiem": frozenset({True, False}),
     "dostawa_1_1": frozenset({True, False}),
@@ -726,7 +763,13 @@ _ODESLANIE_Z_AKCJA = re.compile(
 # grawisem: „`events` — …", a ``Jira`` dodatkowo skleja parę: „`my_tasks` / `my_history` — …".
 # Jedenaście z piętnastu ogłoszeń stało więc poza zasięgiem sondy pokrycia.
 _OGLOSZENIE_AKAPITEM = re.compile(r"[Aa]kcj[ae] `([a-z_]+)`")
-_OGLOSZENIE_LINIA = re.compile(r"^`([a-z_]+)`((?:\s*(?:/|i)\s*`[a-z_]+`)*)\s*[—–-]", re.M)
+# Ogłoszenie akapitem albo linią. Linia NIE MOŻE iść zaraz po linii kończącej się dwukropkiem:
+# opisy wymieniają POLA dokładnie tym samym kształtem („Wymaga:\n`project` — klucz z rejestru",
+# „Pola:\n`reason` — jedno zdanie"), więc bez tego warunku sonda czytałaby `project`, `reason`
+# czy `since` jako akcje. Pusta linia jako rozróżnik NIE działa — akapity akcji w ``Activity``
+# i ``Jira`` są sklejane POJEDYNCZYM ``\n`` (`build_activity_catalog`), więc wymóg pustej linii
+# zdejmował z pomiaru jedenaście ogłoszeń z piętnastu. Zmierzone.
+_OGLOSZENIE_LINIA = re.compile(r"^(?<!:\n)`([a-z_]+)`((?:\s*(?:/|i)\s*`[a-z_]+`)*)\s*[—–-]", re.M)
 _AKCJA_W_GRAWISACH = re.compile(r"`([a-z_]+)`")
 
 
@@ -745,7 +788,7 @@ def _repertuar_akcji() -> Mapping[str, frozenset[str]]:
 
     Lista pisana ręką rozjeżdża się z katalogiem i wycisza bramkę; ten plik przerabiał to już raz
     przy nazwach narzędzi (patrz ``test_rejestr_nazw_bramki_odeslan_pokrywa_sie_z_mierzona_
-    powierzchnia``). Liczone LENIWIE, przy pierwszym teście, a nie przy imporcie: osiem profili to
+    powierzchnia``). Liczone LENIWIE, przy pierwszym teście, a nie przy imporcie: trzynaście profili
     osiem wywołań prawdziwych builderów, a wyjątek w którymkolwiek z nich przy imporcie zabrałby
     także sufity bajtów i bramkę odesłań — czyli zamieniłby w fikcję sondy, które z tą nie mają
     nic wspólnego.
@@ -765,7 +808,7 @@ def _repertuar_akcji() -> Mapping[str, frozenset[str]]:
 
 
 @pytest.mark.parametrize(("etykieta", "kwargi"), _PROFILE_DRZWI, ids=[e for e, _ in _PROFILE_DRZWI])
-def test_opis_nie_obiecuje_akcji_spoza_tego_wariantu(etykieta: str, kwargi: dict) -> None:  # noqa: ANN001
+def test_opis_nie_obiecuje_akcji_spoza_tego_wariantu(etykieta: str, kwargi: dict) -> None:
     """Opis cytujący WŁASNĄ akcję, której ``Literal`` tego wariantu nie ma, to martwa obietnica.
 
     ``tools/project.py`` zapisuje tę zasadę jako komentarz („akapit zapisu wchodzi WYŁĄCZNIE razem
@@ -792,7 +835,7 @@ def test_opis_nie_obiecuje_akcji_spoza_tego_wariantu(etykieta: str, kwargi: dict
 
 
 @pytest.mark.parametrize(("etykieta", "kwargi"), _PROFILE_DRZWI, ids=[e for e, _ in _PROFILE_DRZWI])
-def test_opis_nie_odsyla_do_akcji_nieobecnej_u_sasiada(etykieta: str, kwargi: dict) -> None:  # noqa: ANN001
+def test_opis_nie_odsyla_do_akcji_nieobecnej_u_sasiada(etykieta: str, kwargi: dict) -> None:
     """Odesłanie ```File(edit)``` umiera, gdy sąsiad ma tę akcję ZA BRAMKĄ, która akurat jest OFF.
 
     Bramka odesłań (wyżej) sprawdza, czy NAZWA jest na tych drzwiach; ta sprawdza, czy AKCJA jest
@@ -842,7 +885,7 @@ def test_kazde_ogloszenie_akcji_ma_pokrycie_w_enumie() -> None:
             brak = sorted(_ogloszone_akcje(spec.description) - _akcje_wariantu(spec))
             bez_pokrycia += [f"{etykieta}: {spec.name} ogłasza {a}" for a in brak]
 
-    assert not bez_pokrycia
+    assert not bez_pokrycia, f"akcja ogłoszona w opisie, a nieobecna w Literal: {bez_pokrycia}"
 
 
 def test_kazda_akcja_wariantu_jest_ogloszona_w_opisie() -> None:
@@ -867,12 +910,12 @@ def test_kazda_akcja_wariantu_jest_ogloszona_w_opisie() -> None:
             brak = sorted(_akcje_wariantu(spec) - _ogloszone_akcje(spec.description))
             niezapowiedziane += [f"{etykieta}: {spec.name} milczy o {a}" for a in brak]
 
-    assert not niezapowiedziane
+    assert not niezapowiedziane, f"akcja w Literal, a nieogłoszona w opisie: {niezapowiedziane}"
 
 
 # Etykieta profilu, w którym bramka odesłań zapala się na ISTNIEJĄCYM opisie — patrz
 # ``test_odeslania_do_narzedzi_trzymaja_sie_w_kazdym_profilu``.
-_PROFIL_Z_MARTWA_OBIETNICA = "Teams domyślny: wszystkie bramki wykonawcze zamknięte"
+_PROFIL_Z_MARTWA_OBIETNICA = "Teams: File ON, katalog roboczy OFF, bez powłoki"
 
 _PROFILE_ODESLAN = [
     pytest.param(
@@ -908,7 +951,7 @@ _PROFILE_ODESLAN = [
 
 
 @pytest.mark.parametrize(("etykieta", "kwargi"), _PROFILE_ODESLAN)
-def test_odeslania_do_narzedzi_trzymaja_sie_w_kazdym_profilu(etykieta: str, kwargi: dict) -> None:  # noqa: ANN001
+def test_odeslania_do_narzedzi_trzymaja_sie_w_kazdym_profilu(etykieta: str, kwargi: dict) -> None:
     """Bramka odesłań na WSZYSTKICH profilach, nie tylko na dwóch najbogatszych.
 
     ``test_opis_nie_odsyla_do_narzedzia_spoza_tej_konfiguracji`` jedzie na fikstrze
@@ -1082,3 +1125,64 @@ def test_wzorzec_ogloszenia_akcji_zna_ksztalty_uzywane_w_opisach() -> None:
     # zapalałaby się na „`content` to SAMA TREŚĆ" z opisu ``File`` i na każdej liście pól.
     assert _ogloszone_akcje("`content` to SAMA TREŚĆ — bez pól YAML.") == set()
     assert _ogloszone_akcje("Wymaga: `project` (klucz z rejestru).") == set()
+
+    # POLE wymienione po linii kończącej się dwukropkiem — kształt identyczny z ogłoszeniem akcji,
+    # a znaczenie inne. Opisy wymieniają pola dokładnie tak, więc bez tego rozróżnienia sonda
+    # pokrycia zapalałaby się na `project`, `reason` i `since`, żądając dla nich wpisu w `Literal`.
+    assert _ogloszone_akcje("Wymaga:\n`project` — klucz projektu z rejestru.") == set()
+    assert _ogloszone_akcje("Pola:\n`reason` - jedno zdanie.") == set()
+    assert _ogloszone_akcje("Zakres:\n`since` / `until` — daty.") == set()
+
+
+def test_wzorzec_odeslania_do_nazwy_zna_ksztalty_uzywane_w_opisach() -> None:
+    """Wzorzec NAZW był jedynym bez własnej sondy — a to na nim stoją oba historyczne defekty.
+
+    ``_cytowanie`` zna trzy kształty i każdy kosztował realny defekt: ```Nazwa``` (grawisy),
+    ``Nazwa(`` (cytowanie z akcją — tak przeżył ``GitHub(action='comment')`` w nagłówku sesji)
+    oraz gołe ``snake_case`` (tak przeżyło „(z wyników search_notes)" w opisie ``GetNote``).
+    Trzy młodsze wzorce dostały sondy kształtów przy rozbudowie bramki; ten nie, mimo że jest
+    najstarszy i najczęściej ruszany.
+
+    Zmierzone: zwężenie ``_cytowanie`` z powrotem do samego ```Nazwa``` przechodziło CAŁY plik
+    na zielono, ze znacznikiem ``xfail`` włącznie. Czyli powrót do stanu, który własny docstring
+    tej funkcji opisuje jako przepuszczający dwa defekty naraz, nie zapalał niczego.
+    """
+    ksztalty = {
+        "grawisy": "użyj `SearchNotes`, żeby znaleźć notatkę",
+        "wywołanie z akcją": "użyj SearchNotes(query='x')",
+        "wywołanie ze spacją": "użyj SearchNotes (query='x')",
+    }
+    niewidziane = [e for e, z in ksztalty.items() if not _cytowanie("SearchNotes").search(z)]
+    assert niewidziane == [], f"wzorzec nazw nie widzi kształtów: {niewidziane}"
+
+    # snake_case w prozie nie występuje, więc dla nazw ZNIESIONYCH wystarczy całe słowo.
+    assert _cytowanie("search_notes").search("(z wyników search_notes)")
+
+    # PascalCase pokrywa się ze zwykłymi słowami prozy — korpus promptu mówi „Notes are
+    # identified as…" o notatkach, nie o narzędziu. Bez kontekstu cytowania bramka odesłań
+    # zapalałaby się na prozie i zostałaby wyłączona jako uciążliwa.
+    assert not _cytowanie("Notes").search("Notes are identified as name+date")
+
+
+def test_repertuar_akcji_jest_przypiety_do_kontraktu_a_nie_wyprowadzony() -> None:
+    """Sondy pokrycia biorą `Literal` i opis z TEGO SAMEGO kodu, więc kurczą się razem — po cichu.
+
+    Zmierzone: literówka w porównaniu wartości bramki (``mutacje == "z kasowaniami"``) usuwa
+    ``delete`` i z enuma, i z opisu ``File`` na KAŻDEJ mierzonej powierzchni. Wszystkie sondy
+    zostają zielone, bo obie strony równania zniknęły jednocześnie, a suma bajtów cicho spada.
+    Ta sama klasa awarii, którą ``_POWIERZCHNIA_Z_POWLOKA``/``_BEZ_POWLOKI`` zamykają dla NAZW:
+    kontrakt wypisany ręką, a nie wyprowadzony z tego samego kodu, który ma być mierzony.
+
+    ``test_profile_drzwi_pokrywaja_kazda_bramke_powierzchni`` tego nie łapie — pilnuje SYGNATURY
+    (że bramka ma wpis i profil), a nie SKUTKU (że bramka otwarta naprawdę otwiera).
+    """
+    najbogatsza = {s.name: _akcje_wariantu(s) for s in _powierzchnia_agenta(shell=True)}
+
+    assert najbogatsza["File"] == frozenset({"read", "edit", "delete"})
+    assert najbogatsza["Project"] == frozenset({"status", "save"})
+    assert najbogatsza["Activity"] == frozenset(
+        {"events", "summary", "worklog", "create_issue", "comment"}
+    )
+    assert najbogatsza["Jira"] == frozenset(
+        {"my_tasks", "my_history", "member_tasks", "member_history", "task", "search"}
+    )
