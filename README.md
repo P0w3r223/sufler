@@ -12,7 +12,7 @@ wiedzy o projektach, dostępna tam, gdzie zespół już pracuje: w Claude Code, 
 > Teams/CLI/GitHub, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira „moje
 > zadania" oraz lokalny retrieval leksykalny notatek. Karty czasu (WorklogPRO) wycofane z projektu
 > (2026-07-30, [ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)). **69 ADR-ów**
-> architektonicznych (`docs/adr/0001–0069`) — sześć najnowszych jest **wdrożonych**: 0064 (harness
+> architektonicznych (`docs/adr/0001–0070`) — sześć najnowszych jest **wdrożonych**: 0064 (harness
 > plików), 0065 (mutowalna baza wiedzy pod sędzią), 0066 (klasy zaufania), 0067 (obserwowalność
 > Fazy 0: dziennik audytu + dead-letter notifiera), 0068 (nazwy narzędzi agenta: `Notes`→`Project`,
 > `GitHub`→`Activity`, bramka budżetu opisów) i 0069 (kwarantanna porzuconych wiadomości
@@ -227,7 +227,7 @@ Dokumentacja jest uporządkowana wg [Diátaxis](https://diataxis.fr/) — patrz 
 - **How-to** (`docs/how-to/`) — konkretne procedury operacyjne: wdrożenie, aktywacja drzwi, smoke test.
 - **Reference** (`docs/reference/`) — fakty do sprawdzenia: narzędzia, konfiguracja, schemat notatki.
 - **Explanation** (`docs/explanation/`) — kontekst i uzasadnienie: architektura systemu.
-- **ADR** (`docs/adr/`) — zapis decyzji architektonicznych, 0001–0069.
+- **ADR** (`docs/adr/`) — zapis decyzji architektonicznych, 0001–0070.
 - **Research** (`docs/research/`) — notatki badawcze uzasadniające wybory techniczne.
 
 Zmiany między wersjami: [`CHANGELOG.md`](CHANGELOG.md). Chcesz coś zmienić? →

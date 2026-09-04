@@ -8,7 +8,8 @@ Related to: [ADR 0042](0042-meeting-note-sender-authorization.md) (write-side me
 [ADR 0035](0035-weekly-per-person-worklogpro-sheets-and-teams-dm.md) / [ADR 0036](0036-shift-worklog-integration-identity-and-week-contract.md) (identity directory),
 [ADR 0057](0057-shell-executor-container-without-network.md) (executor mount boundary),
 infra `docs/decyzje/0006` (workspace write model), `docs/decyzje/0010` (conversation isolation in the shell),
-`docs/przebudowa-harnessu.md` §6 (stage 2)
+`docs/przebudowa-harnessu.md` §6 (stage 2),
+**[ADR 0070](0070-teams-only-identity-and-what-a-map-entry-grants.md) — the identity map change that finally lets this gate be turned on, and the statement of what a map entry grants beyond reads**
 
 ---
 

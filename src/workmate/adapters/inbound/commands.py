@@ -99,9 +99,12 @@ class CommandRouter:
         # woła bezpośrednio — ta sama fabryka zasila per-turowy katalog agenta.
         self._my_jira_tasks = my_jira_tasks
         # Autoryzacja ODCZYTU bazy wiedzy (ADR 0062), bramka członkostwa nadawcy — ``None`` gdy
-        # bramka wyłączona / inne drzwi (wtedy komendy odczytu jak dawniej). Egzekwowana w
-        # ``/szukaj`` i ``/projekty`` (czytają katalog notatek pionu); ``/status`` idzie przez
-        # ``get_project_status`` (poza katalogiem ODCZYTU z ADR 0062 — kandydat na kolejny etap).
+        # bramka wyłączona / inne drzwi (wtedy komendy odczytu jak dawniej). Egzekwowana w TRZECH
+        # komendach: ``/szukaj`` i ``/projekty`` (czytają katalog notatek pionu) oraz ``/status``
+        # Z ARGUMENTEM (synteza stanu projektu jest złożona z tych samych notatek — patrz
+        # ``_status``). Ten komentarz mówił do 2026-09-04, że ``/status`` jest POZA bramką; było to
+        # prawdą tylko do chwili, gdy sprawdzenie tam dołożono, a nieaktualne zdanie zdążyło
+        # przewędrować do ADR 0070 jako opis stanu. Proza o bramce starzeje się szybciej niż bramka.
         self._note_read_authorizer = note_read_authorizer
         handlers = {
             "/pomoc": self._help,
