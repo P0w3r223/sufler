@@ -45,13 +45,17 @@ zdrowia czy fazy."""
 # obiecujący zapis przy nieczynnej akcji byłby tym samym defektem co dawna obietnica
 # ``/mnt/user/outputs``: model dostaje instrukcję, po którą nie ma jak sięgnąć.
 #
-# Ta sama zasada w drugą stronę i MIĘDZY narzędziami: akapit nie odsyła do `File(edit)`, choć
-# odesłanie było trafne. ``build_project_catalog`` nie zna profilu mutacji sąsiedniego narzędzia
-# (bramka `File` siedzi w ustawieniach drzwi), a złożenie „zapis notatek ON + mutacje OFF" jest
-# budowalne — wtedy `File` ma sam `read` i odesłanie stawało się martwe. Symetryczne do decyzji
-# po drugiej stronie: `File` przestał obiecywać „zapisz jako nową notatkę" dokładnie dlatego, że
-# nie zna profilu zapisu `Project` (`tests/core/test_file_tool.py`). Milczenie jest tu tańsze niż
-# odesłanie prawdziwe w jednej konfiguracji i fałszywe w drugiej.
+# Ta sama zasada w drugą stronę i MIĘDZY narzędziami: akapit nie odsyła do narzędzia `File`.
+# Odsyłał — i było to odesłanie MARTWE, na jedynych drzwiach, które ten akapit w ogóle emitują.
+# Zmierzone 2026-09-04: `enable_write=True` podaje wyłącznie CLI (`cli/app.py:116`), a CLI nie
+# buduje `File` W OGÓLE, bo nie podaje `enable_file_tool`/`supports_attachments`/
+# `workspace_settings` (warunek w `agent_wiring/__init__.py:353-360`). Drzwi Teams mają
+# `enable_write=False` zaszyte (ADR 0006), więc tam akapit `save` nie jedzie wcale. Model
+# dostawał więc nazwę narzędzia, którego w swoim katalogu nie widział.
+#
+# Symetryczne do decyzji po drugiej stronie: `File` przestał obiecywać „zapisz jako nową
+# notatkę", bo nie zna profilu zapisu `Project` (`tests/core/test_file_tool.py`). Tutaj tak samo:
+# ``build_project_catalog`` nie ma jak zapytać, czy sąsiad w ogóle istnieje na tych drzwiach.
 _PROJECT_SAVE = """
 
 Akcja `save` — dopisz NOWĄ notatkę ze spotkania do tego projektu (ZAPIS). Wymaga: `project`,
