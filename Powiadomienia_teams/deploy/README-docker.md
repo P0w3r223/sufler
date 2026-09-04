@@ -333,7 +333,6 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 | Objaw | Przyczyna | Obejście |
 |---|---|---|
 | Zmiana przez północ znika | `22:00–06:00` traci informację o przejściu doby i jest po cichu pomijana | Nie dotyczy tego zespołu (brak nocek); wymaga poprawki kodu, gdy się pojawią |
-| Pracownik nie dostał prośby o potwierdzenie | Nieudana wysyłka nie jest ponawiana; status już zmieniony | Napisz do niego ręcznie |
 | `--login` przy działającej usłudze | Omija blokadę jednej instancji i pisze do cache równolegle | Zawsze `docker compose stop` przed logowaniem (krok 4) |
 | Wpis zniknął, a pracownik nie dostał ŻADNEJ wiadomości | Odczyt czatu padł w serii kolejnych obiegów, a od ostatniej aktywności minęło ponad `SUFIT_WPISU_BEZ_ODCZYTU_H` (144 h) — wpis zamknięto po cichu (ADR 0007). Same 144 h nie wystarczą: pojedyncza awaria odczytu wpisu NIE zamyka | To zamierzone: nie wiemy, czy odpisał, więc nie wolno mu zarzucić milczenia. Alert „Przypomnienia zablokowane na odczycie czatu" mówi kogo dotyczy; grafik ustal z tymi osobami ręcznie |
 

@@ -187,3 +187,21 @@ exactly three cycles.
 so a value added later cannot slip through unexamined — and the ceiling predicate at its boundary,
 with a moving anchor and with no anchor at all. `tests/test_config.py` covers refusal to start when the ceiling is
 `<= 0`, at or below the courtesy floor, or above one week.
+
+---
+
+## Amendment, 2026-09-04 — C3 landed as anticipated
+
+The watermark fix (wave 4) shipped, and the expectation recorded above held: the two sends it
+wrapped now raise into the per-person handler as `UNKNOWN`, not `READ_FAILED`, so the read counter
+does not move and no entry is pushed towards this ceiling by a failed **send**. No coupling between
+the two changes was needed, and none was added.
+
+One correction to the note above: it says the rollback would go through `_record_failure`. It does
+not. That function writes state and sends a message, and calling it from a `finally` block — during
+unwinding, often after `AuthExpiredError` — would mean writing to a person with a dead token, the
+failure wave 1 closed. Wave 4 uses a snapshot plus a restore function whose signature carries no
+`settings`, `state` or `client`, so it has nothing to do I/O with. The loop ceiling still comes for
+free, from `_record_failure` called one level up in `_process_pending`.
+
+This closes the nine defects found when the 0.2.19 sources were recovered. No `xfail` remains.

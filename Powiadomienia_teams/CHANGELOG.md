@@ -14,6 +14,70 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — naprawy usterek 0.2.19, fala 4: watermark
+
+**Lista dziewięciu usterek importu 0.2.19 jest zamknięta. 0 xfailed.**
+
+Wysyłka, która nie doszła, przestaje kasować wiadomość pracownika.
+
+### Przyczyna
+
+Trzy miejsca w `_interpret_and_confirm` utrwalały obsługę porcji PRZED wysyłką i nie cofały jej,
+gdy wysyłka padła. Watermark zostawał przesunięty za wiadomość, o której pracownik nie usłyszał
+ani słowa — kolejny cykl jej nie widział, a po terminie człowiek dostawał nieprawdziwe „nie
+dostałem odpowiedzi". Jedno z miejsc miało `finally` cofające status i flagę zapisu, ale nie
+watermark; dwa pozostałe (gałęzie „brak powodu wolnego" i `unclear`) nie miały `try` w ogóle.
+
+### Naprawione
+
+- Migawka pól sprzed obsługi (`_migawka_commitu`) i wycofanie w `finally` (`_wycofaj_commit`)
+  we wszystkich trzech miejscach. Cofane są: `watermark`, `employee_memory`, `memory_started_at`,
+  `fail_count`, `status`, `resolved`, `resolved_time_off`. `awaiting_yes` wraca twardo na `False`,
+  nie z migawki — to bramka nieodwracalnego zapisu do Shifts (N38), a wycofanie nigdy nie ma prawa
+  ROZSZERZYĆ uprawnienia.
+- Prośba o potwierdzenie przestaje POŁYKAĆ wyjątek z wysyłki. Sufit pętli daje `_record_failure`
+  wołane wyżej, w `_process_pending`.
+- Strażnik szwu wysyłki: `assert poza == []` zamiast przypiętej liczby dwa, plus nowa reguła —
+  `_wycofaj_commit` musi stać w `finalbody`.
+
+### Rozstrzygnięcia
+
+**Bez nowego ADR-a.** Reguła 10 żąda ADR-a przy ZMIANIE niezmiennika; tu go przywracamy. Docstring
+`_commit` już deklarował, że „nieudane przetworzenie zostawia watermark nietknięty", a `poll_replies`
+zakresuje „co najwyżej raz" na skutki NIEODWRACALNE — dosłownie „zapis do Shifts, wysyłka
+domknięcia". Prośba o potwierdzenie nie jest ani jednym, ani drugim.
+
+**Wycofanie NIE przez `_record_failure`**, wbrew rekomendacji z planu i przeglądu fali 3. Ta funkcja
+woła `save_state` i `do_pracownika`; z bloku `finally` znaczyłoby to przy utracie sesji próbę
+napisania do człowieka martwym tokenem — usterkę zamkniętą w fali 1. Sygnatura `_wycofaj_commit`
+(tylko `pending` i migawka) czyni brak I/O własnością konstrukcji.
+
+**`dostarczono` wstaje po `do_pracownika`, przed `_oznacz_wyslane`.** Ten drugi zapisuje stan, więc
+`StateWriteError` z niego znaczy, że wiadomość JUŻ JEST u pracownika — cofnięcie wymieniłoby
+zgubioną wiadomość na zdublowaną.
+
+### Cena, świadomie zaakceptowana
+
+Ta sama wiadomość wraca do interpretacji: **dwa dodatkowe wywołania modelu** na jedną niedoręczoną
+wiadomość (`_MAX_PENDING_FAILURES - 1`), nie jedno, jak zakładał plan. Rozłożone na około trzy
+godziny, bo wynikiem obiegu jest teraz `UNKNOWN`, więc backoff się nie resetuje. Taniej niż zgubiona
+odpowiedź pracownika.
+
+Nowe, drobne ryzyko odwracalne: jeśli Graph przyjmie POST, a klient zobaczy błąd, kolejny cykl
+wyśle prośbę drugi raz. „Co najwyżej raz" chroni skutki nieodwracalne, a duplikat PYTANIA nim nie
+jest.
+
+Efekt operacyjny do zapowiedzenia: kolumna `błędy` w `--stan` zacznie pokazywać 1–2 dla osoby,
+której nie udało się odpowiedzieć. Dotąd było tam zawsze 0 — nie dlatego, że nic się nie działo,
+tylko dlatego, że `_commit` licznik zerował.
+
+### Usunięte z „Znanych ograniczeń"
+
+Wiersz „Pracownik nie dostał prośby o potwierdzenie → nieudana wysyłka nie jest ponawiana; napisz
+do niego ręcznie". Opisywał usterkę jako świadomy kompromis, **przemilczając**, że odpowiedź
+przestaje być widoczna dla kolejnych cykli. Po tej fali jest nieprawdziwy podwójnie: prośba przyjdzie
+sama w kolejnym cyklu, a po trzech nieudanych próbach pracownik dostaje prośbę o doprecyzowanie.
+
 ## [Nieopublikowane] — naprawy usterek 0.2.19, fala 3: wpis nie do rozstrzygnięcia
 
 Wpis, którego czatu nie da się odczytać, przestaje wisieć w nieskończoność (ADR 0007).
