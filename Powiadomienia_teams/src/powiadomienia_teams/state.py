@@ -74,9 +74,17 @@ class PendingReminder:
     # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
     # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``runtime.listener._record_failure``).
     fail_count: int = 0
-    # Obiegi Z RZĘDU, w których ODCZYT CZATU tej osoby rzucił wyjątkiem (zeruje `_commit`, tak jak
-    # `fail_count`). Liczy wyłącznie awarię odczytu: wątek z obcym nadawcą daje `ReadOutcome.BLOCKED`
-    # i tego licznika NIE rusza (ADR 0007), bo tam operator jest już zawołany osobno.
+    # Obiegi Z RZĘDU, w których ODCZYT CZATU tej osoby rzucił wyjątkiem (ADR 0007). Liczy wyłącznie
+    # awarię odczytu i to jest egzekwowane konstrukcją, nie dyscypliną: `ReadOutcome.READ_FAILED`
+    # powstaje w JEDNYM miejscu, w wąskim `try` obejmującym samo wywołanie `list_chat_messages`,
+    # i tylko ten wynik podbija licznik. Każdy inny — `BLOCKED` (obcy w wątku), `UNKNOWN` (obsługa
+    # wywróciła się PO odczycie), `HANDLED`, `NOTHING_NEW` — znaczy, że czat ODPOWIEDZIAŁ, więc
+    # licznik wraca do zera.
+    #
+    # Pierwsza wersja tej zmiany liczyła każdy `UNKNOWN` i przez to twierdziła nieprawdę: ucięty
+    # odczyt GRAFIKU (`GraphTruncatedReadError` omija `_record_failure` świadomie) podbijał licznik
+    # „czat nie odpowiada" dla czatu, który czytał się bez zarzutu, a alert kierował operatora do
+    # złego podsystemu.
     #
     # OSOBNE pole, a nie wspólne z `fail_count`, i to nie jest kosmetyka: przekroczenie progu
     # `fail_count` wysyła pracownikowi „Nie do końca zrozumiałem" DO CZATU — czyli dokładnie tam,

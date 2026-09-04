@@ -2970,7 +2970,15 @@ def test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem(tmp_path: Path, monkeypatch)
     # 3 × okno odpowiedzi (48 h) po nudge'u — sufit przekroczony.
     po_suficie = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
-    poll_replies(settings, client, _FakeLlm("{}"), now=po_suficie)  # type: ignore[arg-type]
+    # PĘTLA, nie jeden obieg — i to jest różnica między naprawą a regresem. Sufit wymaga OBU
+    # przesłanek: wieku ponad sufit ORAZ serii nieudanych odczytów. Wersja zamykająca wpis po
+    # PIERWSZYM nieudanym odczycie przechodziła ten test i była gorsza od 0.2.19: po przestoju
+    # dłuższym niż sufit wszystkie wpisy są stare, więc jeden 429 z Graph przy pierwszym obiegu
+    # po powrocie zamykał je razem z odpowiedziami czekającymi w czatach. Liczba obiegów nigdy
+    # nie była tu przedmiotem ochrony — jest nim ciche zamknięcie z alertem — ale jeden obieg
+    # zamrażał zachowanie, którego ADR 0007 nie chce.
+    for _ in range(_PROG_CYKLI_BEZ_ODCZYTU):
+        poll_replies(settings, client, _FakeLlm("{}"), now=po_suficie)  # type: ignore[arg-type]
 
     assert load_state(state_path)["u1"].status == EXPIRED  # wpis zszedł z obiegu
     assert client.sent == []  # ale pracownik NIE dostał zarzutu o milczenie
@@ -2991,7 +2999,7 @@ def test_prog_w_tescie_zgadza_sie_ze_stala_w_kodzie():
 
 
 def test_obcy_nadawca_NIE_podbija_licznika_nieudanych_odczytow(tmp_path: Path, monkeypatch):
-    """Rozdział `UNKNOWN`/`BLOCKED` musi być widoczny w LICZNIKU, nie tylko w enumie (ADR 0007).
+    """Rozdział wyników odczytu musi być widoczny w LICZNIKU, nie tylko w enumie (ADR 0007).
 
     Przy obcym nadawcy odczyt czatu SIĘ UDAŁ — nie ma awarii, którą licznik miałby mierzyć,
     a operator został zawołany osobno przez `_zglos_obcych_raz`. Gdyby licznik rósł także tutaj,
@@ -3018,13 +3026,16 @@ def test_obcy_nadawca_NIE_podbija_licznika_nieudanych_odczytow(tmp_path: Path, m
 def test_bledy_interpretacji_NIE_alarmuja_o_odczycie_czatu(tmp_path: Path, monkeypatch):
     """Najcichsza z pułapek tej zmiany: dwa liczniki karmione z jednego wyjątku.
 
-    Wyjątek z `_process_pending` przechodzi przez `_record_failure` (rośnie `fail_count`), ale
-    dolatuje WYŻEJ do per-osobowego handlera w `poll_replies` i staje się tam `UNKNOWN` — czyli
-    podbija też `unknown_count`. Bez zerowania w `_commit` trzy deterministyczne błędy modelu
-    zapaliłyby alert „przypomnienia zablokowane na odczycie czatu" o czacie, który czyta się bez
-    zarzutu, i wysłały operatora szukać awarii Graph, której nie ma.
+    Błąd interpretacji leci przez `_record_failure` (rośnie `fail_count`), ale dolatuje WYŻEJ do
+    per-osobowego handlera w `poll_replies`. Dopóki wszystko to było jednym `UNKNOWN`, podbijało
+    też licznik odczytu — i trzy deterministyczne błędy modelu zapalały alert „przypomnienia
+    zablokowane na odczycie czatu" o czacie, który czyta się bez zarzutu, wysyłając operatora
+    szukać awarii Graph, której nie ma.
 
-    Właściwa sekwencja to 1, 2, (commit odpuszcza porcję → 0), 1, 2, … — próg 3 nieosiągalny.
+    Po rozdzieleniu wyniku (ADR 0007) licznik rusza WYŁĄCZNIE na `READ_FAILED`, czyli na wyjątku
+    z samego `list_chat_messages`. Tutaj odczyt się udaje, więc licznik stoi na zerze — i ten test
+    pilnuje, żeby granica między „czat nie odpowiada" a „nie zrozumieliśmy odpowiedzi" nie zatarła
+    się przy kolejnej zmianie w `_process_pending`.
     """
     wyslane: list[str] = []
     monkeypatch.setattr(
@@ -3047,10 +3058,8 @@ def test_bledy_interpretacji_NIE_alarmuja_o_odczycie_czatu(tmp_path: Path, monke
 def test_powrot_odczytu_zglasza_sie_operatorowi(tmp_path: Path, monkeypatch):
     """Alert powrotu ma DZIAŁAĆ, a nie tylko istnieć w kodzie.
 
-    `_commit` zeruje `unknown_count`, a krok 1.6 biegnie po nim — więc naiwna implementacja
-    porównywałaby licznik już wyzerowany i nie zgłosiła powrotu NIGDY. Alert byłby ozdobą:
-    operator dostawałby „zablokowane", nie dostawał nigdy „wróciło" i musiał sam zgadywać, czy
-    awaria trwa. Dlatego o powrocie sądzimy z migawki sprzed obiegu.
+    Operator, który dostał „czat nie odpowiada", musi dostać też wiadomość, że awaria minęła —
+    inaczej sam zgaduje, czy sprawa jest wciąż otwarta, a przy ośmiu osobach zgaduje osiem razy.
     """
     wyslane: list[str] = []
     monkeypatch.setattr(
@@ -3063,13 +3072,13 @@ def test_powrot_odczytu_zglasza_sie_operatorowi(tmp_path: Path, monkeypatch):
 
     for _ in range(_PROG_CYKLI_BEZ_ODCZYTU):
         poll_replies(settings, _OdczytPadaZawsze({}), _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
-    assert wyslane == ["Przypomnienia zablokowane na odczycie czatu"]
+    # Wpis ma 71 h, czyli jest DALEKO od sufitu — pada alert progowy, nie ten o zamknięciu.
+    # Tytuły są rozdzielone celowo: oba mogą paść w jednym obiegu i mówią rzeczy przeciwne.
+    assert wyslane == ["Czat nie odpowiada — przypomnienia wstrzymane"]
 
-    # Czat wraca Z ODPOWIEDZIĄ, nie pusty — i to jest cała trudność tej sondy. Pusty czat daje
-    # `NOTHING_NEW`, przy którym `_commit` w ogóle nie biegnie, więc licznik dotrwałby do kroku 1.6
-    # nietknięty i naiwna implementacja też by przeszła. Dopiero prawdziwa wiadomość uruchamia
-    # `_commit`, który zeruje `unknown_count` PRZED krokiem 1.6 — czyli jedyny przypadek, w którym
-    # migawka sprzed obiegu robi różnicę. (Sprawdzone mutacją: bez migawki ten test pada.)
+    # Czat wraca Z ODPOWIEDZIĄ, nie pusty: ścieżka `HANDLED` przechodzi przez `_commit`, czyli
+    # przez najwięcej kodu między odczytem a krokiem 1.6. Pusty czat (`NOTHING_NEW`) też by tu
+    # przeszedł, ale badałby mniej.
     odpowiedz = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "poniedziałek 8-16")]})
     poll_replies(settings, odpowiedz, _FakeLlm("{}"), now=_PO_PRZESTOJU)  # type: ignore[arg-type]
 

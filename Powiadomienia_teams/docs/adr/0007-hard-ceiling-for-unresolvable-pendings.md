@@ -20,8 +20,9 @@ It also named the price, in its own "Accepted gaps" section:
 > breaker guards interpretation, not the read itself.
 
 That gap is not theoretical, and it is worse than "not tidied away". `client.list_chat_messages`
-is called in `_read_new`, which runs **before** `_record_failure`. An exception therefore reaches
-the per-person `except Exception` in `poll_replies` and becomes `ReadOutcome.UNKNOWN`: `fail_count`
+is called at the top of `_process_pending`, **before** the `try` that leads to `_record_failure`.
+An exception therefore reached the per-person `except Exception` in `poll_replies` and became
+`ReadOutcome.UNKNOWN`: `fail_count`
 does not grow, the watermark does not move, and `should_expire` correctly refuses to expire. The
 pending stays open forever, and because the state key is `member_id`, it **blocks that person's
 reminder every following week**. The only trace is a `logger.exception` inside the container.
@@ -49,6 +50,15 @@ stopped being asked.
    entry that is still unresolved is closed **silently**: status `EXPIRED`, no message to the
    employee, one alert to the operator.
 
+   **The ceiling requires both conditions — the age *and* the run of failed reads.** Age alone is
+   not enough, and the difference is not academic: after any downtime longer than the ceiling
+   *every* open entry is older than it, so a single 429 on the first tick back would close them
+   all, silently, together with the replies waiting in their chats. That is strictly worse than the
+   defect this ADR fixes, because 0.2.19 at least kept the reply readable. The conjunction costs
+   nothing — below the ceiling the counter grows every tick anyway, and three ticks at the backoff
+   ceiling are about three hours against 144 — and it makes the operator's warning arrive before
+   anything disappears, which is what the alert text already promises.
+
 **This weakens ADR 0003, and the weakening is the point.** After the ceiling, an entry can reach a
 terminal status without the successful read that ADR 0003 requires.
 
@@ -59,25 +69,34 @@ sentence makes no claim, so no claim is false. This is why the ceiling must not 
 `domkniecia.zamknij_bez_zapisu`: that function sends `EXPIRED_TEXT`, and routing the ceiling
 through it would turn a bookkeeping decision into a lie to a person.
 
-**Scope: only `UNKNOWN` from a failed read.** The listener has a second source of "we established
-nothing" — a thread that stopped being 1:1, where a stranger's message must not be taken for the
-employee's reply. Both collapsed into `UNKNOWN`, so this change splits them: the stranger case
-becomes `ReadOutcome.BLOCKED`, and neither the counter nor the ceiling touches it.
+**Scope: only a failed read of the chat itself.** `UNKNOWN` meant three different things at once,
+and a counter built on it could not be honest. This change splits them by *what actually failed*:
 
-The reason is this ADR's own premise, not test convenience. The motivation above is *"silent,
-one-way, and looks like a quiet week"*. In the stranger case none of that holds: `_zglos_obcych_raz`
-already calls the operator and tells them what to do. An alert that is already ringing does not need
-a second bell, and an entry whose owner has been told is not abandoned. Applying the ceiling there
-would also mean closing someone's week because a colleague wrote in their thread — a cause that has
-nothing to do with the person being closed.
+- `READ_FAILED` — `list_chat_messages` raised. Returned from **one** place, inside a `try` that
+  wraps nothing but that call. The only value the counter counts and the only one that moves an
+  entry towards the ceiling, because it is the only one that says the channel is unreachable.
+- `BLOCKED` — the read succeeded but the thread stopped being 1:1. Excluded deliberately:
+  `_zglos_obcych_raz` has already called the operator, and closing here would end someone's week
+  because a colleague wrote in their thread.
+- `UNKNOWN` — the read succeeded and handling blew up afterwards. Excluded because the chat
+  answered. This is the case a single collapsed value got wrong: a truncated read of the
+  **schedule** (`GraphTruncatedReadError`, which bypasses `_record_failure` by design) raised the
+  "chat unreadable" counter for a chat that read perfectly, and pointed the operator's alert at the
+  wrong subsystem.
 
-`BLOCKED` is a fourth enum value, which the proposed compatibility contract **N34**
+Every exclusion follows this ADR's own premise, not test convenience. The motivation is *"silent,
+one-way, and looks like a quiet week"*. Where the operator has already been called, or where the
+chat demonstrably answers, none of that holds — and a counter that fires anyway teaches the operator
+to distrust the one channel they have.
+
+The two new enum values are what the proposed compatibility contract **N34**
 (`plan-rozwoju.md` §11, quoted in `service.py`) would otherwise speak against. N34 exists so that an
 image rollback is a plain version swap, which means it protects values **written to disk**: an older
 image must be able to read the state file it finds. `ReadOutcome` lives only in memory for the
 duration of one tick and is never serialised, so the reason behind N34 does not reach it — and the
-on-disk status enum, which N34 does cover, is left untouched by this ADR. `should_expire` still
-refuses to expire on `BLOCKED`, so the safety property of ADR 0003 is unchanged for that path.
+on-disk status enum, which N34 does cover, is left untouched by this ADR. `should_expire` passes
+only `NOTHING_NEW`, so both new values keep blocking expiry and the safety property of ADR 0003 is
+unchanged on every path.
 
 **The ceiling is derived from the weekly cycle, not from the reply window.** 144 h = 6 days, one day
 short of the 168 h cycle. The anchor is `lifecycle._anchor` (`max(watermark, bot_last_message_at,
@@ -124,9 +143,10 @@ something untrue as a result, because no employee is told anything at all.
 **A condition this ADR imposes on the watermark fix (C3), which is not part of it.** C3 will wrap
 two sends that currently stand outside any `try`. Their exceptions will then reach the same
 per-person handler and arrive as `UNKNOWN` — inflating the read counter for a **send** failure.
-`_commit` therefore zeroes `unknown_count` alongside `fail_count`, and that must stay when C3
-lands. Without it, three deterministic interpretation failures already raise "chat unreadable" for
-a chat that reads perfectly well.
+After the split above this is exactly right: the chat was read, a send failed, and the read counter
+must not move. No coupling between the two changes is needed. An earlier draft of this ADR required
+`_commit` to zero `unknown_count` for that reason; the split makes it redundant, and it was removed
+rather than left as defensive decoration.
 
 **Rejected alternatives.** *Ceiling on `fail_count` instead of a new field* — the failed read never
 reaches `_record_failure`, so the counter it would rely on does not move; this is the defect, not a
@@ -149,7 +169,10 @@ same change. Making the throttle durable is a separate decision with its own ris
 `tests/test_app.py`: `test_nierozstrzygniete_cykle_powinny_alarmowac_po_progu` (alert exactly once
 at the threshold, across `threshold + 5` cycles) and `test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem`
 (`EXPIRED`, `client.sent == []`, one operator alert) — both were `xfail(strict=True)` guards written
-against the recovered 0.2.19 source and are unmarked by the change that fixes them.
+against the recovered 0.2.19 source and are unmarked by the change that fixes them. The ceiling
+guard's body now loops `_PROG_CYKLI_BEZ_ODCZYTU` times instead of running one tick: the property it
+protects (silent closure with an alert) is untouched, but a single tick would freeze in place the
+age-only behaviour this ADR rejects above.
 
 The control in the other direction must keep passing:
 `test_trwale_nieodczytywalny_czat_nie_wygasa_i_nie_gubi_odpowiedzi` holds an entry 71 h old through
@@ -160,6 +183,7 @@ read". The three stranger-thread tests (`test_obcy_nadawca_NIE_pozwala_wygasic_w
 executable form of the `BLOCKED` split, since each holds an entry 142 h old and the middle one runs
 exactly three cycles.
 
-`tests/test_lifecycle.py` covers `should_expire` for `BLOCKED` and the ceiling predicate at its
-boundary and with no anchor. `tests/test_config.py` covers refusal to start when the ceiling is
+`tests/test_lifecycle.py` covers `should_expire` across every `ReadOutcome` — as a set comparison,
+so a value added later cannot slip through unexamined — and the ceiling predicate at its boundary,
+with a moving anchor and with no anchor at all. `tests/test_config.py` covers refusal to start when the ceiling is
 `<= 0`, at or below the courtesy floor, or above one week.

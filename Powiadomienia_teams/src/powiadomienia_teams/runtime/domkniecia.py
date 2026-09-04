@@ -7,8 +7,8 @@ a dla części z nich po prostu nieprawdziwy.
 
 Sposób PIĄTY (``zamknij_cicho_nierozstrzygniete``, ADR 0007) nie mówi pracownikowi NIC — i to jest
 ta sama zasada, nie wyjątek od niej. Wpis schodzi z obiegu, bo jego czatu nie dało się odczytać
-przez sześć dób; o zachowaniu człowieka nie ustaliliśmy wtedy niczego, więc każde zdanie na jego
-temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą treścią, jaką mamy. Dowiaduje się
+w serii obiegów, a od ostatniej aktywności minął sufit; o zachowaniu człowieka nie ustaliliśmy
+wtedy niczego, więc każde zdanie na jego temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą treścią, jaką mamy. Dowiaduje się
 operator, nie pracownik.
 
 Wzorzec utrwalania jest jeden dla wszystkich ścieżek: status terminalny NAJPIERW, wysyłka POTEM.
@@ -111,11 +111,16 @@ def zamknij_cicho_nierozstrzygniete(
 ) -> None:
     """Zamknij wpisy, których NIE DA SIĘ rozstrzygnąć — bez jednego słowa do pracownika (ADR 0007).
 
-    Piąta ścieżka domykająca i jedyna niema. Powód zamknięcia leży po NASZEJ stronie: czat tej osoby
-    nie daje się odczytać od `sufit_wpisu_bez_odczytu_h`, więc wpis blokowałby jej przypomnienie
-    w każdym kolejnym tygodniu (klucz stanu to `member_id`). O tym, czy pracownik odpisał, nie
-    wiemy NIC — i dlatego nie wolno tu użyć `zamknij_bez_zapisu`: tamta wysyła `EXPIRED_TEXT`
-    („Nie dostałem odpowiedzi"), czyli zarzut postawiony na podstawie naszej własnej awarii.
+    Piąta ścieżka domykająca i jedyna niema. Powód zamknięcia leży po NASZEJ stronie: odczyt czatu
+    tej osoby padł w serii kolejnych obiegów ORAZ od ostatniej aktywności minęło więcej niż
+    `sufit_wpisu_bez_odczytu_h`, więc wpis blokowałby jej przypomnienie w każdym kolejnym tygodniu
+    (klucz stanu to `member_id`). Obie przesłanki są konieczne — sam wiek nie wystarcza, bo po
+    dłuższym przestoju WSZYSTKIE wpisy są starsze niż sufit, a jeden 429 z Graph zamykałby je
+    razem z odpowiedziami czekającymi w czatach.
+
+    O tym, czy pracownik odpisał, nie wiemy NIC — i dlatego nie wolno tu użyć `zamknij_bez_zapisu`:
+    tamta wysyła `EXPIRED_TEXT` („Nie dostałem odpowiedzi"), czyli zarzut postawiony na podstawie
+    naszej własnej awarii.
 
     Brak `client` w sygnaturze jest zamierzony i jest tu strażnikiem: bez niego nie ma czym wysłać
     wiadomości, więc „ciche" nie zależy od tego, czy ktoś o tym pamiętał. Z tego samego powodu nie

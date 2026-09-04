@@ -30,19 +30,26 @@ to dokładnie jak spokojny tydzień.
 
 ### Dodane
 
-- Pole stanu `PendingReminder.unknown_count` — obiegi z rzędu z nieudanym odczytem czatu.
+- Pole stanu `PendingReminder.unknown_count` — obiegi z rzędu, w których padł ODCZYT CZATU.
   Wstecznie **i wprzód** zgodne (`state._FIELDS` odsiewa nieznane klucze), więc cofnięcie po tagu
   obrazu zostaje bezpieczne. Trzymane OSOBNO od `fail_count`: przekroczenie progu `fail_count`
   wysyła „Nie do końca zrozumiałem" DO CZATU, czyli tam, gdzie z definicji nie ma dostępu.
 - Alert progowy dla operatora po trzech obiegach bez odczytu — raz, przy równości progowi, plus
-  osobny alert powrotu wagi INFO. Ten sam wzorzec co `_PULS_PROG_ALERTU`.
+  osobny alert powrotu wagi INFO. Ten sam wzorzec co `_PULS_PROG_ALERTU`. Alert progowy i alert
+  o zamknięciu mają RÓŻNE tytuły: mogą paść w tym samym obiegu i mówią rzeczy przeciwne.
 - `POWIADOMIENIA_SUFIT_WPISU_BEZ_ODCZYTU_H` (domyślnie 144 h): twardy sufit wieku wpisu. Po nim
   wpis schodzi z obiegu **po cichu** — status `EXPIRED`, ZERO wiadomości do pracownika, alert do
   operatora. Nie da się wyłączyć zerem; walidacja żąda `> REPLY_MIN_HOURS` i `<= 168`.
+  **Sufit wymaga OBU przesłanek: wieku ORAZ serii nieudanych odczytów.** Sam wiek nie wystarcza —
+  po przestoju dłuższym niż sufit wszystkie wpisy są stare, więc jeden 429 z Graph przy pierwszym
+  obiegu po powrocie zamykałby je razem z odpowiedziami czekającymi w czatach.
 - Kolumna `bez odcz.` w `--stan`, obok `błędy` — bo to dwa różne liczniki, a operator wywołany
   alertem musi mieć czym go sprawdzić.
-- `ReadOutcome.BLOCKED` — czwarta wartość, wyłącznie w pamięci. Rozdziela dwa `UNKNOWN`, które
-  do tej pory były zlane: awarię odczytu i obcego nadawcę w wątku.
+- `ReadOutcome.READ_FAILED` i `ReadOutcome.BLOCKED` — dwie nowe wartości, wyłącznie w pamięci.
+  Rozbijają `UNKNOWN`, który znaczył naraz trzy różne rzeczy: awarię odczytu czatu (liczoną),
+  obcego nadawcę w wątku (operator już zawołany) i awarię obsługi PO udanym odczycie (czat
+  odpowiada). `READ_FAILED` powstaje w jednym miejscu, w wąskim `try` wokół `list_chat_messages`,
+  więc „licznik mierzy dostępność czatu" jest własnością konstrukcji, nie dyscypliny.
 
 ### Cena, świadomie zaakceptowana
 
@@ -64,6 +71,25 @@ więc przyczyna ginie — osobnego statusu dodać nie wolno (N34), zostaje alert
   szwu wysyłki i kosztowała usterkę, której nikt nie zauważył.
 - Cytowanie `listener.py:462-469` w `reason` ocalałego `xfail` wskazywało na sygnaturę funkcji,
   a nie na zdanie, które cytowało. Poprawione na linię niosącą tę obietnicę.
+
+### Znalezione przeglądem tej fali, przed scaleniem
+
+Pierwsza wersja tej zmiany miała dwie usterki własne, obie w nowym kroku pętli nasłuchu:
+
+- **Sufit pytał wyłącznie o wiek wpisu**, więc pojedynczy 429 z Graph na wpisie starszym niż
+  144 h zamykał go po cichu razem z odpowiedzią pracownika czekającą w czacie — REGRES wobec
+  0.2.19, w którym wpis zostawał otwarty i kolejny obieg tę odpowiedź czytał. Naprawione
+  koniunkcją; strażnik `test_twardy_sufit_zamyka_wpis_CICHO_i_z_alertem` dostał pętlę, bo
+  pojedynczy obieg zamrażał wadliwe zachowanie.
+- **`unknown_count` nie liczył tego, co deklarował.** Krok liczący widział `ReadOutcome.UNKNOWN`,
+  a ten powstawał dla KAŻDEGO wyjątku z obsługi — także dla uciętego odczytu GRAFIKU, który
+  świadomie omija `_record_failure`. Alert „czat nie odpowiada" potrafił więc paść dla czatu
+  czytanego bez zarzutu i skierować operatora do złego podsystemu. Naprawione rozdzieleniem
+  wyniku odczytu (`READ_FAILED`).
+
+Przy okazji odpadła nieudokumentowana zależność między `_MAX_PENDING_FAILURES`
+a `_PROG_CYKLI_BEZ_ODCZYTU` (progi musiały być równe, żeby licznik nie fałszował) oraz zerowanie
+`unknown_count` w `_commit`, które po rozdzieleniu przestało być potrzebne.
 
 ## [Nieopublikowane] — naprawy usterek 0.2.19, fala 2: tożsamość
 

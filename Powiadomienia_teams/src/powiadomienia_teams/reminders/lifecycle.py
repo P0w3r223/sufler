@@ -35,16 +35,26 @@ class ReadOutcome(Enum):
 
     HANDLED = "handled"  # była nowa wiadomość i została obsłużona
     NOTHING_NEW = "nothing_new"  # odczyt się powiódł, nowej wiadomości nie ma
-    # Nic pewnego nie ustaliliśmy: odczyt czatu padł ALBO obsługa wywróciła się w połowie. Jedno
-    # i drugie znaczy to samo dla wygaszania — nie ma podstaw, by twierdzić „nie odpisał".
+    # Nic pewnego nie ustaliliśmy: obsługa odpowiedzi wywróciła się w połowie. Dla wygaszania
+    # znaczy to samo co awaria odczytu — nie ma podstaw, by twierdzić „nie odpisał" — ale czat
+    # ODPOWIADAŁ (``READ_FAILED`` jest osobno), więc licznik z ADR 0007 tej wartości nie liczy.
     UNKNOWN = "unknown"
+    # Sam ODCZYT czatu padł: o tej osobie nie wiemy nic i nie mamy jak się dowiedzieć. Jedyna
+    # wartość, którą liczy `unknown_count` i jedyna, która zbliża wpis do twardego sufitu
+    # (ADR 0007) — bo tylko ona świadczy o tym, że KANAŁ jest niedostępny.
+    #
+    # Rozdział wobec `UNKNOWN` nie jest kosmetyczny. Zlane w jedno, do sufitu zbliżał wpis także
+    # ucięty odczyt GRAFIKU (`GraphTruncatedReadError` omija `_record_failure` świadomie) i każdy
+    # błąd między odczytem czatu a blokiem `try` w `_process_pending` — czyli awarie, które
+    # o dostępności czatu nie mówią nic, a alert o nich twierdził, że czat milczy.
+    READ_FAILED = "read_failed"
     # Odczyt się UDAŁ, ale wątek przestał być rozmową 1:1 — jest w nim ktoś obcy, więc o TEJ osobie
     # nie orzekamy. Dla wygaszania znaczy dokładnie to samo co `UNKNOWN` (patrz ``should_expire``),
     # ale jest osobną wartością, bo licznik i sufit z ADR 0007 celowo tej ścieżki NIE obejmują:
     # tam operator jest już zawołany (``listener._zglos_obcych_raz``), więc awaria nie jest cicha,
     # a zamknięcie wpisu znaczyłoby zamknięcie komuś tygodnia dlatego, że kolega napisał w wątku.
     #
-    # Czwarta wartość enuma mimo N34: N34 chroni wartości ZAPISYWANE NA DYSK, żeby cofnięcie obrazu
+    # Nowe wartości enuma mimo N34: N34 chroni wartości ZAPISYWANE NA DYSK, żeby cofnięcie obrazu
     # było samą podmianą wersji. `ReadOutcome` żyje wyłącznie w pamięci jednego obiegu i nigdy nie
     # jest serializowany, więc powód stojący za N34 tu nie sięga.
     BLOCKED = "blocked"
