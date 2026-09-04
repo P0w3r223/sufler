@@ -135,6 +135,47 @@ card steps 4-5, image 1.12.1), which puts the re-measure at **~2026-09-20** (sam
 move is removal, not silence — a tool that costs prefix bytes every turn and buys nothing is exactly
 the scaffolding this project deletes.
 
+### Interim reading, 2026-09-04 — the numbers exist, and they cannot yet falsify anything
+
+`audit.db` (ADR 0067) now holds the tool-call counts the follow-up asks for. They are recorded here
+early because the shape of the sample matters more than the counts, and that shape will not be
+visible on 2026-09-20 unless it is written down now.
+
+Window **2026-08-20 → 2026-09-02**, `teams_graph` (the only door that records tool calls),
+**62 calls, 10 conversations, one actor, 0 errors, every status `ok`**:
+
+| Tool | Calls |
+|---|---|
+| `Bash` | 40 |
+| `Activity` | 10 |
+| `Schedule` | 5 |
+| `Jira` | 4 |
+| `Project` | 2 |
+| **`File`** | **1** |
+
+Read naively this inverts the plan's thesis: the shell — the candidate for removal — dominates, and
+`File` sits at the removal threshold this ADR set for itself. **That reading does not hold.** The
+traffic is not spread across the window:
+
+| Day | Calls | Conversations |
+|---|---|---|
+| 2026-08-20 | 7 | 3 |
+| 2026-08-21 | 54 | 6 |
+| 2026-09-02 | 1 | 1 |
+
+61 of 62 calls fall on the two days the shell was activated and smoke-tested, followed by **twelve
+days of near-silence**. The single `File` call is itself part of that testing — its target was
+`biap/smoke-test/2026-07-31-smoke-test-wdrozenia`. So the counts measure **who exercised what during
+activation**, not what the tool is worth in use. `Bash`'s 40 is an activation artifact for the same
+reason `File`'s 1 is: nobody has yet used this fleet in anger.
+
+**Consequence for the 2026-09-20 re-measure:** run as scheduled, it would produce these same numbers
+with a longer denominator and invite the same false conclusion. The follow-up therefore gains a
+precondition it did not have: **the re-measure is only decisive if the window contains real traffic
+— at least 20 user turns from at least 2 distinct actors, outside activation and smoke-test
+conversations.** Below that, the honest verdict is *not measured*, and the date moves; it is not
+evidence for removal. A tool cannot be falsified by an absence of users.
+
 ## Options considered
 
 - **Return the binary through the tool result** (rejected): the `document` block is illegal there and
@@ -172,7 +213,9 @@ the scaffolding this project deletes.
 ## Closed questions — decisions of 2026-08-14
 
 - **Does the measurement justify the tool?** No — and the tool is built regardless, by owner decision.
-  See *Measurement* above, including the re-measure follow-up that keeps the decision falsifiable.
+  See *Measurement* above, including the re-measure follow-up that keeps the decision falsifiable. The interim reading of 2026-09-04 adds the precondition that
+  makes the re-measure worth running: without real traffic in the window, the verdict is *not
+  measured*, not *remove*.
 - **Formats `read` materializes.** Images (png/jpeg/gif/webp), PDF, docx, xlsx/pptx (already extracted
   to text), plain text, and **HTML** (new `extract_html`). Ceilings **reuse the `AttachmentLimits`
   values** unchanged (`max_bytes`, `max_total_bytes`, `max_extract_bytes`, `max_image_edge`,

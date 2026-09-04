@@ -6,6 +6,19 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Zmienione
+
+- **ADR 0064 dostaje pomiar pośredni (2026-09-04) i warunek do biegu z ~2026-09-20.** `audit.db`
+  ma już liczby, których follow-up żądał: 62 wywołania, 10 rozmów, jeden aktor, `File` = 1,
+  `Bash` = 40. Czytane wprost, wskazywałoby to na `File` jako narzędzie do usunięcia. Rozkład dzienny
+  temu przeczy — **61 z 62 wywołań przypada na dwa dni aktywacji powłoki** (2026-08-20/21), potem
+  dwanaście dni ciszy i jedno wywołanie 2026-09-02; samo `File` = 1 to wywołanie na notatce
+  `biap/smoke-test/…`. Próbka mierzy więc, kto co przetestował przy aktywacji, a nie wartość
+  narzędzia. Follow-up zyskuje warunek, którego nie miał: pomiar rozstrzyga tylko przy oknie
+  z ruchem (≥ 20 tur użytkownika, ≥ 2 aktorów, poza rozmowami smoke-testowymi); poniżej tego
+  progu werdyktem jest *niezmierzone*, a data się przesuwa. **Nieużywanie nie falsyfikuje
+  narzędzia, jeśli nie było użytkowników.**
+
 ### Do dokończenia
 
 - **Nocny bieg CI (`schedule`) — przygotowany, NIE wdrożony.** `.github/workflows/ci.yml` wymaga
