@@ -8,6 +8,38 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Mapa tożsamości przyjmuje wpis „tylko Teams": `jira_user` jest opcjonalne, `aad_user_id`
+  zostaje wymagane** ([ADR 0070](docs/adr/0070-teams-only-identity-and-what-a-map-entry-grants.md)).
+  Ładowarka żądała OBU identyfikatorów, a w pionie jest osoba bez konta Jira — więc bramka odczytu
+  bazy wiedzy (ADR 0062) stała WYŁĄCZONA od kiedy powstała: jest fail-closed, więc jej włączenie
+  odcięłoby tę osobę od notatek. Koszt był mierzalny, nie teoretyczny — 2026-09-03 **wszystkie 62
+  z 62 wpisów `audit.db` niosły `trust_class: unknown`**, czyli kryterium odbioru Fazy 3 („wpis
+  z klasą zaufania tury") było spełnione wyłącznie formalnie. Unikalność identyfikatorów pomija
+  teraz puste WARTOŚCI (nie całe pole): bez tego druga osoba bez Jiry kładłaby start błędem
+  o zdublowanym identyfikatorze, a pominięcie całego pola zdjęłoby ochronę przed dwiema osobami
+  o tym samym, niepustym `jira_user`.
+  **Wpis w mapie to PEŁNE członkostwo** — baza wiedzy, notatki ze spotkań dwojgiem drzwi, klasa
+  zaufania T1, mutacja notatek i **powłoka** (`ENABLE_SHELL=true` na flocie), niezależnie od flagi
+  odczytu. Dopisanie wiersza wręcza więc uruchamianie kodu; to świadoma decyzja właściciela
+  (ADR 0070 §3), nie skutek uboczny odblokowania bramki. Sześć testów trzyma to zdanie, bo do tej
+  pory nie trzymało go nic. Asymetria przyjęta razem z decyzją: osoba bez konta Jira nie dostaje
+  narzędzia `Jira` **wcale**, więc traci też pytania o zadania innych ludzi.
+  Sam merge nie zmienia zachowania floty — zdolności nadaje dopiero wpis w `identities.yaml`,
+  który leży poza repozytorium.
+
+- **Preflight Jiry potrafił zameldować `OK` osobie, która narzędzia `Jira` nie dostanie.**
+  Usterka odkryta przy powyższym, nienazwana w ADR-ze — który twierdzi, że surowość mapy „żyje
+  w dokładnie jednym miejscu, w ładowarce". Konsumentów pola `jira_user` jest **siedem, nie
+  sześć**: czwarty odczyt produkcyjny siedzi w `deploy/jira/preflight.py`, poza wyliczeniem ADR-u.
+  Po zmianie wypisywałby `OK: rozwiązano na jira_user=''` z kodem `0`, a `_mask("")` zwraca pusty
+  napis, więc nie było nawet widać, że pole jest puste. Nic by tego nie złapało: `deploy/` jest
+  poza `mypy` (`files = ["src"]`), a skrypt nie miał ani jednego testu. Dziś odmawia i wprost
+  ZABRANIA uzupełniania mapy — fałszywa czerwień popychająca do „naprawy" byłaby gorsza od
+  fałszywej zieleni, bo cudze konto w tym wpisie pokazałoby tej osobie cudze zadania.
+  Przy okazji sprostowana martwa obietnica starsza od ADR 0070: `docs/how-to/jira-my-tasks.md`
+  twierdził, że preflight sprawdza rozwiązanie `jira_user` **do konta w Jirze**. Nigdy nie pytał
+  Jiry — czyta wyłącznie plik mapy.
+
 - **Opis `Project` przestaje odsyłać do narzędzia `File` — odesłanie było MARTWE na jedynych
   drzwiach, które ten akapit emitują.** Akapit akcji `save` mówił „a istniejącą zmienia
   `File(edit)`". Zmierzone 2026-09-04: `enable_write=True` podaje wyłącznie CLI
