@@ -174,12 +174,22 @@ class _AuditCapturingRuntime(_FakeRuntime):
         )
 
 
+class _FakeRecorder:
+    """Atrapa rejestratora tury — notuje to, co realnie do niej dotarło."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict, str]] = []
+
+    def __call__(self, name: str, arguments: object, status: str) -> None:
+        self.calls.append((name, dict(arguments), status))  # type: ignore[arg-type]
+
+
 class _FakeAudit:
-    """Atrapa ``AuditService`` — notuje kontekst tury i zwraca sentinel rejestrator."""
+    """Atrapa ``AuditService`` — notuje kontekst tury i zwraca wołalny rejestrator."""
 
     def __init__(self) -> None:
         self.turn_calls: list[dict[str, str]] = []
-        self.recorder = object()
+        self.recorder = _FakeRecorder()
 
     def turn_recorder(
         self, *, door: str, raw_user: str, conversation_id: str, trust_class: str = "unknown"
@@ -198,9 +208,12 @@ class _FakeAudit:
 def test_audit_recorder_built_per_turn_and_passed_to_runtime():
     """Szew responder→runtime: rejestrator audytu domknięty na (kanał, nadawca, rozmowa) i wpięty.
 
-    Jedyne miejsce, gdzie audyt się w ogóle włącza — usunięcie ``audit=audit_recorder`` albo pomyłka
+    Jedyne miejsce, gdzie audyt się w ogóle włącza — usunięcie wpięcia albo pomyłka
     w ``door``/``raw_user``/``conversation_id`` przeszłaby bramkę bez śladu bez tego testu (luka
-    pokrycia z review Fazy 0).
+    pokrycia z review Fazy 0). Od poprawki skazy w chwili wywołania runtime dostaje OBSERWATORA,
+    a nie sam rejestrator, więc sprawdzamy DROGĘ: to, co obserwator dostaje, ma dojść do
+    rejestratora nietknięte. Test tożsamości obiektu przechodziłby na obserwatorze, który
+    połyka wpisy.
     """
     store = SqliteConversationStore(":memory:")
     service = ConversationService(store, max_context_tokens=1000)
@@ -227,11 +240,19 @@ def test_audit_recorder_built_per_turn_and_passed_to_runtime():
             "trust_class": "unknown",  # T0–T3 dowiąże ADR 0066
         }
     ]
-    assert runtime.audit_arg is audit.recorder  # dokładnie ten rejestrator wpięty do run_turn
+    obserwator = runtime.audit_arg
+    assert callable(obserwator)
+    obserwator("Project", {"action": "list"}, "ok")  # type: ignore[operator]
+    assert audit.recorder.calls == [("Project", {"action": "list"}, "ok")]
 
 
-def test_audit_absent_passes_none_recorder():
-    """Bez ``audit`` (drzwi bez dziennika) runtime dostaje ``audit=None`` — audyt niewłączony."""
+def test_audit_absent_still_passes_observer_for_taint():
+    """Drzwi bez dziennika dostają obserwatora, nie ``None`` — bo wisi na nim także skaza.
+
+    Skaza (ADR 0066) i audyt (ADR 0067) jadą tą samą drogą, ale to DWIE zdolności: drzwi bez
+    audytu nadal muszą oznaczać rozmowę, do której weszła treść obca. Wywołanie obserwatora
+    przy wyłączonym dzienniku ma być ciche — nie ma komu zapisać, ale nie ma też co wywracać.
+    """
     store = SqliteConversationStore(":memory:")
     service = ConversationService(store, max_context_tokens=1000)
     runtime = _AuditCapturingRuntime()
@@ -239,7 +260,9 @@ def test_audit_absent_passes_none_recorder():
 
     asyncio.run(responder.respond(InboundMessage(text="x", conversation_id="c1")))
 
-    assert runtime.audit_arg is None
+    obserwator = runtime.audit_arg
+    assert callable(obserwator)
+    obserwator("Project", {}, "ok")  # type: ignore[operator]  # bez dziennika: cicho
 
 
 def test_second_turn_receives_prior_history_and_reply_is_recorded():
@@ -658,11 +681,21 @@ def test_metrics_failure_does_not_break_turn():
 
 
 class _ToolCallingRuntime(_FakeRuntime):
-    """Runtime, który udaje turę z wywołaniem WSKAZANEGO narzędzia (do wyzwalaczy skazy)."""
+    """Runtime udający turę z wywołaniem WSKAZANEGO narzędzia (do wyzwalaczy skazy).
 
-    def __init__(self, tool_name: str) -> None:
+    Woła ``audit`` tak, jak robi to prawdziwy ``AgentRuntime._dispatch`` — w chwili wywołania,
+    przed zwróceniem wyniku tury. Bez tego atrapa udawałaby kontrakt, którego realny runtime
+    dotrzymuje, a sondy skazy mierzyłyby wyłącznie samą fiksturę.
+
+    ``stop_reason``/``entries`` są parametrem, bo tura UCIĘTA jest tu przypadkiem głównym:
+    inwariant zapisu (ADR 0011) każe wtedy zwrócić ``entries=()``, więc każdy fakt czytany
+    z wyniku tury przepada — a skutki uboczne narzędzi zostają.
+    """
+
+    def __init__(self, tool_name: str, *, stop_reason: str = "end_turn") -> None:
         super().__init__("ok")
         self._tool = tool_name
+        self._stop_reason = stop_reason
         self.trust_seen: list[str] = []
         self.nonce_seen: list[str] = []
 
@@ -670,6 +703,12 @@ class _ToolCallingRuntime(_FakeRuntime):
         self.calls.append((query, list(kwargs.get("history", []))))
         self.trust_seen.append(str(kwargs.get("trust")))
         self.nonce_seen.append(str(kwargs.get("trust_nonce")))
+        audit = kwargs.get("audit")
+        if audit is not None:
+            audit(self._tool, {}, "ok")
+        if self._stop_reason != "end_turn":
+            # Tura niedomknięta: nic do zapisu (inwariant ADR 0011).
+            return AgentResult(reply="czę", entries=(), stop_reason=self._stop_reason)
         return AgentResult(
             reply="ok",
             entries=(
@@ -677,7 +716,7 @@ class _ToolCallingRuntime(_FakeRuntime):
                 AssistantTurn("ok", (ToolCall("t1", self._tool, {}),)),
                 AssistantTurn("ok", ()),
             ),
-            stop_reason="end_turn",
+            stop_reason=self._stop_reason,
         )
 
 
@@ -721,6 +760,37 @@ def test_activity_content_taints_the_conversation():
     responder, service, _ = _responder_z_zaufaniem(_ToolCallingRuntime("Activity"))
 
     asyncio.run(responder.respond(InboundMessage(text="co w PR?", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+    assert conv.taint_source == "tool"
+
+
+def test_taint_survives_a_turn_cut_on_max_tokens():
+    """Tura ucięta zostawia skutki uboczne narzędzi — musi zostawić też skazę (3.15).
+
+    ``max_tokens`` daje ``entries=()`` (inwariant zapisu ADR 0011), więc dopóki skaza była
+    czytana z WYNIKU tury, tura z ośmioma wywołaniami ``Bash`` nie zostawiała żadnego śladu.
+    Ucięcie trafia przy tym w tury NAJBOGATSZE w wywołania — bo to one wyczerpują budżet.
+    """
+    runtime = _ToolCallingRuntime("Bash", stop_reason="max_tokens")
+    responder, service, _ = _responder_z_zaufaniem(runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="policz pliki", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+    assert conv.taint_source == "tool"
+
+
+def test_taint_survives_exhausted_tool_iterations():
+    """Druga ścieżka wyjścia bez zapisu: limit rund. Tu wywołania narzędzi są PEWNE —
+    limit wyczerpuje się wyłącznie przez nie.
+    """
+    runtime = _ToolCallingRuntime("Bash", stop_reason="max_tool_iterations")
+    responder, service, _ = _responder_z_zaufaniem(runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="rób", conversation_id="t")))
 
     conv = service.active_conversation("teams_graph", "t")
     assert conv is not None and conv.tainted is True

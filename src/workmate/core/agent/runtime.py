@@ -118,6 +118,9 @@ class AgentRuntime:
         ``(nazwa, argumenty, status)``. ``None`` → brak audytu (dawne zachowanie). Kontekst tury
         (pseudonim nadawcy/rozmowy, klasa zaufania) jest domknięty PO STRONIE drzwi — runtime widzi
         tylko wąski callback i pozostaje niezależny od pseudonimizacji i magazynu.
+        To JEDYNA droga, którą fakt o wywołaniu narzędzia wychodzi z tury niezależnie od tego,
+        czy tura dobiła do zapisu — drzwi wieszają na niej także lepką skazę rozmowy (ADR 0066),
+        bo ``entries=()`` niżej gubi wszystko, co czytane jest z WYNIKU tury.
 
         ``history`` to wcześniejsze tury bieżącej rozmowy (pamięć, ADR 0010) —
         poprzedzają nową wiadomość jako kontekst. Puste dla drzwi bezstanowych.
@@ -131,6 +134,10 @@ class AgentRuntime:
         z rzędu) i żadna niereplayowalna tura (niepełny thinking/tool_use) nie trafia do API.
         Turę traktujemy jak przejściową porażkę: użytkownik dostaje częściową/zastępczą
         odpowiedź, a pamięć zostaje spójna (bez sieroty).
+        UWAGA dla każdej nowej ścieżki wyjścia z pętli: pusty ``entries`` znaczy „nic do
+        ZAPISU", nie „nic się nie wydarzyło". Narzędzia zdążyły pobiec i ich skutki uboczne
+        zostają, więc faktu o nich nie wolno wywodzić z wyniku tury — od tego jest ``audit``,
+        wołany w chwili wywołania (patrz wyżej).
         """
         # ``extra_tools`` (ADR 0018): narzędzia dokładane per turę, np. katalog roboczy związany z
         # rozmową (scope domknięty w closurze). Scalamy z bazowym katalogiem TYLKO na to wywołanie

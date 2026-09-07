@@ -121,10 +121,15 @@ def build_file_catalog(  # noqa: C901, PLR0915
 
     ``tainted`` przyjmuje ALBO wartość, ALBO funkcję odczytywaną w chwili wywołania mutacji, i to
     drugie jest tu formą właściwą. Katalog powstaje raz, na początku tury, a skaza rozmowy (ADR
-    0066) zapala się dopiero z faktów tury — wartość domknięta przy budowie opisuje więc stan
-    SPRZED tury. Członek dostający zatruty PDF i robiący w tej samej turze ``File(read)`` +
-    ``File(edit)`` trafiał do sędziego z etykietą „rozmowa czysta" — dokładnie w turze, dla
-    której ADR 0066 R2 tę eskalację wprowadził.
+    0066) narasta W TRAKCIE tury — wartość domknięta przy budowie opisuje więc stan SPRZED tury.
+    Członek dostający zatruty PDF i robiący w tej samej turze ``File(read)`` + ``File(edit)``
+    trafiał do sędziego z etykietą „rozmowa czysta" — dokładnie w turze, dla której ADR 0066 R2
+    tę eskalację wprowadził.
+
+    Odkąd skaza z narzędzi zapala się w CHWILI WYWOŁANIA (amendment ADR 0066 z 2026-09-07), a nie
+    z wyniku tury, leniwy odczyt obejmuje też wywołania tej samej tury: ``Bash`` z trzeciej rundy
+    jest dla sędziego faktem, zanim ``File(edit)`` z rundy piątej do niego dotrze. Wcześniej ten
+    fakt docierał turę później, a w turze uciętej na ``max_tokens`` nie docierał NIGDY.
 
     ``shell_available`` wybiera, dokąd opis odsyła po tekst i po identyfikator notatki (ADR 0068
     §2). Dotąd odsyłał w OBIE strony do narzędzi nieobecnych w danej konfiguracji: bez powłoki

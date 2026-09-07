@@ -155,6 +155,25 @@ Ponawianie `LLMError` świadomie WYJĘTE — wraca osobno z projektem idempotenc
 
 ### Naprawione
 
+- **Lepka skaza rozmowy nie zapalała się w turze uciętej — a ucięcie trafia w tury o NAJWIĘKSZEJ
+  liczbie wywołań narzędzi** ([ADR 0066](docs/adr/0066-content-trust-classes-and-sticky-conversation-taint.md),
+  amendment 2026-09-07). Połowa skazy pochodząca z narzędzi była czytana z `AgentResult.entries`,
+  a inwariant zapisu ([ADR 0011](docs/adr/0011-stateful-lossless-conversation-memory.md)) każe zwrócić `entries=()`
+  przy ucięciu na `max_tokens` oraz przy wyczerpanym limicie rund narzędzi. Tura, w której model
+  osiem razy wołał `Bash`, nie zostawiała **żadnego** śladu skazy — a przy wyczerpanym limicie
+  narzędzia na pewno pobiegły, bo dlatego limit się wyczerpał. Skutki uboczne zostawały, ślad
+  znikał, i nic tego nie logowało: objawem jest wyłącznie sygnał, który się nie zapala.
+  Skaza jedzie teraz **tą samą drogą co wpis do audytu** ([ADR 0067](docs/adr/0067-observability-audit-journal-and-notifier-dead-letter.md)):
+  drzwi składają obserwatora wywołań i wieszają na nim obie sprawy, a runtime dalej nie wie
+  o skazie nic — widzi jeden wąski callback. Odporność na ucięcie wynika odtąd z BUDOWY, a nie
+  z pamiętania o niej przy każdej nowej ścieżce wyjścia z pętli.
+  *Zakres wyzwalaczy się nie zmienia* (wpis asystenta z `tool_calls` powstawał przed dispatchem,
+  więc sięgnięcie po narzędzie spoza katalogu skażało i wcześniej) — zmienia się CHWILA zapłonu.
+  **Znana konsekwencja, przyjęta:** sędzia mutacji (ADR 0065) widzi teraz skazę z tej samej tury,
+  więc `Bash` z trzeciej rundy jest faktem, zanim `File(edit)` z rundy piątej do sędziego dotrze.
+  To jest odczyt, który leniwe `tainted` obiecywało od początku; kierunek zmiany jest
+  ostrożniejszy, nie luźniejszy. Docstring `File` mówił dotąd odwrotnie — poprawiony.
+
 - **Token tury domykał punkt kontrolny człowieka przy ponowieniu (mutacja notatek).** Token tury
   był losowany przy budowie katalogu `File`, na przesłance „jedno wywołanie fabryki to jedna tura".
   Przesłanka pękała, gdyby drzwi Teams ponawiały TĘ SAMĄ wiadomość: `record_run` nie zdążył pobiec,
