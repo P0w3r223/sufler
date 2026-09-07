@@ -84,6 +84,18 @@ def _issue(number, *, login="alice", title=None):
     }
 
 
+def _komentarz(comment_id, *, login="alice", issue=7):
+    return {
+        "id": comment_id,
+        "body": "treść komentarza",
+        "html_url": f"http://gh/c/{comment_id}",
+        "user": {"login": login},
+        "issue_url": f"http://api/repos/biap/workmate/issues/{issue}",
+        "created_at": "2026-07-15T12:05:00Z",
+        "updated_at": "2026-07-15T12:05:00Z",
+    }
+
+
 def _poller(client, events, *, state=None):
     return GithubPoller(
         client,
@@ -172,6 +184,45 @@ def test_issue_created_by_our_write_door_is_skipped_by_the_poller(tmp_path):
 
     assert ingested == 1  # nasze pominięte po echu, cudze przyjęte
     assert [e.external_id for e in events.recent(source="github")] == ["8"]
+
+
+def test_nasz_wlasny_komentarz_nie_wraca_pollerem(tmp_path):
+    """Najwyższa stawka etapu 2: to jest ścieżka, na której pętla bot↔bot byłaby WIDOCZNA.
+
+    Auto-komentarz CI (ADR 0024) pisze przez ``GithubWriteService``, więc zostawia echo
+    ``('teams', id, 'github_comment_created')`` — i to ono, a nie konto autora, powstrzymuje
+    pollera przed wciągnięciem własnego komentarza. Sonda składa obie strony na jednym pliku bazy,
+    bo rozumowanie „przecież zostawia echo" jest dokładnie tym rodzajem przekonania, które
+    smoke-test F6 sprawdza dopiero na produkcji, komentarzem bota na cudzym PR-ze.
+    """
+    db = tmp_path / "events.db"
+    events = EventService(SqliteEventStore(db))
+    writer = _FakeGithubWriteClient()
+    service = GithubWriteService(writer, owner="biap", repo="workmate", events=events)
+
+    service.create_comment(7, "CI padło — szczegóły w przebiegu")
+    echo = events.recent()[0]
+
+    client = _FakeGithubReadClient(comments=[_komentarz(int(echo.external_id), login=_SELF)])
+    ingested = asyncio.run(_poller(client, EventService(SqliteEventStore(db))).poll_once())
+
+    assert ingested == 0
+    assert [e.kind for e in events.recent()] == ["github_comment_created"]
+
+
+def test_CUDZY_komentarz_wchodzi_normalnie(tmp_path):
+    """Kontrola pozytywna do sondy wyżej: bez echa komentarz ma wejść.
+
+    Bez niej „zero przyjętych" znaczyłoby tyle samo przy działającym strażniku, co przy pollerze,
+    który przestał czytać komentarze w ogóle.
+    """
+    events = EventService(SqliteEventStore(tmp_path / "events.db"))
+    client = _FakeGithubReadClient(comments=[_komentarz(555, login="alice")])
+
+    ingested = asyncio.run(_poller(client, events).poll_once())
+
+    assert ingested == 1
+    assert [e.external_id for e in events.recent()] == ["555"]
 
 
 def test_issue_from_our_ACCOUNT_but_not_our_tool_now_enters(tmp_path):

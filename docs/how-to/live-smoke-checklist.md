@@ -92,7 +92,9 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
   utwórz ręcznie issue w repo. Podejrzyj `~/.workmate/events.db` (np. przez agenta akcją
   `Activity(action='events')` na drzwiach Teams).
 - **Oczekiwane:** issue pojawia się jako zdarzenie `source="github", kind="issue_opened"`;
-  ponowny poll go NIE dubluje (dedup), a issue utworzone kontem PAT jest pomijane (self-skip).
+  ponowny poll go NIE dubluje (dedup). Issue utworzone **kontem PAT, ale poza narzędziem**
+  (`gh`, WWW) też się pojawia — od ADR 0071 decyzja 6 strażnik pyta o echo naszych drzwi,
+  nie o konto autora. Zamknięte issue daje DRUGIE zdarzenie `kind="issue_closed"` (etap 1).
 
 ## 9. EventStore → Teams (notifier dual-target) — 🔑 👥 🐙 (ADR 0022)
 
@@ -106,7 +108,9 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 - **Krok:** ustaw `WORKMATE_GITHUB_ENABLE_WRITE=true`; przez agenta na kanale Teams poproś
   „utwórz issue: …". 
 - **Oczekiwane:** issue powstaje w skonfigurowanym repo (nie w cudzym); agent zwraca numer i URL;
-  **potwierdź, że NIE wraca jako powiadomienie** (self-skip po loginie PAT + echo `source="teams"`).
+  **potwierdź, że NIE wraca jako powiadomienie** — dwoma niezależnymi drogami: poller pomija je,
+  bo znajduje echo `('teams', numer, 'github_issue_created')`, a notifier nie odsyła zdarzeń
+  `source="teams"` (ADR 0071 decyzja 6; do 2026-09-07 pierwszą drogą był login PAT).
 
 ---
 

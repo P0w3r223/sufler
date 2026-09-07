@@ -209,15 +209,15 @@ docker compose run --rm -T mcp python -c "import asyncio;from dataclasses import
 ## F6 — Strażnik pętli (self-skip)
 
 ### T13 · F6 · [DESTRUKCYJNY — komentarz bota] · ~5 min
-**Warunek wstępny:** w `env`: `WORKMATE_GITHUB_ENABLE_WRITE=true` + `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true` + `ci` w `WORKMATE_GITHUB_WATCH_KINDS`; poller i zapis dzielą TEN SAM PAT (self-skip po koncie PAT, ADR 0021). Wywołaj zdarzenie CI (push do PR w `${ORG}/PIWorkmate` uruchamiający workflow).
+**Warunek wstępny:** w `env`: `WORKMATE_GITHUB_ENABLE_WRITE=true` + `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true` + `ci` w `WORKMATE_GITHUB_WATCH_KINDS`; poller i zapis dzielą TEN SAM PAT (ADR 0021 — warunek zapisu; strażnik pętli od ADR 0071 decyzja 6 pyta o ECHO naszych drzwi, nie o konto). Wywołaj zdarzenie CI (push do PR w `${ORG}/PIWorkmate` uruchamiający workflow).
 **Komenda / kliknięcie (pomiar 2× w odstępie `POLL_INTERVAL`):**
 ```bash
 gh pr view <NR> -R ${ORG}/PIWorkmate --json comments -q "[.comments[]|select(.author.login==\"${BOT_LOGIN}\")]|length"
 sleep 70
 gh pr view <NR> -R ${ORG}/PIWorkmate --json comments -q "[.comments[]|select(.author.login==\"${BOT_LOGIN}\")]|length"
 ```
-**Oczekiwane:** liczba komentarzy bota = dokładnie `1` w OBU pomiarach (nie rośnie po 2 interwałach → cisza = self-skip zadziałał, nie opóźnienie). W `events.db` `max(id)` rośnie (bot WIDZI własne zdarzenie), ale NOWY komentarz nie powstaje.
-**Porażka oznacza:** `2`, `3`… komentarzy → self-skip nieszczelny (echo `source`/konto) → pętla komentarzy bot↔bot na produkcji.
+**Oczekiwane:** liczba komentarzy bota = dokładnie `1` w OBU pomiarach (nie rośnie po 2 interwałach → cisza = strażnik zadziałał, nie opóźnienie). W `events.db` `max(id)` rośnie (bot WIDZI własne zdarzenie), ale NOWY komentarz nie powstaje. Auto-komentarz idzie przez `GithubWriteService`, więc zostawia echo `('teams', id, 'github_comment_created')` — i to ono powstrzymuje pollera. Sprawdź to zapytaniem, nie samą liczbą komentarzy: `sqlite3 events.db "select source,kind,external_id from events where kind like 'github_%'"`.
+**Porażka oznacza:** `2`, `3`… komentarzy → strażnik nieszczelny → pętla komentarzy bot↔bot na produkcji. Pierwsze, gdzie zajrzeć: czy echo w ogóle powstało (zapytanie wyżej) — bo od ADR 0071 decyzja 6 brak echa, a nie zgodność kont, jest tym, co przepuszcza własne zdarzenie.
 **Sprzątanie:** `gh pr close <NR>`; przywróć `WORKMATE_GITHUB_ENABLE_WRITE=false` i `_ENABLE_CI_AUTO_COMMENT=false`; `docker compose up -d github`.
 
 ---
