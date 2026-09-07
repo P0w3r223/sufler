@@ -13,9 +13,14 @@ Tylko odczyt (`GET /me`, `GET /teams/{id}/members`) — nic nie wysyła i nic ni
 Lokalnie (z katalogu projektu):
     uv run --no-sync python scripts/lista_czlonkow.py
 
-Na serwerze:
-    sudo -u powiadomienia /opt/teams-shifts-reminder/.venv/bin/python \
-        /opt/teams-shifts-reminder/scripts/lista_czlonkow.py
+Na serwerze (wdrożenie DOCKEROWE — to jest obowiązująca ścieżka, patrz deploy/README-docker.md):
+    cd /opt/teams-shifts-reminder
+    docker compose run --rm --entrypoint python powiadomienia /app/scripts/lista_czlonkow.py
+
+Do 2026-09-07 stało tu `sudo -u powiadomienia /opt/teams-shifts-reminder/.venv/bin/python …`, czyli
+instrukcja dla wariantu **systemd** (`deploy/powiadomienia-teams.service`). Na serwerze klienta nie
+ma ani użytkownika `powiadomienia`, ani tego venva — polecenie kończyło się `user not found`,
+a `deploy/DO-WYKONANIA.md` podawał obok wersję dockerową. Dwie instrukcje, jedna nieprawdziwa.
 """
 
 from __future__ import annotations

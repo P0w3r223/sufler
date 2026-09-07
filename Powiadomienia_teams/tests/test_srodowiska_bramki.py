@@ -23,6 +23,7 @@ import pytest
 _PODPROJEKT = Path(__file__).resolve().parent.parent
 _KORZEN_REPO = _PODPROJEKT.parent
 _DOCKERFILE = _PODPROJEKT / "Dockerfile"
+_SCRIPTS = _PODPROJEKT / "scripts"
 _CI = _KORZEN_REPO / ".github" / "workflows" / "ci.yml"
 
 #: Wpis macierzy CI, którego dotyczy ta reguła.
@@ -110,3 +111,30 @@ def test_kazdy_uv_sync_w_obrazie_jest_locked():
     assert wiersze, "brak wierszy `uv sync` w Dockerfile — reguła straciła przedmiot ochrony"
     bez_locked = [w for w in wiersze if "--locked" not in w]
     assert bez_locked == [], bez_locked
+
+
+def test_skrypt_obiecujacy_uruchomienie_na_serwerze_jest_w_obrazie():
+    """Skrypt, którego docstring mówi „Na serwerze", MUSI być skopiowany do obrazu.
+
+    Inaczej jedyną drogą uruchomienia go jest zamontowanie pliku z hosta — czyli wykonanie kodu
+    SPOZA obrazu na sesji Graph bota, wbrew całej konstrukcji tego wdrożenia. Tak właśnie wyszło
+    2026-09-07: `scripts/zbierz_historie.py` obiecywał wariant serwerowy, a `Dockerfile` kopiował
+    wyłącznie `lista_czlonkow.py`.
+
+    Reguła iteruje po SKRYPTACH, więc nowy diagnostyk z instrukcją serwerową wpada pod nią bez
+    dopisywania czegokolwiek tutaj.
+    """
+    _wymagaj(_DOCKERFILE)
+    if not _SCRIPTS.is_dir():
+        pytest.skip("brak katalogu scripts/ — poza kontekstem repozytorium; biegnie w CI")
+    dockerfile = _DOCKERFILE.read_text(encoding="utf-8")
+    obiecujace = [
+        p
+        for p in sorted(_SCRIPTS.glob("*.py"))
+        if "Na serwerze" in p.read_text(encoding="utf-8")[:4000]
+    ]
+    assert obiecujace, "żaden skrypt nie obiecuje uruchomienia na serwerze — reguła mierzy pustkę"
+    brak = [p.name for p in obiecujace if f"scripts/{p.name}" not in dockerfile]
+    assert brak == [], (
+        f"skrypty obiecujące uruchomienie na serwerze, a nieskopiowane do obrazu: {brak}"
+    )

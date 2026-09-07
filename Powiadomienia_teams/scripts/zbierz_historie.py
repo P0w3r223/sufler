@@ -19,9 +19,13 @@ Lokalnie (z katalogu projektu):
     uv run --no-sync python scripts/zbierz_historie.py
     uv run --no-sync python scripts/zbierz_historie.py --tygodni 12
 
-Na serwerze, na koncie usługi:
-    sudo -u powiadomienia /opt/teams-shifts-reminder/.venv/bin/python \
-        /opt/teams-shifts-reminder/scripts/zbierz_historie.py
+Na serwerze (wdrożenie DOCKEROWE), od obrazu 0.2.21 skrypt jest w środku:
+    cd /opt/teams-shifts-reminder
+    docker compose run --rm --entrypoint python powiadomienia /app/scripts/zbierz_historie.py
+
+Wolno to uruchomić przy DZIAŁAJĄCEJ usłudze: skrypt nie bierze blokady pliku stanu i niczego nie
+zapisuje. Dzieli z usługą cache tokenu MSAL — tak samo jak `lista_czlonkow.py`, i tak samo jak on
+jest to procedura obowiązująca (deploy/DO-WYKONANIA.md).
 
 Kryterium decyzji (zapisane w planie razem z wynikiem):
     ≥ 2 osoby z pewnością WYSOKA i INNĄ propozycją  → podłączyć (defekt realny i powtarzalny)
