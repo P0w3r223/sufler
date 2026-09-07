@@ -74,6 +74,27 @@ Zasady:
 - **zaktualizuj baseline** (`tests/adapters/tool_surface_baseline.json`) — wyłącznie o nowy wpis;
   zmiana albo usunięcie istniejącego to złamanie zamrożonego kontraktu, nie aktualizacja.
 
+> **Wyjątek, który nie jest furtką (dopisany 2026-09-04).** Zdarza się, że zamrożony wpis niesie
+> zdanie NIEPRAWDZIWE — wtedy zamrożenie utrwala usterkę, a nie kontrakt. Poprawka istniejącego
+> wpisu jest dopuszczalna wyłącznie gdy: (1) stoi za nią ADR, (2) idzie OSOBNYM commitem, którego
+> komunikat mówi, co i dlaczego się zmieniło, (3) `parameters` zostają **bajt w bajt** — zmiana
+> sygnatury to już nie poprawka opisu i tu nie należy, (4) regenerujesz JEDEN wpis, kształtem
+> zapisu **dokładnie takim, jaki plik już ma**:
+>
+> ```python
+> json.dumps(dane, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+> ```
+>
+> Precedens: 1.13.0 (odświeżony opis `read_events_since`) i ADR 0071 decyzja 10.
+>
+> Trzy części tego wywołania są obowiązkowe z różnych powodów i żadnej nie wolno pominąć:
+> `sort_keys` — żeby diff pokazywał zmianę, a nie przetasowanie pliku; `ensure_ascii=False` — bo
+> bez niego KAŻDA polska litera ucieka do `\uXXXX` i diff obejmuje szesnaście linii zamiast
+> jednej; końcowy `\n` — bo `json.dumps` go nie dokłada, a plik go ma.
+> **Pierwsza wersja tego przepisu miała tylko `sort_keys` i produkowała dokładnie ten diff, przed
+> którym ostrzega** — złapane 2026-09-07 przez URUCHOMIENIE przepisu na pliku, nie przez lekturę.
+> Wiąże to dziś sonda `test_przepis_regeneracji_z_dokumentu_odtwarza_baseline_bajt_w_bajt`.
+
 ## 3b. Narzędzie dla runtime'u agenta — wzorzec `action=…`
 
 Powierzchnia agenta jest budżetem wyboru, nie katalogiem zdolności: każde narzędzie kosztuje

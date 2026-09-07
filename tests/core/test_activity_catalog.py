@@ -245,11 +245,36 @@ def test_przefiltrowany_widok_zdarzen_niesie_slad_po_filtrze() -> None:
     assert "ZAWĘŻONY" in wynik["note"]
 
 
-def test_niefiltrowany_widok_zdarzen_nie_dokleja_notki() -> None:
-    # Zdanie jedzie TYLKO w turach, których dotyczy — inaczej opłacamy je w każdej.
+def test_niefiltrowany_widok_zdarzen_TEZ_niesie_notke_warstwy() -> None:
+    """ODWRÓCONY 2026-09-04 (ADR 0071 decyzja 10). Do tego dnia brzmiał „nie dokleja notki".
+
+    Stara reguła — „zdanie jedzie TYLKO w turach, których dotyczy" — była oszczędnością na
+    właściwym zdaniu. Notka o ZAWĘŻENIU faktycznie dotyczy tylko tur zawężonych, ale notka
+    o tym, czym ta warstwa JEST, dotyczy każdej: 2026-09-04 pytanie o otwarte zgłoszenia
+    dostało tabelę dziesięciu, wszystkich zamkniętych, przy widoku, który NIE był zawężony.
+    Kompletność widoku nie czyni go odpowiedzią na zadane pytanie.
+    """
     fn = build_activity_catalog(events=_FakeEvents())[0].fn
 
-    assert "note" not in fn(action="events")
+    wynik = fn(action="events")
+
+    assert "HISTORIA" in wynik["note"]
+    assert "ZAWĘŻONY" not in wynik["note"]  # ta druga tylko przy realnym zawężeniu
+
+
+def test_zawezony_widok_niesie_OBIE_notki_zlozone() -> None:
+    """Składanie, nie zastępowanie — obie notki mówią co innego i obie są potrzebne naraz.
+
+    Po dołożeniu zamknięć i backfillu pytanie BEZ filtru zacznie regularnie dobijać do okna 20,
+    więc ten przypadek przestanie być rzadki. Zastąpienie jednej notki drugą kasowałoby połowę
+    odpowiedzi w dokładnie tych turach, w których obie są potrzebne.
+    """
+    fn = build_activity_catalog(events=_FakeEvents())[0].fn
+
+    notka = fn(action="events", source="github")["note"]
+
+    assert "HISTORIA" in notka
+    assert "ZAWĘŻONY" in notka
 
 
 def test_opis_zdarzen_mowi_ze_source_to_drzwi_a_nie_system() -> None:
@@ -259,7 +284,23 @@ def test_opis_zdarzen_mowi_ze_source_to_drzwi_a_nie_system() -> None:
     opis = build_activity_catalog(events=_FakeEvents())[0].description
 
     assert "DRZWI" in opis
-    assert "BEZ `source`" in opis
+    # ODWRÓCONE 2026-09-04: do tego dnia ten test WYMUSZAŁ obecność zdania „o stan GitHuba pytaj
+    # BEZ `source`" — czyli bramka trzymała przy życiu obietnicę, której warstwa nie umie spełnić.
+    # Zdjęcie filtru pokazuje pełną HISTORIĘ mostu, a nie stan GitHuba (ADR 0071 decyzja 10).
+    assert "BEZ `source`" not in opis
+    assert "HISTORIA" in opis
+
+
+def test_podsumowanie_tez_niesie_notke_warstwy() -> None:
+    """``summary`` nie miał pola ``note`` NIGDY, a stoi na tej samej warstwie co ``events``.
+
+    Ma zawsze filtr ``project`` (pole wymagane), więc pod starą regułą „notka przy zawężeniu"
+    i tak powinien był ją nieść. Podsumowanie „przebiegu prac" bez tego zdania czyta się jak
+    stan projektu, a jest stanem tego, co most zdążył zapisać.
+    """
+    fn = build_activity_catalog(events=_FakeEvents())[0].fn
+
+    assert "HISTORIA" in fn(action="summary", project="workmate")["note"]
 
 
 def test_okno_limitu_tez_jest_zawezeniem() -> None:
@@ -282,3 +323,35 @@ def test_okno_limitu_tez_jest_zawezeniem() -> None:
     wynik = build_activity_catalog(events=_Pelne())[0].fn(action="events", limit=20)
 
     assert "limit=20" in wynik["note"]
+
+
+def test_zlozona_notka_mowi_klauzule_ostroznosci_DOKLADNIE_raz() -> None:
+    """Obie notki kończyły się dosłownie tym samym zdaniem, a odkąd się SKŁADAJĄ — model dostawał
+    je w jednej odpowiedzi dwa razy.
+
+    Powtórzenie w prompcie nie jest neutralne: uczy, że tekst obok wyniku jest wypełniaczem,
+    który można przeskoczyć. Klauzula jest więc wspólna i idzie na końcu raz, a każda z notek
+    wnosi tylko własny POWÓD ostrożności.
+    """
+    from workmate.core.application.tools.spec import _EVENTS_CAUTION_NOTE
+
+    notka = build_activity_catalog(events=_FakeEvents())[0].fn(action="events", source="github")[
+        "note"
+    ]
+
+    assert notka.count(_EVENTS_CAUTION_NOTE) == 1
+    assert "HISTORIA" in notka and "ZAWĘŻONY" in notka  # oba powody nadal obecne
+
+
+def test_podsumowanie_mowi_z_jakiego_okna_liczy_i_ile_pokazuje() -> None:
+    """Druga wątpliwość recenzenta etapu 4, zamknięta pomiarem, nie opinią.
+
+    Liczniki `summary` idą z okna `limit` (domyślnie 50, sufit 200), a lista `recent` pokazuje
+    z niego PIERWSZE 20. Druga z tych liczb nie stała dotąd nigdzie — ani w opisie, ani w wyniku
+    — więc lista wyglądała na komplet okna, którym nie jest. To ta sama klasa co incydent, dla
+    którego powstała notka warstwy: widok wygląda na pełny, bo nic nie mówi, że nim nie jest.
+    """
+    wynik = build_activity_catalog(events=_FakeEvents())[0].fn(action="summary", project="workmate")
+
+    assert "okna 50" in wynik["note"]
+    assert "pierwsze" in wynik["note"]

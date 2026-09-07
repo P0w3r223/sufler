@@ -53,8 +53,45 @@ class ToolSpec:
 # wyprowadza z niej twierdzenie o ŚWIECIE: na demo 2026-08-21 odpowiedział „najnowsze issue to
 # #76", bo #77 — założone przez niego samego z Teamsów — leży pod ``source='teams'``.
 _EVENTS_FILTERED_NOTE = (
-    "Ten widok jest ZAWĘŻONY ({filtry}) — to nie jest pełna lista zdarzeń. Zanim powiesz, "
-    "że czegoś nie ma albo co jest najnowsze, powtórz odczyt bez filtru."
+    "Ten widok jest ZAWĘŻONY ({filtry}) — to nie jest pełna lista zdarzeń; przy twierdzeniu "
+    "o kompletności powtórz odczyt bez filtru."
+)
+
+# Notka BEZWARUNKOWA — o tym, czym ta warstwa JEST, a nie o tym, jak ją zawężono. Jedzie w KAŻDEJ
+# odpowiedzi, także pełnej, bo poprzednia wersja opisu odsyłała po stan GitHuba do widoku, który
+# stanu nie zna: 2026-09-04 na pytanie o otwarte zgłoszenia padła tabela dziesięciu, wszystkich
+# zamkniętych, a jedyne otwarte nie mogło się w niej pojawić. Notka o zawężeniu tego nie łapała,
+# bo widok NIE BYŁ zawężony — był kompletny i mimo to nie odpowiadał na zadane pytanie.
+# Idzie polem ``note`` w kopercie (ADR 0068 §5), nie w opisie: tam nie ma sufitu bajtów.
+#
+# UWAGA przy ADR 0071 decyzja 1: zdanie o niezapisywaniu zamknięć przestanie być prawdziwe
+# w chwili, gdy mapper zacznie emitować zamknięcie zgłoszenia. Pilnuje tego moduł
+# ``tests/core/test_warstwa_zdarzen_mowi_prawde.py``, który iteruje po REPERTUARZE MAPPERA
+# (rzecz chroniona), a nie po etykietach notifiera (zabezpieczenie) — więc zrywa się niezależnie
+# od tego, jak etap 1 nazwie nowy rodzaj, i w tym samym commicie, w którym zmienia się zdolność.
+# Pierwsza wersja tej bramki pytała o etykietę i przechodziła na wstrzykniętym ``map_issue_closed``:
+# ``default_event_render`` robi ``.get(kind, kind)``, więc rodzaj bez etykiety działa.
+_EVENTS_LAYER_NOTE = (
+    "Ta warstwa to HISTORIA tego, co most ZAPISAŁ — nie stan GitHuba. Zamknięć zgłoszeń nie "
+    "zapisuje w ogóle, więc nie odpowiada na pytanie, co jest dziś otwarte."
+)
+
+# Klauzula WSPÓLNA obu notek wyżej, wydzielona 2026-09-07. Obie kończyły się dosłownie tym samym
+# zdaniem („Zanim powiesz, że czegoś nie ma albo co jest najnowsze…"), a odkąd notki się SKŁADAJĄ,
+# model dostawał je w jednej odpowiedzi dwa razy. Powtórzenie w prompcie nie jest neutralne: uczy,
+# że tekst obok wyniku jest wypełniaczem. Zdanie jedzie więc raz, na końcu złożonej notki, a każda
+# z notek wnosi tylko własny POWÓD ostrożności.
+_EVENTS_CAUTION_NOTE = (
+    "Zanim powiesz, że czegoś nie ma albo co jest najnowsze, powiedz, w co zajrzałeś."
+)
+
+# Okno agregacji ``summary`` (ADR 0071 decyzja 10, dopisane 2026-09-07 z pytania recenzenta).
+# Liczniki idą z okna ``limit`` (domyślnie 50, sufit 200), a lista ``recent`` pokazuje z niego
+# PIERWSZE 20 — i ta druga liczba nie stała nigdzie. To ta sama klasa co incydent, dla którego
+# powstała notka warstwy: widok wygląda na komplet, bo nic nie mówi, że nim nie jest.
+_EVENTS_SUMMARY_WINDOW_NOTE = (
+    "Liczniki policzone z okna {okno} ostatnich zdarzeń projektu; lista `recent` pokazuje "
+    "z tego okna pierwsze {pokazane}."
 )
 
 

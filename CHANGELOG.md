@@ -8,6 +8,44 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Warstwa zdarzeń przestaje obiecywać, że odpowiada o stan GitHuba — bo nie odpowiada.**
+  2026-09-04 na kanale padło pytanie o otwarte zgłoszenia; bot pokazał tabelę dziesięciu.
+  **Wszystkie dziesięć jest zamkniętych, a jedyne faktycznie otwarte nie mogło się w niej
+  pojawić** — zero trafnych wierszy na dziesięć. Bot nie zmyślił: dołożył zastrzeżenie, że to
+  widok warstwy zdarzeń, a nie stan repozytorium, tak jak nauczyła go poprawka z 1.13.0.
+  Zastrzeżenie było jednak WĘŻSZE od prawdy — mówiło „chyba że zgłoszenie zamknięto poza
+  oknem”, podczas gdy zamknięć nie zapisujemy w ogóle.
+  Winne było zdanie w opisie narzędzia: odsyłało po stan systemu zewnętrznego do widoku, który
+  stanu nie zna — zdjęcie filtru daje pełną HISTORIĘ mostu, nie stan GitHuba. To ta sama klasa
+  co martwa obietnica `/mnt/user/outputs`: opis każe modelowi sięgnąć po zdolność, której nie
+  ma. Zdanie znika z OBU powierzchni (agenta i MCP), a na jego miejsce wchodzi to, czym warstwa
+  jest ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md)
+  decyzja 10).
+  **Notka w kopercie jest teraz BEZWARUNKOWA i SKŁADA SIĘ z notką o zawężeniu**, zamiast być
+  przez nią zastępowana. Poprzednia jechała wyłącznie przy widoku zawężonym — a incydent
+  zdarzył się na widoku KOMPLETNYM: kompletność nie czyni widoku odpowiedzią na zadane pytanie.
+  `summary` dostaje tę notkę po raz pierwszy (nie miał pola `note` nigdy), choć stoi na tej
+  samej warstwie i ma zawsze filtr `project`.
+  Powierzchnia agenta: 7418 → **7400 B** z powłoką, 7673 → **7655 B** bez niej (zapas 345 B).
+  `summary` mówi teraz także, **z jakiego OKNA** liczy: liczniki z `limit` (domyślnie 50), a lista
+  `recent` pokazuje z niego pierwsze 20 — druga z tych liczb nie stała dotąd nigdzie, więc lista
+  wyglądała na komplet okna, którym nie jest. To ta sama klasa co incydent, dla którego notka
+  powstała. Klauzula ostrożności („Zanim powiesz, że czegoś nie ma…") jest wspólna dla obu notek
+  i jedzie w złożonej odpowiedzi **raz**; powtórzenie uczyłoby model, że tekst obok wyniku jest
+  wypełniaczem.
+  **Bramka wymuszająca przepisana — iteruje po REPERTUARZE MAPPERA, nie po etykietach notifiera.**
+  Pierwsza wersja pytała o obecność `issue_closed` w `notifier._KIND_LABELS` i **mierzyła nie to,
+  co deklarowała**: `default_event_render` robi `.get(kind, kind)`, więc rodzaj bez etykiety działa;
+  rodzaje bez etykiety już istnieją (`github_issue_created`, `github_comment_created`), a etykiety
+  istnieją dla rodzajów, których nikt w `src` nie emituje. Etykiety są tabelą renderowania, nie
+  repertuarem. Nowa bramka (`tests/core/test_warstwa_zdarzen_mowi_prawde.py`) czyta repertuar
+  z AST mappera w pięciu kształtach składni i wymaga odpowiedzi dla KAŻDEGO rodzaju w jawnym
+  rejestrze — więc etap 1 zrywa ją niezależnie od tego, jak nazwie nowy rodzaj. Obejmuje obie
+  powierzchnie (agenta i MCP) oraz szuka trzeciej kopii zdania w całym `src`.
+  Przepis regeneracji baseline'u w `docs/how-to/add-a-tool.md` **produkował diff, przed którym
+  ostrzega** — brakowało `ensure_ascii=False` i końcowego znaku nowej linii (16 linii ucieczek
+  `\uXXXX` zamiast jednej). Sprawdzone URUCHOMIENIEM przepisu na pliku i związane sondą.
+
 - **Zbiór wyzwalaczy skazy przestaje być listą napisów w adapterze — odpowiedź jedzie z narzędziem**
   ([ADR 0073](docs/adr/0073-guards-iterate-over-the-protected-surface.md)). `ToolSpec` dostaje
   `taints`: czy WYNIK tego narzędzia niesie treść spoza bramek zdolności (pytanie ADR 0066 R2).
@@ -168,6 +206,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   więc `Bash` z trzeciej rundy jest faktem, zanim `File(edit)` z rundy piątej do sędziego dotrze.
   To jest odczyt, który leniwe `tainted` obiecywało od początku; kierunek zmiany jest
   ostrożniejszy, nie luźniejszy. Docstring `File` mówił dotąd odwrotnie — poprawiony.
+
+### Uwagi wdrożeniowe
+
+- **Zamrożony baseline MCP zmieniony ŚWIADOMIE, jeden wpis** (`read_events_since`): to samo
+  fałszywe zdanie stało na drzwiach MCP, a naprawa jednych drzwi z dwojga zostawiłaby je tam,
+  gdzie o stan repozytorium pyta się najczęściej. `parameters` bajt w bajt, diff to dokładnie
+  jedna linia. `docs/how-to/add-a-tool.md` zabraniał dotąd zmiany istniejącego wpisu BEZ
+  wyjątku — dopisany jest warunek, pod którym poprawka NIEPRAWDZIWEGO opisu jest dopuszczalna,
+  bo inaczej zamrożenie utrwala usterkę zamiast kontraktu. Cztery warunki, w tym sortowanie
+  kluczy przy regeneracji: bez niego diff ma kilkanaście linii przetasowania i recenzent nie
+  widzi, co się naprawdę zmieniło (sprawdzone na własnej skórze przy tej poprawce).
 
 ## [1.14.0] — 2026-09-03
 
