@@ -18,9 +18,9 @@ Pełny zamysł: **[PLAN.md](PLAN.md)**.
 > wiedzieć przed pracą tutaj:
 >
 > - **Oryginalnych testów 0.2.19 nie ma.** Bramka jakości obrazu zaliczyła 792 testy, ale zestawu
->   nie zachowano. Obecny `tests/` został przepisany pod odzyskane źródła i przechodzi w całości
->   (403 passed, 10 xfailed) — nie jest to jednak ten sam zestaw co przy buildzie, więc nie
->   dowodzi zgodności z 0.2.19 w takim stopniu, w jakim dowodziłby oryginalny.
+>   nie zachowano. Obecny `tests/` został przepisany pod odzyskane źródła i przechodzi w całości —
+>   nie jest to jednak ten sam zestaw co przy buildzie, więc nie dowodzi zgodności z 0.2.19
+>   w takim stopniu, w jakim dowodziłby oryginalny.
 > - **Numeracja wersji śledzi tagi obrazu Docker**, nie `pyproject.toml`. Gdy jedno rozjedzie się
 >   z drugim, obowiązuje tag obrazu.
 
@@ -86,19 +86,22 @@ Identyfikatory AAD wypisze `scripts/lista_czlonkow.py`.
 ```bash
 uv run --directory Powiadomienia_teams ruff check .    # lint
 uv run --directory Powiadomienia_teams mypy            # typy
-uv run --directory Powiadomienia_teams pytest -q       # PATRZ NIŻEJ — dziś nie przechodzi
+uv run --directory Powiadomienia_teams pytest -q       # testy
 ```
 
-Wszystkie cztery bramki są zielone: **403 passed, 10 xfailed**, `mypy` czysto na 48 plikach.
+Wszystkie cztery bramki są zielone. **Liczb tu nie ma świadomie** — zmieniają się przy każdej
+naprawie, więc byłyby rozjazdem z założenia; przelicz je `uv run pytest` i `uv run mypy`. Ta sama
+zasada obowiązuje w korzeniowym `CLAUDE.md`, a pilnuje jej `tests/test_dokumentacja_bramek.py`.
 
-**Dziesięć `xfail` to nie pominięte testy, tylko UDOKUMENTOWANE usterki 0.2.19.** Każdy ma
-`strict=True`, więc naprawa usterki zapali XPASS i wymusi zdjęcie znacznika — nie da się jej
-przeoczyć. Powody czytaj w `reason`; najważniejsze są też w CHANGELOG (0.2.19, „Znane usterki").
+**`xfail` w tym pod-projekcie jest opisem UDOKUMENTOWANEJ usterki, nie pominiętym testem.** Ma mieć
+`strict=True` i w `reason` powód, po którym da się usterkę odtworzyć — wtedy naprawa zapala XPASS
+i wymusza zdjęcie znacznika, więc nie da się jej przeoczyć. Dziś nie ma ani jednego: lista dziewięciu
+usterek importu 0.2.19 została zamknięta (patrz CHANGELOG).
 
 `src/` jest wyłączone z `ruff format` i z reguł kosmetycznych (E501, C901, PLR0915, SIM105,
 SIM300) — uzasadnienie w `pyproject.toml`. Reguły łapiące USTERKI (F, B, UP, I) obowiązują tam
 normalnie. To artefakt odzyskany z obrazu: naginanie go pod linter kosztowałoby jedyną własność,
-dla której import powstał. Zanim zestaw testowy zostanie odtworzony pod obecny kod, jedynym sprawdzeniem na żywym
+dla której import powstał. Testy biegają na atrapach, więc jedynym sprawdzeniem na ŻYWYM
 tenancie jest `--proba-nasluchu` (z zastrzeżeniami wyżej) i `scripts/lista_czlonkow.py`
 (czysty odczyt, weryfikuje sesję Graph).
 

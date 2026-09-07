@@ -74,6 +74,11 @@ docker run --rm -v powiadomienia-teams-stan:/s alpine rm -f /s/teams_token_cache
 docker compose run --rm -it powiadomienia --login
 ```
 
+> **Ten `rm -f` wyłącza też WorkMate'owi dostęp do grafiku.** Wolumen `powiadomienia-teams-stan`
+> jest zamontowany **read-only** do kontenera `workmate-teams-graph`, który czyta stąd cache MSAL
+> (decyzja 0004 paczki `infra-docker-workmate`). Od skasowania pliku do zakończenia device-code
+> drugi produkt nie ma jak sięgnąć do Shifts — i szuka wtedy przyczyny u siebie.
+
 **Kasowanie starego cache jest warunkiem poprawności, nie porządkiem.** Przy dwóch kontach w jednym
 pliku wybór nadawcy byłby losowy (kolejność `get_accounts()` nie jest kontraktem MSAL), a bot
 odezwałby się do zespołu niewłaściwą tożsamością — nieodwracalnie.

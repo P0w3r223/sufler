@@ -94,4 +94,6 @@ testpaths = ["tests"]
 # Liczy się zwłaszcza przy biegu nocnym: `xfail(strict=True)` zapala się CZERWONO dokładnie
 # wtedy, gdy ktoś usterkę NAPRAWI i nie zdejmie znacznika. To zamierzone, ale bez powodu w logu
 # wygląda o 6 rano jak regresja zamiast jak zaproszenie do skasowania jednej linijki.
-addopts = "-q -rxX"
+# `s` dokłada powód POMINIĘCIA. Strażnicy prozy (`test_dokumentacja_bramek.py`) pomijają się
+# w obrazie, bo ten nie niesie `README.md` — bez `-rs` byłoby to milczenie nieodróżnialne od biegu.
+addopts = "-q -rxXs"
