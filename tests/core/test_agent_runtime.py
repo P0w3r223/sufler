@@ -392,6 +392,62 @@ def test_runtime_audit_records_each_tool_call_with_status():
     assert calls == [("search_notes", {"query": "x"}, "ok")]
 
 
+def test_runtime_audit_survives_a_turn_cut_on_max_tokens():
+    """Wpis audytu wychodzi z tury, której NIC nie zapisujemy — a to jedyna wtedy droga.
+
+    Ucięcie na ``max_tokens`` daje ``entries=()`` (inwariant zapisu ADR 0011). Narzędzia
+    wcześniejszych rund JUŻ pobiegły i ich skutki uboczne zostają, więc każdy fakt o turze
+    czytany z jej WYNIKU przepada po cichu — tak przepadała lepka skaza rozmowy (ADR 0066),
+    dopóki wisiała na ``result.entries``. Ten test pilnuje samej drogi, niezależnie od tego,
+    kto się na niej wiesza.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def rec(name, arguments, status):
+        calls.append((name, status))
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall("t1", "search_notes", {"query": "x"}),)),
+            LLMResponse(text="czę", stop_reason="max_tokens"),
+        ]
+    )
+
+    result = AgentRuntime(llm, [_spec("search_notes", lambda query: {"count": 1})]).run_turn(
+        "q", audit=rec
+    )
+
+    assert result.entries == ()  # nic do zapisu
+    assert calls == [("search_notes", "ok")]  # a mimo to fakt o wywołaniu wyszedł
+
+
+def test_runtime_audit_survives_exhausted_tool_iterations():
+    """Druga ścieżka wyjścia bez zapisu — i ta, w której wywołania narzędzi są PEWNE.
+
+    Limit rund wyczerpuje się wyłącznie przez wywołania narzędzi, więc „tura bez śladu"
+    znaczyła tu „tura o największej liczbie skutków ubocznych bez śladu".
+    """
+    calls: list[str] = []
+
+    def rec(name, arguments, status):
+        calls.append(name)
+
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(tool_calls=(ToolCall(f"t{i}", "search_notes", {"query": "x"}),))
+            for i in range(2)
+        ]
+    )
+
+    result = AgentRuntime(
+        llm, [_spec("search_notes", lambda query: {"count": 1})], max_tool_iterations=2
+    ).run_turn("q", audit=rec)
+
+    assert result.stop_reason == "max_tool_iterations"
+    assert result.entries == ()
+    assert calls == ["search_notes", "search_notes"]
+
+
 def test_runtime_audit_marks_error_result_status():
     statuses: list[str] = []
 

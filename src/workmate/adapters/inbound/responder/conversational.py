@@ -9,7 +9,7 @@ import logging
 import secrets
 import threading
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from workmate.adapters.inbound.brief_command import BriefContext
 from workmate.adapters.inbound.change_command import ChangeDigestContext
@@ -19,14 +19,12 @@ from workmate.core.agent.prompt import build_session_header
 from workmate.core.domain.trust import TrustClass
 from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.ports.llm import (
-    AgentResult,
-    AssistantTurn,
     Attachment,
     AttachmentQueue,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from workmate.adapters.inbound.brief_command import BriefRouter
     from workmate.adapters.inbound.change_command import ChangeDigestRouter
@@ -65,6 +63,13 @@ logger = logging.getLogger(__name__)
 # samą zatrutą treść do rozmowy oznaczonej jako czysta — a `Bash` i `File` w tym samym
 # scenariuszu skażają. Nazwy pilnuje sonda wiążąca ten zbiór z realnym katalogiem narzędzi;
 # bez niej zmiana nazwy narzędzia po cichu gasiłaby wyzwalacz.
+#
+# Zbiór czytany jest w CHWILI WYWOŁANIA, na tej samej drodze co wpis do audytu (ADR 0067),
+# a nie z wyniku tury. Powód jest strukturalny: tura ucięta na ``max_tokens`` albo na limicie
+# iteracji zwraca ``entries=()`` (inwariant zapisu ADR 0011), więc odczyt z wyniku gubił skazę
+# dokładnie w turach, w których model wołał narzędzia NAJWIĘCEJ — bo to one wyczerpują limit.
+# Skutki uboczne zostawały, ślad znikał. Zapłon per wywołanie czyni odporność na ucięcie
+# własnością BUDOWY, a nie rzeczą do zapamiętania przy każdej kolejnej ścieżce wyjścia z pętli.
 _TAINTING_TOOLS = frozenset({"Activity", "Bash", "File", "ReadFile", "ListFiles"})
 
 
@@ -366,10 +371,10 @@ class ConversationalResponder:
         )
 
         # Skaza z faktów ZNANYCH PRZED turą (ADR 0066) — zapalana TU, przed budową katalogów.
-        # Rozdzielenie na dwie połowy (druga niżej, po turze) nie jest kosmetyką: załącznik ląduje
-        # na dysku rozmowy PRZED wywołaniem modelu, więc gdyby cała skaza czekała na wynik tury,
-        # błąd API w pętli narzędzi zostawiałby zatruty plik w katalogu i rozmowę oznaczoną jako
-        # czysta.
+        # Rozdzielenie na dwie połowy (druga w obserwatorze wywołań, ``_tool_observer``) nie jest
+        # kosmetyką: załącznik ląduje na dysku rozmowy PRZED wywołaniem modelu, więc gdyby cała
+        # skaza czekała na koniec tury, błąd API w pętli narzędzi zostawiałby zatruty plik
+        # w katalogu i rozmowę oznaczoną jako czysta.
         #
         # Kolejność wobec katalogów jest istotą sprawy: fabryka ``File`` dostaje skazę jako
         # ARGUMENT (sędzia mutacji ma orzekać ze świadomością pochodzenia tury), więc zapalanie
@@ -445,10 +450,12 @@ class ConversationalResponder:
                         self._turn_token(message),
                         trust,
                         # LENIWA skaza: fabryka czyta ją w chwili MUTACJI, nie budowy katalogu.
-                        # Wartość jest już poprawna w chwili budowy (zapalamy ją wyżej), więc to
-                        # druga, niezależna warstwa — skaza z narzędzi tej samej tury (``Bash``,
-                        # ``GitHub``) zapala się dopiero PO niej, a sędzia ma widzieć rozmowę
-                        # taką, jaka jest w momencie orzekania.
+                        # Odkąd narzędzia zapalają skazę per wywołanie, to lenistwo wreszcie coś
+                        # znaczy: ``Bash`` w trzeciej rundzie tury skazi rozmowę ZANIM ``File``
+                        # z rundy piątej pójdzie do sędziego, więc sędzia widzi rozmowę taką,
+                        # jaka jest w momencie orzekania, a nie taką, jaka była przed turą.
+                        # Kierunek zmiany jest ostrożniejszy, nie luźniejszy — a to jedyny
+                        # kierunek, w którym wolno się mylić przy mutacji bazy wiedzy.
                         lambda: self._is_tainted(conversation_id),
                         # Werdykt sędziego mutacji wraca TĄ drogą do wiersza audytu tego samego
                         # wywołania ``File`` (ADR 0065 §8) — bez audytu ujścia po prostu nie ma.
@@ -542,13 +549,11 @@ class ConversationalResponder:
                 shell_unavailable=self._shell_catalog_factory is not None
                 and not any(spec.name == "Bash" for spec in extra_tools),
             ),
-            audit=audit_recorder,
+            audit=self._tool_observer(conversation_id, audit_recorder),
             attachment_queue=attachment_queue,
             trust_nonce=trust_nonce,
             trust=trust,
         )
-        # Druga połowa skazy: to, co wiadomo dopiero PO turze — po co model sięgnął.
-        self._mark_taint_from_tools(conversation_id, result)
         # Bezstratny zapis PEŁNEGO transkryptu tury (ADR 0011): wiadomość + tury
         # assistant/tool z blokami VERBATIM. Tura ucięta jest już wykluczona z ``entries``.
         with self._store_lock:
@@ -674,20 +679,39 @@ class ConversationalResponder:
         except Exception:
             logger.warning("Nie zapisałem skazy rozmowy %r (źródło %s)", conversation_id, source)
 
-    def _mark_taint_from_tools(self, conversation_id: str, result: AgentResult) -> None:
-        """Skaza z tego, po co model sięgnął w tej turze (znane dopiero PO turze).
+    def _tool_observer(
+        self,
+        conversation_id: str,
+        audit: Callable[[str, Mapping[str, Any], str], None] | None,
+    ) -> Callable[[str, Mapping[str, Any], str], None]:
+        """Obserwator wywołań narzędzi tej tury: zapala skazę i przekazuje wpis do audytu.
 
-        Zbiór wyzwalaczy jest wąski ROZMYŚLNIE (ADR 0066 R2): gdyby skaziło wszystko, sygnał
-        nie znaczyłby nic. Odczyt notatek i zdarzeń własnego pionu typowanymi narzędziami NIE
-        skaża — to treść zza bramek zdolności.
+        Runtime woła go dla KAŻDEGO wywołania (ADR 0067), także odrzuconego przed uruchomieniem
+        — i to jest właściwa granica: skaza mówi, po co model SIĘGNĄŁ, a sięgnięcie po ``Bash``
+        spoza katalogu jest tym samym faktem o turze, co udane. Dawny odczyt z ``result.entries``
+        miał tę samą własność (wpis asystenta powstaje przed dispatchem), więc zakres wyzwalaczy
+        NIE zmienia się tą poprawką — zmienia się wyłącznie CHWILA zapłonu i to, czy przeżywa on
+        wyjście z pętli bez zapisu.
+
+        Zbiór wyzwalaczy jest wąski ROZMYŚLNIE (ADR 0066 R2): gdyby skaziło wszystko, sygnał nie
+        znaczyłby nic. Odczyt notatek i zdarzeń własnego pionu typowanymi narzędziami NIE skaża —
+        to treść zza bramek zdolności.
+
+        Zapłon jest raz na turę, nie raz na wywołanie: ``mark_tainted`` jest wprawdzie
+        idempotentne (źródło z PIERWSZEGO zapłonu), ale osiem rund po kilka wywołań to osiem
+        zapisów pod ``_store_lock`` za jeden fakt.
         """
-        if any(
-            call.name in _TAINTING_TOOLS
-            for entry in result.entries
-            if isinstance(entry, AssistantTurn)
-            for call in entry.tool_calls
-        ):
-            self._mark_taint(conversation_id, "tool")
+        zapalone = False
+
+        def obserwuj(name: str, arguments: Mapping[str, Any], status: str) -> None:
+            nonlocal zapalone
+            if not zapalone and name in _TAINTING_TOOLS:
+                zapalone = True
+                self._mark_taint(conversation_id, "tool")
+            if audit is not None:
+                audit(name, arguments, status)
+
+        return obserwuj
 
     def _thread_link(self, external_id: str) -> tuple[str, int] | None:
         """Powiązanie wątku z issue/PR albo ``None`` — opcjonalne wzbogacenie nagłówka.

@@ -260,3 +260,35 @@ restart-surviving conversation taint that escalates — never blocks — consequ
   together.
 - Populate `identities.yaml` (the same operator rollout ADR 0062 needs); only then consider promoting
   the T1/T2 split from opt-in to default-ON.
+
+## Amendment (2026-09-07) — the taint fires at call time, not from the turn result
+
+**Defect.** The tool-driven half of the taint was read from `AgentResult.entries` after the turn
+returned. The write invariant of ADR 0011 makes that read empty exactly where it matters most: a turn
+cut on `max_tokens`, or one that exhausts the tool-iteration budget, returns `entries=()` because
+nothing may be persisted. The tools had already run — an exhausted iteration budget is *caused* by
+tool calls — so their side effects stayed and the provenance record vanished. The `File` docstring
+promised the opposite. This was a silent hole, not a visible failure: nothing logs a taint that never
+fires.
+
+**Decision.** The taint now fires **at the moment of the call**, on the same road as the audit entry
+(ADR 0067): the door composes an observer that the runtime invokes for every tool call, and hangs both
+concerns on it. Resilience to a truncated turn is therefore a property of the *construction*, not
+something each new loop-exit path has to remember. The runtime still knows nothing about taint — it
+sees one narrow callback.
+
+**Trigger set: unchanged.** The observer fires for rejected calls too (unknown tool, bad arguments),
+which matches the previous behaviour exactly: the assistant entry carrying `tool_calls` was appended
+*before* dispatch, so reaching for `Bash` from outside the catalogue already tainted. What changes is
+the *moment*, and whether the fact survives an exit without a write.
+
+**Known consequence, accepted.** Within a single turn the taint is now visible to the mutation judge
+of ADR 0065: a `Bash` call in round three taints the conversation before a `File(edit)` in round five
+reaches the judge, whereas previously the judge saw the pre-turn value. That is the reading the lazy
+`tainted` callback always claimed to provide ("the conversation as it is at the moment of judging").
+The direction is more conservative, never less — the only direction in which it is acceptable to be
+wrong about a knowledge-base mutation.
+
+**Not changed:** stickiness, restart survival, first-source-wins, and the rollover/compaction rules of
+Decision 3 — the taint is still one row-level fact, written idempotently, and the observer lights it
+once per turn rather than once per call.
