@@ -14,7 +14,18 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
-## [Nieopublikowane] — po 0.2.20
+## [0.2.21] — 2026-09-07
+
+Wydanie porządkowe i wydajnościowe, zbudowane z drzewa, w którym `src/` po raz pierwszy podlega
+wszystkim regułom lintera. Poza dwiema pozycjami niżej wchodzą tu także zmiany bez wpływu na
+zachowanie usługi: odtworzony `docs/plan-rozwoju.md` (kod cytował go 40 razy, a dokumentu nie było),
+jedenaście martwych odsyłaczy przekierowanych na istniejące cele, osiem nowych strażników
+statycznych, ADR 0008 (dwa środowiska bramki) i skrypt pomiarowy `scripts/zbierz_historie.py`.
+
+**Znane ograniczenie tego wydania, świadome:** obraz 0.2.20 przepracował kilka godzin, a nie pełny
+cykl tygodniowy, więc fala 4 (rdzeń „co najwyżej raz") i fale 1–3 wchodzą do obserwacji razem.
+Gdyby piątkowy przebieg zachował się nieoczekiwanie, rozdzielenie przyczyn będzie trudniejsze niż
+przy wdrożeniu falami. Rollback: podmiana tagu na `0.2.20`.
 
 Wersja `0.2.20` (fale 1–3 napraw) stoi u klienta od 2026-09-07. Poniżej zmiany, które pojadą
 następnym obrazem.
