@@ -113,4 +113,4 @@ def build_schedule_catalog(service: TeamScheduleService) -> list[ToolSpec]:
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
-    return [ToolSpec("Schedule", _SCHEDULE_DESC, schedule)]
+    return [ToolSpec("Schedule", _SCHEDULE_DESC, schedule, taints=False)]

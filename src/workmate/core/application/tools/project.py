@@ -176,7 +176,7 @@ def build_project_catalog(
                 return _zla_akcja("Project", action, _PROJECT_AKCJE)
             return _status(project)
 
-        return [ToolSpec("Project", _PROJECT_HEAD, project_tool)]
+        return [ToolSpec("Project", _PROJECT_HEAD, project_tool, taints=False)]
 
     def project_rw(
         action: Annotated[
@@ -229,4 +229,4 @@ def build_project_catalog(
             return _zla_akcja("Project", action, _PROJECT_AKCJE_RW)
         return _status(project)
 
-    return [ToolSpec("Project", f"{_PROJECT_HEAD}{_PROJECT_SAVE}", project_rw)]
+    return [ToolSpec("Project", f"{_PROJECT_HEAD}{_PROJECT_SAVE}", project_rw, taints=False)]

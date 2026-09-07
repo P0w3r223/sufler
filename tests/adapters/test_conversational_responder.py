@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from tests.conftest import FakeNotesRepository, FakeProjectsRepository
 from workmate.adapters.inbound.commands import (
     _NEW_THREAD_ACK,
     _NEW_THREAD_ALREADY_FRESH,
@@ -27,6 +28,8 @@ from workmate.adapters.inbound.responder import (
 from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
 from workmate.core.application.compaction import CompactionService
 from workmate.core.application.conversations import ConversationService, _row_of
+from workmate.core.application.services import ProjectsService
+from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
 from workmate.core.domain.pricing import TokenUsage
 from workmate.core.ports.llm import (
@@ -698,6 +701,12 @@ class _ToolCallingRuntime(_FakeRuntime):
         self._stop_reason = stop_reason
         self.trust_seen: list[str] = []
         self.nonce_seen: list[str] = []
+        # Katalog BAZOWY atrapy: drzwi wyprowadzają z niego wyzwalacze skazy (ADR 0073).
+        # Specyfikacje pochodzą z PRODUKCYJNYCH builderów — atrapa z ręcznie ustawioną flagą
+        # sprawdzałaby wyłącznie samą siebie. Narzędzie nieznane builderom (sondy kierunku
+        # strażnika) nadpisuje ten katalog własnym.
+        realne = _specy_realnych_builderow()
+        self.catalog: tuple[ToolSpec, ...] = (realne[tool_name],) if tool_name in realne else ()
 
     def run_turn(self, query, **kwargs) -> AgentResult:  # type: ignore[override]
         self.calls.append((query, list(kwargs.get("history", []))))
@@ -924,13 +933,17 @@ def test_nonce_is_not_derivable_from_the_conversation_id_alone():
     assert runtime_a.nonce_seen[0] != runtime_b.nonce_seen[0]
 
 
-def test_tainting_tool_names_match_the_real_catalog():
-    """Zbiór wyzwalaczy to NAPISY — bez wiązania z rejestrem zmiana nazwy narzędzia gasi
-    wyzwalacz po cichu, a objawem jest wyłącznie skaza, która nigdy się nie zapala."""
-    from workmate.adapters.inbound.responder import _TAINTING_TOOLS
+def _specy_realnych_builderow() -> dict[str, ToolSpec]:
+    """Specyfikacje z PRAWDZIWYCH builderów — po nazwie, razem z metadaną ``taints`` (ADR 0073).
+
+    Atrapy runtime'u w tym pliku wystawiają przez to katalog, który niesie tę samą odpowiedź, co
+    produkcja. Atrapa z własnoręcznie ustawioną flagą sprawdzałaby wyłącznie własną fiksturę —
+    dokładnie ta wada kazała 2026-09-07 przepisać ``_ToolCallingRuntime``, żeby wołał ``audit``.
+    """
     from workmate.core.application.tools import (
         build_activity_catalog,
         build_file_catalog,
+        build_project_catalog,
         build_shell_catalog,
         build_workspace_catalog,
     )
@@ -968,7 +981,7 @@ def test_tainting_tool_names_match_the_real_catalog():
 
     class _PustyRunner:
         def run(self, command, *, cwd="", timeout_s=0):
-            raise AssertionError("sonda czyta NAZWY z buildera, nie uruchamia poleceń")
+            raise AssertionError("sonda czyta METADANE z buildera, nie uruchamia poleceń")
 
     class _PusteZdarzenia:
         def read_since(self, after_id, *, source=None, limit=50):
@@ -980,41 +993,76 @@ def test_tainting_tool_names_match_the_real_catalog():
     repo = _PustyWorkspace()
     scope = WorkspaceScope("teams_graph", "t/c/r")
     limity = WorkspaceLimits(1, 1, 1, frozenset({"md"}))
-    workspace = [
-        s.name
-        for s in build_workspace_catalog(
+    specy = [
+        *build_workspace_catalog(
             scope, WorkspaceService(repo), WorkspaceWriteService(repo, repo, limity)
-        )
-    ]
-    plikowe = [
-        s.name
-        for s in build_file_catalog(
+        ),
+        *build_file_catalog(
             scope,
             WorkspaceService(repo),
             _PustyMaterializer(),
             AttachmentQueue(budget_bytes=1),
             MaterializationLimits(1, 1),
-        )
+        ),
+        *build_shell_catalog(scope, _PustyRunner(), workspace_root="/tmp/ws"),
+        *build_activity_catalog(events=_PusteZdarzenia()),
+        *build_project_catalog(
+            ProjectsService(FakeProjectsRepository([], {}), FakeNotesRepository([]))
+        ),
     ]
+    return {spec.name: spec for spec in specy}
 
-    powloka = [s.name for s in build_shell_catalog(scope, _PustyRunner(), workspace_root="/tmp/ws")]
-    aktywnosc = [s.name for s in build_activity_catalog(events=_PusteZdarzenia())]
 
-    # Narzędzia CZYTAJĄCE katalog roboczy muszą być wyzwalaczami — trzymają odłożone załączniki.
-    assert {"ReadFile", "ListFiles"} <= set(workspace)
-    assert {"ReadFile", "ListFiles"} <= _TAINTING_TOOLS
-    assert set(plikowe) <= _TAINTING_TOOLS
-    # Powłoka i warstwa zdarzeń wciągają treść spoza bramek — też muszą być z REJESTRU, nie
-    # z napisu. Ta runda przemianowała `GitHub` na `Activity`; gołe napisy przeżyłyby rename
-    # zielone, a jedynym objawem byłaby skaza, która nigdy się nie zapala.
-    assert set(powloka) <= _TAINTING_TOOLS
-    assert set(aktywnosc) <= _TAINTING_TOOLS
-    # Komplet w drugą stronę: KAŻDY wyzwalacz musi pochodzić z któregoś realnego buildera,
-    # inaczej zbiór cicho obrasta nazwami nieistniejących narzędzi.
-    z_builderow = set(powloka) | set(aktywnosc) | set(plikowe) | {"ReadFile", "ListFiles"}
-    assert z_builderow == _TAINTING_TOOLS
-    # ``CreateFile`` NIE skaża: model zapisuje własną treść, nie wciąga cudzej.
-    assert "CreateFile" in workspace and "CreateFile" not in _TAINTING_TOOLS
+def test_drzwi_wyprowadzaja_skaze_z_metadanej_narzedzia_a_nie_z_listy_nazw():
+    """Kierunek strażnika (ADR 0073): pytamy NARZĘDZIA, nie zamrożonej listy napisów.
+
+    Sonda podstawia dwa narzędzia o nazwach, których żadna lista w tym repozytorium nie zna, i
+    różniące się WYŁĄCZNIE odpowiedzią ``taints``. Zbiór wyzwalaczy wypisany z palca przepuściłby
+    oba jako nieznane; wyprowadzony z metadanej rozstrzyga je poprawnie — i tak samo rozstrzygnie
+    narzędzie, którego dziś jeszcze nie ma.
+    """
+    for nazwa, taints, oczekiwana_skaza in (
+        ("ZupelnieNoweObce", True, True),
+        ("ZupelnieNoweWlasne", False, False),
+    ):
+        runtime = _ToolCallingRuntime(nazwa)
+        runtime.catalog = (ToolSpec(nazwa, "opis", lambda: {}, taints=taints),)
+        responder, service, _ = _responder_z_zaufaniem(runtime)
+
+        asyncio.run(responder.respond(InboundMessage(text="x", conversation_id=f"t-{nazwa}")))
+
+        conv = service.active_conversation("teams_graph", f"t-{nazwa}")
+        assert conv is not None and conv.tainted is oczekiwana_skaza
+
+
+def test_drzwi_czytaja_katalog_BAZOWY_runtimeu_nie_tylko_wlasne_narzedzia():
+    """``Activity`` mieszka w katalogu bazowym runtime'u, nie w ``extra_tools`` drzwi.
+
+    Gdyby wyprowadzenie sięgało wyłącznie po narzędzia dokładane per turę, największy wyzwalacz
+    powierzchni agenta zniknąłby po cichu — a nazwa listy, którą właśnie usunęliśmy, dalej by się
+    zgadzała. Ta sonda pilnuje, że okno na katalog runtime'u jest naprawdę czytane.
+    """
+    aktywnosc = _specy_realnych_builderow()["Activity"]
+    assert aktywnosc.taints is True  # metadana pochodzi z produkcyjnego buildera, nie z fikstury
+    runtime = _ToolCallingRuntime("Activity")
+    runtime.catalog = (aktywnosc,)
+    responder, service, _ = _responder_z_zaufaniem(runtime)
+
+    asyncio.run(responder.respond(InboundMessage(text="co w PR?", conversation_id="t")))
+
+    conv = service.active_conversation("teams_graph", "t")
+    assert conv is not None and conv.tainted is True
+
+
+def test_narzedzia_katalogu_roboczego_niosa_odpowiedzi_zgodne_z_ADR_0066():
+    """Trzy odpowiedzi, których wartość widać dopiero razem: katalog roboczy trzyma ODŁOŻONE
+    ZAŁĄCZNIKI (ADR 0064) i przeżywa rollover, więc jego ODCZYT skaża, a ZAPIS nie — model
+    odkłada tam własną treść. Sonda czyta produkcyjne buildery, nie powtarza listy nazw."""
+    specy = _specy_realnych_builderow()
+
+    assert specy["ReadFile"].taints is True
+    assert specy["ListFiles"].taints is True
+    assert specy["CreateFile"].taints is False
 
 
 # --- Powloka nieobecna w TEJ turze: sprostowanie w naglowku sesji (ADR 0068 §2) -------

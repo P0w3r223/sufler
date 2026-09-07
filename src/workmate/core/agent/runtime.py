@@ -73,6 +73,17 @@ class AgentRuntime:
         self._system_prompt = system_prompt
         self._max_tool_iterations = max_tool_iterations
 
+    @property
+    def catalog(self) -> tuple[ToolSpec, ...]:
+        """Katalog BAZOWY tego runtime'u — do odczytu metadanych narzędzi (ADR 0073).
+
+        Drzwi znają wyłącznie narzędzia, które same dokładają per turę (``extra_tools``);
+        reszta powierzchni — z ``Activity`` włącznie — mieszka tutaj. Bez tego okna konsument
+        metadanej ``ToolSpec.taints`` musiałby ją POWTÓRZYĆ listą napisów, czyli dokładnie tym,
+        co ADR 0073 zdejmuje. Krotka, nie lista: okno jest do czytania.
+        """
+        return tuple(self._catalog)
+
     def run(
         self,
         query: str,

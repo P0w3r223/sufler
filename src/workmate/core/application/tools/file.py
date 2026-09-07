@@ -368,8 +368,8 @@ def build_file_catalog(  # noqa: C901, PLR0915
     # tak właśnie przepadła pierwsza redakcja ostrzeżenia o `content` (poprawka #69).
     opis = _FILE_OPIS + (_FILE_TEKST_POWLOKA if shell_available else _FILE_TEKST_NARZEDZIA)
     if mutations is None:
-        return [ToolSpec("File", opis, file_tylko_odczyt)]
+        return [ToolSpec("File", opis, file_tylko_odczyt, taints=True)]
     opis += _FILE_EDIT.format(zrodlo=zrodlo_id)
     if not kasowanie:
-        return [ToolSpec("File", opis, file_bez_kasowania)]
-    return [ToolSpec("File", opis + _FILE_DELETE, file)]
+        return [ToolSpec("File", opis, file_bez_kasowania, taints=True)]
+    return [ToolSpec("File", opis + _FILE_DELETE, file, taints=True)]

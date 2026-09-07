@@ -66,7 +66,7 @@ def build_workspace_catalog(
     # MCP, więc zamrożenie go nie dotyczy, a dwie konwencje w jednym katalogu kodowały modelowi
     # rozróżnienie („skonsolidowane" kontra „zastane"), którego nie ma jak odczytać.
     return [
-        ToolSpec("CreateFile", create_file.__doc__ or "", create_file),
-        ToolSpec("ReadFile", read_file.__doc__ or "", read_file),
-        ToolSpec("ListFiles", list_files.__doc__ or "", list_files),
+        ToolSpec("CreateFile", create_file.__doc__ or "", create_file, taints=False),
+        ToolSpec("ReadFile", read_file.__doc__ or "", read_file, taints=True),
+        ToolSpec("ListFiles", list_files.__doc__ or "", list_files, taints=True),
     ]

@@ -109,4 +109,4 @@ def build_shell_catalog(
 
         return _envelope(build, errors=(WorkMateError,))
 
-    return [ToolSpec("Bash", description, run_command)]
+    return [ToolSpec("Bash", description, run_command, taints=True)]

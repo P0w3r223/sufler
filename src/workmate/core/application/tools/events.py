@@ -79,4 +79,8 @@ def build_events_since_catalog(events: EventService) -> list[ToolSpec]:
 
         return _envelope(build)
 
-    return [ToolSpec("read_events_since", read_events_since.__doc__ or "", read_events_since)]
+    return [
+        ToolSpec(
+            "read_events_since", read_events_since.__doc__ or "", read_events_since, taints=True
+        )
+    ]

@@ -53,16 +53,11 @@ from workmate.adapters.inbound.responder.transcript import (
 
 logger = logging.getLogger(__name__)
 
-# Narzędzia, których WYNIK niesie treść spoza bramek zdolności (ADR 0066): komentarze i opisy
-# z GitHuba, wyjście powłoki oraz pliki katalogu roboczego. `Notes`/`Jira`/`Schedule` tu NIE są —
-# czytają treść zza bramek, więc skaziłyby każdą rozmowę i zamieniły sygnał w szum.
-#
-# ``read_file``/``list_files`` są na liście, choć brzmią niewinnie: katalog roboczy trzyma
-# ODŁOŻONE ZAŁĄCZNIKI (ADR 0064) i przeżywa rollover, bo jest per (kanał, wątek). Bez nich
-# ścieżka „załącznik w rozmowie A → rollover → `read_file` w czystej rozmowie B" wciągałaby tę
-# samą zatrutą treść do rozmowy oznaczonej jako czysta — a `Bash` i `File` w tym samym
-# scenariuszu skażają. Nazwy pilnuje sonda wiążąca ten zbiór z realnym katalogiem narzędzi;
-# bez niej zmiana nazwy narzędzia po cichu gasiłaby wyzwalacz.
+# Wyzwalacze skazy (ADR 0066) NIE są tu listą napisów. Odpowiedź „czy WYNIK tego narzędzia
+# niesie treść spoza bramek zdolności" jedzie z narzędziem, w ``ToolSpec.taints`` (ADR 0073) —
+# lista w adapterze przeżywała rename zielona, a jedynym objawem była skaza, która nigdy się
+# nie zapala. Zbiór na turę wyprowadzamy niżej, w ``_tool_observer``: katalog bazowy runtime'u
+# (mieszka tam m.in. ``Activity``) w unii z narzędziami dokładanymi per turę przez drzwi.
 #
 # Zbiór czytany jest w CHWILI WYWOŁANIA, na tej samej drodze co wpis do audytu (ADR 0067),
 # a nie z wyniku tury. Powód jest strukturalny: tura ucięta na ``max_tokens`` albo na limicie
@@ -70,7 +65,6 @@ logger = logging.getLogger(__name__)
 # dokładnie w turach, w których model wołał narzędzia NAJWIĘCEJ — bo to one wyczerpują limit.
 # Skutki uboczne zostawały, ślad znikał. Zapłon per wywołanie czyni odporność na ucięcie
 # własnością BUDOWY, a nie rzeczą do zapamiętania przy każdej kolejnej ścieżce wyjścia z pętli.
-_TAINTING_TOOLS = frozenset({"Activity", "Bash", "File", "ReadFile", "ListFiles"})
 
 
 class ConversationalResponder:
@@ -549,7 +543,7 @@ class ConversationalResponder:
                 shell_unavailable=self._shell_catalog_factory is not None
                 and not any(spec.name == "Bash" for spec in extra_tools),
             ),
-            audit=self._tool_observer(conversation_id, audit_recorder),
+            audit=self._tool_observer(conversation_id, audit_recorder, extra_tools),
             attachment_queue=attachment_queue,
             trust_nonce=trust_nonce,
             trust=trust,
@@ -683,6 +677,7 @@ class ConversationalResponder:
         self,
         conversation_id: str,
         audit: Callable[[str, Mapping[str, Any], str], None] | None,
+        extra_tools: Sequence[ToolSpec],
     ) -> Callable[[str, Mapping[str, Any], str], None]:
         """Obserwator wywołań narzędzi tej tury: zapala skazę i przekazuje wpis do audytu.
 
@@ -700,12 +695,20 @@ class ConversationalResponder:
         Zapłon jest raz na turę, nie raz na wywołanie: ``mark_tainted`` jest wprawdzie
         idempotentne (źródło z PIERWSZEGO zapłonu), ale osiem rund po kilka wywołań to osiem
         zapisów pod ``_store_lock`` za jeden fakt.
+
+        Zbiór wyzwalaczy jest WYPROWADZANY z metadanych narzędzi tej tury (ADR 0073), nie
+        cytowany listą napisów: katalog bazowy runtime'u w unii z ``extra_tools`` drzwi.
+        ``getattr`` na katalogu, bo drzwi przyjmują też atrapy runtime'u w testach — że
+        PRAWDZIWY runtime to okno ma i że obserwator z niego korzysta, pilnują sondy;
+        bez nich zapas byłby cichym wyłącznikiem skazy.
         """
+        katalog = getattr(self._runtime, "catalog", ())
+        skazace = {spec.name for spec in (*katalog, *extra_tools) if spec.taints}
         zapalone = False
 
         def obserwuj(name: str, arguments: Mapping[str, Any], status: str) -> None:
             nonlocal zapalone
-            if not zapalone and name in _TAINTING_TOOLS:
+            if not zapalone and name in skazace:
                 zapalone = True
                 self._mark_taint(conversation_id, "tool")
             if audit is not None:

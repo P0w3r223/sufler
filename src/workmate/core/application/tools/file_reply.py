@@ -82,7 +82,7 @@ def build_file_reply_catalog(
         "``filename`` (baza nazwy, bez rozszerzenia). Cel wątku jest ustalony z rozmowy — nie "
         "podajesz go. Użyj TYLKO gdy użytkownik WPROST prosi o plik albo dokument."
     )
-    return [ToolSpec("ReplyWithFile", description, reply_with_file)]
+    return [ToolSpec("ReplyWithFile", description, reply_with_file, taints=False)]
 
 
 def _safe_doc_name(base: str, fmt: str, content: bytes) -> str:
@@ -158,7 +158,7 @@ def build_user_image_push_catalog(
         f"base64) oraz ``image_format`` (jeden z: {formats}). Odbiorca jest ustalony z rozmowy — "
         "nie podajesz go. Użyj TYLKO gdy użytkownik WPROST prosi o obraz."
     )
-    return [ToolSpec("SendImage", description, send_image_to_user)]
+    return [ToolSpec("SendImage", description, send_image_to_user, taints=False)]
 
 
 def build_user_doc_push_catalog(
@@ -214,4 +214,4 @@ def build_user_doc_push_catalog(
         f"{formats}) oraz opcjonalnie ``filename`` (baza nazwy, bez rozszerzenia). Odbiorca jest "
         "ustalony z rozmowy — nie podajesz go. Użyj TYLKO gdy użytkownik WPROST prosi o plik."
     )
-    return [ToolSpec("SendDocument", description, send_document_to_user)]
+    return [ToolSpec("SendDocument", description, send_document_to_user, taints=False)]

@@ -92,8 +92,15 @@ def build_my_jira_tasks_catalog(service: MyJiraTasksService) -> list[ToolSpec]:
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
     return [
-        ToolSpec("get_my_jira_tasks", get_my_jira_tasks.__doc__ or "", get_my_jira_tasks),
-        ToolSpec("get_my_jira_history", get_my_jira_history.__doc__ or "", get_my_jira_history),
+        ToolSpec(
+            "get_my_jira_tasks", get_my_jira_tasks.__doc__ or "", get_my_jira_tasks, taints=False
+        ),
+        ToolSpec(
+            "get_my_jira_history",
+            get_my_jira_history.__doc__ or "",
+            get_my_jira_history,
+            taints=False,
+        ),
     ]
 
 
@@ -344,4 +351,4 @@ def build_jira_catalog(  # noqa: C901
 
         return _envelope(szukaj, errors=(WorkMateError, ValidationError))
 
-    return [ToolSpec("Jira", _JIRA_DESC, jira)]
+    return [ToolSpec("Jira", _JIRA_DESC, jira, taints=False)]
