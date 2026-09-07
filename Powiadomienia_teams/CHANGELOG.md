@@ -14,6 +14,37 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — po 0.2.20
+
+Wersja `0.2.20` (fale 1–3 napraw) stoi u klienta od 2026-09-07. Poniżej zmiany, które pojadą
+następnym obrazem.
+
+### Naprawione
+
+- **Ostrzeżenie o uciętym odczycie czatu mierzyło długość strony, nie lukę wobec watermarku.**
+  Warunek `len(wiadomosci) >= top` był prawdziwy dla każdego czatu mającego w ogóle 50 wiadomości,
+  więc w produkcji zapalał się CO GODZINĘ, nieprzerwanie, dla jednego czatu — a docstring
+  obiecywał wykrycie sytuacji „między dwoma zajrzeniami przyszło więcej niż `top`". Ostrzeżenie,
+  które pada zawsze, uczy operatora nie czytać kanału, którym przyjdzie to prawdziwe.
+
+  Od tej zmiany zapala się wtedy, gdy strona jest pełna **i** jej najstarsza wiadomość jest nowsza
+  od watermarku. Przy niepewności (nieczytelny watermark, strona bez znaczników czasu, znacznik
+  bez strefy) ostrzega DRUGIM zdaniem, które mówi wprost, że rozstrzygnięcia nie było — kierunek
+  jak w ADR 0003: brak dowodu nie jest dowodem braku.
+
+### Zmienione
+
+- `GraphClient.list_chat_messages` ma nowy argument **wymagany i wyłącznie nazwany**
+  `od_watermarku`, wzorem `replies.incoming_after(..., *, nadawca)`. Wartość domyślna znaczyłaby,
+  że przyszły wołający po cichu traci wykrywanie — ta sama klasa cichej degradacji, którą ten
+  warunek zamyka.
+
+### Efekt operacyjny do zapowiedzenia
+
+Powtarzające się co godzinę ostrzeżenie „Historia czatu … zwróciła pełną stronę" **zniknie**.
+Jeśli pojawi się nowe, o innej treści („jest NOWSZA niż watermark" albo „NIE UMIEM
+rozstrzygnąć"), znaczy to realną możliwość utraty odpowiedzi i warto obejrzeć czat.
+
 ## [Nieopublikowane] — naprawy usterek 0.2.19, fala 4: watermark
 
 **Lista dziewięciu usterek importu 0.2.19 jest zamknięta. 0 xfailed.**

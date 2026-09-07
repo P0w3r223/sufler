@@ -102,7 +102,9 @@ class _FakeClient:
     def create_or_get_chat(self, me_id: str, target_user_id: str) -> str:
         return f"chat-{target_user_id}"
 
-    def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
+    def list_chat_messages(
+        self, chat_id: str, *, od_watermarku: str = "", top: int = 20
+    ) -> list[dict[str, Any]]:
         return self.messages.get(chat_id, [])
 
     def send_chat_message(self, chat_id: str, html: str) -> str:
@@ -1318,7 +1320,9 @@ def test_failed_chat_read_does_not_expire(tmp_path: Path):
     _po_przestoju(state_path)
 
     class _OdczytPada(_FakeClient):
-        def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
+        def list_chat_messages(
+            self, chat_id: str, *, od_watermarku: str = "", top: int = 20
+        ) -> list[dict[str, Any]]:
             raise RuntimeError("Graph 500")
 
     client = _OdczytPada({})
@@ -3059,7 +3063,9 @@ def _pending_bez_odczytu(state_path: Path, nudge: str = "2026-07-17T09:00:00Z") 
 
 
 class _OdczytPadaZawsze(_FakeClient):
-    def list_chat_messages(self, chat_id: str, *, top: int = 20) -> list[dict[str, Any]]:
+    def list_chat_messages(
+        self, chat_id: str, *, od_watermarku: str = "", top: int = 20
+    ) -> list[dict[str, Any]]:
         raise RuntimeError("Graph 500")
 
 
