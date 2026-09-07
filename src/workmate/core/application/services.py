@@ -264,13 +264,17 @@ class ProjectsService:
         """
         if self._events is None:
             return 0, None, 0
-        items = self._events.recent(project=key, limit=100)
+        # OKNO PO CZASIE, nie po kolejności przyjęcia (amendment ADR 0071, 2026-09-07). To jest
+        # miejsce, w którym backfill odtworzyłby incydent w INNYM narzędziu: ``max(occurred_at)``
+        # niżej porządkuje wnętrze okna, ale samo okno wybierane po ``id`` wpuściłoby lipcowe
+        # wiersze backfillu (najwyższe ``id`` w bazie) i wypchnęłoby z niego naprawdę świeże
+        # zdarzenia — a ``Project(status)`` zaczął(by) raportować „ostatnią aktywność" z lipca.
+        items = self._events.recent_by_time(project=key, limit=100)
         failing = sum(1 for e in items if e.kind == "ci_failure")
-        # MAKSIMUM, nie pierwszy element. ``recent`` sortuje po ``id``, czyli po kolejności
-        # PRZYJĘCIA, a watermarki pollera są osobne per typ zasobu — komentarz z 10:00 potrafi
-        # wejść rundę po issue z 10:05. Pierwszy element okna zaniżał wtedy „ostatnią aktywność",
-        # a model buduje na tym polu zdania w rodzaju „ostatnio nic się nie działo".
-        # ``change_digest._group_by_project`` liczy to tak od początku.
+        # MAKSIMUM, nie pierwszy element — mimo sortu po czasie. Powód jest inny niż kolejność:
+        # dwa zdarzenia mogą mieć ten sam ``occurred_at``, a ``max`` nie zależy od tego, które
+        # z nich baza zwróci pierwsze. Zdanie „ostatnio nic się nie działo" model buduje właśnie
+        # na tym polu. ``change_digest._group_by_project`` liczy to tak od początku.
         latest = max((e.occurred_at for e in items), default=None)
         return len(items), latest, failing
 

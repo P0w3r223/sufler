@@ -470,6 +470,15 @@ class _FakeDeadLetters:
     def recent(self, limit=200):
         return list(reversed(self.records))[:limit]
 
+    def recent_by_time(self, *, source=None, project=None, limit=20):
+        """Jak ``recent``, ale po CZASIE ZDARZENIA — wiernie wobec magazynu (ADR 0071).
+
+        Nie alias: alias ukryłby różnicę, o którą w tej zmianie chodzi, a atrapa odpowiadałaby
+        na pytanie o czas kolejnością przyjęcia.
+        """
+        okno = self.recent(source=source, project=project, limit=limit)
+        return sorted(okno, key=lambda e: e.occurred_at, reverse=True)
+
 
 def _channel_targets() -> NotifyTargets:
     return NotifyTargets(team_id="t1", channel_id="c1", enable_channel=True)

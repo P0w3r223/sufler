@@ -66,6 +66,15 @@ class _FakeStore:
     def recent(self, *, source=None, project=None, limit=20):
         return list(reversed(self.rows))
 
+    def recent_by_time(self, *, source=None, project=None, limit=20):
+        """Jak ``recent``, ale po CZASIE ZDARZENIA — wiernie wobec magazynu (ADR 0071).
+
+        Nie alias: alias ukryłby różnicę, o którą w tej zmianie chodzi, a atrapa odpowiadałaby
+        na pytanie o czas kolejnością przyjęcia.
+        """
+        okno = self.recent(source=source, project=project, limit=limit)
+        return sorted(okno, key=lambda e: e.occurred_at, reverse=True)
+
 
 class _RecordingPort:
     """Atrapa ``GithubWritePort`` — NOTUJE ``create_comment`` i zwraca dict jak realny GitHub.

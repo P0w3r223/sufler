@@ -138,7 +138,7 @@ def build_activity_catalog(  # noqa: C901, PLR0915
         def build() -> dict[str, Any]:
             assert events is not None
             sufit = max(1, min(limit, _ACTIVITY_MAX_EVENTS))
-            items = events.recent(source=source, project=project, limit=sufit)
+            items = events.recent_by_time(source=source, project=project, limit=sufit)
             wynik = {"count": len(items), "events": [e.model_dump(mode="json") for e in items]}
             # Okno `limit` zawęża widok tak samo jak filtr — a domyślne 20 najnowszych z 200
             # w magazynie jest dla twierdzenia „nie ma" równie zwodnicze jak `source`.
@@ -176,7 +176,7 @@ def build_activity_catalog(  # noqa: C901, PLR0915
         def build() -> dict[str, Any]:
             assert events is not None
             okno = max(1, min(limit, _ACTIVITY_MAX_EVENTS))
-            items = events.recent(project=project, limit=okno)
+            items = events.recent_by_time(project=project, limit=okno)
             by_kind: dict[str, int] = {}
             for event in items:
                 by_kind[event.kind] = by_kind.get(event.kind, 0) + 1

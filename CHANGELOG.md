@@ -8,6 +8,25 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Cztery powierzchnie pokazujące zdarzenia człowiekowi sortują po CZASIE ZAJŚCIA, nie po
+  kolejności przyjęcia** ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md)
+  decyzja 8 wg amendmentu; etap 3 z czterech). `EventStore` zyskuje `recent_by_time`;
+  `Activity(events)`, `Activity(summary)`, `_activity_facts` za `Project(status)` i digest zmian
+  przechodzą na nią. **`recent()` zostaje nietknięte** i dalej obsługuje bootstrap kursora MCP —
+  na jego kolejności stoi zamrożony opis „`latest_cursor` to najwyższe ZWRÓCONE `id`" (ADR 0040).
+  Do backfillu kolejność przyjęcia przybliżała czas zdarzenia i różnica była niewidoczna. Decyzja 9
+  łamie to przybliżenie TRWALE: lipcowe wiersze dostają najwyższe `id` w bazie. `_activity_facts`
+  jest najostrzejszym przypadkiem — brało już `max(occurred_at)` w oknie, ale samo okno wybierało
+  100 po `id`, więc backfill wypchnąłby z niego naprawdę świeże zdarzenia i `Project(status)`
+  raportowałby „ostatnią aktywność" z lipca. **To kształt incydentu z 2026-09-04 w innym
+  narzędziu**, i dlatego etap 3 jest warunkiem wstępnym backfillu, a nie porządkami.
+  **Pułapka spoza ADR-u, zmierzona przed kodem:** `occurred_at` zapisujemy przez `isoformat()`,
+  czyli z offsetem, jaki niosło zdarzenie — a porządek leksykalny napisów z różnymi offsetami NIE
+  jest chronologiczny (`2026-09-07T13:30:00+02:00` to 11:30 UTC i wypada tekstowo przed
+  `…T12:00:00+00:00`). Sortujemy więc po `datetime(occurred_at)`, które normalizuje do UTC. Dziś
+  wszystkie wiersze produkcji mają `+00:00`, więc różnica byłaby niewidoczna — i właśnie dlatego
+  domknięta teraz, a nie po pierwszym zdarzeniu z innym offsetem.
+
 - **ADR 0071 decyzja 8 traci mechanizm, zachowuje cel** (amendment 2026-09-07, **przed** kodem
   etapu 3 — reguła 10). Decyzja opierała się na zdaniu „kontrakt jest TRZYMANY, nie zmieniany",
   które nie przeżyło sprawdzenia: zamrożony opis mówi „`latest_cursor` to najwyższe **zwrócone**

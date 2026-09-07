@@ -362,3 +362,54 @@ def test_diff_branches_seeds_then_detects_push_and_delete() -> None:
     events3, _ = selection.diff_branches(raw3, heads2, repo="o/r", project="wm", occurred_at=_WHEN)
     assert [(e.kind, e.external_id) for e in events3] == [("branch_deleted", "feat@ccc#deleted")]
     assert all(e.project == "wm" and e.repo == "o/r" and e.actor == "" for e in events3)
+
+
+def test_backfill_nie_wypycha_swiezych_zdarzen_z_okna_Project_status(tmp_path) -> None:
+    """Kształt incydentu w INNYM narzędziu — i powód, dla którego decyzja 8 była warunkiem 9.
+
+    ``_activity_facts`` brało już ``max(occurred_at)``, więc kolejność WEWNĄTRZ okna była
+    obsłużona. Ale samo okno wybierało 100 zdarzeń po ``id``, a backfill (decyzja 9 ADR 0071)
+    daje lipcowym wierszom NAJWYŻSZE ``id`` w bazie. Okno po ``id`` wypełniłoby się wtedy lipcem
+    i wypchnęło z niego naprawdę świeże zdarzenia — a ``Project(status)`` zacząłby raportować
+    „ostatnią aktywność" sprzed miesięcy. Zero trafnych wierszy, tak samo jak na kanale
+    2026-09-04, tylko w innym narzędziu.
+
+    Sonda wstawia sto wierszy backfillu, bo okno ma sufit sto — nie podmieniamy tego sufitu na
+    mniejszy „dla wygody testu". Podmiana sprawdzałaby mechanizm na granicy, której w produkcji
+    nie ma, a to ta sama klasa co bramka mierząca coś innego, niż deklaruje.
+    """
+    from datetime import date
+
+    from workmate.core.application.events import EventService
+    from workmate.core.application.services import ProjectsService
+    from workmate.core.domain.models import ProjectStatusRecord
+
+    swieze = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    store = SqliteEventStore(tmp_path / "events.db")
+    store.append(_ev_o("o/r#swieze", when=swieze))  # najniższe id, NAJŚWIEŻSZE
+    for i in range(100):  # backfill: wyższe id, lipcowe daty — wypełnia całe okno
+        store.append(_ev_o(f"o/r#lipiec-{i}", when=datetime(2026, 7, 1, 9, 0, tzinfo=UTC)))
+
+    class _Repo:
+        def all(self):
+            return [Project(key="wm", company="biap", name="WM", description="")]
+
+        def get(self, key):
+            return self.all()[0] if key == "wm" else None
+
+        def status_record(self, key):
+            return ProjectStatusRecord(
+                key="wm",
+                status="active",
+                health="green",
+                phase="p",
+                summary="s",
+                last_updated=date(2026, 7, 1),
+            )
+
+    service = ProjectsService(_Repo(), _EmptyNotesRepo(), events=EventService(store))
+
+    status = service.get_project_status("wm")
+
+    assert status is not None
+    assert status.latest_activity_at == swieze

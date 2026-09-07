@@ -271,3 +271,75 @@ def test_home_relative_path_opens_the_expanded_file_not_a_literal_tilde(tmp_path
 
     assert (tmp_path / ".workmate" / "events.db").is_file()
     assert not (tmp_path / "~").exists()  # żadnego katalogu o nazwie "~" obok
+
+
+# --- Okno po CZASIE ZDARZENIA (amendment ADR 0071 z 2026-09-07) ------------------------------
+
+
+def test_recent_by_time_porzadkuje_po_czasie_a_nie_po_kolejnosci_przyjecia(tmp_path):
+    """Kształt BACKFILLU: stare zdarzenie dostaje najwyższe ``id`` w bazie.
+
+    Do backfillu kolejność przyjęcia przybliżała czas zdarzenia i różnica była niewidoczna.
+    Decyzja 9 ADR 0071 łamie to przybliżenie TRWALE — i wtedy „najnowsze" w kolejności ``id``
+    zaczyna znaczyć „ostatnio wciągnięte", co dla człowieka pytającego o projekt jest inną
+    odpowiedzią niż ta, o którą pyta.
+    """
+    store = SqliteEventStore(tmp_path / "e.db")
+    store.append(_event("swieze", occurred_at=datetime(2026, 9, 1, 12, 0, tzinfo=UTC)))
+    # Backfill: wchodzi PÓŹNIEJ (wyższe id), ale zdarzyło się DAWNIEJ.
+    store.append(_event("lipcowe", occurred_at=datetime(2026, 7, 1, 12, 0, tzinfo=UTC)))
+
+    assert [e.external_id for e in store.recent()] == ["lipcowe", "swieze"]  # po id
+    assert [e.external_id for e in store.recent_by_time()] == ["swieze", "lipcowe"]  # po czasie
+
+
+def test_recent_by_time_liczy_sie_z_OFFSETEM_a_nie_z_tekstem(tmp_path):
+    """Pułapka spoza ADR-u, zmierzona przed napisaniem kodu.
+
+    ``occurred_at`` zapisujemy przez ``isoformat()``, czyli z offsetem, jaki niosło zdarzenie.
+    Porządek leksykalny napisów z RÓŻNYMI offsetami nie jest chronologiczny:
+    ``2026-09-07T13:30:00+02:00`` to 11:30 UTC, więc jest WCZEŚNIEJSZE niż ``…T12:00:00+00:00``,
+    a tekstowo wypada przed nim. Dziś wszystkie wiersze produkcji mają ``+00:00``, więc różnica
+    byłaby niewidoczna — i dlatego trzeba ją domknąć teraz, a nie po pierwszym zdarzeniu z innym
+    offsetem.
+    """
+    from datetime import timedelta, timezone
+
+    store = SqliteEventStore(tmp_path / "e.db")
+    store.append(_event("utc-1200", occurred_at=datetime(2026, 9, 7, 12, 0, tzinfo=UTC)))
+    store.append(
+        _event(
+            "plus2-1330",  # 11:30 UTC — wcześniejsze, choć tekstowo „większe"
+            occurred_at=datetime(2026, 9, 7, 13, 30, tzinfo=timezone(timedelta(hours=2))),
+        )
+    )
+
+    assert [e.external_id for e in store.recent_by_time()] == ["utc-1200", "plus2-1330"]
+
+
+def test_recent_zostaje_po_id_bo_na_tym_stoi_zamrozony_kontrakt(tmp_path):
+    """`recent` NIE przechodzi na czas — i to jest decyzja, nie przeoczenie.
+
+    Na tej kolejności stoi bootstrap kursora MCP, którego zamrożony opis mówi „``latest_cursor``
+    to najwyższe ZWRÓCONE ``id``". Przestawienie ``recent`` na czas uczyniłoby to zdanie fałszywym
+    w zmianie, której tezą jest usuwanie fałszywych zdań z tej powierzchni (amendment ADR 0071).
+    """
+    store = SqliteEventStore(tmp_path / "e.db")
+    store.append(_event("a", occurred_at=datetime(2026, 9, 1, 12, 0, tzinfo=UTC)))
+    store.append(_event("b", occurred_at=datetime(2026, 7, 1, 12, 0, tzinfo=UTC)))
+
+    okno = store.recent()
+
+    assert [e.id for e in okno] == sorted((e.id for e in okno), reverse=True)
+
+
+def test_recent_by_time_respektuje_te_same_filtry_co_recent(tmp_path):
+    """Filtry są tu warunkiem poprawności, nie wygodą: metoda bez nich kusiłaby wołających do
+    filtrowania po stronie Pythona NA UCIĘTYM OKNIE, czyli do cichej utraty zdarzeń."""
+    store = SqliteEventStore(tmp_path / "e.db")
+    store.append(_event("gh", project="workmate"))
+    store.append(NewEvent(source="teams", kind="note", external_id="tm", occurred_at=_WHEN))
+    store.append(_event("inny", project="inny"))
+
+    assert [e.external_id for e in store.recent_by_time(source="github")] == ["inny", "gh"]
+    assert [e.external_id for e in store.recent_by_time(project="workmate")] == ["gh"]

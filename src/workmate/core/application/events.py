@@ -55,8 +55,18 @@ class EventService:
     def recent(
         self, *, source: str | None = None, project: str | None = None, limit: int = 20
     ) -> list[Event]:
-        """Ostatnie zdarzenia (najnowsze pierwsze), opcjonalnie zawężone do źródła/projektu."""
+        """Ostatnie zdarzenia w kolejności PRZYJĘCIA (po ``id``), opcjonalnie zawężone.
+
+        Na tej kolejności stoi bootstrap kursora MCP i jego zamrożony opis — konsument pytający
+        o CZAS woła ``recent_by_time`` (amendment ADR 0071 z 2026-09-07).
+        """
         return self._store.recent(source=source, project=project, limit=limit)
+
+    def recent_by_time(
+        self, *, source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> list[Event]:
+        """Ostatnie zdarzenia w kolejności CZASU ZDARZENIA, opcjonalnie zawężone."""
+        return self._store.recent_by_time(source=source, project=project, limit=limit)
 
     def read_since(
         self,
