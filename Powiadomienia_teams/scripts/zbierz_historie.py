@@ -7,9 +7,15 @@ w rytmie przemiennym, podłączenie nie kupuje nic, a kosztuje adapter, ADR, zł
 zdania w wiadomościach do ludzi i nowe ryzyko przy propozycji, która jest jedno „tak" od
 nieodwracalnego zapisu (N1).
 
-**Tylko odczyt.** `GET /me`, `GET /teams/{id}/schedule/shifts`, `.../timesOff`. Nic nie wysyła,
-nic nie zapisuje, nie bierze blokady pliku stanu i nie dotyka pamięci ani stanu usługi — można
-uruchomić przy działającej usłudze.
+**Tylko odczyt po stronie GRAPH.** `GET /me`, `GET /teams/{id}/schedule/shifts`, `.../timesOff`.
+Nic nie wysyła, nie zapisuje grafiku, nie dotyka pliku stanu i nie bierze jego blokady.
+
+**Zapisuje natomiast cache tokenu MSAL** — `build_token_provider` utrwala go po KAŻDYM pobraniu
+tokenu, bo ciche odświeżenie potrafi zrotować refresh-token. To ta sama własność co
+`lista_czlonkow.py` i tak samo jak tam wynika z niej jedno ograniczenie: **nie uruchamiaj tego
+równolegle z `--login`**, bo dwaj piszący do jednego cache'u to ostatni-wygrywa. Przy zwykle
+działającej usłudze jest bezpiecznie: zapis jest atomowy (`os.replace`), a obie strony trzymają
+ten sam, jeden dozwolony rachunek (`graph/auth.py::_jedyne_konto`).
 
 **Anonimizacja jest wbudowana, nie opcjonalna.** Na wyjściu ludzie występują jako `os1`, `os2`…;
 identyfikatory AAD, nazwiska i adresy nie opuszczają procesu. To jest wynik, który trafi do
