@@ -648,7 +648,11 @@ def _przebieg_i_podsumowanie(
     return udany
 
 
-def run_forever(
+# Sufit funkcji przekroczony ŚWIADOMIE: pętla usługi trzyma naraz terminarz, okno łaski, godziny
+# ciszy, puls sesji i podsumowanie — a każde z nich czyta ten sam zegar i ten sam `last_run_term`.
+# Wyniesienie ich osobno rozdzieliłoby stan od warunków, które go zmieniają. Dług, nie
+# usprawiedliwienie.
+def run_forever(  # noqa: C901, PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,

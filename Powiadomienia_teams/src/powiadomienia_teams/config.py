@@ -491,7 +491,10 @@ class Settings:
         except Exception as exc:
             raise ConfigError(f"Nieznana strefa czasowa: {self.timezone!r}") from exc
 
-    def validate(self) -> None:
+    # Sufit funkcji przekroczony ŚWIADOMIE: to lista kontrolna warunków startu, a jej wartością
+    # jest KOLEJNOŚĆ, w jakiej padają komunikaty do operatora. Rozbicie na grupy tę kolejność
+    # rozmywa i zachęca do sprawdzania warunków w dwóch miejscach. Dług, nie usprawiedliwienie.
+    def validate(self) -> None:  # noqa: C901, PLR0915
         self.validate_dostep()
         if not 0 <= self.run_weekday <= 6:
             raise ConfigError(f"run_weekday poza zakresem 0..6: {self.run_weekday}")

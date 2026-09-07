@@ -486,7 +486,10 @@ def _wczytaj_env() -> None:
         load_dotenv(env)
 
 
-def main() -> None:
+# Sufit funkcji przekroczony ŚWIADOMIE: router poleceń. Rozbicie znaczy rozdzielenie parsowania
+# argumentów od budowy zależności, a te dwie rzeczy dziś rozstrzygają się nawzajem (`--login`
+# buduje inny klient niż `--stan`). Dług, nie usprawiedliwienie.
+def main() -> None:  # noqa: PLR0915
     parser = argparse.ArgumentParser(
         description="Cotygodniowe przypomnienia o zmianach (Microsoft Shifts)."
     )

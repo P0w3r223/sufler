@@ -319,7 +319,11 @@ def _grafik_kroku_1_5(
     )
 
 
-def poll_replies(
+# Sufit funkcji przekroczony ŚWIADOMIE: orkiestracja pięciu kroków obiegu, których KOLEJNOŚĆ
+# jest niezmiennikiem bezpieczeństwa (odpowiedź > samouzupełnienie > sufit ADR 0007 >
+# wygaszenie). Wyniesienie kroków do osobnych funkcji rozprasza tę kolejność po module i czyni
+# ją kwestią pamięci. Dług, nie usprawiedliwienie.
+def poll_replies(  # noqa: C901, PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,
@@ -1322,7 +1326,10 @@ def _apply_confirmed_yes(
         )
 
 
-def _interpret_and_confirm(
+# Sufit funkcji przekroczony ŚWIADOMIE: dispatcher gałęzi decyzji modelu, w którym KAŻDA gałąź
+# ma własną kompensację commitu (fala 4). Rozbicie rozdzieliłoby wysyłkę od jej wycofania, czyli
+# dokładnie tę parę, którą strażnik szwu pilnuje razem. Dług, nie usprawiedliwienie.
+def _interpret_and_confirm(  # noqa: PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,

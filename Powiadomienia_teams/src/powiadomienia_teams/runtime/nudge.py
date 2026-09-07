@@ -38,7 +38,10 @@ logger = logging.getLogger(__name__)
 _UTC = timezone.utc
 
 
-def run_once(
+# Sufit funkcji przekroczony ŚWIADOMIE: jeden przebieg tygodniowy, od wykrycia luk do utrwalenia
+# stanu. Wysyłka jest tu nierozdzielna od zapisu pendingu (pending bez wiadomości znaczy, że
+# człowiek nie dostanie prośby w ogóle). Dług, nie usprawiedliwienie.
+def run_once(  # noqa: PLR0915
     settings: Settings,
     client: GraphClient,
     *,
