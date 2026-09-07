@@ -1,4 +1,5 @@
 """Treść powiadomienia 1:1 (czysta logika) + minimalny render do HTML dla Graph."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -13,7 +14,13 @@ from powiadomienia_teams.domain.models import Member, WeekSchedule
 _DNI = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
 _DNI_SKROT = ["pon", "wt", "śr", "czw", "pt", "sob", "nd"]
 _DNI_DOPELNIACZ = [
-    "poniedziałku", "wtorku", "środy", "czwartku", "piątku", "soboty", "niedzieli",
+    "poniedziałku",
+    "wtorku",
+    "środy",
+    "czwartku",
+    "piątku",
+    "soboty",
+    "niedzieli",
 ]
 
 
@@ -30,6 +37,7 @@ def _do_nastepnego_dnia(start: datetime, end: datetime) -> str:
     if start.date() == end.date():
         return ""
     return f" (do {_DNI_DOPELNIACZ[end.weekday()]})"
+
 
 DECLINED_TEXT = (
     "OK, nie wprowadzam żadnych zmian w Twoim grafiku na ten tydzień i kończę przypominanie. "
@@ -116,7 +124,8 @@ def build_self_filled_text(week_label: str) -> str:
     """Podziękowanie, gdy pracownik SAM uzupełnił grafik w Shifts, zanim odpisał na czacie.
 
     Forma neutralna („jest już uzupełniony", nie „uzupełniłeś"), bo grafik mógł wypełnić także
-    przełożony. Wysyłane bezwarunkowo — reaguje na działanie pracownika, więc milczenie byłoby gorsze.
+    przełożony. Wysyłane bezwarunkowo — reaguje na działanie pracownika, więc milczenie byłoby
+    gorsze.
     """
     return (
         f"Widzę, że Twój grafik na tydzień {week_label} jest już uzupełniony ✅ "
@@ -244,10 +253,7 @@ def build_confirm_text(
         segments.append(f"grafik: {describe_schedule(schedule, tz)}")
     if time_off:
         segments.append(f"czas wolny: {describe_time_off(time_off)}")
-    prosba = (
-        f"Zapiszę {'; '.join(segments)}. "
-        "Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
-    )
+    prosba = f"Zapiszę {'; '.join(segments)}. Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
     ostrzezenie = describe_pominiete(pominiete)
     return f"{prosba}\n{ostrzezenie}" if ostrzezenie else prosba
 
@@ -296,7 +302,8 @@ def build_applied_text(*, minione: int = 0, juz_w_grafiku: Iterable[int] = ()) -
     """Potwierdzenie zapisu, wymieniające dni, które do grafiku NIE trafiły — i dlaczego.
 
     Pracownik potwierdził konkretny komplet dni, a zapisać można było mniej. Powody są DWA i mówią
-    zupełnie co innego, więc jeden wspólny komunikat („zapisałem część") byłby dla niego bezużyteczny:
+    zupełnie co innego, więc jeden wspólny komunikat („zapisałem część") byłby dla niego
+    bezużyteczny:
 
     - ``minione`` — dni, które zdążyły się skończyć, zanim padło „tak" (odsiewa je
       ``lifecycle.still_writable``). Grafiku wstecz nie uzupełniamy, bo menedżer czyta go jak stan
@@ -415,8 +422,7 @@ def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg:
             # potwierdził zmiany, a zapis do Shifts nie doszedł do skutku. Doliczanie ich do
             # „zapisanych grafików" sprawiało, że raport twierdził coś nieprawdziwego.
             lines.append(
-                f"• ⚠️ potwierdzone, ale NIEZAPISANE (do ręcznego uzupełnienia): "
-                f"{t.niepotwierdzone}"
+                f"• ⚠️ potwierdzone, ale NIEZAPISANE (do ręcznego uzupełnienia): {t.niepotwierdzone}"
             )
         lines.append(f"• zapisane grafiki: {t.zapisane}")
         lines.append(f"• odmowy: {t.odmowy}")

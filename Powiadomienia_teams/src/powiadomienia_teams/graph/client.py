@@ -5,6 +5,7 @@ event-loopowe jak poller kanałów — sync upraszcza pętlę i listener odpowie
 429/Retry-After i stronicowanie ``@odata.nextLink``. Token wstrzykiwany przez dostawcę
 (``graph/auth.py``); ``refresh_auth`` woła się raz na przebieg.
 """
+
 from __future__ import annotations
 
 import logging
@@ -89,13 +90,15 @@ def _retry_after(response: httpx.Response, pozostaly_budzet: int) -> int:
         # dławienia. Skoro nie umiemy tego odczytać, niech przynajmniej będzie widać.
         logger.warning(
             "Nagłówek Retry-After nie jest liczbą sekund (%r) — przyjmuję %ds",
-            raw, _DEFAULT_RETRY_AFTER_S,
+            raw,
+            _DEFAULT_RETRY_AFTER_S,
         )
     czekaj = int(raw) if raw.isdigit() else _DEFAULT_RETRY_AFTER_S
     if czekaj > pozostaly_budzet:
         logger.warning(
             "Graph prosi o %ds przerwy, a budżet oczekiwania to jeszcze %ds — skracam",
-            czekaj, pozostaly_budzet,
+            czekaj,
+            pozostaly_budzet,
         )
     return max(0, min(czekaj, pozostaly_budzet))
 
@@ -112,8 +115,9 @@ def _zglos_odrzucone(wszystkich: int, przyjetych: int, co: str) -> None:
     """
     odrzucone = wszystkich - przyjetych
     if odrzucone > 0:
-        logger.warning("Pominięto %d z %d wpisów (%s) — nie dało się ich zmapować",
-                       odrzucone, wszystkich, co)
+        logger.warning(
+            "Pominięto %d z %d wpisów (%s) — nie dało się ich zmapować", odrzucone, wszystkich, co
+        )
 
 
 def _raise_for_status(response: httpx.Response) -> None:
@@ -126,8 +130,13 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code < 400:
         return
     body = response.text[:_MAX_ERROR_BODY]
-    logger.error("Graph %s %s → %s: %s", response.request.method, response.request.url,
-                 response.status_code, body)
+    logger.error(
+        "Graph %s %s → %s: %s",
+        response.request.method,
+        response.request.url,
+        response.status_code,
+        body,
+    )
     if response.status_code == 401:
         # Token odrzucony mimo udanego cichego odświeżenia (cofnięta zgoda, zmiana hasła konta
         # „głosu", nowa polityka Conditional Access). To NIE jest błąd transientny — usługa ma się
@@ -198,7 +207,10 @@ def _zglos_luke_w_czacie(
         logger.warning(
             "Historia czatu %s: pełna strona (%d), a najstarsza wiadomość na niej (%s) jest "
             "NOWSZA niż watermark (%s) — odpowiedzi z luki między nimi przepadły",
-            chat_id, top, to_graph_iso(najstarsza), to_graph_iso(granica),
+            chat_id,
+            top,
+            to_graph_iso(najstarsza),
+            to_graph_iso(granica),
         )
         return
     logger.warning(
@@ -372,9 +384,10 @@ class GraphClient:
         return data
 
     def get_me(self) -> str:
-        """Id zalogowanego użytkownika (tożsamość »głosu« bota). Pusty wynik jest błędem, nie danymi.
+        """Id zalogowanego użytkownika (»głos« bota). Pusty wynik jest błędem, nie danymi.
 
-        Puste id nie jest neutralne: filtr ``m.user_id != me_id`` w ``runtime.nudge.run_once`` przestaje
+        Puste id nie jest neutralne: filtr ``m.user_id != me_id`` w ``runtime.nudge.run_once``
+        przestaje
         wtedy odsiewać konto bota (bot pisze sam do siebie), a ``create_or_get_chat`` buduje
         ``users('')`` i dostaje 400 dla KAŻDEJ osoby. Wyjątki łapie izolacja per-osoba, więc
         przebieg kończyłby się „sukcesem" bez jednej wysłanej prośby i bez alertu.

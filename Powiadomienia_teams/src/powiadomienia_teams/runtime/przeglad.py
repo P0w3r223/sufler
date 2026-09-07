@@ -21,8 +21,10 @@ zgłoszenia.
 polityce retencji. Identyfikator wystarcza, bo ``scripts/lista_czlonkow.py`` rozwiązuje go
 w jednym wywołaniu (ten sam kierunek co pozycja A10 planu).
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -126,10 +128,11 @@ def zbadaj_zrodlo(sciezka: Path) -> ZrodloStanu:
     """
     kopia = sciezka_kopii(sciezka)
     zapisany: datetime | None = None
-    try:
+    # `suppress`, a nie `try/except/pass`: to raport DIAGNOSTYCZNY, a brak czasu modyfikacji jest
+    # tu normalnym wynikiem (plik może nie istnieć). Jedyne miejsce w tym kodzie, gdzie połknięcie
+    # wyjątku jest zamierzone — i dlatego ma być widoczne z jednej linii, a nie ukryte w czterech.
+    with contextlib.suppress(OSError):
         zapisany = datetime.fromtimestamp(os.stat(sciezka).st_mtime, _UTC)
-    except OSError:
-        pass
     istnieje = sciezka.exists()
     return ZrodloStanu(
         sciezka=sciezka,
@@ -176,9 +179,7 @@ def raport_stanu(
     linie = _naglowek(zrodlo, teraz, okno=okno, wczytanych=len(stan))
     if stan:
         linie += [""] + _bloki_tygodni(stan)
-        linie += [""] + _lista_wpisow(
-            stan, teraz, okno=okno, z_nazwiskami=z_nazwiskami
-        )
+        linie += [""] + _lista_wpisow(stan, teraz, okno=okno, z_nazwiskami=z_nazwiskami)
         linie += ["", _stopka_o_nazwiskach(z_nazwiskami)]
     return "\n".join(linie)
 
@@ -279,9 +280,7 @@ def _bloki_tygodni(stan: Mapping[str, PendingReminder]) -> list[str]:
     for pending in stan.values():
         per_tydzien[pending.week_start][pending.status] += 1
 
-    linie = [
-        f"WPISY WEDŁUG TYGODNIA DOCELOWEGO (wpisów: {len(stan)}, tygodni: {len(per_tydzien)})"
-    ]
+    linie = [f"WPISY WEDŁUG TYGODNIA DOCELOWEGO (wpisów: {len(stan)}, tygodni: {len(per_tydzien)})"]
     for week_start in sorted(per_tydzien, reverse=True):
         licznik = per_tydzien[week_start]
         linie += ["", f"  tydzień od {week_start} (wpisów: {sum(licznik.values())})"]
@@ -303,7 +302,9 @@ def _statusy_w_kolejnosci(licznik: Counter[str]) -> list[str]:
 
 def _stopka_o_nazwiskach(z_nazwiskami: bool) -> str:
     if z_nazwiskami:
-        return "Nazwiska wypisane, bo POWIADOMIENIA_LOGUJ_NAZWISKA=true — to wyjście ma dane osobowe."
+        return (
+            "Nazwiska wypisane, bo POWIADOMIENIA_LOGUJ_NAZWISKA=true — to wyjście ma dane osobowe."
+        )
     return "Nazwiska nie są wypisywane — identyfikatory rozwiązuje scripts/lista_czlonkow.py."
 
 
@@ -325,8 +326,9 @@ def _lista_wpisow(
     # Nazwisko RAZEM z identyfikatorem, nie zamiast — tak samo jak w logach (`runtime.etykiety`),
     # żeby wiersz dało się skorelować z alertem po tej samej wartości w obu trybach.
     nazwa = {
-        p.member_id: (f"{p.member_name} ({p.member_id})" if z_nazwiskami and p.member_name
-                      else p.member_id)
+        p.member_id: (
+            f"{p.member_name} ({p.member_id})" if z_nazwiskami and p.member_name else p.member_id
+        )
         for p in wpisy
     }
     szer = max(len(nazwa[p.member_id]) for p in wpisy)

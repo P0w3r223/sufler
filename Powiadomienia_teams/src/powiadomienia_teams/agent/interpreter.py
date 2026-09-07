@@ -19,6 +19,7 @@ Bezpieczeństwo (obrona wielowarstwowa):
    w liczeniu, kod nie.
 6. Zapis do Shifts tylko po jawnym „tak" (patrz ``runtime.listener.poll_replies``).
 """
+
 from __future__ import annotations
 
 import json
@@ -78,7 +79,7 @@ class WywolanieNarzedzia:
 
 @dataclass(frozen=True)
 class OdpowiedzLlm:
-    """Jedna tura modelu, w postaci niezależnej od SDK (atrapy w testach nie potrzebują ``anthropic``).
+    """Jedna tura modelu, niezależna od SDK (atrapy w testach nie potrzebują ``anthropic``).
 
     ``surowe`` to bloki treści w formacie dostawcy — odsyłamy je z powrotem NIEZMIENIONE jako turę
     asystenta, bo tylko wtedy model widzi własne wywołanie narzędzia obok jego wyniku.
@@ -199,15 +200,16 @@ _SYSTEM_KONIEC = (
     'W proponowanym grafiku pole "theme" to tryb pracy: "green"=stacjonarnie, "blue"=zdalnie. '
     # Pracownik OTRZYMUJE grafik z emotkami 🟢/🔵, więc odpowiada tym samym językiem — rozumiej je.
     "Tryb pracy pracownik może wskazać SŁOWEM, KOLOREM lub EMOTKĄ i wszystkie znaczą to samo: "
-    '„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; '
-    '„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. '
+    "„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; "
+    "„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. "
     'Pole "tryb" ustaw tylko gdy pracownik wskazał tryb dla danego dnia; inaczej zostaw je puste '
     "(kolor zostanie z zeszłego tygodnia). "
     # --- Wynik CZĘŚCIOWY jest normalnym wynikiem, nie porażką ---
     "Odpowiedź bywa zrozumiała tylko CZĘŚCIOWO i to jest zwykły przypadek: zapisz wszystko, co da "
     'się odczytać, a resztę wymień w "pominiete". Dzień z godzinami sprzecznymi lub bezsensownymi '
     "(zrównany początek i koniec, np. „8-8”, albo wartości spoza doby) trafia do „pominiete” "
-    "z powodem „godziny_sprzeczne” — godzin nie zgaduj ani nie poprawiaj. POZOSTAŁE dni z tej samej "
+    "z powodem „godziny_sprzeczne” — godzin nie zgaduj ani nie poprawiaj. "
+    "POZOSTAŁE dni z tej samej "
     'odpowiedzi zostają w "shifts" i zwracasz action="modify". Przykład: „poniedziałek 8-8, '
     "wtorek 8-16” → shifts=[wtorek 08:00–16:00], pominiete=[poniedziałek/godziny_sprzeczne], "
     'action="modify". Dopiero gdy nie zostaje ANI JEDEN poprawny dzień pracy ani wolne — '
@@ -216,7 +218,8 @@ _SYSTEM_KONIEC = (
     # Szczegół (co wpisać w „dzien”, czym różni się „8-8”) stoi przy polach kontraktu wyjścia,
     # w `agent.schema._wpis_zmiany` — tu zostaje jedno zdanie orientujące.
     "Godzina końca wcześniejsza niż początku znaczy zmianę NOCNĄ, kończącą się następnego dnia "
-    "(„22-6”, „z piątku na sobotę 22 do 6”): zapisz ją w „shifts” jak każdą inną, wpisując w „dzien” "
+    "(„22-6”, „z piątku na sobotę 22 do 6”): zapisz ją w „shifts” jak każdą inną, "
+    "wpisując w „dzien” "
     "dzień jej ROZPOCZĘCIA. "
     # --- Pusty gotowiec: grafik OD ZERA (pracownik nie miał zmian w zeszłym tygodniu) ---
     # Klucz „proponowany_grafik" niesie BAZĘ, nie zawsze pierwotny gotowiec — od pierwszej poprawki
@@ -255,13 +258,14 @@ _SYSTEM_KONIEC = (
     "confirm — »nie chcę zmian« znaczy »nic nie zapisuj«, a NIE »zapisz proponowany grafik«. "
     # --- Czas wolny: urlop / nieobecność / chorobowe (jak »dodaj czas wolny« w Shifts) ---
     "Gdy pracownik jest wolny/nieobecny — NIE usuwaj dnia po cichu, tylko dodaj go do time_off z "
-    "właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod=\"urlop\"; „nie będzie mnie”/"
-    "„nieobecny”/„wolne” → powod=\"nieobecność\"; „chorobowe”/„L4”/„zwolnienie” → "
-    "powod=\"chorobowe\"; „urlop bezpłatny” → powod=\"urlop bezpłatny\"; „rodzicielski”/"
-    "„macierzyński” → powod=\"urlop rodzicielski\". Urlop na CAŁY tydzień → time_off dla dni "
+    'właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod="urlop"; „nie będzie mnie”/'
+    '„nieobecny”/„wolne” → powod="nieobecność"; „chorobowe”/„L4”/„zwolnienie” → '
+    'powod="chorobowe"; „urlop bezpłatny” → powod="urlop bezpłatny"; „rodzicielski”/'
+    '„macierzyński” → powod="urlop rodzicielski". Urlop na CAŁY tydzień → time_off dla dni '
     "roboczych (pon–pt), shifts=[]. Nieobecność w KONKRETNE dni → ten dzień do time_off, pozostałe "
     "dni pracujące zostaw w shifts. Jeśli NIE WIADOMO, które dni są wolne (np. „nie będzie mnie "
-    'kilka dni” bez podania których) — zwróć action="unclear" z powod_niejasnosci="nieznany_dzien". '
+    'kilka dni” bez podania których) — zwróć action="unclear" '
+    'z powod_niejasnosci="nieznany_dzien". '
     # --- Zmiana SAMEGO trybu (bez godzin) na NIEPUSTEJ bazie = modify, nie unclear ---
     # Słowo „gotowiec" znika z części OPERATYWNYCH promptu świadomie: odkąd bazą jest grafik
     # już uzgodniony (`propose.baza_interpretacji`), „gotowiec »jak w zeszłym tygodniu«" i
@@ -269,11 +273,14 @@ _SYSTEM_KONIEC = (
     # potrafi realnie pobrać. Zostawienie obu słów obok siebie znaczyło „nanoś poprawki na
     # oryginał" — czyli dokładnie ten defekt, który naprawiono po stronie kodu.
     "Odpowiedź o samym trybie pracy przy NIEPUSTYM proponowanym grafiku to prawidłowa zmiana "
-    '(action="modify"), NIGDY "unclear": ZACHOWAJ dni i godziny z proponowanego grafiku, zmień tylko "tryb". '
+    '(action="modify"), NIGDY "unclear": ZACHOWAJ dni i godziny z proponowanego grafiku, '
+    'zmień tylko "tryb". '
     "Gdy pracownik wskaże tryb bez konkretnego dnia i użyje słowa »zawsze«/»wszędzie«/»wszystko«/"
     "»cały tydzień«/»wszystkie dni« (albo poda sam tryb, np. „🟢”, „zdalnie”) — ustaw ten tryb dla "
-    "KAŻDEGO dnia proponowanego grafiku. Gdy wskaże tryb dla KONKRETNEGO dnia — zmień tryb tylko tego dnia, "
-    "resztę zostaw jak w proponowanym grafiku. Gdy bieżąca odpowiedź NIE podaje własnego dnia/godzin (np. „jak "
+    "KAŻDEGO dnia proponowanego grafiku. Gdy wskaże tryb dla KONKRETNEGO dnia — "
+    "zmień tryb tylko tego dnia, "
+    "resztę zostaw jak w proponowanym grafiku. Gdy bieżąca odpowiedź NIE podaje własnego "
+    "dnia/godzin (np. „jak "
     "zwykle”, „reszta jak [dzień]”, „i tyle”), zastosuj tę samą logikę do dni/godzin "
     "z »historia_pracownika« zamiast z proponowanego grafiku — nie zwróć z tego powodu „unclear”. "
     # --- Kotwica na końcu (recency) ---
@@ -300,11 +307,24 @@ _SYSTEM_BEZ_NARZEDZI = _SYSTEM_POCZATEK + _SEKCJA_BEZ_NARZEDZI + _SYSTEM_KONIEC
 # 🟢/🔵 i pracownik odpowiada tym samym językiem (patrz `messages.describe_schedule`). Dzięki temu
 # intencja trybu nie ginie, nawet gdy model przekaże w polu »tryb« emotkę albo nazwę koloru.
 _TRYB_TO_THEME = {
-    "zdalnie": "blue", "zdalna": "blue", "zdalny": "blue", "remote": "blue", "dom": "blue",
-    "niebieski": "blue", "niebieska": "blue", "niebiesko": "blue", "🔵": "blue",
-    "stacjonarnie": "green", "stacjonarna": "green", "stacjonarny": "green",
-    "biuro": "green", "onsite": "green",
-    "zielony": "green", "zielona": "green", "zielono": "green", "🟢": "green",
+    "zdalnie": "blue",
+    "zdalna": "blue",
+    "zdalny": "blue",
+    "remote": "blue",
+    "dom": "blue",
+    "niebieski": "blue",
+    "niebieska": "blue",
+    "niebiesko": "blue",
+    "🔵": "blue",
+    "stacjonarnie": "green",
+    "stacjonarna": "green",
+    "stacjonarny": "green",
+    "biuro": "green",
+    "onsite": "green",
+    "zielony": "green",
+    "zielona": "green",
+    "zielono": "green",
+    "🟢": "green",
 }
 
 
@@ -338,12 +358,14 @@ def schedule_to_intervals(proposal: WeekSchedule, tz: ZoneInfo) -> list[dict[str
     for sh in proposal.shifts:
         start = sh.start.astimezone(tz)
         end = sh.end.astimezone(tz)
-        intervals.append({
-            "weekday": start.weekday(),
-            "start": f"{start:%H:%M}",
-            "end": f"{end:%H:%M}",
-            "theme": sh.theme,  # kolor = tryb pracy (blue/green)
-        })
+        intervals.append(
+            {
+                "weekday": start.weekday(),
+                "start": f"{start:%H:%M}",
+                "end": f"{end:%H:%M}",
+                "theme": sh.theme,  # kolor = tryb pracy (blue/green)
+            }
+        )
     return intervals
 
 
@@ -387,7 +409,8 @@ def build_schedule(
     NIEZMIENNIK DNIA: ``weekday`` to dzień, w którym zmiana się ZACZYNA. Godzina końca wcześniejsza
     niż początku znaczy zmianę NOCNĄ, kończącą się następnego dnia — koniec przewijamy wtedy na
     ``day + 1``. Przypisanie do dnia startu nie jest wyborem estetycznym: tak liczą już
-    ``schedule_to_intervals``, ``propose.skip_weekdays``, ``client.read_shifts`` (okno po ``start``),
+    ``schedule_to_intervals``, ``propose.skip_weekdays``, ``client.read_shifts`` (okno po
+    ``start``),
     ``_zdecyduj`` (kolizja praca/wolne) i ``odczyt.opisz_zmiany``, więc każda inna konwencja
     wymagałaby zmiany w sześciu miejscach.
 
@@ -513,7 +536,7 @@ def build_time_offs(
 
 
 def _lista_slownikow(dane: dict[str, Any], klucz: str) -> list[dict[str, Any]]:
-    """Lista wpisów spod ``klucz``. Kształt gwarantuje schemat, to zabezpieczenie ostatniej szansy."""
+    """Lista wpisów spod ``klucz``. Kształt gwarantuje schemat; to ostatnia siatka."""
     wartosc = dane.get(klucz)
     if not isinstance(wartosc, list):
         return []
@@ -570,9 +593,7 @@ def _zdecyduj(
     # Rozłączność: dzień wolny wygrywa — usuń go z grafiku pracy, żeby nie zapisać obu naraz.
     off_days = {item["weekday"] for item in time_off}
     if off_days and not schedule.is_empty:
-        kept = tuple(
-            s for s in schedule.shifts if s.start.astimezone(tz).weekday() not in off_days
-        )
+        kept = tuple(s for s in schedule.shifts if s.start.astimezone(tz).weekday() not in off_days)
         schedule = WeekSchedule(schedule.member_id, schedule.week_start, kept)
 
     # Pominięcia uzgadniamy z tym, co NAPRAWDĘ idzie do zapisu — dopiero po ustaleniu rozłączności.
@@ -665,7 +686,9 @@ def interpret_reply(
                 )
             return _zdecyduj(_odczytaj_decyzje(odpowiedz.tekst), proposal, tz, group_id)
         if ctx is None:  # model zażądał narzędzia, którego mu nie daliśmy — nie ma jak odpowiedzieć
-            logger.warning("Model zażądał narzędzia bez włączonego kontekstu — degraduję do »unclear«.")
+            logger.warning(
+                "Model zażądał narzędzia bez włączonego kontekstu — degraduję do »unclear«."
+            )
             return ReplyDecision("unclear", None, (), _PRZERWANA)
         wiadomosci.append({"role": "assistant", "content": odpowiedz.surowe})
         # Wykonujemy najwyżej `_MAX_NARZEDZI_NA_TURE`; nadmiarowym ODPOWIADAMY błędem, bo API
@@ -676,11 +699,10 @@ def interpret_reply(
         if odrzucone:
             logger.warning(
                 "Model poprosił o %d wywołań narzędzi w jednej turze — wykonuję %d",
-                len(odpowiedz.narzedzia), len(wykonane),
+                len(odpowiedz.narzedzia),
+                len(wykonane),
             )
-        wyniki = [
-            _wynik_narzedzia(w.id, tools.wykonaj(w.nazwa, w.wejscie, ctx)) for w in wykonane
-        ]
+        wyniki = [_wynik_narzedzia(w.id, tools.wykonaj(w.nazwa, w.wejscie, ctx)) for w in wykonane]
         wyniki += [
             _wynik_narzedzia(
                 w.id,
@@ -690,9 +712,7 @@ def interpret_reply(
         ]
         wiadomosci.append({"role": "user", "content": wyniki})
 
-    logger.warning(
-        "Przekroczono limit %d obiegów narzędzi — degraduję do »unclear«.", _MAX_OBIEGOW
-    )
+    logger.warning("Przekroczono limit %d obiegów narzędzi — degraduję do »unclear«.", _MAX_OBIEGOW)
     return ReplyDecision("unclear", None, (), _PRZERWANA)
 
 
@@ -710,7 +730,7 @@ def _przytnij(tekst: str, limit: int, co: str) -> str:
 
 
 def _odczytaj_decyzje(tekst: str) -> dict[str, Any]:
-    """Wyjście modelu → słownik. Kształt gwarantuje ``output_config.format``; to siatka bezpieczeństwa.
+    """Wyjście modelu → słownik. Kształt gwarantuje ``output_config.format``; to siatka.
 
     Zostaje, bo gwarancja API nie obejmuje przypadku, w którym model w ogóle nie zdążył nic
     napisać (wyczerpany ``max_tokens``) — wtedy tekst jest pusty i ``json.loads`` rzuca.

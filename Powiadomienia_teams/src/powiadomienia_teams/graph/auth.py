@@ -6,7 +6,8 @@
   w cache) — NIGDY nie inicjuje interaktywnego device-flow, bo ten blokuje aż do zalogowania i
   w usłudze bez terminala zawiesiłby cały nasłuch.
 - Utrata refresh-tokenu (rolling ~90 dni albo Conditional Access) → ``AuthExpiredError`` zamiast
-  zawisu; orkiestracja loguje CRITICAL i zatrzymuje się czysto (patrz ``runtime.service.run_forever``).
+  zawisu; orkiestracja loguje CRITICAL i zatrzymuje się czysto (patrz
+  ``runtime.service.run_forever``).
 - App MSAL i cache budowane RAZ w ``build_token_provider`` (nie co wywołanie) — token trzyma się
   w pamięci, plik czytany na starcie, zapisywany dopiero gdy refresh-token się zmieni.
 - Cache tokenu jest SEKRETEM — poza repo i ``data/`` (patrz ``Settings.token_cache_path``).
@@ -14,6 +15,7 @@
 Import ``msal`` jest LENIWY (w fabryce aplikacji), więc sam import modułu i testy wyższych warstw
 go nie wymagają; ``app_factory`` jest wstrzykiwalny, więc testy podają atrapę bez ``msal``.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -94,8 +96,7 @@ def _load_cache(cache_path: Path) -> Any:
             # identycznie — usługa byłaby nie do odzyskania bez ręcznego kasowania pliku
             # w wolumenie. Pusty cache oznacza tylko ponowne logowanie, czyli stan naprawialny.
             logger.warning(
-                "Uszkodzony cache tokenu %s — zaloguj się ponownie: "
-                "`powiadomienia-teams --login`.",
+                "Uszkodzony cache tokenu %s — zaloguj się ponownie: `powiadomienia-teams --login`.",
                 cache_path,
             )
     return cache

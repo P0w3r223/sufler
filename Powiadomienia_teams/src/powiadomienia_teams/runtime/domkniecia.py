@@ -8,7 +8,8 @@ a dla części z nich po prostu nieprawdziwy.
 Sposób PIĄTY (``zamknij_cicho_nierozstrzygniete``, ADR 0007) nie mówi pracownikowi NIC — i to jest
 ta sama zasada, nie wyjątek od niej. Wpis schodzi z obiegu, bo jego czatu nie dało się odczytać
 w serii obiegów, a od ostatniej aktywności minął sufit; o zachowaniu człowieka nie ustaliliśmy
-wtedy niczego, więc każde zdanie na jego temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą treścią, jaką mamy. Dowiaduje się
+wtedy niczego, więc każde zdanie na jego temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą
+treścią, jaką mamy. Dowiaduje się
 operator, nie pracownik.
 
 Wzorzec utrwalania jest jeden dla wszystkich ścieżek: status terminalny NAJPIERW, wysyłka POTEM.
@@ -18,6 +19,7 @@ przebiegu). Nieudana wysyłka jest wyłącznie logowana: status jest już termin
 i tak nie będzie. Wyjątkiem jest utrata sesji — dotyczy całej usługi, nie tej jednej wiadomości,
 i propaguje dalej.
 """
+
 from __future__ import annotations
 
 import logging
@@ -72,7 +74,9 @@ def do_domkniecia(
         return wpisy
     logger.info(
         "Godziny ciszy — %d %s odkładam do %s (odpowiadam tylko tym, którzy napisali)",
-        len(wpisy), czego, najblizsza_dozwolona(teraz, okno_domkniec).isoformat(),
+        len(wpisy),
+        czego,
+        najblizsza_dozwolona(teraz, okno_domkniec).isoformat(),
     )
     return []
 
@@ -164,7 +168,9 @@ def _powiadom_o_zamknieciu(
         except NIE_POLYKAJ:
             raise
         except Exception:
-            logger.exception("Nie udało się wysłać domknięcia do %s", etykiety.osoba(pending, settings))
+            logger.exception(
+                "Nie udało się wysłać domknięcia do %s", etykiety.osoba(pending, settings)
+            )
 
 
 def zamknij_samodzielnie_uzupelnione(
@@ -177,9 +183,10 @@ def zamknij_samodzielnie_uzupelnione(
     *,
     okno_domkniec: OknoCiszy,
 ) -> None:
-    """Zamknij tematy osób, które SAME uzupełniły grafik: status SELF_FILLED utrwalony PRZED wysyłką.
+    """Zamknij tematy osób, które SAME uzupełniły grafik: SELF_FILLED utrwalony PRZED wysyłką.
 
-    Wzorzec „co najwyżej raz" jak w ``zamknij_bez_zapisu``: najpierw commit terminalnego statusu (jeden zapis dla
+    Wzorzec „co najwyżej raz" jak w ``zamknij_bez_zapisu``: najpierw commit terminalnego statusu
+    (jeden zapis dla
     wszystkich), potem podziękowania. Podziękowanie leci BEZWARUNKOWO (nie zależy od
     ``send_expiry_message``, inaczej niż wygaśnięcie) — reaguje na działanie pracownika, więc
     milczenie byłoby gorsze niż uprzejme domknięcie (jak przy ``STALE_WEEK_TEXT``).
@@ -212,7 +219,8 @@ def podziekuj_za_samodzielne_uzupelnienie(
     """Podziękuj za grafik, który uzupełnił się bez nas. Stan MUSI być już utrwalony.
 
     Do tego samego domknięcia dochodzi się DWIEMA drogami i każda utrwala stan inaczej: milczący
-    pracownik zamykany hurtem (``zamknij_samodzielnie_uzupelnione`` → jeden ``save_state`` dla wszystkich) oraz
+    pracownik zamykany hurtem (``zamknij_samodzielnie_uzupelnione`` → jeden ``save_state`` dla
+    wszystkich) oraz
     ten, który powiedział „tak" na komplet już obecny w grafiku (``_apply_confirmed_yes`` →
     ``_commit`` z porcją wiadomości). Różni je WYŁĄCZNIE sposób zapisu, więc wspólna jest dokładnie
     ta część: etykieta tygodnia, treść i izolacja nieudanej wysyłki.
@@ -226,17 +234,23 @@ def podziekuj_za_samodzielne_uzupelnienie(
     week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
     try:
         do_pracownika(
-            settings, client, pending.chat_id,
-            to_html(build_self_filled_text(week_label)), teraz=teraz,
+            settings,
+            client,
+            pending.chat_id,
+            to_html(build_self_filled_text(week_label)),
+            teraz=teraz,
         )
         logger.info(
-            "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)", etykiety.osoba(pending, settings)
+            "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)",
+            etykiety.osoba(pending, settings),
         )
     # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
     except NIE_POLYKAJ:
         raise
     except Exception:
-        logger.exception("Nie udało się wysłać podziękowania do %s", etykiety.osoba(pending, settings))
+        logger.exception(
+            "Nie udało się wysłać podziękowania do %s", etykiety.osoba(pending, settings)
+        )
 
 
 def powiadom_o_nieudanym_zapisie(
@@ -244,7 +258,8 @@ def powiadom_o_nieudanym_zapisie(
 ) -> None:
     """Powiedz pracownikowi, że zapis padł — we własnym ``try``, spójnie z resztą wysyłek.
 
-    Bez tego opakowania awaria TEJ wysyłki leciała do ``_process_pending``, gdzie ``_record_failure``
+    Bez tego opakowania awaria TEJ wysyłki leciała do ``_process_pending``, gdzie
+    ``_record_failure``
     podbijał licznik prób na wpisie już terminalnym i logował mylące „nie udało się obsłużyć
     odpowiedzi" dla odpowiedzi, która została obsłużona.
     """
@@ -255,5 +270,6 @@ def powiadom_o_nieudanym_zapisie(
         raise
     except Exception:
         logger.exception(
-            "Zapis dla %s padł i nie udało się o tym powiadomić pracownika", etykiety.osoba(pending, settings)
+            "Zapis dla %s padł i nie udało się o tym powiadomić pracownika",
+            etykiety.osoba(pending, settings),
         )

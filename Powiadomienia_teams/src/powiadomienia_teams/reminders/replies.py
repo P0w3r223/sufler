@@ -1,4 +1,5 @@
 """Parsowanie odpowiedzi pracownika z wiadomości czatu (czysta logika)."""
+
 from __future__ import annotations
 
 import re
@@ -17,8 +18,19 @@ _TAGS = re.compile(r"<[^>]+>")
 MEMORY_CAP = 10
 MEMORY_WINDOW = timedelta(hours=1)
 _AFFIRM = {
-    "tak", "ok", "okej", "okey", "spoko", "potwierdzam", "zgoda",
-    "pasuje", "dokładnie", "git", "zgadza", "jasne", "super",
+    "tak",
+    "ok",
+    "okej",
+    "okey",
+    "spoko",
+    "potwierdzam",
+    "zgoda",
+    "pasuje",
+    "dokładnie",
+    "git",
+    "zgadza",
+    "jasne",
+    "super",
 }
 # Uprzejmości dopuszczalne obok potwierdzenia (nie są poprawką grafiku).
 _FILLER = {"", "no", "dzięki", "dzieki", "dziękuję", "dziekuje", "wielkie", "i", "też"}
@@ -196,7 +208,8 @@ def history_for_llm(
 
     Zwraca ``[]``, gdy stałe okno minęło (kontekst startuje od nowa) lub gdy brak historii.
     ``current_at`` to createdDateTime bieżącej wiadomości — decyzja o resecie jest wspólna z
-    ``advance_memory`` (obie wołają ``_window_reset``), więc prompt i utrwalony stan nie rozjadą się.
+    ``advance_memory`` (obie wołają ``_window_reset``), więc prompt i utrwalony stan nie rozjadą
+    się.
     """
     if _window_reset(started_at, current_at, window):
         return []
@@ -215,7 +228,8 @@ def advance_memory(
     """Nowa (pamięć, kotwica) PO zapisaniu bieżącej wiadomości pracownika.
 
     Wyliczane z niezmienionych wejść (nie akumulowane na miejscu), więc ponowienie z tymi samymi
-    argumentami daje identyczny wynik — idempotencja wymagana przez ``runtime.listener._commit`` (ta sama
+    argumentami daje identyczny wynik — idempotencja wymagana przez ``runtime.listener._commit`` (ta
+    sama
     wiadomość nie może się zdublować przy ponownej obsłudze). Po upływie okna zeruje pamięć i
     zakotwicza ją na bieżącej wiadomości; sufit ``cap`` przycina od najstarszej, ale kotwicy NIE
     rusza (okno pozostaje liczone od pierwszej interakcji, nie kroczące).

@@ -46,35 +46,6 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C901", "PLR0915"]
 [tool.ruff.lint.mccabe]
 max-complexity = 15
 
-# `src/` to artefakt ODZYSKANY z obrazu produkcyjnego 0.2.19 (commit importu 7c7fe8c), a nie kod
-# pisany ręcznie w tym repo. Sufit funkcji (C901, PLR0915) i limit linii zaostrzono na linii
-# repozytorium 2026-09-02 — czyli JUŻ PO buildzie 0.2.19 — więc ten kod nigdy nie miał szansy im
-# sprostać. Naginanie go teraz kosztowałoby jedyną własność, dla której import w ogóle powstał:
-# możliwość porównania repo z tym, co realnie pisze do ludzi i zapisuje grafik klienta.
-#
-# Wyciszone jest PIĘĆ reguł: E501 (długość linii), C901 i PLR0915 (sufit funkcji) oraz SIM105
-# i SIM300 — dwie stylistyczne z rodziny SIM. F (błędy), B (pułapki), UP, I i RESZTA SIM zostają
-# aktywne.
-#
-# `SIM105` (`contextlib.suppress` zamiast `try/except/pass`) wyciszamy z zastrzeżeniem: w kodzie,
-# którego centralną klasą usterki są POŁKNIĘTE WYJĄTKI, nie jest to reguła czysto kosmetyczna.
-# Jedyne jej wystąpienie (`runtime/przeglad.py`) dotyczy `OSError` przy odczycie pliku w raporcie
-# diagnostycznym, czyli miejsca bez skutków ubocznych. Kształtu szwu wysyłki pilnuje osobno
-# `tests/test_szew_wysylki.py`, i to tam mieszka realna bramka na połykanie.
-#
-# Dług znika razem z falami naprawczymi — od pierwszej z nich repo NIE jest już tożsame z obrazem,
-# więc argument „wierność wobec artefaktu" wygasa i wyłączenia trzeba będzie zdjąć.
-[tool.ruff.lint.per-file-ignores]
-"src/**" = ["E501", "C901", "PLR0915", "SIM105", "SIM300"]
-
-# Formatowanie omija `src/` z tego samego powodu: `ruff format` jest wprawdzie zachowawczy
-# semantycznie (sprawdzone — AST identyczne we wszystkich 48 plikach), ale przepisałby 41 plików,
-# a wtedy „repo zgadza się z obrazem" przestałoby być prawdą dla drzewa roboczego.
-[tool.ruff.format]
-# `scripts/lista_czlonkow.py` również pochodzi z obrazu (kopiowany tam osobno przez Dockerfile),
-# więc obejmuje go ta sama zasada co `src/`.
-exclude = ["src/**", "scripts/lista_czlonkow.py"]
-
 [tool.mypy]
 python_version = "3.10"
 disallow_untyped_defs = true

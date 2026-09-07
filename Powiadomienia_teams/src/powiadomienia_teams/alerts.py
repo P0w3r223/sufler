@@ -11,6 +11,7 @@ więc wiązanie się z jednym formatem szybko by się zdezaktualizowało. Ładun
 
 Wysyłka jest ZAWSZE best-effort: alert, który wywraca usługę, jest gorszy niż brak alertu.
 """
+
 from __future__ import annotations
 
 import logging

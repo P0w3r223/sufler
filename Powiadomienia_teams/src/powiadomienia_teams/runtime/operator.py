@@ -12,6 +12,7 @@ Nazwa pliku pokrywa się z modułem standardowej biblioteki ``operator``. To bez
 ma bezwzględne importy, więc ``import operator`` w dowolnym innym pliku nadal trafia do stdlib —
 ale w TYM pliku stdlibowego ``operator`` nie da się zaimportować pod tą nazwą. Nie jest potrzebny.
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,8 +102,10 @@ def odczekaj_przed_wyjsciem(settings: Settings, sleep: Callable[[float], None]) 
     zamienia się w restart co sekundę zamiast w spokojne czekanie na interwencję człowieka.
     """
     if settings.auth_failure_exit_delay_s > 0:
-        logger.info("Czekam %ds przed wyjściem (ogranicza pętlę restartów).",
-                    settings.auth_failure_exit_delay_s)
+        logger.info(
+            "Czekam %ds przed wyjściem (ogranicza pętlę restartów).",
+            settings.auth_failure_exit_delay_s,
+        )
         sleep(float(settings.auth_failure_exit_delay_s))
 
 
@@ -129,9 +132,7 @@ def tresc_publiczna(blad: Exception) -> str:
     return getattr(blad, "publiczny", "") or str(blad)
 
 
-def zglos_utrate_sesji(
-    settings: Settings, blad: Exception, sleep: Callable[[float], None]
-) -> None:
+def zglos_utrate_sesji(settings: Settings, blad: Exception, sleep: Callable[[float], None]) -> None:
     """Zgłoś utratę sesji i odczekaj, zanim proces się zakończy.
 
     Alert idzie webhookiem, NIE przez Teams: wiadomość na Teams wymaga tego samego tokenu, który
@@ -139,7 +140,8 @@ def zglos_utrate_sesji(
     podniósłby proces natychmiast — martwy token zamieniłby się w restart co sekundę zamiast
     w spokojne czekanie na `--login`, po którym usługa wraca sama.
     """
-    logger.critical("Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)",
-                    blad)
+    logger.critical(
+        "Utracono uwierzytelnienie — zatrzymuję usługę. Zaloguj się: `--login`. (%s)", blad
+    )
     alert(settings, "Utracono uwierzytelnienie", tresc_publiczna(blad), waga=alerts.KRYTYCZNY)
     odczekaj_przed_wyjsciem(settings, sleep)

@@ -6,6 +6,7 @@ z odpowiedzią — ``runtime.listener``.
 
 Idempotencja przebiegu opiera się WYŁĄCZNIE na pliku stanu: jedna prośba na osobę na dany tydzień.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +38,10 @@ logger = logging.getLogger(__name__)
 _UTC = timezone.utc
 
 
-def run_once(
+# Sufit funkcji przekroczony ŚWIADOMIE: jeden przebieg tygodniowy, od wykrycia luk do utrwalenia
+# stanu. Wysyłka jest tu nierozdzielna od zapisu pendingu (pending bez wiadomości znaczy, że
+# człowiek nie dostanie prośby w ogóle). Dług, nie usprawiedliwienie.
+def run_once(  # noqa: PLR0915
     settings: Settings,
     client: GraphClient,
     *,
@@ -55,7 +59,8 @@ def run_once(
     w tym tygodniu, więc człowiek nie dostałby prośby o grafik wcale. `ignoruj_cisze` obsługuje
     `--once --ignoruj-cisze`, czyli świadomą decyzję operatora (decyzja 4.1/3 planu).
 
-    **``now`` a ``teraz`` to DWIE różne chwile i mylenie ich kosztowało nocną wysyłkę.** ``now`` jest
+    **``now`` a ``teraz`` to DWIE różne chwile i mylenie ich kosztowało nocną wysyłkę.** ``now``
+    jest
     odniesieniem TYGODNIA i przy nadrabianiu równa się MINIONEMU terminowi (piątek 16:00), żeby
     restart po północy nie przesunął tygodnia o siedem dni. ``teraz`` jest chwilą FAKTYCZNĄ i tylko
     ona ma prawo rozstrzygać o godzinach ciszy oraz iść do szwu wysyłki — inaczej przebieg
@@ -70,7 +75,8 @@ def run_once(
     zgłoszony przy uruchomieniu, a nie o trzeciej nad ranem u pracownika.
     """
     # `ignoruj_cisze` materializuje się jako ustawienia Z WYŁĄCZONĄ ciszą, a nie jako flaga wleczona
-    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal jest
+    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal
+    # jest
     # siatką na nowy punkt wysyłki), a cała ścieżka widzi jeden, spójny świat — bez tego `--once
     # --ignoruj-cisze` przechodził bramę pętli i padał dopiero na szwie, czyli operator dostawał
     # „nie udało się powiadomić" zamiast prośby wysłanej świadomie.
@@ -130,7 +136,9 @@ def run_once(
         missing = [m for m in missing if znormalizuj(m.user_id) in settings.only_user_ids]
         logger.info(
             "Zakres pilotażowy: %d z %d osób bez grafiku (lista ma %d pozycji)",
-            len(missing), przed, len(settings.only_user_ids),
+            len(missing),
+            przed,
+            len(settings.only_user_ids),
         )
     prior_shifts = client.read_shifts(
         ctx.team_id, prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)
@@ -199,15 +207,21 @@ def run_once(
             # ręcznego sprawdzenia rozmowy, która stoi nienaruszona.
             logger.warning(
                 "Nadpisuję otwartą rozmowę z %s (status %s) dla %s — zaczynam tydzień %s",
-                existing.week_start, existing.status,
-                etykiety.czlonek(member, settings), week_start_iso,
+                existing.week_start,
+                existing.status,
+                etykiety.czlonek(member, settings),
+                week_start_iso,
             )
         member_off = off_by_member.get(znormalizuj(member.user_id), frozenset())
         proposal = proposal_from_last_week(
             member.user_id, prior_shifts, target_monday.date(), tz=tz, skip_weekdays=member_off
         )
         text = build_nudge_text(
-            member, proposal, week_label, tz, off_weekdays=member_off,
+            member,
+            proposal,
+            week_label,
+            tz,
+            off_weekdays=member_off,
             # Termin liczony TĄ SAMĄ funkcją, którą wygasza `runtime.listener` — inaczej treść
             # obiecywałaby co innego, niż robi runtime, a rozjazd wychodzi dopiero w chwili,
             # w której ktoś traci tydzień grafiku (pozycja B7 planu).
@@ -265,7 +279,8 @@ def run_once(
             nudged_at=sent_iso,  # niezmienny czas nudge'a — baza dolnej granicy kurtuazji
             proposal=schedule_to_intervals(proposal, tz),
             # Dni już objęte urlopem w Graphie: przy zapisie NIE tworzymy dla nich drugiego
-            # timeOff, gdyby pracownik powtórzył je w odpowiedzi (`create_time_off` nie deduplikuje).
+            # timeOff, gdyby pracownik powtórzył je w odpowiedzi (`create_time_off` nie
+            # deduplikuje).
             known_time_off_weekdays=sorted(member_off),
         )
         # Zapis PO KAŻDEJ wysyłce: awaria w połowie nie gubi już-wysłanych pendingów (ich odpowiedzi
@@ -295,4 +310,3 @@ def run_once(
         "dry-run (nic nie wysłano)" if settings.dry_run else f"wysłano {sent}",
     )
     return missing
-

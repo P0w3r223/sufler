@@ -8,6 +8,7 @@ domykając cykl na poziomie pakietów.
 To są dwie funkcje bez żadnej wiedzy o HTTP — należą do warstwy, od której zależą wszyscy.
 ``graph.mapping`` re-eksportuje je, więc dotychczasowe importy nadal działają.
 """
+
 from __future__ import annotations
 
 import re

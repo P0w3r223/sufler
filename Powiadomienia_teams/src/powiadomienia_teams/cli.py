@@ -5,6 +5,7 @@ czytane są argumenty wiersza poleceń oraz `.env`. Reszta obiegu (``runtime.nud
 ``runtime.listener``, ``runtime.service``) dostaje gotowe zależności w parametrach — dzięki temu
 daje się je uruchomić w teście bez sieci i bez klucza API.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -110,14 +111,20 @@ def _ensure_authenticated(
                 # w milczeniu: jedyny kanał niezależny od AAD nie był używany właśnie wtedy, gdy
                 # był jedynym działającym. Poprawka gałęzi obok (utrata sesji bez terminala) tej
                 # nie objęła.
-                operator.alert(settings, "Nie udało się uwierzytelnić przy starcie", komunikat,
-                       waga=alerts.KRYTYCZNY)
+                operator.alert(
+                    settings,
+                    "Nie udało się uwierzytelnić przy starcie",
+                    komunikat,
+                    waga=alerts.KRYTYCZNY,
+                )
                 operator.odczekaj_przed_wyjsciem(settings, sleep)
                 raise SystemExit(1) from None
             wait = _AUTH_CHECK_BACKOFF_S * attempt
             logger.warning(
                 "Nie udało się sprawdzić uwierzytelnienia (próba %d/%d) — ponawiam za %ds",
-                attempt, attempts, wait,
+                attempt,
+                attempts,
+                wait,
             )
             sleep(wait)
 
@@ -164,7 +171,8 @@ def _polecenie_jednorazowe(akcja: Callable[[], Any]) -> None:
         # nie wykonał, a zero znaczy w tym poleceniu „wykonane" (krok wdrożenia sprawdza właśnie
         # kod wyjścia). To ta sama zasada, dla której `run_once` przestało zwracać pustą listę.
         logger.warning(
-            "%s Uruchom ponownie po tej godzinie albo świadomie pomiń ciszę: --once --ignoruj-cisze",
+            "%s Uruchom ponownie po tej godzinie albo świadomie pomiń ciszę: "
+            "--once --ignoruj-cisze",
             odmowa,
         )
         raise SystemExit(1) from None
@@ -173,9 +181,7 @@ def _polecenie_jednorazowe(akcja: Callable[[], Any]) -> None:
         raise SystemExit(1) from None
 
 
-def _przebieg_jednorazowy(
-    settings: Settings, client: GraphClient, *, ignoruj_cisze: bool
-) -> None:
+def _przebieg_jednorazowy(settings: Settings, client: GraphClient, *, ignoruj_cisze: bool) -> None:
     """`--once`: przebieg, dla którego odniesienie tygodnia i chwila faktyczna to TA SAMA chwila.
 
     Osobna funkcja, a nie `lambda`, wyłącznie po to, żeby dało się wyliczyć chwilę raz i podać ją
@@ -360,13 +366,15 @@ def _wypisz_stan(settings: Settings) -> None:
     # i było zaniżone o rząd.
     if zbadaj_zrodlo(settings.state_path).wpisow_w_pliku != zrodlo.wpisow_w_pliku:
         zrodlo = replace(zrodlo, wpisow_w_pliku=None)
-    print(raport_stanu(
-        stan,
-        datetime.now(_UTC),
-        zrodlo=zrodlo,
-        okno=settings.okno_odpowiedzi,
-        z_nazwiskami=settings.loguj_nazwiska,
-    ))
+    print(
+        raport_stanu(
+            stan,
+            datetime.now(_UTC),
+            zrodlo=zrodlo,
+            okno=settings.okno_odpowiedzi,
+            z_nazwiskami=settings.loguj_nazwiska,
+        )
+    )
 
 
 def ostrzezenia_startowe(settings: Settings) -> list[str]:
@@ -417,9 +425,7 @@ def ostrzezenia_startowe(settings: Settings) -> list[str]:
         )
     # Wartość spod usuniętej nazwy nie działa i nie ma jak zadziałać — a operator, który ją wpisał,
     # ma prawo myśleć, że zmienił ludziom termin. To jedyne miejsce, w którym się o tym dowie.
-    zdania += [
-        f"{nazwa} nie jest już czytana: {powod}." for nazwa, powod in uzyte_usuniete_nazwy()
-    ]
+    zdania += [f"{nazwa} nie jest już czytana: {powod}." for nazwa, powod in uzyte_usuniete_nazwy()]
     # Termin kalendarzowy i godzina przebiegu są konfigurowane OSOBNO, więc mogą się rozjechać tak,
     # że termin wypada przed przebiegiem albo zaraz po nim. Wtedy o wygaśnięciu decyduje wyłącznie
     # dolna granica kurtuazji, czyli okno odpowiedzi milcząco przestaje być kalendarzowe — a to
@@ -433,20 +439,25 @@ def ostrzezenia_startowe(settings: Settings) -> list[str]:
             f"i REPLY_DEADLINE_OFFSET_H."
         )
     # Godzina przebiegu wewnątrz okna ciszy jest konfiguracją LEGALNĄ (`validate()` sprawdza tylko
-    # zakres 0..23), a kosztuje najwięcej, co ta usługa może kosztować: przebieg jest wtedy CO TYDZIEŃ
-    # odkładany do końca ciszy. Bez tego zdania jedynym śladem jest linia w logu kontenera — a pozycja
+    # zakres 0..23), a kosztuje najwięcej, co ta usługa może kosztować: przebieg jest wtedy CO
+    # TYDZIEŃ
+    # odkładany do końca ciszy. Bez tego zdania jedynym śladem jest linia w logu kontenera — a
+    # pozycja
     # A12 zakłada, że logów nikt nie czyta.
     #
-    # Zdanie mówi o ZERZE, nie o „krótkim" oknie łaski, i to jest poprawka po przeglądzie: okno łaski
+    # Zdanie mówi o ZERZE, nie o „krótkim" oknie łaski, i to jest poprawka po przeglądzie: okno
+    # łaski
     # nie liczy godzin ciszy (`_catchup_due` odejmuje `cisza_pomiedzy`), więc między terminem
     # a końcem ciszy budżet nie jest zużywany wcale i wystarcza każda wartość dodatnia. Rada
     # „podnieś CATCHUP_GRACE_HOURS" naprawiałaby coś, co nie jest zepsute, i odwracała uwagę od
     # jedynej wartości, która faktycznie kosztuje tydzień.
     if settings.godzina_przebiegu_w_ciszy:
         zdania.append(
-            f"Przebieg tygodniowy wypada o {settings.run_hour:02d}:{settings.run_minute:02d}, czyli "
+            f"Przebieg tygodniowy wypada o {settings.run_hour:02d}:"
+            f"{settings.run_minute:02d}, czyli "
             f"w godzinach ciszy ({settings.cisza_od_h}:00–{settings.cisza_do_h}:00) — będzie co "
-            f"tydzień ODKŁADANY do jej końca. Przy CATCHUP_GRACE_HOURS=0 nadrabianie jest wyłączone, "
+            f"tydzień ODKŁADANY do jej końca. Przy CATCHUP_GRACE_HOURS=0 nadrabianie jest "
+            f"wyłączone, "
             f"więc nie wykona się w żadnym tygodniu. Przestaw RUN_HOUR albo CISZA_OD_H/CISZA_DO_H."
         )
     if len(settings.admin_user_ids) == 1:
@@ -481,7 +492,10 @@ def _wczytaj_env() -> None:
         load_dotenv(env)
 
 
-def main() -> None:
+# Sufit funkcji przekroczony ŚWIADOMIE: router poleceń. Rozbicie znaczy rozdzielenie parsowania
+# argumentów od budowy zależności, a te dwie rzeczy dziś rozstrzygają się nawzajem (`--login`
+# buduje inny klient niż `--stan`). Dług, nie usprawiedliwienie.
+def main() -> None:  # noqa: PLR0915
     parser = argparse.ArgumentParser(
         description="Cotygodniowe przypomnienia o zmianach (Microsoft Shifts)."
     )
@@ -492,27 +506,32 @@ def main() -> None:
         "--poll-once", action="store_true", help="jedno sprawdzenie odpowiedzi i wyjście"
     )
     parser.add_argument(
-        "--login", action="store_true",
+        "--login",
+        action="store_true",
         help="jednorazowe interaktywne logowanie (device-code) i wyjście",
     )
     parser.add_argument(
-        "--stan", action="store_true",
+        "--stan",
+        action="store_true",
         help="wypisz raport diagnostyczny pliku stanu i wyjdź (bez sieci, bez blokady instancji)",
     )
     parser.add_argument(
-        "--ignoruj-cisze", action="store_true",
+        "--ignoruj-cisze",
+        action="store_true",
         help="pozwól `--once` pisać do pracowników w godzinach ciszy (nadrabianie po awarii); "
-             "`--poll-once` ciszy nie podlega z zasady, bo odpowiada ludziom, którzy właśnie napisali",
+        "`--poll-once` ciszy nie podlega z zasady, bo odpowiada ludziom, którzy właśnie napisali",
     )
     parser.add_argument(
-        "--proba-nasluchu", action="store_true",
+        "--proba-nasluchu",
+        action="store_true",
         help="próba: jeden obieg nasłuchu na żywym Graphie i modelu, BEZ zapisów do grafiku "
-             "i bez wiadomości do pracowników; stan produkcyjny nietknięty",
+        "i bez wiadomości do pracowników; stan produkcyjny nietknięty",
     )
     args = parser.parse_args()
     if args.ignoruj_cisze and not args.once:
         # Milczące zignorowanie flagi jest tu najgorszym wariantem: operator nadrabiający po awarii
-        # zobaczyłby „nie wysłano nic" i nie miał z czego wywnioskować, że jego flaga nic nie znaczy.
+        # zobaczyłby „nie wysłano nic" i nie miał z czego wywnioskować, że jego flaga nic nie
+        # znaczy.
         parser.error(
             "--ignoruj-cisze działa wyłącznie z --once. `--poll-once` ciszy nie podlega z zasady "
             "(odpowiada ludziom, którzy właśnie napisali), a `--proba-nasluchu` nic nie wysyła."
@@ -610,9 +629,13 @@ def main() -> None:
                 # ta sama chwila — powiedziane WPROST, bo `run_once` nie ma już domyślnego `teraz`
                 # (patrz jego docstring). Wyliczona raz: dwa osobne `datetime.now` rozjechałyby
                 # się o ułamek sekundy i test czytający jedną z nich nie widziałby drugiej.
-                _polecenie_jednorazowe(lambda: _przebieg_jednorazowy(
-                    settings, client, ignoruj_cisze=args.ignoruj_cisze,
-                ))
+                _polecenie_jednorazowe(
+                    lambda: _przebieg_jednorazowy(
+                        settings,
+                        client,
+                        ignoruj_cisze=args.ignoruj_cisze,
+                    )
+                )
             elif args.poll_once:
                 # `--poll-once` ciszy NIE podlega (decyzja 4.1/3): odpowiada ludziom, którzy właśnie
                 # napisali. Milczenie bota po wiadomości pracownika jest gorsze niż odpowiedź
@@ -621,9 +644,14 @@ def main() -> None:
                 # Wyłączenie obejmuje ODPOWIADANIE, nie domykanie: wygaszenia i podziękowania za
                 # samouzupełnienie idą do ludzi, którzy nic nie napisali, więc `poll_replies`
                 # zostawia je pod pierwotnym oknem ciszy i odkłada do jej końca.
-                _polecenie_jednorazowe(lambda: poll_replies(
-                    settings, client, llm, ignoruj_cisze=True,
-                ))
+                _polecenie_jednorazowe(
+                    lambda: poll_replies(
+                        settings,
+                        client,
+                        llm,
+                        ignoruj_cisze=True,
+                    )
+                )
             elif args.proba_nasluchu:
                 # Własny klient, bo próba MUSI mieć odcięte metody piszące — a nie tę samą klasę
                 # z flagą, którą ktoś kiedyś pominie w nowym miejscu wywołania. Bez budżetu

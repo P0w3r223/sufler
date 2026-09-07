@@ -11,6 +11,7 @@ i ``reminders`` zależą teraz oba od ``domain``, w jedną stronę.
 
 ``reminders.timeoff`` re-eksportuje te nazwy, więc dotychczasowe importy nadal działają.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

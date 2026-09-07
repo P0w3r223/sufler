@@ -1,4 +1,5 @@
 """Budowa propozycji »jak w zeszłym tygodniu« (czysta logika)."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -14,7 +15,7 @@ def baza_interpretacji(
     resolved: list[dict[str, Any]],
     resolved_time_off: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Grafik, na który nanosi się KOLEJNA poprawka pracownika: ustalony, a gdy go nie ma — gotowiec.
+    """Grafik pod KOLEJNĄ poprawkę pracownika: ustalony, a gdy go nie ma — gotowiec.
 
     Semantyka w jednym zdaniu: to grafik, który zapiszemy, jeśli pracownik nie poprosi o zmianę.
     Na początku rozmowy jest nim gotowiec »jak w zeszłym tygodniu«, po pierwszej poprawce — to,
@@ -73,8 +74,7 @@ def proposal_from_last_week(
         (
             s
             for s in last_week_shifts
-            if s.user_id == member_id
-            and s.start.astimezone(tz).weekday() not in skip_weekdays
+            if s.user_id == member_id and s.start.astimezone(tz).weekday() not in skip_weekdays
         ),
         key=lambda s: s.start,
     )

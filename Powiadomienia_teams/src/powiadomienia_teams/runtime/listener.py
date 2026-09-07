@@ -11,6 +11,7 @@ Dwa niezmienniki, na których stoi cała reszta i których nie wolno tu naruszy�
 2. **„Co najwyżej raz"** — stan jest utrwalany PRZED każdym nieodwracalnym skutkiem. Pominięcie
    naprawia człowiek, zdublowanie jest nie do cofnięcia w grafiku klienta.
 """
+
 from __future__ import annotations
 
 import logging
@@ -213,7 +214,8 @@ def _odsiej_juz_zapisane(
         raise
     if dane is None:
         logger.warning(
-            "Nie udało się sprawdzić aktualnego grafiku %s przed zapisem — zapisuję bez weryfikacji",
+            "Nie udało się sprawdzić aktualnego grafiku %s przed zapisem — "
+            "zapisuję bez weryfikacji",
             etykiety.osoba(pending, settings),
         )
         return schedule, time_offs, ()
@@ -227,7 +229,9 @@ def _odsiej_juz_zapisane(
     )
     if odsiane:
         logger.info(
-            "Pomijam dni już obecne w grafiku %s: %s", etykiety.osoba(pending, settings), sorted(odsiane)
+            "Pomijam dni już obecne w grafiku %s: %s",
+            etykiety.osoba(pending, settings),
+            sorted(odsiane),
         )
     return WeekSchedule(schedule.member_id, schedule.week_start, zostaje), wolne, odsiane
 
@@ -316,7 +320,11 @@ def _grafik_kroku_1_5(
     )
 
 
-def poll_replies(
+# Sufit funkcji przekroczony ŚWIADOMIE: orkiestracja pięciu kroków obiegu, których KOLEJNOŚĆ
+# jest niezmiennikiem bezpieczeństwa (odpowiedź > samouzupełnienie > sufit ADR 0007 >
+# wygaszenie). Wyniesienie kroków do osobnych funkcji rozprasza tę kolejność po module i czyni
+# ją kwestią pamięci. Dług, nie usprawiedliwienie.
+def poll_replies(  # noqa: C901, PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,
@@ -342,7 +350,8 @@ def poll_replies(
 
     now = now or datetime.now(_UTC)
     # `ignoruj_cisze` materializuje się jako ustawienia Z WYŁĄCZONĄ ciszą, a nie jako flaga wleczona
-    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal jest
+    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal
+    # jest
     # siatką na nowy punkt wysyłki), a cała ścieżka widzi jeden, spójny świat — bez tego `--once
     # --ignoruj-cisze` przechodził bramę pętli i padał dopiero na szwie, czyli operator dostawał
     # „nie udało się powiadomić" zamiast prośby wysłanej świadomie.
@@ -356,7 +365,8 @@ def poll_replies(
     okno_pierwotne = settings.okno_ciszy
     if ignoruj_cisze:
         settings = replace(settings, cisza_od_h=0, cisza_do_h=0)
-    # Godziny ciszy ODKŁADAJĄ CAŁĄ pracę, nie tylko wysyłkę. Pominięcie samej wiadomości rozjechałoby
+    # Godziny ciszy ODKŁADAJĄ CAŁĄ pracę, nie tylko wysyłkę. Pominięcie samej wiadomości
+    # rozjechałoby
     # stan z tym, co widzi pracownik: stan jest utrwalany PRZED skutkiem, więc zostałaby prośba
     # o potwierdzenie, której nikt nie dostał, a po terminie „nie doczekałem się potwierdzenia" —
     # za ciszę BOTA. Odłożona porcja czeka nietknięta (watermark nie rusza), więc po ciszy ta sama
@@ -375,9 +385,7 @@ def poll_replies(
         # o samym odstępie, więc zostaje kolejność warunków, ale zapisana jako reguła, nie zbieg.
         return PollOutcome(0, None)
     state = st.load_state(settings.state_path)
-    open_items = [
-        p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
-    ]
+    open_items = [p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)]
     if not open_items:
         return PollOutcome(0, None)
 
@@ -392,7 +400,9 @@ def poll_replies(
     # odczytu i nie znać konfiguracji, ale jego porażka jest decyzją o przyjęciu ryzyka
     # nieodwracalnej szkody — a taka decyzja nie może kończyć się w logu.
     snapshot = SnapshotGrafiku(
-        client, ctx, tz,
+        client,
+        ctx,
+        tz,
         ostrzegaj=lambda tytul, tresc: operator.alert(settings, tytul, tresc),
     )
 
@@ -428,7 +438,9 @@ def poll_replies(
         except Exception:
             # Izolacja per-osoba — błąd jednej odpowiedzi nie blokuje pozostałych.
             outcomes[pending.member_id] = ReadOutcome.UNKNOWN
-            logger.exception("Nie udało się obsłużyć odpowiedzi dla %s", etykiety.osoba(pending, settings))
+            logger.exception(
+                "Nie udało się obsłużyć odpowiedzi dla %s", etykiety.osoba(pending, settings)
+            )
 
     # Dane, za które ścieżka zapisu (krok 1) już zapłaciła, trafiają do pamięci kroku 1.5 za
     # darmo. Kierunek jednostronny: snapshot → pamięć (ADR 0009).
@@ -472,14 +484,18 @@ def poll_replies(
             # obiegów `samodzielni` jest puste i żadnego pobrania nie ma.
             samodzielni = _uzupelnili_sami(
                 samodzielni,
-                snapshot.dla_tygodni(
-                    {p.week_start for p in samodzielni}, alert_przy_porazce=False
-                ),
+                snapshot.dla_tygodni({p.week_start for p in samodzielni}, alert_przy_porazce=False),
                 tz,
             )
         if samodzielni:
             zamknij_samodzielnie_uzupelnione(
-                settings, client, state, samodzielni, tz, now, okno_domkniec=okno_pierwotne,
+                settings,
+                client,
+                state,
+                samodzielni,
+                tz,
+                now,
+                okno_domkniec=okno_pierwotne,
             )
 
     # 1.6. Wpisy, których CZATU NIE DA SIĘ ODCZYTAĆ (ADR 0007). Krok PO samouzupełnieniu i PRZED
@@ -494,9 +510,7 @@ def poll_replies(
     #    przez pętlę wyżej): bezpieczna wartość domyślna nie może zależeć od tego, czy ktoś kiedyś
     #    doda tam wcześniejsze wyjście z pętli. Milczenie usługi nie jest milczeniem pracownika.
     #    Commit EXPIRED PRZED wysyłką domknięcia — semantyka „co najwyżej raz" (jak przy zapisie).
-    still_open = [
-        p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
-    ]
+    still_open = [p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)]
     #    Samo ORZECZENIE wygaśnięcia liczymy zawsze; o tym, czy wolno je teraz wykonać (i napisać
     #    o nim człowiekowi, który nic nie napisał), rozstrzyga szew `domkniecia.do_domkniecia`
     #    z PIERWOTNYM oknem ciszy — także wtedy, gdy `--poll-once` ciszę świadomie pominął.
@@ -512,18 +526,31 @@ def poll_replies(
     ]
     # Rozdział po statusie, bo powody są RÓŻNE i każdy komunikat musi być prawdziwy: kto nie
     # odpisał w ogóle, słyszy „nie dostałem odpowiedzi"; kto odpisał, ale nie potwierdził —
-    # „nie doczekałem się potwierdzenia". Podział PRZED `zamknij_bez_zapisu`, bo ono nadpisuje status.
+    # „nie doczekałem się potwierdzenia". Podział PRZED `zamknij_bez_zapisu`, bo ono nadpisuje
+    # status.
     bez_odpowiedzi = [p for p in newly_expired if p.status == st.AWAITING_REPLY]
     bez_potwierdzenia = [p for p in newly_expired if p.status == st.AWAITING_CONFIRM]
     if bez_odpowiedzi:
         zamknij_bez_zapisu(
-            settings, client, state, bez_odpowiedzi, EXPIRED_TEXT, now, "brak odpowiedzi",
+            settings,
+            client,
+            state,
+            bez_odpowiedzi,
+            EXPIRED_TEXT,
+            now,
+            "brak odpowiedzi",
             okno_domkniec=okno_pierwotne,
         )
     if bez_potwierdzenia:
         zamknij_bez_zapisu(
-            settings, client, state, bez_potwierdzenia, NO_CONFIRM_TEXT, now,
-            "brak potwierdzenia", okno_domkniec=okno_pierwotne,
+            settings,
+            client,
+            state,
+            bez_potwierdzenia,
+            NO_CONFIRM_TEXT,
+            now,
+            "brak potwierdzenia",
+            okno_domkniec=okno_pierwotne,
         )
 
     # Ostatnia aktywność liczona z wciąż otwartych (po przetworzeniu): świeża odpowiedź skróci
@@ -582,8 +609,10 @@ def _commit(
         pending.awaiting_yes = awaiting_yes
     if not wiadomosci:
         if not status and awaiting_yes is None:
-            logger.debug("Nic do utrwalenia dla %s — pusta porcja i brak zmiany statusu",
-                         etykiety.osoba(pending, settings))
+            logger.debug(
+                "Nic do utrwalenia dla %s — pusta porcja i brak zmiany statusu",
+                etykiety.osoba(pending, settings),
+            )
             return
         st.save_state(settings.state_path, state)
         return
@@ -624,7 +653,8 @@ def _migawka_commitu(pending: st.PendingReminder) -> _MigawkaCommitu:
     `resolved` i `resolved_time_off` są w migawce, choć ustawia je wołający, a nie `_commit`:
     po cofnięciu watermarku ta sama wiadomość wraca do interpretacji, a `propose.baza_interpretacji`
     bierze `resolved` za bazę. Poprawka WZGLĘDNA („piątek godzinę później") naniosłaby się wtedy
-    drugi raz. Następny cykl odtworzy oba pola z tej samej wiadomości, więc cofnięcie nic nie kosztuje.
+    drugi raz. Następny cykl odtworzy oba pola z tej samej wiadomości, więc cofnięcie nic nie
+    kosztuje.
     """
     return _MigawkaCommitu(
         watermark=pending.watermark,
@@ -740,9 +770,7 @@ def _oznacz_wyslane(
 _ZGLOSZONE_OBCE: set[str] = set()
 
 
-def _zglos_obcych_raz(
-    settings: Settings, pending: st.PendingReminder, obcy: list[str]
-) -> None:
+def _zglos_obcych_raz(settings: Settings, pending: st.PendingReminder, obcy: list[str]) -> None:
     """Zawołaj operatora RAZ na proces dla danej pary (czat, zestaw obcych nadawców)."""
     if pending.chat_id in _ZGLOSZONE_OBCE:
         return
@@ -790,9 +818,7 @@ def _process_pending(
         # interpretacji i uciętego odczytu GRAFIKU, czyli awarie mówiące o czymś zupełnie innym —
         # a to właśnie one wcześniej podbijały licznik „czat nie odpowiada" i uruchamiały alert
         # kierujący operatora do złego podsystemu.
-        logger.exception(
-            "Nie udało się odczytać czatu %s", etykiety.osoba(pending, settings)
-        )
+        logger.exception("Nie udało się odczytać czatu %s", etykiety.osoba(pending, settings))
         return ReadOutcome.READ_FAILED
     nowe = incoming_after(wiadomosci_czatu, me_id, pending.watermark, nadawca=pending.member_id)
     if not nowe:
@@ -844,7 +870,8 @@ def _process_pending(
     #
     # Bramką jest `pending.awaiting_yes`, nie sam status. Do 0.2.13 wystarczał `AWAITING_CONFIRM`,
     # a ten status ZOSTAJE po każdej wymianie odczytowej: gałąź `unclear` commitowała bez statusu.
-    # Sekwencja „propozycja → pytanie o cokolwiek → »tak«" trafiała więc w szybką ścieżkę i ZAPISYWAŁA
+    # Sekwencja „propozycja → pytanie o cokolwiek → »tak«" trafiała więc w szybką ścieżkę i
+    # ZAPISYWAŁA
     # do Shifts. Dziś mało groźne, bo propozycja się w międzyczasie nie zmieniła — ale mechanizm
     # istniał, a każda umiejętność odczytowa czyni go realnym: człowiek pyta „ile mam godzin",
     # dostaje odpowiedź, pisze „tak". Do czego?
@@ -888,7 +915,8 @@ def _process_pending(
             )
     except AuthExpiredError:
         # Utrata tokenu dotyczy całej usługi, nie tej jednej wiadomości — ale WYCOFANIE commitu,
-        # jeśli jakieś się wydarzyło niżej, musi trafić na dysk PRZED wyjściem. Patrz `_utrwal_wycofanie`.
+        # jeśli jakieś się wydarzyło niżej, musi trafić na dysk PRZED wyjściem. Patrz
+        # `_utrwal_wycofanie`.
         _utrwal_wycofanie(settings, state, pending)
         raise
     except PrzebiegPrzekroczylCzasError:
@@ -940,7 +968,7 @@ def _dogladaj_nierozstrzygniete(
     outcomes: dict[str, ReadOutcome],
     now: datetime,
 ) -> None:
-    """Krok 1.6: policz obiegi bez odczytu, zawołaj operatora po progu, zamknij po suficie (ADR 0007).
+    """Krok 1.6: policz obiegi bez odczytu, zawołaj operatora, zamknij po suficie (ADR 0007).
 
     Źródłem prawdy jest ``outcomes``, a NIE ``state``: wpisu, którego w tym obiegu nie zbadaliśmy,
     nie wolno zamknąć — nie wiemy o nim nic nowego. To ta sama zasada, co domyślne ``UNKNOWN``
@@ -1018,7 +1046,8 @@ def _dogladaj_nierozstrzygniete(
     if progowe:
         # OSOBNY tytuł od alertu o zamknięciu. Oba mogą paść w tym samym obiegu (część wpisów po
         # suficie, część dopiero na progu), a mówią rzeczy przeciwne — „zamknięte" i „zostaje
-        # otwarte". Wspólny tytuł dawał operatorowi dwa identycznie zatytułowane bloki na Discordzie.
+        # otwarte". Wspólny tytuł dawał operatorowi dwa identycznie zatytułowane bloki na
+        # Discordzie.
         operator.alert(
             settings,
             "Czat nie odpowiada — przypomnienia wstrzymane",
@@ -1120,18 +1149,23 @@ def _record_failure(
     # Commit PRZED wysyłką i — WYJĄTKOWO — bez wycofania. Nawias „(jak wszędzie)" stał tu do fali 4
     # i po niej przestał być prawdziwy: trzy miejsca w `_interpret_and_confirm` cofają teraz commit,
     # gdy wiadomość nie dotarła. Tutaj cofnąć NIE WOLNO: nieudana wysyłka nie może cofnąć decyzji
-    # o odpuszczeniu porcji, bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy. Tam wycofanie
+    # o odpuszczeniu porcji, bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy. Tam
+    # wycofanie
     # ratuje odpowiedź pracownika, tu skasowałoby jedyny mechanizm, który tę pętlę domyka.
     try:
         _oznacz_wyslane(
-            settings, state, pending,
+            settings,
+            state,
+            pending,
             do_pracownika(settings, client, pending.chat_id, to_html(UNCLEAR_TEXT), teraz=now),
         )
     # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
     except NIE_POLYKAJ:
         raise
     except Exception:
-        logger.exception("Nie udało się poprosić %s o doprecyzowanie", etykiety.osoba(pending, settings))
+        logger.exception(
+            "Nie udało się poprosić %s o doprecyzowanie", etykiety.osoba(pending, settings)
+        )
 
 
 def _apply_confirmed_yes(
@@ -1174,7 +1208,10 @@ def _apply_confirmed_yes(
                 "Domknięto temat %s (miniony tydzień), ale nie udało się wysłać wiadomości",
                 etykiety.osoba(pending, settings),
             )
-        logger.info("Nic już do zapisania dla %s — tydzień docelowy minął", etykiety.osoba(pending, settings))
+        logger.info(
+            "Nic już do zapisania dla %s — tydzień docelowy minął",
+            etykiety.osoba(pending, settings),
+        )
         return
 
     # Świeżość PRZED commitem, z tego samego powodu co wyżej: to odczyt, a jego pusty wynik znaczy
@@ -1186,14 +1223,22 @@ def _apply_confirmed_yes(
         # Cały potwierdzony komplet jest już w grafiku. To NIE jest wygaśnięcie ani miniony tydzień
         # — temat domyka się sukcesem, więc dostaje status i podziękowanie ścieżki samouzupełnienia.
         _commit(
-            settings, state, pending, wiadomosci, status=st.SELF_FILLED, awaiting_yes=False,
+            settings,
+            state,
+            pending,
+            wiadomosci,
+            status=st.SELF_FILLED,
+            awaiting_yes=False,
         )
         # NIE podziękowanie ze ścieżki samouzupełnienia: pracownik przed chwilą potwierdził
         # konkretne godziny, a nie zapisano z nich nic. Musi usłyszeć KTÓRE dni i dlaczego.
         try:
             do_pracownika(
-                settings, client, pending.chat_id,
-                to_html(build_nic_do_zapisania_text(juz_w_grafiku)), teraz=now,
+                settings,
+                client,
+                pending.chat_id,
+                to_html(build_nic_do_zapisania_text(juz_w_grafiku)),
+                teraz=now,
             )
         # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
         except NIE_POLYKAJ:
@@ -1285,11 +1330,15 @@ def _apply_confirmed_yes(
         raise
     except Exception:
         logger.exception(
-            "Zapisano grafik dla %s, ale nie udało się wysłać potwierdzenia", etykiety.osoba(pending, settings)
+            "Zapisano grafik dla %s, ale nie udało się wysłać potwierdzenia",
+            etykiety.osoba(pending, settings),
         )
 
 
-def _interpret_and_confirm(
+# Sufit funkcji przekroczony ŚWIADOMIE: dispatcher gałęzi decyzji modelu, w którym KAŻDA gałąź
+# ma własną kompensację commitu (fala 4). Rozbicie rozdzieliłoby wysyłkę od jej wycofania, czyli
+# dokładnie tę parę, którą strażnik szwu pilnuje razem. Dług, nie usprawiedliwienie.
+def _interpret_and_confirm(  # noqa: PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,
@@ -1378,8 +1427,11 @@ def _interpret_and_confirm(
             dostarczono = False
             try:
                 sent_at = do_pracownika(
-                    settings, client, pending.chat_id,
-                    to_html(build_unclear_text("brak_powodu_wolnego")), teraz=now,
+                    settings,
+                    client,
+                    pending.chat_id,
+                    to_html(build_unclear_text("brak_powodu_wolnego")),
+                    teraz=now,
                 )
                 dostarczono = True  # patrz komentarz przy prośbie o potwierdzenie niżej
                 _oznacz_wyslane(settings, state, pending, sent_at)
@@ -1390,8 +1442,12 @@ def _interpret_and_confirm(
         pending.resolved = schedule_to_intervals(decision.schedule, tz)
         pending.resolved_time_off = resolved_time_off
         _commit(
-            settings, state, pending, wiadomosci,
-            status=st.AWAITING_CONFIRM, awaiting_yes=True,
+            settings,
+            state,
+            pending,
+            wiadomosci,
+            status=st.AWAITING_CONFIRM,
+            awaiting_yes=True,
         )
         confirm = build_confirm_text(
             decision.schedule, resolved_time_off, tz, pominiete=decision.pominiete
@@ -1419,9 +1475,7 @@ def _interpret_and_confirm(
         # więc to miejsce wyglądało dla niego na połykające utratę sesji.
         dostarczono = False
         try:
-            sent_at = do_pracownika(
-                settings, client, pending.chat_id, to_html(confirm), teraz=now
-            )
+            sent_at = do_pracownika(settings, client, pending.chat_id, to_html(confirm), teraz=now)
             # Flaga wstaje TU, a nie po `_oznacz_wyslane` — i to nie jest kosmetyka.
             # `_oznacz_wyslane` woła `save_state`, więc `StateWriteError` z niego znaczy, że
             # prośba JUŻ JEST u pracownika. Cofnięcie commitu w tym miejscu kazałoby kolejnemu
@@ -1478,8 +1532,11 @@ def _interpret_and_confirm(
         dostarczono = False
         try:
             sent_at = do_pracownika(
-                settings, client, pending.chat_id,
-                to_html(build_unclear_text(decision.powod_niejasnosci)), teraz=now,
+                settings,
+                client,
+                pending.chat_id,
+                to_html(build_unclear_text(decision.powod_niejasnosci)),
+                teraz=now,
             )
             dostarczono = True
             _oznacz_wyslane(settings, state, pending, sent_at)

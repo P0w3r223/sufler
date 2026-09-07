@@ -6,6 +6,7 @@ interwałów (weekday + HH:MM) ustalonego grafiku — tz-agnostyczna, odtwarzana
 Zapis jest atomowy (temp + os.replace), a odczyt tolerancyjny (ignoruje nieznane pola,
 uszkodzony plik → pusty stan) — bo ten plik chroni przed podwójnym zapisem zmian.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -72,7 +73,8 @@ class PendingReminder:
     known_time_off_weekdays: list[int] = field(default_factory=list)
     # Nieudane próby obsługi od ostatniego UDANEGO commitu (licznik zeruje wyłącznie `_commit`,
     # więc obejmuje też kolejne różne wiadomości, jeśli żadna nie doszła do końca).
-    # Chroni przed zapętleniem na błędzie deterministycznym (patrz ``runtime.listener._record_failure``).
+    # Chroni przed zapętleniem na błędzie deterministycznym (patrz
+    # ``runtime.listener._record_failure``).
     fail_count: int = 0
     # Obiegi Z RZĘDU, w których ODCZYT CZATU tej osoby rzucił wyjątkiem (ADR 0007). Liczy wyłącznie
     # awarię odczytu i to jest egzekwowane konstrukcją, nie dyscypliną: `ReadOutcome.READ_FAILED`
@@ -181,7 +183,8 @@ def _wczytaj(path: Path, *, cicho: bool = False) -> dict[str, PendingReminder] |
     # cały nasłuch — zgodnie z deklarowaną tolerancyjnością odczytu.
     #
     # Pomijamy też pola z wartością ``null``: przekazane do konstruktora nadpisałyby domyślną
-    # wartość (``field(default_factory=list)`` / ``""``) jawnym ``None``, a warstwa wyżej zakłada, że
+    # wartość (``field(default_factory=list)`` / ``""``) jawnym ``None``, a warstwa wyżej zakłada,
+    # że
     # ``employee_memory`` jest listą, a znaczniki czasu napisem. ``employee_memory=null`` (ręczna
     # edycja, dryf schematu) daje wtedy ``None`` zamiast ``[]``, na którym ``advance_memory`` rzuca
     # ``TypeError`` — i to w miejscu, gdzie ``_record_failure`` miał już tylko „odpuścić" tę
@@ -251,7 +254,8 @@ def sprawdz_zapisywalnosc(path: Path) -> None:
     Przebieg wysyła prośbę, a dopiero potem utrwala pending (kolejność świadoma: pending bez
     wiadomości byłby najgorszym wariantem). Cena jest taka, że przy niezapisywalnym wolumenie
     prośby wychodzą do ludzi i nie zostaje po nich ślad — następny przebieg startuje od
-    ``load_state``, nie widzi ich i wysyła DRUGI RAZ. Idempotencja opiera się wyłącznie na tym pliku.
+    ``load_state``, nie widzi ich i wysyła DRUGI RAZ. Idempotencja opiera się wyłącznie na tym
+    pliku.
 
     Sonda pisze i kasuje plik OBOK stanu, zamiast zapisywać sam stan, z jednego powodu: musi
     działać także w trybie próbnym. Runbook wdrożenia stawia próbę na sucho właśnie po to, żeby

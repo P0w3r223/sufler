@@ -7,6 +7,7 @@ Termin odpowiedzi jest **kalendarzowy**: liczy się od początku tygodnia, któr
 a nie od ostatniej aktywności w rozmowie. Do 0.2.12 było odwrotnie (okno ``N`` godzin ciszy od
 kotwicy) i dawało dwa defekty naraz — patrz ``termin_odpowiedzi``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -81,7 +82,8 @@ def _najpozniejszy(*znaczniki: str) -> datetime | None:
 def _anchor(pending: PendingReminder) -> datetime | None:
     """Czas OSTATNIEJ AKTYWNOŚCI w temacie (obie strony rozmowy), z fallbackiem na nudge.
 
-    Od 0.2.13 kotwica **nie wyznacza już terminu odpowiedzi** (patrz ``termin_odpowiedzi``) — została
+    Od 0.2.13 kotwica **nie wyznacza już terminu odpowiedzi** (patrz ``termin_odpowiedzi``) —
+    została
     dwóm zastosowaniom, w których naprawdę chodzi o „jak dawno cokolwiek się tu działo":
     ``ready_for_self_fill_check`` (czy bot już dość długo czeka, by zajrzeć do Shifts) i
     ``prune_terminal`` (wiek wpisu terminalnego). Trzecim czytelnikiem jest diagnostyka
@@ -146,7 +148,8 @@ def termin_odpowiedzi(pending: PendingReminder, okno: OknoOdpowiedzi) -> datetim
 
     ``termin = max(początek_tygodnia + offset_h, ostatnia_prośba_bota + min_h)``
 
-    Pierwszy składnik to sedno zmiany. Okno liczone od ostatniej aktywności dawało dwa defekty naraz:
+    Pierwszy składnik to sedno zmiany. Okno liczone od ostatniej aktywności dawało dwa defekty
+    naraz:
 
     1. Przy przebiegu w piątek i oknie 48 h termin zamykał się w NIEDZIELĘ, przed początkiem
        tygodnia, którego dotyczył — a człowiek, który siadł do grafiku w poniedziałek rano, był po
@@ -157,7 +160,8 @@ def termin_odpowiedzi(pending: PendingReminder, okno: OknoOdpowiedzi) -> datetim
        i zostawała nadpisana razem z uzgodnionym już grafikiem (``runtime.nudge`` alertuje o tym
        zderzeniu, ale uzgodnienie jest już wtedy stracone).
 
-    Drugi składnik to dolna granica kurtuazji i JEDYNE, co zostało z kotwicy N10: nie zamykamy tematu
+    Drugi składnik to dolna granica kurtuazji i JEDYNE, co zostało z kotwicy N10: nie zamykamy
+    tematu
     zaraz po tym, jak bot o coś poprosił. Bez niego pending obsłużony po przestoju dłuższym niż
     tydzień (utrata sesji czeka na ręczne ``--login``) dostawał prośbę o potwierdzenie i wygasał
     w kolejnym cyklu — po dziesięciu sekundach, bo obsłużona odpowiedź resetuje backoff — zdaniem
@@ -261,14 +265,13 @@ def przekroczyl_sufit(pending: PendingReminder, now: datetime, sufit_h: int) -> 
     return wiek is not None and wiek >= timedelta(hours=sufit_h)
 
 
-def ready_for_self_fill_check(
-    pending: PendingReminder, now: datetime, min_idle_s: int
-) -> bool:
+def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_s: int) -> bool:
     """Czy wolno zajrzeć do Shifts, bo pracownik MILCZY od dłuższej chwili (nie odpisuje na czacie).
 
     Ciszę mierzymy tą samą kotwicą co wygaśnięcie (``_anchor``: ostatnia aktywność, potem czas
     nudge'a) — sprawdzamy grafik dopiero, gdy bot NAPRAWDĘ już czeka, a nie zaraz po nudge'u.
-    ``min_idle_s < 0`` wyłącza funkcję; ``0`` sprawdza przy każdym cichym cyklu. Bez kotwicy → False.
+    ``min_idle_s < 0`` wyłącza funkcję; ``0`` sprawdza przy każdym cichym cyklu. Bez kotwicy →
+    False.
     """
     if min_idle_s < 0:
         return False

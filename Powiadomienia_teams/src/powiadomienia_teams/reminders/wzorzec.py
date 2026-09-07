@@ -51,6 +51,7 @@ nieinformatywnych. `dni_urlopu` jest tu brane od wołającego bez korekty o zmia
 przez północ; utrwala to `test_wzorzec.py` osobnym testem opisanym jako stan faktyczny, nie
 decyzja. Złoty korpus nie ma dla tego przypadku pozycji — dopisze ją dopiero rozstrzygnięcie.
 """
+
 from __future__ import annotations
 
 from collections import Counter
@@ -128,7 +129,7 @@ class TydzienHistorii:
 
 
 class Pewnosc(Enum):
-    """Jak bardzo człowiek ma się przyglądać propozycji. To funkcja bezpieczeństwa, nie kosmetyka."""
+    """Jak bardzo człowiek ma się przyglądać propozycji. Funkcja bezpieczeństwa, nie kosmetyka."""
 
     WYSOKA = "wysoka"
     SREDNIA = "srednia"
@@ -181,9 +182,7 @@ def wnioskuj(historia: Sequence[TydzienHistorii]) -> Propozycja:
         return _bez_propozycji(Pewnosc.BRAK, Podstawa.BRAK_HISTORII)
 
     informatywne = [
-        (indeks, tydzien)
-        for indeks, tydzien in enumerate(historia)
-        if not tydzien.nieinformatywny
+        (indeks, tydzien) for indeks, tydzien in enumerate(historia) if not tydzien.nieinformatywny
     ]
     if not informatywne:
         # Sam urlop w całym oknie. Nie ma czego wnioskować, ale to nie jest „brak historii":
@@ -266,7 +265,8 @@ def _oceniona(
 
     if _przeczy_wzorcowi(najswiezszy, dni, alternacyjne):
         # Reguła świeżości. Osoba, która właśnie przeszła z rannej na popołudniową, dostawałaby
-        # przez trzy tygodnie WYSOKĄ pewność dla odpowiedzi nieaktualnej — a to gorsze niż dzisiejsze
+        # przez trzy tygodnie WYSOKĄ pewność dla odpowiedzi nieaktualnej — a to gorsze niż
+        # dzisiejsze
         # »jak w zeszłym tygodniu«, bo tamto patrzy przynajmniej na właściwy tydzień.
         return Propozycja(dni, Pewnosc.SREDNIA, Podstawa.BYWALO_ROZNIE, wsparcie)
 

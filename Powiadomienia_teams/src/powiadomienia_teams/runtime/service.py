@@ -7,6 +7,7 @@ interpretacji odpowiedzi — od tego są ``runtime.nudge`` i ``runtime.listener`
 Podsumowanie jest tu „dead man's switchem": w instalacji bez monitoringu brak wiadomości w piątek
 wieczorem jest jedynym sygnałem awarii, dlatego jest nierozłączne z przebiegiem.
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,7 +58,8 @@ def _poll_delay(settings: Settings, outcome: PollOutcome | None, now: datetime) 
     bramki w `run_forever` (ta w ciszy w ogóle nie wchodzi w obieg nasłuchu), ale **nie jest**:
     `poll_replies` zwraca w ciszy `PollOutcome(0, None)`, czyli DOKŁADNIE to samo, co przy braku
     otwartych spraw. Gdyby sufit ciszy przesunąć poniżej warunku `open_count == 0`, odłożony obieg
-    dostawałby odstęp „nic otwartego", czyli do godziny — i odpowiedź napisana tuż po ciszy czekałaby
+    dostawałby odstęp „nic otwartego", czyli do godziny — i odpowiedź napisana tuż po ciszy
+    czekałaby
     bez powodu. Kolejność warunków JEST tu więc regułą, nie stylem; osobnej reprezentacji odmowy po
     stronie nasłuchu świadomie nie wprowadzamy (dwa wołające miejsca, jeden konsument), ale niech to
     zdanie stoi tu zamiast słowa „redundantny".
@@ -103,7 +105,8 @@ def _run_once_with_retry(
     ile jest prób.
 
     ``GraphTruncatedReadError`` dołączył tu z powodu KOSZTU, nie poprawności: kolekcja zespołu
-    rośnie i nigdy nie maleje, więc odczyt ucięty na limicie stron będzie ucięty także za trzydzieści
+    rośnie i nigdy nie maleje, więc odczyt ucięty na limicie stron będzie ucięty także za
+    trzydzieści
     sekund. Każda próba to ``_MAX_PAGES`` pełnych żądań, a przebieg jest jeszcze ponawiany w oknie
     łaski — bez tej klasyfikacji trwałe przekroczenie sufitu zamieniało się w dziesiątki pełnych
     odczytów, czyli usługa zaczynała dławić Graph dokładnie wtedy, gdy już sobie z nim nie radzi.
@@ -141,7 +144,9 @@ def _run_once_with_retry(
             wait = backoff_s * attempt
             logger.warning(
                 "Przebieg powiadomień nieudany (próba %d/%d) — ponawiam za %ds",
-                attempt, attempts, wait,
+                attempt,
+                attempts,
+                wait,
             )
             sleep(wait)
 
@@ -210,7 +215,9 @@ def _puls_sesji(
             )
         return StanPulsu(teraz + timedelta(seconds=_PULS_PONOWIENIE_S), nieudane)
     if stan.nieudane >= _PULS_PROG_ALERTU:
-        operator.alert(settings, "Puls sesji wrócił", "Uwierzytelnienie znów działa.", waga=alerts.INFO)
+        operator.alert(
+            settings, "Puls sesji wrócił", "Uwierzytelnienie znów działa.", waga=alerts.INFO
+        )
     logger.info("Puls sesji: uwierzytelnienie nadal ważne.")
     return StanPulsu(teraz + timedelta(hours=settings.heartbeat_interval_h), 0)
 
@@ -281,10 +288,12 @@ def _powitanie(settings: Settings, termin: datetime, *, wyslane: bool) -> bool:
             waga=alerts.INFO,
         )
     else:
-        operator.alert(settings, "Usługa wystartowała",
-               f"Nasłuch aktywny. {krag} "
-               f"Najbliższy przebieg: {termin.isoformat()}",
-               waga=alerts.INFO)
+        operator.alert(
+            settings,
+            "Usługa wystartowała",
+            f"Nasłuch aktywny. {krag} Najbliższy przebieg: {termin.isoformat()}",
+            waga=alerts.INFO,
+        )
     return True
 
 
@@ -427,21 +436,18 @@ def _liczby_per_tydzien(stan: dict[str, st.PendingReminder]) -> list[LiczbyTygod
 
     bloki = []
     for week_start, licznik in per_tydzien.items():
-        pozycje = {
-            pozycja: licznik[status] for status, pozycja in STATUS_DO_POZYCJI.items()
-        }
+        pozycje = {pozycja: licznik[status] for status, pozycja in STATUS_DO_POZYCJI.items()}
         nierozpoznane = sum(n for s, n in licznik.items() if s not in ZLICZANE_STATUSY)
         if nierozpoznane:
             # Jedno ostrzeżenie na tydzień, nie na wpis: log ma zwrócić uwagę, a nie zostać zalany.
             logger.warning(
                 "Tydzień %s ma %d wpisów o statusie nieznanym temu wydaniu (%s) — trafiają do "
                 "pozycji »nierozpoznane« i NIE pozwalają nazwać tygodnia domkniętym",
-                week_start, nierozpoznane,
+                week_start,
+                nierozpoznane,
                 ", ".join(sorted(s for s in licznik if s not in ZLICZANE_STATUSY)),
             )
-        bloki.append(
-            LiczbyTygodnia(week_start=week_start, nierozpoznane=nierozpoznane, **pozycje)
-        )
+        bloki.append(LiczbyTygodnia(week_start=week_start, nierozpoznane=nierozpoznane, **pozycje))
     return bloki
 
 
@@ -614,7 +620,13 @@ def _przebieg_i_podsumowanie(
     zglos_zawieszone_zapisy(settings)
     try:
         udany = _safe_run_once(
-            settings, client, now=now, teraz=teraz, sleep=sleep, alertuj=alertuj, budzet=budzet,
+            settings,
+            client,
+            now=now,
+            teraz=teraz,
+            sleep=sleep,
+            alertuj=alertuj,
+            budzet=budzet,
         )
     except CiszaWstrzymalaPrzebieg as odmowa:
         # Podsumowanie jest ODKŁADANE razem z przebiegiem, a nie wysyłane mimo odmowy. Inaczej dead
@@ -638,7 +650,11 @@ def _przebieg_i_podsumowanie(
     return udany
 
 
-def run_forever(
+# Sufit funkcji przekroczony ŚWIADOMIE: pętla usługi trzyma naraz terminarz, okno łaski, godziny
+# ciszy, puls sesji i podsumowanie — a każde z nich czyta ten sam zegar i ten sam `last_run_term`.
+# Wyniesienie ich osobno rozdzieliłoby stan od warunków, które go zmieniają. Dług, nie
+# usprawiedliwienie.
+def run_forever(  # noqa: C901, PLR0915
     settings: Settings,
     client: GraphClient,
     llm: LlmClient,
@@ -726,12 +742,8 @@ def run_forever(
                 koniec_ciszy if zalegly_w_ciszy is not None else _kolejny_termin(settings, now),
                 settings.okno_ciszy,
             )
-            powitanie_wyslane = _powitanie(
-                settings, termin_powitania, wyslane=powitanie_wyslane
-            )
-            stan_pulsu = _puls_z_obsluga_utraty(
-                settings, client, stan_pulsu, sleep, teraz=teraz()
-            )
+            powitanie_wyslane = _powitanie(settings, termin_powitania, wyslane=powitanie_wyslane)
+            stan_pulsu = _puls_z_obsluga_utraty(settings, client, stan_pulsu, sleep, teraz=teraz())
             # Śpimy do KOŃCA CISZY albo do najbliższego pulsu — zależnie od tego, co wypada
             # wcześniej. Jeden sen na całą noc znaczyłby, że `heartbeat_interval_h` przestaje
             # obowiązywać dokładnie wtedy, gdy nikt nie patrzy: utrata sesji o 21:00 wychodziłaby
@@ -742,9 +754,7 @@ def run_forever(
             # `last_run_term` NIETKNIĘTY: zaległy termin zostaje zaległy i nadrobi się po ciszy,
             # o ile okno łaski jeszcze trwa (`_catchup_due` nie liczy godzin ciszy).
             pobudka_ciszy = min(koniec_ciszy, stan_pulsu.nastepny)
-            spij_z_pulsem(
-                settings, max(0.0, (pobudka_ciszy - teraz()).total_seconds()), sleep
-            )
+            spij_z_pulsem(settings, max(0.0, (pobudka_ciszy - teraz()).total_seconds()), sleep)
             continue
         # Nadrobienie: zaplanowany termin właśnie minął (okno łaski) → wykonaj przebieg teraz
         # (idempotentnie), z czasem TERMINU jako odniesieniem tygodnia (nie „teraz").
@@ -759,8 +769,13 @@ def run_forever(
             )
             pierwsze_podejscie = catchup_term != zgloszony_termin
             if _przebieg_i_podsumowanie(
-                settings, client, catchup_term, sleep,
-                alertuj=pierwsze_podejscie, teraz=teraz(), budzet=budzet,
+                settings,
+                client,
+                catchup_term,
+                sleep,
+                alertuj=pierwsze_podejscie,
+                teraz=teraz(),
+                budzet=budzet,
             ):
                 last_run_term = catchup_term  # odhaczamy WYŁĄCZNIE udany przebieg
             zgloszony_termin = catchup_term
@@ -788,18 +803,22 @@ def run_forever(
                 # niezależnymi zegarami. W produkcji dają tę samą wartość, ale „w produkcji to
                 # jedno i to samo" nie jest niezmiennikiem — jest zbiegiem okoliczności.
                 with budzet.na_czas("Obieg nasłuchu"):
-                    outcome = poll_replies(
-                        settings, client, llm, now=teraz(), pamiec=pamiec
-                    )
+                    outcome = poll_replies(settings, client, llm, now=teraz(), pamiec=pamiec)
                 if przekroczenia_nasluchu >= _PROG_ALERTU_PRZEKROCZEN:
-                    operator.alert(settings, "Nasłuch znów mieści się w limicie czasu",
-                           "Obieg zakończył się w całości — odpowiedzi są przetwarzane.",
-                           waga=alerts.INFO)
+                    operator.alert(
+                        settings,
+                        "Nasłuch znów mieści się w limicie czasu",
+                        "Obieg zakończył się w całości — odpowiedzi są przetwarzane.",
+                        waga=alerts.INFO,
+                    )
                 if awarie_modelu >= _PROG_ALERTU_PRZEKROCZEN:
-                    operator.alert(settings, "Interpretacja odpowiedzi znów działa",
-                           "Model odpowiedział — odpowiedzi pracowników są przetwarzane. "
-                           "Nic nie przepadło: nieobsłużone wiadomości czekały za watermarkiem.",
-                           waga=alerts.INFO)
+                    operator.alert(
+                        settings,
+                        "Interpretacja odpowiedzi znów działa",
+                        "Model odpowiedział — odpowiedzi pracowników są przetwarzane. "
+                        "Nic nie przepadło: nieobsłużone wiadomości czekały za watermarkiem.",
+                        waga=alerts.INFO,
+                    )
                 przekroczenia_nasluchu = 0
                 awarie_modelu = 0
             except AuthExpiredError as blad:
@@ -813,13 +832,19 @@ def run_forever(
                 # odpowiedzi pracowników przestały być przetwarzane — i nikt by się o tym nie
                 # dowiedział, bo pętla żyje, puls bije, a healthcheck świeci na zielono.
                 przekroczenia_nasluchu += 1
-                logger.warning("Obieg nasłuchu przerwany limitem czasu (%d. raz z rzędu): %s",
-                               przekroczenia_nasluchu, blad)
+                logger.warning(
+                    "Obieg nasłuchu przerwany limitem czasu (%d. raz z rzędu): %s",
+                    przekroczenia_nasluchu,
+                    blad,
+                )
                 if przekroczenia_nasluchu == _PROG_ALERTU_PRZEKROCZEN:
-                    operator.alert(settings, "Nasłuch nie mieści się w limicie czasu",
-                           f"{przekroczenia_nasluchu} obiegi z rzędu przerwane po "
-                           f"{settings.run_deadline_s} s. Odpowiedzi pracowników mogą nie być "
-                           f"przetwarzane, mimo że usługa wygląda na zdrową. {blad}")
+                    operator.alert(
+                        settings,
+                        "Nasłuch nie mieści się w limicie czasu",
+                        f"{przekroczenia_nasluchu} obiegi z rzędu przerwane po "
+                        f"{settings.run_deadline_s} s. Odpowiedzi pracowników mogą nie być "
+                        f"przetwarzane, mimo że usługa wygląda na zdrową. {blad}",
+                    )
             except LlmNiedostepnyError as blad:
                 # Granica modelu, symetrycznie do gałęzi wyżej. Bez tej gałęzi zły klucz API,
                 # wyczerpany limit i awaria dostawcy wyglądały jak „pracownicy piszą niejasno":
@@ -828,28 +853,33 @@ def run_forever(
                 # sieci naprawia się samo, a powtarzalna awaria znaczy, że tydzień jest do
                 # wyrzucenia — pracownicy odpisują, a ich odpowiedzi nikt nie czyta.
                 awarie_modelu += 1
-                logger.error("Interpretacja odpowiedzi niedostępna (%d. raz z rzędu): %s",
-                             awarie_modelu, blad)
+                logger.error(
+                    "Interpretacja odpowiedzi niedostępna (%d. raz z rzędu): %s",
+                    awarie_modelu,
+                    blad,
+                )
                 if awarie_modelu == _PROG_ALERTU_PRZEKROCZEN:
-                    operator.alert(settings, "Interpretacja odpowiedzi nie działa",
-                           f"{awarie_modelu} obiegi z rzędu bez odpowiedzi od usługi modelu: "
-                           f"{blad} Odpowiedzi pracowników NIE są przetwarzane — sprawdź klucz "
-                           "API, limity konta i status dostawcy. Usługa pracuje dalej i wróci "
-                           "do nich, gdy model odpowie.")
+                    operator.alert(
+                        settings,
+                        "Interpretacja odpowiedzi nie działa",
+                        f"{awarie_modelu} obiegi z rzędu bez odpowiedzi od usługi modelu: "
+                        f"{blad} Odpowiedzi pracowników NIE są przetwarzane — sprawdź klucz "
+                        "API, limity konta i status dostawcy. Usługa pracuje dalej i wróci "
+                        "do nich, gdy model odpowie.",
+                    )
             except Exception:
                 # Błąd listenera nie może zabić pętli.
                 logger.exception("Listener odpowiedzi zawiódł")
             # Puls w OSOBNYM bloku: gdy Graph jest niedostępny, `poll_replies` rzuca — a wtedy puls
             # w tym samym `try` nie wykonałby się ani razu, czyli przestałby działać dokładnie
             # w awarii, którą ma wykrywać.
-            stan_pulsu = _puls_z_obsluga_utraty(
-                settings, client, stan_pulsu, sleep, teraz=teraz()
-            )
+            stan_pulsu = _puls_z_obsluga_utraty(settings, client, stan_pulsu, sleep, teraz=teraz())
             now_dt = teraz()
             remaining = (pobudka - now_dt).total_seconds()
             if remaining > 0:
-                spij_z_pulsem(settings, min(remaining, _poll_delay(settings, outcome, now_dt)),
-                               sleep)
+                spij_z_pulsem(
+                    settings, min(remaining, _poll_delay(settings, outcome, now_dt)), sleep
+                )
         odswiez_puls(settings)
         # Przebieg wykonujemy TYLKO po dojściu do terminu. Wcześniejsza pobudka oznacza ponowienie
         # zaległego przebiegu — obsłuży je `_catchup_due` na górze pętli.
@@ -861,8 +891,11 @@ def run_forever(
         # zatrzymania. Zweryfikowane sondą: scena „pracuj do terminu i przestań" wysyłała
         # wiadomość. Produkcji to nie dotyka (domyślne `lambda: True`), ale to jedyny szew
         # sterujący warstwą, która pisze do ludzi.
-        if czy_kontynuowac() and teraz() >= termin and _przebieg_i_podsumowanie(
-            settings, client, teraz(), sleep, teraz=teraz(), budzet=budzet
+        if (
+            czy_kontynuowac()
+            and teraz() >= termin
+            and _przebieg_i_podsumowanie(
+                settings, client, teraz(), sleep, teraz=teraz(), budzet=budzet
+            )
         ):
             last_run_term = termin  # odhaczamy WYŁĄCZNIE udany przebieg
-

@@ -14,6 +14,7 @@ egzekwowania. Rozproszenie warunku `if settings.loguj_nazwiska` po kilkudziesię
 `logger.*` skończyłoby się tym, czym kończy się zawsze: nowe miejsce logowania powstaje bez
 warunku i nikt tego nie zauważa, dopóki nazwisko nie wypłynie na webhook.
 """
+
 from __future__ import annotations
 
 from powiadomienia_teams import state as st

@@ -14,6 +14,7 @@ Utrata sesji (``AuthExpiredError``) propaguje NIEZMIENIONA: dotyczy całej usłu
 odpowiedzi, i ma własną obsługę w ``app``. Każda inna awaria odczytu — łącznie z odczytem uciętym
 na limicie stron — staje się ``tools.OdczytNiedostepny``, czyli „nie wiadomo", nigdy „pusto".
 """
+
 from __future__ import annotations
 
 import logging
@@ -72,10 +73,12 @@ def opisz_uzgodnione_wolne(wpisy: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for wpis in wpisy:
         weekday = wpis.get("weekday")
         if isinstance(weekday, int) and 0 <= weekday <= 6:
-            opis.append({
-                "dzien": PELNE_NAZWY_DNI[weekday],
-                "powod": str(wpis.get("reason_name") or "nieobecność"),
-            })
+            opis.append(
+                {
+                    "dzien": PELNE_NAZWY_DNI[weekday],
+                    "powod": str(wpis.get("reason_name") or "nieobecność"),
+                }
+            )
     return opis
 
 
@@ -171,7 +174,9 @@ class SnapshotGrafikReader:
         except AuthExpiredError:
             raise  # utrata sesji dotyczy całej usługi, nie tej jednej odpowiedzi
         except GraphTruncatedReadError as blad:
-            logger.warning("Odczyt grafiku ucięty na limicie stron — narzędzie zwraca »nie wiadomo«")
+            logger.warning(
+                "Odczyt grafiku ucięty na limicie stron — narzędzie zwraca »nie wiadomo«"
+            )
             raise OdczytNiedostepny(str(blad)) from blad
         except Exception as blad:
             # Siatka domykająca, o tej samej szerokości co przed D2. Poprzedni czytnik miał

@@ -1,4 +1,5 @@
 """Wykrywanie osób bez zmian na wskazany tydzień (czysta logika)."""
+
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
@@ -76,9 +77,7 @@ def off_reason_by_weekday(
     return dni
 
 
-def member_filled_week(
-    member_id: str, shifts: Iterable[Shift], off_days: frozenset[int]
-) -> bool:
+def member_filled_week(member_id: str, shifts: Iterable[Shift], off_days: frozenset[int]) -> bool:
     """Czy dana osoba MA już grafik na docelowy tydzień: jakakolwiek zmiana albo pełny pn–pt urlop.
 
     Odwrotność kryterium z ``members_without_shifts`` (patrz tam), zawężona do JEDNEJ osoby — dzięki
@@ -86,14 +85,15 @@ def member_filled_week(
     ``shifts`` są zawężone wcześniej do docelowego tygodnia; ``off_days`` to dni tej osoby pokryte
     urlopem (z ``off_weekdays_by_member``).
     """
-    return any(ten_sam(s.user_id, member_id) for s in shifts) or _WORKING_WEEK <= off_days
+    return any(ten_sam(s.user_id, member_id) for s in shifts) or off_days >= _WORKING_WEEK
 
 
 def shift_weekdays(member_id: str, shifts: Iterable[Shift], tz: tzinfo) -> frozenset[int]:
     """Dni (0=pon…6=nd), w których ta osoba MA już zmianę w odczytanym oknie.
 
     Dzień liczony jest ROZPOCZĘCIEM zmiany — zgodnie z niezmiennikiem dnia startu, który obowiązuje
-    w całym projekcie (nocka piątek→sobota jest zmianą piątkową; patrz ``interpreter.build_schedule``).
+    w całym projekcie (nocka piątek→sobota jest zmianą piątkową; patrz
+    ``interpreter.build_schedule``).
     """
     return frozenset(
         s.start.astimezone(tz).weekday() for s in shifts if ten_sam(s.user_id, member_id)
@@ -107,7 +107,7 @@ def drop_already_covered(
     covered: Collection[int],
     tz: tzinfo,
 ) -> tuple[tuple[Shift, ...], tuple[TimeOff, ...], tuple[int, ...]]:
-    """Odsiej wpisy dotyczące dni, które w grafiku SĄ JUŻ pokryte. Zwraca (zmiany, wolne, odsiane dni).
+    """Odsiej dni, które w grafiku SĄ JUŻ pokryte. Zwraca (zmiany, wolne, odsiane dni).
 
     Powód istnienia jest wąski i konkretny: między prośbą o uzupełnienie a „tak" pracownika mijają
     dni (piątkowy przebieg → termin odpowiedzi w poniedziałek nad ranem), a w tym czasie grafik
@@ -150,8 +150,6 @@ def members_without_shifts(
     """
     off_by_member = off_by_member or {}
     covered_by_shift = {znormalizuj(s.user_id) for s in shifts}
-    covered_by_full_off = {
-        uid for uid, days in off_by_member.items() if _WORKING_WEEK <= days
-    }
+    covered_by_full_off = {uid for uid, days in off_by_member.items() if days >= _WORKING_WEEK}
     covered = covered_by_shift | covered_by_full_off
     return [m for m in members if znormalizuj(m.user_id) not in covered]

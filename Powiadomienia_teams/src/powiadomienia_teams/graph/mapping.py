@@ -4,6 +4,7 @@ Wydzielone od klienta HTTP, żeby dało się je testować na utrwalonych odpowie
 Wszystkie mappery zwracają ``None`` dla wpisów, których nie da się bezpiecznie zinterpretować
 (brak wymaganych pól, zła data, niepoprawny zakres) — warstwa wyżej je pomija.
 """
+
 from __future__ import annotations
 
 from datetime import timezone

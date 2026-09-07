@@ -98,10 +98,12 @@ zasada obowiązuje w korzeniowym `CLAUDE.md`, a pilnuje jej `tests/test_dokument
 i wymusza zdjęcie znacznika, więc nie da się jej przeoczyć. Dziś nie ma ani jednego: lista dziewięciu
 usterek importu 0.2.19 została zamknięta (patrz CHANGELOG).
 
-`src/` jest wyłączone z `ruff format` i z reguł kosmetycznych (E501, C901, PLR0915, SIM105,
-SIM300) — uzasadnienie w `pyproject.toml`. Reguły łapiące USTERKI (F, B, UP, I) obowiązują tam
-normalnie. To artefakt odzyskany z obrazu: naginanie go pod linter kosztowałoby jedyną własność,
-dla której import powstał. Testy biegają na atrapach, więc jedynym sprawdzeniem na ŻYWYM
+Od 2026-09-07 `src/` podlega WSZYSTKIM regułom, łącznie z `ruff format` i sufitem funkcji.
+Wyłączenia były uzasadnione wiernością wobec obrazu 0.2.19; ta wierność żyje dziś w commicie
+importu `7c7fe8c`, a u klienta stoi obraz zbudowany z tego drzewa. Sześć funkcji przekraczających
+sufit ma punktowe `noqa` z powodem — dług policzalny, nie hurtowe wyciszenie.
+
+Testy biegają na atrapach, więc jedynym sprawdzeniem na ŻYWYM
 tenancie jest `--proba-nasluchu` (z zastrzeżeniami wyżej) i `scripts/lista_czlonkow.py`
 (czysty odczyt, weryfikuje sesję Graph).
 

@@ -18,6 +18,7 @@ Dwie decyzje projektowe, które trzeba znać czytając wynik:
 ``w_zakresie=False`` to jawny sygnał „to nie dotyczy tygodnia, o który pytamy" — warstwa wyżej
 zamienia go na uczciwy komunikat zamiast po cichu zapisać zły tydzień.
 """
+
 from __future__ import annotations
 
 import re
@@ -28,60 +29,141 @@ from datetime import date, timedelta
 # ``interpreter._coerce_weekday``). Warianty bez ogonków i skróty = odporność na to, że model
 # odbiegnie od proszonej pełnej nazwy albo że pracownik napisze skrótem.
 NAZWY_DNI: dict[str, int] = {
-    "poniedziałek": 0, "poniedzialek": 0, "poniedziałku": 0, "poniedzialku": 0, "pon": 0, "pn": 0,
-    "wtorek": 1, "wtorku": 1, "wt": 1,
-    "środa": 2, "sroda": 2, "środę": 2, "srode": 2, "środy": 2, "srody": 2, "śr": 2, "sr": 2,
-    "czwartek": 3, "czwartku": 3, "czw": 3, "cz": 3,
-    "piątek": 4, "piatek": 4, "piątku": 4, "piatku": 4, "pt": 4, "pi": 4,
-    "sobota": 5, "sobotę": 5, "sobote": 5, "soboty": 5, "sob": 5, "sb": 5,
-    "niedziela": 6, "niedzielę": 6, "niedziele": 6, "niedzieli": 6, "niedz": 6, "ndz": 6, "nd": 6,
+    "poniedziałek": 0,
+    "poniedzialek": 0,
+    "poniedziałku": 0,
+    "poniedzialku": 0,
+    "pon": 0,
+    "pn": 0,
+    "wtorek": 1,
+    "wtorku": 1,
+    "wt": 1,
+    "środa": 2,
+    "sroda": 2,
+    "środę": 2,
+    "srode": 2,
+    "środy": 2,
+    "srody": 2,
+    "śr": 2,
+    "sr": 2,
+    "czwartek": 3,
+    "czwartku": 3,
+    "czw": 3,
+    "cz": 3,
+    "piątek": 4,
+    "piatek": 4,
+    "piątku": 4,
+    "piatku": 4,
+    "pt": 4,
+    "pi": 4,
+    "sobota": 5,
+    "sobotę": 5,
+    "sobote": 5,
+    "soboty": 5,
+    "sob": 5,
+    "sb": 5,
+    "niedziela": 6,
+    "niedzielę": 6,
+    "niedziele": 6,
+    "niedzieli": 6,
+    "niedz": 6,
+    "ndz": 6,
+    "nd": 6,
 }
 
 # Kanoniczne nazwy dni w kolejności ``weekday()`` — kontrakt wyjścia modelu (``agent.schema``)
 # dopuszcza wyłącznie te napisy, dzięki czemu nieznany dzień jest niemożliwy, a nie „pomijany".
 PELNE_NAZWY_DNI: tuple[str, ...] = (
-    "poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela",
+    "poniedziałek",
+    "wtorek",
+    "środa",
+    "czwartek",
+    "piątek",
+    "sobota",
+    "niedziela",
 )
 
 # Nazwa miesiąca → numer. Dopełniacz („15 stycznia") i mianownik („styczeń”), oba bez ogonków.
 NAZWY_MIESIECY: dict[str, int] = {
-    "stycznia": 1, "styczeń": 1, "styczen": 1,
-    "lutego": 2, "luty": 2,
-    "marca": 3, "marzec": 3,
-    "kwietnia": 4, "kwiecień": 4, "kwiecien": 4,
-    "maja": 5, "maj": 5,
-    "czerwca": 6, "czerwiec": 6,
-    "lipca": 7, "lipiec": 7,
-    "sierpnia": 8, "sierpień": 8, "sierpien": 8,
-    "września": 9, "wrzesnia": 9, "wrzesień": 9, "wrzesien": 9,
-    "października": 10, "pazdziernika": 10, "październik": 10, "pazdziernik": 10,
-    "listopada": 11, "listopad": 11,
-    "grudnia": 12, "grudzień": 12, "grudzien": 12,
+    "stycznia": 1,
+    "styczeń": 1,
+    "styczen": 1,
+    "lutego": 2,
+    "luty": 2,
+    "marca": 3,
+    "marzec": 3,
+    "kwietnia": 4,
+    "kwiecień": 4,
+    "kwiecien": 4,
+    "maja": 5,
+    "maj": 5,
+    "czerwca": 6,
+    "czerwiec": 6,
+    "lipca": 7,
+    "lipiec": 7,
+    "sierpnia": 8,
+    "sierpień": 8,
+    "sierpien": 8,
+    "września": 9,
+    "wrzesnia": 9,
+    "wrzesień": 9,
+    "wrzesien": 9,
+    "października": 10,
+    "pazdziernika": 10,
+    "październik": 10,
+    "pazdziernik": 10,
+    "listopada": 11,
+    "listopad": 11,
+    "grudnia": 12,
+    "grudzień": 12,
+    "grudzien": 12,
 }
 
 # Wyrażenia wskazujące tydzień, jako przesunięcie względem tygodnia zawierającego `dzis`.
 # Kolejność ma znaczenie: dłuższe frazy najpierw, żeby „w przyszłym tygodniu" nie zostało
 # dopasowane jako „w tym tygodniu" po odcięciu przedrostka.
 _FRAZY_TYGODNIA: tuple[tuple[str, int], ...] = (
-    ("w przyszłym tygodniu", 1), ("w przyszlym tygodniu", 1),
-    ("przyszłego tygodnia", 1), ("przyszlego tygodnia", 1),
-    ("przyszły tydzień", 1), ("przyszly tydzien", 1),
-    ("następny tydzień", 1), ("nastepny tydzien", 1),
-    ("w następnym tygodniu", 1), ("w nastepnym tygodniu", 1),
-    ("w zeszłym tygodniu", -1), ("w zeszlym tygodniu", -1),
-    ("zeszły tydzień", -1), ("zeszly tydzien", -1),
-    ("w ubiegłym tygodniu", -1), ("w ubieglym tygodniu", -1),
-    ("poprzedni tydzień", -1), ("poprzedni tydzien", -1),
-    ("w tym tygodniu", 0), ("ten tydzień", 0), ("ten tydzien", 0),
-    ("bieżący tydzień", 0), ("biezacy tydzien", 0),
+    ("w przyszłym tygodniu", 1),
+    ("w przyszlym tygodniu", 1),
+    ("przyszłego tygodnia", 1),
+    ("przyszlego tygodnia", 1),
+    ("przyszły tydzień", 1),
+    ("przyszly tydzien", 1),
+    ("następny tydzień", 1),
+    ("nastepny tydzien", 1),
+    ("w następnym tygodniu", 1),
+    ("w nastepnym tygodniu", 1),
+    ("w zeszłym tygodniu", -1),
+    ("w zeszlym tygodniu", -1),
+    ("zeszły tydzień", -1),
+    ("zeszly tydzien", -1),
+    ("w ubiegłym tygodniu", -1),
+    ("w ubieglym tygodniu", -1),
+    ("poprzedni tydzień", -1),
+    ("poprzedni tydzien", -1),
+    ("w tym tygodniu", 0),
+    ("ten tydzień", 0),
+    ("ten tydzien", 0),
+    ("bieżący tydzień", 0),
+    ("biezacy tydzien", 0),
 )
 
 # „przyszły czwartek" — przedrostek TUŻ PRZED nazwą dnia, więc obsługiwany osobno od fraz wyżej.
 _PRZEDROSTKI_DNIA: tuple[tuple[str, int], ...] = (
-    ("przyszły", 1), ("przyszly", 1), ("przyszłym", 1), ("przyszlym", 1),
-    ("następny", 1), ("nastepny", 1), ("następnym", 1), ("nastepnym", 1),
-    ("zeszły", -1), ("zeszly", -1), ("zeszłym", -1), ("zeszlym", -1),
-    ("ubiegły", -1), ("ubiegly", -1),
+    ("przyszły", 1),
+    ("przyszly", 1),
+    ("przyszłym", 1),
+    ("przyszlym", 1),
+    ("następny", 1),
+    ("nastepny", 1),
+    ("następnym", 1),
+    ("nastepnym", 1),
+    ("zeszły", -1),
+    ("zeszly", -1),
+    ("zeszłym", -1),
+    ("zeszlym", -1),
+    ("ubiegły", -1),
+    ("ubiegly", -1),
 )
 
 # Przyimki i wypełniacze bez wpływu na znaczenie („od poniedziałku", „we wtorek").
@@ -89,7 +171,14 @@ _POMIJALNE = frozenset({"w", "we", "od", "do", "na", "dnia", "to", "jest", "będ
 
 _ZNAKI_DO_ODCIECIA = ".,!?…:;-–„”\"'()"
 _LICZEBNIKI: dict[str, int] = {
-    "jeden": 1, "jedna": 1, "dwa": 2, "dwie": 2, "trzy": 3, "cztery": 4, "pięć": 5, "piec": 5,
+    "jeden": 1,
+    "jedna": 1,
+    "dwa": 2,
+    "dwie": 2,
+    "trzy": 3,
+    "cztery": 4,
+    "pięć": 5,
+    "piec": 5,
 }
 _MAX_PRZESUNIECIE_TYGODNI = 8  # dalej niż 2 miesiące to na pewno nie jest grafik na ten tydzień
 
@@ -169,7 +258,7 @@ def _data_jawna(tekst: str, dzis: date) -> date | None:
 
 
 def _zbuduj_date(dzien: int, miesiac: int, rok: int | None, dzis: date) -> date | None:
-    for kandydat_roku in ([rok] if rok is not None else [dzis.year, dzis.year + 1]):
+    for kandydat_roku in [rok] if rok is not None else [dzis.year, dzis.year + 1]:
         try:
             kandydat = date(kandydat_roku, miesiac, dzien)
         except ValueError:

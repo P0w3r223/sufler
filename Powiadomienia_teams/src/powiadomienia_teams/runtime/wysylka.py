@@ -30,6 +30,7 @@ nigdy nie było (w całym `tests/` nie występował ani jeden `ast.parse`). Dlat
 rozproszonych warunków to kształt odrzucony świadomie w N14 i tutaj obowiązuje ta sama zasada:
 wygaszanie stoi przy wysyłce, a nie w pięciu miejscach, które o niej pamiętają.
 """
+
 from __future__ import annotations
 
 import logging
@@ -82,7 +83,9 @@ def do_pracownika(
         # Alert PRZED rzuceniem, bo to jedyny kanał niezależny od ciszy — a kilka punktów wysyłki
         # domyka temat w bloku `except Exception` i wyjątek by tam ucichł. Sytuacja jest błędem
         # w kodzie (nowa ścieżka wysyłki bez bramki w pętli), więc waga jak przy tripwire N5.
-        logger.critical("Próba napisania do pracownika w godzinach ciszy — punkt wysyłki bez bramki")
+        logger.critical(
+            "Próba napisania do pracownika w godzinach ciszy — punkt wysyłki bez bramki"
+        )
         operator.alert(
             settings,
             "NARUSZENIE: próba wysyłki w godzinach ciszy",
