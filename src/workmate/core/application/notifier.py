@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _KIND_LABELS = {
     "issue_opened": "Nowe issue",
+    "issue_closed": "Issue zamknięte",
     "issue_comment": "Nowy komentarz",
     "pr_opened": "Nowy PR",
     "pr_merged": "PR zmergowany",

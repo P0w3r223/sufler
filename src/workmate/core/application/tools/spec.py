@@ -64,16 +64,20 @@ _EVENTS_FILTERED_NOTE = (
 # bo widok NIE BYŁ zawężony — był kompletny i mimo to nie odpowiadał na zadane pytanie.
 # Idzie polem ``note`` w kopercie (ADR 0068 §5), nie w opisie: tam nie ma sufitu bajtów.
 #
-# UWAGA przy ADR 0071 decyzja 1: zdanie o niezapisywaniu zamknięć przestanie być prawdziwe
-# w chwili, gdy mapper zacznie emitować zamknięcie zgłoszenia. Pilnuje tego moduł
-# ``tests/core/test_warstwa_zdarzen_mowi_prawde.py``, który iteruje po REPERTUARZE MAPPERA
-# (rzecz chroniona), a nie po etykietach notifiera (zabezpieczenie) — więc zrywa się niezależnie
-# od tego, jak etap 1 nazwie nowy rodzaj, i w tym samym commicie, w którym zmienia się zdolność.
-# Pierwsza wersja tej bramki pytała o etykietę i przechodziła na wstrzykniętym ``map_issue_closed``:
-# ``default_event_render`` robi ``.get(kind, kind)``, więc rodzaj bez etykiety działa.
+# ZDANIE PRZEPISANE PRZY ETAPIE 1 (ADR 0071 decyzja 1, 2026-09-07). Do tego dnia mówiło
+# „zamknięć zgłoszeń nie zapisuje w ogóle" i było prawdziwe; mapper zaczął je emitować, więc
+# zdanie zmieniło się W TYM SAMYM COMMICIE — wymusiła to bramka
+# ``tests/core/test_warstwa_zdarzen_mowi_prawde.py``, która iteruje po REPERTUARZE MAPPERA (rzecz
+# chroniona), a nie po etykietach notifiera (zabezpieczenie). Zerwała się sama, z komunikatem
+# mówiącym, co poprawić — tak, jak zaprojektowano ją dzień wcześniej.
+#
+# Na miejsce starego zdania wchodzi konsekwencja decyzji 5 (odroczone ``issue_reopened``), a nie
+# samo „zapisujemy zamknięcia": bez niej powtórzylibyśmy KLASĘ incydentu — widok wyglądałby na
+# odpowiedź o stan, będąc nią tylko dopóki nikt niczego nie otworzył na nowo.
 _EVENTS_LAYER_NOTE = (
-    "Ta warstwa to HISTORIA tego, co most ZAPISAŁ — nie stan GitHuba. Zamknięć zgłoszeń nie "
-    "zapisuje w ogóle, więc nie odpowiada na pytanie, co jest dziś otwarte."
+    "Ta warstwa to HISTORIA tego, co most ZAPISAŁ — nie stan GitHuba. Zapisuje otwarcia "
+    "i zamknięcia zgłoszeń, ale NIE ponowne otwarcia: zgłoszenie zamknięte i otwarte na nowo "
+    "wygląda tu wciąż na zamknięte."
 )
 
 # Klauzula WSPÓLNA obu notek wyżej, wydzielona 2026-09-07. Obie kończyły się dosłownie tym samym

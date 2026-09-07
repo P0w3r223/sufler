@@ -107,6 +107,125 @@ def test_map_issue_clips_long_body():
     assert len(ev.summary) < 900
 
 
+# --- Zamknięcia zgłoszeń (ADR 0071 etap 1) --------------------------------------------------
+
+
+def _zamkniete(number: int, *, closed_at: str = "2026-09-01T09:30:00Z", **kw) -> dict:
+    return _issue(number, state="closed", closed_at=closed_at, **kw)
+
+
+def test_map_issue_closed_emituje_fakt_zamkniecia():
+    """Warstwa była dziennikiem SAMYCH OTWARĆ i strukturalnie nie mogła powiedzieć, co jest
+    otwarte — incydent 2026-09-04 (ADR 0071)."""
+    ev = selection.map_issue_closed(_zamkniete(7))
+
+    assert ev is not None
+    assert ev.kind == "issue_closed"
+    assert ev.title == "Issue #7 zamknięte"
+    assert ev.summary == "Issue 7"  # tytuł issue jako treść, nie ciało
+    assert ev.occurred_at.isoformat() == "2026-09-01T09:30:00+00:00"
+
+
+def test_klucz_dedupu_niesie_znacznik_DOSLOWNIE_z_payloadu():
+    """Najważniejsza sonda tego etapu — i jedyna, której naruszenia nie da się cofnąć.
+
+    ``events.db`` jest append-only. Gdyby klucz powstawał przez sparsowanie i PONOWNE
+    sformatowanie ``closed_at``, każda przyszła zmiana formatowania (strefa, mikrosekundy, ``Z``
+    kontra ``+00:00``) utworzyłaby NOWY klucz dla tego samego faktu i to samo zamknięcie
+    zdublowałoby się na zawsze. Dlatego podajemy znacznik w kształcie, którego żaden rozsądny
+    formatter by nie odtworzył: jeśli w kluczu wyląduje cokolwiek innego niż wejście, to znaczy,
+    że ktoś po drodze parsuje.
+    """
+    dziwny = "2026-09-01T09:30:00.000000+02:00"
+
+    ev = selection.map_issue_closed(_zamkniete(7, closed_at=dziwny))
+
+    assert ev is not None
+    assert ev.external_id == f"7#closed@{dziwny}"
+
+
+def test_klucz_zamkniecia_jest_FAKTEM_a_nie_stanem():
+    """``{n}#closed`` kodowałoby STAN („zostało kiedyś zamknięte"), a magazyn append-only stanu
+    nie unosi: po cyklu zamknięcie → otwarcie → zamknięcie dedup połknąłby drugie zamknięcie
+    i nie dałoby się go odzyskać (ADR 0071 decyzja 3). Znacznik w kluczu czyni z tego fakt
+    „zamknięte o T" i pozwala dołożyć ponowne otwarcia BEZ migracji."""
+    pierwsze = selection.map_issue_closed(_zamkniete(7, closed_at="2026-09-01T09:30:00Z"))
+    drugie = selection.map_issue_closed(_zamkniete(7, closed_at="2026-09-03T11:00:00Z"))
+
+    assert pierwsze is not None and drugie is not None
+    assert pierwsze.external_id != drugie.external_id
+
+
+def test_map_issue_closed_nie_zmysla_znacznika_gdy_go_brak(caplog: pytest.LogCaptureFixture):
+    """BEZ zapasu na ``updated_at``, inaczej niż ``map_pull_state`` (ADR 0071 decyzja 4).
+
+    Zapas kupowałby odporność na przypadek, który nie występuje (GitHub zawsze podaje
+    ``closed_at`` dla zamkniętego issue), a płacił WYMYŚLONYM znacznikiem w magazynie, którego
+    nie da się cofnąć — i to znacznikiem, z którego zbudowałby się klucz dedupu.
+    """
+    raw = _issue(7, state="closed", updated_at="2026-09-02T08:00:00Z")  # bez closed_at
+
+    with caplog.at_level("WARNING"):
+        ev = selection.map_issue_closed(raw)
+
+    assert ev is None
+    assert "closed_at" in caplog.text  # cisza bez śladu byłaby gorsza niż brak zdarzenia
+
+
+def test_map_issue_closed_milczy_dla_otwartych_i_dla_PR():
+    assert selection.map_issue_closed(_issue(7, state="open")) is None
+    assert selection.map_issue_closed(_issue(7)) is None  # brak pola state
+    assert selection.map_issue_closed(_zamkniete(7, pull_request={"url": "http://pr"})) is None
+
+
+def test_zamkniecie_ma_PUSTY_actor_i_to_jest_wybor():
+    """``user`` z payloadu to ten, kto issue ZAŁOŻYŁ — na zamknięciu nazwałby autora zamykającym,
+    czyli podstawiłby nowy fałsz w miejsce starego (ADR 0071 decyzja 2).
+
+    ``closed_by`` jest dostępne i świadomie go nie bierzemy, dopóki self-skip filtruje po KONCIE:
+    w tym repozytorium zamykającym jest zawsze konto PAT, więc ``actor`` z ``closed_by`` kazałby
+    strażnikowi zjeść wszystkie zamknięcia — incydent odtworzony wewnątrz własnej naprawy. Ta
+    sonda ma paść, gdy ktoś „tylko doda zamykającego" przed etapem 2.
+    """
+    ev = selection.map_issue_closed(_zamkniete(7, login="autor", closed_by={"login": "zamykacz"}))
+
+    assert ev is not None
+    assert ev.actor == ""
+
+
+def test_select_events_daje_OBA_fakty_dla_zamknietego_zgloszenia():
+    """Otwarcie i zamknięcie to dwa różne fakty o tym samym zgłoszeniu; dedup magazynu połyka
+    powtórki otwarcia, więc emitowanie obu jest tanie i poprawne."""
+    events = selection.select_events([_zamkniete(7, login="alice")], [], self_login="me")
+
+    assert [(e.kind, e.external_id) for e in events] == [
+        ("issue_opened", "7"),
+        ("issue_closed", "7#closed@2026-09-01T09:30:00Z"),
+    ]
+
+
+def test_zamkniecie_przechodzi_mimo_ze_zgloszenie_zalozylo_konto_bota():
+    """Interakcja z self-skipem, którą ADR nakazuje trzymać pod sondą (decyzja 2 + 6).
+
+    Otwarcie autorstwa konta PAT strażnik zjada — i to jest dziś zamierzone. Zamknięcie ma
+    przejść mimo to, bo niesie PUSTY ``actor``: inaczej warstwa dalej nie wiedziałaby o zamknięciu
+    zgłoszeń założonych przez bota, czyli o ośmiu z osiemnastu w tym repozytorium.
+    """
+    events = selection.select_events([_zamkniete(7, login="me")], [], self_login="me")
+
+    assert [e.kind for e in events] == ["issue_closed"]
+
+
+def test_zamkniecia_nie_ma_gdy_drzwi_nie_obserwuja_zgloszen():
+    """``watch_kinds`` bez „issues" wyłącza CAŁĄ ścieżkę zgłoszeń, także zamknięcia — inaczej
+    konfiguracja „tylko PR-y" zaczęłaby po cichu zapisywać zdarzenia zgłoszeń."""
+    events = selection.select_events(
+        [_zamkniete(7, login="alice")], [], self_login="me", watch_kinds=("pulls",)
+    )
+
+    assert events == []
+
+
 def test_select_events_skips_self_and_sorts_by_time():
     issues = [_issue(1, login="me"), _issue(2, login="alice")]
     comments = [_comment(9, login="me")]
