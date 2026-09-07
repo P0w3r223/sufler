@@ -14,6 +14,30 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [0.2.22] — 2026-09-07
+
+Wydanie naprawcze dla skryptu diagnostycznego. **Zachowanie usługi bez zmian wobec 0.2.21** —
+różnica jest wyłącznie w `scripts/` i w zasięgu bramki typów.
+
+### Naprawione
+
+- **Pomiar D1 wywracał się przy pierwszym członku zespołu.** `scripts/zbierz_historie.py` czytał
+  `Shift.member_id`, a pole nazywa się `user_id` — `AttributeError` w połowie przebiegu, na żywym
+  tenancie, po pobraniu 267 zmian. Przy okazji porównanie identyfikatorów szło znak w znak zamiast
+  przez `domain.tozsamosc.ten_sam`: rozjazd wielkości liter nie zapisałby nic złego, ale zaniżyłby
+  historię do zera i pomiar powiedziałby „brak danych" o osobie z pełnym grafikiem.
+
+### Zmienione
+
+- **`mypy` obejmuje `scripts/`, nie tylko `src/`.** To jest właściwa naprawa tamtej usterki:
+  literówka w nazwie pola przeszła przez WSZYSTKIE cztery bramki, bo skrypty były poza zasięgiem
+  kontroli typów — mimo że wchodzą do obrazu i sięgają po ten sam model domeny co usługa.
+  Zweryfikowane: przywrócenie `member_id` daje teraz `mypy` czerwony.
+- `tests/test_zbierz_historie.py` — bucketowanie historii na danych syntetycznych: dzień
+  ROZPOCZĘCIA (nocka należy do piątku), porównanie przez tożsamość, urlop jako brak danych,
+  kolejność tygodni od najświeższego. Cztery rzeczy, z których każda daje CICHO zły pomiar, a więc
+  złą decyzję o `wzorzec.py`.
+
 ## [0.2.21] — 2026-09-07
 
 Wydanie porządkowe i wydajnościowe, zbudowane z drzewa, w którym `src/` po raz pierwszy podlega

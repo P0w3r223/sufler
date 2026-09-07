@@ -118,7 +118,7 @@ HEALTHCHECK --interval=5m --timeout=15s --start-period=3m --retries=3 \
 # żeby ustalić, co właściwie działa, gdy tagi zostały nadpisane albo zdublowane. Deklaracja stoi TUŻ przed
 # LABEL celowo: `ARG` unieważnia cache wszystkich kolejnych warstw, więc wyżej kosztowałaby pełne
 # `apt-get update && upgrade` przy każdym podbiciu wersji.
-ARG WERSJA=0.2.21
+ARG WERSJA=0.2.22
 
 LABEL org.opencontainers.image.title="powiadomienia-teams" \
       org.opencontainers.image.description="Cotygodniowe przypomnienia o zmianach (Microsoft Shifts)" \

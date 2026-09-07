@@ -50,7 +50,8 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from powiadomienia_teams.config import ConfigError, Settings
-from powiadomienia_teams.domain.models import Shift, TimeOff
+from powiadomienia_teams.domain.models import Shift, TimeOff, WeekSchedule
+from powiadomienia_teams.domain.tozsamosc import ten_sam
 from powiadomienia_teams.graph.auth import AuthExpiredError, build_token_provider
 from powiadomienia_teams.graph.client import GraphClient
 from powiadomienia_teams.reminders.propose import proposal_from_last_week
@@ -109,13 +110,17 @@ def _historia_osoby(
     per_tydzien: dict[date, dict[int, set[Interwal]]] = defaultdict(lambda: defaultdict(set))
     urlopy: dict[date, set[int]] = defaultdict(set)
     for zmiana in zmiany:
-        if zmiana.member_id != member_id:
+        # `ten_sam`, nie `!=`: Graph nie obiecuje tej samej wielkości liter w `/me`, `list_members`
+        # i kolekcji zmian — to ta sama klasa usterki, którą zamknęła fala 2 (`domain/tozsamosc`).
+        # Tutaj rozjazd nie zapisałby nic złego, ale zaniżyłby historię do zera i pomiar
+        # powiedziałby „brak danych" o osobie, która ma pełen grafik.
+        if not ten_sam(zmiana.user_id, member_id):
             continue
         start = zmiana.start.astimezone(tz)
         pon = (start - timedelta(days=start.weekday())).date()
         per_tydzien[pon][start.weekday()].add(_interwal(zmiana, tz))
     for wpis in wolne:
-        if wpis.member_id != member_id:
+        if not ten_sam(wpis.user_id, member_id):
             continue
         start = wpis.start.astimezone(tz)
         koniec = wpis.end.astimezone(tz)
@@ -134,7 +139,7 @@ def _historia_osoby(
     ]
 
 
-def _z_propozycji(schedule, tz: ZoneInfo) -> dict[int, DzienGrafiku]:
+def _z_propozycji(schedule: WeekSchedule, tz: ZoneInfo) -> dict[int, DzienGrafiku]:
     """Dzisiejsza propozycja („jak w zeszłym tygodniu") w tej samej postaci co wynik `wnioskuj`."""
     dni: dict[int, set[Interwal]] = defaultdict(set)
     for zmiana in schedule.shifts:
@@ -200,7 +205,7 @@ def main() -> int:
         f"{'inna niż »zeszły tydzień«':26}  tygodni z danymi"
     )
     print("-" * 100)
-    licznik = Counter()
+    licznik: Counter[tuple[Pewnosc, bool]] = Counter()
     for nr, czlonek in enumerate(sorted(members, key=lambda m: m.user_id), start=1):
         if czlonek.user_id == me_id:
             continue  # konto bota nie jest przedmiotem pomiaru
@@ -212,7 +217,7 @@ def main() -> int:
             [
                 s
                 for s in zmiany
-                if s.member_id == czlonek.user_id
+                if ten_sam(s.user_id, czlonek.user_id)
                 and s.start.astimezone(tz).date() >= poniedzialki[0]
             ],
             poniedzialki[0] + timedelta(days=7),

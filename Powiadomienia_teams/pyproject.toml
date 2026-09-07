@@ -1,6 +1,6 @@
 [project]
 name = "powiadomienia-teams"
-version = "0.2.21"
+version = "0.2.22"
 description = "Cotygodniowe przypomnienia o uzupełnianiu zmian w Microsoft Shifts (Teams)."
 requires-python = ">=3.10"
 dependencies = [
@@ -51,7 +51,12 @@ python_version = "3.10"
 disallow_untyped_defs = true
 warn_unused_ignores = true
 no_implicit_optional = true
-files = ["src"]
+# `scripts` OBOWIĄZKOWO, nie tylko `src`. Skrypty diagnostyczne wchodzą do obrazu i sięgają po
+# ten sam model domeny co usługa, a przy zasięgu ograniczonym do `src` literówka w nazwie pola
+# (`shift.member_id` zamiast `user_id`) przechodziła przez WSZYSTKIE cztery bramki i wywracała się
+# dopiero na żywym tenancie, w połowie pomiaru. `tests` zostają poza zasięgiem — tam atrapy bywają
+# świadomie nietypowane, a `disallow_untyped_defs` zamieniłoby to w setki adnotacji bez wartości.
+files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
 module = ["msal.*", "anthropic.*"]
