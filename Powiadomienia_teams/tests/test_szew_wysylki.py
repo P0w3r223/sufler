@@ -238,6 +238,25 @@ def _wycofania_warunkowe(blok: ast.Try) -> list[ast.Call]:
     return znalezione
 
 
+def _listy_instrukcji(wezel: ast.AST) -> list[list[ast.stmt]]:
+    """KAŻDA lista instrukcji pod `wezel` — `body`, ale też `orelse` i `finalbody`.
+
+    Reguła niżej potrzebuje nie samego `Try`, tylko GAŁĘZI, w której on stoi: `_commit_przed`
+    szuka poprzedzającego wołania `_commit` w tej samej liście. Pierwsza wersja czytała wyłącznie
+    `body`, więc gałąź `else` łańcucha `if/elif/else` była dla reguły NIEWIDZIALNA — a stoi w niej
+    jedna z trzech wysyłek, dla których ta reguła powstała (`unclear` w `_interpret_and_confirm`).
+    Zieleniała przy zdjęciu kompensacji z tej gałęzi i przy dopisaniu tam czwartej wysyłki bez
+    kompensacji; obie mutacje sprawdzone. Strażnik, którego da się obejść nie zauważywszy, usypia.
+    """
+    listy = []
+    for rodzic in ast.walk(wezel):
+        for pole in ("body", "orelse", "finalbody"):
+            galezie = getattr(rodzic, pole, None)
+            if isinstance(galezie, list):
+                listy.append(galezie)
+    return listy
+
+
 def test_kazda_wysylka_wymagajaca_kompensacji_ja_ma():
     """Reguła iteruje po WYSYŁKACH, nie po kompensacjach — i to jest jej najważniejsza własność.
 
@@ -250,15 +269,16 @@ def test_kazda_wysylka_wymagajaca_kompensacji_ja_ma():
     Kierunek iteracji jest tu więc całą różnicą: chodzimy po rzeczach CHRONIONYCH, więc nowa
     wysyłka wpada pod regułę bez niczyjej pamięci — tak samo jak w regule wyżej, która była
     zbudowana dobrze od początku.
+
+    Sam kierunek nie wystarczy, jeśli ZASIĘG skanowania pomija część chronionych miejsc — patrz
+    `_listy_instrukcji`. Wersja czytająca same `body` nie widziała gałęzi `else`, czyli jednej
+    z trzech wysyłek, dla których ta reguła istnieje.
     """
     braki = []
     zbedne = []
     wysylek = 0
     for nazwa, funkcja in _funkcje_kompensujace():
-        for rodzic in ast.walk(funkcja):
-            galezie = getattr(rodzic, "body", None)
-            if not isinstance(galezie, list):
-                continue
+        for galezie in _listy_instrukcji(funkcja):
             for wezel in galezie:
                 if not isinstance(wezel, ast.Try):
                     continue

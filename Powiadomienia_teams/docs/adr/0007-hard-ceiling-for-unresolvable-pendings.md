@@ -190,15 +190,24 @@ with a moving anchor and with no anchor at all. `tests/test_config.py` covers re
 
 ---
 
-## Amendment, 2026-09-04 — C3 landed as anticipated
+## Amendment, 2026-09-04 — C3 landed; the mechanism was not the one anticipated
 
-The watermark fix (wave 4) shipped, and the expectation recorded above held: the two sends it
-wrapped now raise into the per-person handler as `UNKNOWN`, not `READ_FAILED`. The read counter is
-therefore **reset, never incremented** — the chat was read, so a run of failed reads has demonstrably
-ended — and no entry is pushed towards this ceiling by a failed **send**. (An earlier wording here
-said the counter "does not move"; measured, it goes to zero. The conclusion is unchanged, the
-sentence was not.) No coupling between
-the two changes was needed, and none was added.
+The watermark fix (wave 4) shipped. Its consequence for this ceiling is what the note above
+predicted, but **the mechanism named there was already true when it was written**, so the note
+described a change that did not happen and missed the one that did. Corrected here rather than in
+the note, which stays as the record of what was expected.
+
+The two sends the note named (`brak powodu wolnego` and `unclear`) stood outside any `try`, so
+their exceptions already reached the per-person handler as `UNKNOWN` before wave 4; wrapping them
+in a `try` whose `finally` only restores a snapshot did not touch that routing. What changed is the
+**third** send — the confirmation request — which wave 4 stopped swallowing: it was caught in place
+and the cycle reported `HANDLED`; it now propagates and arrives as `UNKNOWN`.
+
+The read counter is therefore **reset, never incremented** — the chat was read, so a run of failed
+reads has demonstrably ended — and no entry is pushed towards this ceiling by a failed **send**.
+(An earlier wording here said the counter "does not move"; measured, it goes to zero. The
+conclusion is unchanged, the sentence was not.) No coupling between the two changes was needed,
+and none was added.
 
 One correction to the note above: it says the rollback would go through `_record_failure`. It does
 not. That function writes state and sends a message, and calling it from a `finally` block — during

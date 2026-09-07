@@ -68,8 +68,11 @@ wyśle prośbę drugi raz. „Co najwyżej raz" chroni skutki nieodwracalne, a d
 jest.
 
 Efekt operacyjny do zapowiedzenia: kolumna `błędy` w `--stan` zacznie pokazywać 1–2 dla osoby,
-której nie udało się odpowiedzieć. Dotąd było tam zawsze 0 — nie dlatego, że nic się nie działo,
-tylko dlatego, że `_commit` licznik zerował.
+której nie udało się odpowiedzieć — w tym wtedy, gdy nie doszła PROŚBA O POTWIERDZENIE. Dla tej
+jednej gałęzi stało tam dotąd zawsze 0 i nie dlatego, że nic się nie działo: wyjątek był połykany
+w miejscu, więc `_record_failure` nigdy nie ruszał, a `_commit` licznik przed chwilą wyzerował.
+Dwie pozostałe gałęzie (`brak powodu wolnego`, `unclear`) stały poza `try`, więc ich niepowodzenie
+licznik podbijało już wcześniej.
 
 ### Usunięte z „Znanych ograniczeń"
 
