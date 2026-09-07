@@ -43,6 +43,13 @@ FROM deps AS test
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --extra agent
 COPY tests/ ./tests/
+# Szablony konfiguracji — `test_config.py` sprawdza, czy `.env.example` i `deploy/env.example`
+# nie rozjechały się z `config.py`. To weryfikacja ARTEFAKTU, nie prozy repozytorium, więc bramka
+# ma je widzieć w obu środowiskach. Bez tych dwóch plików etap `test` kończył się
+# `FileNotFoundError`, czyli obrazu NIE DAŁO SIĘ zbudować — a że CI buduje tylko obraz floty,
+# nikt tego nie zauważył od czasu, gdy zestaw testów napisano na nowo po odzyskaniu źródeł 0.2.19.
+COPY .env.example ./
+COPY deploy/env.example ./deploy/env.example
 # Bieg NA TYM Pythonie i NA TEJ architekturze, na której obraz pojedzie — w szczególności
 # potwierdza gałąź POSIX `fcntl` w single_instance.py, nieuruchamialną na maszynie deweloperskiej.
 RUN uv run --no-sync pytest -q && touch /app/.testy-przeszly
