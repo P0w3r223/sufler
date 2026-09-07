@@ -120,13 +120,10 @@ bez cytatu jest dozwolony — plan ma prawo zawierać rzeczy niezrobione.
   rozstrzyga rozłączność praca/wolne po dniu STARTU, więc „piątek 22:00–06:00" plus „sobota urlop"
   zapisują się oba, a sobota 00:00–06:00 jest pokryta dwoma sprzecznymi wpisami. To rozstrzygnięcie
   klienta (§4.2), nie usterka: żaden kierunek nie jest oczywiście poprawny.
-- **Wersja mieszka w pięciu miejscach i nie ma strażnika.** `__init__.__version__` i
-  `pyproject.toml` mówią `0.2.19`, `deploy/docker-compose.yml`, `Dockerfile ARG WERSJA`
-  i `scripts/build-image.sh` mówią `0.2.1`, a u klienta stoi `0.2.20`. Docstring `__init__.py`
-  twierdził dodatkowo, że `pyproject.toml` czyta wersję przez `[tool.hatch.version]` i że pilnuje
-  tego skrypt check_versions — obie rzeczy nieprawdziwe (sprostowane 2026-09-07).
-  Wyrównanie i strażnik należą do kroku WYDANIA, nie do porządków w dokumentacji: dopiero wtedy
-  wiadomo, jaką liczbę wpisać.
+- ~~**Wersja mieszka w pięciu miejscach i nie ma strażnika.**~~ **Zamknięte 2026-09-07 przy
+  wydaniu 0.2.21.** Wszystkie pięć miejsc wyrównane, zgodności pilnuje `tests/test_wersje.py`
+  (iteruje po miejscach deklaracji, więc szóste trzeba dopisać świadomie). Docstring `__init__.py`
+  przestał twierdzić, że robi to `[tool.hatch.version]` i nieistniejący skrypt check_versions.
 
 ## Czego w tym pliku NIE ma
 
