@@ -383,3 +383,61 @@ places, and after decision 6 two of them become **false rather than merely stale
 `docs/how-to/gate-matrix.md:76-79` — describe a mechanism that will no longer exist. They travel in
 the same change as the code; a decision that corrects one false sentence while leaving six behind
 would be the same failure it is written to fix.
+
+---
+
+## Amendment (2026-09-07) — decision 8 keeps its goal and loses its mechanism
+
+Decision 8 rests on a claim that does not survive being checked: *"the contract is kept, not
+amended."* It is not. Two findings, both measured on `Main` before any code was written, and both
+of the class this ADR itself is about — a sentence that stops being true inside the change whose
+thesis is removing an untrue sentence.
+
+**Finding 1 — the frozen sentence names a different quantity.** The frozen description says
+*"`latest_cursor` to najwyższe **zwrócone** `id`"* (`tools/events.py`, byte-identical in
+`tool_surface_baseline.json`). Decision 8 requires the bootstrap cursor to be **the store's
+maximum id** — which is a different number the moment the window is time-ordered, because that is
+exactly the case decision 8 introduces. Regenerating the baseline would freeze a newly-false
+sentence. The same claim is written into [ADR 0040](0040-eventstore-to-mcp-session-cursor-read.md)
+("both modes return events ascending-by-id and a `latest_cursor` (max id seen)"), so the divergence
+would sit in **two** ADRs, not one.
+
+**Finding 2 — the store-maximum cursor loses events silently.** Decision 8 says "the store's
+current maximum id" without qualification, but the incremental read takes `source` and `project`.
+A cursor set above events that were never in the filtered window **never delivers them**: the next
+call asks for `id > cursor` and they are below it forever. Today this defect does not exist,
+because the window is chosen by `id` and the cursor is by construction the largest id returned.
+The mechanism of decision 8 would create it — quietly, in the same read the incident made us
+distrust.
+
+### Decision (variant B)
+
+**`recent()` is left alone.** It keeps ordering by `id DESC` and keeps serving the MCP bootstrap.
+The frozen contract is then untouched in fact rather than in intention: no baseline regeneration,
+no new port method for the store maximum, and Finding 2 has nowhere to occur.
+
+**The four consumers that want TIME get a second read method** — `Activity(events)`,
+`Activity(summary)`, `_activity_facts` behind `Project(status)`, and the change digest — ordered
+`occurred_at DESC, id DESC`, taking the same `source`/`project`/`limit` arguments as `recent()`.
+
+What decision 8 was for is unchanged and still stands: after the backfill of decision 9, insertion
+order stops approximating event time, and any consumer that reads "newest" as "newest in time" must
+say so in the query rather than in a comment. `_activity_facts` remains the sharpest case — it
+already takes `max(occurred_at)` within its window, but chooses that window as the top 100 by id,
+so a store larger than the window would let July's backfilled rows push genuinely recent events out
+of it and `Project(status)` would report a "last activity" from July. That is the incident's shape
+in another tool, and it is why this is a precondition for decision 9 rather than tidying.
+
+**"Newest first" stays true and never needs a correction.** Under decision 8 that phrase in the
+`Activity` description would have had to be re-checked against a changed meaning of `recent()`;
+under variant B the phrase becomes *more* true, because the four surfaces that show it to a human
+start ordering by the time the human means.
+
+### Consequences
+
+- The golden surface regenerates **zero times** for this change instead of twice.
+- `EventStore` gains one method rather than two (`recent_by_time`, no `max_id`).
+- The MCP cursor read keeps its `assert ids == sorted(ids)` gate unchanged — the gate that would
+  have needed rewriting under decision 8, in the direction of accepting less.
+- Cost, stated plainly: two read paths over one table, and a reader has to know which question each
+  answers. That is the price of not touching a frozen contract, and it is the cheaper side.
