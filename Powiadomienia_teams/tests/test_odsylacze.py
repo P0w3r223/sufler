@@ -96,9 +96,15 @@ def _istnieje(cel: str) -> bool:
 
 
 def test_kazdy_cytowany_plik_istnieje():
-    pliki = _pliki()
-    if not pliki:
+    # Sam fakt, że `src/` i `tests/` są na miejscu, NIE wystarcza: obraz niesie właśnie je i nic
+    # więcej, więc reguła miałaby czym skanować, a nie miałaby gdzie rozwiązywać celów — każdy
+    # odsyłacz do `deploy/` czy `docs/` wyszedłby jako martwy. Wykryła to sonda `>100` przy
+    # pierwszym biegu w obrazie (80 odsyłaczy zamiast ponad stu) i to jest dokładnie ta rola,
+    # dla której sonda istnieje: pomiar na okrojonym przedmiocie nie jest pomiarem.
+    if not ((_PODPROJEKT / "docs").is_dir() and (_PODPROJEKT / "deploy").is_dir()):
         pytest.skip("strażnik odsyłaczy — poza kontekstem repozytorium (obraz); biegnie w CI")
+    pliki = _pliki()
+    assert pliki, "brak plików prozy do skanowania mimo obecnego drzewa repozytorium"
 
     martwe: list[str] = []
     wszystkich = 0
