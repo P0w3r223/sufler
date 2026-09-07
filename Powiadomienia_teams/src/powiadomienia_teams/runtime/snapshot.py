@@ -93,10 +93,12 @@ class SnapshotGrafiku:
         wołający spoza ścieżki zapisu: czytnik narzędzia modelu
         (`agent/odczyt.py::SnapshotGrafikReader`, dla obu zakresów — interpretacja wiadomości
         kończy się prośbą o „tak", a nie zapisem) oraz wykrywanie samouzupełnienia
-        (`runtime/listener.py::poll_replies`, krok 1.5 — dotyczy osób milczących). Treść alertu obiecuje
+        (`runtime/listener.py::poll_replies`, krok 1.5 — dotyczy osób milczących). Treść alertu
+        obiecuje
         operatorowi, że *potwierdzenia z tego tygodnia zostaną w tym cyklu zapisane bez
         weryfikacji*, i każe ręcznie obejrzeć grafiki — w przebiegu, w którym nikt nie odpowiedział
-        „tak", byłoby to ostrzeżenie przed szkodą, która się nie wydarzyła. Alert mówiący o szkodzie,
+        „tak", byłoby to ostrzeżenie przed szkodą, która się nie wydarzyła. Alert mówiący o
+        szkodzie,
         której nie było, uczy operatora ignorować kanał, którym przychodzą te prawdziwe.
 
         **Alert jest odłożony od DANYCH, celowo.** Nieudany odczyt pamiętamy raz na tydzień

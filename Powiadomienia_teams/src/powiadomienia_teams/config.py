@@ -169,7 +169,7 @@ def _list(name: str) -> tuple[str, ...]:
 
 
 def _bez_dubli(pozycje: tuple[str, ...]) -> tuple[str, ...]:
-    """Zachowuje kolejność PIERWSZEGO wystąpienia. Dla adresatów duplikat = druga ta sama wiadomość."""
+    """Zachowuje kolejność PIERWSZEGO wystąpienia. Duplikat adresata = druga ta sama wiadomość."""
     widziane: dict[str, None] = dict.fromkeys(pozycje)
     return tuple(widziane)
 
@@ -357,7 +357,8 @@ class Settings:
     heartbeat_interval_h: int = 24  # co ile godzin sprawdzać sesję poza przebiegiem tygodniowym
     auth_failure_exit_delay_s: int = 600  # ile czekać przed wyjściem po utracie sesji
     # Po jakim czasie bez pulsu healthcheck uznaje pętlę za martwą. NIEZALEŻNE od sufitu nasłuchu:
-    # puls bije co minutę (`runtime.service.spij_z_pulsem`), więc próg nie musi rosnąć razem z odstępem
+    # puls bije co minutę (`runtime.service.spij_z_pulsem`), więc próg nie musi rosnąć razem z
+    # odstępem
     # odpytywania. Wcześniejsze wyprowadzanie progu z `poll_max_interval_s` dawało 2 h.
     health_max_age_s: int = 900
     # Sufit czasu na JEDEN przebieg (tygodniowy albo obieg nasłuchu). Jedyny limit obejmujący
@@ -414,8 +415,10 @@ class Settings:
     def godzin_od_przebiegu_do_terminu(self) -> float:
         """Ile godzin ma pracownik od przebiegu tygodniowego do TERMINU kalendarzowego.
 
-        Przebieg celuje zawsze w poniedziałek NASTĘPNEGO tygodnia (``scheduler.weekly.week_windows``),
-        więc odstęp wynika wprost z konfiguracji i da się go policzyć bez zegara. Liczba jest tu, a nie
+        Przebieg celuje zawsze w poniedziałek NASTĘPNEGO tygodnia
+        (``scheduler.weekly.week_windows``),
+        więc odstęp wynika wprost z konfiguracji i da się go policzyć bez zegara. Liczba jest tu, a
+        nie
         w warstwie ostrzeżeń, bo to arytmetyka na ustawieniach — i dlatego daje się sprawdzić testem
         bez uruchamiania startu usługi.
 
@@ -478,7 +481,8 @@ class Settings:
         """Minimum potrzebne, żeby SIĘ ZALOGOWAĆ i ODCZYTAĆ roster — nic ponadto.
 
         Wydzielone z ``validate()``, bo pełna lista kontrolna jest listą warunków **wysyłki**,
-        a dwie czynności przygotowawcze wysyłki nie robią: ``--login`` i ``scripts/lista_czlonkow.py``.
+        a dwie czynności przygotowawcze wysyłki nie robią: ``--login`` i
+        ``scripts/lista_czlonkow.py``.
         Bez tego podziału powstaje zakleszczenie: bramka pilotażu żąda identyfikatorów, a jedyne
         narzędzie, które je wypisuje, sama blokuje. Operator dostawał instrukcję naprawy, której
         nie da się wykonać w tym samym ``env``.

@@ -6,7 +6,8 @@
   w cache) — NIGDY nie inicjuje interaktywnego device-flow, bo ten blokuje aż do zalogowania i
   w usłudze bez terminala zawiesiłby cały nasłuch.
 - Utrata refresh-tokenu (rolling ~90 dni albo Conditional Access) → ``AuthExpiredError`` zamiast
-  zawisu; orkiestracja loguje CRITICAL i zatrzymuje się czysto (patrz ``runtime.service.run_forever``).
+  zawisu; orkiestracja loguje CRITICAL i zatrzymuje się czysto (patrz
+  ``runtime.service.run_forever``).
 - App MSAL i cache budowane RAZ w ``build_token_provider`` (nie co wywołanie) — token trzyma się
   w pamięci, plik czytany na starcie, zapisywany dopiero gdy refresh-token się zmieni.
 - Cache tokenu jest SEKRETEM — poza repo i ``data/`` (patrz ``Settings.token_cache_path``).

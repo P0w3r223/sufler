@@ -24,6 +24,7 @@ w jednym wywołaniu (ten sam kierunek co pozycja A10 planu).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -127,10 +128,11 @@ def zbadaj_zrodlo(sciezka: Path) -> ZrodloStanu:
     """
     kopia = sciezka_kopii(sciezka)
     zapisany: datetime | None = None
-    try:
+    # `suppress`, a nie `try/except/pass`: to raport DIAGNOSTYCZNY, a brak czasu modyfikacji jest
+    # tu normalnym wynikiem (plik może nie istnieć). Jedyne miejsce w tym kodzie, gdzie połknięcie
+    # wyjątku jest zamierzone — i dlatego ma być widoczne z jednej linii, a nie ukryte w czterech.
+    with contextlib.suppress(OSError):
         zapisany = datetime.fromtimestamp(os.stat(sciezka).st_mtime, _UTC)
-    except OSError:
-        pass
     istnieje = sciezka.exists()
     return ZrodloStanu(
         sciezka=sciezka,

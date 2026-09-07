@@ -288,7 +288,8 @@ def _wykonaj_kalendarz(wejscie: dict[str, Any], ctx: KontekstNarzedzi) -> dict[s
         # Ostatnia siatka pod kontraktem „``wykonaj`` nigdy nie rzuca". Rozwiązywanie dat pracuje
         # na tekście przepisanym przez model z wiadomości pracownika, czyli na wejściu niezaufanym
         # o nieprzewidywalnym kształcie. Wyjątek stąd przerwałby obsługę CAŁEJ odpowiedzi, a że
-        # watermark rośnie dopiero po sukcesie (``runtime.listener._commit``), ta sama wiadomość wracałaby
+        # watermark rośnie dopiero po sukcesie (``runtime.listener._commit``), ta sama wiadomość
+        # wracałaby
         # w każdym ticku aż do wyczerpania licznika prób.
         logger.warning("Nie udało się rozwiązać wyrażenia czasowego %r", wyrazenie, exc_info=True)
         return _blad(
@@ -342,7 +343,8 @@ def wykonaj(nazwa: str, wejscie: dict[str, Any], ctx: KontekstNarzedzi) -> dict[
     """Wykonaj wywołanie narzędzia. Błąd wraca do modelu jako DANE, nie jako wyjątek.
 
     Wyjątek z narzędzia przerwałby obsługę JEDNEJ odpowiedzi pracownika, a że watermark rośnie
-    dopiero po sukcesie (``runtime.listener._commit``), ta sama wiadomość wracałaby w każdym ticku. Zwracamy
+    dopiero po sukcesie (``runtime.listener._commit``), ta sama wiadomość wracałaby w każdym ticku.
+    Zwracamy
     więc opisany błąd i zostawiamy modelowi szansę na poprawkę w tej samej pętli.
 
     JEDYNY wyjątek, który stąd wychodzi, to utrata sesji (``AuthExpiredError`` z czytnika Graph)

@@ -214,7 +214,8 @@ def _odsiej_juz_zapisane(
         raise
     if dane is None:
         logger.warning(
-            "Nie udało się sprawdzić aktualnego grafiku %s przed zapisem — zapisuję bez weryfikacji",
+            "Nie udało się sprawdzić aktualnego grafiku %s przed zapisem — "
+            "zapisuję bez weryfikacji",
             etykiety.osoba(pending, settings),
         )
         return schedule, time_offs, ()
@@ -349,7 +350,8 @@ def poll_replies(  # noqa: C901, PLR0915
 
     now = now or datetime.now(_UTC)
     # `ignoruj_cisze` materializuje się jako ustawienia Z WYŁĄCZONĄ ciszą, a nie jako flaga wleczona
-    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal jest
+    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal
+    # jest
     # siatką na nowy punkt wysyłki), a cała ścieżka widzi jeden, spójny świat — bez tego `--once
     # --ignoruj-cisze` przechodził bramę pętli i padał dopiero na szwie, czyli operator dostawał
     # „nie udało się powiadomić" zamiast prośby wysłanej świadomie.
@@ -363,7 +365,8 @@ def poll_replies(  # noqa: C901, PLR0915
     okno_pierwotne = settings.okno_ciszy
     if ignoruj_cisze:
         settings = replace(settings, cisza_od_h=0, cisza_do_h=0)
-    # Godziny ciszy ODKŁADAJĄ CAŁĄ pracę, nie tylko wysyłkę. Pominięcie samej wiadomości rozjechałoby
+    # Godziny ciszy ODKŁADAJĄ CAŁĄ pracę, nie tylko wysyłkę. Pominięcie samej wiadomości
+    # rozjechałoby
     # stan z tym, co widzi pracownik: stan jest utrwalany PRZED skutkiem, więc zostałaby prośba
     # o potwierdzenie, której nikt nie dostał, a po terminie „nie doczekałem się potwierdzenia" —
     # za ciszę BOTA. Odłożona porcja czeka nietknięta (watermark nie rusza), więc po ciszy ta sama
@@ -523,7 +526,8 @@ def poll_replies(  # noqa: C901, PLR0915
     ]
     # Rozdział po statusie, bo powody są RÓŻNE i każdy komunikat musi być prawdziwy: kto nie
     # odpisał w ogóle, słyszy „nie dostałem odpowiedzi"; kto odpisał, ale nie potwierdził —
-    # „nie doczekałem się potwierdzenia". Podział PRZED `zamknij_bez_zapisu`, bo ono nadpisuje status.
+    # „nie doczekałem się potwierdzenia". Podział PRZED `zamknij_bez_zapisu`, bo ono nadpisuje
+    # status.
     bez_odpowiedzi = [p for p in newly_expired if p.status == st.AWAITING_REPLY]
     bez_potwierdzenia = [p for p in newly_expired if p.status == st.AWAITING_CONFIRM]
     if bez_odpowiedzi:
@@ -649,7 +653,8 @@ def _migawka_commitu(pending: st.PendingReminder) -> _MigawkaCommitu:
     `resolved` i `resolved_time_off` są w migawce, choć ustawia je wołający, a nie `_commit`:
     po cofnięciu watermarku ta sama wiadomość wraca do interpretacji, a `propose.baza_interpretacji`
     bierze `resolved` za bazę. Poprawka WZGLĘDNA („piątek godzinę później") naniosłaby się wtedy
-    drugi raz. Następny cykl odtworzy oba pola z tej samej wiadomości, więc cofnięcie nic nie kosztuje.
+    drugi raz. Następny cykl odtworzy oba pola z tej samej wiadomości, więc cofnięcie nic nie
+    kosztuje.
     """
     return _MigawkaCommitu(
         watermark=pending.watermark,
@@ -865,7 +870,8 @@ def _process_pending(
     #
     # Bramką jest `pending.awaiting_yes`, nie sam status. Do 0.2.13 wystarczał `AWAITING_CONFIRM`,
     # a ten status ZOSTAJE po każdej wymianie odczytowej: gałąź `unclear` commitowała bez statusu.
-    # Sekwencja „propozycja → pytanie o cokolwiek → »tak«" trafiała więc w szybką ścieżkę i ZAPISYWAŁA
+    # Sekwencja „propozycja → pytanie o cokolwiek → »tak«" trafiała więc w szybką ścieżkę i
+    # ZAPISYWAŁA
     # do Shifts. Dziś mało groźne, bo propozycja się w międzyczasie nie zmieniła — ale mechanizm
     # istniał, a każda umiejętność odczytowa czyni go realnym: człowiek pyta „ile mam godzin",
     # dostaje odpowiedź, pisze „tak". Do czego?
@@ -909,7 +915,8 @@ def _process_pending(
             )
     except AuthExpiredError:
         # Utrata tokenu dotyczy całej usługi, nie tej jednej wiadomości — ale WYCOFANIE commitu,
-        # jeśli jakieś się wydarzyło niżej, musi trafić na dysk PRZED wyjściem. Patrz `_utrwal_wycofanie`.
+        # jeśli jakieś się wydarzyło niżej, musi trafić na dysk PRZED wyjściem. Patrz
+        # `_utrwal_wycofanie`.
         _utrwal_wycofanie(settings, state, pending)
         raise
     except PrzebiegPrzekroczylCzasError:
@@ -961,7 +968,7 @@ def _dogladaj_nierozstrzygniete(
     outcomes: dict[str, ReadOutcome],
     now: datetime,
 ) -> None:
-    """Krok 1.6: policz obiegi bez odczytu, zawołaj operatora po progu, zamknij po suficie (ADR 0007).
+    """Krok 1.6: policz obiegi bez odczytu, zawołaj operatora, zamknij po suficie (ADR 0007).
 
     Źródłem prawdy jest ``outcomes``, a NIE ``state``: wpisu, którego w tym obiegu nie zbadaliśmy,
     nie wolno zamknąć — nie wiemy o nim nic nowego. To ta sama zasada, co domyślne ``UNKNOWN``
@@ -1039,7 +1046,8 @@ def _dogladaj_nierozstrzygniete(
     if progowe:
         # OSOBNY tytuł od alertu o zamknięciu. Oba mogą paść w tym samym obiegu (część wpisów po
         # suficie, część dopiero na progu), a mówią rzeczy przeciwne — „zamknięte" i „zostaje
-        # otwarte". Wspólny tytuł dawał operatorowi dwa identycznie zatytułowane bloki na Discordzie.
+        # otwarte". Wspólny tytuł dawał operatorowi dwa identycznie zatytułowane bloki na
+        # Discordzie.
         operator.alert(
             settings,
             "Czat nie odpowiada — przypomnienia wstrzymane",
@@ -1141,7 +1149,8 @@ def _record_failure(
     # Commit PRZED wysyłką i — WYJĄTKOWO — bez wycofania. Nawias „(jak wszędzie)" stał tu do fali 4
     # i po niej przestał być prawdziwy: trzy miejsca w `_interpret_and_confirm` cofają teraz commit,
     # gdy wiadomość nie dotarła. Tutaj cofnąć NIE WOLNO: nieudana wysyłka nie może cofnąć decyzji
-    # o odpuszczeniu porcji, bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy. Tam wycofanie
+    # o odpuszczeniu porcji, bo wróciłaby dokładnie ta pętla, którą właśnie przerywamy. Tam
+    # wycofanie
     # ratuje odpowiedź pracownika, tu skasowałoby jedyny mechanizm, który tę pętlę domyka.
     try:
         _oznacz_wyslane(

@@ -124,7 +124,8 @@ def build_self_filled_text(week_label: str) -> str:
     """Podziękowanie, gdy pracownik SAM uzupełnił grafik w Shifts, zanim odpisał na czacie.
 
     Forma neutralna („jest już uzupełniony", nie „uzupełniłeś"), bo grafik mógł wypełnić także
-    przełożony. Wysyłane bezwarunkowo — reaguje na działanie pracownika, więc milczenie byłoby gorsze.
+    przełożony. Wysyłane bezwarunkowo — reaguje na działanie pracownika, więc milczenie byłoby
+    gorsze.
     """
     return (
         f"Widzę, że Twój grafik na tydzień {week_label} jest już uzupełniony ✅ "
@@ -301,7 +302,8 @@ def build_applied_text(*, minione: int = 0, juz_w_grafiku: Iterable[int] = ()) -
     """Potwierdzenie zapisu, wymieniające dni, które do grafiku NIE trafiły — i dlaczego.
 
     Pracownik potwierdził konkretny komplet dni, a zapisać można było mniej. Powody są DWA i mówią
-    zupełnie co innego, więc jeden wspólny komunikat („zapisałem część") byłby dla niego bezużyteczny:
+    zupełnie co innego, więc jeden wspólny komunikat („zapisałem część") byłby dla niego
+    bezużyteczny:
 
     - ``minione`` — dni, które zdążyły się skończyć, zanim padło „tak" (odsiewa je
       ``lifecycle.still_writable``). Grafiku wstecz nie uzupełniamy, bo menedżer czyta go jak stan

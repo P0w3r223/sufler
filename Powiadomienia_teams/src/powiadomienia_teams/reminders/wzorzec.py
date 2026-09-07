@@ -129,7 +129,7 @@ class TydzienHistorii:
 
 
 class Pewnosc(Enum):
-    """Jak bardzo człowiek ma się przyglądać propozycji. To funkcja bezpieczeństwa, nie kosmetyka."""
+    """Jak bardzo człowiek ma się przyglądać propozycji. Funkcja bezpieczeństwa, nie kosmetyka."""
 
     WYSOKA = "wysoka"
     SREDNIA = "srednia"
@@ -265,7 +265,8 @@ def _oceniona(
 
     if _przeczy_wzorcowi(najswiezszy, dni, alternacyjne):
         # Reguła świeżości. Osoba, która właśnie przeszła z rannej na popołudniową, dostawałaby
-        # przez trzy tygodnie WYSOKĄ pewność dla odpowiedzi nieaktualnej — a to gorsze niż dzisiejsze
+        # przez trzy tygodnie WYSOKĄ pewność dla odpowiedzi nieaktualnej — a to gorsze niż
+        # dzisiejsze
         # »jak w zeszłym tygodniu«, bo tamto patrzy przynajmniej na właściwy tydzień.
         return Propozycja(dni, Pewnosc.SREDNIA, Podstawa.BYWALO_ROZNIE, wsparcie)
 

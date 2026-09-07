@@ -8,7 +8,8 @@ a dla części z nich po prostu nieprawdziwy.
 Sposób PIĄTY (``zamknij_cicho_nierozstrzygniete``, ADR 0007) nie mówi pracownikowi NIC — i to jest
 ta sama zasada, nie wyjątek od niej. Wpis schodzi z obiegu, bo jego czatu nie dało się odczytać
 w serii obiegów, a od ostatniej aktywności minął sufit; o zachowaniu człowieka nie ustaliliśmy
-wtedy niczego, więc każde zdanie na jego temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą treścią, jaką mamy. Dowiaduje się
+wtedy niczego, więc każde zdanie na jego temat byłoby zgadywaniem. Milczenie jest jedyną prawdziwą
+treścią, jaką mamy. Dowiaduje się
 operator, nie pracownik.
 
 Wzorzec utrwalania jest jeden dla wszystkich ścieżek: status terminalny NAJPIERW, wysyłka POTEM.
@@ -182,9 +183,10 @@ def zamknij_samodzielnie_uzupelnione(
     *,
     okno_domkniec: OknoCiszy,
 ) -> None:
-    """Zamknij tematy osób, które SAME uzupełniły grafik: status SELF_FILLED utrwalony PRZED wysyłką.
+    """Zamknij tematy osób, które SAME uzupełniły grafik: SELF_FILLED utrwalony PRZED wysyłką.
 
-    Wzorzec „co najwyżej raz" jak w ``zamknij_bez_zapisu``: najpierw commit terminalnego statusu (jeden zapis dla
+    Wzorzec „co najwyżej raz" jak w ``zamknij_bez_zapisu``: najpierw commit terminalnego statusu
+    (jeden zapis dla
     wszystkich), potem podziękowania. Podziękowanie leci BEZWARUNKOWO (nie zależy od
     ``send_expiry_message``, inaczej niż wygaśnięcie) — reaguje na działanie pracownika, więc
     milczenie byłoby gorsze niż uprzejme domknięcie (jak przy ``STALE_WEEK_TEXT``).
@@ -217,7 +219,8 @@ def podziekuj_za_samodzielne_uzupelnienie(
     """Podziękuj za grafik, który uzupełnił się bez nas. Stan MUSI być już utrwalony.
 
     Do tego samego domknięcia dochodzi się DWIEMA drogami i każda utrwala stan inaczej: milczący
-    pracownik zamykany hurtem (``zamknij_samodzielnie_uzupelnione`` → jeden ``save_state`` dla wszystkich) oraz
+    pracownik zamykany hurtem (``zamknij_samodzielnie_uzupelnione`` → jeden ``save_state`` dla
+    wszystkich) oraz
     ten, który powiedział „tak" na komplet już obecny w grafiku (``_apply_confirmed_yes`` →
     ``_commit`` z porcją wiadomości). Różni je WYŁĄCZNIE sposób zapisu, więc wspólna jest dokładnie
     ta część: etykieta tygodnia, treść i izolacja nieudanej wysyłki.
@@ -255,7 +258,8 @@ def powiadom_o_nieudanym_zapisie(
 ) -> None:
     """Powiedz pracownikowi, że zapis padł — we własnym ``try``, spójnie z resztą wysyłek.
 
-    Bez tego opakowania awaria TEJ wysyłki leciała do ``_process_pending``, gdzie ``_record_failure``
+    Bez tego opakowania awaria TEJ wysyłki leciała do ``_process_pending``, gdzie
+    ``_record_failure``
     podbijał licznik prób na wpisie już terminalnym i logował mylące „nie udało się obsłużyć
     odpowiedzi" dla odpowiedzi, która została obsłużona.
     """

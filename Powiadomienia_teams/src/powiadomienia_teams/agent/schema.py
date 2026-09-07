@@ -184,7 +184,9 @@ def schemat_decyzji() -> dict[str, Any]:
             "shifts": {
                 "type": "array",
                 "items": _wpis_zmiany(),
-                "description": "Dni PRACUJĄCE tygodnia docelowego. Pusta lista przy decline/unclear.",
+                "description": (
+                    "Dni PRACUJĄCE tygodnia docelowego. Pusta lista przy decline/unclear."
+                ),
             },
             "time_off": {
                 "type": "array",

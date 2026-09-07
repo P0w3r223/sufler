@@ -58,7 +58,8 @@ def _poll_delay(settings: Settings, outcome: PollOutcome | None, now: datetime) 
     bramki w `run_forever` (ta w ciszy w ogóle nie wchodzi w obieg nasłuchu), ale **nie jest**:
     `poll_replies` zwraca w ciszy `PollOutcome(0, None)`, czyli DOKŁADNIE to samo, co przy braku
     otwartych spraw. Gdyby sufit ciszy przesunąć poniżej warunku `open_count == 0`, odłożony obieg
-    dostawałby odstęp „nic otwartego", czyli do godziny — i odpowiedź napisana tuż po ciszy czekałaby
+    dostawałby odstęp „nic otwartego", czyli do godziny — i odpowiedź napisana tuż po ciszy
+    czekałaby
     bez powodu. Kolejność warunków JEST tu więc regułą, nie stylem; osobnej reprezentacji odmowy po
     stronie nasłuchu świadomie nie wprowadzamy (dwa wołające miejsca, jeden konsument), ale niech to
     zdanie stoi tu zamiast słowa „redundantny".
@@ -104,7 +105,8 @@ def _run_once_with_retry(
     ile jest prób.
 
     ``GraphTruncatedReadError`` dołączył tu z powodu KOSZTU, nie poprawności: kolekcja zespołu
-    rośnie i nigdy nie maleje, więc odczyt ucięty na limicie stron będzie ucięty także za trzydzieści
+    rośnie i nigdy nie maleje, więc odczyt ucięty na limicie stron będzie ucięty także za
+    trzydzieści
     sekund. Każda próba to ``_MAX_PAGES`` pełnych żądań, a przebieg jest jeszcze ponawiany w oknie
     łaski — bez tej klasyfikacji trwałe przekroczenie sufitu zamieniało się w dziesiątki pełnych
     odczytów, czyli usługa zaczynała dławić Graph dokładnie wtedy, gdy już sobie z nim nie radzi.

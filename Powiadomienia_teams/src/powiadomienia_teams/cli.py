@@ -171,7 +171,8 @@ def _polecenie_jednorazowe(akcja: Callable[[], Any]) -> None:
         # nie wykonał, a zero znaczy w tym poleceniu „wykonane" (krok wdrożenia sprawdza właśnie
         # kod wyjścia). To ta sama zasada, dla której `run_once` przestało zwracać pustą listę.
         logger.warning(
-            "%s Uruchom ponownie po tej godzinie albo świadomie pomiń ciszę: --once --ignoruj-cisze",
+            "%s Uruchom ponownie po tej godzinie albo świadomie pomiń ciszę: "
+            "--once --ignoruj-cisze",
             odmowa,
         )
         raise SystemExit(1) from None
@@ -438,20 +439,25 @@ def ostrzezenia_startowe(settings: Settings) -> list[str]:
             f"i REPLY_DEADLINE_OFFSET_H."
         )
     # Godzina przebiegu wewnątrz okna ciszy jest konfiguracją LEGALNĄ (`validate()` sprawdza tylko
-    # zakres 0..23), a kosztuje najwięcej, co ta usługa może kosztować: przebieg jest wtedy CO TYDZIEŃ
-    # odkładany do końca ciszy. Bez tego zdania jedynym śladem jest linia w logu kontenera — a pozycja
+    # zakres 0..23), a kosztuje najwięcej, co ta usługa może kosztować: przebieg jest wtedy CO
+    # TYDZIEŃ
+    # odkładany do końca ciszy. Bez tego zdania jedynym śladem jest linia w logu kontenera — a
+    # pozycja
     # A12 zakłada, że logów nikt nie czyta.
     #
-    # Zdanie mówi o ZERZE, nie o „krótkim" oknie łaski, i to jest poprawka po przeglądzie: okno łaski
+    # Zdanie mówi o ZERZE, nie o „krótkim" oknie łaski, i to jest poprawka po przeglądzie: okno
+    # łaski
     # nie liczy godzin ciszy (`_catchup_due` odejmuje `cisza_pomiedzy`), więc między terminem
     # a końcem ciszy budżet nie jest zużywany wcale i wystarcza każda wartość dodatnia. Rada
     # „podnieś CATCHUP_GRACE_HOURS" naprawiałaby coś, co nie jest zepsute, i odwracała uwagę od
     # jedynej wartości, która faktycznie kosztuje tydzień.
     if settings.godzina_przebiegu_w_ciszy:
         zdania.append(
-            f"Przebieg tygodniowy wypada o {settings.run_hour:02d}:{settings.run_minute:02d}, czyli "
+            f"Przebieg tygodniowy wypada o {settings.run_hour:02d}:"
+            f"{settings.run_minute:02d}, czyli "
             f"w godzinach ciszy ({settings.cisza_od_h}:00–{settings.cisza_do_h}:00) — będzie co "
-            f"tydzień ODKŁADANY do jej końca. Przy CATCHUP_GRACE_HOURS=0 nadrabianie jest wyłączone, "
+            f"tydzień ODKŁADANY do jej końca. Przy CATCHUP_GRACE_HOURS=0 nadrabianie jest "
+            f"wyłączone, "
             f"więc nie wykona się w żadnym tygodniu. Przestaw RUN_HOUR albo CISZA_OD_H/CISZA_DO_H."
         )
     if len(settings.admin_user_ids) == 1:
@@ -524,7 +530,8 @@ def main() -> None:  # noqa: PLR0915
     args = parser.parse_args()
     if args.ignoruj_cisze and not args.once:
         # Milczące zignorowanie flagi jest tu najgorszym wariantem: operator nadrabiający po awarii
-        # zobaczyłby „nie wysłano nic" i nie miał z czego wywnioskować, że jego flaga nic nie znaczy.
+        # zobaczyłby „nie wysłano nic" i nie miał z czego wywnioskować, że jego flaga nic nie
+        # znaczy.
         parser.error(
             "--ignoruj-cisze działa wyłącznie z --once. `--poll-once` ciszy nie podlega z zasady "
             "(odpowiada ludziom, którzy właśnie napisali), a `--proba-nasluchu` nic nie wysyła."

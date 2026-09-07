@@ -384,9 +384,10 @@ class GraphClient:
         return data
 
     def get_me(self) -> str:
-        """Id zalogowanego użytkownika (tożsamość »głosu« bota). Pusty wynik jest błędem, nie danymi.
+        """Id zalogowanego użytkownika (»głos« bota). Pusty wynik jest błędem, nie danymi.
 
-        Puste id nie jest neutralne: filtr ``m.user_id != me_id`` w ``runtime.nudge.run_once`` przestaje
+        Puste id nie jest neutralne: filtr ``m.user_id != me_id`` w ``runtime.nudge.run_once``
+        przestaje
         wtedy odsiewać konto bota (bot pisze sam do siebie), a ``create_or_get_chat`` buduje
         ``users('')`` i dostaje 400 dla KAŻDEJ osoby. Wyjątki łapie izolacja per-osoba, więc
         przebieg kończyłby się „sukcesem" bez jednej wysłanej prośby i bez alertu.

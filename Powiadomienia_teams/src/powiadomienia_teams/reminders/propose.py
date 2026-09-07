@@ -15,7 +15,7 @@ def baza_interpretacji(
     resolved: list[dict[str, Any]],
     resolved_time_off: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Grafik, na który nanosi się KOLEJNA poprawka pracownika: ustalony, a gdy go nie ma — gotowiec.
+    """Grafik pod KOLEJNĄ poprawkę pracownika: ustalony, a gdy go nie ma — gotowiec.
 
     Semantyka w jednym zdaniu: to grafik, który zapiszemy, jeśli pracownik nie poprosi o zmianę.
     Na początku rozmowy jest nim gotowiec »jak w zeszłym tygodniu«, po pierwszej poprawce — to,

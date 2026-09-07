@@ -59,7 +59,8 @@ def run_once(  # noqa: PLR0915
     w tym tygodniu, więc człowiek nie dostałby prośby o grafik wcale. `ignoruj_cisze` obsługuje
     `--once --ignoruj-cisze`, czyli świadomą decyzję operatora (decyzja 4.1/3 planu).
 
-    **``now`` a ``teraz`` to DWIE różne chwile i mylenie ich kosztowało nocną wysyłkę.** ``now`` jest
+    **``now`` a ``teraz`` to DWIE różne chwile i mylenie ich kosztowało nocną wysyłkę.** ``now``
+    jest
     odniesieniem TYGODNIA i przy nadrabianiu równa się MINIONEMU terminowi (piątek 16:00), żeby
     restart po północy nie przesunął tygodnia o siedem dni. ``teraz`` jest chwilą FAKTYCZNĄ i tylko
     ona ma prawo rozstrzygać o godzinach ciszy oraz iść do szwu wysyłki — inaczej przebieg
@@ -74,7 +75,8 @@ def run_once(  # noqa: PLR0915
     zgłoszony przy uruchomieniu, a nie o trzeciej nad ranem u pracownika.
     """
     # `ignoruj_cisze` materializuje się jako ustawienia Z WYŁĄCZONĄ ciszą, a nie jako flaga wleczona
-    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal jest
+    # przez kolejne wywołania. Dwa powody: szew wysyłki zostaje regułą BEZ WYJĄTKU (a więc nadal
+    # jest
     # siatką na nowy punkt wysyłki), a cała ścieżka widzi jeden, spójny świat — bez tego `--once
     # --ignoruj-cisze` przechodził bramę pętli i padał dopiero na szwie, czyli operator dostawał
     # „nie udało się powiadomić" zamiast prośby wysłanej świadomie.
@@ -277,7 +279,8 @@ def run_once(  # noqa: PLR0915
             nudged_at=sent_iso,  # niezmienny czas nudge'a — baza dolnej granicy kurtuazji
             proposal=schedule_to_intervals(proposal, tz),
             # Dni już objęte urlopem w Graphie: przy zapisie NIE tworzymy dla nich drugiego
-            # timeOff, gdyby pracownik powtórzył je w odpowiedzi (`create_time_off` nie deduplikuje).
+            # timeOff, gdyby pracownik powtórzył je w odpowiedzi (`create_time_off` nie
+            # deduplikuje).
             known_time_off_weekdays=sorted(member_off),
         )
         # Zapis PO KAŻDEJ wysyłce: awaria w połowie nie gubi już-wysłanych pendingów (ich odpowiedzi

@@ -1,6 +1,7 @@
 """Godziny ciszy — kiedy usługa nie pisze do pracowników.
 
-Czysta arytmetyka kalendarza (wstrzykiwany ``teraz``), bez I/O i bez znajomości obiegu. Trzy pytania,
+Czysta arytmetyka kalendarza (wstrzykiwany ``teraz``), bez I/O i bez znajomości obiegu. Trzy
+pytania,
 na które odpowiada, i każde ma innego odbiorcę:
 
 * ``wolno_pisac`` — czy TERAZ wolno się odezwać (pętla nasłuchu, przebieg tygodniowy, szew wysyłki);
@@ -57,7 +58,7 @@ class CiszaWstrzymalaPrzebieg(RuntimeError):
 
 
 def wolno_pisac(teraz: datetime, okno: OknoCiszy) -> bool:
-    """Czy o tej godzinie wolno napisać do pracownika. Okno wyłączone (równe godziny) → zawsze wolno.
+    """Czy o tej godzinie wolno pisać do pracownika. Okno wyłączone (równe godziny) → wolno.
 
     Bez osobnej gałęzi na okno wyłączone: przy ``od_h == do_h`` pierwszy warunek nigdy nie jest
     spełniony, więc odpowiedź brzmi „wolno" sama z siebie. Sonda mutacyjna pokazała, że przy trzech
