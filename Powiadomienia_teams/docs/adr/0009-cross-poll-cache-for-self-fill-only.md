@@ -45,17 +45,38 @@ unchanged.
 
 Three properties carry the decision.
 
-### 1. Safety does not depend on the TTL
+### 1. Safety does not depend on the TTL — but it takes two rules, not one
 
-An entry whose reply deadline falls in the current cycle bypasses the cache (`odswiez`). That is
-the one case where stale data has an irreversible consequence: step 2 would immediately declare
-expiry and send *"I didn't get a reply"* to someone who filled the schedule in themselves, closing
-the topic terminally. For every other entry the worst outcome is a later thank-you — a direction
-step 1.5 already accepts, since an employee who fills the schedule *during* a run is only noticed
-in the next one.
+Step 1.5 can be wrong in **two** directions, and the first draft of this ADR only accounted for
+one of them. Both are irreversible, so both are handled.
 
-So the TTL is a cost knob, not a safety knob. Six hours could be six minutes or twelve hours
-without changing which mistakes are possible.
+**A stale NEGATIVE** — the cache says "not filled", the schedule says otherwise. Harmless on its
+own, except for an entry whose reply deadline falls in the current cycle: step 2 would immediately
+declare expiry and send *"I didn't get a reply"* to someone who filled the schedule in themselves,
+closing the topic terminally. Those entries therefore bypass the cache (`odswiez`), using exactly
+the predicate step 2 will use a moment later.
+
+**A stale POSITIVE** — the cache says "filled", and the shift is no longer there (a manager deleted
+a mistaken entry, a shift moved to another week). `zamknij_samodzielnie_uzupelnione` is terminal
+and unconditionally tells the employee *"I can see your schedule is already filled ✅"*, so a stale
+positive closes the topic **on a false statement** and leaves an empty week behind. Before this
+change that mistake had a window one run long; a cache would have stretched it to the TTL.
+
+So a cached result may be used to **not act**, never to act: whenever step 1.5 is about to close
+anything, the closure is confirmed against a fresh read of those weeks. That costs one fetch **per
+closure**, not per cycle — through most cycles nobody self-fills and nothing is fetched, so the
+saving stands.
+
+With both rules in place the TTL is a cost knob, not a safety knob: six hours could be six minutes
+or twelve hours without changing which mistakes are possible.
+
+**Honest note on the default configuration.** For `AWAITING_REPLY` entries the `odswiez` rule
+rarely gets to fire: the calendar deadline falls at 05:00 local, inside quiet hours, and
+`poll_replies` returns immediately during those — so the last cycle before the deadline and the
+first one after it are more than eleven hours apart and the cache has expired anyway. The rule is
+live for `AWAITING_CONFIRM` entries, where the courtesy floor moves the deadline to an arbitrary
+hour, and for non-default `REPLY_DEADLINE_OFFSET_H`. It is kept because correctness should not
+rest on an accident of the quiet-hours window.
 
 ### 2. Data flows one way: snapshot → memory
 
@@ -88,4 +109,7 @@ the state, not to save a request.
 
 **Where this can break next.** If a future change makes step 1.5 write anything to Shifts, this
 ADR's premise disappears and the memory has to go with it. The premise is *"the worst outcome is
-a later thank-you"*, and it is worth checking that sentence before extending that step.
+a message, never a schedule entry"* — and that sentence is now a gate, not a hope:
+`tests/test_zrodlo_swiezosci.py::test_krok_1_5_nie_pisze_do_shifts` fails if any function of
+step 1.5 calls `create_shift`, `create_time_off` or `_apply_schedule`. It was added after a review
+managed to insert exactly such a loop with the other three rules staying green.

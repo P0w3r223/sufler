@@ -259,6 +259,28 @@ def _apply_schedule(
             client.create_time_off(ctx.team_id, time_off)
 
 
+def _uzupelnili_sami(
+    kandydaci: list[st.PendingReminder],
+    tygodnie: dict[str, DaneTygodnia | None],
+    tz: ZoneInfo,
+) -> list[st.PendingReminder]:
+    """Kto z kandydatów ma już wypełniony tydzień docelowy — wedle PODANYCH danych.
+
+    Wydzielone, bo pytanie zadajemy DWA razy na tych samych osobach: raz na danych z pamięci
+    (żeby w typowym obiegu nie pobierać niczego) i drugi raz na świeżym odczycie, ale wyłącznie
+    dla tych, których pierwsze pytanie wskazało. Dwie kopie tego warunku rozjechałyby się przy
+    pierwszej zmianie definicji „wypełnionego tygodnia".
+    """
+    return [
+        p
+        for p in kandydaci
+        if (dane := tygodnie.get(p.week_start)) is not None
+        and member_filled_week(
+            p.member_id, dane.zmiany, dane.wolne_dni.get(znormalizuj(p.member_id), frozenset())
+        )
+    ]
+
+
 def _grafik_kroku_1_5(
     settings: Settings,
     snapshot: SnapshotGrafiku,
@@ -437,14 +459,24 @@ def poll_replies(
         # gdy w tym samym przebiegu ścieżka ZAPISU sięgnie po ten tydzień, ostrzeżenie odpali się
         # wtedy — `_zaalarmowane` odkłada alert od danych właśnie po to.
         tygodnie = _grafik_kroku_1_5(settings, snapshot, pamiec, kandydaci, now)
-        samodzielni = [
-            p
-            for p in kandydaci
-            if (dane := tygodnie.get(p.week_start)) is not None
-            and member_filled_week(
-                p.member_id, dane.zmiany, dane.wolne_dni.get(znormalizuj(p.member_id), frozenset())
+        samodzielni = _uzupelnili_sami(kandydaci, tygodnie, tz)
+        if samodzielni and pamiec is not None:
+            # Wynik z pamięci wolno użyć do NIEZAMYKANIA, nie do zamknięcia. Domknięcie jest
+            # terminalne i wysyła człowiekowi zdanie „Twój grafik jest już uzupełniony": wpis
+            # sprzed sześciu godzin, który mówi „ma zmianę", a w Shifts tej zmiany już nie ma
+            # (menedżer skasował omyłkowy wpis, zmiana przeniesiona na inny tydzień), zamyka temat
+            # NA PODSTAWIE NIEPRAWDY i zostawia pusty tydzień w grafiku.
+            #
+            # Świeży odczyt bierzemy więc dopiero tam, gdzie krok zamierza coś ZROBIĆ — czyli raz
+            # na domknięcie, nie raz na obieg. Oszczędność z ADR 0009 zostaje: przez większość
+            # obiegów `samodzielni` jest puste i żadnego pobrania nie ma.
+            samodzielni = _uzupelnili_sami(
+                samodzielni,
+                snapshot.dla_tygodni(
+                    {p.week_start for p in samodzielni}, alert_przy_porazce=False
+                ),
+                tz,
             )
-        ]
         if samodzielni:
             zamknij_samodzielnie_uzupelnione(
                 settings, client, state, samodzielni, tz, now, okno_domkniec=okno_pierwotne,

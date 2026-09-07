@@ -3822,37 +3822,125 @@ def test_bez_pamieci_kazdy_obieg_czyta_grafik(tmp_path: Path):
     assert client.odczytow > po_pierwszym
 
 
-def test_wpis_wygasajacy_w_tym_obiegu_omija_pamiec(tmp_path: Path):
-    """Wpis po terminie MUSI dostać świeży odczyt — inaczej ktoś, kto uzupełnił grafik sam,
-    usłyszy „nie dostałem odpowiedzi", a temat zostanie zamknięty TERMINALNIE.
+def test_wpis_wygasajacy_w_tym_obiegu_widzi_SWIEZY_grafik(tmp_path: Path):
+    """Wpis, któremu termin mija w TYM obiegu, ma zobaczyć grafik świeży — inaczej pracownik,
+    który uzupełnił go sam, usłyszy „nie doczekałem się potwierdzenia", a temat zostanie zamknięty
+    TERMINALNIE. To jest reguła, dzięki której bezpieczeństwo nie zależy od wartości TTL.
 
-    To jest reguła, dzięki której bezpieczeństwo nie zależy od wartości TTL.
+    **Asercja dotyczy STATUSU, nie licznika odczytów, i oba obiegi mieszczą się w TTL.** Pierwsza
+    wersja tego testu robiła odstęp 66 godzin przy TTL sześciu, więc pamięć i tak była nieświeża —
+    przechodził on także po usunięciu całej reguły `odswiez` (zweryfikowane mutacją). Licznik
+    odczytów mierzy OSZCZĘDNOŚĆ; jako asercja bezpieczeństwa jest ślepy.
+
+    Termin: kalendarzowy wypada w poniedziałek 05:00 lokalnie, ale kurtuazja (`REPLY_MIN_HOURS`)
+    liczona od ostatniej prośby bota przesuwa go na 11:00Z — czyli poza godziny ciszy, gdzie obieg
+    w ogóle się wykonuje.
     """
+    from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
+
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_confirm",
+                watermark="2026-07-19T11:00:00Z",
+                nudged_at="2026-07-17T14:00:00Z",
+                bot_last_message_at="2026-07-19T11:00:00Z",  # termin = +24 h = pon. 11:00Z
+            )
+        },
+    )
+    settings = _settings_self_fill(state_path)
+    client = _LiczacyOdczyty({"chat1": []})
+    pamiec = PamiecSamouzupelnien()
+
+    # Obieg A — przed terminem. Pamięć zapamiętuje „grafik pusty".
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 20, 9, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+    assert load_state(state_path)["u1"].status == "awaiting_confirm"
+
+    # Pracownik uzupełnia grafik SAM, między obiegami.
+    client._shifts = (
+        Shift(
+            "u1",
+            datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+            datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+        ),
+    )
+
+    # Obieg B — po terminie, wciąż w oknie TTL (3 h < 6 h).
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 20, 12, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == SELF_FILLED, (
+        f"status {po.status!r} — wpis po terminie dostał grafik z pamięci i został wygaszony "
+        f"mimo uzupełnienia"
+    )
+
+
+def test_nieswiezy_wynik_DODATNI_nie_zamyka_tematu(tmp_path: Path):
+    """Wynik z pamięci wolno użyć do NIEZAMYKANIA, nie do zamknięcia.
+
+    Domknięcie samouzupełnienia jest terminalne i wysyła człowiekowi „Twój grafik jest już
+    uzupełniony". Wpis w pamięci sprzed godzin, który mówi „ma zmianę", a w Shifts tej zmiany już
+    nie ma (menedżer skasował omyłkowy wpis, zmiana przeniesiona na inny tydzień), zamknąłby temat
+    NA PODSTAWIE NIEPRAWDY i zostawił pusty tydzień w grafiku. Przed tą zmianą okno tej pomyłki
+    miało długość jednego przebiegu; z pamięcią miałoby długość TTL.
+    """
+    from powiadomienia_teams.domain.models import DaneTygodnia
     from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
 
     state_path = tmp_path / "state.json"
     nudge = "2026-07-16T09:00:00Z"
     _pending_milczacy(state_path, nudge)
     settings = _settings_self_fill(state_path)
-    client = _LiczacyOdczyty({"chat1": []})
+    client = _LiczacyOdczyty({"chat1": []})  # RZECZYWISTOŚĆ: grafik pusty
+
+    # PAMIĘĆ: sprzed trzech godzin, ze zmianą, której już nie ma.
     pamiec = PamiecSamouzupelnien()
+    pamiec.przyjmij(
+        {
+            "2026-07-20": DaneTygodnia(
+                zmiany=(
+                    Shift(
+                        "u1",
+                        datetime(2026, 7, 20, 8, tzinfo=timezone.utc),
+                        datetime(2026, 7, 20, 16, tzinfo=timezone.utc),
+                    ),
+                ),
+                wolne_dni={},
+                wolne=(),
+                poniedzialek=datetime(2026, 7, 20, tzinfo=timezone.utc),
+            )
+        },
+        teraz=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+    )
 
-    # Pierwszy obieg: przed terminem (termin kalendarzowy to poniedziałek 2026-07-20 05:00).
     poll_replies(
         settings,
         client,
         _FakeLlm("{}"),
-        now=datetime(2026, 7, 17, 12, tzinfo=timezone.utc),
-        pamiec=pamiec,
-    )  # type: ignore[arg-type]
-    po_pierwszym = client.odczytow
-    # Drugi obieg: PO terminie, w oknie TTL. Pamięć jest świeża, a mimo to ma zostać ominięta.
-    poll_replies(
-        settings,
-        client,
-        _FakeLlm("{}"),
-        now=datetime(2026, 7, 20, 6, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 16, 12, tzinfo=timezone.utc),
         pamiec=pamiec,
     )  # type: ignore[arg-type]
 
-    assert client.odczytow > po_pierwszym, "wpis po terminie dostał grafik z pamieci"
+    po = load_state(state_path)["u1"]
+    assert po.status == "awaiting_reply", (
+        f"temat zamknięty na podstawie nieświeżej pamięci ({po.status})"
+    )
+    assert client.sent == [], "pracownik dostał nieprawdziwe »grafik jest już uzupełniony«"
