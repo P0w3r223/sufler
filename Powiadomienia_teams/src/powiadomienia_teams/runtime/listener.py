@@ -706,7 +706,9 @@ def _process_pending(
     odczytu czatu ma własną wartość i jest nadawany TUTAJ.
     """
     try:
-        wiadomosci_czatu = client.list_chat_messages(pending.chat_id)
+        wiadomosci_czatu = client.list_chat_messages(
+            pending.chat_id, od_watermarku=pending.watermark
+        )
     except NIE_POLYKAJ:
         # Utrata sesji i granica modelu dotyczą CAŁEJ usługi, nie tej jednej osoby — muszą lecieć
         # dalej, tak jak wszędzie indziej w tym pliku (patrz `wysylka.NIE_POLYKAJ`).

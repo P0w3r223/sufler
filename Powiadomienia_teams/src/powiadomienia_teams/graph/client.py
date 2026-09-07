@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from powiadomienia_teams.domain.czas import to_graph_iso
+from powiadomienia_teams.domain.czas import parse_graph_datetime, to_graph_iso
 from powiadomienia_teams.domain.models import Member, Shift, TimeOff
 from powiadomienia_teams.domain.powody import TeamReasons, normalize
 from powiadomienia_teams.graph.auth import AuthExpiredError
@@ -142,6 +142,27 @@ def _raise_for_status(response: httpx.Response) -> None:
 
 def _bez_limitu_czasu(_za_ile_s: float = 0.0) -> None:
     """Domyślny brak sufitu czasu przebiegu — klient bez wpiętego budżetu działa jak dotąd."""
+
+
+def _czas_wiadomosci(znacznik: str) -> datetime | None:
+    """``createdDateTime`` na datę, albo ``None`` — bo z Graph przychodzą też wiadomości bez niego."""
+    if not znacznik:
+        return None
+    try:
+        return parse_graph_datetime(znacznik)
+    except ValueError:
+        return None
+
+
+def _najstarsza_na_stronie(wiadomosci: list[dict[str, Any]]) -> datetime | None:
+    """Najstarszy CZYTELNY znacznik na stronie; ``None``, gdy nie ma ani jednego.
+
+    Liczone przez ``min``, a nie „ostatni element": kolejność malejąca po czasie jest tym, co Graph
+    zwykle robi, a nie tym, co obiecuje. Reguła, która na tym stoi, wstrzymywałaby ostrzeżenie
+    dokładnie wtedy, gdy kolejność by się zmieniła.
+    """
+    czasy = [c for w in wiadomosci if (c := _czas_wiadomosci(str(w.get("createdDateTime", ""))))]
+    return min(czasy) if czasy else None
 
 
 class GraphClient:
@@ -405,7 +426,7 @@ class GraphClient:
         return str(data.get("createdDateTime", ""))
 
     def list_chat_messages(
-        self, chat_id: str, *, top: int = _MAX_WIADOMOSCI_CZATU
+        self, chat_id: str, *, od_watermarku: str, top: int = _MAX_WIADOMOSCI_CZATU
     ) -> list[dict[str, Any]]:
         """Ostatnie wiadomości czatu (do wykrywania odpowiedzi pracownika).
 
@@ -416,18 +437,50 @@ class GraphClient:
         najnowszą. Odstęp odpytywania rośnie do godziny, więc przypadek jest realny dla kogoś,
         kto pisze serią krótkich dymków.
 
-        Dlatego pełna strona jest ZGŁASZANA, a nie przemilczana — cichy limit na ścieżce odczytu
+        Dlatego takie ucięcie jest ZGŁASZANE, a nie przemilczane — cichy limit na ścieżce odczytu
         odpowiedzi to ta sama klasa błędu, którą przy grafiku zamyka ``GraphTruncatedReadError``.
+
+        **Warunek pyta o LUKĘ WOBEC WATERMARKU, nie o długość strony.** Do 0.2.20 brzmiał
+        ``len(wiadomosci) >= top`` i był prawdziwy dla KAŻDEGO czatu, który ma w ogóle ``top``
+        wiadomości — czyli dla każdego czatu prowadzonego dłużej niż kilka tygodni. W produkcji
+        zapalał się co godzinę, nieprzerwanie, dla jednego czatu; ostrzeżenie, które pada zawsze,
+        uczy operatora nie czytać kanału, którym przyjdzie to prawdziwe (ten sam argument, dla
+        którego alerty w ``runtime`` są zbiorcze).
+
+        Ucięcie jest orzekane wtedy, gdy strona jest PEŁNA **i** jej najstarsza wiadomość jest
+        nowsza od watermarku — wtedy między watermarkiem a stroną została dziura. Gdy strona
+        sięga pod watermark, komplet nowych mamy i nie ma o czym mówić.
+
+        Przy niepewności ostrzegamy: nieparsowalny watermark albo strona bez czytelnych znaczników
+        czasu znaczą „nie wiem", a nie „jest dobrze". Kierunek jak przy wygaszaniu (ADR 0003) —
+        brak dowodu nie jest dowodem braku.
+
+        ``od_watermarku`` jest wymagany i wyłącznie NAZWANY, wzorem ``replies.incoming_after``:
+        wartość domyślna znaczyłaby, że przyszły wołający po cichu traci wykrywanie, a to ta sama
+        klasa cichej degradacji, którą ten warunek zamyka. Brak argumentu to głośny ``TypeError``.
         """
         data = self._get(f"{GRAPH}/chats/{chat_id}/messages", params={"$top": str(top)})
         wiadomosci = list(data.get("value", []))
         if len(wiadomosci) >= top:
-            logger.warning(
-                "Historia czatu %s zwróciła pełną stronę (%d) — starsze wiadomości mogły zostać "
-                "ucięte przez sufit odczytu",
-                chat_id, top,
-            )
+            self._zglos_luke_w_czacie(chat_id, wiadomosci, od_watermarku, top)
         return wiadomosci
+
+    def _zglos_luke_w_czacie(
+        self, chat_id: str, wiadomosci: list[dict[str, Any]], od_watermarku: str, top: int
+    ) -> None:
+        """Ostrzeż, jeśli między watermarkiem a pełną stroną mogła zostać dziura."""
+        granica = _czas_wiadomosci(od_watermarku)
+        najstarsza = _najstarsza_na_stronie(wiadomosci)
+        if granica is not None and najstarsza is not None and najstarsza <= granica:
+            return  # strona sięga pod watermark — komplet nowych wiadomości mamy
+        logger.warning(
+            "Historia czatu %s: pełna strona (%d), a najstarsza wiadomość na niej (%s) nie sięga "
+            "pod watermark (%s) — odpowiedzi z luki mogły przepaść",
+            chat_id,
+            top,
+            najstarsza.isoformat() if najstarsza else "brak czytelnego znacznika",
+            od_watermarku or "brak",
+        )
 
     def create_shift(self, team_id: str, shift: Shift) -> str:
         """Utwórz opublikowaną zmianę (``sharedShift``) dla pracownika — zwróć id zmiany.
