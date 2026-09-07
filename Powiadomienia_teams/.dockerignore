@@ -21,6 +21,9 @@ docs/
 PLAN.md
 scripts/pack.sh
 deploy/
+# ...poza jednym plikiem: szablon konfiguracji jest przedmiotem bramki w etapie `test`.
+# Sekretu tu nie ma — prawdziwy `env` mieszka na serwerze i wchodzi przez `--env-file`.
+!deploy/env.example
 
 # Artefakty wcześniejszego wariantu wdrożenia (tarball).
 *.tar.gz
