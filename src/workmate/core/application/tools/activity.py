@@ -309,4 +309,4 @@ def build_activity_catalog(  # noqa: C901, PLR0915
     )
     if _GITHUB_ZAPIS & set(akcje):
         opis += _ACTIVITY_TAIL
-    return [ToolSpec("Activity", opis, activity)]
+    return [ToolSpec("Activity", opis, activity, taints=True)]

@@ -57,7 +57,9 @@ def build_tool_catalog(
 
     catalog = [
         *build_notes_read_catalog(notes, projects),
-        ToolSpec("get_project_status", get_project_status.__doc__ or "", get_project_status),
+        ToolSpec(
+            "get_project_status", get_project_status.__doc__ or "", get_project_status, taints=False
+        ),
     ]
 
     if write_service is None:
@@ -98,5 +100,5 @@ def build_tool_catalog(
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
-    catalog.append(ToolSpec("save_note", save_note.__doc__ or "", save_note))
+    catalog.append(ToolSpec("save_note", save_note.__doc__ or "", save_note, taints=False))
     return catalog

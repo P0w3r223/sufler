@@ -82,9 +82,9 @@ def build_notes_read_catalog(notes: NotesService, projects: ProjectsService) -> 
         return _envelope(build)
 
     return [
-        ToolSpec("search_notes", search_notes.__doc__ or "", search_notes),
-        ToolSpec("get_note", get_note.__doc__ or "", get_note),
-        ToolSpec("list_projects", list_projects.__doc__ or "", list_projects),
+        ToolSpec("search_notes", search_notes.__doc__ or "", search_notes, taints=False),
+        ToolSpec("get_note", get_note.__doc__ or "", get_note, taints=False),
+        ToolSpec("list_projects", list_projects.__doc__ or "", list_projects, taints=False),
     ]
 
 

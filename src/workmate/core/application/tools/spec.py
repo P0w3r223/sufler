@@ -13,7 +13,7 @@ importować z drugiej."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -28,11 +28,23 @@ _DateField = date
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """Transport-neutralna definicja narzędzia: nazwa, opis i funkcja nad serwisami."""
+    """Transport-neutralna definicja narzędzia: nazwa, opis, funkcja i pochodzenie WYNIKU.
+
+    ``taints`` odpowiada na jedno pytanie (ADR 0066 R2): czy WYNIK tego narzędzia niesie treść
+    spoza bramek zdolności. Mieszka tutaj, a nie w liście napisów u konsumenta, bo to własność
+    NARZĘDZIA — jedzie z nim przy zmianie nazwy, przy przeniesieniu do innego buildera i przy
+    dołożeniu drugich drzwi (ADR 0073). Lista napisów w adapterze przeżywała rename zielona,
+    a jedynym objawem była skaza, która nigdy się nie zapala.
+
+    Domyślne ``False`` jest wygodą dla atrap w testach, nie odpowiedzią. W pakiecie
+    ``core/application/tools/`` cisza jest zabroniona: strażnik AST wymaga WYPISANEGO
+    ``taints=`` przy każdym ``ToolSpec(...)`` i wskazuje plik z linią, gdy go brak.
+    """
 
     name: str
     description: str
     fn: Callable[..., dict[str, Any]]
+    taints: bool = field(default=False, kw_only=True)
 
 
 # Ślad po filtrze idzie do WYNIKU (pole ``note`` w kopercie, ADR 0068 §5), nie do opisu — i

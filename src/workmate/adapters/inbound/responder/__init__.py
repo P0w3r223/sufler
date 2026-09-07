@@ -21,10 +21,7 @@ działa jak przed rozbiciem.
 
 from __future__ import annotations
 
-from workmate.adapters.inbound.responder.conversational import (
-    _TAINTING_TOOLS,
-    ConversationalResponder,
-)
+from workmate.adapters.inbound.responder.conversational import ConversationalResponder
 from workmate.adapters.inbound.responder.protocols import (
     InboundMessage,
     OutboxDeliverer,
@@ -42,9 +39,10 @@ from workmate.adapters.inbound.responder.transcript import (
     _with_notices,
 )
 
-# Nazwy prywatne w re-eksporcie to nie przeoczenie: ``_TAINTING_TOOLS`` bierze stąd bramka
-# skażenia rozmowy, a ``_to_transcript*`` i ``_with_notices`` — testy składania transkryptu.
-# Rozbicie miało nie ruszyć ani jednego importu, więc nie rusza też tych.
+# Nazwy prywatne w re-eksporcie to nie przeoczenie: ``_to_transcript*`` i ``_with_notices``
+# biorą stąd testy składania transkryptu. Rozbicie miało nie ruszyć ani jednego importu, więc
+# nie rusza też tych. ``_TAINTING_TOOLS`` stąd ZNIKŁO razem z samą listą napisów (ADR 0073):
+# zbiór wyzwalaczy wyprowadza się dziś z ``ToolSpec.taints``, więc nie ma czego re-eksportować.
 __all__ = [
     "ConversationalResponder",
     "EchoResponder",
@@ -54,7 +52,6 @@ __all__ = [
     "RuntimeResponder",
     "SafeResponder",
     "SaveNoteResponder",
-    "_TAINTING_TOOLS",
     "_to_transcript",
     "_to_transcript_with_summary",
     "_with_notices",

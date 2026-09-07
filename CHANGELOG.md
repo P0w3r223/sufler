@@ -8,6 +8,25 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Zbiór wyzwalaczy skazy przestaje być listą napisów w adapterze — odpowiedź jedzie z narzędziem**
+  ([ADR 0073](docs/adr/0073-guards-iterate-over-the-protected-surface.md)). `ToolSpec` dostaje
+  `taints`: czy WYNIK tego narzędzia niesie treść spoza bramek zdolności (pytanie ADR 0066 R2).
+  `_TAINTING_TOOLS` — pięć napisów w `conversational.py` — **usunięte**; drzwi wyprowadzają zbiór
+  na turę z katalogu bazowego runtime'u w unii z narzędziami dokładanymi per turę.
+  *Powód jest klasą wady, nie jednym miejscem:* przegląd 2026-09-07 znalazł ten sam kształt
+  niezależnie w pięciu miejscach i nazwał go zdaniem, które projekt zapisał trzy dni wcześniej —
+  **bramka iterująca po ZABEZPIECZENIACH zamraża listę znanych przypadków, bramka iterująca po
+  RZECZACH CHRONIONYCH rozszerza się sama**. Poprzednia bramka pytała, czy każdy z pięciu napisów
+  pochodzi z któregoś z CZTERECH builderów wypisanych z palca; builderów jest piętnaście.
+  Nowy strażnik (`tests/core/test_tool_taint_metadata.py`) czyta AST i idzie po KAŻDYM
+  `ToolSpec(...)` w pakiecie narzędzi: bez wypisanego `taints=` bramka pada i wskazuje plik
+  z linią. Domyślne `False` w dataklasie zostaje wygodą dla atrap w testach — w pakiecie narzędzi
+  cisza jest zabroniona, bo domysł wygląda tam jak decyzja.
+  `AgentRuntime` wystawia `catalog` (krotka, do odczytu) — bez tego okna konsument metadanej
+  musiałby ją POWTÓRZYĆ listą napisów, czyli zrobić dokładnie to, co ta zmiana zdejmuje.
+  Kontrola mutacyjna szła **drogą przyszłej zmiany**, nie drogą pomiaru: nowe narzędzie bez
+  odpowiedzi, przestawiona flaga i rename narzędzia — każde zapala inną asercję.
+
 - **Załącznik z wiadomości Teams musi leżeć w plikach TEGO kanału — drzwi przestają rozwiązywać
   dowolny `contentUrl` tokenem bota** ([ADR 0072](docs/adr/0072-channel-scoped-attachment-resolution.md),
   amenduje [ADR 0016](docs/adr/0016-user-multimodal-attachments.md)). Adres pliku przychodził
