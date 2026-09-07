@@ -60,9 +60,9 @@ class GraphClientTylkoOdczyt(GraphClient):
         # prywatności, nie ustawienie wygody. Wiadomość bota niesie m.in. nazwę powodu
         # nieobecności z tenanta („Zwolnienie lekarskie"), czyli kategorię szczególną; wpisana
         # bezwarunkowo lądowała w logu kontenera, a przy `docker compose run` także w logach
-        # demona. `docs/dane-osobowe.md` §3 opisuje regułę „pełna treść tylko przy
-        # LOGUJ_NAZWISKA=true" — krok próby jest obowiązkowy przed `DRY_RUN=false`, więc dopóki
-        # ta ścieżka jej nie przestrzegała, dokument mówił nieprawdę o systemie.
+        # demona. Reguła brzmi „pełna treść tylko przy LOGUJ_NAZWISKA=true" (**A10**), a krok
+        # próby jest obowiązkowy przed `DRY_RUN=false` — więc dopóki ta ścieżka jej nie
+        # przestrzegała, obowiązująca polityka prywatności mówiła nieprawdę o systemie.
         self._loguj_tresc = loguj_tresc
 
     def _zablokuj(self, czynnosc: str, szczegol: str) -> None:

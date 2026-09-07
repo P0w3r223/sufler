@@ -288,8 +288,9 @@ _SYSTEM_KONIEC = (
 )
 
 #: Prompt dla tury, w której model DOSTAJE narzędzia. Nazwa zostaje `_SYSTEM`, bo pod nią
-#: odsyłają dokumenty (`docs/architektura.md`, `plan-rozwoju.md` §10.3) i pilnuje jej
-#: `tools/sprawdz_odsylacze.py`.
+#: odsyła `docs/plan-rozwoju.md` §10.3, a martwych odsyłaczy pilnuje `tests/test_odsylacze.py`.
+#: (Do 2026-09-07 stało tu odesłanie do `docs/architektura.md` i do strażnika
+#: `tools/sprawdz_odsylacze.py` — obu nigdy nie było w repozytorium.)
 _SYSTEM = _SYSTEM_POCZATEK + _SEKCJA_NARZEDZI + _SYSTEM_KONIEC
 
 #: Ten sam prompt dla tury BEZ narzędzi — różni się wyłącznie jedną wymienioną sekcją.

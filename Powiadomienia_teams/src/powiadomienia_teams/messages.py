@@ -348,9 +348,9 @@ MAX_TYGODNI_W_PODSUMOWANIU = 8
 class LiczbyTygodnia:
     """Stan spraw JEDNEGO tygodnia docelowego — wejście do podsumowania.
 
-    Struktura, nie mapa statusów, bo `messages` celowo nie zna słownictwa `state` (patrz
-    `architektura.md` §2.2, kolumna „czego NIE robi"). Nazwy pól są nazwami POZYCJI RAPORTU,
-    a przełożenie statusów na nie należy do `runtime.service`.
+    Struktura, nie mapa statusów, bo `messages` celowo nie zna słownictwa `state`. Nazwy pól są
+    nazwami POZYCJI RAPORTU, a przełożenie statusów na nie należy do `runtime.service` — zgodności
+    jednego z drugim pilnuje `tests/test_kontrakty.py`.
     """
 
     week_start: str
