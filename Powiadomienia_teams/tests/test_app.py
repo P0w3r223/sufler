@@ -26,6 +26,7 @@ from powiadomienia_teams.reminders.timeoff import TeamReasons
 # Moduł, NIE pojedyncze nazwy: `service` importuje `odswiez_puls` przez `from ... import`, więc
 # podmiana w `healthcheck` nie ma jak zadziałać — trzeba podmienić nazwę tam, gdzie jest związana.
 from powiadomienia_teams.runtime import service as _serwis
+from powiadomienia_teams.runtime.budzet import PrzebiegPrzekroczylCzasError
 from powiadomienia_teams.runtime.cisza import CiszaWstrzymalaPrzebieg
 from powiadomienia_teams.runtime.listener import _MAX_PENDING_FAILURES
 from powiadomienia_teams.runtime.operator import zglos_utrate_sesji
@@ -2787,18 +2788,6 @@ def test_utrata_sesji_przy_zapisie_grafiku_zatrzymuje_usluge(tmp_path: Path):
 # --- Regresja: nieudana prośba o potwierdzenie ------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LUKA 0.2.19 (nie testu): `_commit` przesuwa watermark BEZWARUNKOWO (listener.py:527), "
-        "także wtedy, gdy prośba o potwierdzenie nie została doręczona. Status wraca do "
-        "AWAITING_REPLY, ale wiadomość pracownika jest już oznaczona jako obsłużona, więc "
-        "kolejny cykl jej nie zobaczy: pracownik czeka na pytanie, które nigdy nie padło, "
-        "a po terminie dostaje nieprawdziwe 'nie dostałem odpowiedzi'. Własny docstring "
-        "`_commit` (listener.py:485) deklaruje coś przeciwnego: 'nieudane przetworzenie "
-        "zostawia watermark nietknięty'. To niespójność, nie decyzja."
-    ),
-)
 def test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm(tmp_path: Path):
     """Bez cofnięcia commitu pracownik dostawał po 48 h zarzut o milczenie, którego nie było.
 
@@ -2838,6 +2827,178 @@ def test_nieudana_prosba_o_potwierdzenie_nie_zostawia_wpisu_w_awaiting_confirm(t
     assert po.watermark == nudge  # ta sama odpowiedź wróci w kolejnym cyklu
     assert po.employee_memory == []  # pamięć rozmowy też cofnięta — bez duplikatu przy ponowieniu
     assert po.fail_count == 1  # próba policzona, więc pętla ma sufit
+
+
+def test_nieudana_prosba_o_powod_wolnego_nie_zjada_wiadomosci(tmp_path: Path):
+    """Miejsce 2 z trzech. Ta sama usterka co przy prośbie o potwierdzenie, inny kształt.
+
+    Tu nie ma nawet `finally` cofającego status — wysyłka stoi naga. Pracownik zgłasza urlop,
+    zespół nie ma takiego powodu w Shifts, więc bot chce poprosić o doprecyzowanie; wysyłka pada,
+    a jego wiadomość zostaje oznaczona jako obsłużona. Kolejny cykl jej nie zobaczy.
+    """
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "w poniedziałek urlop")]})
+    # Pusty grafik i pusty czas wolny → gałąź „brak powodu wolnego".
+    llm = _FakeLlm('{"action":"modify","shifts":[],"time_off":[]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == nudge  # ta sama wiadomość wróci w kolejnym cyklu
+    assert po.employee_memory == []  # pamięć też cofnięta — bez duplikatu przy ponowieniu
+
+
+def test_nieudana_prosba_o_doprecyzowanie_nie_zjada_wiadomosci(tmp_path: Path):
+    """Miejsce 3 z trzech — i najbardziej dotkliwe, bo dotyczy wiadomości NIEZROZUMIANEJ.
+
+    Watermark przesuwa się za tekst, którego bot nie pojął, a pytanie o doprecyzowanie do
+    pracownika nie dociera. Po terminie usłyszy „nie dostałem odpowiedzi" — chociaż odpisał,
+    a to my nie umieliśmy ani zrozumieć, ani zapytać.
+    """
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-19T17:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("Graph 503")
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "no wiesz, jakoś tak")]})
+    llm = _FakeLlm('{"action":"unclear","shifts":[]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == nudge  # niezrozumiana wiadomość wraca do interpretacji
+    assert po.employee_memory == []
+
+
+def _pending_do_potwierdzenia(state_path: Path, nudge: str = "2026-07-19T17:00:00Z") -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_REPLY,
+                watermark=nudge,
+                nudged_at=nudge,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "blad",
+    [AuthExpiredError("AADSTS50173"), PrzebiegPrzekroczylCzasError("limit obiegu")],
+    ids=["utrata_sesji", "limit_czasu_przebiegu"],
+)
+def test_wycofanie_commitu_TRAFIA_NA_DYSK_takze_gdy_wyjatek_omija_licznik(
+    tmp_path: Path, blad: Exception
+):
+    """Wycofanie w pamięci nie wystarcza — te dwa wyjątki omijają `_record_failure`.
+
+    Pierwsza wersja fali 4 cofała commit wyłącznie w pamięci, licząc na to, że utrwali go
+    `_record_failure`. Dla utraty sesji i limitu czasu przebiegu to nieprawda: oba są przepuszczane
+    WCZEŚNIEJ, a oba są osiągalne wprost z wysyłki (`_sprawdz_czas` i `refresh_auth` stoją w każdym
+    żądaniu Graph). `_commit` zdążył już zapisać, więc na dysku zostawał `awaiting_yes=True`
+    i przesunięty watermark.
+
+    Skutek był GORSZY niż naprawiana usterka i mierzalny: po restarcie samo „ok" pracownika wpadało
+    w szybką ścieżkę i zapisywało do Shifts komplet, którego nigdy nie widział — czyli regres
+    niezmiennika N38, i to na wpisie, o którym nikt go nie zapytał.
+    """
+    state_path = tmp_path / "state.json"
+    _pending_do_potwierdzenia(state_path)
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise blad
+
+    client = _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    with pytest.raises(type(blad)):
+        poll_replies(_settings_calodobowe(state_path), client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.watermark == "2026-07-19T17:00:00Z"  # NA DYSKU, nie tylko w pamięci
+    assert po.awaiting_yes is False  # bramka N38 zamknięta — inaczej samo „ok" zapisze do Shifts
+    assert po.status == AWAITING_REPLY
+    assert po.resolved == []
+
+
+@pytest.mark.parametrize(
+    "blad",
+    [AuthExpiredError("AADSTS50173"), PrzebiegPrzekroczylCzasError("limit obiegu")],
+    ids=["utrata_sesji", "limit_czasu_przebiegu"],
+)
+def test_po_wycofaniu_samo_ok_NIE_zapisuje_do_grafiku(tmp_path: Path, blad: Exception):
+    """Kontrola skutkowa do testu wyżej: sprawdza SZKODĘ, nie pole w pliku.
+
+    Test wyżej pilnuje `awaiting_yes`. Ten pilnuje tego, po co ta flaga istnieje — żeby po awarii
+    wysyłki i restarcie usługi kolejne „ok" pracownika nie stało się nieodwracalnym zapisem do
+    grafiku klienta. Pole da się kiedyś przemianować; szkoda zostaje ta sama.
+    """
+    state_path = tmp_path / "state.json"
+    _pending_do_potwierdzenia(state_path)
+
+    class _WysylkaPada(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise blad
+
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+    with pytest.raises(type(blad)):
+        poll_replies(
+            _settings_calodobowe(state_path),
+            _WysylkaPada({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]}),
+            llm,
+            now=_NIEDZIELA_19,
+        )  # type: ignore[arg-type]
+
+    # Awaria minęła, pracownik pisze samo „ok" — po prośbie, której NIGDY nie dostał.
+    zdrowy = _FakeClient({"chat1": [_msg("u1", "2026-07-19T19:30:00Z", "ok")]})
+    poll_replies(_settings_calodobowe(state_path), zdrowy, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert zdrowy.created == []  # ANI JEDNEJ zmiany w grafiku klienta
+    assert load_state(state_path)["u1"].status != APPLIED
 
 
 def test_powtarzajaca_sie_awaria_prosby_konczy_sie_prosba_o_doprecyzowanie(tmp_path: Path):
