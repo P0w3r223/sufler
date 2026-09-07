@@ -104,3 +104,17 @@ class ExecManagerError(WorkMateError):
     ``CommandResult`` z niezerowym kodem (jak każdą inną niedostępność wykonawcy, ADR 0057), więc
     tura agenta się nie wywraca — model poprawia się w następnej.
     """
+
+
+class AttachmentOutsideChannel(WorkMateError):
+    """Załącznik wskazany w wiadomości nie leży na dysku plików tego kanału (ADR 0072).
+
+    Drzwi Teams rozwiązują ``contentUrl`` TOKENEM BOTA, którego uprawnienia (``Files.Read.All``,
+    ``Sites.Read.All`` — ADR 0016) są szersze niż uprawnienia nadawcy. Bez tej granicy wiadomość
+    mówiłaby, KTÓRY plik otworzyć, a nic nie mówiłoby, czy pytającemu WOLNO go otworzyć — klasyczny
+    zdezorientowany zastępca. Podnoszony PRZED pobraniem bajtów.
+
+    To błąd *oczekiwany* (autoryzacja), nie defekt: materializer degraduje go do notki mówiącej, co
+    zrobić dalej, i loguje jako przekroczenie granicy — osobno od nieudanego pobrania, bo to jedyny
+    sygnał, po którym poznamy, że wariant B z ADR 0072 wart jest powrotu.
+    """

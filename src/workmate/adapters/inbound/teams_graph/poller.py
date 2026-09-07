@@ -145,7 +145,12 @@ class GraphChannelClient(Protocol):
         self, team_id: str, channel_id: str, root_id: str, message_id: str, hosted_id: str
     ) -> bytes: ...
 
-    async def download_shared_url(self, url: str) -> bytes: ...
+    async def download_channel_file(self, team_id: str, channel_id: str, url: str) -> bytes:
+        """Bajty załącznika z dysku plików TEGO kanału; poza nim — ``AttachmentOutsideChannel``.
+
+        Kanał jest argumentem, a nie domyślnym kontekstem, bo to on jest granicą (ADR 0072).
+        """
+        ...
 
     async def download_public_url(self, url: str) -> bytes: ...
 

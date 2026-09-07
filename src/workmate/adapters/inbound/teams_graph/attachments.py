@@ -29,6 +29,7 @@ from workmate.adapters.inbound.document_text import (
 # ``AttachmentRef`` jest tu potrzebny W CZASIE WYKONANIA (``FileBytesMaterializer`` składa
 # referencję syntetyczną), więc import jest zwykły, nie pod ``TYPE_CHECKING``.
 from workmate.adapters.inbound.teams_graph.selection import AttachmentRef
+from workmate.core.errors import AttachmentOutsideChannel
 from workmate.core.ports.llm import Attachment
 
 if TYPE_CHECKING:
@@ -161,7 +162,22 @@ class AttachmentMaterializer:
             elif ref.kind == "url":
                 data = await self._client.download_public_url(ref.url)
             else:
-                data = await self._client.download_shared_url(ref.url)
+                data = await self._client.download_channel_file(team_id, channel_id, ref.url)
+        except AttachmentOutsideChannel:
+            # NIE jest to nieudane pobranie: granica została przekroczona, a bajty nigdy nie
+            # poszły (ADR 0072 §2). Osobny log, bo to jedyny sygnał, po którym poznamy, czy
+            # ludzie realnie załączają pliki spoza kanału — i czy wariant B wart jest powrotu.
+            logger.warning(
+                "Załącznik %s spoza dysku plików kanału — odmowa otwarcia (ADR 0072).", ref.name
+            )
+            return (
+                _note(
+                    f"Załącznika „{ref.name}” nie otwieram: nie leży w plikach tego kanału. "
+                    "Wgraj go do kanału i wyślij ponownie."
+                ),
+                0,
+                0,
+            )
         except Exception as exc:
             logger.warning("Nie pobrano załącznika %s (status %s).", ref.name, _http_status(exc))
             if ref.kind == "hosted":
