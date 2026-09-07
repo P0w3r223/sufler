@@ -51,7 +51,12 @@ jobs:
             lint_paths: "src tests eval deploy scripts"
           - name: powiadomienia-teams
             dir: "Powiadomienia_teams"
-            sync_args: ""
+            # TA SAMA lista extras co etap `test` w `Powiadomienia_teams/Dockerfile` — jedno
+            # źródło prawdy o tym, czego wymaga pełny przebieg testów, tak jak we wpisie
+            # `workmate` wyżej. Do 2026-09-07 stało tu `""`, więc ten sam zestaw testów biegał
+            # w CI i w obrazie w DWÓCH różnych środowiskach; zgodności pilnuje teraz
+            # `tests/test_srodowiska_bramki.py`.
+            sync_args: "--extra agent"
             lint_paths: "."
           - name: claude-summary
             dir: "claude_summary"
@@ -100,6 +105,21 @@ jobs:
       - name: Testy
         if: ${{ !cancelled() }}
         run: uv run pytest
+
+  # Obraz pod-projektu budowany W BRAMCE, nie tylko na serwerze. Bez tego jobu `Dockerfile`
+  # pod-projektu nie był budowany przez CI ANI RAZU — i przez to od czasu, gdy zestaw `tests/`
+  # napisano na nowo po odzyskaniu źródeł 0.2.19, `docker build` kończył się `FileNotFoundError`,
+  # a dokumentacja twierdziła, że „bramka jakości biegnie w trakcie budowania obrazu". Ścieżka
+  # wdrożenia stała na zdaniu, którego nikt nie sprawdzał (naprawa: PR #109).
+  docker-build-powiadomienia:
+    name: Budowa obrazu powiadomień
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zbuduj obraz (etap `test` w Dockerfile jest bramką ścieżki wdrożeniowej)
+        run: docker build -f Powiadomienia_teams/Dockerfile Powiadomienia_teams
 
   docker-build:
     name: Budowa obrazu floty
