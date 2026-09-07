@@ -90,7 +90,7 @@ bez cytatu jest dozwolony — plan ma prawo zawierać rzeczy niezrobione.
 
 | # | Treść | Status |
 |---|---|---|
-| **D1** | Wnioskowanie wzorca pracy z historii czterech tygodni, z poziomem pewności. Dwie reguły nadrzędne: **twarda reguła alfabetu** (proponować wolno wyłącznie grafiki zaobserwowane w historii — żadnego uśredniania) i **dopasowanie dokładne** (6:00–14:00 i 6:15–14:00 to dwa różne grafiki; tolerancja byłaby cichym wymyślaniem godzin). Priorytet: lepiej częściej pytać, niż częściej zgadywać. | **`napisane, niepodłączone`** — `reminders/wzorzec.py`, zero importów w `src/`, zero testów. Rozstrzygnięcie ma zapaść na LICZBACH: `scripts/zbierz_historie.py` liczy, ile osób dostałoby INNĄ propozycję i z jaką pewnością. Kryterium: ≥2 osoby z pewnością WYSOKA → podłączyć; 0–1 → skasować albo zaparkować, wpisując tu wynik pomiaru z datą |
+| **D1** | Wnioskowanie wzorca pracy z historii czterech tygodni, z poziomem pewności. Dwie reguły nadrzędne: **twarda reguła alfabetu** (proponować wolno wyłącznie grafiki zaobserwowane w historii — żadnego uśredniania) i **dopasowanie dokładne** (6:00–14:00 i 6:15–14:00 to dwa różne grafiki; tolerancja byłaby cichym wymyślaniem godzin). Priorytet: lepiej częściej pytać, niż częściej zgadywać. | **`napisane, niepodłączone`** — `reminders/wzorzec.py`, zero importów w `src/`, zero testów. **POMIAR WYKONANY 2026-09-07** (`scripts/zbierz_historie.py`, 8 tygodni, 267 zmian, 34 wpisy czasu wolnego, 8 osób bez konta bota): **ZERO osób z pewnością WYSOKA i inną propozycją.** Sześć osób → `niska`/`ostatni_tydzien`, czyli wzorzec sam schodzi do dzisiejszego zachowania. Dwie → `srednia`/`bywalo_roznie` z inną propozycją. Kryterium (≥2 z WYSOKĄ) **niespełnione**, więc podłączenie nie kupuje nic, a zmienia treść prośby dla dwóch osób z ośmiu |
 | **D2** | Poprzedni czytnik grafiku dla narzędzi modelu miał `except Exception` przy każdym wywołaniu Graph; zastąpiony kontraktem `ZrodloTygodnia` z siatką o tej samej szerokości. | `zrealizowane` |
 | **D5** | **Wznowienie rozmowy po statusie terminalnym.** Dziś temat domknięty jest zamknięty na zawsze, a `poll_replies` przetwarza wyłącznie wpisy otwarte. D5 ten filtr zdejmuje i dokłada ścieżki piszące do milczących (przypomnienia, wznowienia). Kilka miejsc w kodzie jest już napisanych tak, żeby przetrwały to zdjęcie — łącznie z kasowaniem `awaiting_yes` tam, gdzie dziś niczego to nie zmienia. | **`otwarte`** |
 
@@ -113,6 +113,34 @@ bez cytatu jest dozwolony — plan ma prawo zawierać rzeczy niezrobione.
 | **§10.3** | Prompt systemowy interpretera — dokumenty odsyłają do niego pod nazwą `_SYSTEM`. | `agent/interpreter.py` |
 | **§10.4** | Miary jakości interpretacji (E4). | `agent/interpreter.py`, `agent/schema.py` |
 | **§11** | Kontrakt zgodności wprzód i wstecz (N34): nieznany status przeżywa cofnięcie obrazu. | `runtime/service.py` |
+
+## Wynik pomiaru D1 (2026-09-07)
+
+Pełna tabela, dla kogoś, kto będzie chciał ten pomiar powtórzyć albo zakwestionować:
+
+| osoba | pewność | podstawa | inna niż „zeszły tydzień" | tygodni z danymi |
+|---|---|---|---|---|
+| os1 | niska | ostatni_tydzien | nie | 8/8 |
+| os2 | niska | ostatni_tydzien | nie | 8/8 |
+| os3 | **srednia** | bywalo_roznie | **TAK** | 8/8 |
+| os4 | niska | ostatni_tydzien | nie | 8/8 |
+| os6 | niska | ostatni_tydzien | nie | 8/8 |
+| os7 | niska | ostatni_tydzien | nie | 8/8 |
+| os8 | **srednia** | bywalo_roznie | **TAK** | 8/8 |
+| os9 | niska | ostatni_tydzien | nie | 7/8 |
+
+Dane są dobre — osiem tygodni historii dla siedmiu osób i siedem dla ósmej, więc wynik nie bierze
+się z braku materiału. Bierze się z tego, że **w tym zespole nikt nie chodzi w rytmie przemiennym**,
+czyli dokładnie w tym, dla którego D1 powstało. Sześć osób ma rytm stabilny na tyle, że wzorzec sam
+schodzi do „jak w zeszłym tygodniu"; dwie mają rozrzut, przy którym moduł hedguje („bywało różnie")
+zamiast twierdzić — zgodnie z własną zasadą „lepiej częściej pytać, niż częściej zgadywać".
+
+**Czego pomiar NIE rozstrzyga.** Nie mówi, czy propozycja tych dwóch osób byłaby lepsza od
+dzisiejszej — mówi tylko, że byłaby inna i opatrzona słabszym zdaniem. Kryterium celowo pytało
+o pewność WYSOKĄ, bo tylko przy niej podłączenie ma dawać wartość, a nie samą zmianę.
+
+Pomiar powtarza się jednym poleceniem, więc przy zmianie składu zespołu warto go ponowić —
+dopiero praca zmianowa czyni tę pozycję opłacalną.
 
 ## Pozycje otwarte, nieprzypisane do litery
 
