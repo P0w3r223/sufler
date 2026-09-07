@@ -50,8 +50,8 @@ bez cytatu jest dozwolony — plan ma prawo zawierać rzeczy niezrobione.
 | **N22** | Daty i dni liczy KOD, nie model. Ta sama rodzina zadań co wnioskowanie wzorca (D1). | `zrealizowane` |
 | **N23** | Z granicy narzędzi modelu nie ma prawa wyjść nic poza kontraktem — każdy wyjątek zamieniany jest na `OdczytNiedostepny`. Zawężenie siatki do dwóch typów postawiłoby N23 na braku wyjątku zamiast na kontrakcie. | `zrealizowane` |
 | **N28** | Dane osobowe (nazwisko, treść rozmowy, powód wolnego) poza `repr`, poza logami i poza alertami — tak samo jak klucz API. | `zrealizowane` |
-| **N32** | Tydzień urlopowy nie przeczy wzorcowi pracy. Rozszerzone przeglądem D1 na poziom pojedynczego DNIA urlopowego. | `zrealizowane` w `reminders/wzorzec.py` (moduł niepodłączony — patrz D1) |
-| **N33** | Pewność propozycji wolno wyłącznie OBNIŻAĆ; kierunek w dół jest zawsze bezpieczny. | `zrealizowane` w `reminders/wzorzec.py` |
+| **N32** | Tydzień urlopowy nie przeczy wzorcowi pracy. Rozszerzone przeglądem D1 na poziom pojedynczego DNIA urlopowego. | **`odrzucone` 2026-09-07** — żyło wyłącznie w module skasowanym razem z D1; dziś nie obowiązuje w kodzie |
+| **N33** | Pewność propozycji wolno wyłącznie OBNIŻAĆ; kierunek w dół jest zawsze bezpieczny. | **`odrzucone` 2026-09-07** — jw.; pojęcie „pewności propozycji" zniknęło razem z modułem |
 | **N34** | Kontrakt zgodności: status nieznany temu wydaniu przeżywa cofnięcie obrazu i jest raportowany, a nie odsiewany. Chroni wartości ZAPISYWANE NA DYSK — enumy trzymane wyłącznie w pamięci pod N34 nie podpadają. | `zrealizowane` (§11) |
 | **N35** | Narzędzia modelu nie mają własnej drogi do Graph: cały odczyt idzie przez wspólny snapshot przebiegu. | `zrealizowane` (0.2.14) |
 | **N38** | `awaiting_yes` jest jedyną bramką szybkiej ścieżki zapisu, a KAŻDA ścieżka domykająca temat ją kasuje. Wycofanie commitu nigdy nie ma prawa tej bramki rozszerzyć. | `zrealizowane` (0.2.17) |
@@ -90,7 +90,7 @@ bez cytatu jest dozwolony — plan ma prawo zawierać rzeczy niezrobione.
 
 | # | Treść | Status |
 |---|---|---|
-| **D1** | Wnioskowanie wzorca pracy z historii czterech tygodni, z poziomem pewności. Dwie reguły nadrzędne: **twarda reguła alfabetu** (proponować wolno wyłącznie grafiki zaobserwowane w historii — żadnego uśredniania) i **dopasowanie dokładne** (6:00–14:00 i 6:15–14:00 to dwa różne grafiki; tolerancja byłaby cichym wymyślaniem godzin). Priorytet: lepiej częściej pytać, niż częściej zgadywać. | **`napisane, niepodłączone`** — `reminders/wzorzec.py`, zero importów w `src/`, zero testów. **POMIAR WYKONANY 2026-09-07** (`scripts/zbierz_historie.py`, 8 tygodni, 267 zmian, 34 wpisy czasu wolnego, 8 osób bez konta bota): **ZERO osób z pewnością WYSOKA i inną propozycją.** Sześć osób → `niska`/`ostatni_tydzien`, czyli wzorzec sam schodzi do dzisiejszego zachowania. Dwie → `srednia`/`bywalo_roznie` z inną propozycją. Kryterium (≥2 z WYSOKĄ) **niespełnione**, więc podłączenie nie kupuje nic, a zmienia treść prośby dla dwóch osób z ośmiu |
+| **D1** | Wnioskowanie wzorca pracy z historii czterech tygodni, z poziomem pewności. Dwie reguły nadrzędne: **twarda reguła alfabetu** (proponować wolno wyłącznie grafiki zaobserwowane w historii — żadnego uśredniania) i **dopasowanie dokładne** (6:00–14:00 i 6:15–14:00 to dwa różne grafiki). Priorytet: lepiej częściej pytać, niż częściej zgadywać. | **`odrzucone` 2026-09-07, PO POMIARZE.** Zero osób z pewnością WYSOKA i inną propozycją (tabela niżej) — w tym zespole nikt nie chodzi w rytmie przemiennym, czyli w tym, dla czego D1 powstało. Moduł, skrypt pomiarowy i jego testy skasowane; kod żyje w historii gita, wskrzeszenie to `git show b3188e9~1` po ścieżkach reminders/wzorzec.py i scripts/zbierz_historie.py |
 | **D2** | Poprzedni czytnik grafiku dla narzędzi modelu miał `except Exception` przy każdym wywołaniu Graph; zastąpiony kontraktem `ZrodloTygodnia` z siatką o tej samej szerokości. | `zrealizowane` |
 | **D5** | **Wznowienie rozmowy po statusie terminalnym.** Dziś temat domknięty jest zamknięty na zawsze, a `poll_replies` przetwarza wyłącznie wpisy otwarte. D5 ten filtr zdejmuje i dokłada ścieżki piszące do milczących (przypomnienia, wznowienia). Kilka miejsc w kodzie jest już napisanych tak, żeby przetrwały to zdjęcie — łącznie z kasowaniem `awaiting_yes` tam, gdzie dziś niczego to nie zmienia. | **`otwarte`** |
 
@@ -139,8 +139,10 @@ zamiast twierdzić — zgodnie z własną zasadą „lepiej częściej pytać, n
 dzisiejszej — mówi tylko, że byłaby inna i opatrzona słabszym zdaniem. Kryterium celowo pytało
 o pewność WYSOKĄ, bo tylko przy niej podłączenie ma dawać wartość, a nie samą zmianę.
 
-Pomiar powtarza się jednym poleceniem, więc przy zmianie składu zespołu warto go ponowić —
-dopiero praca zmianowa czyni tę pozycję opłacalną.
+**Skrypt pomiarowy został skasowany razem z modułem** — mierzył wyłącznie jego i bez niego nie ma
+przedmiotu. Przy zmianie składu zespołu (praca zmianowa) obie rzeczy wskrzesza się z historii
+gita: `git show b3188e9~1` po ścieżkach reminders/wzorzec.py i scripts/zbierz_historie.py, razem
+z testami bucketowania historii. Dopiero praca zmianowa czyni tę pozycję opłacalną.
 
 ## Pozycje otwarte, nieprzypisane do litery
 

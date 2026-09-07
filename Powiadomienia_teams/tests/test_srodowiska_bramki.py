@@ -118,8 +118,8 @@ def test_skrypt_obiecujacy_uruchomienie_na_serwerze_jest_w_obrazie():
 
     Inaczej jedyną drogą uruchomienia go jest zamontowanie pliku z hosta — czyli wykonanie kodu
     SPOZA obrazu na sesji Graph bota, wbrew całej konstrukcji tego wdrożenia. Tak właśnie wyszło
-    2026-09-07: `scripts/zbierz_historie.py` obiecywał wariant serwerowy, a `Dockerfile` kopiował
-    wyłącznie `lista_czlonkow.py`.
+    2026-09-07: skrypt pomiarowy obiecywał wariant serwerowy, a Dockerfile kopiował wyłącznie
+    jeden z dwóch diagnostyków.
 
     Reguła iteruje po SKRYPTACH, więc nowy diagnostyk z instrukcją serwerową wpada pod nią bez
     dopisywania czegokolwiek tutaj.

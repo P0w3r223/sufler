@@ -58,7 +58,6 @@ _HISTORYCZNE = {
     ): "zdanie mówi wprost, że narzędzie nigdy nie istniało",
     ("interpreter.py", "docs/architektura.md"): "zdanie mówi wprost, że dokumentu nigdy nie było",
     ("interpreter.py", "tools/sprawdz_odsylacze.py"): "jw. — strażnik zastąpiony tym plikiem",
-    ("wzorzec.py", "test_wzorzec.py"): "moduł niepodłączony (D1); rozstrzyga się razem z nim",
     (
         "0001-multi-team-shifts-support.md",
         "roster.py",

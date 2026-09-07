@@ -92,12 +92,10 @@ WORKDIR /app
 COPY --from=test /app/.testy-przeszly /app/.testy-przeszly
 COPY --from=deps --chown=root:root /app/.venv /app/.venv
 COPY --from=deps --chown=root:root /app/src /app/src
-# Skrypty DIAGNOSTYCZNE, oba wyłącznie odczytowe. Wchodzą do obrazu, bo inaczej jedyną drogą
-# uruchomienia ich na serwerze jest montowanie pliku z hosta — a wtedy operator wykonuje kod spoza
-# obrazu na sesji Graph bota. `lista_czlonkow` rozwiązuje identyfikatory na ludzi (A10),
-# `zbierz_historie` liczy pomiar D1 i anonimizuje wynik.
+# Skrypt DIAGNOSTYCZNY, wyłącznie odczytowy. Wchodzi do obrazu, bo inaczej jedyną drogą
+# uruchomienia go na serwerze jest montowanie pliku z hosta — a wtedy operator wykonuje kod spoza
+# obrazu na sesji Graph bota. `lista_czlonkow` rozwiązuje identyfikatory na ludzi (A10).
 COPY --chown=root:root scripts/lista_czlonkow.py /app/scripts/lista_czlonkow.py
-COPY --chown=root:root scripts/zbierz_historie.py /app/scripts/zbierz_historie.py
 
 # Kod należy do root, proces biegnie jako powiadomienia — skompromitowany proces nie podmieni
 # własnego kodu. Zapisywalny jest tylko wolumen stanu.
