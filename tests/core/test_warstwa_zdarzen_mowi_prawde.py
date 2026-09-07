@@ -43,13 +43,22 @@ _FRAZA_ROSZCZENIA = "zamknięć zgłoszeń nie zapisuje".casefold()
 # KOTWICA — do wyszukania powierzchni, które o zamknięciach zgłoszeń w ogóle mówią. Krótsza od
 # roszczenia, bo ma przetrwać łamanie wiersza, i szersza od niego, bo szukamy także zdań
 # twierdzących przeciwnie. Miejsce, które o tym mówi bez bramki, jest tym, czego szukamy.
-_KOTWICA = "zamknięć zgłoszeń".casefold()
+#
+# FORMY jawnie, a nie wzorzec: etap 1 przepisał zdanie z „zamknięć zgłoszeń nie zapisuje" na
+# „zapisuje otwarcia i zamknięcia zgłoszeń" i kotwica w jednej formie przestałaby cokolwiek
+# znajdować — sonda pilnująca kompletu meldowałaby wtedy ZERO nosicieli jako sukces. Dopisanie
+# formy ma być decyzją czytelną w diffie, nie skutkiem ubocznym regexa, który łapie za dużo.
+_KOTWICE = tuple(
+    forma.casefold()
+    for forma in ("zamknięć zgłoszeń", "zamknięcia zgłoszeń", "zamknięcie zgłoszenia")
+)
 
 # Rodzaj zdarzenia mappera → czy jest ZAMKNIĘCIEM ZGŁOSZENIA. Rejestr jest jawny, bo to jedyne
 # miejsce, w którym ktoś odpowiada na to pytanie świadomie; brak wpisu zrywa bramkę razem
 # z nazwą rodzaju, którego zabrakło.
 _CZY_ZAMKNIECIE_ZGLOSZENIA = {
     "issue_opened": False,
+    "issue_closed": True,  # etap 1 ADR 0071 — od 2026-09-07 most zapisuje zamknięcia
     "issue_comment": False,
     "pr_opened": False,
     "pr_comment": False,
@@ -238,7 +247,7 @@ def test_o_zamknieciach_zgloszen_mowia_WYLACZNIE_dwie_bramkowane_powierzchnie() 
     nosiciele = {
         p.relative_to(_SRC).as_posix()
         for p in _SRC.rglob("*.py")
-        if _KOTWICA in p.read_text(encoding="utf-8").casefold()
+        if any(k in p.read_text(encoding="utf-8").casefold() for k in _KOTWICE)
     }
 
     assert nosiciele == {

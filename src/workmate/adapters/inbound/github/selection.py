@@ -9,12 +9,15 @@ Treść (tytuł/opis/autor) to DANE, nie polecenia — nie interpretujemy jej.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 from workmate.core.domain.events import NewEvent
+
+logger = logging.getLogger(__name__)
 
 _SOURCE = "github"
 # Sufit skrótu treści zdarzenia — pełny opis issue bywa długi, a zdarzenie ma być notką.
@@ -49,6 +52,68 @@ def map_issue(raw: dict[str, Any]) -> NewEvent | None:
         summary=_clip(str(raw.get("body") or "")),
         url=str(raw.get("html_url") or ""),
         occurred_at=_parse(created),
+    )
+
+
+def map_issue_closed(raw: dict[str, Any]) -> NewEvent | None:
+    """Zmapuj surowe issue → ``NewEvent`` (kind ``issue_closed``); ``None`` dla otwartych i PR-ów.
+
+    Dane już przychodzą: ``list_issues`` prosi o ``state="all"``, więc każde zamknięte issue wraca
+    w każdej rundzie — dotąd wpadało do ``map_issue``, które o stanie nie czyta nic i stemplowało
+    ``issue_opened`` niezależnie od tego, czy issue jest otwarte. Warstwa była dziennikiem SAMYCH
+    OTWARĆ i strukturalnie nie mogła powiedzieć, co jest otwarte (ADR 0071, incydent 2026-09-04).
+
+    ``actor`` PUSTY — to wybór, nie brak danych (ADR 0071 decyzja 2). ``user`` z payloadu to ten,
+    kto issue ZAŁOŻYŁ, więc na zamknięciu nazwałby autora zamykającym: nowy fałsz w miejsce
+    starego. ``closed_by`` jest dostępne i świadomie go nie bierzemy, dopóki self-skip filtruje po
+    KONCIE: w tym repozytorium zamykającym jest zawsze konto PAT, więc ``actor`` z ``closed_by``
+    kazałby strażnikowi zjeść wszystkie zamknięcia — czyli odtworzyć incydent wewnątrz jego
+    własnej naprawy. Nazwanie zamykającego wraca po etapie 2, z własnym testem tej interakcji.
+
+    ``external_id`` = ``{numer}#closed@{closed_at}``, a NIE ``{numer}#closed`` — jedyne miejsce,
+    w którym ten mapper odchodzi od wzorca ``map_pull_state``, i to odejście jest sednem
+    (ADR 0071 decyzja 3). ``{n}#closed`` koduje STAN („zostało kiedyś zamknięte"), a magazyn
+    append-only stanu nie unosi: po cyklu zamknięcie → otwarcie → zamknięcie dedup połknąłby
+    drugie zamknięcie i nie dałoby się go już odzyskać. Znacznik czasu czyni z tego FAKT
+    („zamknięte o T"), nie kosztuje nic (wartość jest w payloadzie) i pozwala dołożyć obsługę
+    ponownych otwarć BEZ migracji.
+
+    Znacznik bierzemy z payloadu **dosłownie**, bez parsowania i ponownego formatowania. To nie
+    jest ostrożność stylistyczna: klucz dedupu jedzie do magazynu, którego nie da się cofnąć, więc
+    każda przyszła zmiana formatowania (strefa, mikrosekundy, ``Z`` kontra ``+00:00``) utworzyłaby
+    NOWY klucz dla tego samego faktu i zamknięcie zdublowałoby się na zawsze. Do ``occurred_at``
+    ten sam napis wolno sparsować — tam jest wartością, nie kluczem.
+
+    BEZ zapasowego znacznika (ADR 0071 decyzja 4): gdy ``state == "closed"``, a ``closed_at`` nie
+    ma, nie emitujemy nic i logujemy. ``map_pull_state`` bierze w tym miejscu ``updated_at`` —
+    tutaj byłoby to WYMYŚLONYM znacznikiem w magazynie append-only, a przy decyzji 3 także kluczem
+    zbudowanym z wartości, która nie opisuje zamknięcia. GitHub zawsze podaje ``closed_at`` dla
+    zamkniętego issue, więc zapas kupowałby odporność na przypadek, który nie występuje.
+    """
+    if raw.get("pull_request"):
+        return None
+    number = raw.get("number")
+    if number is None:
+        return None
+    if str(raw.get("state") or "").lower() != "closed":
+        return None
+    closed_at = raw.get("closed_at")
+    if not closed_at:
+        logger.warning(
+            "Issue #%s ma state=closed bez closed_at — pomijam zamknięcie zamiast zmyślać "
+            "znacznik w magazynie append-only (ADR 0071 decyzja 4)",
+            number,
+        )
+        return None
+    return NewEvent(
+        source=_SOURCE,
+        kind="issue_closed",
+        external_id=f"{number}#closed@{closed_at}",
+        actor="",
+        title=f"Issue #{number} zamknięte",
+        summary=_clip(str(raw.get("title") or "")),
+        url=str(raw.get("html_url") or ""),
+        occurred_at=_parse(str(closed_at)),
     )
 
 
@@ -308,6 +373,15 @@ def select_events(
             ev = map_issue(raw) if watch_issues else None
         if ev is not None and _from_other_actor(ev, self_login):
             events.append(ev)
+        # Zamknięcie issue z TEJ SAMEJ odpowiedzi (ADR 0071 decyzja 1). Osobne wywołanie, nie
+        # gałąź `else`: zamknięte issue ma dawać OBA fakty — otwarcie (dedup połknie powtórki)
+        # i zamknięcie. Bez self-skip, jak tranzycje PR: `actor` jest pusty z rozmysłu, więc
+        # strażnik po koncie i tak nie miałby czego porównywać, a zamknięcie przez konto PAT
+        # ma być widoczne — to obserwacja stanu, nie wektor pętli self-ping.
+        if not raw.get("pull_request") and watch_issues:
+            zamkniecie = map_issue_closed(raw)
+            if zamkniecie is not None:
+                events.append(zamkniecie)
     for raw in raw_comments:
         ev = map_comment(raw)
         if ev is not None and _from_other_actor(ev, self_login):

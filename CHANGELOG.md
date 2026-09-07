@@ -155,6 +155,33 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Dodane
 
+- **Most GitHub zapisuje ZAMKNIĘCIA zgłoszeń — warstwa zdarzeń przestaje być dziennikiem samych
+  otwarć** ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md),
+  decyzje 1-5; etap 1 z czterech). Do tej zmiany `select source, kind, count(*) from events`
+  zwracało po stronie GitHuba `('github', 'issue_opened', 10)` **i nic więcej** — warstwa
+  strukturalnie nie mogła powiedzieć, co jest otwarte, i to jest mechanizm incydentu z 2026-09-04
+  (tabela dziesięciu zgłoszeń, wszystkie zamknięte, jedyne otwarte niewidoczne). Dane przychodziły
+  od zawsze: `list_issues` prosi o `state="all"`, więc każde zamknięte issue wracało w każdej
+  rundzie i wpadało do `map_issue`, które o stanie nie czyta nic.
+  **Klucz dedupu to `{numer}#closed@{closed_at}`, nie `{numer}#closed`** — jedyne odejście od
+  wzorca `pr_closed` i sedno decyzji 3. `{n}#closed` kodowałby STAN („zostało kiedyś zamknięte"),
+  a magazyn append-only stanu nie unosi: po cyklu zamknięcie → otwarcie → zamknięcie dedup
+  połknąłby drugie zamknięcie bezpowrotnie. Znacznik czyni z tego FAKT i pozwala dołożyć ponowne
+  otwarcia **bez migracji**. Znacznik bierzemy z payloadu **dosłownie**: parsowanie i ponowne
+  sformatowanie tworzyłoby przy każdej przyszłej zmianie formatu NOWY klucz dla tego samego faktu,
+  w magazynie, którego nie da się cofnąć.
+  **Bez zapasu na `updated_at`** (decyzja 4): `state=closed` bez `closed_at` → nic nie emitujemy
+  i logujemy. `actor` **pusty i to jest wybór, nie brak danych** (decyzja 2): `closed_by` jest
+  dostępne, ale dopóki self-skip filtruje po KONCIE, `actor` z zamykającym kazałby strażnikowi
+  zjeść wszystkie zamknięcia — incydent odtworzony wewnątrz własnej naprawy. Wraca po etapie 2,
+  z własnym testem tej interakcji.
+  **Notka warstwy i docstring MCP zmieniły się w TYM SAMYM commicie** — wymusiła to bramka
+  z etapu 4, która iteruje po repertuarze mappera: zerwała się sama, z komunikatem mówiącym, co
+  poprawić. Na miejsce zdania o niezapisywaniu zamknięć wchodzi konsekwencja decyzji 5
+  (`issue_reopened` odroczone): zgłoszenie zamknięte i otwarte na nowo **wygląda tu wciąż na
+  zamknięte**. Bez tego zdania powtórzylibyśmy KLASĘ incydentu — widok wyglądałby na odpowiedź
+  o stan, będąc nią tylko dopóki nikt niczego nie otworzył na nowo.
+
 - **Bramka redakcyjna: opis narzędzia nie obiecuje AKCJI, której na tych drzwiach nie ma.**
   Istniejąca bramka odesłań pilnowała NAZW narzędzi; ta schodzi piętro niżej, na akcje. Trzy
   sondy w `tests/core/test_tool_descriptions.py`, wszystkie liczące repertuar akcji
