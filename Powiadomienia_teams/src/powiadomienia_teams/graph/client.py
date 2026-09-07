@@ -145,13 +145,23 @@ def _bez_limitu_czasu(_za_ile_s: float = 0.0) -> None:
 
 
 def _czas_wiadomosci(znacznik: str) -> datetime | None:
-    """``createdDateTime`` na datę, albo ``None`` — bo z Graph przychodzą też wiadomości bez niego."""
+    """``createdDateTime`` na datę, albo ``None`` — bo z Graph przychodzą też wiadomości bez niego.
+
+    Znacznik BEZ STREFY też daje ``None``, choć ``parse_graph_datetime`` potrafi go zwrócić.
+    Porównanie naiwnej daty ze świadomą podnosi ``TypeError``, a ten wyjątek wypadłby tutaj
+    w najgorszym możliwym miejscu: wąski ``try`` w ``listener._process_pending`` zamienia go na
+    ``READ_FAILED``, czyli JEDYNY wynik podbijający ``unknown_count`` — i po trzech obiegach
+    z rzędu oraz przekroczeniu sufitu z ADR 0007 wpis zostaje zamknięty BEZ SŁOWA DO PRACOWNIKA.
+    ``None`` prowadzi zamiast tego do gałęzi „nie wiem", czyli do ostrzeżenia. Graph oddaje
+    ``DateTimeOffset`` zawsze ze strefą, więc jest to zabezpieczenie, nie ścieżka spodziewana.
+    """
     if not znacznik:
         return None
     try:
-        return parse_graph_datetime(znacznik)
+        czas = parse_graph_datetime(znacznik)
     except ValueError:
         return None
+    return czas if czas.tzinfo is not None else None
 
 
 def _najstarsza_na_stronie(wiadomosci: list[dict[str, Any]]) -> datetime | None:
@@ -163,6 +173,43 @@ def _najstarsza_na_stronie(wiadomosci: list[dict[str, Any]]) -> datetime | None:
     """
     czasy = [c for w in wiadomosci if (c := _czas_wiadomosci(str(w.get("createdDateTime", ""))))]
     return min(czasy) if czasy else None
+
+
+def _zglos_luke_w_czacie(
+    chat_id: str, wiadomosci: list[dict[str, Any]], od_watermarku: str, top: int
+) -> None:
+    """Ostrzeż, jeśli między watermarkiem a pełną stroną mogła zostać dziura.
+
+    DWA komunikaty, nie jeden, i to jest ustalenie przeglądu. Gałąź „nie wiem" (nieczytelny
+    watermark albo strona bez znaczników) też ostrzega — ale zdanie „najstarsza wiadomość nie
+    sięga pod watermark" byłoby wtedy twierdzeniem o porównaniu, którego nie dało się wykonać.
+    Operator, który to czyta, idzie szukać dziury; ma wiedzieć, czy szuka jej dlatego, że ją
+    zmierzyliśmy, czy dlatego, że nie umieliśmy zmierzyć.
+
+    Obie strony porównania drukujemy tym samym formaterem — surowy watermark z Graph i wynik
+    ``isoformat()`` różnią się zapisem strefy (``Z`` kontra ``+00:00``) i wyglądały jak dwa
+    różne rodzaje danych.
+    """
+    granica = _czas_wiadomosci(od_watermarku)
+    najstarsza = _najstarsza_na_stronie(wiadomosci)
+    if granica is not None and najstarsza is not None:
+        if najstarsza <= granica:
+            return  # strona sięga pod watermark — komplet nowych wiadomości mamy
+        logger.warning(
+            "Historia czatu %s: pełna strona (%d), a najstarsza wiadomość na niej (%s) jest "
+            "NOWSZA niż watermark (%s) — odpowiedzi z luki między nimi przepadły",
+            chat_id, top, to_graph_iso(najstarsza), to_graph_iso(granica),
+        )
+        return
+    logger.warning(
+        "Historia czatu %s: pełna strona (%d), a NIE UMIEM rozstrzygnąć, czy sięga pod watermark "
+        "(%s) — traktuję jak możliwą lukę",
+        chat_id,
+        top,
+        "brak czytelnych znaczników czasu na stronie"
+        if najstarsza is None
+        else f"nieczytelny watermark {od_watermarku!r}",
+    )
 
 
 class GraphClient:
@@ -462,25 +509,8 @@ class GraphClient:
         data = self._get(f"{GRAPH}/chats/{chat_id}/messages", params={"$top": str(top)})
         wiadomosci = list(data.get("value", []))
         if len(wiadomosci) >= top:
-            self._zglos_luke_w_czacie(chat_id, wiadomosci, od_watermarku, top)
+            _zglos_luke_w_czacie(chat_id, wiadomosci, od_watermarku, top)
         return wiadomosci
-
-    def _zglos_luke_w_czacie(
-        self, chat_id: str, wiadomosci: list[dict[str, Any]], od_watermarku: str, top: int
-    ) -> None:
-        """Ostrzeż, jeśli między watermarkiem a pełną stroną mogła zostać dziura."""
-        granica = _czas_wiadomosci(od_watermarku)
-        najstarsza = _najstarsza_na_stronie(wiadomosci)
-        if granica is not None and najstarsza is not None and najstarsza <= granica:
-            return  # strona sięga pod watermark — komplet nowych wiadomości mamy
-        logger.warning(
-            "Historia czatu %s: pełna strona (%d), a najstarsza wiadomość na niej (%s) nie sięga "
-            "pod watermark (%s) — odpowiedzi z luki mogły przepaść",
-            chat_id,
-            top,
-            najstarsza.isoformat() if najstarsza else "brak czytelnego znacznika",
-            od_watermarku or "brak",
-        )
 
     def create_shift(self, team_id: str, shift: Shift) -> str:
         """Utwórz opublikowaną zmianę (``sharedShift``) dla pracownika — zwróć id zmiany.

@@ -165,7 +165,13 @@ def _czat(wiadomosci: list[dict[str, str]], watermark: str, caplog) -> list[str]
 
     with caplog.at_level(logging.WARNING, logger="powiadomienia_teams.graph.client"):
         _graph(handler).list_chat_messages("chat-1", od_watermarku=watermark, top=len(wiadomosci))
-    return [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    # Filtr po nazwie loggera, nie po samym poziomie: bez niego reguła zbierałaby ostrzeżenia
+    # z dowolnego modułu i „coś ostrzegło" udawałoby „ostrzegł ten warunek".
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and r.name == "powiadomienia_teams.graph.client"
+    ]
 
 
 def test_pelna_strona_siegajaca_pod_watermark_nie_ostrzega(caplog):
@@ -181,7 +187,10 @@ def test_pelna_strona_w_calosci_nowsza_niz_watermark_ostrzega(caplog):
     """Prawdziwe ucięcie: cała strona jest po watermarku, więc pod nim została dziura."""
     ostrzezenia = _czat(_strona(50), "2026-09-01T00:00:00Z", caplog)
     assert len(ostrzezenia) == 1
-    assert "nie sięga" in ostrzezenia[0]
+    assert "NOWSZA niż watermark" in ostrzezenia[0]
+    # Obie strony porównania w komunikacie i w tym samym formacie — operator ma zobaczyć, co
+    # z czym porównano, a nie dwa różne zapisy strefy.
+    assert "2026-09-09T22:00:00Z" in ostrzezenia[0] and "2026-09-01T00:00:00Z" in ostrzezenia[0]
 
 
 def test_niepelna_strona_nigdy_nie_ostrzega(caplog):
@@ -195,22 +204,77 @@ def test_niepelna_strona_nigdy_nie_ostrzega(caplog):
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
-def test_nieparsowalny_watermark_ostrzega(caplog):
-    """Brak dowodu nie jest dowodem braku — kierunek jak przy wygaszaniu (ADR 0003)."""
-    assert _czat(_strona(50), "wczoraj", caplog) != []
+def test_nieparsowalny_watermark_ostrzega_ale_INNYM_zdaniem(caplog):
+    """Brak dowodu nie jest dowodem braku — ale komunikat nie ma udawać, że coś porównał.
+
+    Asercja na TREŚĆ, nie na samo `!= []`: sam fakt ostrzeżenia nie odróżnia nowej logiki od
+    starej, która ostrzegała zawsze.
+    """
+    ostrzezenia = _czat(_strona(50), "wczoraj", caplog)
+    assert len(ostrzezenia) == 1
+    assert "NIE UMIEM rozstrzygnąć" in ostrzezenia[0]
+    assert "nieczytelny watermark" in ostrzezenia[0]
 
 
-def test_strona_bez_znacznikow_czasu_ostrzega(caplog):
+def test_strona_bez_znacznikow_czasu_ostrzega_ale_INNYM_zdaniem(caplog):
     """Wiadomości systemowe bywają bez `createdDateTime`; komplet takich znaczy »nie wiem«."""
-    assert _czat([{"id": f"m{i}"} for i in range(50)], "2026-09-11T20:00:00Z", caplog) != []
+    ostrzezenia = _czat([{"id": f"m{i}"} for i in range(50)], "2026-09-11T20:00:00Z", caplog)
+    assert len(ostrzezenia) == 1
+    assert "brak czytelnych znaczników" in ostrzezenia[0]
 
 
-def test_watermark_jest_argumentem_wylacznie_nazwanym():
-    """Pozycyjnie stoi tam `chat_id`; podstawienie watermarku pod niego ma być głośnym błędem."""
+def test_watermark_bez_strefy_nie_wywraca_odczytu(caplog):
+    """Naiwny znacznik nie ma prawa podnieść `TypeError` — ten wyjątek kończy się CICHYM
+    zamknięciem rozmowy.
+
+    Wąski `try` w `listener._process_pending` zamieniłby go na `READ_FAILED`, czyli jedyny wynik
+    podbijający `unknown_count`; po trzech obiegach i przekroczeniu sufitu z ADR 0007 wpis znika
+    bez słowa do pracownika. Ma trafić do gałęzi „nie wiem", nie do wyjątku.
+    """
+    ostrzezenia = _czat(_strona(50), "2026-09-11T20:00:00", caplog)
+    assert len(ostrzezenia) == 1
+    assert "NIE UMIEM rozstrzygnąć" in ostrzezenia[0]
+
+
+def test_strona_w_kolejnosci_rosnacej_MILCZY_gdy_siega_pod_watermark(caplog):
+    """`min`, a nie „ostatni element": kolejność malejąca to zwyczaj Graph, nie jego obietnica.
+
+    Test musi mierzyć CISZĘ, nie ostrzeżenie — i to jest cała różnica. Pierwsza wersja tego testu
+    asertowała ostrzeżenie na stronie rosnącej i przechodziła TAKŻE po podmianie `min(czasy)` na
+    `czasy[-1]`, bo obie wersje wtedy ostrzegają. Mutacja objawia się dopiero tam, gdzie poprawny
+    kod MILCZY: przy stronie rosnącej `czasy[-1]` to najNOWSZA wiadomość, więc porównanie
+    z watermarkiem wypada odwrotnie i wymyślony alarm pada na spokojnej rozmowie.
+    """
+    strona = list(reversed(_strona(50)))  # rosnąco: najstarsza pierwsza
+    # Watermark młodszy od najstarszej? NIE — starszy, więc strona sięga pod niego i nie ma luki.
+    assert _czat(strona, "2026-09-11T22:30:00Z", caplog) == []
+
+
+def test_najstarsza_rowna_watermarkowi_nie_ostrzega(caplog):
+    """Remis to normalny kształt świeżej rozmowy: w czacie ZAŁOŻONYM przez bota watermark jest
+    znacznikiem jego własnego nudge'a, więc po dobiciu do sufitu najstarsza na stronie NIM JEST.
+
+    Ostre porównanie dawałoby tu fałszywy alarm przy każdej takiej rozmowie. Konwencja zgadza się
+    z `replies.incoming_after`, gdzie remis też znaczy „już obsłużone".
+    """
+    strona = _strona(50)
+    assert _czat(strona, strona[-1]["createdDateTime"], caplog) == []
+
+
+def test_watermark_jest_wymagany_i_wylacznie_nazwany():
+    """Dwie tezy docstringa, dwie asercje — i pierwsza jest tą, której brakowało.
+
+    Sama gwiazdka w sygnaturze stała tam PRZED tą zmianą, więc wywołanie pozycyjne padało już
+    wcześniej: ten przypadek nie pokrywał niczego nowego. Tezą tej zmiany jest WYMAGALNOŚĆ, bo
+    cofnięcie do `od_watermarku: str = ""` to dokładnie ta cicha degradacja, przed którą ostrzega
+    docstring — i bez pierwszej asercji przechodziło bramkę bez szmeru (zweryfikowane mutacją).
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"value": []})
 
+    with pytest.raises(TypeError):
+        _graph(handler).list_chat_messages("chat-1")  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         _graph(handler).list_chat_messages("chat-1", "2026-09-11T20:00:00Z")  # type: ignore[misc]
 
