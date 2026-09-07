@@ -14,6 +14,7 @@ Pusty wynik jest zawsze JAWNY (``{"pusto": true, "znaczenie": ...}``). Cicha pus
 czyta się jak awaria narzędzia i prowokuje ponowienia — a każda dodatkowa iteracja pętli to
 kolejne wywołanie modelu opłacane przy KAŻDEJ wiadomości pracownika.
 """
+
 from __future__ import annotations
 
 import logging
@@ -95,15 +96,15 @@ def definicje() -> list[dict[str, Any]]:
             "name": NARZEDZIE_GRAFIK,
             "description": (
                 "Odczytaj stan grafiku pracownika, z którym rozmawiasz, w Microsoft Shifts. "
-                "Zawołaj action=\"powody\" ZANIM zaproponujesz jakikolwiek czas wolny — wolno Ci "
+                'Zawołaj action="powody" ZANIM zaproponujesz jakikolwiek czas wolny — wolno Ci '
                 "użyć tylko powodu oznaczonego jako dostępny w tym zespole. "
-                "Zawołaj action=\"zapisany\", gdy pracownik pyta, co ma w grafiku, twierdzi, że "
+                'Zawołaj action="zapisany", gdy pracownik pyta, co ma w grafiku, twierdzi, że '
                 "już go uzupełnił, albo gdy chcesz sprawdzić, czy Twoja propozycja czegoś nie "
-                "nadpisuje. Zawołaj action=\"wolne\", zanim dopiszesz urlop — dzień już objęty "
+                'nadpisuje. Zawołaj action="wolne", zanim dopiszesz urlop — dzień już objęty '
                 "urlopem nie może dostać drugiego wpisu. "
-                "action=\"bazowy\" zwraca grafik, który zostanie zapisany, jeśli pracownik nie "
+                'action="bazowy" zwraca grafik, który zostanie zapisany, jeśli pracownik nie '
                 "poprosi o zmianę — czyli to, co już z nim uzgodniono w tej rozmowie; to na NIM "
-                "nanosisz kolejne poprawki. action=\"proponowany\" zwraca pierwotny gotowiec »jak "
+                'nanosisz kolejne poprawki. action="proponowany" zwraca pierwotny gotowiec »jak '
                 "w zeszłym tygodniu«, ten sam, który pracownik zobaczył w pierwszej wiadomości od "
                 "bota — sięgnij po niego, gdy pracownik chce wrócić do tego, jak było. "
                 "To narzędzie NIE zapisuje niczego i nie ma jak zapisać — zapis do grafiku "
@@ -122,8 +123,8 @@ def definicje() -> list[dict[str, Any]]:
                         "type": "string",
                         "enum": list(_TYGODNIE),
                         "description": (
-                            "\"docelowy\" = tydzień, o który bot pyta (domyślny wybór); "
-                            "\"poprzedni\" = tydzień przed nim. Ignorowane dla action=\"powody\"."
+                            '"docelowy" = tydzień, o który bot pyta (domyślny wybór); '
+                            '"poprzedni" = tydzień przed nim. Ignorowane dla action="powody".'
                         ),
                     },
                 },
@@ -136,12 +137,12 @@ def definicje() -> list[dict[str, Any]]:
             "description": (
                 "Zamień wyrażenie czasowe napisane przez pracownika na konkretny dzień lub "
                 "tydzień. Zawołaj ZAWSZE, gdy pracownik użył czegoś innego niż zwykła nazwa dnia "
-                "tygodnia — „w przyszły czwartek\", „od 15-go\", „za dwa tygodnie\", „jutro\", "
-                "„15.01\". NIE licz dat samodzielnie: to narzędzie zna dzisiejszą datę i granice "
+                'tygodnia — „w przyszły czwartek", „od 15-go", „za dwa tygodnie", „jutro", '
+                '„15.01". NIE licz dat samodzielnie: to narzędzie zna dzisiejszą datę i granice '
                 "tygodnia, o który pytamy, a Ty nie. "
                 "Odpowiedź zawiera pole w_zakresie — gdy jest false, pracownik mówi o INNYM "
                 "tygodniu niż ten uzupełniany; nie przenoś takiego dnia na tydzień docelowy, "
-                "tylko zwróć action=\"unclear\" z powod_niejasnosci=\"inny_tydzien\"."
+                'tylko zwróć action="unclear" z powod_niejasnosci="inny_tydzien".'
             ),
             "strict": True,
             "input_schema": {
@@ -151,15 +152,15 @@ def definicje() -> list[dict[str, Any]]:
                         "type": "string",
                         "enum": list(_AKCJE_KALENDARZA),
                         "description": (
-                            "\"dzien\" = rozwiąż pojedynczy dzień; "
-                            "\"tydzien\" = rozwiąż, o który tydzień chodzi."
+                            '"dzien" = rozwiąż pojedynczy dzień; '
+                            '"tydzien" = rozwiąż, o który tydzień chodzi.'
                         ),
                     },
                     "wyrazenie": {
                         "type": "string",
                         "description": (
                             "Fragment odpowiedzi pracownika opisujący czas, przepisany dosłownie, "
-                            "np. \"w przyszły czwartek\", \"od 15-go\", \"za dwa tygodnie\"."
+                            'np. "w przyszły czwartek", "od 15-go", "za dwa tygodnie".'
                         ),
                     },
                 },
@@ -240,7 +241,7 @@ def _wykonaj_grafik(wejscie: dict[str, Any], ctx: KontekstNarzedzi) -> dict[str,
             "powody",
             ctx.reader.powody(),
             "zespół nie ma ANI JEDNEGO aktywnego powodu czasu wolnego — nie da się zapisać urlopu, "
-            "zwróć action=\"unclear\" z powod_niejasnosci=\"brak_powodu_wolnego\"",
+            'zwróć action="unclear" z powod_niejasnosci="brak_powodu_wolnego"',
         )
     except OdczytNiedostepny:
         # Awaria odczytu MUSI być odróżnialna od pustki (patrz `OdczytNiedostepny`).
@@ -248,7 +249,7 @@ def _wykonaj_grafik(wejscie: dict[str, Any], ctx: KontekstNarzedzi) -> dict[str,
             NARZEDZIE_GRAFIK,
             "nie udało się odczytać stanu z Shifts — wynik NIEZNANY, nie pusty",
             "nie zakładaj, że pracownik nie ma nic zapisane; oprzyj się na gotowcu i jego "
-            "odpowiedzi, a przy wątpliwości zwróć action=\"unclear\"",
+            'odpowiedzi, a przy wątpliwości zwróć action="unclear"',
             akcja=akcja,
         )
 
@@ -306,8 +307,8 @@ def _rozwiaz(akcja: str, wyrazenie: str, ctx: KontekstNarzedzi) -> dict[str, Any
                 "status": "ok",
                 "rozpoznano": False,
                 "znaczenie": (
-                    "nie da się jednoznacznie ustalić dnia — nie zgaduj, zwróć action=\"unclear\" "
-                    "z powod_niejasnosci=\"nieznany_dzien\""
+                    'nie da się jednoznacznie ustalić dnia — nie zgaduj, zwróć action="unclear" '
+                    'z powod_niejasnosci="nieznany_dzien"'
                 ),
             }
         return {

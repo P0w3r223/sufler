@@ -1,4 +1,5 @@
 """Treść powiadomienia 1:1 (czysta logika) + minimalny render do HTML dla Graph."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -13,7 +14,13 @@ from powiadomienia_teams.domain.models import Member, WeekSchedule
 _DNI = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
 _DNI_SKROT = ["pon", "wt", "śr", "czw", "pt", "sob", "nd"]
 _DNI_DOPELNIACZ = [
-    "poniedziałku", "wtorku", "środy", "czwartku", "piątku", "soboty", "niedzieli",
+    "poniedziałku",
+    "wtorku",
+    "środy",
+    "czwartku",
+    "piątku",
+    "soboty",
+    "niedzieli",
 ]
 
 
@@ -30,6 +37,7 @@ def _do_nastepnego_dnia(start: datetime, end: datetime) -> str:
     if start.date() == end.date():
         return ""
     return f" (do {_DNI_DOPELNIACZ[end.weekday()]})"
+
 
 DECLINED_TEXT = (
     "OK, nie wprowadzam żadnych zmian w Twoim grafiku na ten tydzień i kończę przypominanie. "
@@ -244,10 +252,7 @@ def build_confirm_text(
         segments.append(f"grafik: {describe_schedule(schedule, tz)}")
     if time_off:
         segments.append(f"czas wolny: {describe_time_off(time_off)}")
-    prosba = (
-        f"Zapiszę {'; '.join(segments)}. "
-        "Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
-    )
+    prosba = f"Zapiszę {'; '.join(segments)}. Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
     ostrzezenie = describe_pominiete(pominiete)
     return f"{prosba}\n{ostrzezenie}" if ostrzezenie else prosba
 
@@ -415,8 +420,7 @@ def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg:
             # potwierdził zmiany, a zapis do Shifts nie doszedł do skutku. Doliczanie ich do
             # „zapisanych grafików" sprawiało, że raport twierdził coś nieprawdziwego.
             lines.append(
-                f"• ⚠️ potwierdzone, ale NIEZAPISANE (do ręcznego uzupełnienia): "
-                f"{t.niepotwierdzone}"
+                f"• ⚠️ potwierdzone, ale NIEZAPISANE (do ręcznego uzupełnienia): {t.niepotwierdzone}"
             )
         lines.append(f"• zapisane grafiki: {t.zapisane}")
         lines.append(f"• odmowy: {t.odmowy}")

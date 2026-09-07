@@ -18,6 +18,7 @@ przebiegu). Nieudana wysyłka jest wyłącznie logowana: status jest już termin
 i tak nie będzie. Wyjątkiem jest utrata sesji — dotyczy całej usługi, nie tej jednej wiadomości,
 i propaguje dalej.
 """
+
 from __future__ import annotations
 
 import logging
@@ -72,7 +73,9 @@ def do_domkniecia(
         return wpisy
     logger.info(
         "Godziny ciszy — %d %s odkładam do %s (odpowiadam tylko tym, którzy napisali)",
-        len(wpisy), czego, najblizsza_dozwolona(teraz, okno_domkniec).isoformat(),
+        len(wpisy),
+        czego,
+        najblizsza_dozwolona(teraz, okno_domkniec).isoformat(),
     )
     return []
 
@@ -164,7 +167,9 @@ def _powiadom_o_zamknieciu(
         except NIE_POLYKAJ:
             raise
         except Exception:
-            logger.exception("Nie udało się wysłać domknięcia do %s", etykiety.osoba(pending, settings))
+            logger.exception(
+                "Nie udało się wysłać domknięcia do %s", etykiety.osoba(pending, settings)
+            )
 
 
 def zamknij_samodzielnie_uzupelnione(
@@ -226,17 +231,23 @@ def podziekuj_za_samodzielne_uzupelnienie(
     week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
     try:
         do_pracownika(
-            settings, client, pending.chat_id,
-            to_html(build_self_filled_text(week_label)), teraz=teraz,
+            settings,
+            client,
+            pending.chat_id,
+            to_html(build_self_filled_text(week_label)),
+            teraz=teraz,
         )
         logger.info(
-            "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)", etykiety.osoba(pending, settings)
+            "Zamknięto temat dla %s (grafik uzupełniony samodzielnie)",
+            etykiety.osoba(pending, settings),
         )
     # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
     except NIE_POLYKAJ:
         raise
     except Exception:
-        logger.exception("Nie udało się wysłać podziękowania do %s", etykiety.osoba(pending, settings))
+        logger.exception(
+            "Nie udało się wysłać podziękowania do %s", etykiety.osoba(pending, settings)
+        )
 
 
 def powiadom_o_nieudanym_zapisie(
@@ -255,5 +266,6 @@ def powiadom_o_nieudanym_zapisie(
         raise
     except Exception:
         logger.exception(
-            "Zapis dla %s padł i nie udało się o tym powiadomić pracownika", etykiety.osoba(pending, settings)
+            "Zapis dla %s padł i nie udało się o tym powiadomić pracownika",
+            etykiety.osoba(pending, settings),
         )

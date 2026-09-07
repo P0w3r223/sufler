@@ -10,6 +10,7 @@ Siła blokady RÓŻNI SIĘ między platformami i to widać w testach: POSIX-owe 
 ``msvcrt.locking`` jest obowiązkowe — właściciel nie wpuszcza do zablokowanego bajtu nawet
 czytającego z tego samego procesu. Wspólny mianownik, na którym wolno polegać, to ten pierwszy.
 """
+
 from __future__ import annotations
 
 import logging

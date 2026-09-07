@@ -4,6 +4,7 @@ Wzorzec jak w WorkMate (`src/workmate/config.py`). Prefiks zmiennych: `POWIADOMI
 Sekrety (klucz Claude) mają `repr=False`. Domyślnie `dry_run=True` — nic nie wysyła ani
 nie zapisuje, dopóki nie zostanie jawnie wyłączone.
 """
+
 from __future__ import annotations
 
 import os
@@ -624,6 +625,7 @@ class Settings:
                 f"alert_webhook_url musi zaczynać się od https:// (adres bywa sekretem): "
                 f"{schemat!r}"
             )
+
     @classmethod
     def from_env(cls) -> Settings:
         return cls(

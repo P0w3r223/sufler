@@ -19,6 +19,7 @@ Dzień jest enumem pełnych nazw, nie liczbą: model bywa zawodny w liczeniu 0�
 niezawodnie (ta sama obserwacja co w ``kalendarz.NAZWY_DNI``). Zamknięty enum sprawia, że
 „nieznany dzień" przestaje być cichym pominięciem wpisu — jest po prostu nieosiągalny.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -103,16 +104,16 @@ def _wpis_zmiany() -> dict[str, Any]:
             },
             "start": {
                 "type": "string",
-                "description": "Godzina rozpoczęcia w formacie 24-godzinnym HH:MM, np. \"08:00\".",
+                "description": 'Godzina rozpoczęcia w formacie 24-godzinnym HH:MM, np. "08:00".',
             },
             "end": {
                 "type": "string",
                 "description": (
-                    "Godzina zakończenia w formacie HH:MM, np. \"16:00\". Godzina WCZEŚNIEJSZA "
+                    'Godzina zakończenia w formacie HH:MM, np. "16:00". Godzina WCZEŚNIEJSZA '
                     "niż start znaczy zmianę nocną kończącą się następnego dnia — np. start "
-                    "\"22:00\" i end \"06:00\" to poprawna nocka z piątku na sobotę. Zrównane "
-                    "godziny (start \"08:00\", end \"08:00\") są sprzeczne i dzień idzie do "
-                    "\"pominiete\"."
+                    '"22:00" i end "06:00" to poprawna nocka z piątku na sobotę. Zrównane '
+                    'godziny (start "08:00", end "08:00") są sprzeczne i dzień idzie do '
+                    '"pominiete".'
                 ),
             },
             "tryb": {
@@ -140,7 +141,7 @@ def _wpis_wolnego() -> dict[str, Any]:
                 "enum": list(POWODY_WOLNEGO),
                 "description": (
                     "Kanoniczny powód nieobecności. Użyj wyłącznie powodu, który zespół "
-                    "faktycznie ma — sprawdź to narzędziem shifts_read(action=\"powody\")."
+                    'faktycznie ma — sprawdź to narzędziem shifts_read(action="powody").'
                 ),
             },
         },
@@ -197,8 +198,8 @@ def schemat_decyzji() -> dict[str, Any]:
                 "type": "string",
                 "enum": list(POWODY_NIEJASNOSCI),
                 "description": (
-                    "Wypełnij przy action=\"unclear\", żeby bot poprosił o doprecyzowanie "
-                    "KONKRETNEJ rzeczy zamiast ogólnego „nie zrozumiałem\". Pusty napis, gdy "
+                    'Wypełnij przy action="unclear", żeby bot poprosił o doprecyzowanie '
+                    'KONKRETNEJ rzeczy zamiast ogólnego „nie zrozumiałem". Pusty napis, gdy '
                     "odpowiedź była zrozumiała."
                 ),
             },

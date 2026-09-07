@@ -1,4 +1,5 @@
 """Parsowanie odpowiedzi pracownika z wiadomości czatu (czysta logika)."""
+
 from __future__ import annotations
 
 import re
@@ -17,8 +18,19 @@ _TAGS = re.compile(r"<[^>]+>")
 MEMORY_CAP = 10
 MEMORY_WINDOW = timedelta(hours=1)
 _AFFIRM = {
-    "tak", "ok", "okej", "okey", "spoko", "potwierdzam", "zgoda",
-    "pasuje", "dokładnie", "git", "zgadza", "jasne", "super",
+    "tak",
+    "ok",
+    "okej",
+    "okey",
+    "spoko",
+    "potwierdzam",
+    "zgoda",
+    "pasuje",
+    "dokładnie",
+    "git",
+    "zgadza",
+    "jasne",
+    "super",
 }
 # Uprzejmości dopuszczalne obok potwierdzenia (nie są poprawką grafiku).
 _FILLER = {"", "no", "dzięki", "dzieki", "dziękuję", "dziekuje", "wielkie", "i", "też"}

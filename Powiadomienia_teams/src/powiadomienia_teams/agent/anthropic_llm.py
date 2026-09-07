@@ -7,6 +7,7 @@ Adapter jest cienki z premedytacją: cała logika obiegu (pętla narzędziowa, l
 w ``interpreter``, tutaj zostaje wyłącznie tłumaczenie na SDK i z powrotem. Dzięki temu testy
 podstawiają atrapę spełniającą ``LlmClient`` i nie potrzebują ani ``anthropic``, ani sieci.
 """
+
 from __future__ import annotations
 
 import logging
@@ -129,9 +130,7 @@ class AnthropicLlm:
             powod = _niedostepnosc_uslugi(blad)
             if not powod:
                 raise
-            raise LlmNiedostepnyError(
-                f"Interpretacja odpowiedzi niedostępna ({powod})"
-            ) from blad
+            raise LlmNiedostepnyError(f"Interpretacja odpowiedzi niedostępna ({powod})") from blad
 
     def rozmawiaj(
         self,
@@ -202,7 +201,8 @@ class AnthropicLlm:
 
         return OdpowiedzLlm(
             tekst="".join(
-                getattr(block, "text", "") for block in message.content
+                getattr(block, "text", "")
+                for block in message.content
                 if getattr(block, "type", "") == "text"
             ),
             narzedzia=tuple(

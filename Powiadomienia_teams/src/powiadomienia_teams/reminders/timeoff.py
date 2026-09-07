@@ -5,6 +5,7 @@ nazwę wyświetlaną w Shifts, a `TeamReasons` (zbudowane z żywych powodów zes
 konkretne id (``TOR_…``) i FAKTYCZNĄ nazwę wyświetlaną — z fallbackiem do istniejącego powodu,
 żeby dzień wolny nigdy nie zginął po cichu przy innym nazewnictwie w tenancie.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,9 +18,7 @@ from powiadomienia_teams.domain.powody import TeamReasons
 __all__ = ["TeamReasons", "resolve_time_off"]
 
 
-def resolve_time_off(
-    intents: list[dict[str, Any]], reasons: TeamReasons
-) -> list[dict[str, Any]]:
+def resolve_time_off(intents: list[dict[str, Any]], reasons: TeamReasons) -> list[dict[str, Any]]:
     """Intencje {weekday, powod} + powody zespołu → wpisy {weekday, reason_id, reason_name}.
 
     Pomija tylko wpisy, których w ogóle nie da się przypisać (pusty zespół powodów) — dzięki
@@ -37,7 +36,5 @@ def resolve_time_off(
         if match is None:
             continue
         reason_id, reason_name = match
-        resolved.append(
-            {"weekday": weekday, "reason_id": reason_id, "reason_name": reason_name}
-        )
+        resolved.append({"weekday": weekday, "reason_id": reason_id, "reason_name": reason_name})
     return resolved

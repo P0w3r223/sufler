@@ -19,6 +19,7 @@ Bezpieczeństwo (obrona wielowarstwowa):
    w liczeniu, kod nie.
 6. Zapis do Shifts tylko po jawnym „tak" (patrz ``runtime.listener.poll_replies``).
 """
+
 from __future__ import annotations
 
 import json
@@ -199,8 +200,8 @@ _SYSTEM_KONIEC = (
     'W proponowanym grafiku pole "theme" to tryb pracy: "green"=stacjonarnie, "blue"=zdalnie. '
     # Pracownik OTRZYMUJE grafik z emotkami 🟢/🔵, więc odpowiada tym samym językiem — rozumiej je.
     "Tryb pracy pracownik może wskazać SŁOWEM, KOLOREM lub EMOTKĄ i wszystkie znaczą to samo: "
-    '„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; '
-    '„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. '
+    "„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; "
+    "„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. "
     'Pole "tryb" ustaw tylko gdy pracownik wskazał tryb dla danego dnia; inaczej zostaw je puste '
     "(kolor zostanie z zeszłego tygodnia). "
     # --- Wynik CZĘŚCIOWY jest normalnym wynikiem, nie porażką ---
@@ -255,10 +256,10 @@ _SYSTEM_KONIEC = (
     "confirm — »nie chcę zmian« znaczy »nic nie zapisuj«, a NIE »zapisz proponowany grafik«. "
     # --- Czas wolny: urlop / nieobecność / chorobowe (jak »dodaj czas wolny« w Shifts) ---
     "Gdy pracownik jest wolny/nieobecny — NIE usuwaj dnia po cichu, tylko dodaj go do time_off z "
-    "właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod=\"urlop\"; „nie będzie mnie”/"
-    "„nieobecny”/„wolne” → powod=\"nieobecność\"; „chorobowe”/„L4”/„zwolnienie” → "
-    "powod=\"chorobowe\"; „urlop bezpłatny” → powod=\"urlop bezpłatny\"; „rodzicielski”/"
-    "„macierzyński” → powod=\"urlop rodzicielski\". Urlop na CAŁY tydzień → time_off dla dni "
+    'właściwym powodem: „urlop”/„na urlopie”/„wakacje” → powod="urlop"; „nie będzie mnie”/'
+    '„nieobecny”/„wolne” → powod="nieobecność"; „chorobowe”/„L4”/„zwolnienie” → '
+    'powod="chorobowe"; „urlop bezpłatny” → powod="urlop bezpłatny"; „rodzicielski”/'
+    '„macierzyński” → powod="urlop rodzicielski". Urlop na CAŁY tydzień → time_off dla dni '
     "roboczych (pon–pt), shifts=[]. Nieobecność w KONKRETNE dni → ten dzień do time_off, pozostałe "
     "dni pracujące zostaw w shifts. Jeśli NIE WIADOMO, które dni są wolne (np. „nie będzie mnie "
     'kilka dni” bez podania których) — zwróć action="unclear" z powod_niejasnosci="nieznany_dzien". '
@@ -300,11 +301,24 @@ _SYSTEM_BEZ_NARZEDZI = _SYSTEM_POCZATEK + _SEKCJA_BEZ_NARZEDZI + _SYSTEM_KONIEC
 # 🟢/🔵 i pracownik odpowiada tym samym językiem (patrz `messages.describe_schedule`). Dzięki temu
 # intencja trybu nie ginie, nawet gdy model przekaże w polu »tryb« emotkę albo nazwę koloru.
 _TRYB_TO_THEME = {
-    "zdalnie": "blue", "zdalna": "blue", "zdalny": "blue", "remote": "blue", "dom": "blue",
-    "niebieski": "blue", "niebieska": "blue", "niebiesko": "blue", "🔵": "blue",
-    "stacjonarnie": "green", "stacjonarna": "green", "stacjonarny": "green",
-    "biuro": "green", "onsite": "green",
-    "zielony": "green", "zielona": "green", "zielono": "green", "🟢": "green",
+    "zdalnie": "blue",
+    "zdalna": "blue",
+    "zdalny": "blue",
+    "remote": "blue",
+    "dom": "blue",
+    "niebieski": "blue",
+    "niebieska": "blue",
+    "niebiesko": "blue",
+    "🔵": "blue",
+    "stacjonarnie": "green",
+    "stacjonarna": "green",
+    "stacjonarny": "green",
+    "biuro": "green",
+    "onsite": "green",
+    "zielony": "green",
+    "zielona": "green",
+    "zielono": "green",
+    "🟢": "green",
 }
 
 
@@ -338,12 +352,14 @@ def schedule_to_intervals(proposal: WeekSchedule, tz: ZoneInfo) -> list[dict[str
     for sh in proposal.shifts:
         start = sh.start.astimezone(tz)
         end = sh.end.astimezone(tz)
-        intervals.append({
-            "weekday": start.weekday(),
-            "start": f"{start:%H:%M}",
-            "end": f"{end:%H:%M}",
-            "theme": sh.theme,  # kolor = tryb pracy (blue/green)
-        })
+        intervals.append(
+            {
+                "weekday": start.weekday(),
+                "start": f"{start:%H:%M}",
+                "end": f"{end:%H:%M}",
+                "theme": sh.theme,  # kolor = tryb pracy (blue/green)
+            }
+        )
     return intervals
 
 
@@ -570,9 +586,7 @@ def _zdecyduj(
     # Rozłączność: dzień wolny wygrywa — usuń go z grafiku pracy, żeby nie zapisać obu naraz.
     off_days = {item["weekday"] for item in time_off}
     if off_days and not schedule.is_empty:
-        kept = tuple(
-            s for s in schedule.shifts if s.start.astimezone(tz).weekday() not in off_days
-        )
+        kept = tuple(s for s in schedule.shifts if s.start.astimezone(tz).weekday() not in off_days)
         schedule = WeekSchedule(schedule.member_id, schedule.week_start, kept)
 
     # Pominięcia uzgadniamy z tym, co NAPRAWDĘ idzie do zapisu — dopiero po ustaleniu rozłączności.
@@ -665,7 +679,9 @@ def interpret_reply(
                 )
             return _zdecyduj(_odczytaj_decyzje(odpowiedz.tekst), proposal, tz, group_id)
         if ctx is None:  # model zażądał narzędzia, którego mu nie daliśmy — nie ma jak odpowiedzieć
-            logger.warning("Model zażądał narzędzia bez włączonego kontekstu — degraduję do »unclear«.")
+            logger.warning(
+                "Model zażądał narzędzia bez włączonego kontekstu — degraduję do »unclear«."
+            )
             return ReplyDecision("unclear", None, (), _PRZERWANA)
         wiadomosci.append({"role": "assistant", "content": odpowiedz.surowe})
         # Wykonujemy najwyżej `_MAX_NARZEDZI_NA_TURE`; nadmiarowym ODPOWIADAMY błędem, bo API
@@ -676,11 +692,10 @@ def interpret_reply(
         if odrzucone:
             logger.warning(
                 "Model poprosił o %d wywołań narzędzi w jednej turze — wykonuję %d",
-                len(odpowiedz.narzedzia), len(wykonane),
+                len(odpowiedz.narzedzia),
+                len(wykonane),
             )
-        wyniki = [
-            _wynik_narzedzia(w.id, tools.wykonaj(w.nazwa, w.wejscie, ctx)) for w in wykonane
-        ]
+        wyniki = [_wynik_narzedzia(w.id, tools.wykonaj(w.nazwa, w.wejscie, ctx)) for w in wykonane]
         wyniki += [
             _wynik_narzedzia(
                 w.id,
@@ -690,9 +705,7 @@ def interpret_reply(
         ]
         wiadomosci.append({"role": "user", "content": wyniki})
 
-    logger.warning(
-        "Przekroczono limit %d obiegów narzędzi — degraduję do »unclear«.", _MAX_OBIEGOW
-    )
+    logger.warning("Przekroczono limit %d obiegów narzędzi — degraduję do »unclear«.", _MAX_OBIEGOW)
     return ReplyDecision("unclear", None, (), _PRZERWANA)
 
 

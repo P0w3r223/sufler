@@ -6,6 +6,7 @@ z odpowiedzią — ``runtime.listener``.
 
 Idempotencja przebiegu opiera się WYŁĄCZNIE na pliku stanu: jedna prośba na osobę na dany tydzień.
 """
+
 from __future__ import annotations
 
 import logging
@@ -130,7 +131,9 @@ def run_once(
         missing = [m for m in missing if znormalizuj(m.user_id) in settings.only_user_ids]
         logger.info(
             "Zakres pilotażowy: %d z %d osób bez grafiku (lista ma %d pozycji)",
-            len(missing), przed, len(settings.only_user_ids),
+            len(missing),
+            przed,
+            len(settings.only_user_ids),
         )
     prior_shifts = client.read_shifts(
         ctx.team_id, prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)
@@ -199,15 +202,21 @@ def run_once(
             # ręcznego sprawdzenia rozmowy, która stoi nienaruszona.
             logger.warning(
                 "Nadpisuję otwartą rozmowę z %s (status %s) dla %s — zaczynam tydzień %s",
-                existing.week_start, existing.status,
-                etykiety.czlonek(member, settings), week_start_iso,
+                existing.week_start,
+                existing.status,
+                etykiety.czlonek(member, settings),
+                week_start_iso,
             )
         member_off = off_by_member.get(znormalizuj(member.user_id), frozenset())
         proposal = proposal_from_last_week(
             member.user_id, prior_shifts, target_monday.date(), tz=tz, skip_weekdays=member_off
         )
         text = build_nudge_text(
-            member, proposal, week_label, tz, off_weekdays=member_off,
+            member,
+            proposal,
+            week_label,
+            tz,
+            off_weekdays=member_off,
             # Termin liczony TĄ SAMĄ funkcją, którą wygasza `runtime.listener` — inaczej treść
             # obiecywałaby co innego, niż robi runtime, a rozjazd wychodzi dopiero w chwili,
             # w której ktoś traci tydzień grafiku (pozycja B7 planu).
@@ -295,4 +304,3 @@ def run_once(
         "dry-run (nic nie wysłano)" if settings.dry_run else f"wysłano {sent}",
     )
     return missing
-

@@ -67,14 +67,6 @@ max-complexity = 15
 [tool.ruff.lint.per-file-ignores]
 "src/**" = ["E501", "C901", "PLR0915", "SIM105", "SIM300"]
 
-# Formatowanie omija `src/` z tego samego powodu: `ruff format` jest wprawdzie zachowawczy
-# semantycznie (sprawdzone — AST identyczne we wszystkich 48 plikach), ale przepisałby 41 plików,
-# a wtedy „repo zgadza się z obrazem" przestałoby być prawdą dla drzewa roboczego.
-[tool.ruff.format]
-# `scripts/lista_czlonkow.py` również pochodzi z obrazu (kopiowany tam osobno przez Dockerfile),
-# więc obejmuje go ta sama zasada co `src/`.
-exclude = ["src/**", "scripts/lista_czlonkow.py"]
-
 [tool.mypy]
 python_version = "3.10"
 disallow_untyped_defs = true

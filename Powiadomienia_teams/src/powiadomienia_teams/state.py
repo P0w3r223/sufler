@@ -6,6 +6,7 @@ interwałów (weekday + HH:MM) ustalonego grafiku — tz-agnostyczna, odtwarzana
 Zapis jest atomowy (temp + os.replace), a odczyt tolerancyjny (ignoruje nieznane pola,
 uszkodzony plik → pusty stan) — bo ten plik chroni przed podwójnym zapisem zmian.
 """
+
 from __future__ import annotations
 
 import contextlib

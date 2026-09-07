@@ -19,6 +19,7 @@ klienta. Ścieżka ZAPISU zostaje przy tym module bez zmian, a ``znane()`` niże
 żeby dane pobrane przez nią trafiały do tamtej pamięci za darmo. Kierunek jest jednostronny:
 snapshot → pamięć.
 """
+
 from __future__ import annotations
 
 import logging
@@ -132,8 +133,7 @@ class SnapshotGrafiku:
         ``--proba-nasluchu``, gdzie klient ma odcięte metody piszące.
         """
         return {
-            ws: self.dla_tygodnia(ws, alert_przy_porazce=alert_przy_porazce)
-            for ws in week_starts
+            ws: self.dla_tygodnia(ws, alert_przy_porazce=alert_przy_porazce) for ws in week_starts
         }
 
     def znane(self) -> dict[str, DaneTygodnia]:

@@ -7,6 +7,7 @@ Termin odpowiedzi jest **kalendarzowy**: liczy się od początku tygodnia, któr
 a nie od ostatniej aktywności w rozmowie. Do 0.2.12 było odwrotnie (okno ``N`` godzin ciszy od
 kotwicy) i dawało dwa defekty naraz — patrz ``termin_odpowiedzi``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -261,9 +262,7 @@ def przekroczyl_sufit(pending: PendingReminder, now: datetime, sufit_h: int) -> 
     return wiek is not None and wiek >= timedelta(hours=sufit_h)
 
 
-def ready_for_self_fill_check(
-    pending: PendingReminder, now: datetime, min_idle_s: int
-) -> bool:
+def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_s: int) -> bool:
     """Czy wolno zajrzeć do Shifts, bo pracownik MILCZY od dłuższej chwili (nie odpisuje na czacie).
 
     Ciszę mierzymy tą samą kotwicą co wygaśnięcie (``_anchor``: ostatnia aktywność, potem czas

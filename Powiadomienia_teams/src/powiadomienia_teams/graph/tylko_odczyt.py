@@ -21,6 +21,7 @@ Dlaczego podklasa, a nie osobna implementacja protokołu: ``GraphClient`` jest t
 w sygnaturach całego obiegu, a odczytów jest kilkanaście. Podklasa dziedziczy je bez zmian, więc
 próba idzie DOKŁADNIE tym samym kodem co produkcja — a to jest cały sens ćwiczenia.
 """
+
 from __future__ import annotations
 
 import logging

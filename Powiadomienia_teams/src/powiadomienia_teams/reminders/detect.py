@@ -1,4 +1,5 @@
 """Wykrywanie osób bez zmian na wskazany tydzień (czysta logika)."""
+
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
@@ -76,9 +77,7 @@ def off_reason_by_weekday(
     return dni
 
 
-def member_filled_week(
-    member_id: str, shifts: Iterable[Shift], off_days: frozenset[int]
-) -> bool:
+def member_filled_week(member_id: str, shifts: Iterable[Shift], off_days: frozenset[int]) -> bool:
     """Czy dana osoba MA już grafik na docelowy tydzień: jakakolwiek zmiana albo pełny pn–pt urlop.
 
     Odwrotność kryterium z ``members_without_shifts`` (patrz tam), zawężona do JEDNEJ osoby — dzięki
@@ -150,8 +149,6 @@ def members_without_shifts(
     """
     off_by_member = off_by_member or {}
     covered_by_shift = {znormalizuj(s.user_id) for s in shifts}
-    covered_by_full_off = {
-        uid for uid, days in off_by_member.items() if _WORKING_WEEK <= days
-    }
+    covered_by_full_off = {uid for uid, days in off_by_member.items() if _WORKING_WEEK <= days}
     covered = covered_by_shift | covered_by_full_off
     return [m for m in members if znormalizuj(m.user_id) not in covered]

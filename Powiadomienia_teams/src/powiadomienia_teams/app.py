@@ -8,6 +8,7 @@ Ten moduł zostaje, bo jest historycznym punktem wejścia (``[project.scripts]``
 ``pyproject.toml`` wskazuje na ``powiadomienia_teams.app:main``) i bo trzyma w jednym miejscu
 publiczną powierzchnię usługi. Nie ma tu logiki — wyłącznie re-eksport.
 """
+
 from __future__ import annotations
 
 from powiadomienia_teams.cli import main

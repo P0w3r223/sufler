@@ -12,6 +12,7 @@ Moduł nie zna ani Graph, ani pętli usługi: dostaje zegar i limit, oddaje jedn
 jeszcze wolno". Dzięki temu ``graph`` nie musi wiedzieć nic o przebiegach, a ``service`` nie musi
 wiedzieć nic o stronicowaniu.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator

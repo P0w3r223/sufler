@@ -1,4 +1,5 @@
 """Budowa propozycji »jak w zeszłym tygodniu« (czysta logika)."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -73,8 +74,7 @@ def proposal_from_last_week(
         (
             s
             for s in last_week_shifts
-            if s.user_id == member_id
-            and s.start.astimezone(tz).weekday() not in skip_weekdays
+            if s.user_id == member_id and s.start.astimezone(tz).weekday() not in skip_weekdays
         ),
         key=lambda s: s.start,
     )

@@ -14,6 +14,7 @@ WSZYSTKICH trzech klientach HTTP procesu: Graph (`httpx.Client(timeout=30)`), An
 (`_TIMEOUT_S`) oraz MSAL (`_MSAL_TIMEOUT_S`). Ten ostatni był długo pominięty, przez co samo
 zdanie powyżej bywało nieprawdziwe — bez niego blackhole sieciowy wieszał pętlę bezterminowo.
 """
+
 from __future__ import annotations
 
 import logging

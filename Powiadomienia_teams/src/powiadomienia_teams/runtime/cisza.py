@@ -17,6 +17,7 @@ Granica okna wypada zawsze o pełnej godzinie, więc porównujemy godzinę zegar
 zespołu. Dryf DST (raz na pół roku okno jest o godzinę krótsze albo dłuższe) świadomie ignorujemy:
 to reguła uprzejmości, nie termin, od którego cokolwiek zależy nieodwracalnie.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta

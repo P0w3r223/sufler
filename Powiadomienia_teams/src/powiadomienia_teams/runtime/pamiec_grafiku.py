@@ -23,6 +23,7 @@ najgorsze, co robi nieświeży wynik, to opóźnienie podziękowania o jeden obi
 Porażek NIE zapamiętujemy. Zapamiętana porażka na przebieg to jedno rozstrzygnięcie (i tak działa
 ``SnapshotGrafiku``); zapamiętana na sześć godzin to wyłączony krok 1.5 na sześć godzin.
 """
+
 from __future__ import annotations
 
 import logging
@@ -86,22 +87,16 @@ class PamiecSamouzupelnien:
         """
         wymuszone = set(odswiez)
         wszystkie = set(week_starts)
-        do_pobrania = {
-            ws for ws in wszystkie if ws in wymuszone or not self._swieze(ws, teraz)
-        }
+        do_pobrania = {ws for ws in wszystkie if ws in wymuszone or not self._swieze(ws, teraz)}
         wynik: dict[str, DaneTygodnia | None] = {
             ws: self._dane[ws][1] for ws in wszystkie - do_pobrania
         }
         if do_pobrania:
             pobrane = pobierz(do_pobrania)
-            self.przyjmij(
-                {ws: d for ws, d in pobrane.items() if d is not None}, teraz=teraz
-            )
+            self.przyjmij({ws: d for ws, d in pobrane.items() if d is not None}, teraz=teraz)
             wynik.update(pobrane)
         if wynik and not do_pobrania:
-            logger.debug(
-                "Krok 1.5: grafik %d tygodni z pamięci, zero pobrań", len(wynik)
-            )
+            logger.debug("Krok 1.5: grafik %d tygodni z pamięci, zero pobrań", len(wynik))
         return wynik
 
     def _swieze(self, week_start: str, teraz: datetime) -> bool:

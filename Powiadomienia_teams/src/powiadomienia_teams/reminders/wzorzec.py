@@ -51,6 +51,7 @@ nieinformatywnych. `dni_urlopu` jest tu brane od wołającego bez korekty o zmia
 przez północ; utrwala to `test_wzorzec.py` osobnym testem opisanym jako stan faktyczny, nie
 decyzja. Złoty korpus nie ma dla tego przypadku pozycji — dopisze ją dopiero rozstrzygnięcie.
 """
+
 from __future__ import annotations
 
 from collections import Counter
@@ -181,9 +182,7 @@ def wnioskuj(historia: Sequence[TydzienHistorii]) -> Propozycja:
         return _bez_propozycji(Pewnosc.BRAK, Podstawa.BRAK_HISTORII)
 
     informatywne = [
-        (indeks, tydzien)
-        for indeks, tydzien in enumerate(historia)
-        if not tydzien.nieinformatywny
+        (indeks, tydzien) for indeks, tydzien in enumerate(historia) if not tydzien.nieinformatywny
     ]
     if not informatywne:
         # Sam urlop w całym oknie. Nie ma czego wnioskować, ale to nie jest „brak historii":
