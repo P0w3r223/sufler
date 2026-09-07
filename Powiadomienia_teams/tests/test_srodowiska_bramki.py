@@ -63,16 +63,26 @@ def _sync_args_ci() -> str | None:
     return None
 
 
-def _pomin_bez_repozytorium() -> None:
-    if not _CI.exists():
+def _wymagaj(*sciezki: Path) -> None:
+    """Pomiń test, gdy brakuje któregokolwiek z plików, które ma czytać — z ich nazwami w powodzie.
+
+    `Dockerfile` jest w KONTEKŚCIE budowania, ale do obrazu NIE jest kopiowany, więc reguła o
+    `--locked` też musi tędy przejść. Pierwsza wersja tego pliku pomijała się wyłącznie po braku
+    `.github/`, a `Dockerfile` czytała bezwarunkowo — i wywróciła etap `test` przy pierwszym
+    biegu nowego jobu (`FileNotFoundError: /app/Dockerfile`). Warunek pomijania ma dotyczyć
+    KAŻDEGO pliku, którego test dotyka, a nie jednego wybranego jako reprezentant.
+    """
+    brakuje = [str(s.name) for s in sciezki if not s.exists()]
+    if brakuje:
         pytest.skip(
-            "strażnik środowisk bramki — poza kontekstem repozytorium (obraz); biegnie w CI"
+            f"strażnik środowisk bramki — brak {', '.join(brakuje)} "
+            f"(poza kontekstem repozytorium, np. w obrazie); biegnie w CI"
         )
 
 
 def test_ci_i_obraz_instaluja_te_same_extras():
     """Rozjazd extras znaczy: ten sam zestaw testów, dwa różne środowiska, jeden fałszywy dowód."""
-    _pomin_bez_repozytorium()
+    _wymagaj(_CI, _DOCKERFILE)
     wiersze = _wiersze_uv_sync()
     assert wiersze, "brak wierszy `uv sync` w Dockerfile — reguła straciła przedmiot ochrony"
 
@@ -95,6 +105,7 @@ def test_kazdy_uv_sync_w_obrazie_jest_locked():
     Bez niego `uv` wolno rozwiązać zależności inaczej niż `uv.lock`, więc obraz przestaje być
     odtwarzalny z commita — a to jedyna droga, jaką da się ustalić, co właściwie działa u klienta.
     """
+    _wymagaj(_DOCKERFILE)
     wiersze = _wiersze_uv_sync()
     assert wiersze, "brak wierszy `uv sync` w Dockerfile — reguła straciła przedmiot ochrony"
     bez_locked = [w for w in wiersze if "--locked" not in w]
