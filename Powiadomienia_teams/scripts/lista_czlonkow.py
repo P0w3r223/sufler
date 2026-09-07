@@ -8,7 +8,10 @@ w kanale z retencją. Z wyniku wybierasz:
     jest menedżerski); to konto logujesz przez `powiadomienia-teams --login`,
   - odbiorców przypomnień → `POWIADOMIENIA_ONLY_USER_IDS` (lista po przecinku).
 
-Tylko odczyt (`GET /me`, `GET /teams/{id}/members`) — nic nie wysyła i nic nie zapisuje.
+Tylko odczyt po stronie Graph (`GET /me`, `GET /teams/{id}/members`) — nic nie wysyła i nie
+dotyka pliku stanu. **Zapisuje natomiast cache tokenu MSAL**: `build_token_provider` utrwala go po
+każdym pobraniu tokenu, bo ciche odświeżenie potrafi zrotować refresh-token. Stąd jedno
+ograniczenie — nie uruchamiaj tego równolegle z `--login`.
 
 Lokalnie (z katalogu projektu):
     uv run --no-sync python scripts/lista_czlonkow.py
