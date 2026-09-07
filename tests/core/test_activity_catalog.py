@@ -325,23 +325,33 @@ def test_okno_limitu_tez_jest_zawezeniem() -> None:
     assert "limit=20" in wynik["note"]
 
 
-def test_notatka_warstwy_klamie_gdy_zamkniecia_juz_sa() -> None:
-    """Notka ma mówić prawdę o TYM, co most zapisuje — bramka wymuszająca, nie opisowa.
+def test_zlozona_notka_mowi_klauzule_ostroznosci_DOKLADNIE_raz() -> None:
+    """Obie notki kończyły się dosłownie tym samym zdaniem, a odkąd się SKŁADAJĄ — model dostawał
+    je w jednej odpowiedzi dwa razy.
 
-    Zdanie „zamknięć zgłoszeń nie zapisuje w ogóle" jest dziś prawdziwe i jest jedynym powodem,
-    dla którego warstwa nie odpowiada na pytanie o otwarte zgłoszenia. Przestanie być prawdziwe
-    w chwili, gdy mapper zacznie emitować ``issue_closed`` (ADR 0071 decyzja 1) — a wtedy notka
-    zaczęłaby zaniżać zdolność zamiast ją zawyżać. Obie pomyłki są tej samej klasy: opis niezgodny
-    ze zdolnością.
-
-    Asercja jest RÓWNOWAŻNOŚCIĄ, nie warunkiem — dzięki temu nie jest pusta ani dziś, ani po
-    dołożeniu zamknięć: zrywa się w obie strony. Rodzaj zdarzenia czytamy z etykiet notifiera,
-    bo to jedyne miejsce, gdzie repertuar rodzajów jest wyliczony jawnie.
+    Powtórzenie w prompcie nie jest neutralne: uczy, że tekst obok wyniku jest wypełniaczem,
+    który można przeskoczyć. Klauzula jest więc wspólna i idzie na końcu raz, a każda z notek
+    wnosi tylko własny POWÓD ostrożności.
     """
-    from workmate.core.application.notifier import _KIND_LABELS
-    from workmate.core.application.tools.spec import _EVENTS_LAYER_NOTE
+    from workmate.core.application.tools.spec import _EVENTS_CAUTION_NOTE
 
-    zamkniecia_sa_zapisywane = "issue_closed" in _KIND_LABELS
-    notka_mowi_ze_nie_sa = "Zamknięć zgłoszeń nie zapisuje" in _EVENTS_LAYER_NOTE
+    notka = build_activity_catalog(events=_FakeEvents())[0].fn(action="events", source="github")[
+        "note"
+    ]
 
-    assert zamkniecia_sa_zapisywane != notka_mowi_ze_nie_sa
+    assert notka.count(_EVENTS_CAUTION_NOTE) == 1
+    assert "HISTORIA" in notka and "ZAWĘŻONY" in notka  # oba powody nadal obecne
+
+
+def test_podsumowanie_mowi_z_jakiego_okna_liczy_i_ile_pokazuje() -> None:
+    """Druga wątpliwość recenzenta etapu 4, zamknięta pomiarem, nie opinią.
+
+    Liczniki `summary` idą z okna `limit` (domyślnie 50, sufit 200), a lista `recent` pokazuje
+    z niego PIERWSZE 20. Druga z tych liczb nie stała dotąd nigdzie — ani w opisie, ani w wyniku
+    — więc lista wyglądała na komplet okna, którym nie jest. To ta sama klasa co incydent, dla
+    którego powstała notka warstwy: widok wygląda na pełny, bo nic nie mówi, że nim nie jest.
+    """
+    wynik = build_activity_catalog(events=_FakeEvents())[0].fn(action="summary", project="workmate")
+
+    assert "okna 50" in wynik["note"]
+    assert "pierwsze" in wynik["note"]

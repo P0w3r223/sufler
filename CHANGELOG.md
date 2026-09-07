@@ -27,6 +27,24 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   `summary` dostaje tę notkę po raz pierwszy (nie miał pola `note` nigdy), choć stoi na tej
   samej warstwie i ma zawsze filtr `project`.
   Powierzchnia agenta: 7418 → **7400 B** z powłoką, 7673 → **7655 B** bez niej (zapas 345 B).
+  `summary` mówi teraz także, **z jakiego OKNA** liczy: liczniki z `limit` (domyślnie 50), a lista
+  `recent` pokazuje z niego pierwsze 20 — druga z tych liczb nie stała dotąd nigdzie, więc lista
+  wyglądała na komplet okna, którym nie jest. To ta sama klasa co incydent, dla którego notka
+  powstała. Klauzula ostrożności („Zanim powiesz, że czegoś nie ma…") jest wspólna dla obu notek
+  i jedzie w złożonej odpowiedzi **raz**; powtórzenie uczyłoby model, że tekst obok wyniku jest
+  wypełniaczem.
+  **Bramka wymuszająca przepisana — iteruje po REPERTUARZE MAPPERA, nie po etykietach notifiera.**
+  Pierwsza wersja pytała o obecność `issue_closed` w `notifier._KIND_LABELS` i **mierzyła nie to,
+  co deklarowała**: `default_event_render` robi `.get(kind, kind)`, więc rodzaj bez etykiety działa;
+  rodzaje bez etykiety już istnieją (`github_issue_created`, `github_comment_created`), a etykiety
+  istnieją dla rodzajów, których nikt w `src` nie emituje. Etykiety są tabelą renderowania, nie
+  repertuarem. Nowa bramka (`tests/core/test_warstwa_zdarzen_mowi_prawde.py`) czyta repertuar
+  z AST mappera w pięciu kształtach składni i wymaga odpowiedzi dla KAŻDEGO rodzaju w jawnym
+  rejestrze — więc etap 1 zrywa ją niezależnie od tego, jak nazwie nowy rodzaj. Obejmuje obie
+  powierzchnie (agenta i MCP) oraz szuka trzeciej kopii zdania w całym `src`.
+  Przepis regeneracji baseline'u w `docs/how-to/add-a-tool.md` **produkował diff, przed którym
+  ostrzega** — brakowało `ensure_ascii=False` i końcowego znaku nowej linii (16 linii ucieczek
+  `\uXXXX` zamiast jednej). Sprawdzone URUCHOMIENIEM przepisu na pliku i związane sondą.
 
 - **Zbiór wyzwalaczy skazy przestaje być listą napisów w adapterze — odpowiedź jedzie z narzędziem**
   ([ADR 0073](docs/adr/0073-guards-iterate-over-the-protected-surface.md)). `ToolSpec` dostaje

@@ -14,8 +14,10 @@ if TYPE_CHECKING:
 
 from workmate.core.application.events import EventService
 from workmate.core.application.tools.spec import (
+    _EVENTS_CAUTION_NOTE,
     _EVENTS_FILTERED_NOTE,
     _EVENTS_LAYER_NOTE,
+    _EVENTS_SUMMARY_WINDOW_NOTE,
     ToolSpec,
     _brakuje_pol,
     _DateField,
@@ -68,6 +70,9 @@ _ACTIVITY_POLA: dict[str, tuple[str, ...]] = {
 # Sufit ``limit`` na ścieżce agenta. SQLite traktuje ``LIMIT -1`` jak brak limitu, więc bez
 # przycięcia jedno wywołanie wciąga cały backlog do kontekstu. Ta sama granica co na drzwiach MCP.
 _ACTIVITY_MAX_EVENTS = 200
+# Ile zdarzeń `summary` pokazuje w `recent` z okna agregacji — liczba, która musi stać
+# w notce, a nie tylko w kodzie (ADR 0071 decyzja 10).
+_SUMMARY_RECENT = 20
 # Okno agregacji ``summary`` — liczniki ``by_kind`` liczą się z NIEGO, a nie z rozmiaru wyniku
 # (ten i tak tnie się do 20). Domyślne 20 wspólne z ``events`` zwężyłoby podsumowanie projektu.
 _ACTIVITY_OKNO = 50
@@ -151,9 +156,12 @@ def build_activity_catalog(  # noqa: C901, PLR0915
             # notka warstwy — „nawet pełny widok nie zna stanu GitHuba". Po dołożeniu zamknięć
             # i backfillu pytanie BEZ filtru zacznie regularnie dobijać do domyślnego okna 20,
             # więc obie będą jechać razem; zastąpienie jednej drugą kasowałoby pół odpowiedzi.
+            # Klauzula ostrożności jest WSPÓLNA i idzie na końcu RAZ — obie notki kończyły się
+            # dosłownie tym samym zdaniem, więc złożone mówiły je dwa razy.
             notatki = [_EVENTS_LAYER_NOTE]
             if filtry:
                 notatki.append(_EVENTS_FILTERED_NOTE.format(filtry=filtry))
+            notatki.append(_EVENTS_CAUTION_NOTE)
             return {**wynik, "note": " ".join(notatki)}
 
         return _envelope(build)
@@ -167,7 +175,8 @@ def build_activity_catalog(  # noqa: C901, PLR0915
 
         def build() -> dict[str, Any]:
             assert events is not None
-            items = events.recent(project=project, limit=max(1, min(limit, _ACTIVITY_MAX_EVENTS)))
+            okno = max(1, min(limit, _ACTIVITY_MAX_EVENTS))
+            items = events.recent(project=project, limit=okno)
             by_kind: dict[str, int] = {}
             for event in items:
                 by_kind[event.kind] = by_kind.get(event.kind, 0) + 1
@@ -179,12 +188,22 @@ def build_activity_catalog(  # noqa: C901, PLR0915
                 "event_count": len(items),
                 "by_kind": by_kind,
                 "latest_activity_at": najnowsze.isoformat() if najnowsze else None,
-                "recent": [e.model_dump(mode="json") for e in items[:20]],
+                "recent": [e.model_dump(mode="json") for e in items[:_SUMMARY_RECENT]],
                 # `summary` nie miał pola `note` NIGDY — a stoi na tej samej warstwie co
                 # `events` i ma zawsze filtr `project` (pole wymagane). Podsumowanie „przebiegu
                 # prac" bez tego zdania czyta się jak stan projektu, a jest stanem tego, co most
-                # zdążył zapisać.
-                "note": _EVENTS_LAYER_NOTE,
+                # zdążył zapisać. Do tego OKNO: liczniki idą z `limit` (domyślnie 50), a `recent`
+                # pokazuje z niego pierwsze 20 — druga z tych liczb nie stała dotąd nigdzie,
+                # więc lista wyglądała na komplet okna, którym nie jest.
+                "note": " ".join(
+                    (
+                        _EVENTS_LAYER_NOTE,
+                        _EVENTS_SUMMARY_WINDOW_NOTE.format(
+                            okno=okno, pokazane=min(_SUMMARY_RECENT, len(items))
+                        ),
+                        _EVENTS_CAUTION_NOTE,
+                    )
+                ),
             }
 
         return _envelope(build)

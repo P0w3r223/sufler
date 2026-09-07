@@ -172,3 +172,29 @@ def test_file_tool_never_reaches_the_mcp_surface(monkeypatch, tmp_path):
     _configure(monkeypatch, tmp_path, bridge=True, jira=True)
 
     assert "File" not in _surface(build_server())
+
+
+def test_przepis_regeneracji_z_dokumentu_odtwarza_baseline_bajt_w_bajt() -> None:
+    r"""Przepis z `docs/how-to/add-a-tool.md` ma DZIAŁAĆ, nie tylko brzmieć sensownie.
+
+    Pierwsza wersja przepisu (2026-09-04) miała samo `sort_keys` — i produkowała dokładnie ten
+    diff, przed którym ostrzega: bez `ensure_ascii=False` każda polska litera ucieka do `\uXXXX`,
+    czyli szesnaście linii różnicy zamiast jednej, a recenzent nie widzi, co się zmieniło.
+    Wyszło przy URUCHOMIENIU przepisu na pliku; lektura go nie łapała, bo brakujący argument
+    wygląda jak brak, nie jak błąd.
+
+    Sonda wiąże trzy rzeczy naraz: kształt zapisu pliku, treść przepisu w dokumencie i to, że
+    wykonanie przepisu daje plik z powrotem. Dokument rozjeżdżający się z formatem zrywa ją tak
+    samo jak plik przeformatowany inaczej.
+    """
+    import json
+
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "how-to" / "add-a-tool.md").read_text(
+        encoding="utf-8"
+    )
+    oryginal = _BASELINE.read_text(encoding="utf-8")
+
+    odtworzone = json.dumps(json.loads(oryginal), indent=2, sort_keys=True, ensure_ascii=False)
+
+    assert odtworzone + "\n" == oryginal
+    assert 'json.dumps(dane, indent=2, sort_keys=True, ensure_ascii=False) + "\\n"' in doc
