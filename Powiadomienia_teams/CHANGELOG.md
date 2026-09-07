@@ -16,8 +16,25 @@ która je przesuwa.
 
 ## [0.2.22] — 2026-09-07
 
-Wydanie naprawcze dla skryptu diagnostycznego. **Zachowanie usługi bez zmian wobec 0.2.21** —
-różnica jest wyłącznie w `scripts/` i w zasięgu bramki typów.
+Wydanie naprawczo-porządkowe. **Zachowanie usługi bez zmian wobec 0.2.21** — różnica jest wyłącznie
+w `scripts/`, w zasięgu bramki typów i w usunięciu modułu, którego nic nie wołało.
+
+### Usunięte
+
+- **`reminders/wzorzec.py` (351 linii) — po pomiarze, nie z przeczucia.** Moduł liczył wzorzec
+  pracy z historii czterech tygodni z poziomami pewności; nic go nie importowało, nic nie testowało,
+  a jechał w obrazie do klienta od sierpnia. Pomiar na żywym tenancie (8 tygodni, 267 zmian, 8 osób)
+  dał **zero osób z pewnością WYSOKA i inną propozycją**: w tym zespole nikt nie chodzi w rytmie
+  przemiennym, czyli w tym, dla czego ta pozycja powstała. Razem z modułem wypada skrypt pomiarowy
+  (mierzył wyłącznie jego) i jego testy.
+
+  Projekt, uzasadnienie i **pełna tabela pomiaru** zostają w `docs/plan-rozwoju.md` przy pozycji D1
+  ze statusem `odrzucone`; kod żyje w historii gita i wskrzesza się jednym `git show`. Dwie pozycje
+  niezmienników (N32, N33) obowiązywały wyłącznie w tym module i dostały ten sam status — bez tego
+  plan twierdziłby, że są zrealizowane w kodzie, którego nie ma.
+
+  To ten sam ruch, którym czyszczenie 0.2.0 usunęło `roster.py`: kod, który nigdy nie wszedł na
+  ścieżkę wykonania, nie zostaje „na wszelki wypadek".
 
 ### Naprawione
 
