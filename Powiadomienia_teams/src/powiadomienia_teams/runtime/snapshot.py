@@ -11,6 +11,13 @@ możliwym momencie, po czym degradowała do zapisu bez weryfikacji.
 Zakres życia to JEDEN przebieg ``poll_replies`` i ani chwili dłużej. Cache międzyprzebiegowy byłby
 czymś jakościowo innym: sprawdzenie świeżości grafiku ma sens wyłącznie wtedy, gdy dane są świeże,
 a jego jedynym zadaniem jest wyłapać uzupełnienie, które nastąpiło od czasu wysłania prośby.
+
+**Wyjątek, jeden i nazwany (ADR 0009):** krok 1.5 nasłuchu — wykrywanie, że pracownik uzupełnił
+grafik SAM — korzysta z ``runtime.pamiec_grafiku``, która wyniki przechowuje między przebiegami.
+Tam stawka jest inna: nieświeży wynik opóźnia podziękowanie, a nie dubluje wpisy w grafiku
+klienta. Ścieżka ZAPISU zostaje przy tym module bez zmian, a ``znane()`` niżej istnieje po to,
+żeby dane pobrane przez nią trafiały do tamtej pamięci za darmo. Kierunek jest jednostronny:
+snapshot → pamięć.
 """
 from __future__ import annotations
 
@@ -128,6 +135,15 @@ class SnapshotGrafiku:
             ws: self.dla_tygodnia(ws, alert_przy_porazce=alert_przy_porazce)
             for ws in week_starts
         }
+
+    def znane(self) -> dict[str, DaneTygodnia]:
+        """Tygodnie odczytane w tym przebiegu POMYŚLNIE — bez porażek i bez nowych pobrań.
+
+        Wyłącznie do zasilenia ``runtime.pamiec_grafiku`` (ADR 0009): dane, za które ścieżka zapisu
+        już zapłaciła, mają być dostępne krokowi 1.5 za darmo. Czysty akcesor — nie dotyka Graph
+        i nie zmienia stanu, więc nie ma jak zamienić się w drugą drogę odczytu.
+        """
+        return {ws: dane for ws, dane in self._pamiec.items() if dane is not None}
 
     def powody_zespolu(self) -> TeamReasons:
         """Aktywne powody czasu wolnego zespołu — pobrane RAZ na przebieg.

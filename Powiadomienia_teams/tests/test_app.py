@@ -3704,3 +3704,155 @@ def test_nieudane_domkniecie_odmowy_tez_nie_udaje_awarii_odczytu(tmp_path: Path,
     po = load_state(state_path)["u1"]
     assert po.status == DECLINED
     assert "nie udało się go o tym powiadomić" in caplog.text  # utrata wiadomości WIDOCZNA
+
+
+# --- Pamięć grafiku dla kroku 1.5 (ADR 0009) -------------------------------------------------
+#
+# Odczyt grafiku pobiera CAŁĄ kolekcję zespołu i szedł co obieg nasłuchu, całą dobę, dopóki
+# jakakolwiek rozmowa była otwarta. Pamięć obejmuje WYŁĄCZNIE krok 1.5 (wykrywanie, że pracownik
+# uzupełnił grafik sam); ścieżka zapisu zostaje przy odczycie per przebieg.
+
+
+class _LiczacyOdczyty(_FakeClient):
+    """`_FakeClient` z licznikiem pełnych odczytów grafiku — to on jest tu przedmiotem pomiaru."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.odczytow = 0
+
+    def read_shifts(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
+        self.odczytow += 1
+        return super().read_shifts(team_id, start, end)
+
+
+def _pending_milczacy(state_path: Path, nudge: str, week_start: str = "2026-07-20") -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start=week_start,
+                status="awaiting_reply",
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+
+
+def test_krok_1_5_nie_powtarza_odczytu_grafiku_w_obrebie_ttl(tmp_path: Path):
+    """Dwa obiegi w oknie TTL — grafik czytany RAZ. To jest cała oszczędność tej zmiany."""
+    from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
+
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    _pending_milczacy(state_path, nudge)
+    settings = _settings_self_fill(state_path)
+    client = _LiczacyOdczyty({"chat1": []})  # grafik pusty → nikt nie uzupełnił, wpis zostaje
+    pamiec = PamiecSamouzupelnien()
+
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 16, 12, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+    po_pierwszym = client.odczytow
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 16, 13, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+
+    assert po_pierwszym >= 1, "pierwszy obieg w ogóle nie zajrzał do grafiku"
+    assert client.odczytow == po_pierwszym, "drugi obieg pobrał grafik mimo świeżej pamięci"
+
+
+def test_po_uplywie_ttl_krok_1_5_czyta_ponownie(tmp_path: Path):
+    """Pamięć ma wygasać — inaczej samouzupełnienie z wtorku wyszłoby dopiero w piątek."""
+    from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
+
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    _pending_milczacy(state_path, nudge)
+    settings = _settings_self_fill(state_path)
+    client = _LiczacyOdczyty({"chat1": []})
+    pamiec = PamiecSamouzupelnien(ttl_s=3600)
+
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 16, 12, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+    po_pierwszym = client.odczytow
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 16, 14, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+
+    assert client.odczytow > po_pierwszym
+
+
+def test_bez_pamieci_kazdy_obieg_czyta_grafik(tmp_path: Path):
+    """`pamiec=None` to dzisiejsze zachowanie — dostają je `--poll-once` i `--proba-nasluchu`."""
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    _pending_milczacy(state_path, nudge)
+    settings = _settings_self_fill(state_path)
+    client = _LiczacyOdczyty({"chat1": []})
+
+    poll_replies(
+        settings, client, _FakeLlm("{}"), now=datetime(2026, 7, 16, 12, tzinfo=timezone.utc)
+    )  # type: ignore[arg-type]
+    po_pierwszym = client.odczytow
+    poll_replies(
+        settings, client, _FakeLlm("{}"), now=datetime(2026, 7, 16, 13, tzinfo=timezone.utc)
+    )  # type: ignore[arg-type]
+
+    assert client.odczytow > po_pierwszym
+
+
+def test_wpis_wygasajacy_w_tym_obiegu_omija_pamiec(tmp_path: Path):
+    """Wpis po terminie MUSI dostać świeży odczyt — inaczej ktoś, kto uzupełnił grafik sam,
+    usłyszy „nie dostałem odpowiedzi", a temat zostanie zamknięty TERMINALNIE.
+
+    To jest reguła, dzięki której bezpieczeństwo nie zależy od wartości TTL.
+    """
+    from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
+
+    state_path = tmp_path / "state.json"
+    nudge = "2026-07-16T09:00:00Z"
+    _pending_milczacy(state_path, nudge)
+    settings = _settings_self_fill(state_path)
+    client = _LiczacyOdczyty({"chat1": []})
+    pamiec = PamiecSamouzupelnien()
+
+    # Pierwszy obieg: przed terminem (termin kalendarzowy to poniedziałek 2026-07-20 05:00).
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 17, 12, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+    po_pierwszym = client.odczytow
+    # Drugi obieg: PO terminie, w oknie TTL. Pamięć jest świeża, a mimo to ma zostać ominięta.
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),
+        now=datetime(2026, 7, 20, 6, tzinfo=timezone.utc),
+        pamiec=pamiec,
+    )  # type: ignore[arg-type]
+
+    assert client.odczytow > po_pierwszym, "wpis po terminie dostał grafik z pamieci"

@@ -39,6 +39,7 @@ from powiadomienia_teams.runtime.cisza import (
 )
 from powiadomienia_teams.runtime.listener import PollOutcome, poll_replies
 from powiadomienia_teams.runtime.nudge import run_once
+from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
 from powiadomienia_teams.runtime.wysylka import do_administratora
 from powiadomienia_teams.scheduler.backoff import next_poll_delay
 from powiadomienia_teams.scheduler.weekly import next_run, previous_run
@@ -677,6 +678,10 @@ def run_forever(
     # Wpięte tutaj, a nie w `cli`, z tego samego powodu co sufit czasu przebiegu: alerty są dla
     # pracy BEZOBSŁUGOWEJ, a `--once`/`--poll-once` uruchamia człowiek, który widzi log.
     zglos_zawieszone_zapisy(settings)
+    # Pamięć grafiku dla kroku 1.5 (ADR 0009) — właścicielem jest PĘTLA, bo to ona przeżywa obiegi.
+    # Świadomie NIE `SnapshotGrafiku`: jeden obiekt obsługujący i ścieżkę zapisu, i krok
+    # samouzupełnienia byłby o jeden `bool` od podania nieświeżych danych przed POST-em do Shifts.
+    pamiec = PamiecSamouzupelnien()
     # Start liczy się jako świeżo potwierdzona sesja (`_ensure_authenticated` właśnie ją sprawdził).
     stan_pulsu = StanPulsu(teraz() + timedelta(hours=settings.heartbeat_interval_h))
     powitanie_wyslane = False
@@ -783,7 +788,9 @@ def run_forever(
                 # niezależnymi zegarami. W produkcji dają tę samą wartość, ale „w produkcji to
                 # jedno i to samo" nie jest niezmiennikiem — jest zbiegiem okoliczności.
                 with budzet.na_czas("Obieg nasłuchu"):
-                    outcome = poll_replies(settings, client, llm, now=teraz())
+                    outcome = poll_replies(
+                        settings, client, llm, now=teraz(), pamiec=pamiec
+                    )
                 if przekroczenia_nasluchu >= _PROG_ALERTU_PRZEKROCZEN:
                     operator.alert(settings, "Nasłuch znów mieści się w limicie czasu",
                            "Obieg zakończył się w całości — odpowiedzi są przetwarzane.",
