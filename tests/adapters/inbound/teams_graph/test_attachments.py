@@ -27,6 +27,7 @@ from workmate.adapters.inbound.teams_graph.attachments import (
     FileBytesMaterializer,
 )
 from workmate.adapters.inbound.teams_graph.selection import AttachmentRef, ChannelMessage
+from workmate.core.errors import AttachmentOutsideChannel
 
 # Atrapy: prefiks magic + zera. Pillow ich nie otworzy → fallback na sniff magicznych bajtów
 # (rozpoznaje typ, bez downscalingu) — dokładnie ścieżka dla obrazów inline z Teams.
@@ -58,6 +59,7 @@ class _FakeGraphClient:
         self._public = public or {}
         self.hosted_calls: list[tuple[str, str, str, str, str]] = []
         self.file_calls: list[str] = []
+        self.file_scopes: list[tuple[str, str]] = []
         self.public_calls: list[str] = []
 
     async def get_hosted_content(
@@ -66,8 +68,9 @@ class _FakeGraphClient:
         self.hosted_calls.append((team_id, channel_id, root_id, message_id, hosted_id))
         return _resolve(self._hosted[hosted_id])
 
-    async def download_shared_url(self, url: str) -> bytes:
+    async def download_channel_file(self, team_id: str, channel_id: str, url: str) -> bytes:
         self.file_calls.append(url)
+        self.file_scopes.append((team_id, channel_id))
         return _resolve(self._files[url])
 
     async def download_public_url(self, url: str) -> bytes:
@@ -790,3 +793,31 @@ def test_laczny_sufit_tekstu_jest_ZWIAZANY_z_sufitem_pojedynczego_pliku():
     limity = AttachmentLimits(max_bytes=1, max_count=1, max_total_bytes=1)
 
     assert limity.max_total_text_chars == _MAX_TEXT_CHARS
+
+
+def test_zalacznik_spoza_kanalu_dostaje_INNA_notke_niz_nieudane_pobranie():
+    """Odmowa granicy i awaria pobrania to dwa różne zdarzenia — i mają być odróżnialne (ADR 0072).
+
+    Gdyby odmowa wpadła do generycznego handlera, człowiek dostałby „nie udało się pobrać" —
+    komunikat, który każe spróbować ponownie, choć ponowienie nigdy nie zadziała. Notka ma
+    powiedzieć, CO zrobić: wgrać plik do kanału.
+    """
+    client = _FakeGraphClient(files={"u://obcy": AttachmentOutsideChannel("poza kanałem")})
+    ref = AttachmentRef(kind="file", name="wynagrodzenia.xlsx", url="u://obcy")
+
+    (att,) = _materialize(client, (ref,))
+
+    assert att.kind == "text"
+    assert "wynagrodzenia.xlsx" in att.text
+    assert "nie leży w plikach tego kanału" in att.text
+    assert "nie udało się pobrać" not in att.text
+
+
+def test_materializer_podaje_kanal_przy_pobraniu_zalacznika():
+    """Kanał jedzie do klienta jako argument — bez tego granica nie miałaby wobec czego mierzyć."""
+    client = _FakeGraphClient(files={"u://a": b"%PDF-1.4 tresc"})
+    ref = AttachmentRef(kind="file", name="raport.pdf", url="u://a")
+
+    _materialize(client, (ref,))
+
+    assert client.file_scopes == [(_TEAM, _CHAN)]

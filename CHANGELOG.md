@@ -8,6 +8,37 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Załącznik z wiadomości Teams musi leżeć w plikach TEGO kanału — drzwi przestają rozwiązywać
+  dowolny `contentUrl` tokenem bota** ([ADR 0072](docs/adr/0072-channel-scoped-attachment-resolution.md),
+  amenduje [ADR 0016](docs/adr/0016-user-multimodal-attachments.md)). Adres pliku przychodził
+  Z WIADOMOŚCI i był brany dosłownie — jedynym warunkiem było „niepusty" — a pobranie szło
+  **tokenem bota**, któremu ADR 0016 nadał `Files.Read.All` + `Sites.Read.All`. Graph autoryzuje
+  po koncie bota, nie po nadawcy, więc wiadomość mówiła, KTÓRY plik otworzyć, a nic nie mówiło,
+  czy pytającemu WOLNO: członek obserwowanego kanału, piszący przez API zamiast przez klienta
+  Teams, mógł kazać botowi przeczytać dowolny plik widoczny dla konta bota — także z witryny,
+  do której sam nie ma dostępu — a treść wracała na kanał w odpowiedzi. Zdezorientowany zastępca.
+  *Asymetria była widoczna w jednym pliku:* sąsiednia ścieżka obrazów publicznych ma allowlistę
+  hostów i komentarz nazywający ją barierą SSRF, a ścieżka nieporównanie szersza w skutkach nie
+  miała nic; test asertował nawet, że `"u://plik"` przechodzi parsowanie, więc brak kontroli był
+  zamierzony, nie przeoczony. Bariery nie trzeba było wymyślać — `graph_file_sender` pyta
+  `filesFolder` o `parentReference.driveId` przy WYSYŁCE od ADR 0026; to samo pytanie zadajemy
+  teraz przy ODBIORZE. Udostępnienie rozwiązujemy najpierw do METADANYCH, porównujemy dysk, i
+  dopiero wtedy pobieramy treść **wprost z dysku i pozycji**, a nie ponownym rozwiązaniem
+  udostępnienia — zwalidowany obiekt i pobrany obiekt to ten sam obiekt.
+  Metoda pobłażliwa została **usunięta z portu, nie oznaczona jako przestarzała**: droga
+  rozwiązująca dowolny udział z uprawnieniami bota nie ma zostać w powierzchni dla przyszłego
+  wołającego. Odmowa jest osobnym zdarzeniem od nieudanego pobrania — własny wyjątek, własny
+  `warning` i notka mówiąca, co zrobić („wgraj plik do kanału"), bo „nie udało się pobrać"
+  kazałoby ponawiać coś, co nigdy nie zadziała. Ten log jest zarazem jedynym sygnałem, po którym
+  poznamy, czy ludzie realnie załączają pliki spoza kanału.
+  *Koszt zmierzony przed decyzją:* produkcja przeniosła **4 bloki załącznikowe w całej historii**
+  (`conversations.db`, 2026-07-31 → 2026-09-07), więc surowa reguła nie odbiera dziś nikomu
+  niczego, co robi. Załącznik z prywatnego OneDrive zostanie odrzucony z notką — wariant
+  dopuszczający dysk nadawcy rozważono i odrzucono (ADR 0072, opcja B): zostawia nadawcy
+  możliwość opublikowania w wątku własnego pliku, którego kanałowi nie udostępnił.
+  Pobranie pliku kosztuje teraz dwa wywołania Graph zamiast jednego, plus jedno `filesFolder`
+  na kanał na proces (cache). Obrazy wklejane i publiczne — bez zmian.
+
 - **Mapa tożsamości przyjmuje wpis „tylko Teams": `jira_user` jest opcjonalne, `aad_user_id`
   zostaje wymagane** ([ADR 0070](docs/adr/0070-teams-only-identity-and-what-a-map-entry-grants.md)).
   Ładowarka żądała OBU identyfikatorów, a w pionie jest osoba bez konta Jira — więc bramka odczytu

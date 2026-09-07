@@ -17,7 +17,7 @@ import httpx
 
 from workmate.adapters.inbound.teams_graph.formatting import to_teams_html
 from workmate.adapters.outbound.graph_http import retry_after_s
-from workmate.core.errors import ThreadRootGone
+from workmate.core.errors import AttachmentOutsideChannel, ThreadRootGone
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Twardy cap pobrania publicznego obrazu (GIF/emoji) — zewnętrzny host, którego nie kontrolujemy;
@@ -34,6 +34,9 @@ class HttpxGraphChannelClient:
     def __init__(self, client: httpx.AsyncClient, token_provider: Callable[[], str]) -> None:
         self._client = client
         self._token = token_provider
+        # driveId folderu plików kanału — własność KANAŁU, nie wiadomości, a poller pyta wiecznie
+        # o te same kilka kanałów. Cache na życie procesu (ADR 0072 §3).
+        self._channel_drive_ids: dict[tuple[str, str], str] = {}
 
     async def refresh_auth(self) -> None:
         """Ustaw nagłówek Authorization świeżym tokenem (sync MSAL w puli wątków).
@@ -168,14 +171,44 @@ class HttpxGraphChannelClient:
                 chunks.append(chunk)
             return b"".join(chunks)
 
-    async def download_shared_url(self, url: str) -> bytes:
-        """Bajty pliku z SharePoint po ``contentUrl`` (driveItem via /shares).
+    async def channel_drive_id(self, team_id: str, channel_id: str) -> str:
+        """``driveId`` folderu plików kanału — granica przynależności załącznika (ADR 0072).
 
-        Wymaga zakresów ``Files.Read.All``/``Sites.Read.All``. ``/driveItem/content``
-        zwraca 302 do wstępnie uwierzytelnionego URL-a SharePointu — podążamy za nim;
-        httpx zdejmuje nagłówek ``Authorization`` przy przekierowaniu na inny host.
+        To samo pytanie, które przy WYSYŁCE zadaje ``graph_file_sender`` (``filesFolder`` →
+        ``parentReference.driveId``); tutaj zadane przy ODBIORZE. Wynik cache'owany per kanał.
         """
-        endpoint = f"{GRAPH}/shares/{_encode_share_id(url)}/driveItem/content"
+        klucz = (team_id, channel_id)
+        znany = self._channel_drive_ids.get(klucz)
+        if znany is not None:
+            return znany
+        folder = await self._get(f"{GRAPH}/teams/{team_id}/channels/{channel_id}/filesFolder")
+        drive_id = str((folder.get("parentReference") or {}).get("driveId") or "")
+        if not drive_id:
+            raise RuntimeError("filesFolder kanału nie podał driveId")
+        self._channel_drive_ids[klucz] = drive_id
+        return drive_id
+
+    async def download_channel_file(self, team_id: str, channel_id: str, url: str) -> bytes:
+        """Bajty załącznika — TYLKO jeśli leży na dysku plików tego kanału (ADR 0072).
+
+        Rozwiązujemy udostępnienie najpierw do METADANYCH, nie do treści: ``contentUrl`` przychodzi
+        z wiadomości, a token jest bota, więc bez tego porównania wiadomość wybierałaby dowolny plik
+        widoczny dla konta bota. Dopiero po sprawdzeniu pobieramy treść WPROST z dysku i pozycji
+        (``/drives/{id}/items/{id}/content``), a nie ponownym rozwiązaniem udostępnienia — dzięki
+        temu zwalidowany obiekt i pobrany obiekt to ten sam obiekt, bez łańcucha przekierowań,
+        którego nie da się obejrzeć.
+        """
+        meta = await self._get(
+            f"{GRAPH}/shares/{_encode_share_id(url)}/driveItem",
+            {"$select": "id,parentReference"},
+        )
+        rodzic = meta.get("parentReference") or {}
+        drive_zalacznika = str(rodzic.get("driveId") or "")
+        item_id = str(meta.get("id") or "")
+        drive_kanalu = await self.channel_drive_id(team_id, channel_id)
+        if not drive_zalacznika or not item_id or drive_zalacznika != drive_kanalu:
+            raise AttachmentOutsideChannel("załącznik nie leży na dysku plików tego kanału")
+        endpoint = f"{GRAPH}/drives/{drive_zalacznika}/items/{item_id}/content"
         return await self._get_bytes(endpoint, follow_redirects=True)
 
     async def list_root_messages(

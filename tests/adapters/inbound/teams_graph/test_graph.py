@@ -17,7 +17,7 @@ from workmate.adapters.inbound.teams_graph.graph import (
     HttpxGraphChannelClient,
     _encode_share_id,
 )
-from workmate.core.errors import ThreadRootGone
+from workmate.core.errors import AttachmentOutsideChannel, ThreadRootGone
 
 
 def test_encode_share_id_uses_u_prefix_urlsafe_base64_without_padding():
@@ -225,3 +225,92 @@ def test_get_gives_up_on_persistent_401_after_single_refresh():
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(run())
     assert len(calls) == 2  # oryginał + jedno ponowienie, potem podnosi (nie pętli)
+
+
+# ── Granica przynależności załącznika (ADR 0072) ────────────────────────────────────────────
+#
+# ``contentUrl`` przychodzi Z WIADOMOŚCI, a token jest BOTA — więc bez porównania dysków to
+# wiadomość wybierałaby, który plik tenanta otworzyć. Sondy niżej pilnują trzech rzeczy: że
+# pobranie idzie z dysku kanału i po identyfikatorze, że plik z cudzego dysku NIE JEST POBIERANY
+# (nie: „jest pobierany i odrzucany"), i że o dysk kanału pytamy raz.
+
+_DYSK_KANALU = "b!kanal"
+_DYSK_OBCY = "b!zarzad"
+
+
+def _graph_handler(sciezki: list[str], *, dysk_pliku: str, item_id: str = "01ITEM"):
+    """Atrapa Graph: folder plików kanału, metadane udostępnienia i treść. Zapisuje ścieżki."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sciezki.append(request.url.path)
+        if request.url.path.endswith("/filesFolder"):
+            return httpx.Response(
+                200, json={"id": "folder", "parentReference": {"driveId": _DYSK_KANALU}}
+            )
+        if request.url.path.endswith("/driveItem"):
+            return httpx.Response(
+                200, json={"id": item_id, "parentReference": {"driveId": dysk_pliku}}
+            )
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=b"PDF-bajty")
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_download_channel_file_bierze_tresc_z_dysku_kanalu_po_identyfikatorze():
+    """Zwalidowany obiekt i pobrany obiekt to TEN SAM obiekt — treść idzie po drive+item.
+
+    Gdyby treść szła ponownie przez ``/shares/…/content``, walidacja dotyczyłaby innego
+    rozwiązania URL-a niż pobranie i łańcuch przekierowań zostałby poza wglądem.
+    """
+    sciezki: list[str] = []
+    transport = httpx.MockTransport(_graph_handler(sciezki, dysk_pliku=_DYSK_KANALU))
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            return await client.download_channel_file("team", "chan", "https://x/plik.pdf")
+
+    dane = asyncio.run(run())
+
+    assert dane == b"PDF-bajty"
+    assert f"/v1.0/drives/{_DYSK_KANALU}/items/01ITEM/content" in sciezki
+    assert not any("/shares/" in s and s.endswith("/content") for s in sciezki)
+
+
+def test_zalacznik_z_cudzego_dysku_nie_jest_w_ogole_pobierany():
+    """Sedno ADR 0072: odmowa zapada PRZED pobraniem, więc bajty nigdy nie opuszczają SharePointu.
+
+    Asercja celuje w BRAK żądania treści, a nie w komunikat — sprawdzenie samego wyjątku
+    przeszłoby też wtedy, gdyby plik został pobrany i dopiero potem odrzucony, czyli w układzie,
+    w którym treść cudzego pliku i tak przeszła przez proces drzwi.
+    """
+    sciezki: list[str] = []
+    transport = httpx.MockTransport(_graph_handler(sciezki, dysk_pliku=_DYSK_OBCY))
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            await client.download_channel_file("team", "chan", "https://x/wynagrodzenia.xlsx")
+
+    with pytest.raises(AttachmentOutsideChannel):
+        asyncio.run(run())
+
+    assert not any(s.endswith("/content") for s in sciezki), sciezki
+
+
+def test_o_dysk_kanalu_pytamy_raz_na_kanal():
+    """``filesFolder`` to własność kanału, nie wiadomości — drugi załącznik nie pyta ponownie."""
+    sciezki: list[str] = []
+    transport = httpx.MockTransport(_graph_handler(sciezki, dysk_pliku=_DYSK_KANALU))
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = HttpxGraphChannelClient(http, token_provider=lambda: "tok")
+            await client.download_channel_file("team", "chan", "https://x/a.pdf")
+            await client.download_channel_file("team", "chan", "https://x/b.pdf")
+
+    asyncio.run(run())
+
+    assert sum(1 for s in sciezki if s.endswith("/filesFolder")) == 1, sciezki
