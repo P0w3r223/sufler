@@ -562,7 +562,7 @@ class Settings:
                 f"auth_failure_exit_delay_s < 0 niedozwolone: {self.auth_failure_exit_delay_s}"
             )
         # Sprawdzane ZAWSZE, nie tylko przy dry_run=false. Sekwencja wdrożenia każe przećwiczyć
-        # pilotaż najpierw w trybie próbnym (docs/wdrozenie.md) — gdyby bramka milczała w dry_run,
+        # pilotaż najpierw w trybie próbnym (deploy/README-docker.md) — gdyby bramka milczała
         # próba nie sprawdzałaby dokładnie tego, co ma ochronić przy przełączeniu na serio.
         if self.pilotaz and not self.only_user_ids:
             raise ConfigError(

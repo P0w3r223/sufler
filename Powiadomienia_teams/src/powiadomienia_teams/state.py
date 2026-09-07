@@ -311,7 +311,7 @@ def _wygaszone() -> dict[str, Any]:
 
     **Czego tu NIE ma i dlaczego** (ustalenie przeglądu 0.2.18): ``awaiting_yes`` obowiązuje w obu
     przejściach, ale jest gaszony w każdym z nich osobno. To lista pól PRYWATNOŚCIOWYCH — cytuje ją
-    w tej roli ``docs/dane-osobowe.md`` — a ``awaiting_yes`` jest bramką nieodwracalnego zapisu
+    w tej roli reguła prywatności **A10** — a ``awaiting_yes`` jest bramką nieodwracalnego zapisu
     (**N38**), nie danymi o osobie; wpisany tutaj zniknąłby z tamtej listy i z tamtego uzasadnienia.
     Cena rozdziału jest jawna: obie strony pilnuje sonda parzystości i zdjęcie którejkolwiek daje
     test czerwony, ale trzecie pole o tym kształcie należy dopisać do sondy, a nie do tej funkcji.
@@ -408,7 +408,7 @@ def _zapisz_kopie(path: Path, domkniete: dict[str, PendingReminder]) -> None:
     rozmowy, która u klienta jest już zamknięta — a to ono, nie utrata pamięci, było tu realną ceną.
 
     **Warunek tożsamości rozmowy (0.2.17): ten sam ``week_start``.** Kluczem stanu jest samo
-    ``member_id`` (dług policzony w §5.1 architektury), więc wpis pod tym kluczem w POPRZEDNIM
+    ``member_id`` (dług znany i świadomy), więc wpis pod tym kluczem w POPRZEDNIM
     pliku może dotyczyć innego tygodnia niż wpis domknięty w nowym — ``nudge.run_once`` nadpisuje
     otwartą rozmowę z poprzedniego tygodnia. Dziś to nieosiągalne, bo wpis na nowy tydzień zawsze
     przechodzi najpierw przez zapis ze statusem otwartym, ale własność wywnioskowana z kolejności

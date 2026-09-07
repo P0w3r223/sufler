@@ -49,7 +49,7 @@ def _sync_args_ci() -> str | None:
     """`sync_args` wpisu macierzy o `dir: "Powiadomienia_teams"`; ``None``, gdy wpisu nie ma.
 
     Czytamy tekstem, nie parserem YAML: `pyyaml` wypadło z zależności przy czyszczeniu 0.2.0
-    (jedyny konsument zniknął razem z `roster.py`), a dokładanie go z powrotem dla jednego testu
+    (jedyny konsument zniknął razem z modułem roster), a dokładanie go z powrotem dla jednego testu
     byłoby drożej niż dwadzieścia linii regexa.
     """
     tresc = _CI.read_text(encoding="utf-8")

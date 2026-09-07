@@ -288,7 +288,7 @@ Usługa sama się zgłasza — ręczne zaglądanie jest już tylko uzupełnienie
 | `HEALTHCHECK` | co 5 min | `docker compose ps` pokazuje `healthy`/`unhealthy`, nie samo „Up" |
 | Puls sesji | co 24 h | utrata sesji wychodzi w dobę, nie dopiero w piątek o 16:00 |
 
-Wymaga ustawienia `POWIADOMIENIA_ADMIN_USER_ID` i `POWIADOMIENIA_ALERT_WEBHOOK_URL` — bez nich
+Wymaga ustawienia `POWIADOMIENIA_ADMIN_USER_IDS` i `POWIADOMIENIA_ALERT_WEBHOOK_URL` — bez nich
 usługa działa, ale milczy.
 
 ```bash
@@ -332,7 +332,6 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 
 | Objaw | Przyczyna | Obejście |
 |---|---|---|
-| Zmiana przez północ znika | `22:00–06:00` traci informację o przejściu doby i jest po cichu pomijana | Nie dotyczy tego zespołu (brak nocek); wymaga poprawki kodu, gdy się pojawią |
 | `--login` przy działającej usłudze | Omija blokadę jednej instancji i pisze do cache równolegle | Zawsze `docker compose stop` przed logowaniem (krok 4) |
 | Wpis zniknął, a pracownik nie dostał ŻADNEJ wiadomości | Odczyt czatu padł w serii kolejnych obiegów, a od ostatniej aktywności minęło ponad `SUFIT_WPISU_BEZ_ODCZYTU_H` (144 h) — wpis zamknięto po cichu (ADR 0007). Same 144 h nie wystarczą: pojedyncza awaria odczytu wpisu NIE zamyka | To zamierzone: nie wiemy, czy odpisał, więc nie wolno mu zarzucić milczenia. Alert „Przypomnienia zablokowane na odczycie czatu" mówi kogo dotyczy; grafik ustal z tymi osobami ręcznie |
 

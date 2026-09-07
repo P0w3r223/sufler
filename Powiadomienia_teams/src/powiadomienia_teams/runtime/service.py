@@ -258,7 +258,8 @@ def _powitanie(settings: Settings, termin: datetime, *, wyslane: bool) -> bool:
     bramką ciszy, usługa wstająca po 20:00 milczała do 07:00 — a to jest wprost sprzeczne
     z kontraktem „alerty operatorskie idą zawsze, dotyczą stanu USŁUGI" i kosztuje dwie rzeczy
     opisane w dokumentach: kontrolę ``ONLY_USER_IDS`` na alercie startowym
-    (``docs/wdrozenie.md``) oraz jedyny ślad samoleczenia po restarcie (``docs/runbook.md``).
+    (``deploy/README-docker.md``) oraz jedyny ślad samoleczenia po restarcie
+    (``deploy/README-serwer.md``).
     Nocne wdrożenie i nocny restart to przypadki typowe, nie skrajne.
     """
     if wyslane:

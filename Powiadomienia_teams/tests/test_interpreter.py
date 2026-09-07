@@ -570,3 +570,50 @@ def test_zly_json_nie_wypuszcza_calego_wyjscia_modelu_do_logu(caplog):
     # innym środkiem, a nie porzucone.
     assert "nie zwrócił poprawnego JSON" in zapis
     assert surowe[:40] not in zapis
+
+
+# --- Nocka: cała droga, od interwału do opisu ---------------------------------
+#
+# Ten test istnieje, bo `deploy/README-docker.md` przez jedenaście wydań twierdził, że zmiana
+# przez północ „traci informację o przejściu doby i jest po cichu pomijana". Nieprawda była
+# w każdym członie — a przeżyła tak długo, bo ŻADEN test nie przechodził tej drogi w całości:
+# osobno sprawdzano budowę zmiany, osobno round-trip, osobno opis.
+
+
+def test_nocka_przechodzi_cala_droge_do_opisu():
+    """22:00–06:00 z piątku: koniec wypada w SOBOTĘ, round-trip wierny, opis mówi »do soboty«."""
+    from powiadomienia_teams.agent.interpreter import schedule_to_intervals
+    from powiadomienia_teams.messages import describe_schedule
+
+    interwaly = [{"dzien": "piątek", "start": "22:00", "end": "06:00"}]
+    grafik = build_schedule("u1", date(2026, 9, 14), interwaly, WAW, "grupa-1")
+
+    assert len(grafik.shifts) == 1, "nocka została pominięta przy budowie"
+    zmiana = grafik.shifts[0]
+    start_lokalnie = zmiana.start.astimezone(WAW)
+    koniec_lokalnie = zmiana.end.astimezone(WAW)
+    assert start_lokalnie.date() == date(2026, 9, 18), "dzień przypisania to dzień ROZPOCZĘCIA"
+    assert koniec_lokalnie.date() == date(2026, 9, 19), (
+        "koniec nie został przewinięty na następny dzień"
+    )
+    assert (zmiana.end - zmiana.start).total_seconds() == 8 * 3600
+
+    # Round-trip: stan trzyma interwały, więc rozjazd tych dwóch funkcji znaczyłby, że wpis
+    # zapisany w piątek nie da się odtworzyć w poniedziałek.
+    z_powrotem = schedule_to_intervals(grafik, WAW)
+    assert z_powrotem == [{"weekday": 4, "start": "22:00", "end": "06:00", "theme": None}]
+    assert (
+        build_schedule("u1", date(2026, 9, 14), z_powrotem, WAW, "grupa-1").shifts == grafik.shifts
+    )
+
+    opis = describe_schedule(grafik, WAW)
+    assert "22:00" in opis and "06:00" in opis
+    assert "sobot" in opis.lower(), f"opis nie mówi, że zmiana kończy się nazajutrz: {opis!r}"
+
+
+def test_zrownane_godziny_to_nie_nocka_tylko_sprzecznosc():
+    """„8–8" nie znaczy doby pracy w realnej rozmowie — wpis ma odpaść, nie urosnąć do 24 h."""
+    grafik = build_schedule(
+        "u1", date(2026, 9, 14), [{"dzien": "piątek", "start": "08:00", "end": "08:00"}], WAW, None
+    )
+    assert grafik.is_empty

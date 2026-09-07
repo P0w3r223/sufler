@@ -179,7 +179,8 @@ def termin_odpowiedzi(pending: PendingReminder, okno: OknoOdpowiedzi) -> datetim
     wygaszenie następuje w pierwszym cichym obiegu po terminie. Przy domyślnym offsecie termin
     wypada w poniedziałek o 05:00, czyli WEWNĄTRZ godzin ciszy — a te odkładają cały obieg, więc
     orzeczenie i wiadomość wychodzą dopiero o 07:00 (**B5**, od 0.2.13). Daje to dwie godziny
-    łaski, których nikt nie projektował, i jest opisane w ``docs/runbook.md``. Instalacja, dla
+    łaski, których nikt nie projektował, i jest opisane w ``deploy/README-serwer.md``. Instalacja,
+    dla
     której nawet to jest wtargnięciem, wyłącza samo domknięcie (``SEND_EXPIRY_MESSAGE=false``);
     przesunięcie godziny robi się przez ``CISZA_DO_H`` albo ``REPLY_DEADLINE_OFFSET_H``.
 
