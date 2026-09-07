@@ -73,7 +73,6 @@ class GithubSettings:
     enable_github_write: bool = False
     enable_ci_auto_comment: bool = False
     state_path: Path = _DEFAULT_GITHUB_STATE
-    self_login: str = ""
     worklog_idle_gap_minutes: int = 90
     worklog_ramp_up_minutes: int = 30
     worklog_round_minutes: int = 15
@@ -96,7 +95,6 @@ class GithubSettings:
                 "WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", default=False
             ),
             state_path=_path_from_env("WORKMATE_GITHUB_STATE", _DEFAULT_GITHUB_STATE),
-            self_login=os.environ.get("WORKMATE_GITHUB_SELF_LOGIN", ""),
             worklog_idle_gap_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES", 90),
             worklog_ramp_up_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_RAMP_UP_MINUTES", 30),
             worklog_round_minutes=_int_from_env("WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES", 15),

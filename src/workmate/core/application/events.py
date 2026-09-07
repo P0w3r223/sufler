@@ -36,6 +36,22 @@ class EventService:
             return None
         return self._store.append(event)
 
+    def echo_exists(self, external_id: str, kind: str) -> bool:
+        """Czy w magazynie leży ECHO naszych drzwi zapisu o tym kluczu (ADR 0071 decyzja 6).
+
+        Źródło ``teams`` nie jest parametrem z rozmysłu: echo to ślad, który zostawiają WYŁĄCZNIE
+        nasze drzwi zapisu. Wołający podający inne źródło zadawałby inne pytanie — i dostałby na
+        nie odpowiedź wyglądającą jak ta, co czyni z parametru pułapkę zamiast elastyczności.
+
+        Dedup magazynu tego pytania NIE zamyka i nie wolno tego zakładać (ADR 0071 decyzja 7):
+        klucz unikalności to ``(source, external_id, kind)``, więc echo ``('teams', '40',
+        'github_issue_created')`` i zdarzenie pollera ``('github', '40', 'issue_opened')`` są dla
+        bazy DWOMA różnymi faktami i oba przechodzą. Magazyn gwarantuje, że każdy zapisze się raz;
+        nie ma pojęcia, że opisują to samo. Dlatego strażnik musi jawnie SPRAWDZIĆ klucz echa,
+        a nie liczyć na ``ON CONFLICT``.
+        """
+        return self._store.exists("teams", external_id, kind)
+
     def recent(
         self, *, source: str | None = None, project: str | None = None, limit: int = 20
     ) -> list[Event]:

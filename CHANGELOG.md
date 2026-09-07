@@ -8,6 +8,36 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **Strażnik pętli self-ping pyta o ECHO naszych drzwi zapisu, a nie o konto autora**
+  ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md) decyzja 6;
+  etap 2 z czterech). Dotychczasowa reguła stała na przesłance „nasze konto ⇒ nasze narzędzie",
+  zmierzonej jako **fałszywa**: konto PAT założyło w tym repozytorium osiem zgłoszeń, z czego przez
+  narzędzie **dwa**; pozostałe sześć powstało `gh` CLI i przez WWW z sesji Claude Code. Filtr po
+  koncie zjadał wszystkie osiem, echo miały dwa — **pozostałych sześciu nie było nigdzie**, ani
+  jako zdarzenie pollera, ani jako echo. Strażnik filtrował po tym, KTO pisze, gdy pytanie brzmi,
+  co zapisały NASZE DRZWI.
+  Pomijamy teraz wtedy i tylko wtedy, gdy w magazynie leży echo, które mogły zostawić wyłącznie
+  drzwi zapisu: `issue_opened` dla numeru *n* przy `('teams', n, 'github_issue_created')`,
+  komentarz *c* przy `('teams', c, 'github_comment_created')`. Wszystko inne — `pr_opened`,
+  `pr_review`, `issue_closed` — traci self-skip **bez zamiennika**: drzwi zapisu są create-only na
+  zgłoszeniach i komentarzach (reguła 7, ADR 0021), więc nie ma drogi, którą bylibyśmy autorem PR-a
+  czy recenzji, a filtrowanie ich po koncie było czystą stratą.
+  **Dedup magazynu tego NIE zamyka i nie wolno tego zakładać** (decyzja 7): klucz unikalności to
+  `(source, external_id, kind)`, więc echo i zdarzenie pollera są dla bazy dwoma różnymi faktami
+  i oba przechodzą. Strażnik jawnie SPRAWDZA klucz echa, zamiast liczyć na `ON CONFLICT`.
+  **`WORKMATE_GITHUB_SELF_LOGIN` USUNIĘTE** — po tej zmianie nie ma wołającego, a wcześniej i tak
+  nie robiło tego, na co wyglądało: pusta wartość nie wyłączała filtru, tylko kazała ustalić konto
+  z `GET /user`. To dlatego incydent zdarzył się na flocie, gdzie tej zmiennej nie ustawiono wcale.
+  Zmienna znika z `.env.example`, `deploy/docker/env.example`, `docs/reference/config.md`,
+  `docs/reference/gaps.md` i `docs/how-to/gate-matrix.md` razem z kodem — nie po nim.
+  `selection` **zostaje wolne od I/O**: predykat przychodzi jako wstrzykiwany argument, tak jak
+  zegar `diff_branches`, i jest **wymagany bez wartości domyślnej** (pominięty przez przeoczenie
+  wyłączałby strażnika w ciszy). Sama selekcja schodzi w pollerze do **puli wątków**, bo predykat
+  sięga do SQLite pod zamkiem dzielonym z notifierem — bez tego etap 2 wprowadzałby blokowanie
+  pętli asyncio, którego wcześniej nie było.
+  Kształt kluczy jest **kontraktem między dwoma modułami**; pilnuje go nowa sonda porównująca
+  klucz echa z kluczem mappera **wyliczone przez obie strony**, nie przepisane do asercji.
+
 - **Warstwa zdarzeń przestaje obiecywać, że odpowiada o stan GitHuba — bo nie odpowiada.**
   2026-09-04 na kanale padło pytanie o otwarte zgłoszenia; bot pokazał tabelę dziesięciu.
   **Wszystkie dziesięć jest zamkniętych, a jedyne faktycznie otwarte nie mogło się w niej

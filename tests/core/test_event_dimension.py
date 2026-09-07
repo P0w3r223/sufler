@@ -16,6 +16,17 @@ from workmate.core.application.services import ProjectsService
 from workmate.core.domain.events import NewEvent, composite_external_id
 from workmate.core.domain.models import Project
 
+
+def _bez_echa(external_id: str, echo_kind: str) -> bool:
+    """Predykat „magazyn nic o tym nie wie" — wołający bez magazynu podaje go JAWNIE.
+
+    ``select_events`` wymaga tego argumentu bez wartości domyślnej (ADR 0071 decyzja 6): pominięty
+    przez przeoczenie wyłączałby strażnika pętli w ciszy. Widoczna nazwa w wywołaniu mówi wprost,
+    że TA sonda o echo nie pyta — a sonda, która pyta, podaje własny predykat.
+    """
+    return False
+
+
 _WHEN = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
 
 
@@ -150,7 +161,7 @@ def test_github_selection_stamps_repo_and_project() -> None:
         "user": {"login": "alice"},
     }
     events = selection.select_events(
-        [raw], [], self_login="bot", watch_kinds=("issues",), repo="o/r", project="wm"
+        [raw], [], echo_seen=_bez_echa, watch_kinds=("issues",), repo="o/r", project="wm"
     )
     assert len(events) == 1
     # repo/project ostemplowane; external_id niezmienione (single-repo, ADR 0028/0029).
@@ -203,7 +214,7 @@ def test_select_events_maps_pull_state_transitions() -> None:
                 "html_url": "http://gh/7",
             }
         ],
-        self_login="bot",
+        echo_seen=_bez_echa,
         watch_kinds=("pull_state",),
     )
     assert [e.kind for e in events] == ["pr_merged"]

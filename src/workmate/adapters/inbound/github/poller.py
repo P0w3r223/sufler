@@ -46,8 +46,10 @@ class GithubPoller:
     """Nasłuch repo GitHub (delegowany PAT). Zdarzenia → ``EventService.ingest`` (dedup magazynu).
 
     ``state`` to mutowalny słownik utrwalany przez ``persist`` po każdej rundzie: ``issues_since``
-    i ``comments_since`` (watermark ``since`` per zasób). ``self_login`` (konto PAT) do self-skip
-    ustala się z konfiguracji albo z ``authenticated_login`` na starcie.
+    i ``comments_since`` (watermark ``since`` per zasób).
+
+    Strażnik pętli self-ping pyta o ECHO naszych drzwi zapisu, nie o konto autora (ADR 0071
+    decyzja 6) — dlatego poller nie zna już żadnego loginu i nie odpytuje ``GET /user``.
     """
 
     def __init__(
@@ -62,7 +64,6 @@ class GithubPoller:
         persist: Callable[[dict[str, Any]], None],
         poll_interval: int,
         per_page: int,
-        self_login: str = "",
         project: str = "",
         clock: Callable[[], datetime] = _utcnow,
         stop: asyncio.Event | None = None,
@@ -77,7 +78,6 @@ class GithubPoller:
         self._persist = persist
         self._poll_interval = poll_interval
         self._per_page = per_page
-        self._self_login = self_login
         self._project = project
         self._clock = clock
         self._stop = stop
@@ -89,15 +89,13 @@ class GithubPoller:
         Sygnał ``stop`` (SIGTERM w ``app.py``) kończy pętlę PO utrwaleniu bieżącej rundy —
         graceful shutdown: ``docker stop`` nie ubija procesu w połowie zapisu (kontrakt R1).
         """
-        await self._resolve_self_login()
         # Seed w formacie GitHuba (``…Z``), NIE ``isoformat`` (``+00:00``): watermarki CI/recenzji
         # są porównywane leksykograficznie ze znacznikami GitHuba, więc format musi być zgodny.
         self._seed(_iso_z(self._clock()))
         logger.info(
-            "Nasłuch GitHub %s/%s (delegowany PAT, konto=%s). Ctrl+C/SIGTERM kończy.",
+            "Nasłuch GitHub %s/%s (delegowany PAT). Ctrl+C/SIGTERM kończy.",
             self._owner,
             self._repo,
-            self._self_login or "?",
         )
         while not self._stopping():
             try:
@@ -187,18 +185,27 @@ class GithubPoller:
                 ),
             )
 
-        events = selection.select_events(
-            raw_issues,
-            raw_comments,
-            raw_runs,
-            raw_reviews,
-            raw_pulls,
-            self_login=self._self_login,
-            watch_kinds=self._watch_kinds,
-            runs_since=self._state.get("runs_since", ""),
-            reviews_since=self._state.get("reviews_since", ""),
-            repo=f"{self._owner}/{self._repo}",
-            project=self._project,
+        # Selekcja idzie do PULI WĄTKÓW, bo od ADR 0071 decyzja 6 strażnik pętli pyta magazyn
+        # o echo — a to SQLite pod zamkiem dzielonym z notifierem. Wołana wprost, blokowałaby
+        # pętlę asyncio przez czas tych zapytań; dotąd selekcja była czysto obliczeniowa i nie
+        # blokowała nic, więc to jest nowy koszt wprowadzany razem ze strażnikiem, nie zastany.
+        # Zapytań jest najwyżej tyle, ile zdarzeń rodzajów z ``_ECHO_KINDS`` w rundzie.
+        events = await loop.run_in_executor(
+            None,
+            partial(
+                selection.select_events,
+                raw_issues,
+                raw_comments,
+                raw_runs,
+                raw_reviews,
+                raw_pulls,
+                echo_seen=self._events.echo_exists,
+                watch_kinds=self._watch_kinds,
+                runs_since=self._state.get("runs_since", ""),
+                reviews_since=self._state.get("reviews_since", ""),
+                repo=f"{self._owner}/{self._repo}",
+                project=self._project,
+            ),
         )
         new_branch_heads: dict[str, str] | None = None
         if "branches" in self._watch_kinds:
@@ -303,18 +310,6 @@ class GithubPoller:
             )
             reviews.extend(batch)
         return reviews
-
-    async def _resolve_self_login(self) -> None:
-        """Ustal login konta PAT (self-skip), jeśli nie podano w konfiguracji — best-effort."""
-        if self._self_login:
-            return
-        loop = asyncio.get_running_loop()
-        try:
-            self._self_login = await loop.run_in_executor(None, self._client.authenticated_login)
-        except Exception:
-            logger.warning(
-                "Nie udało się ustalić konta PAT — self-skip wyłączony (ryzyko pętli self-ping)."
-            )
 
     def _seed(self, startup_iso: str) -> None:
         """Zainicjuj watermarki = teraz (idempotentnie): ignoruj backlog sprzed uruchomienia.

@@ -203,7 +203,6 @@ Polling repo tokenem PAT ([ADR 0020](../adr/0020-github-delegated-polling-door.m
 | `WORKMATE_GITHUB_WATCH_KINDS` | `issues,comments` | Białą listą: `issues,comments,pulls,reviews,ci` ([ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)) oraz `pull_state` (tranzycje PR merged/closed) i `branches` (push/delete gałęzi, SHA-diff) ([ADR 0029](../adr/0029-branch-pr-state-transitions-and-project-activity.md)). |
 | `WORKMATE_GITHUB_ENABLE_WRITE` | `false` | Bramka 4: akcje `Activity(action='create_issue'/'comment')`, create-only ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)). |
 | `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT` | `false` | Deterministyczny auto-komentarz przy porażce CI; wymaga `_ENABLE_WRITE` ORAZ `ci` w `WATCH_KINDS`. |
-| `WORKMATE_GITHUB_SELF_LOGIN` | login konta PAT | Strażnik pętli self-skip (pomija zdarzenia własnego autorstwa). |
 | `WORKMATE_GITHUB_STATE` | `~/.workmate/github_state.json` | Watermarki + kursory notifiera/CI. |
 
 ### Propozycja czasu z commitów ([ADR 0034](../adr/0034-jira-worklog-from-github-commits.md), odczyt)

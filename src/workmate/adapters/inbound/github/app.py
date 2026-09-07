@@ -134,7 +134,6 @@ async def _run(
                 persist=persist,
                 poll_interval=settings.poll_interval_s,
                 per_page=settings.per_page,
-                self_login=settings.self_login,
                 project=project,
                 stop=stop,
                 heartbeat=beat,
