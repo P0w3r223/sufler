@@ -34,6 +34,17 @@ następnym obrazem.
 
 ### Zmienione
 
+- **Grafik dla wykrywania samouzupełnienia czytany rzadziej** (ADR 0009). Odczyt pobiera całą
+  kolekcję zespołu (u klienta trzy strony, ~2000 zmian) i szedł CO OBIEG nasłuchu, całą dobę,
+  dopóki jakakolwiek rozmowa była otwarta — około 61 pełnych pobrań na cykl tygodniowy. Wyniki
+  żyją teraz sześć godzin, ale **wyłącznie dla kroku 1.5**; ścieżka poprzedzająca nieodwracalny
+  zapis do Shifts zostaje przy odczycie per przebieg.
+
+  Cena widoczna dla użytkownika: podziękowanie za samodzielne uzupełnienie grafiku może przyjść
+  do sześciu godzin później niż dotąd. Zamknięcie tematu nigdy nie idzie z pamięci — jest
+  potwierdzane świeżym odczytem, bo wysyła człowiekowi zdanie „Twój grafik jest już uzupełniony",
+  a wpis po terminie odczytu z pamięci w ogóle nie dostaje.
+
 - `GraphClient.list_chat_messages` ma nowy argument **wymagany i wyłącznie nazwany**
   `od_watermarku`, wzorem `replies.incoming_after(..., *, nadawca)`. Wartość domyślna znaczyłaby,
   że przyszły wołający po cichu traci wykrywanie — ta sama klasa cichej degradacji, którą ten

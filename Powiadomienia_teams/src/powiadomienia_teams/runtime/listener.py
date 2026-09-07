@@ -38,7 +38,7 @@ from powiadomienia_teams.agent.odczyt import (
 )
 from powiadomienia_teams.config import Settings, TeamContext
 from powiadomienia_teams.domain.czas import parse_graph_datetime, to_graph_iso
-from powiadomienia_teams.domain.models import TimeOff, WeekSchedule
+from powiadomienia_teams.domain.models import DaneTygodnia, TimeOff, WeekSchedule
 from powiadomienia_teams.domain.tozsamosc import znormalizuj
 from powiadomienia_teams.graph.auth import AuthExpiredError
 from powiadomienia_teams.graph.client import GraphClient, GraphTruncatedReadError
@@ -86,6 +86,7 @@ from powiadomienia_teams.runtime.domkniecia import (
     zamknij_cicho_nierozstrzygniete,
     zamknij_samodzielnie_uzupelnione,
 )
+from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
 from powiadomienia_teams.runtime.snapshot import SnapshotGrafiku
 from powiadomienia_teams.runtime.wysylka import NIE_POLYKAJ, do_pracownika
 
@@ -258,6 +259,63 @@ def _apply_schedule(
             client.create_time_off(ctx.team_id, time_off)
 
 
+def _uzupelnili_sami(
+    kandydaci: list[st.PendingReminder],
+    tygodnie: dict[str, DaneTygodnia | None],
+    tz: ZoneInfo,
+) -> list[st.PendingReminder]:
+    """Kto z kandydatów ma już wypełniony tydzień docelowy — wedle PODANYCH danych.
+
+    Wydzielone, bo pytanie zadajemy DWA razy na tych samych osobach: raz na danych z pamięci
+    (żeby w typowym obiegu nie pobierać niczego) i drugi raz na świeżym odczycie, ale wyłącznie
+    dla tych, których pierwsze pytanie wskazało. Dwie kopie tego warunku rozjechałyby się przy
+    pierwszej zmianie definicji „wypełnionego tygodnia".
+    """
+    return [
+        p
+        for p in kandydaci
+        if (dane := tygodnie.get(p.week_start)) is not None
+        and member_filled_week(
+            p.member_id, dane.zmiany, dane.wolne_dni.get(znormalizuj(p.member_id), frozenset())
+        )
+    ]
+
+
+def _grafik_kroku_1_5(
+    settings: Settings,
+    snapshot: SnapshotGrafiku,
+    pamiec: PamiecSamouzupelnien | None,
+    kandydaci: list[st.PendingReminder],
+    now: datetime,
+) -> dict[str, DaneTygodnia | None]:
+    """Grafik dla kroku 1.5 — z pamięci międzyprzebiegowej, o ile wołający ją dał (ADR 0009).
+
+    ``pamiec is None`` znaczy dokładnie dzisiejsze zachowanie: pełny odczyt co obieg. Tę wartość
+    dostają polecenia diagnostyczne (``--poll-once``, ``--proba-nasluchu``), bo operator uruchamia
+    je po to, żeby zobaczyć STAN, a nie żeby oszczędzić żądanie.
+
+    **Tygodnie wpisów, którym termin mija w TYM obiegu, omijają pamięć.** Dla nich nieświeży wynik
+    ma konsekwencję nieodwracalną: krok 2 zaraz orzeknie wygaśnięcie i wyśle „nie dostałem
+    odpowiedzi" komuś, kto grafik uzupełnił sam. Dla wszystkich pozostałych najgorszym skutkiem
+    jest podziękowanie o obieg późniejsze — kierunek, który ten krok już akceptuje. Dzięki tej
+    regule bezpieczeństwo nie zależy od wartości TTL.
+    """
+    tygodnie_kandydatow = {p.week_start for p in kandydaci}
+    if pamiec is None:
+        return snapshot.dla_tygodni(tygodnie_kandydatow, alert_przy_porazce=False)
+    wygasajace = {
+        p.week_start
+        for p in kandydaci
+        if should_expire(p, now, settings.okno_odpowiedzi, read=ReadOutcome.NOTHING_NEW)
+    }
+    return pamiec.dla_samouzupelnienia(
+        tygodnie_kandydatow,
+        teraz=now,
+        pobierz=lambda tygodnie: snapshot.dla_tygodni(tygodnie, alert_przy_porazce=False),
+        odswiez=wygasajace,
+    )
+
+
 def poll_replies(
     settings: Settings,
     client: GraphClient,
@@ -265,6 +323,7 @@ def poll_replies(
     *,
     now: datetime | None = None,
     ignoruj_cisze: bool = False,
+    pamiec: PamiecSamouzupelnien | None = None,
 ) -> PollOutcome:
     """Przetwórz odpowiedzi (interpretuj → potwierdź → po »tak« zapisz), POTEM wygaś ciche okna.
 
@@ -371,6 +430,11 @@ def poll_replies(
             outcomes[pending.member_id] = ReadOutcome.UNKNOWN
             logger.exception("Nie udało się obsłużyć odpowiedzi dla %s", etykiety.osoba(pending, settings))
 
+    # Dane, za które ścieżka zapisu (krok 1) już zapłaciła, trafiają do pamięci kroku 1.5 za
+    # darmo. Kierunek jednostronny: snapshot → pamięć (ADR 0009).
+    if pamiec is not None:
+        pamiec.przyjmij(snapshot.znane(), teraz=now)
+
     # 1.5. Kto MILCZY na czacie od dłuższej chwili, mógł uzupełnić grafik SAM w Shifts. Zaglądamy
     #    tam dopiero po odczycie czatu (odpowiedź ma pierwszeństwo: sprawdzamy tylko NOTHING_NEW)
     #    i tylko gdy bot już czeka (``ready_for_self_fill_check``). Krok PRZED wygaszaniem, więc
@@ -394,17 +458,25 @@ def poll_replies(
         # kanał, którym przychodzą te prawdziwe (patrz `snapshot.dla_tygodnia`). Nic nie ginie:
         # gdy w tym samym przebiegu ścieżka ZAPISU sięgnie po ten tydzień, ostrzeżenie odpali się
         # wtedy — `_zaalarmowane` odkłada alert od danych właśnie po to.
-        tygodnie = snapshot.dla_tygodni(
-            {p.week_start for p in kandydaci}, alert_przy_porazce=False
-        )
-        samodzielni = [
-            p
-            for p in kandydaci
-            if (dane := tygodnie.get(p.week_start)) is not None
-            and member_filled_week(
-                p.member_id, dane.zmiany, dane.wolne_dni.get(znormalizuj(p.member_id), frozenset())
+        tygodnie = _grafik_kroku_1_5(settings, snapshot, pamiec, kandydaci, now)
+        samodzielni = _uzupelnili_sami(kandydaci, tygodnie, tz)
+        if samodzielni and pamiec is not None:
+            # Wynik z pamięci wolno użyć do NIEZAMYKANIA, nie do zamknięcia. Domknięcie jest
+            # terminalne i wysyła człowiekowi zdanie „Twój grafik jest już uzupełniony": wpis
+            # sprzed sześciu godzin, który mówi „ma zmianę", a w Shifts tej zmiany już nie ma
+            # (menedżer skasował omyłkowy wpis, zmiana przeniesiona na inny tydzień), zamyka temat
+            # NA PODSTAWIE NIEPRAWDY i zostawia pusty tydzień w grafiku.
+            #
+            # Świeży odczyt bierzemy więc dopiero tam, gdzie krok zamierza coś ZROBIĆ — czyli raz
+            # na domknięcie, nie raz na obieg. Oszczędność z ADR 0009 zostaje: przez większość
+            # obiegów `samodzielni` jest puste i żadnego pobrania nie ma.
+            samodzielni = _uzupelnili_sami(
+                samodzielni,
+                snapshot.dla_tygodni(
+                    {p.week_start for p in samodzielni}, alert_przy_porazce=False
+                ),
+                tz,
             )
-        ]
         if samodzielni:
             zamknij_samodzielnie_uzupelnione(
                 settings, client, state, samodzielni, tz, now, okno_domkniec=okno_pierwotne,
