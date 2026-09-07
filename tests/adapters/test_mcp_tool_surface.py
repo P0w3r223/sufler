@@ -174,27 +174,43 @@ def test_file_tool_never_reaches_the_mcp_surface(monkeypatch, tmp_path):
     assert "File" not in _surface(build_server())
 
 
-def test_przepis_regeneracji_z_dokumentu_odtwarza_baseline_bajt_w_bajt() -> None:
-    r"""Przepis z `docs/how-to/add-a-tool.md` ma DZIAŁAĆ, nie tylko brzmieć sensownie.
+# Dokument opisujący regenerację baseline'u żyje w drzewie repozytorium, a obraz kopiuje ``src/``
+# i ``tests/`` — nie ``docs/``. Rozdzielamy więc sondę na część, która działa WSZĘDZIE (kształt
+# zapisu pliku), i część czytającą dokument, pomijaną tam, gdzie dokumentu z założenia nie ma.
+# Wzorzec i uzasadnienie: ``tests/test_adr_numbering.py``. Sklejone w jedno, dawały bramkę
+# padającą w obrazie z powodu, który NIE JEST usterką — a to najkrótsza droga do wyłączenia
+# etapu testowego przy budowie, czyli do utraty bramki naprawdę wartościowej.
+_PRZEPIS = 'json.dumps(dane, indent=2, sort_keys=True, ensure_ascii=False) + "\\n"'
+_DOC_JAK_DODAC = Path(__file__).resolve().parents[2] / "docs" / "how-to" / "add-a-tool.md"
 
-    Pierwsza wersja przepisu (2026-09-04) miała samo `sort_keys` — i produkowała dokładnie ten
-    diff, przed którym ostrzega: bez `ensure_ascii=False` każda polska litera ucieka do `\uXXXX`,
-    czyli szesnaście linii różnicy zamiast jednej, a recenzent nie widzi, co się zmieniło.
-    Wyszło przy URUCHOMIENIU przepisu na pliku; lektura go nie łapała, bo brakujący argument
-    wygląda jak brak, nie jak błąd.
 
-    Sonda wiąże trzy rzeczy naraz: kształt zapisu pliku, treść przepisu w dokumencie i to, że
-    wykonanie przepisu daje plik z powrotem. Dokument rozjeżdżający się z formatem zrywa ją tak
-    samo jak plik przeformatowany inaczej.
+def test_baseline_ma_ksztalt_ktory_da_sie_odtworzyc_bajt_w_bajt() -> None:
+    r"""Kształt zapisu jest CZĘŚCIĄ zamrożonego kontraktu, nie kosmetyką.
+
+    Regeneracja innym kształtem daje diff kilkunastu linii przetasowania i ucieczek `\uXXXX`,
+    w którym recenzent nie zobaczy jednej zmienionej frazy — a to przy zamrożonym baseline jest
+    jedyna rzecz, na którą ma patrzeć. Ta sonda biegnie WSZĘDZIE, także w obrazie.
     """
-    import json
-
-    doc = (Path(__file__).resolve().parents[2] / "docs" / "how-to" / "add-a-tool.md").read_text(
-        encoding="utf-8"
-    )
     oryginal = _BASELINE.read_text(encoding="utf-8")
 
     odtworzone = json.dumps(json.loads(oryginal), indent=2, sort_keys=True, ensure_ascii=False)
 
     assert odtworzone + "\n" == oryginal
-    assert 'json.dumps(dane, indent=2, sort_keys=True, ensure_ascii=False) + "\\n"' in doc
+
+
+@pytest.mark.skipif(
+    not _DOC_JAK_DODAC.is_file(),
+    reason="docs/ nieobecne — bramka dotyczy drzewa repozytorium, nie obrazu",
+)
+def test_dokument_niesie_dokladnie_ten_przepis_ktory_dziala() -> None:
+    r"""Przepis z `docs/how-to/add-a-tool.md` ma DZIAŁAĆ, nie tylko brzmieć sensownie.
+
+    Pierwsza wersja (2026-09-04) miała samo `sort_keys` — i produkowała dokładnie ten diff, przed
+    którym ostrzega: bez `ensure_ascii=False` każda polska litera ucieka do `\uXXXX`, czyli
+    szesnaście linii różnicy zamiast jednej. Wyszło przy URUCHOMIENIU przepisu na pliku; lektura
+    tego nie łapie, bo brakujący argument wygląda jak brak, nie jak błąd.
+
+    Razem z sondą wyżej wiąże dokument z formatem w obie strony: przeformatowanie pliku zrywa
+    tamtą, przeredagowanie przepisu — tę.
+    """
+    assert _PRZEPIS in _DOC_JAK_DODAC.read_text(encoding="utf-8")
