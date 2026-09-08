@@ -1149,6 +1149,18 @@ verified both ways, a 3600 s hold raises no alarm and a 9 h 50 min wall jump sti
   var alone does not reach it), and the whole suite now passes at 40, 80 and 200 columns. The
   guarantee those tests carry is that a flag *exists* — `--force` was added in phase 3b precisely
   because the lock message named a flag no command had — not that it fits in N columns.
+  The second CI run then failed at full width, which settled the actual cause: **colour**.
+  `rich` styles an option's *name*, so with colour on, `--partie` reaches the buffer split by
+  escape sequences and `"--partie" in output` is false while the flag is plainly on screen.
+  GitHub Actions turns colour on by default and our Windows console does not, which is the whole
+  local/CI difference. `NO_COLOR` does not override `FORCE_COLOR` in this version of `rich`,
+  `TERM=dumb` does — so the fixtures use that, and a guard test asserts the runner's output
+  carries no ANSI at all, so a future change in that precedence reports itself once instead of
+  as ten unreadable substring failures. One console test needed a different fix for the same
+  ambient cause: `FORCE_COLOR` makes `rich` treat a `StringIO` as a terminal and **animate** the
+  progress bar, so intermediate frames — including the one before the total is known — land in
+  the buffer; `force_terminal=False` pins it. The suite now passes with `FORCE_COLOR=1` and
+  `COLUMNS=40` set, which is the condition CI actually runs under. 999 offline tests.
 - **The production store has not been migrated yet.** Everything above was verified on a *copy*
   (`31 860 → 16 310` rows, 13 401 records of the overnight run recovered, 1.12 s, `integrity_check`
   ok). The owner's `store-prod.sqlite` is still schema v2 and will migrate on the next run of any

@@ -33,6 +33,13 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     # pięć testów na pierwszym w historii przebiegu CI. Konsola aplikacji powstaje na poziomie
     # modułu, więc samo `COLUMNS` już jej nie dosięga.
     monkeypatch.setenv("COLUMNS", "200")
+    # Kolor wyłączony, bo `rich` koloruje **nazwę opcji**, rozbijając ją sekwencjami ANSI:
+    # przy włączonym kolorze `"--partie" in result.output` jest fałszem, choć flaga jest na
+    # ekranie. Na GitHub Actions kolor jest domyślnie włączony, więc pierwszy przebieg CI
+    # wywrócił na tym pięć testów zielonych lokalnie. `NO_COLOR` nie przebija `FORCE_COLOR`
+    # w tej wersji `rich`, `TERM=dumb` przebija — i dlatego jest tu jeszcze test-strażnik.
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "dumb")
     monkeypatch.setattr(cli.console, "width", 200)
     return CliRunner()
 

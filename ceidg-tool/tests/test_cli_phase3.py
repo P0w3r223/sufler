@@ -45,6 +45,13 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     # lokalnie były zielone — a pytają one o to, czy flaga **istnieje**, nie czy mieści się
     # w N kolumnach. Bez tego test mierzył szerokość maszyny, na której akurat biegnie.
     monkeypatch.setenv("COLUMNS", "200")
+    # Kolor wyłączony, bo `rich` koloruje **nazwę opcji**, rozbijając ją sekwencjami ANSI:
+    # przy włączonym kolorze `"--partie" in result.output` jest fałszem, choć flaga jest na
+    # ekranie. Na GitHub Actions kolor jest domyślnie włączony, więc pierwszy przebieg CI
+    # wywrócił na tym pięć testów zielonych lokalnie. `NO_COLOR` nie przebija `FORCE_COLOR`
+    # w tej wersji `rich`, `TERM=dumb` przebija — i dlatego jest tu jeszcze test-strażnik.
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "dumb")
     # Konsola aplikacji powstaje na poziomie modułu, więc szerokość wzięła już z terminala,
     # zanim `monkeypatch` doszedł do głosu — trzeba ją ustawić wprost. Bez tego test o **treści**
     # zdania mierzy szerokość maszyny, na której akurat biegnie.
@@ -87,6 +94,21 @@ def test_the_new_commands_are_registered(runner: CliRunner, command: str) -> Non
     result = runner.invoke(app, ["--help"])
 
     assert command in result.output
+
+
+def test_wyjscie_cli_w_testach_nie_niesie_sekwencji_ansi(runner: CliRunner) -> None:
+    """Strażnik dla wszystkich asercji o treści komunikatów w tym pliku i w `test_cli.py`.
+
+    `rich` koloruje nazwę opcji, wstawiając sekwencje ANSI **w środek** napisu, więc
+    `"--partie" in result.output` staje się fałszem, choć flaga jest na ekranie. Kolor bierze
+    się z otoczenia (GitHub Actions włącza go domyślnie), a nie z naszego kodu — pierwszy
+    przebieg CI w historii projektu wywrócił na tym pięć testów. Atrapa gasi kolor przez
+    `TERM=dumb`, bo `NO_COLOR` nie przebija `FORCE_COLOR`; gdyby przyszła wersja `rich`
+    zmieniła tę precedencję, ten jeden test powie dlaczego, zamiast dziesięciu innych
+    padających na niezrozumiałym braku podnapisu."""
+    result = runner.invoke(app, ["pobierz", "--help"], env={"FORCE_COLOR": "1"})
+
+    assert "[" not in result.output, "wyjście CLI w testach musi być bez kolorów"
 
 
 def test_pobierz_advertises_the_batch_flag(runner: CliRunner) -> None:

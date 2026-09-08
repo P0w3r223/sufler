@@ -20,7 +20,11 @@ RESUME_AT = 1_700_000_000.0
 
 def events_for() -> tuple[ConsoleEvents, io.StringIO]:
     buffer = io.StringIO()
-    return ConsoleEvents(Console(file=buffer, width=120)), buffer
+    # `force_terminal=False`: bez tego `FORCE_COLOR` z otoczenia (GitHub Actions ustawia go
+    # domyślnie) sprawia, że `rich` uznaje bufor za terminal i **animuje** pasek — do bufora
+    # trafiają wtedy klatki pośrednie, w tym ta sprzed poznania sumy, ze znakiem zapytania.
+    # Test o treści końcowego paska mierzyłby wtedy otoczenie, a nie kod.
+    return ConsoleEvents(Console(file=buffer, width=120, force_terminal=False)), buffer
 
 
 # ----------------------------------------------------------------------------- pasek na akcję
@@ -146,7 +150,7 @@ def test_three_actions_in_a_row_each_get_their_own_bar() -> None:
 def test_quiet_mode_renders_no_progress_at_all() -> None:
     """`sprawdz-nip` woła `ConsoleEvents(quiet=True)` — dwa żądania nie potrzebują paska."""
     buffer = io.StringIO()
-    events = ConsoleEvents(Console(file=buffer, width=120), quiet=True)
+    events = ConsoleEvents(Console(file=buffer, width=120, force_terminal=False), quiet=True)
 
     events.on_page(0, 5, 10)
     events.on_details(1, 5)
