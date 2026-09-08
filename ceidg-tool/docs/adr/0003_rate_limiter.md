@@ -30,7 +30,7 @@ Asymmetric risk: save seconds, pay minutes. Effort M, risk medium/high.
 
 **C. All of it: windows with headroom + `min_spacing_s` + post-429 cooldown +
 request history persisted in SQLite.**
-With `min_spacing = 3.6` the spacing binds and the windows are a safety net; the
+With `min_spacing = 3.75` (corrected 2026-09-08 from 3.6) the spacing binds and the windows are a safety net; the
 windows become load-bearing exactly when needed (resume, second process, lowered
 spacing). One class, one entry point for every request including retries. More
 state; persistence needs a wall clock next to the monotonic one. Effort M, risk low.
@@ -84,7 +84,13 @@ Correctness details:
   its tests use `FakeClock` + `InMemoryHistory`, no network, no database.
 - The "API limit, resuming at HH:MM" message is built from `clock.wall()` and is
   deterministic in tests.
-- Small jobs are deliberately slow (10 requests take about 36 s). Lowering
-  `min_spacing_s` in the profile is allowed; then the windows stop being theoretical.
+- Small jobs are deliberately slow (10 requests take about 38 s). **Do not lower
+  `min_spacing_s` below 3.75 s.** Correction 2026-09-08: this consequence previously read
+  "lowering it is allowed", which is the change measured dangerous on 2026-09-06 — at 3.6 s
+  the busiest 180 s window held **49** requests against our own limit of 48 and the API's 50.
+  Both windows require 180/48 = 3600/960 = 3.75 s, so a lower value only lets the limiter
+  burst and then repay with a longer stop. `apiprofile.py` still accepts `ge=0.0`; the
+  guard that actually holds is
+  `test_ratelimit.py::test_shipped_profiles_cannot_burst_past_their_window`.
 - Revisit: if the probe shows `X-RateLimit-*` headers, synchronise with the server
   instead of estimating.

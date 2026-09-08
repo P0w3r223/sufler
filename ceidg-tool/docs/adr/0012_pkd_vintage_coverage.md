@@ -20,7 +20,14 @@ silently returns a subset. Measured 2026-09-07 (see `docs/decisions.md` for prov
 |---|---|
 | Records in the sample (one voivodeship, daily snapshot) | 285 026 |
 | `RokPKD` = 2007 | 167 139 (58.6 %) |
-| Unreachable by any code in `pkd2025.yaml` | 71 817 (**25.2 %**) |
+| Records whose **main** code is absent from `pkd2025.yaml` | 71 817 (25.2 %) |
+| **Unreachable by *any* code in `pkd2025.yaml`** | **24 494 (8.6 %)** |
+
+*Corrected 2026-09-08: the second row was previously missing and the first was labelled with the
+second's wording. `pkd=` matches any of a record's codes (measured at zero requests from the
+operator's store). The decision below is unaffected in kind — the gap is real, lands on ordinary
+trades, and warrants the transition table — but its magnitude is roughly three times smaller than
+stated, which is worth knowing before re-litigating Option E.*
 | PKD 2025 codes needing at least one PKD 2007 filter | **357 of 728** |
 | …of which expand **cleanly** (the predecessor brings nothing else) | **51** |
 | …of which expand **ambiguously** | **306** |

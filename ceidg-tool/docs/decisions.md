@@ -100,7 +100,17 @@ counts above could not.
 | `RokPKD` = **2007** | 167 139 (**58.6 %**) |
 | `RokPKD` = 2025 | 117 887 (41.4 %) |
 | 2007-coded records whose main code *also* exists in PKD 2025 (unchanged code strings) | 95 322 (57.0 %) |
-| **Records unreachable by any code in `pkd2025.yaml`** | **71 817 = 25.2 % of the register** |
+| Records whose **main** code is not in `pkd2025.yaml` | 71 817 = 25.2 % |
+| **Records unreachable by *any* code in `pkd2025.yaml`** | **24 494 = 8.6 %** |
+
+> **Corrected 2026-09-08.** This table previously carried only the first row and labelled it
+> "unreachable by any code", which is the second row's question. `pkd=` matches any of a record's
+> codes — measured at zero requests from the operator's store (`pkd=6201Z`: 13 records, 9 with the
+> code only in the secondary list, deepest at position 30; `9621Z`+`9602Z`: 357 records, 62 such,
+> deepest at position 50). The operative gap is **8.6 %**. Note also that 285 026 counts rows with a
+> non-empty `GlownyKodPkd`; the archive has 287 256 rows, the remaining 2 230 having no main code at
+> all and all carrying `RokPKD=2007`. The archive covers **one voivodeship (wielkopolskie)**, so
+> "of the register" overstates its scope.
 
 **Each record carries exactly one vintage, and the filter matches the stored string.** The two
 result sets are therefore disjoint, not overlapping: `pkd=6201Z` selects records that have not
@@ -308,9 +318,11 @@ register cannot be reached by any code in the shipped 2025 dictionary.
 - Page numbering is settled, but `links.next` stays the primary cursor (ADR-0002);
   `page_start: 0` is the fallback.
 - Cost model at **3.75 s** per request with `limit=25`. That is the spacing the shipped limiter
-  actually applies: `min_spacing_s` is 3.6 s, but both rate windows (48/180 s and 960/3600 s) work out
-  to 3.75 s per request, and `estimating.effective_spacing` takes the largest of the three. Quoting
-  3.6 s here would make every number below lower than what the tool shows the operator.
+  actually applies: `min_spacing_s` **is 3.75 s** in both shipped profiles, and both rate
+  windows (48/180 s and 960/3600 s) work out to the same 3.75 s per request, so
+  `estimating.effective_spacing` — which takes the largest of the three — agrees with all of them.
+  (Corrected 2026-09-08: this paragraph previously said `min_spacing_s` was 3.6 s. It was raised to
+  3.75 s on 2026-09-06, because 3.6 s let the busiest 180 s window hold 49 requests.)
 
 | Scenario | Requests | Time |
 |---|---|---|

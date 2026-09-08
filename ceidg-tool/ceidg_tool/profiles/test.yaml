@@ -34,7 +34,7 @@ date_format: "%Y-%m-%d"
 max_pages: 10000
 
 rate:
-  windows: [[48, 180], [960, 3600]]   # 4 % zapasu wobec 50/3 min i 1000/60 min
+  windows: [[48, 180], [960, 3600]]   # 48/180 s i 960/3600 s — oba dają 3,75 s na żądanie
   # Musi być >= 180/48 = 3600/960 = 3,75 s, inaczej limiter puszcza żądania gęściej niż
   # okno i nadrabia postojem — szczyt rośnie wtedy do 49 na 180 s (pomiar 2026-09-06).
   # Pilnuje tego `test_ratelimit.py::test_shipped_profiles_cannot_burst_past_their_window`.

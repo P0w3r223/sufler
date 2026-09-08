@@ -11,6 +11,15 @@ PKD/
 *.db
 *.csv
 *.jsonl
+*.ndjson
+# Materiał demo. Zdalne repozytorium należy do innego zespołu, a `.json`/`.yaml` nie były
+# dotąd ignorowane, więc nagranie albo zrzut z produkcji trafiłby do commita domyślnie
+# (audyt 2026-09-08, Tier D3). Cokolwiek ma zostać w repozytorium, dopisuje się tu jawnie
+# przez `!`, po przejściu przez anonimizator.
+demo/recordings/
+demo/raw/
+scripts/demo/recordings/
+scripts/demo/raw/
 !tests/fixtures/**
 .ceidg/
 wyniki/

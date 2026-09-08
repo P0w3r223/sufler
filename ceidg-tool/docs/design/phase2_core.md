@@ -335,7 +335,7 @@ CeidgError
 ## Decisions taken by the project owner (2026-09-05)
 
 - Three additional modules accepted.
-- Default `min_spacing_s` = 3.6 s.
+- Default `min_spacing_s` = 3.75 s (3.6 s was measured unsafe on 2026-09-06).
 - `Adresy` sheet is in phase-2 scope.
 - ADRs written in English (global knowledge-docs convention).
 - Cache retention defaults chosen by Claude: `cache_ttl_days = 7`, cleanup of raw

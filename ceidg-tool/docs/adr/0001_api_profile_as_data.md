@@ -85,7 +85,7 @@ pkd_format: compact           # compact (6201Z) | dotted (62.01.Z)
 date_format: "%Y-%m-%d"
 rate:
   windows: [[48, 180], [960, 3600]]   # 4 % headroom under 50/1000
-  min_spacing_s: 3.6
+  min_spacing_s: 3.75                 # corrected 2026-09-08; 3.6 was measured unsafe
   cooldown_s: 185                     # 180 + clock-drift margin
 ```
 

@@ -813,8 +813,11 @@ to 31.12.2026, so each record carries one vintage and the two result sets are di
 **The decisive measurement cost nothing.** `probe_out/raport_sample.zip`, the 21 MB production report
 already on disk, carries `RokPKD` per record. Across **285 026 real records**: 58.6 % still carry PKD
 2007 codes; 57 % of those happen to be reachable anyway because their code string is unchanged
-between vintages; and **71 817 records — 25.2 % of the register — cannot be reached by any code in
-`pkd2025.yaml`**. The most frequent unreachable codes are ordinary trades: `9602Z` hairdressing
+between vintages; and **24 494 records — 8.6 % of the sample — cannot be reached by any code in
+`pkd2025.yaml`** (corrected 2026-09-08; the figure previously given here, 71 817 = 25.2 %, counts
+records whose *main* code is absent, which is a different question — `pkd=` matches any of a
+record's codes, measured at zero requests from the operator's own store. The sample is one
+voivodeship, not "the register"). The most frequent unreachable codes are ordinary trades: `9602Z` hairdressing
 (6 811), `4520Z` vehicle repair (5 912), `4120Z` building construction (4 684), `4339Z` finishing
 work (4 248), `6201Z` programming (3 865).
 

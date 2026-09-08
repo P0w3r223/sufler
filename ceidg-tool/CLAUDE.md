@@ -71,10 +71,22 @@ one hand-written line in `tests/conftest.py` that an ADR cited as a measurement.
 2026-09-07: the `pkd` filter matches the code **as stored on the record**, and PKD 2007 stays legal
 until 31.12.2026, so each record carries one vintage. Over 285 026 real records in
 `probe_out/raport_sample.zip` (which has `RokPKD` per row, and is why this cost no requests): 58.6 %
-still carry 2007 codes, and **25.2 % of the register is unreachable by any code in `pkd2025.yaml`** —
+still carry 2007 codes, and **8.6 % of the sample is unreachable by any code in `pkd2025.yaml`** —
 `9602Z` hairdressing, `4520Z` vehicle repair, `4120Z` building, `6201Z` programming. So a PKD-filtered
 fetch silently returns a subset, on every input path, the `--pkd` flag included; this is a property
 of the register, not of the assistant. Do not treat "the code is valid" as "the query is complete".
+
+**Corrected 2026-09-08 — this paragraph said 25.2 %, which answers a different question.** `pkd=`
+matches **any** of a record's codes, not just `pkdGlowny`, settled at zero requests from the
+operator's own store: `pkd=6201Z` returned 13 records of which **9 carried the code only in the
+secondary list** (as deep as position 30), and `9621Z`+`9602Z` returned 357 of which **62** did
+(position 50). So the operative figure is "no code the record carries is in the dictionary" =
+**24 494 = 8.6 %**; the old 25.2 % (71 817) counts records whose *main* code is absent, which is not
+what the sentence claimed. Two smaller corrections in the same breath: the archive is
+**wielkopolskie**, not "the register", and its 285 026 counts rows *with a main code* — the file
+holds 287 256, the other 2 230 having an empty `GlownyKodPkd` and all carrying `RokPKD=2007`. The
+trap is real and roughly three times smaller than this file used to claim.
+
 Two traps follow. The classification and the filter are different things: "6201Z does not exist in
 PKD 2025" is true, while "the API would reject it" never was — it returns 234 605 records. And the
 cost table does not cover this: it prices what will be fetched, with nothing to compare against, and
