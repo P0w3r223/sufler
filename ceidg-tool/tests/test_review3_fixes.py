@@ -91,9 +91,12 @@ def test_effective_spacing_uses_tightest_window() -> None:
     assert loose.rate.min_spacing_s > 100.0 / 100
 
 
-def test_update_advances_watermark_per_window_and_skips_fresh_details(
-    tmp_path: Path, clock: FakeClock
-) -> None:
+def test_update_advances_watermark_per_window_and_skips_fresh_details(tmp_path: Path) -> None:
+    # Zegar **za** oknem zmian, nie domyślny z `conftest` (2023-11-14) przy oknie z 2026.
+    # Od naprawy A1 próg świeżości szczegółu to koniec okna zmian, więc zegar sprzed okna
+    # znaczyłby „szczegół musi pochodzić z przyszłości" i cache nie mógłby trafić ani razu —
+    # czyli test mierzyłby coś innego, niż deklaruje w nazwie.
+    clock = FakeClock(start_wall=datetime(2026, 9, 11, 12, tzinfo=UTC).timestamp())
     changed = load_fixture("zmiana.json")["body"]
     # Fixture niesie pisownię z `/zmiana` (małe litery); w bazie wpis żyje pod postacią
     # kanoniczną, bo to jedna tożsamość, a nie dwie (ADR-0013).
@@ -140,9 +143,9 @@ def test_update_advances_watermark_per_window_and_skips_fresh_details(
     deps.store.close()
 
 
-def test_watermark_moves_after_first_window_even_if_second_fails(
-    tmp_path: Path, clock: FakeClock
-) -> None:
+def test_watermark_moves_after_first_window_even_if_second_fails(tmp_path: Path) -> None:
+    # Zegar za oknem zmian — z tego samego powodu, co w teście wyżej.
+    clock = FakeClock(start_wall=datetime(2026, 9, 11, 12, tzinfo=UTC).timestamp())
     changed = load_fixture("zmiana.json")["body"]
     seen: list[str] = []
 
@@ -192,9 +195,13 @@ def test_link_ids_and_stale_detail_ids(tmp_path: Path, clock: FakeClock) -> None
         store.save_page(run_id, page_index=0, records=[list_record(1)], next_cursor=None)
         store.save_details(details=[detail_record(1)])
         fresh_id = list_record(1)["id"]
-        assert store.stale_detail_ids(kanoniczne_id([fresh_id, "NOWY"]), ttl_days=7) == ["NOWY"]
-        clock.advance(8 * 86_400)
-        assert store.stale_detail_ids(kanoniczne_id([fresh_id]), ttl_days=7) == [fresh_id]
+        # Próg podaje wołający. Szczegół zapisano „teraz", więc próg sprzed chwili go
+        # przepuszcza, a próg z przyszłości uznaje za nieświeży — i to jest cała reguła,
+        # na której stoi `aktualizuj` po naprawie A1.
+        przed = datetime.fromtimestamp(clock.wall() - 86_400, tz=UTC)
+        po = datetime.fromtimestamp(clock.wall() + 86_400, tz=UTC)
+        assert store.stale_detail_ids(kanoniczne_id([fresh_id, "NOWY"]), cutoff=przed) == ["NOWY"]
+        assert store.stale_detail_ids(kanoniczne_id([fresh_id]), cutoff=po) == [fresh_id]
         assert store.link_ids(run_id, page_index=1, ids=kanoniczne_id([fresh_id, "NOWY"])) == 1
         assert store.count_run_records(run_id) == 2
         rec = next(r for r in store.iter_run_records(run_id) if r.id == fresh_id)

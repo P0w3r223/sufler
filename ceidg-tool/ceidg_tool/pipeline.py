@@ -53,7 +53,7 @@ from .normalizer import NormalizedRecord, normalize
 from .pkdmap import TablicaPkd, load_pkd_map
 from .progress import Events, NullEvents
 from .ratelimit import RateLimiter
-from .recordid import kanoniczne_id
+from .recordid import KanonicznyId, kanoniczne_id
 from .records import ZRODLO_RAPORT, Report, RowContext
 from .reports import (
     UNFILLED_COLUMNS,
@@ -444,6 +444,13 @@ class RunResult:
     # Wpisy runu bez szczegółów i bez wyjaśnienia. Zero jest normą; cokolwiek innego znaczy,
     # że praca została wykonana i zgubiona, a podsumowanie ma o tym powiedzieć (ADR-0013).
     unresolved: int = 0
+    # Wpisy, których szczegół pochodzi sprzed **końca okna, w którym rejestr je zgłosił** —
+    # czyli takie, o których powiedziano „zmienił się", a w bazie został opis sprzed zmiany.
+    # Liczba **wpisów**, nie wystąpień: przy długim zakresie ta sama firma bywa zgłoszona
+    # w dwóch oknach. Tylko dla `aktualizuj`; zero jest jedyną poprawną wartością. Bez tego
+    # pola złamanie gwarancji nie miało obserwatora — `unresolved` nie może zadziałać, bo
+    # taki wpis jest `pobrany` (audyt 2026-09-08, A1).
+    stale_details: int = 0
 
 
 def count_hits(criteria: Criteria, deps: Deps) -> int:
@@ -783,14 +790,62 @@ def update_range(
     """Zakres zmian: podany albo od znacznika, a w jego braku ostatnia doba.
 
     Wspólne dla wyceny i dla pobrania — gdyby każde liczyło własny zakres, tabela kosztów
-    opisywałaby inną pracę niż ta, która potem rusza."""
-    now = until or datetime.now(tz=UTC)
+    opisywałaby inną pracę niż ta, która potem rusza.
+
+    „Teraz" bierze się z wstrzykniętego zegara, nie z `datetime.now()`. Inaczej ta funkcja
+    była jedynym miejscem w ścieżce `aktualizuj`, którego test ani demo nie mogły ustawić,
+    więc ten sam przebieg dwa razy znaczył co innego.
+
+    Zakres nie wychodzi w przyszłość i nie bywa pusty — jedno i drugie **odmawia**, zamiast
+    po cichu przycinać. Przycięcie `--do` zamieniłoby `--od jutro --do pojutrze` w pusty
+    zakres i komunikat „nic się nie zmieniło", czyli odpowiedź na pytanie, którego nikt nie
+    zadał; a `--od` w przyszłości dawało dokładnie to samo zdanie, tylko bez żadnej odmowy.
+
+    Powód jest o utracie danych, nie o higienie wejścia. `set_watermark` zapisuje koniec
+    domkniętego okna, więc znacznik w przyszłości kazałby **następnemu** przebiegowi zacząć
+    od tamtego momentu i pominąć wszystko, co zmieni się w międzyczasie. A próg świeżości
+    szczegółów to koniec okna, więc leżący w przyszłości znaczyłby „szczegół musi pochodzić
+    z przyszłości" i każdy przebieg kupowałby wszystko od nowa.
+
+    Kontrola stoi **tutaj**, bo to jedyne miejsce, które w ogóle widzi `since` obok `until`,
+    a `run_update` jest publicznym wejściem i `cli` nie jest jego jedynym wołającym.
+    `cli._koniec_zakresu_zmian` zostaje jako wcześniejszy i czytelniejszy komunikat: ta sama
+    celowa dwuwarstwowość, co `client._checked_host` obok `AllowedHostsTransport` (reguła
+    granic 11), gdzie jedna warstwa tłumaczy, a druga obowiązuje niezależnie od tego, czy
+    ktoś o niej pamiętał. `wizard.handle_update` przyjmuje zakres z myślą o trybie demo
+    (ADR-0014) i dziś nikt mu go nie podaje — to przyszły wołający, nie dzisiejszy argument
+    za tą kontrolą."""
+    teraz = datetime.fromtimestamp(deps.clock.wall(), tz=UTC)
+    if until is not None and until > teraz:
+        raise ConfigError(
+            f"Koniec zakresu zmian wskazuje przyszłość ({until.date().isoformat()}). "
+            "Rejestr zgłasza tylko zmiany, które już nastąpiły."
+        )
+    now = until if until is not None else teraz
+    # Początek rozstrzyga się **przed** kontrolą, na wszystkich trzech gałęziach. Kontrola
+    # tylko w gałęzi `since is not None` przepuszczała dwa realne przypadki, oba dopiero
+    # z flagą `--do`: `--od 2026-09-05 --do 2026-09-05` (naturalny zapis „zmiany z 5 września",
+    # bo obie flagi biorą daty, a data znaczy północ) oraz `--do` wcześniejsze niż niewidoczny
+    # znacznik. Oba dawały pusty podział i komunikat „Baza jest aktualna", bez jednego żądania —
+    # czyli dokładnie tę odpowiedź, której ta funkcja odmawia trzy linijki wyżej.
+    #
+    # Gałąź ze znacznikiem jest najważniejsza: początek pochodzi wtedy z bazy, a nie od
+    # operatora, więc to jedyny przypadek, w którym nie ma on jak zobaczyć, co mu powiedziano.
     if since is not None:
-        return since, now
-    mark = deps.store.get_watermark(update_scope(deps))
-    if mark:
-        return datetime.fromisoformat(mark.replace("Z", "+00:00")), now
-    return now - timedelta(days=1), now
+        start = since
+    else:
+        mark = deps.store.get_watermark(update_scope(deps))
+        start = (
+            datetime.fromisoformat(mark.replace("Z", "+00:00")) if mark else now - timedelta(days=1)
+        )
+    if start >= now:
+        # Godzina, nie sama data: przy zakresie w obrębie jednego dnia komunikat z samą datą
+        # wypisywałby dwa razy to samo i nie tłumaczyłby niczego.
+        raise ConfigError(
+            f"Zakres zmian jest pusty: początek ({start:%Y-%m-%d %H:%M}) nie jest wcześniejszy "
+            f"niż koniec ({now:%Y-%m-%d %H:%M} UTC)."
+        )
+    return start, now
 
 
 def update_windows(since: datetime, until: datetime) -> list[tuple[datetime, datetime]]:
@@ -870,6 +925,9 @@ def run_update(
         )
         try:
             page_index = 0
+            # Zbiór, nie licznik: ta sama firma wraca w dwóch oknach długiego zakresu,
+            # a zdanie dla operatora mówi o wpisach, nie o wystąpieniach.
+            przestarzale: set[KanonicznyId] = set()
             seen = 0  # przetworzone identyfikatory, narastająco przez wszystkie okna
             total = 0  # suma `count` z okien, o których już wiemy
             for window_start, window_end in windows:
@@ -885,7 +943,21 @@ def run_update(
                     # Wpis zostawał w stanie `brak`, więc każdy kolejny przebieg kupował go
                     # od nowa: ta sama cicha strata, którą ADR-0013 zamyka od strony pisowni.
                     store.link_ids(run_id, page_index=page_index, ids=ids)
-                    stale = store.stale_detail_ids(ids, ttl_days=deps.settings.cache_ttl_days)
+                    # Próg świeżości to **koniec tego okna zmian**, nie TTL cache'u.
+                    # `/zmiana` jest sygnałem nieświeżości: skoro rejestr zgłosił ten wpis
+                    # jako zmieniony w `[window_start, window_end]`, to szczegół pobrany
+                    # przed `window_end` opisuje stan sprzed zmiany. TTL siedmiodniowy
+                    # pomijał takie wpisy i zostawiał w bazie starą treść (audyt 2026-09-08,
+                    # A1; na bazie operatora 742 z 2 891 identyfikatorów powtórzyło się
+                    # między dwoma przebiegami odległymi o 23 godziny).
+                    #
+                    # Powtórzenie tego samego okna nadal kosztuje zero żądań o szczegóły,
+                    # bo wtedy `detail_utc >= window_end`. W obrębie jednego przebiegu
+                    # identyfikator obecny w oknie 1 i 3 też jest kupowany raz.
+                    # Że `window_end` nie leży w przyszłości, pilnuje `update_range` —
+                    # inaczej żaden szczegół nie byłby nigdy dość świeży i każdy przebieg
+                    # kupowałby wszystko od nowa.
+                    stale = store.stale_detail_ids(ids, cutoff=window_end)
                     batch = deps.profile.ids_batch_size
                     # Znak życia zanim ruszy setka żądań o szczegóły — pasek ma się pojawić
                     # od razu, a nie po pierwszej porcji.
@@ -906,6 +978,23 @@ def run_update(
                         # czyli do stu żądań po 3,75 s — ponad sześć minut ciszy, w których
                         # program wygląda na zawieszony i bywa zabijany, choć pracuje.
                         deps.events.on_details(seen + min(i + batch, len(stale)), goal)
+                    # Obserwator liczony **tu**, przy oknie, które zna swój koniec i swoje
+                    # identyfikatory — a nie raz na cały run. Pytanie raz na run musiałoby
+                    # wziąć jeden próg dla wszystkich okien, więc wpis zgłoszony w drugim
+                    # oknie ze szczegółem z pierwszego mieściłby się powyżej progu i nie
+                    # byłby widziany, choć jest dokładnie tym przypadkiem, o który chodzi.
+                    zostale = store.outdated_details(ids, older_than=window_end)
+                    if zostale:
+                        # Do logu, nie tylko na ekran. Po czterdziestu minutach bez widza
+                        # podsumowanie żyje wyłącznie w przewijaniu terminala — a to jest ten
+                        # sam kształt, przez który dziesięć godzin czekania nie zostawiło
+                        # śladu, bo `on_wait` docierał wyłącznie na ekran.
+                        deps.events.on_message(
+                            f"Uwaga: {len(zostale)} wpisów z okna kończącego się "
+                            f"{utc_iso(window_end.timestamp())} zostało z opisem sprzed "
+                            "zgłoszonej zmiany."
+                        )
+                    przestarzale.update(zostale)
                     page_index += 1
                     seen += len(ids)
                     serce.bij()
@@ -936,6 +1025,8 @@ def run_update(
         count_api=run.count_api,
         requests=client.requests_made,
         unresolved=store.count_run_unresolved(run_id),
+        # Zsumowane po oknach, każde ze swoim progiem — patrz komentarz w pętli.
+        stale_details=len(przestarzale),
     )
 
 

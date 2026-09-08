@@ -237,13 +237,29 @@ def handle_resume(deps: Deps, prompter: Prompter, view: View) -> None:
     flow.export_and_report((result.run_id,), deps, view, cel=cel or None)
 
 
-def handle_update(deps: Deps, prompter: Prompter, view: View) -> None:
-    start, plan = flow.prepare_update(deps, prompter, view)
+def handle_update(
+    deps: Deps,
+    prompter: Prompter,
+    view: View,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> None:
+    """Zakres domyślnie ze znacznika; `since`/`until` podaje wołający.
+
+    Kreator sam o zakres nie pyta, ale przekazanie go dalej jest tym, co pozwala
+    poprowadzić kreatora z zewnątrz po domkniętym, powtarzalnym zakresie — inaczej
+    „teraz" wchodzi do środka i ten sam przebieg dwa razy znaczy co innego."""
+    start, plan = flow.prepare_update(deps, prompter, view, since=since, until=until)
     if not start:
         view.message(texts.update_declined(plan.count))
         return
     result: RunResult = run_update(deps, since=plan.since, until=plan.until)
-    view.message(texts.update_summary(result.records, result.details, result.unresolved))
+    view.message(
+        texts.update_summary(
+            result.records, result.details, result.unresolved, result.stale_details
+        )
+    )
     if result.records:
         _export_on_request(deps, prompter, view, result.run_id)
 

@@ -25,6 +25,21 @@ from tests.support import FakeApi, registry_id
 
 IDS_PER_PAGE = 20
 BATCH = 5
+# Okno zmian tego modułu; zegar poniżej stoi **za** nim, bo rejestr nie zgłasza zmian,
+# które się jeszcze nie wydarzyły.
+OKNO = (datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 3, tzinfo=UTC))
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    """Zegar zgodny z `OKNO`, zamiast domyślnego z `conftest` (2023-11-14).
+
+    Domyślny zegar stawiał „teraz" trzy lata **przed** oknem zmian. Dopóki próg świeżości
+    szczegółów liczył się z TTL cache'u, nikt tego nie zauważał — próg brzmiał „siedem dni
+    wstecz od teraz" i okna nie oglądał. Od naprawy A1 zakres zmian sięgający w przyszłość
+    jest błędem wejścia, bo znacznik w przyszłości kazałby następnemu przebiegowi pominąć
+    wszystko, co zmieni się w międzyczasie."""
+    return FakeClock(start_wall=datetime(2026, 9, 3, 12, tzinfo=UTC).timestamp())
 
 
 class Timeline:
@@ -130,8 +145,8 @@ def make_deps(
 
 
 def run_one_window(deps: Deps) -> None:
-    since = datetime(2026, 9, 1, tzinfo=UTC)
-    run_update(deps, since=since, until=datetime(2026, 9, 3, tzinfo=UTC))
+    since, until = OKNO
+    run_update(deps, since=since, until=until)
 
 
 def test_progress_is_reported_between_detail_batches_not_between_pages(

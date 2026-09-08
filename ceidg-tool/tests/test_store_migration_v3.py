@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -498,7 +499,8 @@ def test_samotna_mala_pisownia_tez_dostaje_postac_kanoniczna(
         assert (store.merged_duplicates, store.renamed_identifiers) == (0, 1)
         # Cache trafiony po migracji: pytanie o ten wpis (w dowolnej pisowni) nie generuje
         # żądania. Przed migracją wiersz stał pod małą pisownią, a pytanie szło wielką.
-        assert store.stale_detail_ids(kanoniczne_id([LOWER]), ttl_days=7) == []
+        prog = datetime.fromtimestamp(clock.wall() - 86_400, tz=UTC)
+        assert store.stale_detail_ids(kanoniczne_id([LOWER]), cutoff=prog) == []
 
 
 # --------------------------------------------------------------------------- licznik i powtórka

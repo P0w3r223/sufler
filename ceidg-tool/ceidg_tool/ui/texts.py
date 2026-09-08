@@ -737,7 +737,19 @@ def unresolved_note(unresolved: int) -> str:
     )
 
 
-def update_summary(records: int, details: int, unresolved: int = 0) -> str:
+def stale_details_note(stale: int) -> str:
+    """Zdanie o wpisach, które zostały z opisem sprzed zmiany.
+
+    Osobne od `unresolved_note`, bo to inna awaria i inna rada: tam wpis nie ma szczegółów
+    wcale, tutaj ma — tylko nieaktualne, więc żaden licznik „brakujących" go nie pokaże."""
+    return (
+        f"Uwaga: {stale} wpisów zachowało opis sprzed zgłoszonej zmiany. "
+        "To nie powinno się zdarzyć — powtórz `aktualizuj` dla tego samego zakresu "
+        "i zgłoś problem, jeśli liczba się utrzyma."
+    )
+
+
+def update_summary(records: int, details: int, unresolved: int = 0, stale: int = 0) -> str:
     """Wynik `aktualizuj` — jedno zdanie dla polecenia i dla kreatora.
 
     Liczba szczegółów dostaje punkt odniesienia. 2026-09-08 to zdanie brzmiało
@@ -747,6 +759,8 @@ def update_summary(records: int, details: int, unresolved: int = 0) -> str:
     zdanie = f"Zmienionych wpisów: {records}, szczegółów: {details}."
     if unresolved:
         zdanie += " " + unresolved_note(unresolved)
+    if stale:
+        zdanie += " " + stale_details_note(stale)
     return zdanie
 
 

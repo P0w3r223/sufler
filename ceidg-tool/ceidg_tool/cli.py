@@ -15,6 +15,7 @@ import typer
 from pydantic import ValidationError
 
 from . import __version__
+from .clock import Clock
 from .config import (
     KEYRING_ASSISTANT_USERNAME,
     KEYRING_USERNAME,
@@ -76,6 +77,45 @@ ForceOpt = Annotated[
         help="Przejmij blokadę bazy po procesie, który jej nie zwolnił (np. został ubity)",
     ),
 ]
+
+
+def _as_utc(value: str | None) -> datetime | None:
+    """Data ISO z linii poleceń jako moment UTC; `None` zostaje `None`.
+
+    Jedno miejsce na dwie flagi (`--od`, `--do`), bo naiwny `datetime` przy porównaniu
+    ze świadomym strefy podnosi `TypeError` — a to jest para, w której łatwo dodać drugą
+    flagę i zapomnieć o strefie."""
+    if value is None:
+        return None
+    parsed = datetime.fromisoformat(value)
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _koniec_zakresu_zmian(value: str | None, clock: Clock) -> datetime | None:
+    """`--do` jako moment UTC, z odmową dla przyszłości.
+
+    „Teraz" bierze się z tego samego zegara, co `pipeline.update_range`. Z osobnego
+    `datetime.now()` powstawały **dwa różne teraz** w jednym poleceniu, więc przy
+    wstrzykniętym zegarze ta bramka przepuszczała datę, którą pipeline widział jeszcze
+    jako przyszłą — czyli wpuszczała dokładnie ten stan, przed którym broni.
+
+    Zakres zmian kończący się w przyszłości psuje dwie rzeczy naraz i obie po cichu.
+    `set_watermark` zapisuje koniec domkniętego okna, więc znacznik w przyszłości kazałby
+    **następnemu** przebiegowi zacząć od tamtego momentu i pominąć wszystko, co zmieni się
+    w międzyczasie. A próg świeżości szczegółów to koniec okna, więc leżący w przyszłości
+    znaczyłby „szczegół musi pochodzić z przyszłości" i każdy przebieg kupowałby wszystko
+    od nowa — ten sam rachunek, który zamyka ADR-0013.
+
+    Odmowa, a nie ciche przycięcie: przycięcie zamieniłoby `--od jutro --do pojutrze`
+    w pusty zakres i komunikat „nic się nie zmieniło", czyli odpowiedź na pytanie, którego
+    nikt nie zadał. `/zmiana` nie zgłasza zmian, które się nie wydarzyły."""
+    koniec = _as_utc(value)
+    if koniec is not None and koniec > datetime.fromtimestamp(clock.wall(), tz=UTC):
+        raise ConfigError(
+            f"--do wskazuje przyszłość ({koniec.date().isoformat()}). Rejestr zgłasza tylko "
+            "zmiany, które już nastąpiły; podaj datę nie późniejszą niż dziś."
+        )
+    return koniec
 
 
 def _confirm(question: str, *, default: bool = False) -> bool:
@@ -599,6 +639,7 @@ def raporty(
 @app.command()
 def aktualizuj(
     od: Annotated[str | None, typer.Option("--od", help="początek zakresu zmian (ISO)")] = None,
+    do: Annotated[str | None, typer.Option("--do", help="koniec zakresu zmian (ISO)")] = None,
     out: Annotated[Path | None, typer.Option("--out", "-o")] = None,
     force: ForceOpt = False,
     srodowisko: EnvOpt = None,
@@ -615,21 +656,28 @@ def aktualizuj(
             view.warning(warning)
         try:
             try:
-                parsed = datetime.fromisoformat(od) if od else None
-                since = (
-                    None
-                    if parsed is None
-                    else (parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC))
-                )
+                since = _as_utc(od)
             except ValueError as exc:
                 raise ConfigError(f"--od musi być datą ISO (YYYY-MM-DD), jest: {od!r}") from exc
+            # `--do` domyka zakres. Bez niego jedynym końcem jest „teraz", więc `aktualizuj`
+            # przy rozjechanym znaczniku jest zobowiązaniem, którego operator nie ma jak
+            # przyciąć: tabela kosztów ogłasza czterdzieści minut i tyle. Z `--do` da się
+            # wziąć dwie godziny, zobaczyć wynik i wrócić po resztę.
+            try:
+                until = _koniec_zakresu_zmian(do, deps.clock)
+            except ValueError as exc:
+                raise ConfigError(f"--do musi być datą ISO (YYYY-MM-DD), jest: {do!r}") from exc
             prompter = _prompter(tak)
-            start, plan = flow.prepare_update(deps, prompter, view, since=since)
+            start, plan = flow.prepare_update(deps, prompter, view, since=since, until=until)
             if not start:
                 view.message(texts.update_declined(plan.count))
                 return
             result = run_update(deps, since=plan.since, until=plan.until, force_lock=force)
-            view.message(texts.update_summary(result.records, result.details, result.unresolved))
+            view.message(
+                texts.update_summary(
+                    result.records, result.details, result.unresolved, result.stale_details
+                )
+            )
             if out:
                 _export_after(deps, result.run_id, out, None, "xlsx")
         finally:

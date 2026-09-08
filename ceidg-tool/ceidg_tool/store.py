@@ -11,6 +11,7 @@ import os
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -725,10 +726,34 @@ class Store:
         return inserted
 
     def stale_detail_ids(
-        self, ids: Sequence[KanonicznyId], *, ttl_days: float
+        self, ids: Sequence[KanonicznyId], *, cutoff: datetime
     ) -> list[KanonicznyId]:
-        """Te z `ids`, których szczegółów nie ma w cache albo są starsze niż TTL."""
-        cutoff = utc_iso(self._clock.wall() - ttl_days * 86_400)
+        """Te z `ids`, których szczegółów nie ma w cache albo pochodzą sprzed `cutoff`.
+
+        Próg **podaje wołający**, i to jest cała treść tej zmiany. Wcześniej metoda liczyła go
+        sama z TTL cache'u — regułą sensowną tam, gdzie ponowne użycie cache'u jest celem
+        (tak działa `pending_detail_ids` na ścieżce `pobierz`), a **błędną** tutaj: ta metoda
+        ma jednego producenta wywołań i jest nim `aktualizuj`, gdzie identyfikatory przychodzą
+        z `/zmiana`,
+        czyli rejestr właśnie powiedział, że te wpisy się zmieniły. Wpis zmieniony wczoraj,
+        a pobrany trzy dni temu, mieścił się w siedmiodniowym TTL i był pomijany — jego stary
+        `detail_json` zostawał w bazie, a podsumowanie meldowało go jako odświeżony.
+
+        Defekt był niewidoczny do 2026-09-08: dopóki ADR-0013 nie naprawił pisowni
+        identyfikatorów, cache nie trafiał ani razu, więc filtr zwracał wszystko. Naprawa
+        jednej cichej straty uruchomiła drugą.
+
+        Sensownym progiem dla `/zmiana` jest **koniec okna zmian**: wpis zgłoszony jako
+        zmieniony w `[od, do]` potrzebuje szczegółu pobranego nie wcześniej niż `do`.
+        Powtórzenie tego samego okna nadal kosztuje zero żądań, bo wtedy `detail_utc >= do`.
+        Że `do` nie leży w przyszłości, pilnują `cli._koniec_zakresu_zmian` i `update_range`.
+
+        Próg wchodzi jako `datetime`, a na tekst zamienia go ta metoda. Porównanie idzie po
+        napisach ISO, więc próg zapisany inaczej niż zawartość kolumny (`…Z` kontra `…+00:00`)
+        sortowałby się przed **każdym** wierszem i po cichu uznawał wszystko za nieświeże.
+        Jedno formatowanie w jednym miejscu czyni to nie do wyrażenia.
+        """
+        prog = utc_iso(cutoff.timestamp())
         fresh: set[str] = set()
         chunk = 500
         for i in range(0, len(ids), chunk):
@@ -737,10 +762,52 @@ class Store:
             rows = self._conn.execute(
                 f"SELECT id FROM firma WHERE id IN ({marks}) AND detail_state = 'pobrany' "
                 "AND detail_utc IS NOT NULL AND detail_utc >= ?",
-                (*part, cutoff),
+                (*part, prog),
             ).fetchall()
             fresh.update(str(r[0]) for r in rows)
         return [rid for rid in ids if rid not in fresh]  # `ids` są już kanoniczne
+
+    def outdated_details(
+        self, ids: Sequence[KanonicznyId], *, older_than: datetime
+    ) -> list[KanonicznyId]:
+        """Te z `ids`, które mają szczegół **pobrany**, ale starszy niż `older_than`.
+
+        Zwraca identyfikatory, a nie liczbę, bo wołający sumuje po oknach, a ta sama firma
+        może wrócić w dwóch oknach długiego zakresu. Liczba zliczałaby wtedy wystąpienia,
+        podczas gdy zdanie dla operatora mówi o **wpisach** — i tylko licznik wpisów da się
+        porównać z „Zmienionych wpisów: N", czyli zrobić z alarmu coś więcej niż alarm.
+
+        Obserwator dla `aktualizuj`, liczony **per okno zmian** i sumowany — bo próg
+        świeżości też jest per okno. Pierwsza wersja pytała raz na cały run z progiem
+        równym początkowi zakresu i była przez to tępsza niż reguła, której pilnuje: wpis
+        zgłoszony w drugim oknie, ze szczegółem z pierwszego, mieścił się powyżej progu
+        i nie był widziany, choć jest dokładnie tym przypadkiem, o który chodzi.
+
+        Zakres po identyfikatorach, nie po runie, właśnie dlatego: okno zna swoje `ids`
+        i swój koniec, a `run_firma` zna tylko numer strony.
+
+        Stan `pobrany` w warunku jest nośny. Wpis, którego rejestr nie zna
+        (`nieznaleziony`), nie ma szczegółu i **nie jest** cichą stratą — ma własne
+        wyjaśnienie i własny licznik. Bez tego warunku obserwator alarmowałby przy każdym
+        poprawnym przebiegu, a alarm, który dzwoni zawsze, nie jest alarmem.
+
+        `count_run_unresolved` tego nie widzi i nie może: tamto liczy wpisy w stanie `brak`,
+        a tutaj wpis jest `pobrany`. Jest **rozwiązany, tylko nieprawdziwy** — ten kształt
+        defektu projekt nazywa gwarancją bez obserwatora.
+        """
+        prog = utc_iso(older_than.timestamp())
+        znalezione: list[KanonicznyId] = []
+        chunk = 500
+        for i in range(0, len(ids), chunk):
+            part = list(ids[i : i + chunk])
+            marks = ",".join("?" * len(part))
+            rows = self._conn.execute(
+                f"SELECT id FROM firma WHERE id IN ({marks}) "
+                "AND detail_state = 'pobrany' AND detail_utc IS NOT NULL AND detail_utc < ?",
+                (*part, prog),
+            ).fetchall()
+            znalezione.extend(KanonicznyId(str(r[0])) for r in rows)
+        return znalezione
 
     def trim_request_log(self, keep_s: float = REQUEST_LOG_KEEP_S) -> int:
         """Przycina historię żądań do okna potrzebnego limiterowi."""
@@ -942,10 +1009,19 @@ class Store:
         return None if row is None else str(row[0])
 
     def set_watermark(self, scope: str, last_utc: str) -> None:
+        """Znacznik idzie tylko **do przodu**.
+
+        Do wprowadzenia `--do` każda ścieżka produkcyjna kończyła zakres na „teraz", więc
+        monotoniczność brała się sama z siebie i nikt jej nie zapisał. Z `--do` da się
+        świadomie nadrobić starszy zakres (`--od 09-01 --do 09-05` przy znaczniku na 09-08),
+        a bezwarunkowy zapis cofnąłby wtedy znacznik o trzy dni. Danych to nie traci —
+        następny przebieg pokryje różnicę — ale każe zapłacić za nią drugi raz, a jednostką
+        rachunku są tu czterdziestominutowe przebiegi."""
         with self._conn:
             self._conn.execute(
                 "INSERT INTO watermark(scope, last_utc, updated_utc) VALUES (?, ?, ?) "
-                "ON CONFLICT(scope) DO UPDATE SET last_utc = excluded.last_utc, "
+                "ON CONFLICT(scope) DO UPDATE SET "
+                "last_utc = MAX(watermark.last_utc, excluded.last_utc), "
                 "updated_utc = excluded.updated_utc",
                 (scope, last_utc, self._now()),
             )

@@ -99,6 +99,23 @@ def _wierszy_firma(deps: Deps) -> int:
 
 
 @pytest.fixture
+def clock() -> FakeClock:
+    """Zegar ustawiony **za** `OKNO`, a nie domyślny z `conftest`.
+
+    Domyślny `FakeClock` startuje 2023-11-14, a `OKNO` to wrzesień 2026 — czyli okno zmian
+    trzy lata po „teraz". Dopóki próg świeżości szczegółów liczył się z TTL cache'u, ta
+    niezgodność nie miała jak się pokazać: próg brzmiał „siedem dni wstecz od teraz" i okna
+    nie oglądał. Od naprawy A1 próg to koniec okna zmian, więc zegar sprzed okna znaczyłby
+    „szczegół musi pochodzić z przyszłości" i żaden nigdy by nie wystarczył.
+
+    Rejestr nie zgłasza zmian, które się jeszcze nie wydarzyły, więc zegar po końcu okna
+    jest jedynym stanem, jaki na produkcji występuje. `update_range` pilnuje tego samego
+    od drugiej strony — **odmawiając** zakresu kończącego się w przyszłości, a nie
+    przycinając go po cichu."""
+    return FakeClock(start_wall=datetime(2026, 9, 3, 12, tzinfo=UTC).timestamp())
+
+
+@pytest.fixture
 def rejestr() -> Rejestr:
     return Rejestr(ZMIENIONE)
 

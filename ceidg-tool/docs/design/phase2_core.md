@@ -34,11 +34,19 @@ def fetch_details(ids) -> tuple[list[dict], list[str]]             # (records, m
 def download_report(report: Report, dest: Path) -> Path
 def iter_changes(od, do, start=None) -> Iterator[Page]
 
-# store.py (schema v2: run.kind in firmy | raport | zmiana)
+# store.py (schema v3: run.kind in firmy | raport | zmiana; identifiers canonicalised, ADR-0013)
 def find_resumable_run(criteria_hash, *, profile_hash, kind="firmy") -> RunInfo | None
 def link_ids(run_id, *, page_index, ids) -> int                     # /zmiana without list JSON
-def stale_detail_ids(ids, *, ttl_days) -> list[str]
+def stale_detail_ids(ids, *, cutoff: datetime) -> list[KanonicznyId]
+def outdated_details(ids, *, older_than: datetime) -> list[KanonicznyId]
 ```
+
+`stale_detail_ids` takes the freshness threshold from its caller rather than computing one from
+a cache TTL. `/zmiana` *is* the staleness signal, so on the `aktualizuj` path the threshold is the
+end of the change window; a TTL there silently kept pre-change data (audit 2026-09-08, A1).
+`outdated_details` is that rule's observer — the entries that kept a detail older than the window
+that reported them. `count_run_unresolved` cannot see those: they are in state `pobrany`, resolved
+and untrue.
 
 ## Deviations from the module table in the instruction
 
