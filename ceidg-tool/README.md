@@ -9,17 +9,53 @@ sprzeczności obowiązuje uzupełnienie), `docs/status.md` (plan i stan bramek),
 `docs/decisions.md` (ustalenia z sondy API), `docs/adr/` (decyzje architektoniczne,
 0008 to warstwa użytkownika, 0011 to asystent), `docs/design/phase2_core.md` (projekt rdzenia),
 `docs/resilience-report.md` (scenariusze odpornościowe), `docs/test-runs-phase4.md`
-(przebiegi sprawdzające asystenta i ich wyniki), `CLAUDE.md` (fakty o projekcie
-dla Claude Code).
+(przebiegi sprawdzające asystenta i ich wyniki), `docs/audit-2026-09-09.md` (audyt
+i lista poprawek), `docs/demo-walkthrough.md` (jak przejść pokaz), `CLAUDE.md`
+(fakty o projekcie dla Claude Code).
+
+## Skąd wziąć kod
+
+Repozytorium `origin` należy do innego zespołu i jego gałąź domyślna (`Main`) zawiera
+**inny produkt**. Ten projekt żyje wyłącznie na gałęzi `ceidg-tool`:
+
+```
+git clone --branch ceidg-tool <adres repozytorium>
+```
+
+Kto pracuje na lokalnej gałęzi o innej nazwie (np. `master`), niech ustawi to raz:
+
+```
+git config branch.<gałąź>.merge refs/heads/ceidg-tool
+git config push.default upstream
+```
+
+Bez tego podpowiedź gita (`git push origin HEAD`) utworzy na cudzym repozytorium nową
+gałąź. **Nigdy nie pushuj do `Main` i nigdy nie używaj `--force`.**
 
 ## Instalacja
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -e .[dev]
+.venv\Scripts\pip install -e .[dev,asystent]
 ```
 
-Zależności przypięte w `requirements.lock`.
+**Extra `asystent` jest obowiązkowa**, także gdy nie zamierzasz używać asystenta: bez niej
+`tests/test_assistant_caller.py` nie zbiera się (importuje `httpx2`), a skany granic 11 i 12
+nie widzą prawdziwego grafu importów. CI instaluje dokładnie to samo. Zależności przypięte
+w `requirements.lock`.
+
+## Uruchomienie bez tokenu i bez danych osobowych
+
+```
+ceidg-tool pobierz --demo -w wielkopolskie --szczegoly
+```
+
+Tryb `--demo` odpowiada z syntetycznego rejestru w pamięci procesu: nie wychodzi ani jedno
+żądanie do CEIDG, nie jest czytany żaden token i nie ma tu niczyich danych. Środowisko
+testowe API **nie odpowiada** (host `test-dane.biznes.gov.pl` nie działa), a token wymaga
+Profilu Zaufanego — więc dla kogoś, kto właśnie sklonował to repozytorium, `--demo` jest
+jedyną drogą, żeby zobaczyć narzędzie w działaniu. Szczegóły: `docs/demo-walkthrough.md`
+i ADR-0014.
 
 ## Token
 
@@ -72,7 +108,7 @@ tekstowych. Ctrl+C przerywa bieżące działanie i wraca do menu, nie kończy se
 
 ```
 ceidg-tool pobierz --wojewodztwo podlaskie --od 2014-01-01 --do 2014-12-31 --out test.xlsx
-ceidg-tool pobierz --miasto Łomża --pkd 62.01.Z --status AKTYWNY --szczegoly --maks 500
+ceidg-tool pobierz --miasto Łomża --pkd 9621Z --status AKTYWNY --szczegoly --maks 500
 ceidg-tool pobierz --zapytanie zapytanie.yaml --tak          # tryb nieinteraktywny
 ceidg-tool pobierz -w mazowieckie --partie                   # zgoda na podział dużego zapytania
 ceidg-tool sprawdz-nip 1234563218                            # jedna firma, 2 zapytania

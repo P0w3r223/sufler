@@ -129,12 +129,16 @@ the only module allowed to hand `rich` a string from outside — that is boundar
 ## Commands
 
 ```
-PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 999 offline tests, no network
+PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 1144 offline tests, no network
 PYTHONUTF8=1 .venv/Scripts/python -m mypy ceidg_tool tests
 .venv/Scripts/ruff check ceidg_tool tests scripts
 .venv/Scripts/ruff format --check ceidg_tool tests scripts   # --check, because bare `format` rewrites and cannot fail
 PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool     # the wizard
+PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool pobierz --demo -w wielkopolskie --szczegoly
 ```
+
+The last one needs no token and reaches no register — use it to see the tool work before
+touching anything real.
 
 CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 3.11 and 3.12.
 
@@ -148,12 +152,18 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
   before assuming how the API behaves.
 - `docs/adr/` — architecture decisions: 0008 the phase-3 user layer, 0011 the assistant, 0012 the
   PKD 2007→2025 transition, 0013 the identity of a record identifier (and the schema v3 migration
-  that follows from it).
+  that follows from it), 0014 the register-free mode that `--demo` runs on.
 - `docs/design/phase2_core.md` — module map and the numbered boundary rules.
 - `docs/resilience-report.md` — the ten resilience scenarios and how each is covered.
 - `docs/test-runs-phase4.md` — the five groups of runs that need a real model or a real register,
   with the results of A and B. Anything about how the model *actually* behaves is measured there,
   not argued: what a mock returns is what we wrote into it.
+- `docs/audit-2026-09-09.md` — the 2026-09-08 audit: six read-only passes, an eleven-mutation
+  sweep, the synthesis, and the ranked remediation list with what has been fixed since. Read the
+  Tier A table before assuming a defect is still open, and the "controls" pass before deciding a
+  rule is ceremony.
+- `docs/demo-walkthrough.md` — how to walk the demo, and what the recorded run actually proved
+  (and did not).
 
 ## Structural facts
 
@@ -176,11 +186,49 @@ beats is wrong the moment some beats bypass it.
 without a terminal. `cli.py` authors no user-facing sentence of its own; `ui/render.py` turns
 blocks into `rich`.
 
-One decision sequence lives in `ui/flow.py`: resume → report → exactly one `count` request → cost
-table → choice → optional split → fetch → export → summary. `aktualizuj` follows the same shape
-through `prepare_update` — one cheap `count_changes` request, a cost table, a question — because
-`/zmiana` returns the count for the whole range, not just the page. Entry points differ only in
-which `Prompter` is installed, which is what keeps their messages identical.
+One decision sequence lives in `ui/flow.py`: resume → report → `count` → cost table → choice →
+optional split → fetch → export → summary. The `count` step is **one request, or two when the PKD
+vintage question is asked** — `flow.py:335-336` counts both populations, deliberately and before
+the operator answers, so the question can state the size of what will be missed or gained instead
+of "the result may be incomplete" (this file said "exactly one" until 2026-09-08; it was never
+true on that branch). `aktualizuj` follows the same shape through `prepare_update` — one cheap
+`count_changes` request, a cost table, a question — because `/zmiana` returns the count for the
+whole range, not just the page. Entry points differ only in which `Prompter` is installed, which
+is what keeps their messages identical.
+
+**`/zmiana` is the staleness signal, and it beats the cache.** `aktualizuj` takes identifiers from
+`/zmiana` — the register saying "these changed" — so the freshness threshold for their details is
+**the end of the change window**, not a cache TTL. `store.stale_detail_ids` takes that threshold
+from its caller for exactly this reason. Until 2026-09-08 it computed a seven-day TTL itself, so an
+entry changed yesterday but fetched three days ago was skipped, kept its pre-change `detail_json`,
+and was counted as refreshed; on the operator's own database 742 of 2 891 identifiers (25.7 %)
+recurred between two runs 23 hours apart. `count_run_unresolved` cannot see this and never could —
+such a record is `pobrany`, i.e. resolved and untrue — so `store.outdated_details` exists as its
+observer and reaches the log, not only the screen. The defect was invisible until the ADR-0013
+repair restored the cache: **fixing one silent loss activated another.** A change range ending in
+the future is refused rather than trimmed, because a watermark in the future makes the *next* run
+skip everything in between.
+
+**The tool runs without the register, and that is a product feature (ADR-0014).** `--demo` answers
+from a synthetic register generated in-process: no socket opens, no CEIDG token is read, and the
+corpus is generated rather than recorded, because the anonymiser leaves NIPs in query strings and
+has already erased the one property a test was meant to check. This exists less for the demo than
+for survival: the `test` environment is dead (2 802 production requests ever, **zero** test ones)
+and a token needs a Profil Zaufany, so before this there was no way to run the tool at all without
+real personal data. Two rules follow. The substitution belongs in `cli`, never inside `build_deps`
+— a standing test asserts production builds its client with `transport=None`, and rule 11 stays
+intact because the demo's `MockTransport` goes through the same `build_http_client`. And the five
+markers in ADR-0014 are mandatory **jointly**: first screen, `Metadane` row, `DEMO_` filename
+prefix (including under `--out`), separate data directory, refusal to combine with production. Drop
+one and a demo workbook becomes indistinguishable from a production one.
+
+**The demo corpus writes no reference data from memory, and that rule was learned twice in one
+day.** `ceidg_tool/demo/korpus.py` declares PKD *code pairs* and reads every name from the
+generated dictionaries, refusing to build if a code is missing or if the pair is not a real
+2007→2025 succession — the first draft had invented names and two codes (`5610A`, `8690E`) that do
+not exist in PKD 2025 at all. The same draft gave four of five cities the wrong `powiat`: a city
+with county rights files under its own name (`Kalisz` → `Kalisz`), and `kaliski` belongs to a
+village. Both passed every automated check, because nothing checked them.
 
 The boundary rules in `docs/design/phase2_core.md` say which module may import what. Rules 1-13
 are enforced by `tests/test_boundaries.py` as an AST scan rather than by discipline; rule 14 (one

@@ -1141,8 +1141,69 @@ was fixed when it was not — the slice heartbeat called `store.touch_lock` dire
 the detector's marker. One `LockHeartbeat` per `Deps`, injected into the limiter, closes it;
 verified both ways, a 3600 s hold raises no alarm and a 9 h 50 min wall jump still does.
 
+## Audit and remediation (2026-09-08)
+
+A full audit ran on 2026-09-08: six independent read-only passes, an eleven-mutation sweep, and one
+synthesis. Everything is in `docs/audit-2026-09-09.md`, including the ranked remediation list and
+what has been closed since. Three things belong here because they change how this file should be
+read.
+
+**The documents were the weakest artifact, not the code.** The audit's own summary: prose 7 146
+lines against 10 551 of code and **17 613 of tests** — the largest artifact in this project is the
+test suite, which refutes the standing suspicion of over-investment in documentation. What is true
+instead is that 20 % of `docs/` is duplicated narrative, and that twelve distinct stale-document
+defects were found across four days. Two of them were actively steering work: ADR-0003 still
+recommended lowering `min_spacing_s`, which is the change measured dangerous on 2026-09-06, and
+three documents put the PKD coverage gap at 25.2 % when the figure answering the sentence they
+actually wrote is **8.6 %** (`pkd=` matches any of a record's codes, settled at zero requests from
+the operator's own store). Both are corrected.
+
+**The 1 076-line retrospective log below is the one control the audit would positively remove.**
+Nothing consults it — one Python citation, not mechanised — and it is a second copy of the session
+briefs in another language, the copy that is *not* auto-loaded. Its only demonstrated effects were
+two errors it caused elsewhere. The recommendation is to trim it to the live sections plus "Argued
+against rather than applied", which exists nowhere else. That deletion was **not** done today: a
+~900-line removal is unreviewable between two code stages in the very file each stage updates, so
+it is its own piece of work.
+
+**Everything else the audit assessed as earning its keep.** All 13 ADRs have a defect behind them
+(ADR-0010's feature was never built and the ADR still paid for itself, by splitting out the proxy
+hole and the silent 21 MB download). Boundary rules 7 and 9-14 have recorded catches; rules 1-6 and
+8 have none, and the audit explicitly recommends **keeping** them rather than removing on absence of
+evidence. Every test cluster earns.
+
+### Closed on 2026-09-08
+
+- **A1** — `aktualizuj` skipped the entries `/zmiana` reported as changed and reported them as
+  refreshed. The only defect found that was actively losing data, and it was activated by the
+  ADR-0013 repair: fixing one silent loss unmasked another.
+- **A2** — `wyczysc --starsze-niz 0` kept 30 days of personal data and said it had purged.
+- **A5** — an exported row could contradict the newer data in the same row.
+- **A6** — `--lista` could not switch off `szczegoly: true` from a query file.
+- **ADR-0014** — the register-free mode (`--demo`), which also removes the audit's second
+  survivability blocker.
+
+### Still open from the audit's Tier A
+
+- **A3** — batching injects `1990-01-01…today` bounds an un-batched query never sends, so splitting
+  changes the result set (1.21 % measured), and `flow.py:509` blames "entries without a start date"
+  when the snapshot has none. Deferred deliberately: the fix changes `plan_batches`' output shape,
+  hence the split table, hence resume compatibility of in-flight batched runs. That is an ADR.
+- **A4** — a batched export's `Metadane` sheet describes batch 1 only.
+- **A7, A8, A10** — `eksportuj` picks the newest run of any status; list-mode export states
+  `liczba_pkd = 0` as a fact; `report_covers` warns about one of two status gaps.
+- **A9** — report rows without NIP/REGON get a `HASH:` identity that changes on every download.
+  Deferred: deciding what identifies such a row is an ADR-0013-shaped decision and it re-keys rows
+  already in the store.
+- **F12** — seven `matches_criteria` fields use exact match while only `nazwa`'s server-side
+  semantics were ever measured. Needs two production requests.
+
+Tiers B, C and D, and the reasoning behind each deferral, are in the audit document.
+
 ## Open items
-- **CI ran for the first time on 2026-09-08, and it failed.** There had never been a commit, so
+- ~~**CI ran for the first time on 2026-09-08, and it failed.**~~ — **green since 2026-09-08**
+  (commit `2e29540` records the first green run; this entry stayed under Open items after the
+  fact, which the audit caught). Kept for the diagnosis, which is worth reading: There had never been a commit, so
   the workflow had never executed — "CI runs the same four gates on Linux and Windows" was a
   configuration, not an observation. The first Linux run turned up ten tests that were measuring
   the **terminal width of the machine they ran on**: `rich` drops an option's name from `--help`
@@ -1163,16 +1224,20 @@ verified both ways, a 3600 s hold raises no alarm and a 9 h 50 min wall jump sti
   ambient cause: `FORCE_COLOR` makes `rich` treat a `StringIO` as a terminal and **animate** the
   progress bar, so intermediate frames — including the one before the total is known — land in
   the buffer; `force_terminal=False` pins it. The suite now passes with `FORCE_COLOR=1` and
-  `COLUMNS=40` set, which is the condition CI actually runs under. 999 offline tests.
-- **The production store has not been migrated yet.** Everything above was verified on a *copy*
-  (`31 860 → 16 310` rows, 13 401 records of the overnight run recovered, 1.12 s, `integrity_check`
-  ok). The owner's `store-prod.sqlite` is still schema v2 and will migrate on the next run of any
-  command that opens it. Nothing needs doing first — the migration is atomic and reports itself —
-  but **do not run `ceidg-tool wyczysc` before it**: retention deletes exactly the 15 550 orphan
-  rows the migration is there to rescue.
-- **`aktualizuj` is worth re-running once after the migration**, to see the cache actually hit.
-  The same window that cost 2 681 requests should now cost none, which is the cheapest possible
-  confirmation that the fix works on the real register.
+  `COLUMNS=40` set, which is the condition CI actually runs under.
+- ~~**The production store has not been migrated yet.**~~ — **done, verified 2026-09-08.** The
+  store is schema v3: 16 310 firms, **zero** duplicates, zero lower-case identifiers, zero orphans,
+  all seven runs `zakonczony`, 15 955 entries carrying fetched details. The `wyczysc` warning that
+  hung off this item is void with it.
+- ~~**`aktualizuj` is worth re-running once after the migration**, to see the cache hit.~~ —
+  **withdrawn 2026-09-08, and the reason matters more than the item.** "Zero detail requests" stopped
+  being evidence of anything: the audit found `aktualizuj` was *also* producing zero, by skipping
+  the very entries `/zmiana` reported as changed (item A1). The measurement could no longer tell the
+  repair from the defect. A1 is fixed, and the demo now demonstrates the property offline — 3 detail
+  requests on the first run over a window, 0 on the second. What still needs the real register is a
+  different half: that a lower-case identifier from `/zmiana` resolves through `/firma` to a detail
+  that lands. That is a bounded run (`aktualizuj --od <T-2h> --do <T>`, order of 50-60 requests) and
+  it is read off the screen — the new stale-detail counter — not off a request count.
 
 - Manual resilience scenarios 1, 2, 8 (`docs/resilience-report.md`) — each now has an
   automated equivalent, but §E asks for a real killed process, a real network cut and a real
@@ -1213,6 +1278,12 @@ verified both ways, a 3600 s hold raises no alarm and a 9 h 50 min wall jump sti
   unblocked, and its hairdressing walk sentence is now the right one to use, because it exercises
   the new step instead of dodging it. The whole mechanism expires on 31.12.2026 with the transition;
   the data file's header says so and names what to delete.
+- **The demo removes the "cannot run this without production data" blocker (2026-09-08, ADR-0014).**
+  `--demo` answers from a synthetic register generated in-process: no socket, no token, no real
+  personal data. It is the first way to run this tool that does not require a Profil Zaufany, and
+  the walkthrough plus the recorded results are in `docs/demo-walkthrough.md`. Still open on the
+  demo: the report path (`/raporty` answers empty, so `--zrodlo auto` falls back to the API), a
+  recorded-response path for the assistant, and the schema-level `DEMO` marker that ADR-0014 defers.
 - The assistant has never run through the wizard on a real terminal. Every real call so far went
   through `scripts/assistant_smoke.py` or a single CLI command in a sandbox; the wizard path is
   covered offline and by construction (`collect_from_description` is shared with `--opis`), but the
