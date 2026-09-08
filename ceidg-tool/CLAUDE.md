@@ -117,7 +117,7 @@ the only module allowed to hand `rich` a string from outside — that is boundar
 ## Commands
 
 ```
-PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 998 offline tests, no network
+PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 999 offline tests, no network
 PYTHONUTF8=1 .venv/Scripts/python -m mypy ceidg_tool tests
 .venv/Scripts/ruff check ceidg_tool tests scripts
 .venv/Scripts/ruff format ceidg_tool tests scripts

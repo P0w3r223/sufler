@@ -265,7 +265,7 @@ $env:PYTHONUTF8 = "1"
 **cmd**: `set PYTHONUTF8=1` raz na sesję. **bash (Git Bash)**: `PYTHONUTF8=1 polecenie`
 albo `export PYTHONUTF8=1`.
 
-998 testów offline, żaden nie łączy się z siecią. To samo uruchamia CI
+999 testów offline, żaden nie łączy się z siecią. To samo uruchamia CI
 (`.github/workflows/ci.yml`) na Linuksie i Windowsie, dla Pythona 3.11 i 3.12.
 
 Sonda API: `PYTHONUTF8=1 python scripts/ceidg_probe.py --env prod --skip-raport` (raport
