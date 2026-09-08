@@ -441,9 +441,28 @@ def slownik_rows() -> list[tuple[str, str, str]]:
 
 
 def merge_sources(raw: RawRecord) -> dict[str, Any]:
-    """Szczegół nadpisuje listę, lista uzupełnia braki; `None` w szczególe nie kasuje wartości."""
-    merged: dict[str, Any] = dict(raw.list_json or {})
-    for key, value in (raw.detail_json or {}).items():
+    """Świeższe źródło wygrywa na wspólnych polach; starsze uzupełnia braki.
+
+    Do 2026-09-08 szczegół wygrywał **zawsze**, bez patrzenia na czas pobrania. To jest
+    poprawne dopóty, dopóki szczegół jest młodszy — i fałszywe, gdy nie jest. Zmierzony objaw
+    (audyt, A5): wiersz eksportu mówił `status = 'AKTYWNY'`, podczas gdy `list_json` **tego
+    samego wiersza** i kolumna indeksowa `status_api` mówiły już `WYKRESLONY`. Skoroszyt
+    zaprzeczał wtedy danym, z których powstał, a operator nie ma jak tego zauważyć.
+
+    Zdarza się to normalnie: szczegóły siedzą w cache, a `pobierz` odświeża listę przy każdym
+    przebiegu, więc lista bywa młodsza od szczegółu o tyle, ile minęło między nimi.
+
+    `None` nadal nie kasuje wartości — brak pola w świeższym źródle znaczy „nie wiem", a nie
+    „puste"; to jest ta sama reguła co dotąd, tylko po właściwej stronie porównania.
+    """
+    lista, szczegol = raw.list_json or {}, raw.detail_json or {}
+    # Porównanie napisów ISO jest tu bezpieczne: oba znaczniki zapisuje `utc_iso`, więc mają
+    # ten sam kształt i tę samą strefę. Przy braku któregokolwiek zostaje dotychczasowa
+    # kolejność — szczegół jest wtedy jedynym źródłem albo jedynym datowanym.
+    lista_swiezsza = bool(raw.list_utc and raw.detail_utc and raw.list_utc > raw.detail_utc)
+    starsze, mlodsze = (szczegol, lista) if lista_swiezsza else (lista, szczegol)
+    merged: dict[str, Any] = dict(starsze)
+    for key, value in mlodsze.items():
         if value is not None or key not in merged:
             merged[key] = value
     return merged
