@@ -1,0 +1,739 @@
+# Polska Klasyfikacja Działalności 2025 — podklasy (kod: nazwa).
+#
+# Podstawa prawna: rozporządzenie Rady Ministrów z 18.12.2024 w sprawie Polskiej Klasyfikacji Działalności (PKD), Dz.U. 2024 poz. 1936; w mocy od 1.01.2025, okres przejściowy z PKD 2007 do 31.12.2026
+# Wyszukiwarka GUS: https://klasyfikacje.stat.gov.pl/Pkd2025
+#
+# Zbudowane: 2026-09-07 przez scripts/build_pkd.py
+# Plik źródłowy: StrukturaPKD2025.xlsx
+# SHA-256 źródła: a37bfd7821f5bf1b350ce81f1f0cd37dff193eb776f64a6ac9fd7dd70ae11f92
+#
+# Plik jest generowany. Nie edytuj go ręcznie — popraw źródło i zbuduj ponownie,
+# inaczej prowenienacja w tym nagłówku przestaje opisywać zawartość.
+0111Z: Uprawa zbóż innych niż ryż, roślin strączkowych i roślin oleistych na nasiona
+0112Z: Uprawa ryżu
+0113Z: Uprawa warzyw, włączając melony oraz uprawa roślin korzeniowych i roślin bulwiastych
+0114Z: Uprawa trzciny cukrowej
+0115Z: Uprawa tytoniu
+0116Z: Uprawa roślin włóknistych
+0119Z: Pozostałe uprawy rolne inne niż wieloletnie
+0121Z: Uprawa winogron
+0122Z: Uprawa drzew i krzewów owocowych tropikalnych i podzwrotnikowych
+0123Z: Uprawa drzew i krzewów owocowych cytrusowych
+0124Z: Uprawa drzew i krzewów owocowych ziarnkowych i pestkowych
+0125Z: Uprawa pozostałych drzew i krzewów owocowych oraz orzechowych
+0126Z: Uprawa drzew oleistych
+0127Z: Uprawa roślin wykorzystywanych do produkcji napojów
+0128Z: Uprawa roślin przyprawowych i aromatycznych oraz roślin wykorzystywanych do produkcji leków i wyrobów farmaceutycznych
+0129Z: Uprawa pozostałych roślin wieloletnich
+0130Z: Rozmnażanie roślin
+0141Z: Chów i hodowla bydła mlecznego
+0142Z: Chów i hodowla pozostałego bydła i bawołów
+0143Z: Chów i hodowla koni i pozostałych zwierząt koniowatych
+0144Z: Chów i hodowla wielbłądów i zwierząt wielbłądowatych
+0145Z: Chów i hodowla owiec i kóz
+0146Z: Chów i hodowla świń
+0147Z: Chów i hodowla drobiu
+0148Z: Chów i hodowla pozostałych zwierząt
+0150Z: Uprawy rolne połączone z chowem i hodowlą zwierząt (działalność mieszana)
+0161Z: Działalność usługowa wspomagająca produkcję roślinną
+0162Z: Działalność usługowa wspomagająca chów i hodowlę zwierząt gospodarskich
+0163Z: Działalność usługowa następująca po zbiorach oraz obróbka nasion dla celów rozmnażania roślin
+0170Z: Łowiectwo i pozyskiwanie zwierząt łownych, włączając działalność usługową
+0210Z: Gospodarka leśna i pozostała działalność leśna, z wyłączeniem pozyskiwania produktów leśnych
+0220Z: Pozyskiwanie drewna
+0230Z: Pozyskiwanie dziko rosnących produktów leśnych, z wyłączeniem drewna
+0240Z: Działalność usługowa związana z leśnictwem
+0311Z: Rybołówstwo w wodach morskich
+0312Z: Rybołówstwo w wodach śródlądowych
+0321Z: Akwakultura w wodach morskich
+0322Z: Akwakultura w wodach śródlądowych
+0330Z: Działalność usługowa wspomagająca rybołówstwo i akwakulturę
+0510Z: Wydobywanie węgla kamiennego
+0520Z: Wydobywanie węgla brunatnego (lignitu)
+0610Z: Górnictwo ropy naftowej
+0620Z: Górnictwo gazu ziemnego
+0710Z: Górnictwo rud żelaza
+0721Z: Górnictwo rud uranu i toru
+0729Z: Górnictwo pozostałych rud metali nieżelaznych
+0811Z: Wydobywanie kamieni ozdobnych, wapienia, gipsu, łupków oraz pozostałych kamieni i skał
+0812Z: Wydobywanie żwiru, piasku, gliny i kaolinu
+0891Z: Wydobywanie minerałów dla przemysłu chemicznego oraz do produkcji nawozów
+0892Z: Wydobywanie torfu
+0893Z: Wydobywanie soli
+0899Z: Pozostałe górnictwo i wydobywanie, gdzie indziej niesklasyfikowane
+0910Z: Działalność usługowa wspomagająca eksploatację złóż ropy naftowej i gazu ziemnego
+0990Z: Działalność usługowa wspomagająca pozostałe górnictwo i wydobywanie
+1011Z: Przetwarzanie i konserwowanie mięsa, z wyłączeniem mięsa z drobiu
+1012Z: Przetwarzanie i konserwowanie mięsa z drobiu
+1013Z: Produkcja wyrobów z mięsa, włączając wyroby z mięsa drobiowego
+1020Z: Przetwarzanie i konserwowanie ryb, skorupiaków i mięczaków
+1031Z: Przetwarzanie i konserwowanie ziemniaków
+1032Z: Produkcja soków z owoców i warzyw
+1039Z: Pozostałe przetwarzanie i konserwowanie owoców i warzyw
+1041Z: Produkcja olejów i pozostałych tłuszczów płynnych
+1042Z: Produkcja margaryny i podobnych tłuszczów jadalnych
+1051Z: Wytwarzanie wyrobów mleczarskich
+1052Z: Produkcja lodów śmietankowych i pozostałych lodów jadalnych
+1061Z: Wytwarzanie produktów przemiału zbóż
+1062Z: Wytwarzanie skrobi i wyrobów skrobiowych
+1071Z: Produkcja pieczywa; produkcja świeżych wyrobów ciastkarskich i ciastek
+1072Z: Produkcja sucharów, herbatników, konserwowanych wyrobów ciastkarskich i ciastek
+1073Z: Produkcja wyrobów mącznych
+1081Z: Produkcja cukru
+1082Z: Produkcja kakao, czekolady i wyrobów cukierniczych
+1083Z: Przetwórstwo herbaty i kawy
+1084Z: Produkcja przypraw
+1085Z: Wytwarzanie gotowych posiłków i dań
+1086Z: Produkcja artykułów spożywczych homogenizowanych i żywności dietetycznej
+1089A: Produkcja suplementów diety
+1089B: Produkcja substytutów mięsa
+1089C: Produkcja roślinnych substytutów dla jaj, nabiału i innych produktów mlecznych, z wyłączeniem napojów
+1089D: Produkcja pozostałych artykułów spożywczych, z wyłączeniem suplementów diety, substytutów mięsa, roślinnych substytutów dla jaj, nabiału i innych produktów mlecznych, gdzie indziej niesklasyfikowana
+1091Z: Produkcja gotowej paszy dla zwierząt gospodarskich
+1092Z: Produkcja gotowej karmy dla zwierząt domowych
+1101Z: Destylowanie, rektyfikowanie i mieszanie alkoholi
+1102Z: Produkcja win gronowych
+1103Z: Produkcja cydru i pozostałych owocowych napojów fermentowanych
+1104Z: Produkcja pozostałych niedestylowanych napojów fermentowanych
+1105Z: Produkcja piwa
+1106Z: Produkcja słodu
+1107Z: Produkcja napojów bezalkoholowych i wód butelkowanych
+1200Z: Produkcja wyrobów tytoniowych
+1310Z: Przygotowanie i przędzenie włókien tekstylnych
+1320Z: Produkcja tkanin
+1330Z: Wykończanie wyrobów tekstylnych
+1391Z: Produkcja dzianin metrażowych
+1392Z: Produkcja wyrobów tekstylnych dla gospodarstw domowych i gotowych artykułów wyposażenia wnętrz
+1393Z: Produkcja dywanów i chodników
+1394Z: Produkcja wyrobów powroźniczych, lin, szpagatów i wyrobów sieciowych
+1395Z: Produkcja włóknin i wyrobów wykonanych z włókniny
+1396Z: Produkcja pozostałych technicznych i przemysłowych wyrobów tekstylnych
+1399Z: Produkcja pozostałych wyrobów tekstylnych, gdzie indziej niesklasyfikowana
+1410Z: Produkcja odzieży dzianej
+1421Z: Produkcja odzieży wierzchniej
+1422Z: Produkcja bielizny
+1423Z: Produkcja odzieży roboczej
+1424Z: Produkcja odzieży skórzanej i wyrobów futrzarskich
+1429Z: Produkcja pozostałej odzieży i dodatków do odzieży, gdzie indziej niesklasyfikowana
+1511Z: Garbowanie, barwienie, wyprawa skór, w tym futerkowych
+1512Z: Produkcja toreb bagażowych, toreb ręcznych i podobnych wyrobów kaletniczych; produkcja wyrobów rymarskich z dowolnego materiału
+1520Z: Produkcja obuwia
+1611Z: Produkcja wyrobów tartacznych
+1612Z: Obróbka i wykończanie wyrobów tartacznych
+1621Z: Produkcja arkuszy fornirowych i płyt wykonanych na bazie drewna
+1622Z: Produkcja gotowych parkietów podłogowych
+1623Z: Produkcja pozostałych wyrobów stolarskich i ciesielskich dla budownictwa
+1624Z: Produkcja opakowań drewnianych
+1625Z: Produkcja drzwi i okien z drewna
+1626Z: Produkcja paliw stałych z biomasy roślinnej
+1627Z: Wykończanie wyrobów drewnianych
+1628Z: Produkcja pozostałych wyrobów z drewna oraz wyrobów z korka, słomy i materiałów używanych do wyplatania
+1711Z: Produkcja masy włóknistej
+1712Z: Produkcja papieru i tektury
+1721Z: Produkcja papieru falistego, tektury falistej oraz opakowań z papieru i tektury
+1722Z: Produkcja artykułów gospodarstwa domowego, toaletowych i sanitarnych
+1723Z: Produkcja artykułów papierniczych
+1724Z: Produkcja tapet
+1725Z: Produkcja pozostałych wyrobów z papieru i tektury
+1811Z: Drukowanie gazet
+1812Z: Pozostałe drukowanie
+1813Z: Działalność usługowa związana z przygotowywaniem do druku
+1814Z: Introligatorstwo i podobne usługi
+1820Z: Reprodukcja zapisanych nośników informacji
+1910Z: Wytwarzanie i przetwarzanie koksu
+1920Z: Wytwarzanie i przetwarzanie produktów rafinacji ropy naftowej oraz produktów z paliw kopalnych
+2011Z: Produkcja gazów technicznych
+2012Z: Produkcja barwników i pigmentów
+2013Z: Produkcja pozostałych podstawowych chemikaliów nieorganicznych
+2014Z: Produkcja pozostałych podstawowych chemikaliów organicznych
+2015Z: Produkcja nawozów i związków azotowych
+2016Z: Produkcja tworzyw sztucznych w formach podstawowych
+2017Z: Produkcja kauczuku syntetycznego w formach podstawowych
+2020A: Produkcja pestycydów
+2020B: Produkcja środków dezynfekujących
+2020C: Produkcja pozostałych środków agrochemicznych
+2030Z: Produkcja farb, lakierów i podobnych powłok, farb drukarskich i mas uszczelniających
+2041Z: Produkcja mydła i detergentów, środków myjących i czyszczących
+2042Z: Produkcja wyrobów kosmetycznych i toaletowych
+2051Z: Produkcja biopaliw płynnych
+2059Z: Produkcja pozostałych wyrobów chemicznych, gdzie indziej niesklasyfikowana
+2060Z: Produkcja włókien chemicznych
+2110Z: Produkcja podstawowych substancji farmaceutycznych
+2120Z: Produkcja leków i pozostałych wyrobów farmaceutycznych
+2211Z: Produkcja, bieżnikowanie i regenerowanie opon z gumy oraz produkcja dętek
+2212Z: Produkcja pozostałych wyrobów z gumy
+2221Z: Produkcja płyt, arkuszy, rur i kształtowników z tworzyw sztucznych
+2222Z: Produkcja opakowań z tworzyw sztucznych
+2223Z: Produkcja drzwi i okien z tworzyw sztucznych
+2224Z: Produkcja wyrobów dla budownictwa z tworzyw sztucznych
+2225Z: Obróbka i wykończanie wyrobów z tworzyw sztucznych
+2226Z: Produkcja pozostałych wyrobów z tworzyw sztucznych
+2311Z: Produkcja szkła płaskiego
+2312Z: Kształtowanie i obróbka szkła płaskiego
+2313Z: Produkcja szkła gospodarczego
+2314Z: Produkcja włókien szklanych
+2315Z: Produkcja i obróbka pozostałego szkła, włączając szkło techniczne
+2320Z: Produkcja wyrobów ogniotrwałych
+2331Z: Produkcja ceramicznych kafli i płytek
+2332Z: Produkcja cegieł, dachówek i materiałów budowlanych, z wypalanej gliny
+2341Z: Produkcja ceramicznych wyrobów stołowych i ozdobnych
+2342Z: Produkcja ceramicznych wyrobów sanitarnych
+2343Z: Produkcja ceramicznych izolatorów i osłon izolacyjnych
+2344Z: Produkcja pozostałych technicznych wyrobów ceramicznych
+2345Z: Produkcja pozostałych wyrobów ceramicznych
+2351Z: Produkcja cementu
+2352Z: Produkcja wapna i gipsu
+2361Z: Produkcja wyrobów budowlanych z betonu
+2362Z: Produkcja wyrobów budowlanych z gipsu
+2363Z: Produkcja masy betonowej prefabrykowanej
+2364Z: Produkcja zaprawy murarskiej
+2365Z: Produkcja cementu wzmocnionego włóknem
+2366Z: Produkcja pozostałych wyrobów z betonu, cementu i gipsu
+2370A: Produkcja nagrobków, grobowców i płyt nagrobnych z kamienia
+2370B: Produkcja pozostałych wyrobów z kamienia oraz cięcie, formowanie i wykończanie kamienia
+2391Z: Produkcja wyrobów ściernych
+2399Z: Produkcja pozostałych wyrobów z mineralnych surowców niemetalicznych, gdzie indziej niesklasyfikowana
+2410Z: Produkcja surówki, żelazostopów, żeliwa i stali oraz wyrobów hutniczych
+2420Z: Produkcja rur, przewodów, kształtowników zamkniętych i łączników, ze stali
+2431Z: Produkcja prętów ciągnionych na zimno
+2432Z: Produkcja wyrobów płaskich walcowanych na zimno
+2433Z: Produkcja wyrobów formowanych na zimno
+2434Z: Produkcja drutu
+2441Z: Produkcja metali szlachetnych
+2442A: Produkcja aluminium hutniczego
+2442B: Produkcja wyrobów z aluminium i stopów aluminium
+2443Z: Produkcja ołowiu, cynku i cyny
+2444Z: Produkcja miedzi
+2445Z: Produkcja pozostałych metali nieżelaznych
+2446Z: Wytwarzanie paliw jądrowych
+2451Z: Odlewnictwo żeliwa
+2452Z: Odlewnictwo staliwa
+2453Z: Odlewnictwo metali lekkich
+2454A: Odlewnictwo miedzi i stopów miedzi
+2454B: Odlewnictwo pozostałych metali nieżelaznych, gdzie indziej niesklasyfikowane
+2511Z: Produkcja konstrukcji metalowych i ich części
+2512Z: Produkcja drzwi i okien z metalu
+2521Z: Produkcja grzejników centralnego ogrzewania, wytwornic pary i kotłów
+2522Z: Produkcja pozostałych zbiorników, cystern i pojemników metalowych
+2530Z: Produkcja broni i amunicji
+2540Z: Kucie i formowanie metali oraz metalurgia proszków
+2551Z: Nakładanie powłok na metale
+2552Z: Obróbka cieplna metali
+2553Z: Obróbka mechaniczna elementów metalowych
+2561Z: Produkcja wyrobów nożowniczych i sztućców
+2562Z: Produkcja zamków i zawiasów
+2563Z: Produkcja narzędzi
+2591Z: Produkcja pojemników metalowych
+2592Z: Produkcja lekkich opakowań metalowych
+2593Z: Produkcja wyrobów z drutu, łańcuchów i sprężyn
+2594Z: Produkcja złączy i śrub
+2599Z: Produkcja pozostałych gotowych wyrobów metalowych, gdzie indziej niesklasyfikowana
+2611Z: Produkcja elementów elektronicznych
+2612Z: Produkcja elektronicznych obwodów drukowanych
+2620Z: Produkcja komputerów i urządzeń peryferyjnych
+2630Z: Produkcja sprzętu (tele)komunikacyjnego
+2640Z: Produkcja elektronicznego sprzętu powszechnego użytku
+2651Z: Produkcja instrumentów i przyrządów pomiarowych, kontrolnych i nawigacyjnych
+2652Z: Produkcja zegarków i zegarów
+2660Z: Produkcja urządzeń napromieniowujących, sprzętu elektromedycznego i elektroterapeutycznego
+2670Z: Produkcja instrumentów optycznych, niezapisanych magnetycznych i optycznych nośników informacji oraz sprzętu fotograficznego
+2711Z: Produkcja elektrycznych silników, prądnic i transformatorów
+2712Z: Produkcja aparatury rozdzielczej i sterowniczej energii elektrycznej
+2720Z: Produkcja baterii i akumulatorów
+2731Z: Produkcja kabli światłowodowych
+2732Z: Produkcja pozostałych elektronicznych i elektrycznych przewodów i kabli
+2733Z: Produkcja sprzętu instalacyjnego
+2740Z: Produkcja sprzętu oświetleniowego
+2751Z: Produkcja elektrycznego sprzętu gospodarstwa domowego
+2752Z: Produkcja nieelektrycznego sprzętu gospodarstwa domowego
+2790Z: Produkcja pozostałego sprzętu elektrycznego
+2811Z: Produkcja silników i turbin, z wyłączeniem silników lotniczych, samochodowych i motocyklowych
+2812Z: Produkcja sprzętu i wyposażenia do napędu hydraulicznego i pneumatycznego
+2813Z: Produkcja pozostałych pomp i sprężarek
+2814Z: Produkcja pozostałych kurków i zaworów
+2815Z: Produkcja łożysk, kół zębatych, przekładni zębatych i elementów napędowych
+2821Z: Produkcja pieców, palenisk i stałych urządzeń grzewczych dla gospodarstw domowych
+2822Z: Produkcja urządzeń podnośnikowych i przeładunkowych
+2823Z: Produkcja maszyn i sprzętu biurowego, z wyłączeniem komputerów i urządzeń peryferyjnych
+2824Z: Produkcja narzędzi ręcznych mechanicznych
+2825Z: Produkcja przemysłowych urządzeń chłodniczych, wentylacyjnych i klimatyzacyjnych
+2829Z: Produkcja pozostałych maszyn ogólnego przeznaczenia, gdzie indziej niesklasyfikowana
+2830Z: Produkcja maszyn dla rolnictwa i leśnictwa
+2841Z: Produkcja maszyn do formowania metalu i obrabiarek do metalu
+2842Z: Produkcja pozostałych narzędzi mechanicznych
+2891Z: Produkcja maszyn dla metalurgii
+2892Z: Produkcja maszyn dla górnictwa i do wydobywania oraz budownictwa
+2893Z: Produkcja maszyn stosowanych w przetwórstwie żywności, tytoniu i produkcji napojów
+2894Z: Produkcja maszyn dla przemysłu tekstylnego, odzieżowego i skórzanego
+2895Z: Produkcja maszyn dla przemysłu papierniczego
+2896Z: Produkcja maszyn do obróbki gumy lub tworzyw sztucznych
+2897Z: Produkcja maszyn do wytwarzania przyrostowego
+2899Z: Produkcja pozostałych maszyn specjalnego przeznaczenia, gdzie indziej niesklasyfikowana
+2910A: Produkcja silników do pojazdów silnikowych, z wyłączeniem motocykli
+2910B: Produkcja samochodów osobowych
+2910C: Produkcja autobusów
+2910D: Produkcja pojazdów silnikowych przeznaczonych do przewozu towarów
+2910E: Produkcja pozostałych pojazdów silnikowych, z wyłączeniem motocykli
+2920Z: Produkcja nadwozi do pojazdów silnikowych, z wyłączeniem motocykli; produkcja przyczep i naczep
+2931Z: Produkcja wyposażenia elektrycznego i elektronicznego do pojazdów silnikowych
+2932Z: Produkcja pozostałych części i akcesoriów do pojazdów silnikowych, z wyłączeniem motocykli
+3011Z: Produkcja cywilnych statków i konstrukcji pływających
+3012Z: Produkcja łodzi wypoczynkowych i sportowych
+3013Z: Produkcja wojskowych okrętów i jednostek pływających
+3020Z: Produkcja lokomotyw kolejowych oraz taboru szynowego
+3031Z: Produkcja cywilnych statków powietrznych, statków kosmicznych i podobnych maszyn
+3032Z: Produkcja wojskowych statków powietrznych, statków kosmicznych i podobnych maszyn
+3040Z: Produkcja wojskowych pojazdów bojowych
+3091Z: Produkcja motocykli
+3092Z: Produkcja rowerów i wózków inwalidzkich
+3099Z: Produkcja pozostałego sprzętu transportowego, gdzie indziej niesklasyfikowana
+3100Z: Produkcja mebli
+3211Z: Produkcja monet
+3212Z: Produkcja wyrobów jubilerskich i podobnych
+3213Z: Produkcja sztucznej biżuterii i wyrobów podobnych
+3220Z: Produkcja instrumentów muzycznych
+3230Z: Produkcja sprzętu sportowego
+3240Z: Produkcja gier i zabawek
+3250A: Produkcja urządzeń, instrumentów oraz wyrobów dentystycznych
+3250B: Pozostała produkcja urządzeń, instrumentów oraz wyrobów medycznych
+3291Z: Produkcja mioteł, szczotek i pędzli
+3299Z: Produkcja pozostałych wyrobów, gdzie indziej niesklasyfikowana
+3311Z: Naprawa i konserwacja metalowych wyrobów gotowych
+3312Z: Naprawa i konserwacja maszyn
+3313Z: Naprawa i konserwacja urządzeń elektronicznych i optycznych
+3314Z: Naprawa i konserwacja urządzeń elektrycznych
+3315Z: Naprawa i konserwacja cywilnych statków i łodzi
+3316Z: Naprawa i konserwacja cywilnych statków powietrznych i statków kosmicznych
+3317Z: Naprawa i konserwacja pozostałego cywilnego sprzętu transportowego
+3318Z: Naprawa i konserwacja wojskowych pojazdów bojowych, okrętów, łodzi, statków powietrznych i statków kosmicznych
+3319Z: Naprawa i konserwacja pozostałego sprzętu i wyposażenia
+3320Z: Instalowanie maszyn przemysłowych, sprzętu i wyposażenia
+3511Z: Wytwarzanie energii elektrycznej ze źródeł nieodnawialnych
+3512A: Energetyka wiatrowa
+3512B: Energetyka słoneczna
+3512C: Energetyka geotermalna
+3512D: Energetyka biogazowa
+3512E: Energetyka wodna
+3512F: Wytwarzanie energii elektrycznej z pozostałych źródeł odnawialnych
+3513Z: Przesyłanie energii elektrycznej
+3514Z: Dystrybucja energii elektrycznej
+3515Z: Handel energią elektryczną
+3516Z: Magazynowanie energii elektrycznej
+3521Z: Wytwarzanie paliw gazowych
+3522Z: Dystrybucja paliw gazowych w systemie sieciowym
+3523Z: Handel paliwami gazowymi w systemie sieciowym
+3524Z: Magazynowanie paliw gazowych w ramach usług zaopatrzenia sieciowego
+3530Z: Wytwarzanie i zaopatrywanie w parę wodną i powietrze do układów klimatyzacyjnych
+3540Z: Działalność brokerów i agentów w zakresie energii elektrycznej i gazu ziemnego
+3600Z: Pobór, uzdatnianie i dostarczanie wody
+3700Z: Odprowadzanie i oczyszczanie ścieków
+3811Z: Zbieranie odpadów innych niż niebezpieczne
+3812Z: Zbieranie odpadów niebezpiecznych
+3821Z: Odzysk surowców
+3822Z: Odzysk energii
+3823Z: Pozostały odzysk związany z odpadami
+3831Z: Spalanie odpadów bez odzysku energii
+3832Z: Składowanie odpadów
+3833Z: Pozostałe unieszkodliwianie odpadów
+3900Z: Działalność związana z rekultywacją i pozostała działalność usługowa związana z gospodarką odpadami
+4100A: Roboty budowlane związane ze wznoszeniem budynków mieszkalnych
+4100B: Roboty budowlane związane ze wznoszeniem budynków niemieszkalnych
+4211Z: Roboty związane z budową dróg i autostrad
+4212Z: Roboty związane z budową dróg szynowych i kolei podziemnej
+4213Z: Roboty związane z budową mostów i tuneli
+4221Z: Roboty związane z budową rurociągów przesyłowych i sieci rozdzielczych
+4222Z: Roboty związane z budową linii telekomunikacyjnych i elektroenergetycznych
+4291Z: Roboty związane z budową obiektów inżynierii wodnej
+4299Z: Roboty związane z budową pozostałych obiektów inżynierii lądowej i wodnej, gdzie indziej niesklasyfikowane
+4311Z: Rozbiórka i burzenie obiektów budowlanych
+4312Z: Przygotowanie terenu pod budowę
+4313Z: Wykonywanie wykopów i wierceń geologiczno-inżynierskich
+4321Z: Wykonywanie instalacji elektrycznych
+4322Z: Wykonywanie instalacji wodno-kanalizacyjnych, cieplnych i klimatyzacyjnych
+4323Z: Montaż izolacji
+4324Z: Wykonywanie pozostałych instalacji budowlanych
+4331Z: Tynkowanie
+4332Z: Zakładanie stolarki budowlanej
+4333Z: Posadzkarstwo; tapetowanie i oblicowywanie ścian
+4334Z: Malowanie i szklenie
+4335Z: Wykonywanie pozostałych robót budowlanych wykończeniowych
+4341Z: Wykonywanie konstrukcji i pokryć dachowych
+4342Z: Wykonywanie pozostałych specjalistycznych robót budowlanych w zakresie budowy budynków
+4350Z: Roboty budowlane specjalistyczne w zakresie inżynierii lądowej i wodnej
+4360Z: Pośrednictwo w zakresie specjalistycznych usług budowlanych
+4391Z: Roboty murarskie
+4399Z: Pozostałe specjalistyczne roboty budowlane, gdzie indziej niesklasyfikowane
+4611A: Działalność agentów zajmujących się sprzedażą hurtową zbóż i nasion oleistych
+4611B: Działalność agentów zajmujących się sprzedażą hurtową pozostałych płodów rolnych, żywych zwierząt, surowców dla przemysłu tekstylnego i półproduktów
+4612Z: Działalność agentów zajmujących się sprzedażą hurtową paliw, rud, metali i chemikaliów przemysłowych
+4613Z: Działalność agentów zajmujących się sprzedażą hurtową drewna i materiałów budowlanych
+4614Z: Działalność agentów zajmujących się sprzedażą hurtową maszyn, urządzeń przemysłowych, statków i samolotów
+4615Z: Działalność agentów zajmujących się sprzedażą hurtową mebli, artykułów gospodarstwa domowego i drobnych wyrobów metalowych
+4616Z: Działalność agentów zajmujących się sprzedażą hurtową wyrobów tekstylnych, odzieży, wyrobów futrzarskich, obuwia i artykułów skórzanych
+4617Z: Działalność agentów zajmujących się sprzedażą hurtową żywności, napojów i wyrobów tytoniowych
+4618Z: Działalność agentów zajmujących się sprzedażą hurtową wyspecjalizowaną pozostałych towarów
+4619Z: Działalność agentów zajmujących się sprzedażą hurtową niewyspecjalizowaną
+4621A: Sprzedaż hurtowa zboża i nasion roślin oleistych
+4621B: Sprzedaż hurtowa nieprzetworzonego tytoniu i pasz dla zwierząt
+4622Z: Sprzedaż hurtowa kwiatów i roślin
+4623Z: Sprzedaż hurtowa żywych zwierząt
+4624Z: Sprzedaż hurtowa skór
+4631Z: Sprzedaż hurtowa owoców i warzyw
+4632Z: Sprzedaż hurtowa mięsa i wyrobów z mięsa oraz ryb i wyrobów z ryb
+4633Z: Sprzedaż hurtowa mleka, wyrobów mleczarskich, jaj, olejów i tłuszczów jadalnych
+4634A: Sprzedaż hurtowa napojów alkoholowych
+4634B: Sprzedaż hurtowa napojów bezalkoholowych
+4635Z: Sprzedaż hurtowa wyrobów tytoniowych
+4636Z: Sprzedaż hurtowa cukru, czekolady i wyrobów cukierniczych
+4637Z: Sprzedaż hurtowa herbaty, kawy, kakao i przypraw
+4638Z: Sprzedaż hurtowa pozostałej żywności
+4639Z: Sprzedaż hurtowa niewyspecjalizowana żywności, napojów i wyrobów tytoniowych
+4641Z: Sprzedaż hurtowa wyrobów tekstylnych
+4642Z: Sprzedaż hurtowa odzieży i obuwia
+4643Z: Sprzedaż hurtowa elektrycznych artykułów użytku domowego
+4644Z: Sprzedaż hurtowa wyrobów porcelanowych, ceramicznych i szklanych oraz środków czyszczących
+4645Z: Sprzedaż hurtowa perfum i kosmetyków
+4646Z: Sprzedaż hurtowa wyrobów farmaceutycznych i medycznych
+4647Z: Sprzedaż hurtowa mebli do użytku domowego, biurowego i sklepowego, dywanów i sprzętu oświetleniowego
+4648Z: Sprzedaż hurtowa zegarków i biżuterii
+4649Z: Sprzedaż hurtowa pozostałych artykułów użytku domowego
+4650Z: Sprzedaż hurtowa urządzeń technologii informacyjnej i komunikacyjnej
+4661Z: Sprzedaż hurtowa maszyn i urządzeń rolniczych oraz dodatkowego wyposażenia
+4662Z: Sprzedaż hurtowa obrabiarek
+4663Z: Sprzedaż hurtowa maszyn wykorzystywanych w górnictwie, budownictwie oraz inżynierii lądowej i wodnej
+4664Z: Sprzedaż hurtowa pozostałych maszyn i urządzeń
+4671Z: Sprzedaż hurtowa pojazdów silnikowych, z wyłączeniem motocykli
+4672Z: Sprzedaż hurtowa części i akcesoriów do pojazdów silnikowych, z wyłączeniem motocykli
+4673Z: Sprzedaż hurtowa motocykli oraz części i akcesoriów do nich
+4681Z: Sprzedaż hurtowa paliw stałych, ciekłych, gazowych oraz produktów pochodnych
+4682Z: Sprzedaż hurtowa metali i rud metali
+4683Z: Sprzedaż hurtowa drewna, materiałów budowlanych i wyposażenia sanitarnego
+4684Z: Sprzedaż hurtowa wyrobów metalowych oraz sprzętu i dodatkowego wyposażenia hydraulicznego i grzejnego
+4685A: Sprzedaż hurtowa chemicznych nawozów i środków ochrony roślin
+4685B: Pozostała sprzedaż hurtowa wyrobów chemicznych
+4686Z: Sprzedaż hurtowa pozostałych półproduktów
+4687Z: Sprzedaż hurtowa odpadów i złomu
+4689Z: Pozostała sprzedaż hurtowa wyspecjalizowana, gdzie indziej niesklasyfikowana
+4690Z: Sprzedaż hurtowa niewyspecjalizowana
+4711Z: Sprzedaż detaliczna niewyspecjalizowana z przewagą żywności, napojów lub wyrobów tytoniowych
+4712Z: Pozostała sprzedaż detaliczna niewyspecjalizowana
+4721Z: Sprzedaż detaliczna owoców i warzyw
+4722Z: Sprzedaż detaliczna mięsa i wyrobów z mięsa
+4723Z: Sprzedaż detaliczna ryb, skorupiaków i mięczaków
+4724Z: Sprzedaż detaliczna pieczywa, ciast, wyrobów ciastkarskich i cukierniczych
+4725Z: Sprzedaż detaliczna napojów alkoholowych i bezalkoholowych
+4726Z: Sprzedaż detaliczna wyrobów tytoniowych
+4727Z: Sprzedaż detaliczna pozostałej żywności
+4730Z: Sprzedaż detaliczna paliw do pojazdów silnikowych
+4740Z: Sprzedaż detaliczna narzędzi technologii informacyjnej i komunikacyjnej
+4751Z: Sprzedaż detaliczna wyrobów tekstylnych
+4752Z: Sprzedaż detaliczna drobnych wyrobów metalowych, materiałów budowlanych, farb i szkła
+4753Z: Sprzedaż detaliczna dywanów, chodników i innych pokryć podłogowych oraz pokryć ściennych
+4754Z: Sprzedaż detaliczna elektrycznego sprzętu gospodarstwa domowego
+4755Z: Sprzedaż detaliczna mebli, sprzętu oświetleniowego, artykułów stołowych oraz pozostałych artykułów użytku domowego
+4761Z: Sprzedaż detaliczna książek
+4762Z: Sprzedaż detaliczna gazet i pozostałych periodyków oraz artykułów papierniczych
+4763Z: Sprzedaż detaliczna sprzętu sportowego
+4764Z: Sprzedaż detaliczna gier i zabawek
+4769A: Sprzedaż detaliczna instrumentów muzycznych i nut
+4769B: Sprzedaż detaliczna dzieł sztuki
+4769C: Sprzedaż detaliczna pozostałych wyrobów związanych z kulturą i rekreacją, gdzie indziej niesklasyfikowana
+4771Z: Sprzedaż detaliczna odzieży
+4772Z: Sprzedaż detaliczna obuwia i wyrobów skórzanych
+4773Z: Sprzedaż detaliczna wyrobów farmaceutycznych
+4774Z: Sprzedaż detaliczna wyrobów medycznych i ortopedycznych
+4775Z: Sprzedaż detaliczna kosmetyków i artykułów toaletowych
+4776A: Sprzedaż detaliczna kwiatów, roślin, nasion, nawozów i środków ochrony roślin
+4776B: Sprzedaż detaliczna żywych zwierząt domowych, karmy dla zwierząt domowych
+4777Z: Sprzedaż detaliczna zegarków i biżuterii
+4778Z: Sprzedaż detaliczna pozostałych nowych wyrobów
+4779A: Sprzedaż detaliczna używanych lub antykwarycznych książek
+4779B: Sprzedaż detaliczna antyków
+4779C: Sprzedaż detaliczna pozostałych artykułów używanych
+4781Z: Sprzedaż detaliczna pojazdów silnikowych, z wyłączeniem motocykli
+4782Z: Sprzedaż detaliczna części i akcesoriów do pojazdów silnikowych, z wyłączeniem motocykli
+4783Z: Sprzedaż detaliczna motocykli oraz części i akcesoriów do nich
+4791Z: Pośrednictwo w sprzedaży detalicznej niewyspecjalizowanej
+4792Z: Pośrednictwo w sprzedaży detalicznej wyspecjalizowanej
+4911Z: Transport kolejowy pasażerski ciężki
+4912Z: Pozostały szynowy transport pasażerski
+4920Z: Transport kolejowy towarów
+4931Z: Transport drogowy pasażerski rozkładowy
+4932Z: Transport drogowy pasażerski inny niż rozkładowy
+4933Z: Transport pasażerski na żądanie pojazdem z kierowcą
+4934Z: Transport pasażerski kolejami linowymi i wyciągami narciarskimi
+4939Z: Pozostały transport lądowy pasażerski, gdzie indziej niesklasyfikowany
+4941Z: Transport drogowy towarów
+4942Z: Działalność usługowa związana z przeprowadzkami
+4950A: Transport rurociągowy paliw gazowych
+4950B: Transport rurociągowy pozostałych towarów
+5010Z: Transport morski i przybrzeżny pasażerski
+5020Z: Transport morski i przybrzeżny towarów
+5030Z: Transport wodny śródlądowy pasażerski
+5040Z: Transport wodny śródlądowy towarów
+5110Z: Transport lotniczy pasażerski
+5121Z: Transport lotniczy towarów
+5122Z: Transport kosmiczny
+5210A: Magazynowanie i przechowywanie zbóż i nasion oleistych
+5210B: Magazynowanie i przechowywanie pozostałych towarów
+5221A: Pomoc drogowa
+5221B: Pozostała działalność usługowa wspomagająca transport lądowy
+5222A: Działalność usługowa wspomagająca transport morski
+5222B: Działalność usługowa wspomagająca transport wodny śródlądowy
+5223Z: Działalność usługowa wspomagająca transport lotniczy
+5224A: Przeładunek towarów w portach morskich
+5224B: Przeładunek towarów w portach śródlądowych
+5224C: Przeładunek towarów w pozostałych punktach przeładunkowych
+5225Z: Działalność logistyczna
+5226Z: Pozostała działalność usługowa wspomagająca transport
+5231Z: Pośrednictwo w transporcie towarów
+5232Z: Pośrednictwo w transporcie pasażerskim
+5310Z: Działalność pocztowa objęta obowiązkiem świadczenia usług powszechnych (operatora publicznego)
+5320Z: Pozostała działalność pocztowa i kurierska
+5330Z: Pośrednictwo w zakresie działalności pocztowej i kurierskiej
+5510Z: Hotele i podobne obiekty zakwaterowania
+5520Z: Obiekty noclegowe turystyczne i miejsca krótkotrwałego zakwaterowania
+5530Z: Pola kempingowe i pola namiotowe
+5540Z: Pośrednictwo w zakwaterowaniu
+5590Z: Pozostałe zakwaterowanie
+5611Z: Restauracje
+5612Z: Ruchome placówki gastronomiczne
+5621Z: Okazjonalne przygotowywanie i dostarczanie żywności dla odbiorców zewnętrznych (katering okazjonalny)
+5622Z: Regularne przygotowywanie i dostarczanie żywności dla odbiorców zewnętrznych (katering regularny) i pozostała gastronomiczna działalność usługowa
+5630Z: Podawanie napojów
+5640Z: Pośrednictwo w zakresie działalności usługowej związanej z wyżywieniem
+5811Z: Wydawanie książek
+5812Z: Wydawanie gazet
+5813Z: Wydawanie czasopism i pozostałych periodyków
+5819Z: Pozostała działalność wydawnicza, z wyłączeniem w zakresie oprogramowania
+5821Z: Działalność wydawnicza w zakresie gier komputerowych
+5829Z: Działalność wydawnicza w zakresie pozostałego oprogramowania
+5911Z: Działalność związana z produkcją filmów, nagrań wideo i programów telewizyjnych
+5912Z: Działalność postprodukcyjna związana z filmami, nagraniami wideo i programami telewizyjnymi
+5913Z: Działalność związana z dystrybucją filmów i nagrań wideo
+5914Z: Działalność związana z projekcją filmów
+5920Z: Działalność w zakresie nagrań dźwiękowych i muzycznych
+6010Z: Nadawanie programów radiofonicznych i dystrybucja nagrań dźwiękowych
+6020Z: Nadawanie programów telewizyjnych ogólnodostępnych i abonamentowych oraz dystrybucja nagrań wideo
+6031Z: Działalność agencji informacyjnych
+6039Z: Pozostała działalność związana z dystrybucją treści
+6110A: Działalność w zakresie wymiany ruchu internetowego
+6110B: Pozostała działalność w zakresie telekomunikacji przewodowej, bezprzewodowej i satelitarnej
+6120Z: Działalność w zakresie odsprzedaży usług telekomunikacyjnych oraz pośrednictwo w telekomunikacji
+6190A: Działalność w obszarze komunikacji internetowej
+6190B: Działalność w zakresie pozostałej telekomunikacji, gdzie indziej niesklasyfikowana
+6210A: Działalność w zakresie programowania gier komputerowych
+6210B: Pozostała działalność w zakresie programowania
+6220A: Działalność w zakresie cyberbezpieczeństwa
+6220B: Pozostała działalność związana z doradztwem w zakresie informatyki oraz zarządzaniem urządzeniami informatycznymi
+6290Z: Pozostała działalność usługowa w zakresie technologii informatycznych i komputerowych
+6310A: Działalność w zakresie kolokacji centrów danych oraz przetwarzania w chmurze
+6310B: Działalność usługowa w zakresie DNS
+6310C: Działalność w zakresie serwerów sieci dostarczania treści (content delivery network)
+6310D: Pozostała działalność usługowa w zakresie infrastruktury obliczeniowej, przetwarzania danych, zarządzania stronami internetowymi (hosting) i działalności powiązane
+6391Z: Działalność wyszukiwarek internetowych
+6392Z: Pozostała działalność usługowa w zakresie informacji
+6411Z: Działalność banku centralnego
+6419Z: Pozostałe pośrednictwo pieniężne
+6421Z: Działalność spółek holdingowych
+6422Z: Działalność spółek pozyskujących finansowanie na rzecz innych podmiotów
+6431Z: Działalność funduszy rynku pieniężnego i funduszy inwestycyjnych niebędących funduszami rynku pieniężnego
+6432Z: Działalność instytucji powierniczych
+6491Z: Leasing finansowy
+6492A: Działalność lombardów
+6492B: Pozostałe formy udzielania kredytów, gdzie indziej niesklasyfikowane
+6499Z: Pozostała finansowa działalność usługowa, z wyłączeniem ubezpieczeń i funduszy emerytalnych, gdzie indziej niesklasyfikowana
+6511Z: Działalność w zakresie ubezpieczeń na życie
+6512Z: Działalność w zakresie pozostałych ubezpieczeń osobowych oraz ubezpieczeń majątkowych
+6520Z: Działalność w zakresie reasekuracji
+6530Z: Działalność w zakresie funduszy emerytalnych
+6611Z: Zarządzanie rynkami finansowymi
+6612Z: Działalność maklerska związana z rynkiem papierów wartościowych i towarów giełdowych
+6619Z: Pozostała działalność wspomagająca usługi finansowe, z wyłączeniem ubezpieczeń i funduszy emerytalnych
+6621Z: Działalność związana z oceną ryzyka i szacowaniem poniesionych strat
+6622Z: Działalność agentów i brokerów ubezpieczeniowych
+6629Z: Działalność wspomagająca ubezpieczenia i fundusze emerytalne, gdzie indziej niesklasyfikowana
+6630Z: Działalność związana z zarządzaniem funduszami
+6811Z: Kupno i sprzedaż nieruchomości na własny rachunek
+6812A: Realizacja projektów budowlanych związanych ze wznoszeniem budynków mieszkalnych
+6812B: Realizacja projektów budowlanych związanych ze wznoszeniem budynków niemieszkalnych
+6812C: Realizacja pozostałych projektów budowlanych
+6820Z: Wynajem i zarządzanie nieruchomościami własnymi lub dzierżawionymi
+6831Z: Pośrednictwo w obrocie nieruchomościami
+6832A: Działalność związana z wyceną nieruchomości
+6832B: Działalność związana z zarządzaniem nieruchomościami wykonywanym na zlecenie
+6832C: Pozostała działalność związana z obsługą rynku nieruchomości wykonywana na zlecenie, gdzie indziej niesklasyfikowana
+6910Z: Działalność prawnicza
+6920A: Działalność rachunkowo-księgowa
+6920B: Doradztwo podatkowe
+6920C: Działalność w zakresie audytu finansowego
+7010A: Działalność biur głównych
+7010B: Działalność central usług wspólnych
+7020Z: Doradztwo w zakresie prowadzenia działalności gospodarczej i pozostałe doradztwo w zakresie zarządzania
+7111Z: Działalność w zakresie architektury
+7112A: Działalność w zakresie geodezji i kartografii
+7112B: Pozostała działalność w zakresie inżynierii i związane z nią doradztwo techniczne
+7120A: Badania i analizy związane z jakością żywności
+7120B: Kontrola i wydawanie opinii o stanie technicznym przewodów kominowych oraz wentylacyjnych
+7120C: Pozostałe badania i analizy techniczne
+7210Z: Badania naukowe i prace rozwojowe w dziedzinie nauk przyrodniczych i technicznych
+7220Z: Badania naukowe i prace rozwojowe w dziedzinie nauk społecznych i humanistycznych
+7311Z: Działalność agencji reklamowych
+7312Z: Reklama poprzez środki masowego przekazu
+7320Z: Badanie rynku i opinii publicznej
+7330A: Działalność lobbingowa
+7330B: Działalność pozostała w zakresie public relations i komunikacji
+7411Z: Działalność w zakresie wzornictwa przemysłowego i projektowania mody
+7412Z: Działalność w zakresie projektowania graficznego i komunikacji wizualnej
+7413Z: Działalność w zakresie projektowania wnętrz
+7414Z: Pozostała działalność w zakresie specjalistycznego projektowania
+7420Z: Działalność fotograficzna
+7430Z: Działalność związana z tłumaczeniami
+7491Z: Działalność rzeczników patentowych i działalność marketingowa
+7499Z: Wszelka pozostała działalność profesjonalna, naukowa i techniczna, gdzie indziej niesklasyfikowana
+7500Z: Działalność weterynaryjna
+7711Z: Wynajem i dzierżawa samochodów osobowych i lekkich pojazdów silnikowych, w tym motocykli
+7712Z: Wynajem i dzierżawa samochodów ciężarowych
+7721Z: Wypożyczanie i dzierżawa sprzętu rekreacyjnego i sportowego
+7722Z: Wypożyczanie i dzierżawa pozostałych artykułów użytku osobistego i domowego
+7731Z: Wynajem i dzierżawa maszyn i urządzeń rolniczych
+7732Z: Wynajem i dzierżawa maszyn i urządzeń budowlanych
+7733Z: Wynajem i dzierżawa maszyn i urządzeń biurowych oraz komputerów
+7734Z: Wynajem i dzierżawa środków transportu wodnego
+7735Z: Wynajem i dzierżawa środków transportu lotniczego
+7739Z: Wynajem i dzierżawa pozostałych maszyn, urządzeń oraz dóbr materialnych, gdzie indziej niesklasyfikowane
+7740A: Działalność związana z dzierżawą i rejestracją nazw domen internetowych
+7740B: Pozostała dzierżawa własności intelektualnej i podobnych produktów, z wyłączeniem prac chronionych prawem autorskim
+7751Z: Pośrednictwo w wynajmie i dzierżawie samochodów osobowych, samochodów kempingowych i przyczep
+7752Z: Pośrednictwo w wynajmie i dzierżawie pozostałych dóbr materialnych oraz niefinansowych wartości niematerialnych i prawnych
+7810Z: Działalność związana z wyszukiwaniem miejsc pracy i pozyskiwaniem pracowników
+7820Z: Działalność agencji pracy tymczasowej i pozostała działalność związana z udostępnianiem pracowników
+7911Z: Działalność agentów turystycznych
+7912Z: Działalność organizatorów turystyki
+7990Z: Pozostała działalność usługowa w zakresie rezerwacji oraz działalności z nią związane
+8001Z: Działalność detektywistyczna i działalność ochroniarska w zakresie ochrony osobistej
+8009Z: Działalność ochroniarska, gdzie indziej niesklasyfikowana
+8110Z: Działalność pomocnicza związana z utrzymaniem porządku w budynkach
+8121Z: Niespecjalistyczne sprzątanie budynków
+8122A: Czyszczenie kominów i palenisk, pieców, przewodów wentylacyjnych
+8122B: Pozostałe sprzątanie budynków i obiektów przemysłowych, gdzie indziej niesklasyfikowane
+8123A: Działalność usługowa związana z dezynfekcją, dezynsekcją i deratyzacją
+8123B: Pozostała działalność związana ze sprzątaniem, gdzie indziej niesklasyfikowana
+8130Z: Działalność usługowa związana z zagospodarowaniem terenów zieleni
+8210Z: Działalność związana z administracyjną obsługą biura, włączając działalność wspomagającą
+8220Z: Działalność centrów telefonicznych (call center)
+8230Z: Działalność związana z organizacją targów, wystaw i kongresów
+8240Z: Pośrednictwo w zakresie działalności wspomagającej prowadzenie działalności gospodarczej, gdzie indziej niesklasyfikowane
+8291Z: Działalność świadczona przez agencje inkasa i biura kredytowe
+8292Z: Działalność związana z pakowaniem
+8299A: Finansowanie społecznościowe dla przedsięwzięć gospodarczych
+8299B: Działalność wspomagająca prowadzenie działalności gospodarczej, gdzie indziej niesklasyfikowana
+8411Z: Kierowanie podstawowymi rodzajami działalności publicznej
+8412Z: Kierowanie działalnością usługową w zakresie ochrony zdrowia, edukacji, kultury oraz pozostałych usług społecznych
+8413Z: Kierowanie w zakresie efektywności gospodarowania
+8421Z: Sprawy zagraniczne
+8422Z: Obrona narodowa
+8423Z: Wymiar sprawiedliwości
+8424Z: Bezpieczeństwo państwa, porządek i bezpieczeństwo publiczne
+8425Z: Ochrona przeciwpożarowa
+8430Z: Obowiązkowe ubezpieczenia społeczne
+8510Z: Placówki wychowania przedszkolnego
+8520Z: Szkoły podstawowe
+8531Z: Szkoły średnie ogólnokształcące
+8532A: Technika
+8532B: Branżowe szkoły I stopnia
+8532C: Branżowe szkoły II stopnia
+8532D: Szkoły specjalne przysposabiające do pracy
+8533A: Szkoły policealne
+8533B: Kolegia pracowników służb społecznych
+8540Z: Szkoły wyższe
+8551Z: Pozostałe formy edukacji sportowej oraz zajęć sportowych i rekreacyjnych
+8552Z: Pozostałe formy edukacji artystycznej
+8553Z: Pozostałe formy edukacji z zakresu nauki jazdy i pilotażu
+8559A: Nauka języków obcych
+8559B: Kursy i szkolenia związane ze zdobywaniem wiedzy, umiejętności i kwalifikacji zawodowych w formach pozaszkolnych
+8559C: Placówki doskonalenia nauczycieli
+8559D: Pozostałe pozaszkolne formy edukacji, gdzie indziej niesklasyfikowane
+8561Z: Pośrednictwo w zakresie prowadzenia kursów i korepetycji
+8569Z: Działalność wspomagająca edukację, gdzie indziej niesklasyfikowana
+8610Z: Działalność szpitali
+8621Z: Praktyka lekarska ogólna
+8622Z: Praktyka lekarska specjalistyczna
+8623Z: Praktyka dentystyczna
+8691A: Działalność w zakresie diagnostyki obrazowej
+8691B: Działalność samodzielnych laboratoriów medycznych
+8692Z: Transport pacjentów karetką
+8693Z: Działalność psychologiczna i psychoterapeutyczna, z wyłączeniem lekarskiej
+8694Z: Działalność pielęgniarska i położnicza
+8695Z: Działalność w zakresie fizjoterapii
+8696Z: Działalność w zakresie medycyny tradycyjnej, uzupełniającej i alternatywnej
+8697Z: Pośrednictwo związane z działalnością lekarską, dentystyczną i pozostałą działalnością w zakresie opieki zdrowotnej
+8699A: Opieka farmaceutyczna
+8699B: Działalność dietetyczna
+8699C: Działalność logopedyczna
+8699D: Działalność w zakresie pozostałej opieki zdrowotnej
+8710Z: Pomoc społeczna z zakwaterowaniem zapewniająca opiekę pielęgniarską
+8720Z: Pomoc społeczna z zakwaterowaniem dla osób z zaburzeniami psychicznymi lub uzależnieniami
+8730Z: Pomoc społeczna z zakwaterowaniem dla osób starszych lub osób z niepełnosprawnościami ruchowymi
+8791Z: Pośrednictwo w zakresie pomocy społecznej z zakwaterowaniem
+8799Z: Pozostała pomoc społeczna z zakwaterowaniem, gdzie indziej niesklasyfikowana
+8810Z: Pomoc społeczna bez zakwaterowania dla osób starszych lub osób z niepełnosprawnościami
+8891Z: Opieka dzienna nad dziećmi
+8899Z: Pozostała pomoc społeczna bez zakwaterowania, gdzie indziej niesklasyfikowana
+9011Z: Działalność literacka i działalność związana z komponowaniem muzyki
+9012Z: Działalność twórcza w zakresie sztuk wizualnych
+9013Z: Pozostała działalność twórcza
+9020A: Działalność artystyczna filharmonii, orkiestr i chórów
+9020B: Działalność teatralna
+9020C: Pozostała działalność związana z wystawianiem przedstawień artystycznych
+9031A: Działalność centrów kultury, domów i ośrodków kultury, klubów i świetlic
+9031B: Działalność pozostałych obiektów kulturalnych
+9039Z: Pozostała działalność wspomagająca działalność twórczą i działalność związaną z wystawianiem przedstawień artystycznych
+9111Z: Działalność bibliotek
+9112Z: Działalność archiwów
+9121A: Działalność muzeów
+9121B: Działalność galerii sztuki
+9121C: Działalność pozostałych podmiotów prezentujących kolekcje dzieł sztuki
+9122Z: Działalność związana z miejscami historycznymi i pomnikami
+9130Z: Działalność w zakresie konserwacji i renowacji oraz pozostała działalność wspomagająca na rzecz dziedzictwa kulturowego
+9141A: Działalność ogrodów botanicznych
+9141B: Działalność ogrodów zoologicznych
+9142Z: Działalność obszarów i obiektów ochrony przyrody
+9200Z: Działalność związana z grami hazardowymi
+9311Z: Działalność obiektów sportowych
+9312Z: Działalność klubów sportowych
+9313Z: Działalność klubów fitness
+9319Z: Działalność sportowa, gdzie indziej niesklasyfikowana
+9321Z: Działalność wesołych miasteczek i parków rozrywki
+9329A: Działalność pokojów zagadek, domów strachu, miejsc do tańczenia i w zakresie innych form rozrywki lub rekreacji organizowanych w pomieszczeniach lub w innych miejscach o zamkniętej przestrzeni
+9329B: Pozostała działalność rozrywkowa i rekreacyjna, gdzie indziej niesklasyfikowana
+9411Z: Działalność organizacji komercyjnych i pracodawców
+9412Z: Działalność członkowskich organizacji zawodowych
+9420Z: Działalność związków zawodowych
+9491Z: Działalność organizacji religijnych
+9492Z: Działalność organizacji politycznych
+9499Z: Działalność pozostałych organizacji członkowskich, gdzie indziej niesklasyfikowana
+9510Z: Naprawa i konserwacja komputerów i sprzętu (tele)komunikacyjnego
+9521Z: Naprawa i konserwacja elektronicznego sprzętu powszechnego użytku
+9522Z: Naprawa i konserwacja urządzeń gospodarstwa domowego oraz sprzętu do użytku domowego i ogrodniczego
+9523Z: Naprawa i konserwacja obuwia i wyrobów skórzanych
+9524Z: Naprawa i konserwacja mebli i wyposażenia domowego
+9525Z: Naprawa i konserwacja zegarów, zegarków oraz biżuterii
+9529Z: Naprawa i konserwacja artykułów użytku osobistego i domowego, gdzie indziej niesklasyfikowana
+9531A: Naprawa mechaniczna i serwisowa pojazdów silnikowych, z wyłączeniem motocykli
+9531B: Naprawa blacharsko-lakiernicza oraz konserwacja pojazdów silnikowych, z wyłączeniem motocykli
+9531C: Działalność usługowa detailingu pojazdów silnikowych, z wyłączeniem motocykli
+9532Z: Naprawa i konserwacja motocykli
+9540Z: Pośrednictwo w naprawie i konserwacji komputerów, artykułów użytku osobistego i domowego oraz pojazdów silnikowych, w tym motocykli
+9610Z: Pranie i czyszczenie wyrobów tekstylnych i futrzarskich
+9621Z: Działalność fryzjerska
+9622Z: Działalność w zakresie pielęgnacji urody i pozostała działalność kosmetyczna
+9623Z: Działalność spa, saun i łaźni parowych
+9630Z: Pogrzeby i działalność pokrewna
+9640Z: Pośrednictwo w zakresie usług indywidualnych
+9691Z: Działalność usługowa na rzecz osób w miejscu zamieszkania
+9699Z: Pozostała działalność usługowa, gdzie indziej niesklasyfikowana
+9700Z: Gospodarstwa domowe zatrudniające pracowników
+9810Z: Gospodarstwa domowe produkujące wyroby na własne potrzeby
+9820Z: Gospodarstwa domowe świadczące usługi na własne potrzeby
+9900Z: Organizacje i zespoły eksterytorialne

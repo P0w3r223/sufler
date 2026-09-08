@@ -1,0 +1,30 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # `asystent` obowiązkowo: bez niego `tests/test_assistant_caller.py` nie zbierze się
+      # (importuje `httpx2`), a skany granic 11 i 12 nie widzą prawdziwego grafu importów —
+      # nazwa `httpx2` w `HTTP_CLIENT_MODULES` byłaby wtedy założeniem, nie faktem.
+      - run: python -m pip install -e .[dev,asystent]
+      # Cały `scripts/` od kiedy sondy dzielą limiter z narzędziem (`scripts/probe_support.py`) —
+      # wyliczanka plików gubiłaby każdy nowy. Dostarczony oryginał `ceidg_probe.py` leży
+      # w katalogu głównym i celowo zostaje poza tym.
+      - run: ruff check ceidg_tool tests scripts
+      - run: ruff format --check ceidg_tool tests scripts
+      - run: mypy ceidg_tool tests
+      # UZUPELNIENIE_01 §E: scenariusze 4 i 7 przy każdym uruchomieniu (tests/resilience/)
+      - run: python -m pytest -q -p no:warnings

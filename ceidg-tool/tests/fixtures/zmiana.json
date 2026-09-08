@@ -1,0 +1,46 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2026-09-02&datado=2026-09-05&limit=100",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "4713",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "970",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 0.703,
+  "body": {
+    "identyfikatoryWpisow": [
+      "18578baf-bac7-42b9-aa7e-4c3666132e69",
+      "aa448259-5001-4b7b-ad40-67f450032b35",
+      "2713582c-f41e-43ac-9fd2-31094140752c",
+      "112fa612-7969-4ed2-ac48-bf55afd380c4",
+      "17dded81-15da-405c-94ef-00aa175a81ec",
+      "bd21bc11-be9d-41ee-98b8-72456e8f75a1",
+      "8e6e5003-214f-4f12-8fd0-1cbd5f65c8ce",
+      "8fc42092-f4e5-49e5-9622-93480f5ae9d3",
+      "1f4a8ca1-ab85-4d59-9463-adc78fca7b6a",
+      "aa53c19c-dfa4-4b9f-9a85-6750692ac139"
+    ],
+    "count": 38744,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2026-09-02&datado=2026-09-05&limit=100&page=1",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2026-09-02&datado=2026-09-05&limit=100&page=0",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2026-09-02&datado=2026-09-05&limit=100&page=0",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2026-09-02&datado=2026-09-05&limit=100&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2026-09-02&datado=2026-09-05&limit=100&page=387"
+    },
+    "properties": {
+      "dc:title": "zmiana",
+      "dc:description": "Zwraca listę identyfikatorów wpisów",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:33:38"
+    }
+  }
+}

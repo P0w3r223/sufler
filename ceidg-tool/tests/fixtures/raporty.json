@@ -1,0 +1,112 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raporty",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "211309",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "971",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 0.985,
+  "body": {
+    "raporty": [
+      {
+        "id": "i5KK21pR-HoSX-TmOm-pPg6-lM1pkQwHZ4L1",
+        "nazwa": "Złożone wnioski - województwo mazowieckie",
+        "format": ".xml",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/i5KK21pR-HoSX-TmOm-pPg6-lM1pkQwHZ4L1",
+        "data-utworzenia": "2026-09-01 06:30:09"
+      },
+      {
+        "id": "RH3UKG05-kUiZ-yv03-Nu7l-Gm805mOq4zhi",
+        "nazwa": "Złożone wnioski - województwo łódzkie",
+        "format": ".csv",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/RH3UKG05-kUiZ-yv03-Nu7l-Gm805mOq4zhi",
+        "data-utworzenia": "2026-08-30 06:30:08"
+      },
+      {
+        "id": "TjyIJNpv-rMW3-Zqrl-vKZ3-PRXpuP0wPw2g",
+        "nazwa": "Zarejestrowane działalności - województwo pomorskie",
+        "format": ".xml",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/TjyIJNpv-rMW3-Zqrl-vKZ3-PRXpuP0wPw2g",
+        "data-utworzenia": "2026-09-01 06:43:15"
+      },
+      {
+        "id": "Xy3UqkOI-wz0N-KPzs-KQmv-WWIWy4yh2Lxg",
+        "nazwa": "Zarejestrowane działalności - województwo małopolskie",
+        "format": ".csv",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/Xy3UqkOI-wz0N-KPzs-KQmv-WWIWy4yh2Lxg",
+        "data-utworzenia": "2026-09-02 06:22:38"
+      },
+      {
+        "id": "y397jY7R-I9uY-Zu0s-ow38-o0m01izOiXJ6",
+        "nazwa": "Zarejestrowane działalności - województwo podlaskie",
+        "format": ".xml",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/y397jY7R-I9uY-Zu0s-ow38-o0m01izOiXJ6",
+        "data-utworzenia": "2026-09-03 06:40:59"
+      },
+      {
+        "id": "olyG7Mrs-SUJT-Qxqw-ny7H-lPkp8u363LVJ",
+        "nazwa": "Złożone wnioski - województwo wielkopolskie",
+        "format": ".xml",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/olyG7Mrs-SUJT-Qxqw-ny7H-lPkp8u363LVJ",
+        "data-utworzenia": "2026-08-31 06:30:10"
+      },
+      {
+        "id": "wLgwUnPJ-JXK0-Qm3u-GhZV-oZu1k0P4z1Mn",
+        "nazwa": "Zarejestrowane działalności - województwo zachodniopomorskie",
+        "format": ".xml",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/wLgwUnPJ-JXK0-Qm3u-GhZV-oZu1k0P4z1Mn",
+        "data-utworzenia": "2026-09-02 06:22:39"
+      },
+      {
+        "id": "UiizRnmv-JoKP-U274-pMX7-OM1mRZMxi4Jt",
+        "nazwa": "Złożone wnioski - województwo podkarpackie",
+        "format": ".xml",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/UiizRnmv-JoKP-U274-pMX7-OM1mRZMxi4Jt",
+        "data-utworzenia": "2026-09-02 06:00:09"
+      },
+      {
+        "id": "IOvJm3JU-sjLx-tnPl-h10Y-tjHvoWtk8VtX",
+        "nazwa": "Złożone wnioski - województwo kujawsko-pomorskie",
+        "format": ".csv",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/IOvJm3JU-sjLx-tnPl-h10Y-tjHvoWtk8VtX",
+        "data-utworzenia": "2026-09-01 06:30:09"
+      },
+      {
+        "id": "puH9pYgx-roUw-on2h-XgIv-kGhrwjo7MTn7",
+        "nazwa": "Zarejestrowane działalności - województwo opolskie",
+        "format": ".csv",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/puH9pYgx-roUw-on2h-XgIv-kGhrwjo7MTn7",
+        "data-utworzenia": "2026-08-30 06:20:41"
+      },
+      {
+        "id": "OQO9JSXm-iSuZ-z62T-jP1h-YQLN3mR5OklG",
+        "nazwa": "Zarejestrowane działalności - województwo kujawsko-pomorskie",
+        "format": ".csv",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/OQO9JSXm-iSuZ-z62T-jP1h-YQLN3mR5OklG",
+        "data-utworzenia": "2026-09-03 06:21:12"
+      },
+      {
+        "id": "VpkoxZ0X-Y5GK-STyP-nYNm-P119V6tNOuMH",
+        "nazwa": "Zarejestrowane działalności - województwo mazowieckie",
+        "format": ".csv",
+        "raport": "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/VpkoxZ0X-Y5GK-STyP-nYNm-P119V6tNOuMH",
+        "data-utworzenia": "2026-09-04 06:22:35"
+      }
+    ],
+    "properties": {
+      "dc:title": "raporty",
+      "dc:description": "Metoda raporty",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:33:34"
+    }
+  }
+}

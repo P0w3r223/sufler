@@ -1,0 +1,32 @@
+# sekrety i dane
+.env
+probe_out/
+# Pliki źródłowe klasyfikacji pobrane z GUS. Do repozytorium trafia wyłącznie **wynik**
+# (`ceidg_tool/data/pkd2025.yaml`), a jego nagłówek niesie SHA-256 tego źródła — więc budowa
+# jest odtwarzalna bez trzymania kilku megabajtów arkuszy w historii.
+PKD/
+*.xlsx
+*.sqlite
+*.sqlite3
+*.db
+*.csv
+*.jsonl
+!tests/fixtures/**
+.ceidg/
+wyniki/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+
+# ide
+.idea/
+.vscode/

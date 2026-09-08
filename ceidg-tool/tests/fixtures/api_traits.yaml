@@ -1,0 +1,62 @@
+# Zmierzone własności odpowiedzi API — twierdzenie osobno od próbki.
+#
+# Fixture jest kopią odpowiedzi przepuszczoną przez `scripts/anonymize_samples.py`, więc
+# każda własność, której anonimizator nie zachowa, znika z materiału dowodowego bez śladu.
+# Tak zginęła wielkość liter identyfikatorów: anonimizator podnosił je do wielkich, przez co
+# 768 testów offline zgadzało się co do świata, którego nie ma, a `aktualizuj` gubił na
+# produkcji wszystkie szczegóły (ADR-0013).
+#
+# Ten plik mówi, co zmierzono na surowych próbkach. `tests/test_api_traits.py` sprawdza, że
+# fixtures są z nim zgodne (biegnie w CI), a tamtejszy `test_audyt_pomiaru_na_surowych_probkach`
+# konfrontuje go z `probe_out/` i uczciwie się pomija, gdy surowych próbek nie ma. Dzięki temu
+# fixture nie może zostać wygenerowany do zgodności z samym sobą: zgadza się z zapisanym
+# pomiarem albo test jest czerwony.
+
+zmierzono: "2026-09-05 (sonda fazy 1), potwierdzone 2026-09-08 na bazie produkcyjnej"
+zrodlo_surowe: "probe_out/samples/"
+
+identyfikatory:
+  # Rejestr zwraca jeden identyfikator wpisu w dwóch pisowniach, zależnie od endpointu.
+  # To nie jest kosmetyka: `firma.id` był kluczem głównym wrażliwym na wielkość liter.
+  - endpoint: firmy
+    fixture: firmy_page0_limit5.json
+    probka: 02_200_firmy.json
+    sciezka: [firmy, id]
+    ksztalt: guid_hex
+    wielkosc_liter: upper
+    uwaga: "Lista wpisów — identyfikator wielkimi literami."
+
+  - endpoint: firma
+    fixture: firma_by_ids.json
+    probka: 24_200_firma.json
+    sciezka: [firma, id]
+    ksztalt: guid_hex
+    wielkosc_liter: upper
+    uwaga: >-
+      Szczegóły. `ids=` dopasowuje **bez względu na wielkość liter**, ale odpowiedź zawsze
+      niesie pisownię wielkimi: zapytanie z identyfikatorami z `/zmiana` (małe) wraca
+      rekordami pisanymi wielkimi. Zmierzone na bazie operatora 2026-09-08 — `detail_utc`
+      wierszy pisanych wielkimi pokrywa się z oknem żądań runu, który pytał małymi.
+
+  - endpoint: zmiana
+    fixture: zmiana.json
+    probka: 26_200_zmiana.json
+    sciezka: [identyfikatoryWpisow]
+    ksztalt: guid_hex
+    wielkosc_liter: lower
+    uwaga: >-
+      Strumień zmian — identyfikator **małymi** literami. To jest ta różnica, przez którą
+      każda zmieniona firma trafiała do bazy dwa razy.
+
+  - endpoint: raporty
+    fixture: raporty.json
+    probka: 25_200_raporty.json
+    sciezka: [raporty, id]
+    ksztalt: guid_niehex
+    wielkosc_liter: mieszana
+    uwaga: >-
+      Identyfikator raportu ma kształt 8-4-4-4-12, ale **nie jest szesnastkowy** i jest
+      istotny co do wielkości liter — wchodzi wprost do adresu pobrania archiwum. Dlatego
+      kanonizacja identyfikatorów wpisów pilnuje wzorca `[0-9A-Fa-f]`: rozluźnienie go do
+      `[0-9A-Za-z]` zepsułoby pobieranie raportów. Produkcyjny przykład kształtu:
+      `F3Aj3APe-9rud-A9rR-IId9-jMe3FedeR3e9`.

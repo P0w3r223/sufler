@@ -1,0 +1,303 @@
+"""Ścieżka raportów: ZIP z `/raport/{id}` → CSV → rekordy w kształcie API (`zrodlo=CEIDG_RAPORT`).
+
+Raport „Zarejestrowane działalności - województwo X” to pełny dzienny zrzut województwa
+(sonda 2026-09-05: 287 tys. wierszy, 24 kolumny, `;`, UTF-8 z BOM, kody PKD rozdzielone
+`$##$`, statusy po polsku). Jeden raport zastępuje tysiące żądań `/firmy` dla zapytań
+„region + okres”. Wiersze są mapowane na ten sam kształt JSON co odpowiedź API, więc
+normalizer, store i eksporter nie odróżniają źródeł poza kolumną `zrodlo`.
+"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import re
+import unicodedata
+import zipfile
+from collections.abc import Iterator, Mapping, Sequence
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+from .criteria import Criteria, normalize_pkd
+from .errors import ExportError
+from .records import Report
+
+KIND_REGISTERED = "Zarejestrowane działalności"
+KIND_APPLICATIONS = "Złożone wnioski"
+PKD_SEPARATOR = "$##$"
+CSV_DELIMITER = ";"
+CSV_ENCODING = "utf-8-sig"
+
+_WOJ_RE = re.compile(r"województwo\s+(.+)$", re.IGNORECASE)
+_PKD_RE = re.compile(r"^\d{4}[A-Z]$")
+
+STATUS_TEXT_TO_API: dict[str, str] = {
+    "AKTYWNY": "AKTYWNY",
+    "ZAWIESZONY": "ZAWIESZONY",
+    "WYKRESLONY": "WYKRESLONY",
+    "DZIALALNOSC PROWADZONA WYLACZNIE W FORMIE SPOLKI CYWILNEJ": "WYLACZNIE_W_FORMIE_SPOLKI",
+    "WYLACZNIE W FORMIE SPOLKI": "WYLACZNIE_W_FORMIE_SPOLKI",
+    "OCZEKUJE NA ROZPOCZECIE DZIALALNOSCI": "OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI",
+    "NIE ROZPOCZAL DZIALALNOSCI": "OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI",
+}
+
+COLUMNS_REQUIRED = ("Nip", "NazwaPodmiotu", "StatusDzialalnosci", "DataRozpoczeciaDzialalnosci")
+
+UNFILLED_COLUMNS: frozenset[str] = frozenset(
+    {
+        "terc",
+        "simc",
+        "ulic",
+        "adres_korespondencyjny",
+        "adres_doreczen_elektronicznych",
+        "obywatelstwa",
+        "wspolnosc_majatkowa",
+        "data_wykreslenia",
+        "pkd_glowny_nazwa",
+        "pkd_nazwa",
+        "link",
+        "link_ceidg",
+        # nie jest "puste", tylko sfabrykowane: raport nie niesie spolek cywilnych, wiec
+        # `0` w kazdym wierszu bylo zdaniem, ktorego zrodlo nie umie powiedziec
+        "liczba_spolek",
+    }
+)
+"""Kolumny, których dzienny raport CSV **nie jest w stanie** wypełnić — nie „akurat puste",
+tylko nieobecne w jego 24 kolumnach (`row_to_record` niżej pokazuje dokładnie, co mapuje).
+`link_ceidg` dochodzi osobno: raport nie niesie identyfikatora wpisu, więc publiczny odnośnik
+nie ma z czego powstać (ADR-0008, decyzja 5). Eksport chowa te kolumny zamiast pokazywać
+kilkanaście pustych; schemat zostaje pełny, żeby oba źródła dawały ten sam układ.
+
+Zbiór jest płaski, a `terc`, `simc` i `ulic` występują i w `Firmy`, i w `Adresy`. Dziś to
+bezpieczne, bo `row_to_record` nie tworzy adresów dodatkowych, więc dla raportu arkusz `Adresy`
+w ogóle nie powstaje. Gdyby raport zaczął je nieść, zbiór musi się rozdzielić na arkusze —
+inaczej ukryłby kolumny, które nagle mają wartości."""
+
+
+def strip_diacritics(text: str) -> str:
+    return (
+        "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
+        .replace("ł", "l")
+        .replace("Ł", "L")
+    )
+
+
+def status_to_api(text: str) -> str:
+    """„Aktywny” → `AKTYWNY`; nieznany tekst wraca w postaci UPPER_SNAKE (nie gubimy informacji)."""
+    key = re.sub(r"\s+", " ", strip_diacritics(text).strip()).upper()
+    if key in STATUS_TEXT_TO_API:
+        return STATUS_TEXT_TO_API[key]
+    return key.replace(" ", "_")
+
+
+def parse_report_name(nazwa: str) -> tuple[str, str | None]:
+    """(rodzaj, województwo) z nazwy raportu; „brak województwa” → `None`."""
+    head, _, tail = nazwa.partition(" - ")
+    match = _WOJ_RE.search(tail)
+    woj = match.group(1).strip().lower() if match else None
+    return head.strip(), woj
+
+
+def pick_registered_report(
+    reports: Sequence[Report], wojewodztwo: str, *, fmt: str = ".csv"
+) -> Report | None:
+    """Najnowszy raport „Zarejestrowane działalności” dla województwa w danym formacie."""
+    wanted = wojewodztwo.strip().lower()
+    candidates = [
+        r
+        for r in reports
+        if r.format.lower() == fmt and parse_report_name(r.nazwa) == (KIND_REGISTERED, wanted)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda r: r.utworzono)
+
+
+# ----------------------------------------------------------------------------- CSV → rekord
+
+
+def _split_pkd(raw: str) -> list[str]:
+    codes: list[str] = []
+    for piece in re.split(r"\$##\$|[;,|\s]+", raw or ""):
+        piece = piece.strip().upper()
+        if not piece:
+            continue
+        try:
+            codes.append(normalize_pkd(piece))
+        except ValueError:
+            if _PKD_RE.fullmatch(piece):
+                codes.append(piece)
+    return codes
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def record_id_for(row: Mapping[str, str]) -> str:
+    """Stabilny identyfikator wiersza raportu: NIP, w braku NIP — REGON, w ostateczności skrót."""
+    nip = _blank_to_none(row.get("Nip"))
+    if nip:
+        return f"NIP:{nip}"
+    regon = _blank_to_none(row.get("Regon"))
+    if regon:
+        return f"REGON:{regon}"
+    digest = hashlib.sha256(
+        "|".join(str(row.get(k, "")) for k in sorted(row)).encode("utf-8")
+    ).hexdigest()[:24]
+    return f"HASH:{digest}"
+
+
+def row_to_record(row: Mapping[str, str], *, wojewodztwo: str | None) -> dict[str, Any]:
+    """Wiersz CSV → JSON w kształcie `/firma` (klucze API), by reszta potoku była wspólna."""
+    glowny = _split_pkd(row.get("GlownyKodPkd", ""))
+    pozostale = _split_pkd(row.get("PozostaleKodyPkd", ""))
+    all_codes = list(dict.fromkeys(glowny + pozostale))
+    record: dict[str, Any] = {
+        "id": record_id_for(row),
+        "nazwa": _blank_to_none(row.get("NazwaPodmiotu")),
+        "wlasciciel": {
+            "imie": _blank_to_none(row.get("Imie")),
+            "nazwisko": _blank_to_none(row.get("Nazwisko")),
+            "nip": _blank_to_none(row.get("Nip")),
+            "regon": _blank_to_none(row.get("Regon")),
+        },
+        "adresDzialalnosci": {
+            "ulica": _blank_to_none(row.get("Ulica")),
+            "budynek": _blank_to_none(row.get("NrBudynku")),
+            "lokal": _blank_to_none(row.get("NrLokalu")),
+            "miasto": _blank_to_none(row.get("Miejscowosc")),
+            "kod": _blank_to_none(row.get("KodPocztowy")),
+            "gmina": _blank_to_none(row.get("Gmina")),
+            "powiat": _blank_to_none(row.get("Powiat")),
+            "wojewodztwo": wojewodztwo.upper() if wojewodztwo else None,
+            "kraj": "PL",
+        },
+        "telefon": _blank_to_none(row.get("Telefon")),
+        "email": _blank_to_none(row.get("Email")),
+        "www": _blank_to_none(row.get("AdresWWW")),
+        "rokPkd": _blank_to_none(row.get("RokPKD")),
+        "pkdGlowny": {"kod": glowny[0]} if glowny else None,
+        "pkd": [{"kod": code} for code in all_codes],
+        "status": status_to_api(row.get("StatusDzialalnosci", "")),
+        "dataRozpoczecia": _blank_to_none(row.get("DataRozpoczeciaDzialalnosci")),
+        "dataZakonczenia": _blank_to_none(row.get("DataZakonczeniaDzialalnosci")),
+        "dataZawieszenia": _blank_to_none(row.get("DataZawieszeniaDzialalnosci")),
+        "dataWznowienia": _blank_to_none(row.get("DataWznowieniaDzialalnosci")),
+    }
+    cleaned: dict[str, Any] = _drop_none(record)
+    return cleaned
+
+
+def _drop_none(value: Any) -> Any:
+    """API pomija brakujące pola zamiast wysyłać null — raport ma zachowywać się tak samo."""
+    if isinstance(value, dict):
+        return {k: _drop_none(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_drop_none(v) for v in value]
+    return value
+
+
+def iter_report_rows(zip_path: Path) -> Iterator[dict[str, str]]:
+    """Wiersze pierwszego pliku CSV w archiwum, strumieniowo (68 MB CSV nie idzie do pamięci)."""
+    try:
+        archive = zipfile.ZipFile(zip_path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ExportError(f"Raport {zip_path} nie jest poprawnym archiwum ZIP: {exc}") from exc
+    with archive:
+        members = [n for n in archive.namelist() if n.lower().endswith(".csv")]
+        if not members:
+            raise ExportError(f"Raport {zip_path} nie zawiera pliku CSV: {archive.namelist()}")
+        with archive.open(members[0]) as raw:
+            text = io.TextIOWrapper(raw, encoding=CSV_ENCODING, newline="")
+            reader = csv.DictReader(text, delimiter=CSV_DELIMITER)
+            header = reader.fieldnames or []
+            missing = [c for c in COLUMNS_REQUIRED if c not in header]
+            if missing:
+                raise ExportError(
+                    f"Raport {members[0]} nie ma oczekiwanych kolumn {missing}; "
+                    f"nagłówek: {header[:8]}…"
+                )
+            for row in reader:
+                yield {k: (v or "") for k, v in row.items() if k is not None}
+
+
+# ----------------------------------------------------------------------------- filtr lokalny
+
+
+def _parse_date(value: Any) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _contains_ci(haystack: Any, needle: str) -> bool:
+    return needle.casefold() in str(haystack or "").casefold()
+
+
+def _equals_ci(value: Any, wanted: str) -> bool:
+    return str(value or "").casefold() == wanted.casefold()
+
+
+def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
+    """Lokalny odpowiednik filtrów `/firmy` dla rekordu z raportu."""
+    owner = record.get("wlasciciel") or {}
+    address = record.get("adresDzialalnosci") or {}
+    if criteria.nip and owner.get("nip") not in criteria.nip:
+        return False
+    if criteria.regon and owner.get("regon") not in criteria.regon:
+        return False
+    if criteria.status and record.get("status") not in criteria.status:
+        return False
+    if criteria.nazwa and not any(_contains_ci(record.get("nazwa"), n) for n in criteria.nazwa):
+        return False
+    if criteria.imie and not any(_equals_ci(owner.get("imie"), v) for v in criteria.imie):
+        return False
+    if criteria.nazwisko and not any(
+        _equals_ci(owner.get("nazwisko"), v) for v in criteria.nazwisko
+    ):
+        return False
+    for field_name, key in (
+        ("miasto", "miasto"),
+        ("powiat", "powiat"),
+        ("gmina", "gmina"),
+        ("kod", "kod"),
+        ("ulica", "ulica"),
+    ):
+        wanted = getattr(criteria, field_name)
+        if wanted and not any(_equals_ci(address.get(key), v) for v in wanted):
+            return False
+    if criteria.wojewodztwo and not any(
+        _equals_ci(address.get("wojewodztwo"), v) for v in criteria.wojewodztwo
+    ):
+        return False
+    # Oba pola PKD razem, dokładnie jak w `to_params`: ścieżka raportowa musi zwracać ten sam
+    # zbiór co API, inaczej „raport zamiast żądań" przestaje być wyborem obojętnym dla wyniku.
+    # Tu rozszerzenie o rocznik 2007 nie kosztuje ani jednego żądania — filtrujemy lokalnie.
+    szukane = criteria.wszystkie_pkd()
+    if szukane:
+        codes = {str(p.get("kod", "")).upper() for p in record.get("pkd") or []}
+        if not codes & set(szukane):
+            return False
+    started = _parse_date(record.get("dataRozpoczecia"))
+    if criteria.data_od and (started is None or started < criteria.data_od):
+        return False
+    if criteria.data_do and (started is None or started > criteria.data_do):
+        return False
+    return True
+
+
+def report_covers(criteria: Criteria) -> bool:
+    """Raport pokrywa zapytanie, gdy jest dokładnie jedno województwo i nie chodzi o firmy
+    wykreślone — dzienny zrzut zawiera tylko wpisy istniejące (sonda 2026-09-05)."""
+    if "WYKRESLONY" in criteria.status:
+        return False
+    return len(criteria.wojewodztwo) == 1

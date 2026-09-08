@@ -1,0 +1,192 @@
+# ceidg-tool
+
+Python CLI that pulls sole-trader records from the CEIDG API v3 data warehouse into an Excel
+workbook for an operator with no API knowledge. Work proceeds in phases; each one ends when the
+owner accepts it, not when the tests go green.
+
+## Facts that change how you work here
+
+**The test API host is unreachable from this network.** `test-dane.biznes.gov.pl` times out at TCP
+level while `dane.biznes.gov.pl` answers instantly. So `--srodowisko test` reaches nothing: every
+live check has to run against production, and production carries real personal data. Ask for the
+owner's consent in the current session before any request goes out, and pass
+`--srodowisko prod --produkcja` explicitly. Everything else is covered by the offline suite.
+
+**Polish output needs `PYTHONUTF8=1`.** Without it the CLI, the probe scripts and pytest mangle
+diacritics on this Windows console. Prefix every Python invocation with it.
+
+**The repository has no commits on purpose.** The owner decided to work without version control for
+now. Anything reading `git ls-files` (coverage graphs, review ranges) comes back empty here; read
+files directly rather than proposing a commit to fix it.
+
+**The token in `.env` belongs to the owner.** It is not a borrowed credential and needs no action
+before 2026-09-30; from that date, remind them to refresh it. Its payload carries a PESEL, so it
+stays out of logs, messages, the database and output files — `config.mask_tokens` and
+`richtext.safe` are what keep it there.
+
+**Silence is a defect, and it is measured in requests.** An operation here can run for half an hour
+against a 3.75 s request spacing, so a stretch without output does not read as "working" — it reads
+as hung, and a hung-looking program gets killed. The rhythm of `Events` and of `store.touch_lock()`
+is therefore counted in **requests sent or rows read**, never in pages or matched records: a
+`/zmiana` page is 500 identifiers (up to a hundred requests), and a report page is however many rows
+happen to match. That off-by-a-layer error produced four separate defects on 2026-09-06, one of
+which let the database lock expire under a working process. `Events.close()` belongs to the
+operation that opened the bar — a live `rich` display overwrites everything printed after it.
+
+The same doctrine applies to **waiting**, and it took until 2026-09-08 to finish. A single wait can
+outlast the lock: the budget brake clamps to the longest window (3600 s) while the lease expires
+after 600 s, so `RateLimiter` sleeps in `WAIT_SLICE_S` slices with a heartbeat before each one, and
+`WAIT_SLICE_S < DEFAULT_LOCK_STALE_S` is an invariant a test guards (the two constants cannot see
+each other — `ratelimit` may not import the database). Waiting also has to reach the **log file**,
+not only the screen: `_LogEvents` records every wait with its *predicted resume time*, because a
+duration alone cannot tell a limiter hold from a suspended laptop after the fact.
+
+**The tool refuses to go through a proxy, on purpose.** `httpclient.build_http_client` is the only
+place an `httpx.Client` is made (boundary rule 11). It always injects a transport, which is what
+actually stops httpx reading `HTTPS_PROXY` from the environment, and it passes `trust_env=False` to
+`httpx.HTTPTransport`, which is what stops `SSL_CERT_FILE` replacing the CA bundle — two different
+mechanisms for two halves of §B, easy to confuse and worth keeping straight. `AllowedHostsTransport`
+then refuses any host outside the *selected environment*, at the layer where the socket opens.
+Consequence on a corporate network: the tool fails to connect rather than handing a PESEL-bearing
+token to an interceptor. `docs/resilience-report.md` carries the §E evidence.
+
+**The PKD dictionary is generated, never written by hand or by a model.**
+`ceidg_tool/data/pkd2025.yaml` (728 subclasses) comes from `scripts/build_pkd.py` over an official
+GUS export; the header carries the legal basis and the source's SHA-256. **The vintage is 2025, not
+2007** — every `rokPkd` the register returns says so, and `6201Z`, the classic software code, does
+not exist in 2025 at all. Two rules follow. First, never regenerate it from memory or from a
+summarised web page: such a list passes every automated check here — canonical keys, entry count,
+agreement with the codes the register returned — while being quietly wrong in names nobody
+cross-reads, and that inverts the one control the operator has (the confirmation screen shows the
+PKD *name*, so a wrong code should read as a wrong industry; a fabricated name makes the screen
+agree with the model). Second, never trust a fixture about the API: the whole 2007 detour rested on
+one hand-written line in `tests/conftest.py` that an ADR cited as a measurement.
+
+**The dictionary is right and it is not enough — the register is mid-transition.** Measured
+2026-09-07: the `pkd` filter matches the code **as stored on the record**, and PKD 2007 stays legal
+until 31.12.2026, so each record carries one vintage. Over 285 026 real records in
+`probe_out/raport_sample.zip` (which has `RokPKD` per row, and is why this cost no requests): 58.6 %
+still carry 2007 codes, and **25.2 % of the register is unreachable by any code in `pkd2025.yaml`** —
+`9602Z` hairdressing, `4520Z` vehicle repair, `4120Z` building, `6201Z` programming. So a PKD-filtered
+fetch silently returns a subset, on every input path, the `--pkd` flag included; this is a property
+of the register, not of the assistant. Do not treat "the code is valid" as "the query is complete".
+Two traps follow. The classification and the filter are different things: "6201Z does not exist in
+PKD 2025" is true, while "the API would reject it" never was — it returns 234 605 records. And the
+cost table does not cover this: it prices what will be fetched, with nothing to compare against, and
+the interpretation is confirmed before `count` runs, so it is a spend control, never a scope one.
+
+**One entry, two spellings — `id` is a value, not a string.** `/firmy` and `/firma` return the
+record identifier in UPPER case, `/zmiana` returns the same identifiers in lower, and `ids=`
+matches either way. `firma.id` was a case-sensitive primary key, so `aktualizuj` wrote every
+changed entry twice — a husk linked to the run and a full record linked to nothing — and the
+detail cache could never hit. The night of 2026-09-08 that cost 2 681 requests and delivered zero
+usable records. Canonicalisation lives in `recordid.py` (boundary rule 14, carried by mypy through
+`KanonicznyId`, not by the AST scan) and applies **only to hex GUIDs**: `/raporty` identifiers
+share the 8-4-4-4-12 shape, are not hex and are case-significant because they go into the download
+URL, and report rows are keyed `NIP:`/`REGON:`/`HASH:`. Do not relax that pattern to `[0-9A-Za-z]`.
+
+**The evidence gets sanitised of exactly what matters — check the generator, not just the fixture.**
+`scripts/anonymize_samples.py` uppercased every identifier while building fixtures, so the offline
+suite asserted the absence of the property that broke production; the `/firma` doubles echoed back
+the identifier they were asked for, which is the one thing the register does not do. This is the
+third instance of the shape, after the hand-written `rokPkd` line and `tests/support.py` building
+its own `httpx.Client`. `tests/fixtures/api_traits.yaml` now states the measured per-endpoint
+properties in words, `tests/test_api_traits.py` holds the fixtures to them and audits against
+`probe_out/` when it is present, and `tests/support.registry_id` is the one line that makes a
+double behave like the register.
+
+**A guarantee whose violation has no observer is not a guarantee.** Three closed on 2026-09-08 and
+they rhyme: the identifier invariant broke behind a lenient `.upper()`; the database lock lease was
+lost behind a discarded `rowcount` (a 9 h 50 min machine suspend expires a 600 s lease under a
+working process, and only the process *taking* a lock was ever warned); ten hours of waiting left
+no trace because `on_wait` reached the screen only. When adding a guard, ask what would print if it
+were violated — and if the honest answer is "nothing", that is the defect, not the guard.
+
+**Registry values are hostile input.** Names come from a public register that anyone can write into.
+They reach both a spreadsheet, where a leading `=` is a formula, and a terminal, where `rich` reads
+square brackets as markup and escape sequences steer the screen. `safetext.py` neutralises the spreadsheet half and `richtext.safe` the terminal half;
+anything new that prints or exports registry text goes through one of them. `richtext.py` is
+the only module allowed to hand `rich` a string from outside — that is boundary rule 10, and
+`tests/test_boundaries.py` enforces it by scanning the syntax of every print call.
+
+## Commands
+
+```
+PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 998 offline tests, no network
+PYTHONUTF8=1 .venv/Scripts/python -m mypy ceidg_tool tests
+.venv/Scripts/ruff check ceidg_tool tests scripts
+.venv/Scripts/ruff format ceidg_tool tests scripts
+PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool     # the wizard
+```
+
+CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 3.11 and 3.12.
+
+## Where the design lives
+
+- `docs/status.md` — the living plan: phases, gates, open items. Update it at every gate.
+- `INSTRUKCJA_CLAUDE_CODE.md` and `UZUPELNIENIE_01.md` — the requirements. The supplement wins
+  wherever the two disagree.
+- `docs/decisions.md` — what the API probe measured (page numbering, page limit, batch size, how
+  empty results are signalled, report contents). These are observations, not guesses; check here
+  before assuming how the API behaves.
+- `docs/adr/` — architecture decisions: 0008 the phase-3 user layer, 0011 the assistant, 0012 the
+  PKD 2007→2025 transition, 0013 the identity of a record identifier (and the schema v3 migration
+  that follows from it).
+- `docs/design/phase2_core.md` — module map and the numbered boundary rules.
+- `docs/resilience-report.md` — the ten resilience scenarios and how each is covered.
+- `docs/test-runs-phase4.md` — the five groups of runs that need a real model or a real register,
+  with the results of A and B. Anything about how the model *actually* behaves is measured there,
+  not argued: what a mock returns is what we wrote into it.
+
+## Structural facts
+
+`Criteria` is the only contract between any input and any fetch. Flags, the YAML query file, the
+wizard and the phase-4 assistant all produce one; nothing downstream accepts anything else.
+
+`pipeline.py` is the only module that knows both the network and the database. `ui/` reaches the
+world through it and never imports `client` or `store`. Two consequences of that rule are worth
+knowing before touching either side: the report download takes its lock heartbeat through a
+callback (`DownloadProgress`), and so does the limiter (`RateLimiter(heartbeat=…)`), because
+neither `client` nor `ratelimit` may see the database.
+
+`recordid.py` owns the canonical form of an entry identifier, and `pipeline.LockHeartbeat` is the
+single object that touches the database lock — one per `Deps`, injected into the limiter. Both are
+"exactly one place" rules with a measured reason behind them, not tidiness: the first because the
+register spells one identifier two ways, the second because a detector that subtracts consecutive
+beats is wrong the moment some beats bypass it.
+
+`ui/texts.py` produces view models with no output library, so every screen is asserted in tests
+without a terminal. `cli.py` authors no user-facing sentence of its own; `ui/render.py` turns
+blocks into `rich`.
+
+One decision sequence lives in `ui/flow.py`: resume → report → exactly one `count` request → cost
+table → choice → optional split → fetch → export → summary. `aktualizuj` follows the same shape
+through `prepare_update` — one cheap `count_changes` request, a cost table, a question — because
+`/zmiana` returns the count for the whole range, not just the page. Entry points differ only in
+which `Prompter` is installed, which is what keeps their messages identical.
+
+The boundary rules in `docs/design/phase2_core.md` say which module may import what. Rules 1-13
+are enforced by `tests/test_boundaries.py` as an AST scan rather than by discipline; rule 14 (one
+producer of `KanonicznyId`) is carried by mypy strict instead, and the design document says so
+rather than counting it into the scan. Rule 12 has two
+halves and the second matters more: one owner for the model SDK client, **and** an explicit
+`api_key=` and `http_client=` in every `Anthropic(...)` call — without them the SDK reaches for an
+ambient credential chain and builds its own transport outside the egress gate. Rule 9 (`cli.py`
+authors no sentence) is what makes rule 10 checkable at all — see ADR-0009 before loosening
+either, and note the two subset assertions there: a `rich` object trusted to carry text must
+itself be scanned, and every channel rule 10 knows about is forbidden in `cli.py`. Rule 11 stands
+in the same relation to the egress policy: only `httpclient.py` builds an `httpx.Client`, so "no
+connection leaves for a host outside `ALLOWED_HOSTS`" is answerable by reading one module.
+
+## Conventions
+
+Code comments, docstrings and user-facing text are Polish; documents under `docs/` are English.
+Line length 100, mypy strict over both `ceidg_tool` and `tests`. Comments carry the *why* — most of
+the ones here record a defect that was found and closed, so a comment that explains a guard is
+usually load-bearing history rather than noise.
+
+Fetched production data stays out of the repository. `tests/fixtures/` holds anonymised copies made
+by `scripts/anonymize_samples.py`; raw samples live in the git-ignored `probe_out/`.
+
+A phase that touches behaviour ends with a code review, and a review finding is applied or argued
+against explicitly, not silently dropped.
