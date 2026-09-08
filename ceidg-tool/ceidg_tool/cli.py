@@ -6,20 +6,25 @@ flagi, plik zapytania, tryb `--tak` i kreator pokazywały dosłownie to samo.
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import typer
 from pydantic import ValidationError
 
 from . import __version__
-from .clock import Clock
+from .apiprofile import load_profile
+from .clock import Clock, SystemClock
 from .config import (
+    ENV_DATA_DIR,
     KEYRING_ASSISTANT_USERNAME,
     KEYRING_USERNAME,
     Settings,
+    default_data_dir,
     delete_token_from_keyring,
     load_settings,
     safe_filename,
@@ -27,6 +32,7 @@ from .config import (
 )
 from .console import ConsoleEvents
 from .criteria import Criteria
+from .demo import TOKEN_DEMO, Demo, zbuduj_demo
 from .errors import CeidgError, ConfigError
 from .logsetup import close_file_handlers, get_logger, setup_logging
 from .pipeline import (
@@ -75,6 +81,13 @@ ForceOpt = Annotated[
     typer.Option(
         "--force",
         help="Przejmij blokadę bazy po procesie, który jej nie zwolnił (np. został ubity)",
+    ),
+]
+DemoOpt = Annotated[
+    bool,
+    typer.Option(
+        "--demo",
+        help="Pokaz bez rejestru: dane syntetyczne, zero żądań do CEIDG, własny katalog danych",
     ),
 ]
 
@@ -144,6 +157,61 @@ def _fail(exc: CeidgError) -> None:
     raise typer.Exit(code=exc.exit_code)
 
 
+def _settings_demo(environment: str | None, prod: bool) -> Settings:
+    """Ustawienia trybu demo — bez `.env`, bez keyringu, we własnym katalogu danych.
+
+    Żadnej nowej furtki do poświadczeń tu nie ma i nie potrzeba: `load_settings` **od zawsze**
+    przyjmuje `env_file=None`, `use_keyring=False` i `token=`. Do dziś korzystały z tego tylko
+    testy. Bez tego demo uruchomione w katalogu repozytorium wczytałoby prawdziwy `CEIDG_TOKEN`
+    z `.env` (`DEFAULT_ENV_FILE` jest względne wobec katalogu roboczego), a ten token niesie
+    PESEL w payloadzie.
+
+    Osobny katalog danych to **znacznik numer cztery** z ADR-0014 i jedyny, który chroni coś
+    poza czytelnością: baza demo nie może dotknąć bazy produkcyjnej, bo to inny plik.
+    """
+    if prod or (environment or "").strip().lower() == "prod":
+        raise ConfigError(
+            "Tryb demo nie łączy się z produkcją. Demo odpowiada z syntetycznego rejestru, "
+            "więc `--produkcja` nie miałoby czego dotyczyć — a razem z nim łatwo pomylić, "
+            "co jest na ekranie."
+        )
+    # Katalog demo wisi pod tym samym korzeniem, co katalog roboczy narzędzia, więc
+    # `CEIDG_DATA_DIR` nadal działa. Zignorowanie tej zmiennej odbierałoby operatorowi
+    # jedyny sposób, żeby powiedzieć „pracuj tutaj", i kazało pokazowi pisać do katalogu
+    # z prawdziwymi danymi.
+    korzen = os.environ.get(ENV_DATA_DIR, "").strip()
+    baza = Path(korzen) if korzen else default_data_dir()
+    settings = load_settings(
+        env_file=None,
+        # `environ` zostaje prawdziwe, żeby `ANTHROPIC_API_KEY` dało się podać do przełącznika
+        # „asystent na żywo". Tokenu CEIDG to nie wpuszcza: `token=` ma pierwszeństwo przed
+        # zmienną środowiskową i przed keyringiem, więc łańcuch nigdy po niego nie sięga.
+        use_keyring=False,
+        token=TOKEN_DEMO,
+        environment="test",
+        data_dir=baza / "demo",
+    )
+    setup_logging(settings.log_dir)
+    return settings
+
+
+def _demo_deps(settings: Settings, events: ConsoleEvents | None = None) -> tuple[Deps, Demo]:
+    """`Deps` mówiące do syntetycznego rejestru zamiast do CEIDG.
+
+    Podstawienie zachodzi **tutaj**, w korzeniu kompozycji, a nie w `build_deps`: gałąź trybu
+    demo w środku `build_deps` słusznie zapala na czerwono
+    `tests/resilience/test_egress_allowlist.py`, który pilnuje, że produkcja buduje klienta
+    przez `build_http_client(transport=None)`. Reguła granic 11 zostaje nietknięta, bo klient
+    i tak powstaje w `httpclient`, tylko z transportem, który nie otwiera gniazda.
+    """
+    profil = load_profile(settings.environment, settings.profile_path)
+    host = urlsplit(profil.base_url).hostname or ""
+    demo = zbuduj_demo(zegar=SystemClock(), host=host)
+    deps = build_deps(settings, events=events, clock=demo.zegar, http=demo.klient)
+    deps.demo = True
+    return deps, demo
+
+
 def _settings(environment: str | None, prod: bool, yes: bool) -> Settings:
     if environment and environment.strip().lower() == "prod" and not prod:
         if yes:
@@ -156,9 +224,11 @@ def _settings(environment: str | None, prod: bool, yes: bool) -> Settings:
     return settings
 
 
-def _banner(settings: Settings) -> None:
+def _banner(settings: Settings, *, demo: bool = False) -> None:
     """Pierwszy ekran — ta sama treść co w kreatorze (UZUPELNIENIE_01 §A)."""
-    view.block(texts.first_screen(settings, now=datetime.now(tz=UTC), version=__version__))
+    view.block(
+        texts.first_screen(settings, now=datetime.now(tz=UTC), version=__version__, demo=demo)
+    )
 
 
 def _prompter(tak: bool, overrides: dict[str, str] | None = None) -> Prompter:
@@ -170,10 +240,15 @@ def _prompter(tak: bool, overrides: dict[str, str] | None = None) -> Prompter:
 
 
 def _sanitised(out: Path | None, deps: Deps) -> Path | None:
-    """UZUPELNIENIE_01 §B: pliki wynikowe tylko w katalogu wyniki/, nazwa oczyszczona."""
+    """UZUPELNIENIE_01 §B: pliki wynikowe tylko w katalogu wyniki/, nazwa oczyszczona.
+
+    Prefiks `DEMO_` doklejamy także tutaj. Nazwa podana przez operatora omijała znacznik
+    numer trzy z ADR-0014, a to jest **ten** plik, który po pokazie najłatwiej wysłać dalej:
+    ktoś go świadomie nazwał, więc traktuje go jak swój."""
     if out is None:
         return None
-    return deps.settings.output_dir / safe_filename(out.stem, ".xlsx")
+    prefiks = "DEMO_" if deps.demo else ""
+    return deps.settings.output_dir / safe_filename(prefiks + out.stem, ".xlsx")
 
 
 OpisOpt = Annotated[
@@ -249,10 +324,14 @@ def main(
 
 
 @app.command()
-def kreator(srodowisko: EnvOpt = None, produkcja: ProdOpt = False) -> None:
+def kreator(srodowisko: EnvOpt = None, produkcja: ProdOpt = False, demo: DemoOpt = False) -> None:
     """Prowadzi krok po kroku: pierwszy ekran, menu, kryteria, koszty, wynik."""
     try:
-        settings = _settings(srodowisko, produkcja, False)
+        settings = (
+            _settings_demo(srodowisko, produkcja)
+            if demo
+            else _settings(srodowisko, produkcja, False)
+        )
         if not interactive_available(
             stdin_tty=sys.stdin.isatty(), stdout_tty=sys.stdout.isatty(), yes=False
         ):
@@ -261,7 +340,7 @@ def kreator(srodowisko: EnvOpt = None, produkcja: ProdOpt = False) -> None:
                 "--tak`."
             )
         events = ConsoleEvents(console)
-        deps = build_deps(settings, events=events)
+        deps = _demo_deps(settings, events)[0] if demo else build_deps(settings, events=events)
         for warning in deps.warnings:
             view.warning(warning)
         try:
@@ -353,11 +432,14 @@ def pobierz(
     srodowisko: EnvOpt = None,
     produkcja: ProdOpt = False,
     tak: YesOpt = False,
+    demo: DemoOpt = False,
 ) -> None:
     """Pobiera firmy według kryteriów i zapisuje skoroszyt Excel."""
     try:
-        settings = _settings(srodowisko, produkcja, tak)
-        _banner(settings)
+        settings = (
+            _settings_demo(srodowisko, produkcja) if demo else _settings(srodowisko, produkcja, tak)
+        )
+        _banner(settings, demo=demo)
         criteria = _criteria_from_options(
             zapytanie,
             wojewodztwo or [],
@@ -378,7 +460,7 @@ def pobierz(
             raise ConfigError(f"Nieznane źródło {zrodlo!r}. Dozwolone: auto, api, raport.")
         _parse_formats(formaty)  # walidacja przed pobraniem, nie po nim
         events = ConsoleEvents(console)
-        deps = build_deps(settings, events=events)
+        deps = _demo_deps(settings, events)[0] if demo else build_deps(settings, events=events)
         for warning in deps.warnings:
             view.warning(warning)
         prompter = _prompter(tak, {"podzial": "partie"} if partie else None)
@@ -482,13 +564,16 @@ def wznow(
     srodowisko: EnvOpt = None,
     produkcja: ProdOpt = False,
     tak: YesOpt = False,
+    demo: DemoOpt = False,
 ) -> None:
     """Wznawia przerwane pobieranie z checkpointu i eksportuje wynik."""
     try:
-        settings = _settings(srodowisko, produkcja, tak)
-        _banner(settings)
+        settings = (
+            _settings_demo(srodowisko, produkcja) if demo else _settings(srodowisko, produkcja, tak)
+        )
+        _banner(settings, demo=demo)
         events = ConsoleEvents(console)
-        deps = build_deps(settings, events=events)
+        deps = _demo_deps(settings, events)[0] if demo else build_deps(settings, events=events)
         for warning in deps.warnings:
             view.warning(warning)
         try:
@@ -527,10 +612,15 @@ def eksportuj(
     formaty: Annotated[str, typer.Option("--format", help="xlsx,csv,jsonl")] = "xlsx",
     srodowisko: EnvOpt = None,
     produkcja: ProdOpt = False,
+    demo: DemoOpt = False,
 ) -> None:
     """Ponowny eksport z bazy — bez żadnego żądania do API."""
     try:
-        settings = _settings(srodowisko, produkcja, True)
+        settings = (
+            _settings_demo(srodowisko, produkcja)
+            if demo
+            else _settings(srodowisko, produkcja, True)
+        )
         # Pasek i komunikaty także tutaj. Bez `events` zależności dostawały `NullEvents`, więc
         # z `eksportuj` znikał nie tylko pasek, ale i zdanie „Zapisuję skoroszyt…" — a zapis
         # pełnego województwa to przy zmierzonych 453 firmach na sekundę ponad dziesięć minut
@@ -539,6 +629,11 @@ def eksportuj(
         # widać" — i była to jedyna droga, na której nie padało (audyt 2026-09-07).
         events = ConsoleEvents(console)
         deps = build_deps(settings, events=events, online=False)
+        # Bez tego ponowny eksport gubi znaczniki 2 i 3: plik nie dostaje prefiksu `DEMO_`,
+        # a arkusz `Metadane` zaczyna się od `kryteria`, więc druga kopia skoroszytu z pokazu
+        # jest nie do odróżnienia od produkcyjnej. ADR-0014 wymaga pięciu znaczników łącznie,
+        # a `eksportuj` istnieje właśnie po to, żeby zrobić kolejną kopię pliku.
+        deps.demo = demo
         for warning in deps.warnings:
             view.warning(warning)
         try:
@@ -557,10 +652,14 @@ def eksportuj(
 
 
 @app.command()
-def runy(srodowisko: EnvOpt = None, produkcja: ProdOpt = False) -> None:
+def runy(srodowisko: EnvOpt = None, produkcja: ProdOpt = False, demo: DemoOpt = False) -> None:
     """Lista pobrań zapisanych w bazie."""
     try:
-        settings = _settings(srodowisko, produkcja, True)
+        settings = (
+            _settings_demo(srodowisko, produkcja)
+            if demo
+            else _settings(srodowisko, produkcja, True)
+        )
         deps = build_deps(settings, online=False)
         for warning in deps.warnings:
             view.warning(warning)
@@ -645,13 +744,16 @@ def aktualizuj(
     srodowisko: EnvOpt = None,
     produkcja: ProdOpt = False,
     tak: YesOpt = False,
+    demo: DemoOpt = False,
 ) -> None:
     """Pobiera zmiany od ostatniego uruchomienia (`/zmiana`) i odświeża cache szczegółów."""
     try:
-        settings = _settings(srodowisko, produkcja, tak)
-        _banner(settings)
+        settings = (
+            _settings_demo(srodowisko, produkcja) if demo else _settings(srodowisko, produkcja, tak)
+        )
+        _banner(settings, demo=demo)
         events = ConsoleEvents(console)
-        deps = build_deps(settings, events=events)
+        deps = _demo_deps(settings, events)[0] if demo else build_deps(settings, events=events)
         for warning in deps.warnings:
             view.warning(warning)
         try:

@@ -52,6 +52,17 @@ KEYRING_USERNAME = "CEIDG_TOKEN"
 # incydentem z danymi osobowymi; klucz jest środkiem płatniczym, więc jego wyciek to rachunek
 # i podszycie. Obsługa taka sama, powód inny.
 ENV_ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
+
+
+# Zdanie o trybie pokazu. Mieszka tutaj, bo potrzebują go dwie warstwy, które **nie mogą**
+# się widzieć: `ui.texts` (pierwszy ekran) i `pipeline.build_metadata` (arkusz `Metadane`).
+# Kierunek zależności biegnie `ui` -> `pipeline`, więc import w drugą stronę odwróciłby go,
+# a druga kopia zdania rozjechałaby się przy pierwszej poprawce — tak jak rozjechał się
+# komentarz o zapasie limitera między `prod.yaml` i `test.yaml`.
+DEMO_OSTRZEZENIE = (
+    "TRYB POKAZU — dane są WYMYŚLONE. Żadne żądanie nie wychodzi do CEIDG, a firmy, NIP-y "
+    "i adresy poniżej nie opisują nikogo. Nie używaj tych wyników do niczego."
+)
 KEYRING_ASSISTANT_USERNAME = "ANTHROPIC_API_KEY"
 
 TOKEN_SERVICE_URL = "https://www.biznes.gov.pl/pl/e-uslugi/00_9999_00"

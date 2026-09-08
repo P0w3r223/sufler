@@ -110,6 +110,10 @@ class TablicaPkd:
     def nazwa_2007(self, kod: str) -> str | None:
         return self._nazwy_2007.get(kod)
 
+    def poprzednicy(self, kod_2025: str) -> tuple[str, ...]:
+        """Kody 2007, z których wywodzi się dany kod 2025 — puste, gdy kod jest nowy."""
+        return self._poprzednicy.get(kod_2025, ())
+
     def nazwa_2025(self, kod: str) -> str | None:
         return self._nazwy_2025.get(kod)
 

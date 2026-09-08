@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Final
 
 from ..batching import GRANULARITY_LABEL, BatchPlan
-from ..config import TOKEN_SERVICE_URL, Settings
+from ..config import DEMO_OSTRZEZENIE, TOKEN_SERVICE_URL, Settings
 from ..criteria import STATUSY, WOJEWODZTWA, Criteria
 from ..estimating import Estimate
 from ..normalizer import NormalizedRecord
@@ -75,22 +75,36 @@ def format_size(path: Path) -> str:
 # ----------------------------------------------------------------------------- ekran startowy
 
 
-def first_screen(settings: Settings, *, now: datetime, version: str) -> Block:
-    """Pierwszy ekran wg UZUPELNIENIE_01 §A: co robi, dokąd wysyła, gdzie pracuje, jaki token."""
+def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool = False) -> Block:
+    """Pierwszy ekran wg UZUPELNIENIE_01 §A: co robi, dokąd wysyła, gdzie pracuje, jaki token.
+
+    W trybie demo ekran mówi o tym **pierwszym** wierszem i w tytule. To znacznik numer jeden
+    z ADR-0014: skoro tryb bez rejestru jest własnością produktu, a nie osobnym programem, to
+    jedyne, co dzieli pokaz od pracy, jest napisane na ekranie i w skoroszycie. Ekran, który
+    o tym milczy, zamienia to demo w najgorszy z rozważanych wariantów.
+    """
     environment = "PRODUKCJA (prawdziwe dane osobowe)" if settings.environment == "prod" else "TEST"
     host = "dane.biznes.gov.pl" if settings.environment == "prod" else "test-dane.biznes.gov.pl"
-    rows = (
+    zrodlo = (
+        "syntetyczny rejestr w pamięci procesu (dane wymyślone)"
+        if demo
+        else (f"wyłącznie do API CEIDG ({host}); brak telemetrii")
+    )
+    rows: tuple[tuple[str, str], ...] = (
         ("co robi", PROGRAM_PURPOSE),
-        ("dokąd wysyłam rekordy", f"wyłącznie do API CEIDG ({host}); brak telemetrii"),
+        ("dokąd wysyłam rekordy", zrodlo),
         ("dokąd wysyła asystent", _assistant_destination(settings)),
-        ("środowisko", environment),
+        ("środowisko", "POKAZ (bez rejestru)" if demo else environment),
         ("token", f"{settings.token_info.validity_text(now)} (źródło: {settings.token_source})"),
         ("dane i wyniki", str(settings.data_dir)),
     )
+    if demo:
+        rows = (("UWAGA", DEMO_OSTRZEZENIE), *rows)
     notes = [f"Nowy token: {TOKEN_SERVICE_URL}"]
-    if settings.environment != "prod":
+    if settings.environment != "prod" and not demo:
         notes.append(PROD_HINT)
-    return Block(title=f"ceidg-tool {version}", rows=rows, notes=tuple(notes))
+    tytul = f"ceidg-tool {version}" + (" — POKAZ" if demo else "")
+    return Block(title=tytul, rows=rows, notes=tuple(notes))
 
 
 def _assistant_destination(settings: Settings) -> str:

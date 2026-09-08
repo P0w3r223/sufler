@@ -141,7 +141,9 @@ def collect_from_description(
 
 
 def show_first_screen(view: View, deps: Deps, *, version: str) -> None:
-    view.block(texts.first_screen(deps.settings, now=datetime.now(tz=UTC), version=version))
+    view.block(
+        texts.first_screen(deps.settings, now=datetime.now(tz=UTC), version=version, demo=deps.demo)
+    )
     for warning in (*deps.settings.warnings, *deps.warnings):
         view.warning(warning)
 
@@ -566,5 +568,7 @@ def _destination(
         return out
     if name_from is not None:
         moment = datetime.now(tz=UTC)
-        return deps.settings.output_dir / output_name(name_from, deps.settings.environment, moment)
+        return deps.settings.output_dir / output_name(
+            name_from, deps.settings.environment, moment, demo=deps.demo
+        )
     return default_export_path(deps, run_ids[0])

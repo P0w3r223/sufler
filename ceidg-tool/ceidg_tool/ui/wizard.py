@@ -172,7 +172,9 @@ def offer_yaml(criteria: Criteria, deps: Deps, prompter: Prompter, view: View) -
         key: list(value) if isinstance(value, tuple) else value
         for key, value in criteria.model_dump(mode="json", exclude_defaults=True).items()
     }
-    stem = output_name(criteria, deps.settings.environment, datetime.now(tz=UTC), suffix="")
+    stem = output_name(
+        criteria, deps.settings.environment, datetime.now(tz=UTC), suffix="", demo=deps.demo
+    )
     path = deps.settings.output_dir / safe_filename(f"zapytanie_{stem}", ".yaml")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=True), encoding="utf-8")

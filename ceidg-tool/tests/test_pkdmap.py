@@ -127,7 +127,7 @@ def test_names_come_from_the_table_and_a_missing_one_is_never_invented() -> None
 
     assert tablica.nazwa_2007("9602Z") == "Fryzjerstwo i pozostałe zabiegi kosmetyczne"
     assert tablica.nazwa_2007("0000X") is None
-    assert tablica.nazwa_2025("9621Z") == "Fryzjerstwo"
+    assert tablica.nazwa_2025("9621Z") == "Działalność fryzjerska"
     assert tablica.nazwa_2025("0111Z") is None
 
 

@@ -107,7 +107,12 @@ NAZWY_2007_TESTOWE: dict[str, str] = {
     "8551Z": "Pozaszkolne formy edukacji sportowej oraz zajęć sportowych i rekreacyjnych",
 }
 NAZWY_2025_TESTOWE: dict[str, str] = {
-    "9621Z": "Fryzjerstwo",
+    # „Działalność fryzjerska", nie „Fryzjerstwo" — nazwa przepisana z `pkd2007_2025.yaml`.
+    # Do 2026-09-08 stało tu „Fryzjerstwo", czyli nazwa, której klasyfikacja nie zna, i nic
+    # tego nie łapało: `test_pkdmap_data.py` przypinał do tablicy `NAZWY_2007_TESTOWE`
+    # i `POPRZEDNICY_TESTOWI`, ale nie ten słownik. Ta sama zmyślona nazwa pojawiła się
+    # potem w `ceidg_tool/demo/korpus.py`, co jest właśnie tym, jak taki błąd się rozchodzi.
+    "9621Z": "Działalność fryzjerska",
     "9622Z": "Działalność w zakresie pielęgnacji urody i pozostała działalność kosmetyczna",
     "1423Z": "Produkcja odzieży roboczej",
     "9313Z": "Działalność klubów fitness",

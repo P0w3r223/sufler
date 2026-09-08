@@ -60,3 +60,38 @@ identyfikatory:
       kanonizacja identyfikatorów wpisów pilnuje wzorca `[0-9A-Fa-f]`: rozluźnienie go do
       `[0-9A-Za-z]` zepsułoby pobieranie raportów. Produkcyjny przykład kształtu:
       `F3Aj3APe-9rud-A9rR-IId9-jMe3FedeR3e9`.
+
+# Własności odpowiedzi niezwiązane z identyfikatorem. Stoją tu, a nie tylko w profilu
+# środowiska, bo od 2026-09-08 obowiązują **dwie** strony: fixtures sondy i syntetyczny
+# rejestr trybu demo (ADR-0014). Atrapa zgadzająca się wyłącznie sama ze sobą jest w tym
+# projekcie najczęściej powtórzonym defektem, a demo dokłada trzecią jej odmianę: atrapę,
+# którą operator ogląda na ekranie i bierze za obraz rejestru.
+#
+# Wpisuje się tu wyłącznie to, co **zmierzono** — stąd `probki` przy każdej pozycji.
+# Koniec stronicowania (`links.next == links.self`) świadomie tu nie stoi: sonda nigdy nie
+# dotarła do ostatniej strony `count = 6 316 121`, więc jest to kontrakt parsera
+# (`client._iter_paged`), a nie pomiar. Sprawdza go `tests/test_demo_rejestr.py` przez
+# przepuszczenie atrapy przez prawdziwego `CeidgClient`.
+odpowiedzi:
+  - wlasnosc: pusty_wynik
+    endpoint: firmy
+    fixture: firmy_204_nazwa.json
+    probki: "11, 15"
+    status: 204
+    ma_tresc: false
+    pole_profilu: empty_result_statuses
+    uwaga: >-
+      Brak trafień to **204 z pustą treścią**, nigdy 200 z `firmy: []` — tego drugiego nie
+      zaobserwowano ani razu. Parser przyjmuje oba, ale profil zna tylko 204, więc atrapa
+      oddająca pustą listę przechodziłaby przez inną gałąź niż produkcja.
+
+  - wlasnosc: count
+    endpoint: firmy
+    fixture: firmy_limit1.json
+    probki: "01"
+    semantyka: total
+    pole_profilu: count_semantics
+    uwaga: >-
+      `count` opisuje **wszystkie** trafienia, nie pozycje na stronie: przy `limit=1` wynosi
+      6 316 121. Na tym stoi tabela kosztów, czyli jedyna liczba, którą operator dostaje
+      przed wydaniem żądań — atrapa licząca stronę wyceniałaby każde zapytanie na 25 firm.

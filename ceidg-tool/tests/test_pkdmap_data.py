@@ -27,7 +27,7 @@ import yaml
 from ceidg_tool.assistant.pkd import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.criteria import normalize_pkd
 from ceidg_tool.pkdmap import DEFAULT_PKD_MAP_PATH, KONIEC_PRZEJSCIA, TablicaPkd, load_pkd_map
-from tests.support import NAZWY_2007_TESTOWE, POPRZEDNICY_TESTOWI
+from tests.support import NAZWY_2007_TESTOWE, NAZWY_2025_TESTOWE, POPRZEDNICY_TESTOWI
 
 pytestmark = pytest.mark.skipif(
     not DEFAULT_PKD_MAP_PATH.is_file(),
@@ -238,6 +238,12 @@ def test_the_test_double_still_agrees_with_the_generated_table() -> None:
         assert tuple(dane["poprzednicy"][kod2025]) == oczekiwani, kod2025
     for kod2007, nazwa in NAZWY_2007_TESTOWE.items():
         assert dane["nazwy_2007"][kod2007] == nazwa, kod2007
+    # Rocznik 2025 też, bo to on trafia na ekran potwierdzenia. Dopisane 2026-09-08: sprawdzenie
+    # obejmowało wcześniej wyłącznie nazwy 2007, więc `NAZWY_2025_TESTOWE["9621Z"]` mogło mówić
+    # „Fryzjerstwo" — nazwę, której klasyfikacja nie zna — i mówiło. Zła nazwa PKD odwraca
+    # jedyną kontrolę operatora: zły kod ma się czytać jako zła branża (CLAUDE.md, ADR-0012).
+    for kod2025, nazwa in NAZWY_2025_TESTOWE.items():
+        assert dane["nazwy_2025"][kod2025] == nazwa, kod2025
 
 
 # ----------------------------------------------------------------------------- prowenienacja

@@ -28,7 +28,7 @@ from .assistant import Assistant
 from .batching import Batch, BatchPlan, refine
 from .client import CeidgClient, Cursor
 from .clock import Clock, SystemClock, local_hhmm, utc_iso
-from .config import HOST_ENVIRONMENT, Settings, safe_filename
+from .config import DEMO_OSTRZEZENIE, HOST_ENVIRONMENT, Settings, safe_filename
 from .criteria import Criteria
 from .errors import (
     CeidgError,
@@ -107,6 +107,11 @@ class Deps:
     # z plastrów limitera. Ustawiane w `build_deps`; `None` tylko w ręcznie składanych
     # atrapach, gdzie pętle same je tworzą.
     heartbeat: LockHeartbeat | None = None
+    # Tryb pokazu (ADR-0014). Stoi w `Deps`, bo znacznik ma dotrzeć wszędzie tam, dokąd
+    # dochodzą zależności: na pierwszy ekran kreatora i do arkusza `Metadane`. Wywodzenie
+    # go z wartości tokenu albo ze ścieżki katalogu byłoby zgadywaniem, a to jest fakt,
+    # który korzeń kompozycji zna wprost.
+    demo: bool = False
 
 
 class LockLostError(ResumableError):
@@ -1229,8 +1234,20 @@ class ExportSummary:
     run_ids: tuple[str, ...] = ()
 
 
-def output_name(criteria: Criteria, environment: str, now: datetime, suffix: str = ".xlsx") -> str:
-    parts = ["ceidg"]
+def output_name(
+    criteria: Criteria,
+    environment: str,
+    now: datetime,
+    suffix: str = ".xlsx",
+    *,
+    demo: bool = False,
+) -> str:
+    """Nazwa pliku wyjściowego; w trybie pokazu z prefiksem `DEMO_`.
+
+    Znacznik numer trzy z ADR-0014. Nazwa pliku jest tym, co widać w katalogu i w załączniku
+    do wiadomości — czyli tam, gdzie plik trafia po pokazie i gdzie nikt już nie pamięta,
+    skąd pochodzi."""
+    parts = ["DEMO", "ceidg"] if demo else ["ceidg"]
     if criteria.wojewodztwo:
         parts.append("_".join(criteria.wojewodztwo))
     if criteria.miasto:
@@ -1268,7 +1285,14 @@ def build_metadata(
         criteria_text = Criteria.model_validate_json(run.criteria_json).describe()
     except ValidationError:
         pass
-    meta: list[tuple[str, Any]] = [
+    meta: list[tuple[str, Any]] = []
+    if deps.demo:
+        # Znacznik numer dwa z ADR-0014, i jedyny, który **podróżuje razem z plikiem**.
+        # Ekran widzi tylko ten, kto siedział przy pokazie; skoroszyt trafia dalej i musi
+        # sam o sobie mówić. Bez tego wiersza plik z pokazu jest nie do odróżnienia od
+        # produkcyjnego — dokładnie to ryzyko audyt zapisał przy zasianej bazie demo.
+        meta.append(("UWAGA", DEMO_OSTRZEZENIE))
+    meta += [
         ("kryteria", criteria_text),
         ("kryteria_json", run.criteria_json),
         ("cel_pobrania", cel_pobrania or ""),
@@ -1441,7 +1465,9 @@ def default_export_path(deps: Deps, run: RunInfo | str, now: datetime | None = N
         criteria = Criteria.model_validate_json(info.criteria_json)
     except ValidationError:
         criteria = Criteria()
-    return deps.settings.output_dir / output_name(criteria, info.environment, moment)
+    return deps.settings.output_dir / output_name(
+        criteria, info.environment, moment, demo=deps.demo
+    )
 
 
 def today() -> date:
