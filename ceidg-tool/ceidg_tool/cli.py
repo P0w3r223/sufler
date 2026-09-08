@@ -131,6 +131,23 @@ def _koniec_zakresu_zmian(value: str | None, clock: Clock) -> datetime | None:
     return koniec
 
 
+def dni_retencji(starsze_niz: int | None, domyslne: int) -> int:
+    """Ile dni zostawić przy `wyczysc`. Zero znaczy „usuń wszystko", a nie „użyj domyślnych".
+
+    Osobna funkcja, bo to jedyny sposób, żeby ten wybór dało się sprawdzić testem **bez
+    uruchamiania `wyczysc`** — polecenia, które kasuje dane osobowe i którego nie chcemy
+    wołać ani w suicie, ani przy diagnozie.
+
+    Defekt (audyt 2026-09-08, A2): było `starsze_niz or domyslne`, więc `--starsze-niz 0`
+    zamieniało się w 30 dni. Operator prosił o skasowanie danych osobowych, dostawał
+    komunikat o powodzeniu i zostawał z miesiącem wpisów o przedsiębiorcach. Że zero jest
+    tu sensowną odpowiedzią, dowodzi ta sama komenda kilkanaście linijek dalej, przekazując
+    `days=0` do `purge_report_files` w gałęzi `--wszystko`; poprawny idiom (`is not None`)
+    stoi w `_criteria_from_options` przy `maks`. Flaga nie miała **żadnego** testu.
+    """
+    return starsze_niz if starsze_niz is not None else domyslne
+
+
 def _confirm(question: str, *, default: bool = False) -> bool:
     """Potwierdzenie po polsku, w tym samym rozumieniu co w kreatorze.
 
@@ -270,14 +287,19 @@ def _criteria_from_options(
     status: list[str],
     od: str | None,
     do: str | None,
-    szczegoly: bool,
+    szczegoly: bool | None,
     maks: int | None,
 ) -> Criteria:
     if zapytanie is not None:
         base = criteria_from_yaml(zapytanie)
         overrides: dict[str, object] = {}
-        if szczegoly:
-            overrides["szczegoly"] = True
+        # `szczegoly` jest trójstanowe: `--szczegoly` (True), `--lista` (False), brak flagi
+        # (None = zostaw wartość z pliku). Jako zwykły `bool` para `--szczegoly/--lista` nie
+        # umiała **wyłączyć** `szczegoly: true` z pliku YAML, bo `False` było nieodróżnialne
+        # od „nie podano": `pobierz -z plik.yaml --lista --tak` po cichu szedł drogą droższą,
+        # a tabela kosztów potwierdzała tę, której operator właśnie odmówił (audyt, A6).
+        if szczegoly is not None:
+            overrides["szczegoly"] = szczegoly
         if maks is not None:  # flaga CLI ma pierwszeństwo nad plikiem
             overrides["max_rekordow"] = maks
         return base.model_copy(update=overrides) if overrides else base
@@ -294,7 +316,10 @@ def _criteria_from_options(
             status=tuple(status),  # type: ignore[arg-type]
             data_od=date.fromisoformat(od) if od else None,
             data_do=date.fromisoformat(do) if do else None,
-            szczegoly=szczegoly,
+            # Bez pliku YAML nie ma czego nadpisywać, więc brak flagi znaczy tu domyślne
+            # „bez szczegółów" — trójstanowość jest potrzebna wyłącznie tam, gdzie istnieje
+            # wartość spod spodu, którą `--lista` ma umieć wyłączyć.
+            szczegoly=bool(szczegoly),
             max_rekordow=maks,
         )
     except ValueError as exc:
@@ -399,8 +424,8 @@ def pobierz(
     od: Annotated[str | None, typer.Option("--od", help="data rozpoczęcia od (YYYY-MM-DD)")] = None,
     do: Annotated[str | None, typer.Option("--do", help="data rozpoczęcia do (YYYY-MM-DD)")] = None,
     szczegoly: Annotated[
-        bool, typer.Option("--szczegoly/--lista", help="pełne szczegóły firm")
-    ] = False,
+        bool | None, typer.Option("--szczegoly/--lista", help="pełne szczegóły firm")
+    ] = None,
     maks: Annotated[int | None, typer.Option("--maks", help="maksymalna liczba rekordów")] = None,
     zapytanie: Annotated[
         Path | None, typer.Option("--zapytanie", "-z", help="plik YAML z kryteriami")
@@ -897,7 +922,7 @@ def wyczysc(
         for warning in deps.warnings:
             view.warning(warning)
         try:
-            days = starsze_niz or settings.retention_days
+            days = dni_retencji(starsze_niz, settings.retention_days)
             runs, records = deps.store.purge_older_than(days)
             zips = purge_report_files(
                 settings.data_dir / "raporty", days=days, now_epoch=datetime.now(tz=UTC).timestamp()
