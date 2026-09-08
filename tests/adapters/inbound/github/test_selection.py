@@ -7,6 +7,16 @@ import pytest
 from workmate.adapters.inbound.github import selection
 
 
+def _bez_echa(external_id: str, echo_kind: str) -> bool:
+    """Predykat „magazyn nic o tym nie wie" — wołający bez magazynu podaje go JAWNIE.
+
+    ``select_events`` wymaga tego argumentu bez wartości domyślnej (ADR 0071 decyzja 6): pominięty
+    przez przeoczenie wyłączałby strażnika pętli w ciszy. Widoczna nazwa w wywołaniu mówi wprost,
+    że TA sonda o echo nie pyta — a sonda, która pyta, podaje własny predykat.
+    """
+    return False
+
+
 def _issue(number: int, *, login: str = "alice", **kw) -> dict:
     raw = {
         "number": number,
@@ -196,7 +206,7 @@ def test_zamkniecie_ma_PUSTY_actor_i_to_jest_wybor():
 def test_select_events_daje_OBA_fakty_dla_zamknietego_zgloszenia():
     """Otwarcie i zamknięcie to dwa różne fakty o tym samym zgłoszeniu; dedup magazynu połyka
     powtórki otwarcia, więc emitowanie obu jest tanie i poprawne."""
-    events = selection.select_events([_zamkniete(7, login="alice")], [], self_login="me")
+    events = selection.select_events([_zamkniete(7, login="alice")], [], echo_seen=_bez_echa)
 
     assert [(e.kind, e.external_id) for e in events] == [
         ("issue_opened", "7"),
@@ -204,14 +214,20 @@ def test_select_events_daje_OBA_fakty_dla_zamknietego_zgloszenia():
     ]
 
 
-def test_zamkniecie_przechodzi_mimo_ze_zgloszenie_zalozylo_konto_bota():
-    """Interakcja z self-skipem, którą ADR nakazuje trzymać pod sondą (decyzja 2 + 6).
+def test_zamkniecie_przechodzi_nawet_gdy_OTWARCIE_ma_echo_naszych_drzwi():
+    """Interakcja, którą ADR nakazuje trzymać pod sondą (decyzje 2 + 6), po etapie 2.
 
-    Otwarcie autorstwa konta PAT strażnik zjada — i to jest dziś zamierzone. Zamknięcie ma
-    przejść mimo to, bo niesie PUSTY ``actor``: inaczej warstwa dalej nie wiedziałaby o zamknięciu
-    zgłoszeń założonych przez bota, czyli o ośmiu z osiemnastu w tym repozytorium.
+    Zgłoszenie założone NASZYMI drzwiami ma echo, więc jego otwarcie strażnik pomija — słusznie,
+    bo ten fakt jest już w magazynie pod ``source='teams'``. Zamknięcie musi przejść mimo to:
+    echo mówi „to my je założyliśmy", a nie „to my je zamknęliśmy", i nie ma rodzaju echa, który
+    by o zamknięciu mówił. Gdyby strażnik zjadał oba, warstwa nie wiedziałaby o zamknięciu żadnego
+    ze zgłoszeń założonych z Teamsów.
     """
-    events = selection.select_events([_zamkniete(7, login="me")], [], self_login="me")
+    events = selection.select_events(
+        [_zamkniete(7, login="alice")],
+        [],
+        echo_seen=lambda eid, kind: (eid, kind) == ("7", "github_issue_created"),
+    )
 
     assert [e.kind for e in events] == ["issue_closed"]
 
@@ -220,23 +236,50 @@ def test_zamkniecia_nie_ma_gdy_drzwi_nie_obserwuja_zgloszen():
     """``watch_kinds`` bez „issues" wyłącza CAŁĄ ścieżkę zgłoszeń, także zamknięcia — inaczej
     konfiguracja „tylko PR-y" zaczęłaby po cichu zapisywać zdarzenia zgłoszeń."""
     events = selection.select_events(
-        [_zamkniete(7, login="alice")], [], self_login="me", watch_kinds=("pulls",)
+        [_zamkniete(7, login="alice")], [], echo_seen=_bez_echa, watch_kinds=("pulls",)
     )
 
     assert events == []
 
 
-def test_select_events_skips_self_and_sorts_by_time():
-    issues = [_issue(1, login="me"), _issue(2, login="alice")]
-    comments = [_comment(9, login="me")]
-    events = selection.select_events(issues, comments, self_login="me")
-    # Zdarzenia autorstwa "me" (issue 1 i komentarz 9) pominięte — zostaje tylko issue 2.
-    assert [(e.kind, e.external_id) for e in events] == [("issue_opened", "2")]
+def test_select_events_pomija_to_co_ma_ECHO_naszych_drzwi():
+    """ODWRÓCONE 2026-09-07 (ADR 0071 decyzja 6): pytamy o ECHO, nie o konto autora.
+
+    Do tego dnia sonda nazywała się „skips_self" i pomijała zdarzenia autorstwa konta PAT.
+    Przesłanka „nasze konto ⇒ nasze narzędzie" była zmierzona jako fałszywa: sześć z ośmiu
+    zgłoszeń założonych kontem bota powstało poza narzędziem (`gh` CLI, WWW) i nie miało echa,
+    więc filtr po koncie wycinał je z warstwy, a nic ich nie zapisywało z drugiej strony.
+    """
+    echa = {("1", "github_issue_created"), ("9", "github_comment_created")}
+    issues = [_issue(1, login="alice"), _issue(2, login="alice")]
+    comments = [_comment(9, login="alice"), _comment(10, login="alice")]
+
+    events = selection.select_events(
+        issues, comments, echo_seen=lambda eid, kind: (eid, kind) in echa
+    )
+
+    # Autor nie ma tu znaczenia — wszystkie cztery zdarzenia są cudze. Pominięte zostają te,
+    # dla których w magazynie leży ślad NASZYCH drzwi zapisu.
+    assert [(e.kind, e.external_id) for e in events] == [
+        ("issue_opened", "2"),
+        ("issue_comment", "10"),
+    ]
 
 
-def test_select_events_empty_self_login_keeps_all():
-    events = selection.select_events([_issue(1, login="me")], [], self_login="")
-    assert len(events) == 1  # pusty self_login wyłącza filtr (nie gubimy zdarzeń)
+def test_select_events_nie_pomija_juz_niczego_po_autorze():
+    """Konto autora przestało być kryterium — także dla zdarzeń konta PAT bez echa.
+
+    To jest cała zmiana widziana od strony skutku: sześć zgłoszeń, które dotąd nie istniały
+    w warstwie, zaczyna istnieć.
+    """
+    events = selection.select_events(
+        [_issue(1, login="me")], [_comment(9, login="me")], echo_seen=_bez_echa
+    )
+
+    assert [(e.kind, e.external_id) for e in events] == [
+        ("issue_opened", "1"),
+        ("issue_comment", "9"),
+    ]
 
 
 def test_next_since_advances_to_newest_updated():
@@ -410,14 +453,14 @@ def test_map_ci_run_ignores_extra_and_sensitive_fields():
 
 def test_select_events_issues_only_skips_pull_requests():
     pr = _issue(8, login="alice", pull_request={"url": "http://pr"})
-    events = selection.select_events([pr], [], self_login="me", watch_kinds=("issues",))
+    events = selection.select_events([pr], [], echo_seen=_bez_echa, watch_kinds=("issues",))
     assert events == []  # PR pominięty, bo nasłuchujemy tylko "issues"
 
 
 def test_select_events_pulls_only_emits_pr_skips_issue():
     pr = _issue(8, login="alice", pull_request={"url": "http://pr"})
     events = selection.select_events(
-        [pr, _issue(9, login="alice")], [], self_login="me", watch_kinds=("pulls",)
+        [pr, _issue(9, login="alice")], [], echo_seen=_bez_echa, watch_kinds=("pulls",)
     )
     assert [(e.kind, e.external_id) for e in events] == [("pr_opened", "8")]
 
@@ -429,7 +472,7 @@ def test_select_events_ci_watermark_filters_old_runs():
         [],
         [],
         raw_runs=[old, fresh],
-        self_login="me",
+        echo_seen=_bez_echa,
         watch_kinds=("ci",),
         runs_since="2026-07-15T10:00:00Z",
     )
@@ -443,23 +486,30 @@ def test_select_events_review_watermark_filters_old_reviews():
         [],
         [],
         raw_reviews=[old, fresh],
-        self_login="me",
+        echo_seen=_bez_echa,
         watch_kinds=("reviews",),
         reviews_since="2026-07-15T10:00:00Z",
     )
     assert [e.external_id for e in events] == ["2"]
 
 
-def test_select_events_review_self_skip():
+def test_recenzje_traca_self_skip_BEZ_zamiennika():
+    """ODWRÓCONE 2026-09-07 (ADR 0071 decyzja 6). Recenzji nie filtrujemy już wcale.
+
+    Drzwi zapisu są create-only na zgłoszeniach i komentarzach (reguła 7, ADR 0021), więc nie
+    istnieje droga, którą bylibyśmy autorem recenzji. Filtrowanie ich po koncie było czystą
+    stratą — tą samą, co na zgłoszeniach, tylko mniej widoczną, bo recenzji jest mało.
+    """
     events = selection.select_events(
-        [], [], raw_reviews=[_review(1, login="me")], self_login="me", watch_kinds=("reviews",)
+        [], [], raw_reviews=[_review(1, login="me")], echo_seen=_bez_echa, watch_kinds=("reviews",)
     )
-    assert events == []  # recenzja autorstwa konta bota pominięta (strażnik pętli)
+
+    assert [e.kind for e in events] == ["pr_review"]
 
 
 def test_select_events_default_watch_kinds_backward_compatible():
     # Domyślne ("issues","comments") mapuje issue i komentarze jak przed ADR 0024.
-    events = selection.select_events([_issue(1, login="alice")], [_comment(9)], self_login="me")
+    events = selection.select_events([_issue(1, login="alice")], [_comment(9)], echo_seen=_bez_echa)
     assert {(e.kind, e.external_id) for e in events} == {
         ("issue_opened", "1"),
         ("issue_comment", "9"),

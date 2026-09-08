@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,6 +28,26 @@ _CI_FAILURE_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 # Stany recenzji PR niosące DECYZJĘ (reszta: komentarz/oczekująca/odrzucona — szum).
 _REVIEW_STATES = {"APPROVED": "zatwierdzono", "CHANGES_REQUESTED": "poproszono o zmiany"}
 _PULL_NUMBER_RE = re.compile(r"/pull/(\d+)")
+
+# Strażnik pętli self-ping (ADR 0071 decyzja 6). Do 2026-09-07 pytał „czy autorem jest konto PAT" —
+# i to była PRZESŁANKA FAŁSZYWA: konto bota założyło w tym repozytorium osiem zgłoszeń, z czego
+# tylko dwa przez nasze narzędzie; pozostałe sześć powstało `gh` CLI i przez WWW z sesji Claude
+# Code. Filtr po koncie zjadał wszystkie osiem, a echo miały dwa — reszta nie istniała nigdzie.
+#
+# Pytanie brzmi teraz „czy zapisały to NASZE DRZWI ZAPISU", a odpowiada na nie obecność echa
+# w magazynie. Tabela wiąże rodzaj zdarzenia pollera z rodzajem echa; wszystko spoza niej NIE
+# podlega self-skipowi wcale, bo drzwi zapisu są create-only na zgłoszeniach i komentarzach
+# (reguła 7, ADR 0021) — nie ma drogi, którą moglibyśmy być autorem PR-a czy recenzji.
+#
+# Kształt kluczy jest KONTRAKTEM MIĘDZY DWOMA MODUŁAMI: echo zapisuje `external_id` z tego samego
+# pola payloadu, którego używa mapper. Cicha zmiana po którejkolwiek stronie wyłączyłaby strażnika
+# bez jednego czerwonego testu — dlatego pilnuje tego osobna sonda porównująca oba klucze
+# WYLICZONE, a nie przepisane (`tests/adapters/inbound/github/test_echo_kontrakt.py`).
+_ECHO_KINDS = {
+    "issue_opened": "github_issue_created",
+    "issue_comment": "github_comment_created",
+    "pr_comment": "github_comment_created",
+}
 
 
 def map_issue(raw: dict[str, Any]) -> NewEvent | None:
@@ -346,7 +366,7 @@ def select_events(
     raw_reviews: Sequence[dict[str, Any]] = (),
     raw_pulls: Sequence[dict[str, Any]] = (),
     *,
-    self_login: str,
+    echo_seen: Callable[[str, str], bool],
     watch_kinds: tuple[str, ...] = ("issues", "comments"),
     runs_since: str = "",
     reviews_since: str = "",
@@ -362,6 +382,13 @@ def select_events(
     ``repo`` (``owner/repo``) i ``project`` (klucz z rejestru) STEMPLUJEMY na każdym zdarzeniu
     (ADR 0028/0029) — do atrybucji i filtrowania po projekcie; ``external_id`` zostaje bez zmian
     (drzwi single-repo; złożenie repo w id — ``composite_external_id`` — wejdzie przy multi-repo).
+
+    ``echo_seen(external_id, rodzaj_echa)`` to strażnik pętli self-ping (ADR 0071 decyzja 6):
+    odpowiada, czy w magazynie leży echo, które mogły zostawić WYŁĄCZNIE nasze drzwi zapisu.
+    Wstrzykiwany, bo ten moduł jest wolny od I/O i ma taki zostać — dokładnie jak zegar, który
+    ``diff_branches`` bierze od wołającego. WYMAGANY, bez wartości domyślnej: pominięty przez
+    przeoczenie wyłączałby strażnika pętli w ciszy, a to najgorszy możliwy rodzaj wartości
+    domyślnej. Wołający bez magazynu podaje jawnie predykat stale fałszywy i widać to w kodzie.
     """
     events: list[NewEvent] = []
     watch_issues = "issues" in watch_kinds
@@ -371,7 +398,7 @@ def select_events(
             ev = map_pull(raw) if watch_pulls else None
         else:
             ev = map_issue(raw) if watch_issues else None
-        if ev is not None and _from_other_actor(ev, self_login):
+        if ev is not None and not _echo_naszych_drzwi(ev, echo_seen):
             events.append(ev)
         # Zamknięcie issue z TEJ SAMEJ odpowiedzi (ADR 0071 decyzja 1). Osobne wywołanie, nie
         # gałąź `else`: zamknięte issue ma dawać OBA fakty — otwarcie (dedup połknie powtórki)
@@ -384,7 +411,7 @@ def select_events(
                 events.append(zamkniecie)
     for raw in raw_comments:
         ev = map_comment(raw)
-        if ev is not None and _from_other_actor(ev, self_login):
+        if ev is not None and not _echo_naszych_drzwi(ev, echo_seen):
             events.append(ev)
     for raw in raw_runs:
         ev = map_ci_run(raw)
@@ -392,11 +419,10 @@ def select_events(
             events.append(ev)
     for raw in raw_reviews:
         ev = map_review(raw)
-        if (
-            ev is not None
-            and _from_other_actor(ev, self_login)
-            and _after_watermark(raw.get("submitted_at"), reviews_since)
-        ):
+        # Recenzje tracą self-skip BEZ ZAMIENNIKA (ADR 0071 decyzja 6): drzwi zapisu są
+        # create-only na zgłoszeniach i komentarzach, więc nie ma drogi, którą bylibyśmy autorem
+        # recenzji. Filtrowanie ich po koncie było czystą stratą — tą samą, co na zgłoszeniach.
+        if ev is not None and _after_watermark(raw.get("submitted_at"), reviews_since):
             events.append(ev)
     for raw in raw_pulls:
         # Tranzycje PR: dedup (external_id ``{n}#merged``/``#closed``) emituje raz; ``actor=""`` →
@@ -409,12 +435,15 @@ def select_events(
     return sorted(events, key=lambda e: e.occurred_at)
 
 
-def _from_other_actor(event: NewEvent, self_login: str) -> bool:
-    """Czy zdarzenie NIE pochodzi od konta bota (PAT) — strażnik pętli self-ping.
+def _echo_naszych_drzwi(event: NewEvent, echo_seen: Callable[[str, str], bool]) -> bool:
+    """Czy TO zdarzenie zapisały nasze drzwi zapisu — czyli czy w magazynie leży jego echo.
 
-    Pusty ``self_login`` (nieustalony) wyłącza filtr, żeby nie zgubić wszystkich zdarzeń.
+    Rodzaj spoza ``_ECHO_KINDS`` nie podlega self-skipowi wcale i nie kosztuje zapytania do
+    magazynu: dla PR-ów, recenzji, CI i zamknięć nie istnieje droga, którą moglibyśmy być
+    autorem, więc pytanie byłoby bezprzedmiotowe.
     """
-    return not self_login or event.actor != self_login
+    echo_kind = _ECHO_KINDS.get(event.kind)
+    return echo_kind is not None and echo_seen(event.external_id, echo_kind)
 
 
 def _after_watermark(timestamp: Any, watermark: str) -> bool:

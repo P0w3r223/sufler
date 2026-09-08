@@ -110,8 +110,9 @@ deduplikacją). Nikt nie woła nikogo bezpośrednio:
 
 Niezawodność stoi na czterech filarach: append-only + dedup `(source, external_id, kind)`,
 watermark przesuwany dopiero po ingest (at-least-once), kursor konsumenta przesuwany dopiero po
-udanej wysyłce, oraz **dwustronny strażnik pętli** (self-skip zdarzeń autorstwa konta PAT;
-echo zapisu oznaczone `source="teams"`, którego notifier nie odsyła). Jedyną autonomiczną
+udanej wysyłce, oraz **dwustronny strażnik pętli**: poller pomija zdarzenie, gdy w magazynie
+leży echo naszych drzwi zapisu (ADR 0071 decyzja 6 — nie „autorem jest konto PAT", bo ta
+przesłanka była fałszywa), a notifier nie odsyła zdarzeń oznaczonych `source="teams"`. Jedyną autonomiczną
 ścieżką zapisu jest deterministyczny (nie-LLM) auto-komentarz przy porażce CI.
 
 ## Jira: wyłącznie odczyt „moje zadania" (bez mostu)

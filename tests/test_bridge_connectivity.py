@@ -84,6 +84,18 @@ def _issue(number, *, login="alice", title=None):
     }
 
 
+def _komentarz(comment_id, *, login="alice", issue=7):
+    return {
+        "id": comment_id,
+        "body": "treść komentarza",
+        "html_url": f"http://gh/c/{comment_id}",
+        "user": {"login": login},
+        "issue_url": f"http://api/repos/biap/workmate/issues/{issue}",
+        "created_at": "2026-07-15T12:05:00Z",
+        "updated_at": "2026-07-15T12:05:00Z",
+    }
+
+
 def _poller(client, events, *, state=None):
     return GithubPoller(
         client,
@@ -95,7 +107,6 @@ def _poller(client, events, *, state=None):
         persist=lambda _s: None,
         poll_interval=1,
         per_page=50,
-        self_login=_SELF,
     )
 
 
@@ -146,13 +157,88 @@ def test_github_issue_flows_through_eventstore_to_both_teams_targets(tmp_path):
     assert "Awaria API" in sender.channels[0][2]
 
 
-# --- STRAŻNIK PĘTLI 1: własne zdarzenie (konto PAT) nie wchodzi ------------------------
-def test_self_authored_github_event_is_skipped(tmp_path):
+# --- STRAŻNIK PĘTLI 1: to, co ZAPISAŁY NASZE DRZWI, nie wraca pollerem -----------------
+def test_issue_created_by_our_write_door_is_skipped_by_the_poller(tmp_path):
+    """ODWRÓCONY 2026-09-07 (ADR 0071 decyzja 6): pytamy o ECHO, nie o konto autora.
+
+    To jest jedyna sonda, która składa OBIE strony mostu na jednym pliku bazy: drzwi zapisu
+    tworzą zgłoszenie i zostawiają echo, a poller widzi to samo zgłoszenie wracające z GitHuba
+    i ma je pominąć. Klucz echa jest kontraktem między dwoma modułami — tutaj sprawdzamy, że
+    kontrakt trzyma na PRAWDZIWYM magazynie, nie na atrapie.
+
+    Do tej zmiany sonda nazywała się „self_authored" i pomijała po koncie PAT. Przesłanka „nasze
+    konto ⇒ nasze narzędzie" jest zmierzona jako fałszywa: sześć z ośmiu zgłoszeń konta bota
+    powstało poza narzędziem i nie miało echa, więc filtr wycinał je z warstwy bezpowrotnie.
+    """
+    db = tmp_path / "events.db"
+    events = EventService(SqliteEventStore(db))
+    create = _create_issue_tool(events)
+    utworzone = create(title="Prośba z Teams", body="treść")
+    numer = str(utworzone["number"])
+
+    # GitHub oddaje pollerowi TO SAMO zgłoszenie (nasze) i jedno cudze.
+    client = _FakeGithubReadClient(
+        issues=[_issue(int(numer), login="ktokolwiek"), _issue(8, login="alice")]
+    )
+    ingested = asyncio.run(_poller(client, EventService(SqliteEventStore(db))).poll_once())
+
+    assert ingested == 1  # nasze pominięte po echu, cudze przyjęte
+    assert [e.external_id for e in events.recent(source="github")] == ["8"]
+
+
+def test_nasz_wlasny_komentarz_nie_wraca_pollerem(tmp_path):
+    """Najwyższa stawka etapu 2: to jest ścieżka, na której pętla bot↔bot byłaby WIDOCZNA.
+
+    Auto-komentarz CI (ADR 0024) pisze przez ``GithubWriteService``, więc zostawia echo
+    ``('teams', id, 'github_comment_created')`` — i to ono, a nie konto autora, powstrzymuje
+    pollera przed wciągnięciem własnego komentarza. Sonda składa obie strony na jednym pliku bazy,
+    bo rozumowanie „przecież zostawia echo" jest dokładnie tym rodzajem przekonania, które
+    smoke-test F6 sprawdza dopiero na produkcji, komentarzem bota na cudzym PR-ze.
+    """
+    db = tmp_path / "events.db"
+    events = EventService(SqliteEventStore(db))
+    writer = _FakeGithubWriteClient()
+    service = GithubWriteService(writer, owner="biap", repo="workmate", events=events)
+
+    service.create_comment(7, "CI padło — szczegóły w przebiegu")
+    echo = events.recent()[0]
+
+    client = _FakeGithubReadClient(comments=[_komentarz(int(echo.external_id), login=_SELF)])
+    ingested = asyncio.run(_poller(client, EventService(SqliteEventStore(db))).poll_once())
+
+    assert ingested == 0
+    assert [e.kind for e in events.recent()] == ["github_comment_created"]
+
+
+def test_CUDZY_komentarz_wchodzi_normalnie(tmp_path):
+    """Kontrola pozytywna do sondy wyżej: bez echa komentarz ma wejść.
+
+    Bez niej „zero przyjętych" znaczyłoby tyle samo przy działającym strażniku, co przy pollerze,
+    który przestał czytać komentarze w ogóle.
+    """
     events = EventService(SqliteEventStore(tmp_path / "events.db"))
-    client = _FakeGithubReadClient(issues=[_issue(7, login=_SELF), _issue(8, login="alice")])
+    client = _FakeGithubReadClient(comments=[_komentarz(555, login="alice")])
+
     ingested = asyncio.run(_poller(client, events).poll_once())
-    assert ingested == 1  # issue autorstwa bota (PAT) pominięte, cudze przyjęte
-    assert [e.external_id for e in events.recent()] == ["8"]
+
+    assert ingested == 1
+    assert [e.external_id for e in events.recent()] == ["555"]
+
+
+def test_issue_from_our_ACCOUNT_but_not_our_tool_now_enters(tmp_path):
+    """Druga połowa tej samej zmiany i właściwy powód, dla którego ją zrobiliśmy.
+
+    Zgłoszenie założone kontem bota, ale POZA narzędziem (`gh` CLI, WWW) nie ma echa — i od tej
+    zmiany wchodzi do warstwy. Dotąd wypadało z obu ścieżek i nie istniało nigdzie: ani jako
+    zdarzenie pollera (filtr po koncie), ani jako echo (nie było czego echem).
+    """
+    events = EventService(SqliteEventStore(tmp_path / "events.db"))
+    client = _FakeGithubReadClient(issues=[_issue(96, login=_SELF)])
+
+    ingested = asyncio.run(_poller(client, events).poll_once())
+
+    assert ingested == 1
+    assert [e.external_id for e in events.recent()] == ["96"]
 
 
 # --- ŁĄCZNOŚĆ 2: Teams → GitHub (zapis) → echo do EventStore ---------------------------

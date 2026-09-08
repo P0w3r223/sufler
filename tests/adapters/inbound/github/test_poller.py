@@ -58,10 +58,12 @@ class _FakeClient:
         self._runs = list(runs)
         self._reviews_by_pr = dict(reviews_by_pr or {})
         self._login = login
+        self.login_calls = 0  # sonda: poller nie ma już pytać o konto PAT
         self.since_seen: list = []
         self.reviews_seen: list = []  # numery PR odpytane o recenzje
 
     def authenticated_login(self) -> str:
+        self.login_calls += 1
         return self._login
 
     def list_issues(self, owner, repo, *, since=None, per_page=50):
@@ -142,7 +144,6 @@ def _poller(
     store,
     *,
     state=None,
-    self_login="bot",
     watch=("issues", "comments"),
     persist=None,
     stop=None,
@@ -158,7 +159,6 @@ def _poller(
         persist=persist if persist is not None else (lambda s: None),
         poll_interval=1,
         per_page=50,
-        self_login=self_login,
         stop=stop,
         heartbeat=heartbeat,
     )
@@ -240,12 +240,49 @@ def test_run_skips_heartbeat_when_round_fails():
     assert beats == 0  # runda padła → brak pulsu
 
 
-def test_poll_once_skips_self_authored():
+def test_poll_once_nie_pomija_juz_po_koncie_autora():
+    """ODWRÓCONE 2026-09-07 (ADR 0071 decyzja 6). Do tego dnia issue autorstwa konta PAT było
+    pomijane — na przesłance „nasze konto ⇒ nasze narzędzie", zmierzonej jako fałszywa.
+
+    W tym repozytorium konto bota założyło osiem zgłoszeń, z czego przez narzędzie tylko dwa;
+    sześć powstało `gh` CLI i przez WWW. Filtr po koncie zjadał wszystkie osiem, a echo miały
+    dwa — pozostałych sześciu nie było nigdzie.
+    """
     store = _FakeStore()
     client = _FakeClient(issues=[_issue(1, login="bot"), _issue(2, login="alice")])
-    ingested = asyncio.run(_poller(client, store, self_login="bot").poll_once())
-    assert ingested == 1  # issue autorstwa "bot" (konto PAT) pominięte
-    assert {r.external_id for r in store.rows} == {"2"}
+
+    ingested = asyncio.run(_poller(client, store).poll_once())
+
+    assert ingested == 2
+    assert {r.external_id for r in store.rows} == {"1", "2"}
+
+
+def test_poll_once_pomija_to_co_zapisaly_NASZE_DRZWI(monkeypatch):
+    """Strażnik pętli po ECHU: pomijamy wtedy i tylko wtedy, gdy w magazynie leży ślad, który
+    mogły zostawić wyłącznie nasze drzwi zapisu (``teams`` + ``github_issue_created``).
+
+    Sonda kładzie echo do magazynu ręcznie, bo drzwi zapisu żyją w innym module — chodzi o to,
+    żeby poller czytał magazyn, a nie o to, czy drzwi umieją pisać (od tego jest sonda kontraktu).
+    """
+    store = _FakeStore()
+    store.append(
+        NewEvent(
+            source="teams",
+            kind="github_issue_created",
+            external_id="1",
+            title="Prośba z Teams",
+            summary="",
+            actor="",
+            url="",
+            occurred_at=datetime(2026, 7, 15, 10, 0, tzinfo=UTC),
+        )
+    )
+    client = _FakeClient(issues=[_issue(1, login="alice"), _issue(2, login="alice")])
+
+    ingested = asyncio.run(_poller(client, store).poll_once())
+
+    assert ingested == 1  # issue 1 ma echo naszych drzwi → pominięte mimo cudzego autora
+    assert {r.external_id for r in store.rows if r.source == "github"} == {"2"}
 
 
 def test_poll_once_dedups_across_rounds():
@@ -282,10 +319,20 @@ def test_poll_once_isolates_poisoned_event():
     assert state["issues_since"]  # watermark PRZESUNIĘTY mimo zatrutego → brak zakleszczenia
 
 
-def test_resolve_self_login_from_client_when_unset():
-    poller = _poller(_FakeClient(login="octocat"), _FakeStore(), self_login="")
-    asyncio.run(poller._resolve_self_login())
-    assert poller._self_login == "octocat"
+def test_poller_nie_pyta_juz_o_konto_PAT():
+    """``GET /user`` znika razem z filtrem po koncie (ADR 0071 decyzja 6).
+
+    Warto zapisać, bo pusta wartość `WORKMATE_GITHUB_SELF_LOGIN` NIE wyłączała dawniej filtru —
+    kazała ustalić konto z `GET /user`, więc filtr zostawał włączony z kontem wykrytym
+    automatycznie. To jest powód, dla którego incydent zdarzył się na flocie, na której tej
+    zmiennej nie ustawiono w ogóle: „wyłączenie" jej nie wyłączało niczego.
+    """
+    client = _FakeClient(login="octocat")
+
+    asyncio.run(_poller(client, _FakeStore()).poll_once())
+
+    assert not hasattr(GithubPoller, "_resolve_self_login")
+    assert client.login_calls == 0
 
 
 def test_poll_once_ingests_ci_runs():

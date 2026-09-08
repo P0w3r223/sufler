@@ -32,8 +32,9 @@ uv run workmate-github
 
 Oczekiwane: poller wystartuje i przy każdej rundzie zapisze nowe zdarzenia do
 `~/.workmate/events.db`. Zdarzenia można podejrzeć z dowolnych drzwi agenta akcją `Activity(action='events')`
-(do 1.6.0 było to osobne narzędzie `read_recent_events`). **Strażnik pętli**: zdarzenia autorstwa konta PAT są pomijane (self-skip);
-zdarzenia CI nie mają autora-człowieka i przepływają zawsze.
+(do 1.6.0 było to osobne narzędzie `read_recent_events`). **Strażnik pętli**: pomijane są zdarzenia, dla których w magazynie leży echo NASZYCH drzwi
+zapisu (ADR 0071 decyzja 6); zdarzenia autorstwa konta PAT powstałe poza narzędziem — `gh` CLI,
+WWW — przepływają normalnie, tak jak CI, które autora-człowieka nie ma.
 
 ## Krok 2 — push do Teams (EventStore → kanał / czat)
 

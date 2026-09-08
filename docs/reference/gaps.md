@@ -47,7 +47,7 @@ z modułem kart czasu (ADR 0055) — nie istnieje już w `docker-compose.yml`.
 ### Zmienne środowiskowe — wymagane (fail-fast `validate`) / opcjonalne
 **Zawsze (profil mcp, HTTP):** WYMAGANE `WORKMATE_TRANSPORT=streamable-http` (compose), `WORKMATE_TOKENS_FILE`, `WORKMATE_ALLOWED_HOSTS` (bez publicznego hosta → 421). OPCJONALNE `WORKMATE_ALLOWED_ORIGINS`, `WORKMATE_TLS_CERTFILE`/`_KEYFILE` (oba-albo-żaden, `server.py:126`; przy nginx PUSTE), `WORKMATE_LOG_LEVEL` (dot. tylko MCP, patrz R3), `WORKMATE_BIND_HOST/_PORT` (compose ustawia).
 
-**github (bridge):** WYMAGANE `WORKMATE_GITHUB_TOKEN`, `_OWNER`, `_REPO` (`config/github.py`). OPCJONALNE `_API_BASE`, `_POLL_INTERVAL`(≥30), `_PER_PAGE`(1–100), `_WATCH_KINDS`, `_STATE`, `_SELF_LOGIN`, `_WORKLOG_*`.
+**github (bridge):** WYMAGANE `WORKMATE_GITHUB_TOKEN`, `_OWNER`, `_REPO` (`config/github.py`). OPCJONALNE `_API_BASE`, `_POLL_INTERVAL`(≥30), `_PER_PAGE`(1–100), `_WATCH_KINDS`, `_STATE`, `_WORKLOG_*`.
 
 **Jira "moje zadania" (ADR 0054, bez osobnych drzwi):** WYMAGANE `WORKMATE_JIRA_BASE_URL`, `_TOKEN`; przy `_DEPLOYMENT=cloud` dodatkowo `_EMAIL`. OPCJONALNE `_DEPLOYMENT` (server/cloud, dom. server), `_MY_ACCOUNT` (principal serwera MCP stdio — NIE nadaje się na współdzielony fleet HTTP). Tożsamość na Teams idzie osobno, przez mapę AAD→Jira (`WORKMATE_TEAMS_GRAPH_IDENTITIES`).
 

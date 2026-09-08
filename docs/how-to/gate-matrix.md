@@ -28,7 +28,7 @@ obie naraz, chyba że świadomie chcesz same koperty.
 | **Zdarzenia mostu lądowały w Teams** (github → czat/kanał) | `WORKMATE_TEAMS_PUSH_ENABLE_CHAT=true` (+`_CHAT_USER_ID`) **LUB** `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL=true` (+`_TEAM_ID`+`_CHANNEL_ID`); zawsze `_CLIENT_ID`+`_TENANT_ID` | `TeamsPushSettings.validate` |
 | **Jedno zgłoszenie = jeden wątek na kanale** | `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` (wymaga `_ENABLE_CHANNEL=true`) | `TeamsPushSettings.validate` |
 | **Agent odpowiadał na kanale Teams** | profil `bridge` z `teams-graph`; `WORKMATE_TEAMS_GRAPH_WATCH` = pary `team:channel`; `_CLIENT_ID`/`_TENANT_ID`; `ANTHROPIC_API_KEY` | `TeamsGraphSettings.validate` (odczyt zawsze ON) |
-| **Auto-komentarz CI na GitHub** | `WORKMATE_GITHUB_ENABLE_WRITE=true` + `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true` + `ci` w `WORKMATE_GITHUB_WATCH_KINDS` (poller i zapis dzielą ten sam PAT; `_SELF_LOGIN`) | `GithubSettings.validate` |
+| **Auto-komentarz CI na GitHub** | `WORKMATE_GITHUB_ENABLE_WRITE=true` + `WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true` + `ci` w `WORKMATE_GITHUB_WATCH_KINDS` (poller i zapis dzielą ten sam PAT — warunek echa, ADR 0071 decyzja 6) | `GithubSettings.validate` |
 | **Agent tworzył issue/komentarze GitHub** | `WORKMATE_GITHUB_ENABLE_WRITE=true` na drzwiach `teams-graph` (wspólny `events.db`) | `_build_bridge_catalog` (teams_graph) |
 | **Agent odpowiadał na GitHub Z WĄTKU Teams** (`Activity(action='comment')` bez podawania numeru) | jak wyżej **oraz** `WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING=true` na drzwiach `github` (to notifier zapełnia mapę wątków) | `ThreadLinkStore` + dispatcher `Activity` |
 | **Agent/komenda pokazywały "moje zadania" z Jiry** | `WORKMATE_JIRA_BASE_URL` + `_TOKEN` (+ Cloud: `_EMAIL`); tożsamość: mapa `WORKMATE_TEAMS_GRAPH_IDENTITIES` (Teams, pole `jira_user`) albo `WORKMATE_JIRA_MY_ACCOUNT` (serwer MCP stdio). **Bez bramki** — czysty odczyt, zawężony server-side do jednego konta (ADR 0054). Pole `jira_user` jest opcjonalne ([ADR 0070](../adr/0070-teams-only-identity-and-what-a-map-entry-grants.md)): jego brak zdejmuje CAŁE narzędzie `Jira` tej osobie, przy zachowanym członkostwie w pozostałych wierszach tej tabeli | `_build_my_jira_tasks_factory` / `_my_jira_tasks_service_if_present` |
@@ -73,9 +73,17 @@ obie naraz, chyba że świadomie chcesz same koperty.
 
 ## Uwagi wiążące (dlaczego bramki mają dodatkowe warunki)
 
-- **Strażnik pętli (self-skip).** Zapis GitHub wymaga, by poller i zapis dzieliły **ten sam
-  token/konto** (`_SELF_LOGIN`): echo `source` na wspólnym `events.db` powstrzymuje
-  bota przed komentowaniem własnych zdarzeń ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)).
+- **Strażnik pętli (self-skip).** Poller pomija zdarzenie wtedy i tylko wtedy, gdy w `events.db`
+  leży **echo, które mogły zostawić wyłącznie nasze drzwi zapisu** — a nie wtedy, gdy autorem jest
+  konto PAT ([ADR 0071](../adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md)
+  decyzja 6, zmiana z 2026-09-07). Poprzednia reguła opierała się na przesłance „nasze konto ⇒
+  nasze narzędzie", zmierzonej jako FAŁSZYWA: z ośmiu zgłoszeń założonych kontem bota tylko dwa
+  powstały przez narzędzie, a pozostałych sześciu (`gh` CLI, WWW) filtr nie wpuszczał **i nie
+  miały echa**, więc nie istniały nigdzie. Zmienna `WORKMATE_GITHUB_SELF_LOGIN` **została
+  usunięta**: po tej zmianie nie ma wołającego, a wcześniej i tak nie robiła tego, na co
+  wyglądała — pusta wartość nie wyłączała filtru, tylko kazała ustalić konto z `GET /user`.
+  Zapis GitHub nadal wymaga, by poller i zapis dzieliły ten sam token
+  ([ADR 0021](../adr/0021-github-write-capability-gate-4.md)) — to warunek echa, nie filtru.
   Jira nie ma dziś żadnej zdolności mutującej ani mostu push — ta ochrona jej już nie dotyczy
   (ADR 0054 supersedes 0031/0032).
 - **Cel push albo nic.** Bez `_ENABLE_CHAT`/`_ENABLE_CHANNEL` drzwi github są **ingest-only** —
