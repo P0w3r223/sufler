@@ -16,6 +16,7 @@ import yaml
 from typer.testing import CliRunner
 
 import ceidg_tool.config as config
+from ceidg_tool import cli
 from ceidg_tool.cli import app
 from ceidg_tool.client import CeidgClient
 from ceidg_tool.config import Settings
@@ -38,6 +39,16 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     # `*_` bo funkcja bierze teraz nazwę pozycji w magazynie (token CEIDG albo klucz
     # asystenta). Atrapa bez tego parametru wywracała **każdy** test CLI naraz.
     monkeypatch.setattr(config, "read_token_from_keyring", lambda *_: None)
+    # Stała, szeroka konsola dla `--help`. `rich` dobiera szerokość z terminala, a w wąskim
+    # obcina kolumnę opcji: przy 40 kolumnach `--partie` i `--pkd-2007` **znikają** z pomocy.
+    # Pierwszy w historii przebieg CI (2026-09-08, Linux) wywrócił na tym pięć testów, które
+    # lokalnie były zielone — a pytają one o to, czy flaga **istnieje**, nie czy mieści się
+    # w N kolumnach. Bez tego test mierzył szerokość maszyny, na której akurat biegnie.
+    monkeypatch.setenv("COLUMNS", "200")
+    # Konsola aplikacji powstaje na poziomie modułu, więc szerokość wzięła już z terminala,
+    # zanim `monkeypatch` doszedł do głosu — trzeba ją ustawić wprost. Bez tego test o **treści**
+    # zdania mierzy szerokość maszyny, na której akurat biegnie.
+    monkeypatch.setattr(cli.console, "width", 200)
     return CliRunner()
 
 

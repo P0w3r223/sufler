@@ -15,9 +15,14 @@ owner's consent in the current session before any request goes out, and pass
 **Polish output needs `PYTHONUTF8=1`.** Without it the CLI, the probe scripts and pytest mangle
 diacritics on this Windows console. Prefix every Python invocation with it.
 
-**The repository has no commits on purpose.** The owner decided to work without version control for
-now. Anything reading `git ls-files` (coverage graphs, review ranges) comes back empty here; read
-files directly rather than proposing a commit to fix it.
+**The project is under version control since 2026-09-08, and its remote is somebody else's repo.**
+The initial commit (`d6a46e9`, 157 files) went to the **`ceidg-tool` branch** of
+`BIAP-Inteligentne-Technologie/PIWorkmate` — a private org repository whose `Main` holds an
+unrelated product (WorkMate: `src/workmate`, Teams notifications, its own ADRs 0064+). The owner
+chose this after being shown that the two share no history. Two consequences worth holding on to:
+never push to `Main` and never force-push anything here, because that branch is another team's
+active work; and `on: push:` in our `.github/workflows/ci.yml` has no branch filter, so every push
+spends the organisation's Actions minutes on a four-way matrix.
 
 **The token in `.env` belongs to the owner.** It is not a borrowed credential and needs no action
 before 2026-09-30; from that date, remind them to refresh it. Its payload carries a PESEL, so it

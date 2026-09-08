@@ -1139,6 +1139,16 @@ the detector's marker. One `LockHeartbeat` per `Deps`, injected into the limiter
 verified both ways, a 3600 s hold raises no alarm and a 9 h 50 min wall jump still does.
 
 ## Open items
+- **CI ran for the first time on 2026-09-08, and it failed.** There had never been a commit, so
+  the workflow had never executed — "CI runs the same four gates on Linux and Windows" was a
+  configuration, not an observation. The first Linux run turned up ten tests that were measuring
+  the **terminal width of the machine they ran on**: `rich` drops an option's name from `--help`
+  when the column is narrow, so `test_pobierz_advertises_the_batch_flag` and friends failed at a
+  width our Windows console never produces. Reproduced locally at `COLUMNS=40`, fixed by pinning
+  the console width in both CLI test fixtures (the app's `console` is built at import, so the env
+  var alone does not reach it), and the whole suite now passes at 40, 80 and 200 columns. The
+  guarantee those tests carry is that a flag *exists* — `--force` was added in phase 3b precisely
+  because the lock message named a flag no command had — not that it fits in N columns.
 - **The production store has not been migrated yet.** Everything above was verified on a *copy*
   (`31 860 → 16 310` rows, 13 401 records of the overnight run recovered, 1.12 s, `integrity_check`
   ok). The owner's `store-prod.sqlite` is still schema v2 and will migrate on the next run of any
@@ -1192,7 +1202,12 @@ verified both ways, a 3600 s hold raises no alarm and a 9 h 50 min wall jump sti
   through `scripts/assistant_smoke.py` or a single CLI command in a sandbox; the wizard path is
   covered offline and by construction (`collect_from_description` is shared with `--opis`), but the
   reading of it is gate 3's business.
-- **Version control: deliberately none.** The owner decided on 2026-09-05 to keep working
-  without commits for now ("bez repozytorium na razie"). Nothing here should be committed
-  or pushed until that changes. Tools that read `git ls-files` (coverage graphs, review
-  ranges) come back empty as a consequence; read the files directly instead.
+- ~~**Version control: deliberately none.**~~ — **changed 2026-09-08 by the owner.** The initial
+  commit `d6a46e9` (157 files, 41 993 lines) is pushed to the **`ceidg-tool` branch** of
+  `BIAP-Inteligentne-Technologie/PIWorkmate`. That repository's `Main` carries an unrelated
+  product, and the owner chose this target after being shown the two share no history — so the
+  standing constraints are: never push to `Main`, never force-push, and remember that our
+  unfiltered `on: push:` CI spends the organisation's Actions minutes on every push. Secrets and
+  production data stay out by `.gitignore`, verified before the push: `.env`, `probe_out/`,
+  `*.sqlite`, `wyniki/`, `PKD/`. The three JWT-shaped strings in the test suite were compared
+  against the real token and are synthetic.

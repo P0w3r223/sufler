@@ -13,6 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 import ceidg_tool.config as config
+from ceidg_tool import cli
 from ceidg_tool.cli import app
 from ceidg_tool.errors import ProdWithoutConsentError
 
@@ -27,6 +28,12 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     # `*_` bo funkcja bierze teraz nazwę pozycji w magazynie (token CEIDG albo klucz
     # asystenta). Atrapa bez tego parametru wywracała **każdy** test CLI naraz.
     monkeypatch.setattr(config, "read_token_from_keyring", lambda *_: None)
+    # Szerokość konsoli przypięta, żeby asercje o **treści** komunikatów nie mierzyły przy
+    # okazji szerokości maszyny — patrz `tests/test_cli_phase3.py`, gdzie ten sam brak wywrócił
+    # pięć testów na pierwszym w historii przebiegu CI. Konsola aplikacji powstaje na poziomie
+    # modułu, więc samo `COLUMNS` już jej nie dosięga.
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr(cli.console, "width", 200)
     return CliRunner()
 
 
