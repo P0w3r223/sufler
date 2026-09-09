@@ -117,11 +117,37 @@ Webhook musi być **niezależny od AAD** — alert „utracono sesję" powstaje 
 przestaje być dostępnym kanałem. Sprawdzić dostępność Workflows (Power Automate) w tenancie;
 Microsoft wycofuje klasyczne Office 365 connectors.
 
-### 7. Zawęzić uprawnienia rejestracji aplikacji
+### 7. ~~Zawęzić uprawnienia rejestracji aplikacji~~ — ZAMKNIĘTE 2026-09-09 jako PRZYJĘTE RYZYKO
 
-Token niesie **25 uprawnień**, a kod prosi o 8. Nadmiarowe m.in. `Channel.Delete.All`,
-`Files.ReadWrite.All`, `Sites.Read.All`. Bot ich nie używa, ale wyciek cache tokenu dałby
-atakującemu kasowanie kanałów i dostęp do plików. Zadanie dla administratora aplikacji.
+**Decyzja klienta: nie zawężamy.** Pozycja przestaje być zadaniem do wykonania — nie dlatego, że
+praca została zrobiona, tylko dlatego, że ryzyko zostało świadomie przyjęte. Zapis zostaje, bo
+skasowanie prawdziwego ustalenia zamieniłoby ten dokument w źródło nieprawdy.
+
+**Stan zmierzony 2026-09-09** (odczyt cache tokenu na produkcji, nie z pamięci): token niesie
+**27 uprawnień**, kod prosi o **8**. Poprzedni zapis mówił „25" — liczba urosła od lipca, co samo
+w sobie jest informacją: nikt jej nie pilnuje.
+
+Czternaście uprawnień jest nadmiarowych i bot nie używa żadnego z nich:
+
+```
+Channel.Create           ChannelMessage.Edit        Files.Read.All
+Channel.Delete.All       ChannelMessage.Read.All    Files.ReadWrite.All
+Channel.ReadBasic.All    ChannelMessage.ReadWrite   OnlineMeetingTranscript.Read.All
+ChannelMember.Read.All   ChannelMessage.Send        OnlineMeetings.Read
+Team.ReadBasic.All                                  Sites.Read.All
+```
+
+**Co dokładnie zostało przyjęte.** Cache tokenu (`teams_token_cache.bin`) leży w wolumenie stanu
+i jest montowany read-only także do kontenera `workmate-teams-graph`. Jego wyciek daje dziś nie
+tylko dostęp do grafiku i czatów 1:1, ale też **zapis do plików SharePoint/OneDrive**
+(`Files.ReadWrite.All`), **kasowanie kanałów Teams** (`Channel.Delete.All`) i **odczyt transkrypcji
+spotkań** — czyli powierzchnię wielokrotnie szerszą niż to, do czego usługa jest zbudowana.
+
+**Jak to odwrócić, gdyby decyzja się zmieniła.** To zmiana w rejestracji aplikacji w Azure AD
+(`POWIADOMIENIA_CLIENT_ID`), nie w kodzie: administrator tenanta usuwa nadmiarowe zgody
+delegowane, po czym usługa wymaga jednorazowego `--login`. Lista ośmiu potrzebnych uprawnień jest
+w `config._DEFAULT_SCOPES` i w README — kod nie prosi o nic ponad nią, więc zawężenie niczego
+w nim nie zepsuje.
 
 ---
 
