@@ -6,6 +6,21 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Naprawione
+
+- **`REWIZJA` wchodzi do `build.args` compose'a, a komentarz budowania niesie obie flagi.**
+  1.15.0 dołożyło etykietę `org.opencontainers.image.revision`, ale **nic jej nie utrwalało**:
+  `build.args` podawał tylko `WERSJA`, więc każde `docker compose build` dawało
+  `revision=nieznana`, a komentarz z komendą ręczną — podbity w tamtym wydaniu — nie wymieniał ani
+  `--build-arg REWIZJA`, ani `--no-cache-filter test`. Etykieta istniała i nie niosła niczego;
+  warunek był ZAPAMIĘTANY, nie zapisany, czyli dokładnie klasa, którą karta podbicia tropi u siebie.
+- **Komentarz `Dockerfile` obiecywał gwarancję, której ten plik nie ma.** Zdanie „Testy biegną
+  W TRAKCIE budowania — obraz nie powstanie z czerwonego drzewa" stało bezwarunkowo dwie linie od
+  komendy bez `--no-cache-filter test`. Marker `/app/.tests-passed` jest PUSTYM plikiem, więc
+  BuildKit podstawia warstwę z cache'u i etap `test` nie biegnie wcale — CHANGELOG 1.15.0 mówi to
+  wprost, a komentarz obok twierdził przeciwnie.
+
+
 ## [1.15.0] — 2026-09-09
 
 **Wydanie bezpieczeństwa i odwracalności.** Dwie poprawki zamykają luki nazwane audytem

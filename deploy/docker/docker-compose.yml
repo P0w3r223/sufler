@@ -44,6 +44,10 @@ x-workmate-common: &workmate-common
     dockerfile: deploy/docker/Dockerfile
     args:
       WERSJA: "1.15.0"
+      # Bez tego KAŻDE `docker compose build` daje `revision=nieznana` — etykieta istniałaby
+      # w `Dockerfile` i nie niosłaby niczego. Domyślne `nieznana` jest jawne: obraz, który nie
+      # wie, z czego powstał, ma to mówić, a nie udawać, że łańcuch jest cały.
+      REWIZJA: "${REWIZJA:-nieznana}"
   env_file:
     - ./env
   restart: unless-stopped
