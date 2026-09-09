@@ -14,6 +14,63 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — audyt 2026-09-08, fala 1: idempotencja i odporność stanu
+
+Dwie usterki znalezione pełnym audytem kodu (architektura + przegląd), obie potwierdzone
+uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrzeżeń.
+
+### Naprawione
+
+- **Idempotencja opierała się na jedynym w projekcie porównaniu znak w znak — groziła podwójnym
+  zapisem do grafiku.** `runtime/nudge.run_once` szukał istniejącego wpisu przez
+  `state.get(member.user_id)`, choć `domain/tozsamosc` mówi wprost, że Graph nie obiecuje tej samej
+  wielkości liter GUID-a, i z tego powodu KAŻDE inne porównanie tożsamości w projekcie idzie przez
+  `ten_sam` — sam `nudge` robi tak w trzech innych linijkach. To jedno miejsce zostało pominięte,
+  a jest jedynym strażnikiem N15 („jedna prośba na osobę na tydzień").
+
+  Identyfikator oddany inaczej niż tydzień wcześniej nie trafiał w istniejący wpis: powstawał DRUGI,
+  obok pierwszego, na tę samą osobę i ten sam tydzień. Pracownik dostawał dwie prośby, odpowiadał
+  „tak" raz, a oba wpisy dochodziły do `_apply_confirmed_yes` — czyli do `create_shift`, który nie
+  deduplikuje. Sprawdzenia świeżości to nie łapie (`SnapshotGrafiku` memoizuje odczyt na cały
+  przebieg, więc drugi wpis widzi grafik sprzed pierwszego zapisu), `ensure_single_owner` też nie
+  (obie strony jego porównania pochodzą z tego samego wpisu).
+
+  Nowe `state.klucz_wpisu` szuka po TOŻSAMOŚCI i zwraca KLUCZ — postać zapisana zostaje nietknięta,
+  zgodnie z zakazem z `domain/tozsamosc` („normalizujemy przy porównaniu, nie zmieniamy samego
+  identyfikatora"): klucze w pliku to surowe id z Graph, a `member_id` idzie stąd wprost do POST-a.
+  Wpis leżący pod starą postacią jest przy zapisie PRZENOSZONY, nie zostawiany obok — niezmiennik
+  „klucz == member_id" jest konieczny, bo `_dogladaj_nierozstrzygniete` indeksuje stan polem
+  `member_id`. Skutek uboczny naprawy: alert „nadpisana otwarta rozmowa" znów działa przy zmianie
+  wielkości liter — dotąd milczał, bo `existing` wychodziło `None`.
+
+- **Siatka na duplikaty już leżące w stanie.** `poll_replies` obsługuje najwyżej JEDEN otwarty wpis
+  na (osoba, tydzień); nadmiarowy jest pomijany z alertem wagi KRYTYCZNEJ. `klucz_wpisu` zamyka
+  drogę, którą duplikat powstawał, ale nie cofa tych już zapisanych ani nie broni przed ręczną
+  edycją pliku — a stawką jest podwójny komplet zmian w Shifts po jednym „tak".
+
+- **Jeden uszkodzony wpis stanu trwale kładł CAŁY nasłuch — przy zielonym healthchecku.**
+  `state._wczytaj` świadomie tolerował dryf schematu i odsiewał `null`, ale NIE sprawdzał typów,
+  mimo że sam docstring nazywał założenie („warstwa wyżej zakłada, że znaczniki czasu są napisem").
+  `week_start` będący liczbą przechodził nietknięty, a wywracał się dopiero w
+  `lifecycle._poczatek_tygodnia`: `date.fromisoformat` rzuca wtedy `TypeError`, którego tamten
+  `except ValueError` nie łapie. Awaria wypadała w kroku 2 `poll_replies`, gdzie `should_expire`
+  jest wołane z list-comprehension — POZA izolacją per-osoba z kroku 1 — więc kładła cały obieg.
+  Deterministycznie, w każdym ticku: pętla żyła, puls bił, healthcheck świecił na zielono, a nikt
+  nie dostawał ani jednej wiadomości.
+
+  Zamknięte w DWÓCH miejscach: `state._wczytaj` egzekwuje teraz typ pola (mapa wyprowadzona
+  z adnotacji, więc nowe pole wchodzi do niej samo, a nieznana adnotacja wywraca import), a
+  `lifecycle._poczatek_tygodnia` i `_najpozniejszy` łapią `TypeError`/`AttributeError` obok
+  `ValueError`. Blankietowego `try` wokół kroków 1.5/1.6/2 świadomie NIE dokładamy: te kroki
+  celowo przepuszczają wyjątki sterujące (`CiszaError`, `AuthExpiredError`, `StateWriteError`),
+  a połknięcie ich byłoby regresją groźniejszą niż naprawiana usterka.
+
+### Testy
+
+Dziewięć nowych sond (503 → 512), każda zweryfikowana jako STRAŻNIK: uruchomiona wobec kodu sprzed
+naprawy pada, i to z przewidzianym błędem (`TypeError: fromisoformat`, `AttributeError: 'int'
+object has no attribute 'strip'`, druga wysyłka, dwa wpisy zamiast jednego, brak alertu).
+
 ## [0.2.22] — 2026-09-07
 
 Wydanie naprawczo-porządkowe. **Zachowanie usługi bez zmian wobec 0.2.21** — różnica jest wyłącznie

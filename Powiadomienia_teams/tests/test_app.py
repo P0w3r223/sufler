@@ -456,6 +456,120 @@ def test_run_once_does_not_renudge_declined_member_same_week(tmp_path: Path):
     assert load_state(state_path)["u1"].status == DECLINED  # stan odmowy zachowany
 
 
+def test_run_once_nie_wysyla_drugi_raz_gdy_graph_zmienil_wielkosc_liter(tmp_path: Path):
+    """Idempotencja N15 opierała się na JEDYNYM w projekcie porównaniu znak w znak.
+
+    `domain.tozsamosc` mówi wprost, że Graph nie obiecuje tej samej wielkości liter GUID-a, i z tego
+    powodu KAŻDE inne porównanie tożsamości idzie przez `ten_sam` — `nudge` robi tak w trzech innych
+    linijkach. To jedno miejsce zostało pominięte, a jest jedynym strażnikiem „jedna prośba na osobę
+    na tydzień": rozminięcie się z wpisem dawało DRUGĄ prośbę i drugi wpis na ten sam tydzień, oba
+    mogące dojść do `create_shift`, który nie deduplikuje.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "U1-ABC": PendingReminder(
+                member_id="U1-ABC",
+                member_name="Mikołaj",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark="2026-07-17T15:00:00Z",
+                nudged_at="2026-07-17T15:00:00Z",
+            )
+        },
+    )
+    # Ten sam człowiek, inna wielkość liter — dokładnie to, czego Graph nie obiecuje trzymać.
+    client = _FakeClient({}, members=(Member("u1-abc", "Mikołaj"),), shifts=())
+    settings = _settings(state_path)
+
+    run_once(settings, client, now=_FRI_16, teraz=_w_oknie())
+
+    assert client.sent == [], "druga prośba do osoby, która ma otwarty wpis na ten tydzień"
+    assert len(load_state(state_path)) == 1, "duplikat wpisu na tę samą osobę i tydzień"
+
+
+def test_run_once_przenosi_wpis_pod_swieza_postac_identyfikatora(tmp_path: Path):
+    """Przy NOWYM tygodniu wpis tej osoby ma zostać zastąpiony, a nie postawiony obok.
+
+    Wpis jest OTWARTY z rozmysłem: terminalny sprzątnąłby `prune_terminal` i test przechodziłby
+    z zupełnie innego powodu niż ten, o który pyta. Otwarty pokazuje też DRUGI skutek naprawy —
+    nadpisanie rozmowy z poprzedniego tygodnia znów jest widoczne, bo `existing` przestało być
+    `None`; przy porównaniu znak w znak alert „nadpisana otwarta rozmowa" milczał.
+
+    Niezmiennik „klucz == member_id" jest tu konieczny, nie estetyczny:
+    `_dogladaj_nierozstrzygniete` (krok 1.6) indeksuje stan kluczem wziętym
+    z `pending.member_id`, więc rozjazd tych dwóch gubi wpis w suficie ADR 0007.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "U1-ABC": PendingReminder(
+                member_id="U1-ABC",
+                member_name="Mikołaj",
+                chat_id="chat1",
+                week_start="2026-07-13",  # tydzień POPRZEDNI — wpis wolno zastąpić
+                status="awaiting_reply",  # OTWARTY, żeby nie sprzątnął go `prune_terminal`
+                watermark="2026-07-10T15:00:00Z",
+                nudged_at="2026-07-10T15:00:00Z",
+            )
+        },
+    )
+    client = _FakeClient({}, members=(Member("u1-abc", "Mikołaj"),), shifts=())
+    settings = _settings(state_path)
+
+    run_once(settings, client, now=_FRI_16, teraz=_w_oknie())
+
+    stan = load_state(state_path)
+    assert len(client.sent) == 1, "nowy tydzień — prośba ma wyjść"
+    assert len(stan) == 1, "stara postać identyfikatora została obok nowej"
+    (klucz,) = stan
+    assert klucz == stan[klucz].member_id == "u1-abc", "klucz musi zgadzać się z `member_id`"
+    assert stan[klucz].week_start == "2026-07-20", "wpis ma dotyczyć NOWEGO tygodnia"
+
+
+def test_dwa_otwarte_wpisy_na_te_sama_osobe_daja_alert_i_jedno_przejscie(
+    tmp_path: Path, monkeypatch
+):
+    """Siatka niezależna od tego, czy prośbę wysłał dzisiejszy kod.
+
+    `state.klucz_wpisu` zamyka drogę, którą duplikat powstawał, ale nie cofa duplikatów już
+    leżących w pliku ani nie broni przed ręczną edycją. Dwa otwarte wpisy tej samej osoby na ten
+    sam tydzień to dwa przejścia przez `_apply_confirmed_yes` po jednym „tak" — czyli podwójny
+    komplet zmian w Shifts, skutku nieodwracalnego nie łapie ani sprawdzenie świeżości, ani
+    `ensure_single_owner`.
+    """
+    state_path = tmp_path / "state.json"
+    wspolne = {
+        "member_name": "Ala",
+        "chat_id": "chat-dubel",
+        "week_start": "2026-07-20",
+        "status": "awaiting_reply",
+        "watermark": "2026-07-17T15:00:00Z",
+        "nudged_at": "2026-07-17T15:00:00Z",
+    }
+    save_state(
+        state_path,
+        {
+            "U1": PendingReminder(member_id="U1", **wspolne),
+            "u1": PendingReminder(member_id="u1", **wspolne),
+        },
+    )
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat-dubel": []})
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+
+    assert any("dwa otwarte wpisy" in t.lower() for t in alerty), alerty
+
+
 _FRI_16 = datetime(2026, 7, 17, 16, 0, tzinfo=timezone.utc)
 
 

@@ -181,7 +181,12 @@ def run_once(  # noqa: PLR0915
         st.save_state(settings.state_path, state)
     sent = 0
     for member in missing:
-        existing = state.get(member.user_id)
+        # Szukamy po TOŻSAMOŚCI, nie znak w znak — uzasadnienie i cena pomyłki są
+        # w `state.klucz_wpisu`.
+        # `klucz` bywa inny niż `member.user_id` tylko wtedy, gdy Graph oddał dziś inną wielkość
+        # liter niż w tygodniu, w którym wpis powstał.
+        klucz = st.klucz_wpisu(state, member.user_id)
+        existing = state.get(klucz)
         # Idempotencja przebiegu: JEDNA prośba na osobę na TEN tydzień. Pomijamy każdy istniejący
         # wpis na bieżący tydzień — nie tylko otwarty (ponowienie po transientnym błędzie albo
         # nadrobienie nie wyśle drugi raz tej samej prośby), ale też TERMINALNY DECLINED/EXPIRED:
@@ -269,6 +274,16 @@ def run_once(  # noqa: PLR0915
         # (`_catchup_due`) `now` to PRZESZŁY termin — użycie go cofnęłoby watermark przed faktyczny
         # czas wysyłki, przez co listener mógłby wziąć wcześniejszą wiadomość z czatu za odpowiedź.
         sent_iso = sent_at or to_graph_iso(datetime.now(_UTC))
+        # Wpis tej osoby leżący pod STARĄ postacią identyfikatora zabieramy, zamiast zostawiać go
+        # obok nowego. Bez tego naprawa szukania po tożsamości cofnęłaby się przy pierwszym
+        # zapisie: w stanie byłyby DWA wpisy tej samej osoby, a `_dogladaj_nierozstrzygniete`
+        # indeksuje stan kluczem wziętym z `pending.member_id`, więc niezgodność klucza z tym
+        # polem gubi wpis w kroku 1.6. Niezmiennik „klucz == member_id" zostaje utrzymany,
+        # a przejście na świeżą postać jest jednorazowe i dzieje się dopiero PO udanej wysyłce.
+        #
+        # `pop` BEZ warunku: gdy klucz już jest świeży, zabiera wpis, który i tak zaraz
+        # nadpiszemy — ten sam skutek bez gałęzi, której sufit złożoności `run_once` nie uniesie.
+        state.pop(klucz, None)
         state[member.user_id] = st.PendingReminder(
             member_id=member.user_id,
             member_name=member.display_name,

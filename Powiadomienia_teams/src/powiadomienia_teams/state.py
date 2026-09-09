@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from powiadomienia_teams.domain.tozsamosc import ten_sam
+
 logger = logging.getLogger(__name__)
 
 _SUFIKS_KOPII = ".bak"
@@ -131,6 +133,18 @@ class PendingReminder:
 
 _FIELDS = {f.name for f in fields(PendingReminder)}
 
+# Typ, jakiego warstwa wyżej OCZEKUJE od każdego pola — wyprowadzony z adnotacji, nie wypisany
+# ręcznie: nowe pole wchodzi tu samo, a takie, którego adnotacji ta mapa nie zna, wywraca import.
+# To właściwy kierunek: literówka w typie ma paść przy starcie usługi, a nie w piątek u klienta.
+#
+# Adnotacje są NAPISAMI (`from __future__ import annotations`), więc bierzemy człon przed `[`.
+# `list[dict[str, Any]]` → `list` wystarcza: głębiej i tak nie da się sprawdzić bez powtarzania
+# schematu, a wołającym chodzi wyłącznie o to, żeby iteracja i indeksowanie nie rzuciły.
+_TYPY_POL: dict[str, type] = {
+    f.name: {"str": str, "int": int, "bool": bool, "list": list}[f.type.split("[")[0].strip()]
+    for f in fields(PendingReminder)
+}
+
 
 class StateUnreadableError(RuntimeError):
     """Plik stanu ISTNIEJE, ale nie dało się go odczytać — treść jest NIEZNANA, nie pusta.
@@ -190,12 +204,33 @@ def _wczytaj(path: Path, *, cicho: bool = False) -> dict[str, PendingReminder] |
     # ``TypeError`` — i to w miejscu, gdzie ``_record_failure`` miał już tylko „odpuścić" tę
     # wiadomość, więc pending grzązłby w pętli ponowień. Odsianie ``None`` przywraca default,
     # spójnie z tolerancją wobec starych plików bez tych pól.
+    #
+    # **To samo dotyczy ZŁEGO TYPU, nie tylko ``null``** — i to jest miejsce, w którym tamto
+    # założenie („znaczniki czasu są napisem") ma być EGZEKWOWANE, a nie tylko opisane. Bez tego
+    # ``week_start`` będący liczbą (ręczna edycja pliku, dryf schematu, cofnięcie obrazu wbrew N34)
+    # przechodził tędy nietknięty, a wywracał się dopiero w ``lifecycle._poczatek_tygodnia``:
+    # ``date.fromisoformat`` rzuca wtedy ``TypeError``, którego tamten ``except ValueError`` nie
+    # łapie. Awaria wypadała w ``poll_replies`` POZA izolacją per-osoba (kroki 1.5/1.6/2 wołają
+    # ``should_expire`` wprost), więc jeden uszkodzony wpis kładł CAŁY obieg — deterministycznie,
+    # w każdym ticku, przy bijącym pulsie i zielonym healthchecku. Dokładnie ten stan, który reszta
+    # tego kodu nazywa najgorszym: usługa wygląda na zdrową i nie robi nic.
+    #
+    # Pole WYMAGANE ze złym typem zniknie z ``kwargs`` i konstruktor rzuci ``TypeError`` niżej,
+    # czyli wpis zostanie pominięty z ostrzeżeniem — tak jak każdy inny nieczytelny. Pole
+    # OPCJONALNE wraca do wartości domyślnej, jak przy ``null``.
     result: dict[str, PendingReminder] = {}
     for key, value in raw.items():
         try:
-            result[key] = PendingReminder(
-                **{k: v for k, v in value.items() if k in _FIELDS and v is not None}
-            )
+            # Adnotacja JAWNA, bo `isinstance` z typem podanym ZMIENNĄ (`_TYPY_POL[k]`) nie zawęża
+            # `Any` do niczego użytecznego — mypy schodzi wtedy do `object` i odrzuca rozpakowanie
+            # do pól o konkretnych typach. Sprawdzenie zostaje w warunku, tu tylko nazywamy to,
+            # czym ten słownik jest: kwargsami konstruktora.
+            pola: dict[str, Any] = {
+                k: v
+                for k, v in value.items()
+                if k in _FIELDS and v is not None and isinstance(v, _TYPY_POL[k])
+            }
+            result[key] = PendingReminder(**pola)
         except (TypeError, AttributeError):
             ostrzez("Pomijam nieczytelny wpis stanu %r w %s", key, path)
     return result
@@ -218,6 +253,36 @@ def load_state(path: Path) -> dict[str, PendingReminder]:
         logger.warning("Odtworzono stan z kopii %s (%d wpisów)", kopia, len(stan))
         return stan
     return {}
+
+
+def klucz_wpisu(state: dict[str, PendingReminder], member_id: str) -> str:
+    """Klucz, pod którym leży wpis TEJ osoby — albo ``member_id``, gdy jej w stanie nie ma.
+
+    Idempotencja przebiegu („jedna prośba na osobę na tydzień", N15) opiera się WYŁĄCZNIE na tym,
+    czy ``runtime.nudge`` odnajdzie istniejący wpis. Do 0.2.22 szukał go przez ``state.get`` po
+    surowym identyfikatorze, czyli porównaniem znak w znak — jedyne takie miejsce w projekcie,
+    bo każde inne porównanie tożsamości idzie przez ``domain.tozsamosc.ten_sam`` (``nudge`` sam
+    robi tak w trzech innych linijkach). Graph nie obiecuje tej samej wielkości liter, więc
+    identyfikator oddany inaczej niż tydzień wcześniej nie trafiał w istniejący wpis: powstawał
+    DRUGI, obok pierwszego, na tę samą osobę i ten sam tydzień. Pracownik dostawał dwie prośby,
+    odpowiadał „tak" raz, a oba wpisy dochodziły do ``create_shift`` — który nie deduplikuje.
+    Sprawdzenie świeżości tego nie łapie (``SnapshotGrafiku`` memoizuje odczyt na cały przebieg,
+    więc drugi wpis widzi grafik sprzed pierwszego zapisu), a ``ensure_single_owner`` też nie
+    (obie strony jego porównania pochodzą z tego samego wpisu).
+
+    **Zwracamy KLUCZ, a nie znormalizowany identyfikator** — i to jest cała ostrożność tej funkcji.
+    ``domain.tozsamosc`` zakazuje wprost normalizowania „żywej" strony, bo klucze w pliku stanu to
+    surowe id z Graph zapisane tygodnie wcześniej, a ``PendingReminder.member_id`` idzie stąd
+    prosto do ``POST``-a tworzącego zmianę. Szukanie po tożsamości spełnia tamten zakaz: postać
+    zapisana zostaje nietknięta, zmienia się tylko sposób jej ODNAJDYWANIA.
+
+    Gdy wpisów tej osoby jest kilka (usterka zdarzyła się, zanim ta funkcja powstała), zwracamy
+    pierwszy; siatka w ``runtime.listener.poll_replies`` zgłosi resztę operatorowi.
+    """
+    for klucz, pending in state.items():
+        if ten_sam(pending.member_id, member_id):
+            return klucz
+    return member_id
 
 
 def daje_sie_odczytac(path: Path) -> bool:
