@@ -14,12 +14,27 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
-## [Nieopublikowane] — E1: pomiar kosztu modelu (bez zmian w kodzie usługi)
+## [0.2.24] — 2026-09-09
+
+Domknięcie pozycji **D5** i pomiar do **E1**. Dwie rzeczy w jednym wydaniu, obie wynikające
+z audytu, ale o zupełnie różnej wadze operacyjnej.
+
+**Zmiana widoczna dla pracowników jest JEDNA:** kto odezwie się po domknięciu tematu — po
+wygaśnięciu albo po własnej odmowie — przestaje być ignorowany. Do tej pory taka wiadomość nie
+była czytana nigdy. Nie dotyczy to tematów z JUŻ ZAPISANYM grafikiem: tam wznowienie jest
+niewykonalne, bo klient Graph nie ma kasowania ani zmiany zmiany, a `create_shift` nie deduplikuje.
+
+Druga część to sam pomiar, bez zmian w kodzie usługi — plus sprostowanie liczby, którą sam
+podałem dobę wcześniej i która była zawyżona 5–10×.
+
+Kontrakt stanu: jedno nowe pole opcjonalne (`wznowiono_at`) z bezpieczną wartością domyślną.
+
+### Pomiar kosztu modelu — i obalenie własnego oszacowania (E1)
 
 Pozycja E1 mówi: „sufit oparty na POMIARZE z pilotażu, nie na przypuszczeniu". Pomiar wykonany —
 i **obalił moje własne oszacowanie sprzed doby, zawyżone 5–10×**.
 
-### Zmierzone
+#### Zmierzone
 
 Sonda: 10 syntetycznych wiadomości (żadnych danych z produkcji) przez `interpret_reply` na
 `claude-haiku-4-5`, liczone linią logu C2 — czyli mechanizmem, który plan do tego przewidział.
@@ -35,7 +50,7 @@ Sonda: 10 syntetycznych wiadomości (żadnych danych z produkcji) przez `interpr
 Cache promptu potwierdzony jako WYŁĄCZONY (`cache-zapis=0, cache-odczyt=0`). Stały prefiks to
 **~98 % każdego żądania** — wiadomość pracownika jest przy nim szumem.
 
-### Zweryfikowany mechanizm — ważniejszy od samej liczby
+#### Zweryfikowany mechanizm — ważniejszy od samej liczby
 
 Koszt jest proporcjonalny do LICZBY WIADOMOŚCI, nie do czasu ani częstotliwości odpytywania.
 Sprawdzone wykonaniem: 20 obiegów nasłuchu bez nowej wiadomości → **0 wywołań modelu**;
@@ -43,7 +58,7 @@ Sprawdzone wykonaniem: 20 obiegów nasłuchu bez nowej wiadomości → **0 wywo�
 więc **nie istnieje scenariusz „rozbiegowy", którego sufit miałby pilnować** — a to była jedyna
 hipoteza, przy której E1 broniłaby się mimo znikomej kwoty.
 
-### Dwie przeszkody, na które pomiar natrafił
+#### Dwie przeszkody, na które pomiar natrafił
 
 Obie warto znać, zanim ktoś zaplanuje kolejny pomiar „z logu":
 
@@ -56,7 +71,7 @@ Obie warto znać, zanim ktoś zaplanuje kolejny pomiar „z logu":
   ale znaczy, że liczbę wymian trzeba liczyć NA BIEŻĄCO. Robi to od 0.2.23 licznik `interpretacje`
   (E4), który domknięcie przeżywa.
 
-### Rekomendacja
+#### Rekomendacja
 
 **Odrzucić E1** — sufit broniłby budżetu rzędu dwóch dolarów rocznie, a mechanizm wyklucza
 rozbieg. Sufity wobec NIEZAUFANEGO wejścia (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, sufity
@@ -67,13 +82,13 @@ to 98 % żądania — 90 % z $0,04 tygodniowo to nadal nic.
 **Decyzja należy do klienta.** Pozycja zostaje w planie jako `otwarte — rekomendacja: odrzucić`,
 z pełną tabelą; skasuję ją tak, jak skasowano `wzorzec.py`, na jedno słowo.
 
-## [Nieopublikowane] — D5, połowa druga: wznowienie rozmowy po domknięciu
+### Wznowienie rozmowy po domknięciu (D5, połowa druga)
 
 Domykała pozycję D5 — i zrobiła to **węziej, niż brzmiał plan**. Plan mówił „zdejmuje filtr
 `open_items`"; zdjęty w całości wpuściłby wpisy terminalne także do kroków 1.5–2, a każdy z nich
 orzeka o rozmowie TRWAJĄCEJ. Poszerzony został wyłącznie **krok 1 (odczyt)**.
 
-### Dodane
+#### Dodane
 
 - **Kto odezwie się po domknięciu tematu, przestaje być ignorowany.** Do tej pory `poll_replies`
   czytało wyłącznie wpisy otwarte, więc wiadomość napisana minutę po wygaśnięciu nie była czytana
@@ -96,14 +111,14 @@ orzeka o rozmowie TRWAJĄCEJ. Poszerzony został wyłącznie **krok 1 (odczyt)**
   grafikiem: 1") i znacznik w `--stan`. Ta sama miara co przy przypomnieniu, z tego samego
   powodu: dźwignia bez licznika jest zmianą, o której wiadomo tylko tyle, że weszła.
 
-### Zmienione — kontrakt
+#### Zmienione — kontrakt
 
 - **`DECLINED` przestaje być głuche.** Test `test_decline_ends_listening_without_changes`
   utrwalał, że po odmowie „nowa wiadomość NIE jest czytana"; został przepisany na
   `test_decline_konczy_pytanie_ale_nie_sluchanie`. To była cena implementacji, nie obietnica wobec
   pracownika: bot mówi „kończę przypominanie", czyli przestaje PYTAĆ — a nie „przestaję słuchać".
 
-### Co się NIE zmieniło
+#### Co się NIE zmieniło
 
 Wznowienie **samo nie zapisuje niczego**: temat wraca do `AWAITING_REPLY`, a `awaiting_yes`
 jest jawnie kasowane, więc samo „tak" po domknięciu trafia do reinterpretacji, nie w szybką
@@ -111,7 +126,7 @@ jest jawnie kasowane, więc samo „tak" po domknięciu trafia do reinterpretacj
 autorzy przewidzieli w komentarzach). Wznowiony temat nie wygasa też natychmiast, mimo że
 wznowienie następuje PO terminie — chroni go dolna granica kurtuazji.
 
-### Usterka złapana w trakcie
+#### Usterka złapana w trakcie
 
 Pierwsza wersja liczyła listę wznawialnych **po** wyjściu `if not open_items: return`. Ponieważ
 wpis wznawialny jest z definicji terminalny, do `open_items` nie wchodzi nigdy — cała pozycja była
