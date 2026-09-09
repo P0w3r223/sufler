@@ -1,4 +1,9 @@
-"""Zegar jako zależność wstrzykiwana — jedyne miejsce z `time.sleep` w pakiecie."""
+"""Zegar jako zależność wstrzykiwana — jedyne `time.sleep` na ścieżce do rejestru.
+
+Drugie i ostatnie w pakiecie siedzi w `assistant/caller.py` (drabinka ponowień SDK),
+na prawdziwym zegarze, bo `AnthropicCaller` nie przyjmuje `Clock`. Ten docstring mówił
+„jedyne miejsce" do 2026-09-09 i był nieprawdą od fazy 4 — audyt 2026-09-08, addendum.
+"""
 
 from __future__ import annotations
 

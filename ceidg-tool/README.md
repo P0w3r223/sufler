@@ -296,13 +296,22 @@ $env:PYTHONUTF8 = "1"
 .venv\Scripts\python -m pytest -q
 .venv\Scripts\python -m mypy ceidg_tool tests
 .venv\Scripts\ruff check ceidg_tool tests scripts
+.venv\Scripts\ruff format --check ceidg_tool tests scripts
 ```
+
+Bramki są cztery, nie trzy. `ruff format` bez `--check` **przepisuje pliki i nie umie
+paść**, więc w roli bramki niczego nie pilnuje; CI uruchamia wariant z `--check`.
 
 **cmd**: `set PYTHONUTF8=1` raz na sesję. **bash (Git Bash)**: `PYTHONUTF8=1 polecenie`
 albo `export PYTHONUTF8=1`.
 
-999 testów offline, żaden nie łączy się z siecią. To samo uruchamia CI
-(`.github/workflows/ci.yml`) na Linuksie i Windowsie, dla Pythona 3.11 i 3.12.
+**1247 testów przechodzi, jeden jest pomijany**, żaden nie łączy się z siecią. To samo
+uruchamia CI (`.github/workflows/ci.yml`) na Linuksie i Windowsie, dla Pythona 3.11 i 3.12.
+
+Pominięcie jest jedno i nie jest szumem: atrapa trybu demo nie obsługuje końcówki
+`/raporty`, więc test pisowni identyfikatorów nie ma dla niej czego sprawdzić. To ta sama
+otwarta krawędź dema, którą wymienia `docs/status.md`, i jedyne miejsce, w którym widać ją
+z poziomu bramki. Suita mówiąca **1248 passed** znaczy, że ścieżka raportowa dostała atrapę.
 
 Sonda API: `PYTHONUTF8=1 python scripts/ceidg_probe.py --env prod --skip-raport` (raport
 w `probe_out/`; host testowy nie odpowiada, więc sonda wymaga zgody na produkcję).

@@ -133,13 +133,18 @@ the only module allowed to hand `rich` a string from outside — that is boundar
 ## Commands
 
 ```
-PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 1247 offline tests, no network
+PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 1247 pass + 1 skip, no network
 PYTHONUTF8=1 .venv/Scripts/python -m mypy ceidg_tool tests
 .venv/Scripts/ruff check ceidg_tool tests scripts
 .venv/Scripts/ruff format --check ceidg_tool tests scripts   # --check, because bare `format` rewrites and cannot fail
 PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool     # the wizard
 PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool pobierz --demo -w wielkopolskie --szczegoly
 ```
+
+The single skip is `tests/test_api_traits.py::test_atrapa_demo_zgadza_sie_ze_zmierzona_pisownia[raporty]`:
+the demo double serves no `/raporty`, which is the open demo edge `docs/status.md` names. It is the
+one place that gap is visible from a gate, so a suite reporting **1248 passed** means the report path
+got a double — not that the skip was tidied away.
 
 The last one needs no token and reaches no register — use it to see the tool work before
 touching anything real.
@@ -302,3 +307,10 @@ by `scripts/anonymize_samples.py`; raw samples live in the git-ignored `probe_ou
 
 A phase that touches behaviour ends with a code review, and a review finding is applied or argued
 against explicitly, not silently dropped.
+
+And the one rule from the top of this file that a long session must still have in view: **no
+request reaches production without the owner's consent, given in the current session**, and
+`--srodowisko prod --produkcja` is passed explicitly. The token's payload carries a PESEL and the
+register holds real people, so this is the only action here that cannot be taken back. It is
+restated at the end deliberately: opening context loses weight as a session fills, and this is
+the sentence that must not be the one that fades.
