@@ -501,6 +501,48 @@ def merge_sources(raw: RawRecord) -> dict[str, Any]:
     return merged
 
 
+KOLUMNY_TYLKO_ZE_SZCZEGOLOW: frozenset[str] = frozenset(
+    {
+        "telefon",
+        "email",
+        "www",
+        "adres_doreczen_elektronicznych",
+        "adres_korespondencyjny",
+        "pkd_glowny_kod",
+        "pkd_glowny_nazwa",
+        "pkd_wszystkie",
+        "liczba_pkd",
+        "liczba_spolek",
+        "obywatelstwa",
+        "wspolnosc_majatkowa",
+        "rok_pkd",
+    }
+)
+"""Kolumny `Firmy`, których lista podstawowa (`/firmy`) **nie jest w stanie** wypełnić.
+
+Odpowiednik `reports.UNFILLED_COLUMNS` dla drugiego niepełnego źródła — i powstał z tego
+samego powodu. Skoroszyt z trybu `lista` pokazywał 43 kolumny, z czego 22 puste w każdym
+wierszu (pomiar na skoroszycie z przebiegu demo, 48 rekordów — na prawdziwych fixtures `/firmy`
+niżej wychodzi 18; te cztery różnicy to daty statusowe, których żaden aktywny wpis nie niesie),
+**nic nie ukrywał** i do tego meldował w podsumowaniu „z telefonem 0 (0%)". Ta
+liczba czyta się jako pomiar („żadna z tych firm nie ma telefonu"), a jest strukturalną
+konsekwencją tego, że w trybie listy telefonów się nie pobiera. Ścieżka raportu, czyli
+źródło **rzadziej** używane, radziła sobie z tym lepiej: chowała kolumny i mówiła o tym
+dwoma zdaniami.
+
+Zbiór jest zmierzony, nie wypisany z pamięci: pilnuje go w `tests/test_pomoc_operatorowi.py`
+test `test_the_detail_only_columns_are_never_filled_by_the_list_endpoint`, wobec 38 prawdziwych
+(zanonimizowanych) rekordów `/firmy` z `tests/fixtures/` — żadna z tych kolumn nie ma w nich
+wartości ani razu. Kierunek jest ważny: ukrycie kolumny, która bywa
+wypełniona, jest defektem, a pominięcie kolumny zawsze pustej to tylko bałagan. Dlatego
+**nie ma** tu czterech kolumn dat statusowych (`data_zawieszenia`, `data_wznowienia`,
+`data_zakonczenia`, `data_wykreslenia`): w tych 38 rekordach są puste, ale wszystkie one są
+aktywne, więc pustka może pochodzić od danych, a nie od źródła. Nie ma tu też
+`dane_szczegolowe` — to jest właśnie ta kolumna, która mówi operatorowi, że szczegółów nie
+pobrano, więc ukrycie jej odwracałoby sens.
+"""
+
+
 def _row(data: Mapping[str, Any], specs: tuple[FieldSpec, ...]) -> dict[str, Any]:
     return {spec.name: extract(data, spec) for spec in specs}
 

@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ..criteria import WOJEWODZTWA
 from ..errors import ConfigError
 from . import texts
 
@@ -413,6 +414,47 @@ PODZIAL = Question(
     ),
     default="popraw",
     safe_default=False,
+)
+
+DOPYTANIE = Question(
+    id="dopytanie",
+    text="Co robimy?",
+    # Opcje buduje `flow._pytanie_dopytania`, bo zależą od tego, ile propozycji przysłał model.
+    default="1",
+    # `safe_default=False`: opis, z którego nie da się zbudować filtra, nie może w trybie
+    # nieinteraktywnym zamienić się w cokolwiek. Harmonogram ma na to plik zapytania.
+    safe_default=False,
+)
+
+WOJEWODZTWO_Z_LISTY = Question(
+    id="wojewodztwo_z_listy",
+    text=texts.WOJEWODZTWO_PYTANIE,
+    options=tuple(Option(nazwa, nazwa) for nazwa in WOJEWODZTWA),
+    default=WOJEWODZTWA[0],
+    safe_default=False,
+)
+"""Szesnaście pozycji ze zbioru zamkniętego — jedyne pytanie w tym narzędziu, na które nie da
+się odpowiedzieć źle. Dlatego stoi w rundzie dopytania jako droga niezależna od modelu."""
+
+RAPORT_NA_API = Question(
+    id="raport_na_api",
+    text="Pobrać zwykłą drogą przez API?",
+    default="tak",
+    # `safe_default=False`: harmonogram, który poprosił o tanią ścieżkę raportu, nie może po
+    # cichu wydać tysięcy zapytań, bo raportu akurat nie było. Interaktywnie pytanie pada,
+    # nieinteraktywnie kończy się zdaniem o tym, że tej decyzji nikt nie podejmie za operatora.
+    safe_default=False,
+)
+
+BRAK_TRAFIEN = Question(
+    id="brak_trafien",
+    text="Nic nie znaleziono. Co zrobić?",
+    # Opcje są dynamiczne (`flow._pytanie_brak_trafien`), bo zależą od tego, które filtry
+    # w ogóle są w kryteriach. Tu zostaje sam identyfikator, tekst i domyślna odpowiedź.
+    default="wyjdz",
+    # `safe_default=True` i domyślna „wyjdź": harmonogram z `--tak` ma po zerze trafień
+    # skończyć, a nie po cichu poszerzyć populację o filtr, którego nikt nie zdejmował.
+    safe_default=True,
 )
 
 NIP = Question(id="nip", text="Podaj NIP firmy", hint="10 cyfr, myślniki są dozwolone")

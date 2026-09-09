@@ -503,7 +503,8 @@ def pobierz(
             # przeczytał. Jego drogą jest plik YAML, zapisywany przez kreator z wyniku asystenta.
             z_opisu = flow.collect_from_description(deps, prompter, view, opis=opis)
             if z_opisu is None:
-                raise ConfigError(texts.ASSISTANT_UNAVAILABLE)
+                # `None` znaczy „operator wybrał pytania po kolei", a nie „asystenta nie ma".
+                raise ConfigError(texts.OPIS_PORZUCONY)
             criteria = z_opisu
         if criteria.is_empty():
             raise ConfigError(texts.EMPTY_CRITERIA)

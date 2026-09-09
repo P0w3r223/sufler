@@ -147,18 +147,30 @@ def test_leaving_issues_no_fetch_request(tmp_path: Path, clock: FakeClock) -> No
     deps.store.close()
 
 
-def test_a_zero_hit_query_stops_before_the_choice(tmp_path: Path, clock: FakeClock) -> None:
-    """Zero trafień to nie błąd, ale i nie ma o co pytać — przepływ kończy się komunikatem."""
+def test_a_zero_hit_query_offers_a_way_out_instead_of_ending(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """Zero trafień **pyta**, co dalej — nie kończy się komunikatem.
+
+    Test odwrócił się 2026-09-09 i to jest jego treść. Wcześniej brzmiał „nie ma o co pytać”
+    i pilnował zachowania, w którym przepływ zwracał `wyjdz` **przed** pytaniem „Co dalej?”,
+    czyli jedyna pozycja pozwalająca poprawić kryteria nie pojawiała się przy zerze nigdy.
+    Dla kogoś, kto nie wie dokładnie, czego szuka, była to najczęstsza ścieżka i jedyna bez
+    wyjścia. `PLAIN` ma jeden filtr, więc nie ma czego zdejmować — zostaje droga „opiszę to
+    inaczej", i ona też musi być na ekranie.
+    """
     api = counting_api(0)
     deps = deps_for(tmp_path, clock, api)
     view = RecordingView()
-    prompter = ScriptedPrompter({})
+    prompter = ScriptedPrompter({"brak_trafien": "wyjdz"})
 
     decision, plan = flow.prepare_fetch(PLAIN, deps, prompter, view, threshold=THRESHOLD)
 
     assert decision == "wyjdz" and plan.count == 0
-    assert prompter.asked == []  # żadnego pytania
-    assert "Brak firm spełniających kryteria." in view.messages
+    assert prompter.asked == ["brak_trafien"]
+    tresc = view.block_titled("Nic nie znaleziono").as_text()
+    assert "To był jedyny filtr" in tresc
+    assert len(count_requests(api)) == 1  # brak trafień nie kosztuje drugiego zapytania
     deps.store.close()
 
 
@@ -415,14 +427,43 @@ def test_a_query_the_report_cannot_cover_never_asks_about_it(
     deps.store.close()
 
 
-def test_asking_for_the_report_source_when_none_exists_is_a_configuration_error(
+def test_asking_for_the_report_source_when_none_exists_offers_the_api_instead(
     tmp_path: Path, clock: FakeClock
 ) -> None:
-    """`--zrodlo raport` bez pokrywającego raportu ma powiedzieć wprost, co zrobić."""
+    """Brak pokrywającego raportu podaje **powód** i proponuje zwykłą drogę.
+
+    Test odwrócił się 2026-09-09. Wcześniej pilnował wyjątku ze zdaniem „Użyj --zrodlo api
+    albo auto" i nazywał to „powiedzieć wprost, co zrobić" — ale w kreatorze, czyli w tym
+    wejściu, dla którego to narzędzie powstało, żadnej flagi `--zrodlo` nie ma. Operator
+    tracił kryteria, wracał do menu i nie dowiadywał się nawet, dlaczego raport odpadł.
+    """
+    api = report_api(1_240, reports=[])
+    deps = deps_for(tmp_path, clock, api)
+    view = RecordingView()
+    prompter = ScriptedPrompter({"raport_na_api": True, "co_dalej": "lista"})
+
+    decision, plan = flow.prepare_fetch(
+        criteria(wojewodztwo="podlaskie"), deps, prompter, view, source="raport"
+    )
+
+    assert decision == "lista" and plan.count == 1_240
+    assert prompter.asked == ["raport_na_api", "co_dalej"]
+    assert "nie ma dziś gotowego raportu" in view.block_titled("Gotowy raport").as_text()
+    deps.store.close()
+
+
+def test_a_schedule_that_asked_for_the_report_never_falls_back_to_thousands_of_requests(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """`--zrodlo raport --tak`: brak raportu kończy się odmową, nie cichym wydatkiem.
+
+    Ta gałąź jest powodem, dla którego pytanie ma `safe_default=False`. Zadanie
+    z harmonogramu poprosiło o dwa zapytania; podmiana na tyle, ile stron ma wynik, byłaby
+    decyzją o cudzych pieniądzach podjętą bez nikogo przy klawiaturze."""
     api = report_api(1_240, reports=[])
     deps = deps_for(tmp_path, clock, api)
 
-    with pytest.raises(ConfigError, match="--zrodlo api"):
+    with pytest.raises(ConfigError, match="nie podejmuje tej decyzji"):
         flow.prepare_fetch(
             criteria(wojewodztwo="podlaskie"),
             deps,

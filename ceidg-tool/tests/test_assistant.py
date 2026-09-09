@@ -266,6 +266,16 @@ POZA_ZASIEGIEM_MODELU = {
     "pkd_2007",  # rozszerzenie o rocznik 2007: wybór populacji zapada na ekranie, nie w modelu
 }
 
+# Pola schematu, które **nie są filtrami** i dlatego nie mają odpowiednika w `Criteria`.
+# Wymienione po nazwie, a nie pominięte warunkiem, bo to jest dokładnie ta lista, która ma
+# rosnąć świadomie: pole dopisane do schematu i zapomniane w `to_criteria` cicho poszerza
+# zapytanie, a wyjątek wpisany tutaj bez powodu jest sposobem, żeby ten test uciszyć.
+NIE_SA_FILTRAMI = {
+    "ograniczenia",  # kody tego, czego rejestr nie potrafi — zdania układa `ui/texts.py`
+    "pytanie",  # runda dopytania (ADR-0017): pytanie modelu, gdy nie powstał żaden filtr
+    "propozycje",  # runda dopytania: gotowe zdania, które wracają do modelu jako nowy opis
+}
+
 
 # Odpowiedź z **każdym** polem wypełnioną wartością rozróżnialną. Służy do sprawdzenia, że
 # tłumaczenie niczego nie gubi — a nie do sprawdzenia, że pola istnieją.
@@ -306,7 +316,7 @@ def test_every_answer_field_reaches_criteria() -> None:
     przejście przez tłumaczenie z wartościami rozróżnialnymi (łapie pole **przestające**
     docierać).
     """
-    pola_modelu = set(AssistantAnswer.model_fields) - {"ograniczenia"}
+    pola_modelu = set(AssistantAnswer.model_fields) - NIE_SA_FILTRAMI
     pola_kryteriow = set(Criteria.model_fields) - POZA_ZASIEGIEM_MODELU
     assert pola_modelu == pola_kryteriow
 

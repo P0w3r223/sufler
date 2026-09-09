@@ -1215,6 +1215,73 @@ the docstring now says which choices are measured and which are defaults. Settli
 
 Tiers B, C and D, and the reasoning behind each deferral, are in the audit document.
 
+## Phase 6 — the UX pass that found three dead ends (2026-09-09)
+
+**How it was measured.** A harness drove the *real* wizard (`wizard.run_wizard`, `flow`,
+`ConsoleView`) with a scripted operator — the only substitution was the human — against the demo
+register with the **live** assistant. Eleven scenarios, seven interpretations, **zero CEIDG
+requests**. The report path was exercised separately on the real 21 MB wielkopolskie archive
+already in `probe_out/`, placed in the cache directory so neither network request fired: 287 256
+rows filtered in 13 s, 281 records for Gniezno, the workbook produced and then deleted.
+
+**What held.** Two words (`fryzjer poznań`) → `miasto: Poznań; PKD: 9621Z`. Two typos
+(`fryzjezy w poznaiu`) → identical. An impossible filter (`duże firmy IT w Warszawie`) → four PKD
+codes plus three limitation sentences, no refusal. A NIP with dashes → the firm card with the
+hostile name neutralised and the public-search link.
+
+**What did not, and it was one shape three times: a message, the lost description, the menu.**
+
+| Path | Old behaviour | Now |
+|---|---|---|
+| `wszystkie firmy` | empty interpretation screen, default answer **"tak, szukaj"**, then `Błąd: Podaj przynajmniej jedno kryterium` | clarification round (ADR-0017) |
+| any 0-hit query | one sentence and `wyjdz`, so *"popraw kryteria"* never appeared at a zero | menu of ranked widenings, each with its reason |
+| report not covering the criteria | `ConfigError` naming `--zrodlo`, a flag the wizard does not have | the reason, then an offer of the API path |
+
+Three smaller findings from the same runs, all fixed: a bad NIP printed a raw `ValidationError`
+with a link to errors.pydantic.dev (the same leak sat in the wizard's form and had a third copy
+inside `assistant/translate.py` — now one `criteria.bledy_po_polsku`); the vintage question was
+asked even when both populations counted **zero**; and the demo's first screen said *"asystent
+wyłączony (brak klucza…)"* while pointing at the keyring, when the true reason is that
+`_settings_demo` deliberately reads neither `.env` nor the keyring.
+
+**And one the fix uncovered.** With contacts finally on screen, the list-path workbook turned out
+to report `z telefonem 0 (0%)` — a structural consequence of not fetching details, reading as a
+measurement. Measured on the demo run's workbook (48 records): **22 of 43 columns empty and none
+hidden** — 18 of them on the real anonymised `/firmy` fixtures, the other four being status dates
+no active entry carries. Meanwhile the
+report path — the rarer source — hid 12 and explained itself in two sentences. Both paths now
+behave the same way: `normalizer.KOLUMNY_TYLKO_ZE_SZCZEGOLOW` (13 columns, measured against 38 real
+anonymised `/firmy` records) is hidden, the screen says so, and the contact rows are replaced by a
+sentence naming what is missing and how to get it.
+
+Tests: **1247** (was 1227). New file `tests/test_pomoc_operatorowi.py`. Two older tests reversed
+their assertions and say so in their docstrings — both had been pinning the defect.
+
+**The report path closed on production the same day, with the owner's consent: exactly two
+requests.** `GET raporty` (1.11 s) then `GET raport` (7.12 s), quota counter 1000 → 999 → 998,
+21 MB archive of 2026-09-08, 282 records for Gniezno — one more than the 2026-09-05 archive held.
+And the run earned its keep immediately: the summary claimed *"telefon i e-mail: nie pobrano"*
+for an export whose rows carried 63 phones and 68 e-mails. Contacts have **two** sources —
+`detail_json` on the API path and the CSV row on the report path — and the fresh predicate saw
+only the first. A silent untruth fixed on the common path had become a loud one on the rare path.
+Corrected, then verified by re-exporting the same run from the store at zero further requests.
+
+**ADR-0017 accepted by the owner 2026-09-09**, after the production verification.
+
+**Code review of the whole change, same day** — no runtime defect, five text findings and four
+smaller ones, all applied. The one worth carrying forward: `prepare_fetch`'s docstring, the
+`flow` module header, `assistant/__init__.py` and CLAUDE.md all still promised *"najwyzej dwa
+`count`"* on a function that had just grown a loop spending one per accepted widening. That is
+the second time this sentence has gone stale (it said "exactly one" until 2026-09-08), and it is
+the sentence the next change reads first. Also found: the model's proposals reach the terminal
+as **option labels**, which bypass `richtext.safe` and land in `input(...)` — `strip_control`
+now runs in `translate._przytnij`, at the boundary; and the fresh contact predicate would have
+mis-hidden contact columns for a mixed report+API export, unreachable from today's CLI but
+closed anyway.
+
+**Open after this phase:** the model's proposals are generic when the description carries
+nothing to work from, which is inherent but worth re-reading after gate 3.
+
 ## Open items
 - ~~Repeated `miasto=` has never been measured~~ — **measured 2026-09-09, it is OR** (one
   production request: `miasto=Gdańsk&miasto=Wrocław` → `count = 242 415`). The owner's example

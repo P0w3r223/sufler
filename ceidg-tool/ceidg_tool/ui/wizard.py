@@ -15,7 +15,7 @@ import yaml
 from pydantic import ValidationError
 
 from ..config import safe_filename
-from ..criteria import Criteria
+from ..criteria import Criteria, bledy_po_polsku
 from ..errors import CeidgError, ConfigError
 from ..pipeline import (
     Deps,
@@ -148,7 +148,7 @@ def collect_criteria(prompter: Prompter, view: View, deps: Deps | None = None) -
         try:
             criteria = Criteria.model_validate(answers.values)
         except ValidationError as exc:
-            view.error(f"Niepoprawne kryteria: {exc}")
+            view.error(f"Niepoprawne kryteria:\n{bledy_po_polsku(exc)}")
             _retry_or_cancel(prompter)
             continue
         if criteria.is_empty():

@@ -13,7 +13,14 @@ from collections.abc import Iterable
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .apiprofile import ApiProfile
 
@@ -135,6 +142,29 @@ def format_pkd(compact: str, fmt: Literal["compact", "dotted"]) -> str:
     return compact
 
 
+def bledy_po_polsku(exc: ValidationError) -> str:
+    """Błędy pydantica jako zdania dla operatora, nie zrzut dla programisty.
+
+    Surowy `ValidationError` niesie `[type=value_error, input_value=(...), input_type=tuple]`
+    i odnośnik do errors.pydantic.dev. Dla kogoś, kto z założenia nie zna API — a taki jest
+    odbiorca tego narzędzia — użyteczna jest w tym jedna fraza w środku, reszta zasłania.
+
+    Funkcja stoi **tutaj**, przy walidatorach, bo trzy różne wejścia dostawały ten sam zrzut:
+    `sprawdz-nip` przy złej sumie kontrolnej, formularz kreatora przy złym roczniku daty
+    i asystent przy kryteriach nie do użycia. Trzecie miejsce miało własną kopię tej funkcji
+    od 2026-09-07; dwa pierwsze nie miały żadnej, więc poprawka w jednym z nich nie ruszała
+    pozostałych.
+    """
+    linie = []
+    for blad in exc.errors():
+        pole = ".".join(str(part) for part in blad["loc"]) or "kryteria"
+        # Pydantic dokleja do komunikatu własnego walidatora angielski prefiks
+        # („Value error, "), więc nasze polskie zdanie zaczynałoby się od cudzego.
+        tresc = blad["msg"].removeprefix("Value error, ").removeprefix("Assertion failed, ")
+        linie.append(f"  {pole}: {tresc}")
+    return "\n".join(linie)
+
+
 def _as_tuple(value: Any) -> tuple[Any, ...]:
     if value is None:
         return ()
@@ -246,6 +276,65 @@ class Criteria(BaseModel):
         return not any(getattr(self, f) for f in _LIST_FIELDS) and not (
             self.data_od or self.data_do
         )
+
+    def poszerzenia(self, *, limit: int = 4) -> tuple[tuple[str, Criteria], ...]:
+        """Kandydaci na zdjęcie **jednego** filtra — od najczęstszej przyczyny pustego wyniku.
+
+        Zwraca pary `(pole, kryteria bez tego pola)`. Nazwę pola po polsku układa `ui/texts`;
+        tutaj zostaje sama decyzja, które filtry są najbardziej podejrzane i w jakiej
+        kolejności — bo to jest twierdzenie o rejestrze, nie o wyglądzie ekranu, i jako takie
+        daje się sprawdzić testem bez terminala.
+
+        Kolejność nie jest dowolna. Filtry tekstowe dopasowują się dosłownie, więc jedna
+        literówka zeruje wynik i to one idą pierwsze. `miasto` jest w tej grupie mimo pozorów:
+        rejestr trzyma nazwę urzędową, a operator pisze potocznie albo podaje dzielnicę.
+        `pkd` jest osobnym przypadkiem i dlatego stoi zaraz za nimi — kod może być poprawny,
+        żywy w PKD 2025 i mimo to nie występować na żadnym wpisie w regionie, bo 58,6 %
+        rejestru zostało jeszcze przy roczniku 2007 (`docs/adr/0012`). Statusy i daty są
+        najmniej podejrzane, bo pochodzą ze zbiorów zamkniętych i z kalendarza.
+
+        Zdjęcie `pkd` czyści **oba** pola: `pkd_2007` jest rozszerzeniem tego samego filtru
+        (ADR-0012), więc kandydat, który zostawiłby stare kody, nie byłby poszerzeniem — dalej
+        odsiewałby po branży, tylko innym rocznikiem.
+
+        Kandydat, który opróżniłby kryteria do zera, nie powstaje: zapytanie bez ani jednego
+        filtra obejmuje cały rejestr i `Criteria` odmawia go gdzie indziej. Lepsze „to był
+        jedyny filtr" niż propozycja, której nie da się przyjąć.
+        """
+        kolejnosc = (
+            "nazwa",
+            "ulica",
+            "kod",
+            "imie",
+            "nazwisko",
+            "miasto",
+            "pkd",
+            "gmina",
+            "powiat",
+            "status",
+            "daty",
+            "wojewodztwo",
+        )
+        out: list[tuple[str, Criteria]] = []
+        for pole in kolejnosc:
+            if pole == "daty":
+                if not (self.data_od or self.data_do):
+                    continue
+                kandydat = self.model_copy(update={"data_od": None, "data_do": None})
+            elif pole == "pkd":
+                if not self.wszystkie_pkd():
+                    continue
+                kandydat = self.model_copy(update={"pkd": (), "pkd_2007": ()})
+            else:
+                if not getattr(self, pole):
+                    continue
+                kandydat = self.model_copy(update={pole: ()})
+            if kandydat.is_empty():
+                continue
+            out.append((pole, kandydat))
+            if len(out) >= limit:
+                break
+        return tuple(out)
 
     def to_params(self, profile: ApiProfile) -> list[tuple[str, str]]:
         """Parametry zapytania `/firmy` w dialekcie profilu, posortowane kanonicznie."""

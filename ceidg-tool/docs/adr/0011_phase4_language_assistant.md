@@ -381,14 +381,26 @@ an operator can check. A wrong code is invisible; a wrong *name* is obvious.
 | **B (chosen). Structured fields → code-authored block** | Assertable offline, single-sourced with the wizard, and it cannot drift from what `Criteria` actually holds because it *is* `criteria.describe()`. |
 | C. Code block plus model prose alongside | Rejected. Two summaries on one screen and the operator cannot tell which one binds. |
 
-**No clarification round trip in v1.** Ambiguity ("duże firmy") comes back as a limitation code and a
-partially-filled `Criteria`, not as a question. The remedies are "popraw opis" and "pytania po
-kolei". This keeps ADR-0008 Decision 2's rejection of a session state machine intact — the assistant
-plugs into `Criteria`, not into the session.
+**No clarification round trip in v1 — reversed 2026-09-09 by ADR-0017, for the empty case only.**
+The rule was: ambiguity ("duże firmy") comes back as a limitation code and a partially-filled
+`Criteria`, not as a question; the remedies are "popraw opis" and "pytania po kolei". That holds
+wherever the criteria are *partially* filled, and it still does. It never covered the case where
+**nothing** is filled — there is no partial result to show and the limitation codes have nothing
+to attach to — and there the wizard put an empty interpretation on screen, defaulted the
+confirmation to "tak, szukaj", and answered the Enter with `Podaj przynajmniej jedno kryterium`.
+ADR-0017 adds one round in exactly that case. ADR-0008 Decision 2's rejection of a session state
+machine stays intact: one round, then the ordinary sequence, and the assistant still plugs into
+`Criteria` rather than into a session.
 
-**Cost disclosure**: one rate line, not a table — *"asystent: ok. 18 tys. tokenów na pytanie,
-ułamek grosza; nie wysyła pobranych rekordów"*. Precedent is ADR-0010 Decision 4, which chose a rate
-over a total when the multiplicand is unknown.
+**Cost disclosure — withdrawn 2026-09-09.** The interpretation screen carried one rate line
+(*"asystent: jedno pytanie to ok. 25 tys. tokenów, ułamek grosza; nie wysyła pobranych rekordów"*,
+18 k as first written, corrected to 25 k after run A7 measured it). The owner removed it: unlike the
+request cost table, which precedes a fetch and gates a spend the operator can still refuse, this
+rate gates nothing — the question has already been asked and paid for by the time the screen
+appears, and a fraction of a grosz changes no decision. The egress half of the sentence does not go
+with it; the first screen's *"dokąd wysyła asystent"* row states what reaches `api.anthropic.com`
+before any key is used. ADR-0010 Decision 4 (rate over total when the multiplicand is unknown)
+stands where it applies — the cost table.
 
 ---
 

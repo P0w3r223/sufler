@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from ..batching import GRANULARITY_LABEL, Batch, BatchPlan
 from ..config import DEMO_OSTRZEZENIE, TOKEN_SERVICE_URL, Settings
@@ -119,7 +119,7 @@ def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool 
     rows: tuple[tuple[str, str], ...] = (
         ("co robi", PROGRAM_PURPOSE),
         ("dokąd wysyłam rekordy", zrodlo),
-        ("dokąd wysyła asystent", _assistant_destination(settings)),
+        ("dokąd wysyła asystent", _assistant_destination(settings, demo=demo)),
         ("środowisko", "POKAZ (bez rejestru)" if demo else environment),
         ("token", f"{settings.token_info.validity_text(now)} (źródło: {settings.token_source})"),
         ("dane i wyniki", str(settings.data_dir)),
@@ -133,16 +133,84 @@ def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool 
     return Block(title=tytul, rows=rows, notes=tuple(notes))
 
 
-def _assistant_destination(settings: Settings) -> str:
+def _assistant_destination(settings: Settings, *, demo: bool = False) -> str:
     """Wiersz §A o asystencie — rozdzielony od wiersza o rekordach, bo cele są różne.
 
     Do 2026-09-07 pierwszy ekran mówił „wyłącznie do API CEIDG". To jest kryterium odbioru §A
     i przestawało być prawdą w chwili użycia asystenta, więc wiersz musiał się rozdwoić:
     rekordy idą wyłącznie do CEIDG, a do modelu — treść pytania i słownik PKD, nigdy rekordy.
+
+    Brak klucza ma **dwie różne przyczyny** i do 2026-09-09 obie dostawały to samo zdanie
+    „brak klucza — zapisz go poleceniem…". W pokazie było ono nieprawdą podwójnie: klucz
+    zwykle istnieje (w `.env`), a polecenie z podpowiedzi pisze do keyringu, którego tryb
+    pokazu celowo nie czyta — `_settings_demo` woła `load_settings(env_file=None,
+    use_keyring=False)`, żeby produkcyjny token z PESEL-em w ładunku nie miał którędy wejść.
+    Operator dostawał więc wskazanie palcem na rzecz, która akurat działa, i nie miał jak
+    zobaczyć asystenta w pokazie — czyli w jedynym miejscu, gdzie wolno go poznawać bez
+    prawdziwych danych osobowych.
     """
-    if settings.anthropic_key is None:
-        return "asystent wyłączony (brak klucza: `ceidg-tool token zapisz --asystent`)"
-    return "treść Twojego pytania i słownik PKD do api.anthropic.com; pobrane rekordy — nigdy"
+    if settings.anthropic_key is not None:
+        return "treść Twojego pytania i słownik PKD do api.anthropic.com; pobrane rekordy — nigdy"
+    if demo:
+        return (
+            "asystent wyłączony — pokaz nie czyta klucza z .env ani z keyringu; "
+            "włącz go zmienną środowiskową ANTHROPIC_API_KEY"
+        )
+    return "asystent wyłączony (brak klucza: `ceidg-tool token zapisz --asystent`)"
+
+
+# ------------------------------------------------------- runda dopytania (ADR-0017)
+
+DOPYTANIE_ZAPASOWE: Final = (
+    "Nie wyciągnąłem z tego zdania ani jednego filtru. Powiedz cokolwiek konkretnego — "
+    "wystarczy miejscowość albo czym firma się zajmuje."
+)
+"""Pytanie układane **przez kod**, gdy model nie zadał własnego.
+
+Siatka bezpieczeństwa, nie ozdoba: gdyby ekran dopytania zależał wyłącznie od tego, czy model
+wypełnił `pytanie`, to obietnica „pusty opis nigdy nie kończy się błędem” trzymałaby się
+zachowania modelu, czyli nie byłaby obietnicą. `flow` wchodzi w rundę na podstawie **pustych
+kryteriów**, a nie na podstawie tego, czy model o coś zapytał."""
+
+DOPYTANIE_JAK_DZIALA: Final = (
+    "Wybierz gotowe zdanie albo napisz własne — i tak zobaczysz, co z tego zrozumiałem, "
+    "zanim cokolwiek ruszy do rejestru."
+)
+
+WOJEWODZTWO_PYTANIE: Final = "Z którego województwa?"
+
+
+def clarification(opis: str, pytanie: str) -> Block:
+    """Ekran rundy dopytania: co napisał operator, o co pyta asystent, co można wybrać.
+
+    Do 2026-09-09 ta sytuacja kończyła się tak: pusty ekran interpretacji („rozumiem jako:
+    tylko lista podstawowa”), pytanie „Czy tak rozumiem Twoje zapytanie?” z domyślną
+    odpowiedzią **tak**, a po Enterze `Błąd: Podaj przynajmniej jedno kryterium` i powrót do
+    menu **bez opisu**. Trzy rzeczy naraz: pytanie o zgodę na nic, domyślna odpowiedź
+    prowadząca w błąd i utrata tego, co operator już napisał.
+    """
+    # Propozycje **nie** są tu wierszami: niesie je menu z `clarification_menu`, a wypisanie
+    # ich dwa razy kazałoby operatorowi zgadywać, czy to ta sama lista. Parametr `propozycje`
+    # stał w sygnaturze nieużywany do przeglądu 2026-09-09 i mówił czytelnikowi nieprawdę
+    # o tym, co ten ekran pokazuje.
+    rows = [("Twoje zdanie", opis), ("asystent pyta", pytanie or DOPYTANIE_ZAPASOWE)]
+    return Block(title="Doprecyzujmy", rows=tuple(rows), notes=(DOPYTANIE_JAK_DZIALA,))
+
+
+def clarification_menu(propozycje: Sequence[str]) -> tuple[tuple[str, str], ...]:
+    """Pozycje rundy dopytania: `(akcja, etykieta)` w kolejności wyświetlania.
+
+    Propozycje modelu idą pierwsze, bo są konkretne i jednym naciśnięciem kończą sprawę.
+    Za nimi dwie drogi, które **nie potrzebują modelu** i dlatego są tu zawsze: wybór
+    województwa z listy szesnastu (zbiór zamknięty, więc nie da się go napisać źle) i własne
+    zdanie. Dopiero na końcu formularz i wyjście — bo odesłanie do formularza jest tym
+    zachowaniem, które ta runda ma zastąpić, a nie tym, do którego ma prowadzić."""
+    pozycje: list[tuple[str, str]] = [(f"opis:{i}", zdanie) for i, zdanie in enumerate(propozycje)]
+    pozycje.append(("wojewodztwo", "wybiorę województwo z listy"))
+    pozycje.append(("wlasny", "napiszę to inaczej"))
+    pozycje.append(("pytania", "przejdę do pytań po kolei"))
+    pozycje.append(("wyjdz", "wróć do menu"))
+    return tuple(pozycje)
 
 
 OGRANICZENIA_ZDANIA: Final[dict[str, str]] = {
@@ -165,10 +233,6 @@ ASSISTANT_THINKING: Final = (
     "Licznik poniżej pokazuje upływ czasu; do rejestru nie idzie jeszcze żadne zapytanie."
 )
 
-ASYSTENT_KOSZT: Final = (
-    "asystent: jedno pytanie to ok. 25 tys. tokenów, ułamek grosza; nie wysyła pobranych rekordów"
-)
-
 
 def interpretation(
     opis: str,
@@ -189,8 +253,13 @@ def interpretation(
     ]
     if kody_pkd:
         rows.append(("PKD", "; ".join(f"{kod} — {nazwa}" for kod, nazwa in kody_pkd)))
+    # Uwagi to **wyłącznie** ograniczenia rejestru. Wiersz o koszcie asystenta (ok. 25 tys.
+    # tokenów, ułamek grosza) stał tu do 2026-09-09 i został usunięty na wniosek właściciela:
+    # ekran interpretacji jest jedynym tekstem, na podstawie którego operator działa, a stawka
+    # za pytanie nie wpływa na żadną jego decyzję — w odróżnieniu od tabeli kosztów żądań,
+    # która wciąż poprzedza pobieranie. Deklaracja „co idzie do api.anthropic.com" nie znika:
+    # niesie ją wiersz „dokąd wysyła asystent" na pierwszym ekranie (`first_screen`).
     notes = [OGRANICZENIA_ZDANIA[kod] for kod in ograniczenia if kod in OGRANICZENIA_ZDANIA]
-    notes.append(ASYSTENT_KOSZT)
     return Block(title="Interpretacja", rows=tuple(rows), notes=tuple(notes))
 
 
@@ -241,6 +310,96 @@ def hints_block() -> Block:
             ("daty", "RRRR-MM-DD, filtr dotyczy daty rozpoczęcia działalności"),
         ),
     )
+
+
+# ------------------------------------------------------------------- zero trafień (pomoc)
+
+POLE_PO_POLSKU: Final[dict[str, str]] = {
+    "nazwa": "fragmentu nazwy",
+    "ulica": "ulicy",
+    "kod": "kodu pocztowego",
+    "imie": "imienia",
+    "nazwisko": "nazwiska",
+    "miasto": "miejscowości",
+    "pkd": "branży (kodu PKD)",
+    "gmina": "gminy",
+    "powiat": "powiatu",
+    "status": "statusu",
+    "daty": "zakresu dat",
+    "wojewodztwo": "województwa",
+}
+"""Nazwy filtrów w dopełniaczu — wchodzą do zdania „spróbuj bez …”."""
+
+DLACZEGO_PUSTO: Final[dict[str, str]] = {
+    "nazwa": "dopasowuje się dosłownie, więc odmiana albo skrót w rejestrze go omija",
+    "ulica": "rejestr zapisuje ją różnie („Kwiatowa”, „ul. Kwiatowa”), więc łatwo się rozminąć",
+    "kod": "jedna cyfra obok i nie pasuje już nic",
+    "imie": "wpis nosi imię przedsiębiorcy, nie nazwę firmy — łatwo je pomylić",
+    "nazwisko": "wpis nosi nazwisko przedsiębiorcy, nie nazwę firmy — łatwo je pomylić",
+    "miasto": "rejestr trzyma nazwę urzędową; dzielnica albo nazwa potoczna nie trafia",
+    # To jest ten sam pomiar, który stoi w ADR-0012, i najczęstsza przyczyna pustki przy
+    # poprawnym kodzie: kod może żyć w PKD 2025 i mimo to nie stać na żadnym wpisie w regionie.
+    "pkd": "kod bywa poprawny, a nieużywany — 58,6 % wpisów wciąż ma rocznik PKD 2007",
+    "gmina": "nazwa gminy bywa inna niż nazwa miejscowości",
+    "powiat": "miasto na prawach powiatu ma powiat równy swojej nazwie, nie przymiotnikowi",
+    "status": "wpisy bywają zawieszone albo wykreślone, a filtr statusu je odsiewa",
+    "daty": "filtr dotyczy wyłącznie daty rozpoczęcia działalności, nie daty zmiany wpisu",
+    "wojewodztwo": "miejscowość mogła zostać przypisana do innego województwa niż podane",
+}
+"""Dlaczego **akurat ten** filtr bywa winny pustki. Klucze muszą pokrywać się z
+`POLE_PO_POLSKU` i z kolejnością w `Criteria.poszerzenia` — pilnuje tego test, bo filtr bez
+zdania wypadłby z ekranu po cichu, czyli dokładnie wtedy, gdy jest jedyną propozycją."""
+
+BRAK_TRAFIEN_KOSZT: Final = (
+    "Każde sprawdzenie to jedno zapytanie do rejestru — nic się jeszcze nie pobiera."
+)
+
+BRAK_TRAFIEN_JEDYNY_FILTR: Final = (
+    "To był jedyny filtr, więc nie ma czego zdjąć — zapytanie bez żadnego objęłoby cały "
+    "rejestr. Opisz to inaczej: inna miejscowość, inna branża albo szerszy region."
+)
+
+
+def zero_hits(criteria: Criteria, propozycje: Sequence[tuple[str, Criteria]]) -> Block:
+    """Ekran zera trafień: co sprawdzono i **co konkretnie** można z tym zrobić.
+
+    Do 2026-09-09 w tym miejscu padało jedno zdanie „Brak firm spełniających kryteria”,
+    po czym przepływ zwracał `wyjdz` — pytanie „Co dalej?” z pozycją „popraw kryteria” nie
+    pojawiało się przy zerze **nigdy**, bo zero wychodziło wcześniej. Operator wracał do menu
+    i przepisywał opis od zera, nie dowiedziawszy się niczego o tym, który filtr był winny.
+    A to jest najczęstsza ścieżka kogoś, kto nie wie dokładnie, czego szuka.
+
+    Kolejność propozycji pochodzi z `Criteria.poszerzenia`, a więc z twierdzenia o rejestrze,
+    nie z układu ekranu; tutaj zostaje samo nazwanie ich po polsku.
+    """
+    if not propozycje:
+        return Block(
+            title="Nic nie znaleziono",
+            rows=(("szukano", criteria.describe()),),
+            notes=(BRAK_TRAFIEN_JEDYNY_FILTR,),
+        )
+    rows = tuple(
+        (POLE_PO_POLSKU[pole], DLACZEGO_PUSTO[pole], kandydat.describe())
+        for pole, kandydat in propozycje
+    )
+    return Block(
+        title="Nic nie znaleziono — spróbujmy bez jednego z filtrów",
+        headers=("bez czego", "dlaczego akurat to", "zostaje"),
+        rows=rows,
+        notes=(BRAK_TRAFIEN_KOSZT,),
+    )
+
+
+def zero_hits_menu(propozycje: Sequence[tuple[str, Criteria]]) -> tuple[tuple[str, str], ...]:
+    """Pozycje pytania po zerze trafień: `(wartość, etykieta)`, w kolejności propozycji.
+
+    Etykiety układa `texts`, a nie `flow` — pytanie jest budowane dynamicznie, więc bez tego
+    zdanie dla operatora powstawałoby w module decyzyjnym (reguła granic 9 w duchu, choć
+    literalnie dotyczy `cli.py`)."""
+    pozycje = [(pole, f"szukaj bez {POLE_PO_POLSKU[pole]}") for pole, _ in propozycje]
+    pozycje.append(("popraw", "opiszę to inaczej"))
+    pozycje.append(("wyjdz", "wróć do menu"))
+    return tuple(pozycje)
 
 
 # ----------------------------------------------------------------------------- koszty
@@ -436,14 +595,42 @@ class SummaryInput:
     by_status: dict[str, int]
     with_phone: int
     with_email: int
+    # Czy kontaktów w tym pliku **nie może** być. Liczy to `pipeline` z danych, bo źródła są
+    # dwa: `detail_json` na ścieżce API i sam wiersz CSV na ścieżce raportu.
+    bez_kontaktow: bool
     sheets: tuple[str, ...]
     kind: str
     run_ids: tuple[str, ...]
     log_path: Path
+    # Czy operator prosił o szczegóły — rozstrzyga wyłącznie o treści rady, nie o zawartości.
+    tryb_szczegoly: bool = False
     extra: tuple[tuple[str, str], ...] = field(default=())
     # Stan każdego runu, w kolejności `run_ids`. Bez tego skoroszyt z pobrania przerwanego
     # w połowie wygląda na ekranie dokładnie tak samo jak komplet (audyt 2026-09-08, A7).
     statuses: tuple[str, ...] = field(default=())
+
+
+BEZ_KONTAKTOW: Final = (
+    "nie pobrano — lista podstawowa ich nie zawiera; powtórz z opcją „lista z pełnymi szczegółami”"
+)
+"""Zdanie zamiast zera. Kolumn, których lista podstawowa nie niesie, skoroszyt też już nie
+pokazuje (`normalizer.KOLUMNY_TYLKO_ZE_SZCZEGOLOW`) — ekran i plik mówią to samo."""
+
+BEZ_KONTAKTOW_NIEDOKONCZONE: Final = (
+    "jeszcze nie pobrane — to pobranie prosiło o szczegóły, ale do nich nie doszło; "
+    "dokończ je poleceniem `ceidg-tool wznow`"
+)
+"""Ten sam brak, inna przyczyna i **inne lekarstwo**.
+
+Przerwane pobranie ze szczegółami ma w pliku zero kontaktów tak samo jak zwykła lista, więc
+jeden predykat je zlewa — ale rada „powtórz z opcją ze szczegółami" znaczy dla niego „zacznij
+od zera", podczas gdy uwaga o niedokończonym przebiegu, drukowana dwa wiersze niżej, mówi
+`wznow`. Dwa zdania na jednym ekranie odsyłające w dwie strony to gorszy stan niż jedno
+milczenie (przegląd 2026-09-09)."""
+
+
+def _bez_kontaktow(summary: SummaryInput) -> str:
+    return BEZ_KONTAKTOW_NIEDOKONCZONE if summary.tryb_szczegoly else BEZ_KONTAKTOW
 
 
 def summary_table(summary: SummaryInput) -> Block:
@@ -454,9 +641,22 @@ def summary_table(summary: SummaryInput) -> Block:
     rows.append(("firm", format_number(summary.records)))
     for status, count in summary.by_status.items():
         rows.append((f"  {status}", format_number(count)))
-    if summary.records:
+    if summary.records and not summary.bez_kontaktow:
         rows.append(("z telefonem", _share(summary.with_phone, summary.records)))
         rows.append(("z e-mailem", _share(summary.with_email, summary.records)))
+    elif summary.records:
+        # Odsetek liczony z kolumn, których w tym trybie nikt nie pobierał, zawsze wynosi
+        # zero — i czyta się jako pomiar. To ta sama pomyłka, którą projekt zna z liczby
+        # 25,2 % w dokumentach: liczba odpowiadająca na inne pytanie niż to, które czytelnik
+        # jej zadaje. Zdanie mówi więc, czego **nie ma w pliku** i skąd to wziąć.
+        #
+        # Warunek pyta o **dwa** źródła kontaktów, nie o jedno, i tego zabrakło w pierwszej
+        # wersji tej poprawki: `/firma` wypełnia je przez `detail_json`, a dzienny raport
+        # wprost w wierszu CSV — bez żadnych szczegółów. Przebieg produkcyjny 2026-09-09
+        # (282 firmy z raportu, kontakty w 22 % i 24 % wierszy) dostał więc zdanie
+        # „nie pobrano" i radę, żeby powtórzyć ze szczegółami, choć dane były w pliku.
+        # Naprawa cichej nieprawdy na ścieżce częstszej wyprodukowała głośną na rzadszej.
+        rows.append(("telefon i e-mail", _bez_kontaktow(summary)))
     rows.append(("arkusze", ", ".join(summary.sheets)))
     rows.append(("log", str(summary.log_path)))
     rows.append(("run_id", ", ".join(summary.run_ids)))
@@ -509,10 +709,21 @@ def _zrodlo_notes(summary: SummaryInput) -> tuple[str, ...]:
             "korespondencyjny, nazwy PKD), skoroszyt nie pokazuje. Są w pliku — w Excelu "
             "przywraca je „Odkryj”, a arkusz Metadane wymienia je w wierszu kolumny_ukryte.",
         )
-    return (
+    uwagi = [
         "Kolumna link_ceidg w arkuszu Firmy prowadzi do wpisu w publicznej wyszukiwarce "
         "CEIDG — do ręcznej weryfikacji.",
-    )
+    ]
+    if summary.bez_kontaktow and summary.records:
+        # Ukrywanie kolumn bez powiedzenia o tym byłoby tym samym defektem co wcześniejsze
+        # „0 (0%)", tylko odwróconym: operator zobaczy w Excelu przeskakujące litery kolumn
+        # i uzna, że plik jest niepełny. Ścieżka raportu mówi to od początku (wyżej), a
+        # ścieżka listy chowała kolumny od 2026-09-09 i milczała.
+        uwagi.append(
+            "Kolumn, których lista podstawowa nie zawiera (telefon, e-mail, PKD dodatkowe, "
+            "adres korespondencyjny), skoroszyt nie pokazuje. Są w pliku — w Excelu "
+            "przywraca je „Odkryj”, a arkusz Metadane wymienia je w wierszu kolumny_ukryte."
+        )
+    return tuple(uwagi)
 
 
 def runs_table(rows: Sequence[tuple[str, ...]]) -> Block:
@@ -569,6 +780,64 @@ def report_offer(report: Report) -> Block:
                 f"firm {_brakujace_statusy()}, adresu korespondencyjnego, obywatelstw i spółek",
             ),
         ),
+    )
+
+
+PowodBrakuRaportu = Literal[
+    "WIELE_WOJEWODZTW",
+    "BRAK_WOJEWODZTWA",
+    "STATUS_SPOZA_RAPORTU",
+    "BRAK_DZISIEJSZEGO",
+]
+"""Zamknięty zbiór powodów, dla których ścieżka raportu odpada.
+
+`Literal`, a nie zwykły napis, bo `flow._powod_braku_raportu` musi go zwracać: piąty kod
+dopisany tam bez zdania niżej daje wtedy **błąd mypy przy zwrocie**, a nie `KeyError` w środku
+kreatora — a `KeyError` nie należy do taksonomii `CeidgError`, więc wyszedłby śladem stosu.
+Test porównujący zbiory tego nie łapie: buduje powody z czterech ręcznie napisanych kryteriów,
+więc kod, którego nikt nie wywołał, zostawia obie strony przy czwórce (przegląd 2026-09-09).
+To ten sam wybór narzędzia co przy regule granic 14 — mypy tam, gdzie skan nie sięga."""
+
+RAPORT_NIEDOSTEPNY: Final[dict[PowodBrakuRaportu, str]] = {
+    "WIELE_WOJEWODZTW": (
+        "Gotowe raporty dzienne są wydawane osobno dla każdego województwa, a Twoje kryteria "
+        "obejmują więcej niż jedno."
+    ),
+    "BRAK_WOJEWODZTWA": (
+        "Gotowe raporty dzienne są wydawane osobno dla każdego województwa, a Twoje kryteria "
+        "nie wskazują żadnego."
+    ),
+    "STATUS_SPOZA_RAPORTU": (
+        "Dzienny zrzut nie zawiera wpisów o statusie, o który pytasz, więc wynik z raportu "
+        "byłby pusty — i to bez ostrzeżenia."
+    ),
+    "BRAK_DZISIEJSZEGO": (
+        "Dla tego województwa nie ma dziś gotowego raportu. Rejestr wydaje je nad ranem "
+        "i trzyma około sześciu dni."
+    ),
+}
+"""Dlaczego ścieżka raportu odpada — kody, bo `texts` nie importuje `reports` (reguła 6).
+Ustala je `flow`, nazywa ten słownik; zgodności kluczy pilnuje test."""
+
+RAPORT_ZAMIAST_NIEGO: Final = (
+    "Zwykła droga przez API zwróci to samo, tylko drożej: zamiast dwóch zapytań będzie ich "
+    "tyle, ile stron wyniku. Zaraz zobaczysz dokładną liczbę i czas, zanim cokolwiek ruszy."
+)
+
+
+def report_unavailable(powod: PowodBrakuRaportu, statusy: Sequence[str] = ()) -> Block:
+    """Ekran „raport nie pokrywa tych kryteriów" — powód i **co się stanie zamiast tego**.
+
+    Do 2026-09-09 padał tu wyjątek ze zdaniem „Użyj --zrodlo api albo auto", czyli nazwa
+    flagi wiersza poleceń — w kreatorze, gdzie żadnej flagi nie ma. Operator tracił przy tym
+    kryteria i wracał do menu, choć wszystko, czego brakowało, to jedno pytanie: czy pobrać
+    zwykłą drogą. Sam powód też nie padał, więc „popraw i spróbuj jeszcze raz" było zgadywanką.
+    """
+    rows = [("dlaczego", RAPORT_NIEDOSTEPNY[powod])]
+    if statusy:
+        rows.append(("statusy spoza raportu", ", ".join(statusy)))
+    return Block(
+        title="Gotowy raport tu nie pomoże", rows=tuple(rows), notes=(RAPORT_ZAMIAST_NIEGO,)
     )
 
 
@@ -811,6 +1080,18 @@ ASSISTANT_UNAVAILABLE: Final = (
     "pytaniami po kolei albo flagami; stan klucza pokaże `ceidg-tool sprawdz-token`."
 )
 ASSISTANT_CANCELLED: Final = "Rezygnacja z opisu — wracam do menu."
+OPIS_PORZUCONY: Final = (
+    "Rezygnacja z opisu zdaniem. `pobierz` nie ma pytań po kolei — ma je kreator "
+    "(`ceidg-tool kreator`); tutaj podaj kryteria flagami, na przykład "
+    "`-w wielkopolskie --miasto Poznań`."
+)
+"""`collect_from_description` zwróciło `None`, czyli operator wybrał pytania po kolei.
+
+Osobne zdanie od `ASSISTANT_UNAVAILABLE`, bo to **inna sytuacja**: asystent zadziałał, klucz
+jest, a wyszedł z tego wybór operatora. Do 2026-09-09 `pobierz --opis` mówił w tym miejscu
+„Asystent jest niedostępny — brakuje klucza API albo pakietu `anthropic`", czyli wskazywał
+palcem na rzecz, która akurat działała. Ta sama klasa pomyłki co komunikat o kluczu w trybie
+pokazu (przebieg B6)."""
 ASSISTANT_NEEDS_A_HUMAN: Final = (
     "Opis zdaniem wymaga potwierdzenia interpretacji, a tryb --tak nie podejmuje tej decyzji "
     "za Ciebie. Uruchom bez --tak albo podaj kryteria flagami; kreator zapisze je do pliku "

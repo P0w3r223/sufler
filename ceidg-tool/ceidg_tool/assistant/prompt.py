@@ -45,6 +45,16 @@ Zasady:
   miasta, chyba że jest jednoznaczna.
 - W `ograniczenia` wypisz kody tego, czego rejestr NIE potrafi, a o co użytkownik zahaczył.
   Nie tłumacz ich słowami — od tego jest program.
+- Gdy ze zdania nie da się zbudować ANI JEDNEGO filtra — nie padło ani miejsce, ani branża,
+  ani nazwa, ani data — NIE odsyłaj samych pustych pól. Wypełnij wtedy `pytanie`: jedno
+  krótkie pytanie po polsku o rzecz, która najbardziej zawęzi wynik. Do tego `propozycje`:
+  od dwóch do czterech GOTOWYCH zdań, z których każde umiesz zinterpretować od razu, bez
+  dalszego dopytywania. Propozycje mają być konkretne (padają w nich nazwy miejscowości,
+  województw albo czynności), mają się od siebie różnić i nie mają powtarzać zdania
+  użytkownika. Pisz je tak, jakby to użytkownik je napisał — one wracają do Ciebie jako
+  nowy opis.
+- Gdy powstał choćby jeden filtr, zostaw `pytanie` i `propozycje` puste. Nie pytaj dla zasady:
+  ekran potwierdzenia i tak pokaże, co zrozumiałeś, i użytkownik może tam poprawić opis.
 
 Czego rejestr nie potrafi — kody do pola `ograniczenia` (użyj, gdy zdanie o to zahacza):
 {ograniczenia}

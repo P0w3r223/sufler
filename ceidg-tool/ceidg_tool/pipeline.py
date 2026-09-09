@@ -29,7 +29,7 @@ from .batching import Batch, BatchPlan, refine
 from .client import CeidgClient, Cursor
 from .clock import Clock, SystemClock, local_hhmm, utc_iso
 from .config import DEMO_OSTRZEZENIE, HOST_ENVIRONMENT, Settings, safe_filename
-from .criteria import Criteria
+from .criteria import Criteria, bledy_po_polsku
 from .errors import (
     CeidgError,
     ConfigError,
@@ -49,7 +49,7 @@ from .exporter import (
 )
 from .httpclient import build_http_client
 from .logsetup import get_logger
-from .normalizer import NormalizedRecord, normalize
+from .normalizer import KOLUMNY_TYLKO_ZE_SZCZEGOLOW, NormalizedRecord, normalize
 from .pkdmap import TablicaPkd, load_pkd_map
 from .progress import Events, NullEvents
 from .ratelimit import RateLimiter
@@ -1246,8 +1246,14 @@ def lookup_nip(nip: str, deps: Deps, *, szczegoly: bool = True) -> NipLookup:
     czemu `eksportuj` zrobi z niego skoroszyt bez ponownego pobierania."""
     try:
         criteria = Criteria(nip=(nip,), szczegoly=szczegoly)
-    except ValueError as exc:
-        raise ConfigError(f"Niepoprawny NIP: {exc}") from exc
+    except ValidationError as exc:
+        # Zdanie, nie zrzut. Do 2026-09-09 wychodził tu surowy `ValidationError` razem z
+        # `[type=value_error, input_value=('1234567890',), input_type=tuple]` i odnośnikiem do
+        # errors.pydantic.dev — najgorszy możliwy komunikat akurat w tym wejściu, bo NIP
+        # przepisuje się z faktury i literówka jest w nim stanem normalnym, nie awarią.
+        raise ConfigError(
+            f"Niepoprawny NIP:\n{bledy_po_polsku(exc)}\nPodaj 10 cyfr, na przykład 356-345-79-32."
+        ) from exc
     if not criteria.nip:
         # Walidator list odsiewa puste napisy, więc pusty NIP dałby `Criteria` bez ani jednego
         # filtra — a to jest zapytanie o cały rejestr, nie o jedną firmę.
@@ -1275,6 +1281,15 @@ class ExportSummary:
     with_phone: int
     with_email: int
     sheets: tuple[str, ...]
+    # Czy w tym pliku kontaktów **nie może** być — bo nie pobrano szczegółów i nie ma w nim
+    # wierszy z raportu. Bez tego odsetek kontaktów odpowiadał na inne pytanie, niż czytał
+    # operator: „0 (0%)" w trybie listy znaczyło „nie pytaliśmy", a brzmiało jak „żadna
+    # z tych firm nie ma telefonu". Jeden predykat, bo decyduje o dwóch rzeczach naraz:
+    # o ukryciu kolumn i o zdaniu na ekranie, a rozjazd między nimi byłby defektem.
+    bez_kontaktow: bool = False
+    # Czy operator prosił o szczegóły. Rozstrzyga wyłącznie o **radzie**: „dokończ przez
+    # wznow" zamiast „powtórz ze szczegółami".
+    tryb_szczegoly: bool = False
     kind: str = "firmy"
     run_ids: tuple[str, ...] = ()
     # Stan każdego runu w tej samej kolejności co `run_ids`. Podsumowanie musi umieć
@@ -1458,8 +1473,28 @@ def run_export(
     # runu: `zrodlo` stoi przy każdym rekordzie i ma `CHECK` w schemacie, a `run.kind` bywa
     # błędny (starszy zapis oznaczył pobranie z raportu jako `firmy`). Zestaw mieszany nie
     # ukrywa niczego — te same kolumny bywają wypełnione przez ścieżkę API.
-    from_report = store.record_sources(run_ids) == {ZRODLO_RAPORT}
-    hidden = UNFILLED_COLUMNS if from_report else frozenset[str]()
+    zrodla = store.record_sources(run_ids)
+    from_report = zrodla == {ZRODLO_RAPORT}
+    # Dwa niepełne źródła, dwa zbiory kolumn — i do 2026-09-09 tylko jedno z nich było
+    # obsłużone. Skoroszyt z trybu `lista` pokazywał kilkanaście kolumn pustych w każdym
+    # wierszu i niczego nie chował, choć ścieżka raportu robiła to od początku.
+    #
+    # Predykat pyta o **oba** źródła kontaktów, nie o jedno: `/firma` wypełnia je przez
+    # `detail_json`, a dzienny raport wprost w wierszu CSV, nie mając żadnych szczegółów.
+    # Pierwsza wersja sprawdzała samo `szczegolow == 0` i przy zestawie mieszanym
+    # (część z raportu, część z API bez szczegółów) ukryłaby kolumny, które raport
+    # wypełnia — czyli dokładnie ten kierunek, który `KOLUMNY_TYLKO_ZE_SZCZEGOLOW` nazywa
+    # defektem, i wprost wbrew komentarzowi „zestaw mieszany nie ukrywa niczego" wyżej.
+    # Dziś nie ma jak takiego zestawu zbudować z CLI; warunek jest po to, żeby jutro też nie
+    # było. Liczone z danych, nie z `run.mode` — etykieta opisuje zamiar, plik zawartość.
+    szczegolow = store.count_details_for_runs(run_ids)
+    bez_kontaktow = szczegolow == 0 and ZRODLO_RAPORT not in zrodla
+    if from_report:
+        hidden = UNFILLED_COLUMNS
+    elif bez_kontaktow:
+        hidden = KOLUMNY_TYLKO_ZE_SZCZEGOLOW
+    else:
+        hidden = frozenset[str]()
     metadata = build_metadata(
         run, deps, cel_pobrania=cel_pobrania, records=records, parts=runs, hidden_columns=hidden
     )
@@ -1524,6 +1559,13 @@ def run_export(
         by_status=dict(sorted(by_status.items())),
         with_phone=contacts["telefon"],
         with_email=contacts["email"],
+        bez_kontaktow=bez_kontaktow,
+        # Zamiar, nie zawartość — i tu właśnie o zamiar chodzi. Przerwane pobranie ze
+        # szczegółami ma zero szczegółów w pliku, ale rada „powtórz z opcją ze szczegółami"
+        # jest dla niego nieprawdą: właściwym lekarstwem jest `wznow`, co zresztą mówi
+        # obok uwaga o niedokończonym przebiegu. Dwa zdania na jednym ekranie nie mogą
+        # odsyłać w dwie strony.
+        tryb_szczegoly=any(r.mode == "szczegoly" for r in runs),
         sheets=tuple(
             s for s in ("Firmy", "PKD", "Spolki", "Adresy", "Slownik", "Metadane") if s in sheets
         ),

@@ -5,8 +5,13 @@ o `count` → tabela kosztów → wybór → ewentualny podział na partie → p
 podsumowanie (ADR-0008, rozszerzone w ADR-0012). Entry pointy różnią się wyłącznie tym, jaki
 `Prompter` podstawią.
 
-Liczba zapytań o `count`: **najwyżej dwa i tylko przed zgodą** — po jednym na populację, gdy
-okres przejściowy PKD daje wybór. Bez takiego wyboru jedno, jak dotąd; po decyzji ani jednego.
+Liczba zapytań o `count` — **wszystkie przed zgodą, po niej ani jednego**: jedno na zapytanie,
+dwa gdy okres przejściowy PKD daje wybór (po jednym na populację), plus **po jednym na każde
+poszerzenie przyjęte przez operatora po zerze trafień** (ADR-0017). To ostatnie jest ograniczone
+liczbą filtrów w kryteriach, bo każdy obrót zdejmuje jeden, i jest zapowiedziane na ekranie
+(`BRAK_TRAFIEN_KOSZT`); tryb `--tak` nie wydaje ani jednego, bo domyślną odpowiedzią jest wyjście.
+Zdanie brzmiało tu „najwyżej dwa" do przeglądu 2026-09-09 — a jest to zdanie, któremu ufa
+następna zmiana, i drugi raz z rzędu opisywałoby stan sprzed niej.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from ..assistant import AssistantResult
 from ..batching import BatchPlan, plan_batches
 from ..criteria import Criteria
 from ..errors import ConfigError
@@ -43,7 +49,7 @@ from ..pipeline import (
 )
 from ..pkdmap import Rozszerzenie
 from ..records import Report
-from ..reports import report_covers
+from ..reports import report_covers, statusy_poza_raportem
 from . import prompts, texts
 from .prompts import Prompter
 from .texts import Block, SummaryInput
@@ -97,9 +103,9 @@ def collect_from_description(
     Jedna implementacja dla kreatora i dla `pobierz --opis`, żeby oba wejścia nie mogły się
     rozjechać — ten sam argument, który w ADR-0008 wyprodukował całą warstwę `ui/`.
 
-    Krok stoi **przed** `prepare_fetch`, więc niezmiennik „dokładnie jedno żądanie `count`",
-    tabela kosztów i ścieżka zgody zostają nietknięte. Operator potwierdza interpretację,
-    zanim wyda się choć jedno żądanie do CEIDG.
+    Krok stoi **przed** `prepare_fetch`, więc liczba żądań `count`, tabela kosztów i ścieżka
+    zgody zostają nietknięte — także runda dopytania, która toczy się w całości nad modelem.
+    Operator potwierdza interpretację, zanim wyda się choć jedno żądanie do CEIDG.
     """
     if deps.assistant is None:
         # Powód, gdy go znamy, zamiast domysłu. `load_pkd` potrafi powiedzieć „brak słownika
@@ -119,6 +125,19 @@ def collect_from_description(
             # gdyby padł — dokładnie ten defekt, który bramka 3 wyłapała 2026-09-06 na ścieżce
             # pobierania. Asystent to szósty kanał postępu i doszedł już po tamtej poprawce.
             deps.events.close()
+        if wynik.kryteria.is_empty():
+            # Runda dopytania (ADR-0017). Warunkiem jest **pustka w kryteriach**, a nie to,
+            # czy model o coś zapytał: gdyby ekran zależał od jego `pytanie`, obietnica
+            # „opis bez filtrów nigdy nie kończy się błędem" trzymałaby się zachowania modelu.
+            # Bez tej gałęzi operator zatwierdzał pustą interpretację (domyślna odpowiedź:
+            # „tak, szukaj"), a `prepare_fetch` odsyłał go do menu, gubiąc opis.
+            dalej = _dopytaj(wynik, opis, prompter, view)
+            if dalej is None:
+                return None
+            if isinstance(dalej, Criteria):
+                return dalej
+            opis = dalej
+            continue
         view.block(
             texts.interpretation(
                 opis,
@@ -138,6 +157,58 @@ def collect_from_description(
         if wybor == "pytania":
             return None
         raise prompts.CancelledError(texts.ASSISTANT_CANCELLED)
+
+
+def _pytanie_dopytania(pozycje: Sequence[tuple[str, str]]) -> prompts.Question:
+    """Pytanie rundy dopytania — numerowane, jak menu główne kreatora.
+
+    Numery, a nie słowa: pozycje są w większości **zdaniami** przysłanymi przez model, więc
+    nie mają krótkiej nazwy, którą dałoby się wpisać w trybie awaryjnym (`input` zamiast
+    strzałek)."""
+    return prompts.Question(
+        id=prompts.DOPYTANIE.id,
+        text=prompts.DOPYTANIE.text,
+        options=tuple(
+            prompts.Option(str(i), etykieta) for i, (_, etykieta) in enumerate(pozycje, start=1)
+        ),
+        default="1",
+        safe_default=prompts.DOPYTANIE.safe_default,
+    )
+
+
+def _dopytaj(
+    wynik: AssistantResult, opis: str, prompter: Prompter, view: View
+) -> Criteria | str | None:
+    """Jedna runda dopytania. Trzy możliwe wyjścia i **żadne z nich nie jest błędem**.
+
+    * `str` — nowy opis, który wraca do modelu (wybrana propozycja albo własne zdanie);
+    * `Criteria` — gotowe kryteria z drogi niezależnej od modelu (województwo z listy);
+    * `None` — operator sam wybrał pytania po kolei.
+
+    Wyjście do menu idzie wyjątkiem `CancelledError`, tak samo jak przy odmowie zatwierdzenia
+    interpretacji — to jedna droga wyjścia dla całej ścieżki asystenta, nie dwie.
+    """
+    pozycje = texts.clarification_menu(wynik.propozycje)
+    view.block(texts.clarification(opis, wynik.pytanie))
+    numer = int(prompter.ask(_pytanie_dopytania(pozycje)))
+    akcja, etykieta = pozycje[numer - 1]
+    if akcja.startswith("opis:"):
+        # Propozycja modelu wraca jako **nowy opis**, nie jako gotowe kryteria. Dzięki temu
+        # przechodzi tę samą drogę co zdanie operatora: walidator PKD, słownik lokalny
+        # i ekran potwierdzenia układany przez kod. Model nie zyskuje krótszej ścieżki
+        # do `Criteria` tylko dlatego, że tekst pochodzi od niego.
+        return etykieta
+    if akcja == "wojewodztwo":
+        # Droga bez modelu: szesnaście wartości ze zbioru zamkniętego. Nie wraca do
+        # `interpret`, bo nie ma czego tłumaczyć — a żądanie do modelu po to, żeby odczytał
+        # nazwę, którą operator właśnie wybrał z listy, byłoby wydatkiem na własną odpowiedź.
+        return Criteria(wojewodztwo=(prompter.ask(prompts.WOJEWODZTWO_Z_LISTY),))
+    if akcja == "wlasny":
+        nowy = prompter.text(prompts.OPIS).strip()
+        return nowy or None
+    if akcja == "pytania":
+        return None
+    raise prompts.CancelledError(texts.ASSISTANT_CANCELLED)
 
 
 def show_first_screen(view: View, deps: Deps, *, version: str) -> None:
@@ -239,10 +310,13 @@ def prepare_fetch(
 ) -> tuple[Decision, FetchPlan]:
     """Ustala, co zrobić z kryteriami.
 
-    Zapytania o `count`: **najwyżej dwa i tylko przed zgodą** — po jednym na populację, gdy
-    okres przejściowy PKD daje wybór (ADR-0012, sub-decyzja 4). Bez takiego wyboru jest jedno,
-    jak dotąd. Po decyzji operatora nie pada już żadne; pobranie korzysta z policzonego.
-    Osobno dochodzi jedno zapytanie o listę raportów, gdy raport pokrywa kryteria.
+    Zapytania o `count` — **wszystkie przed zgodą, po niej ani jednego**: jedno na zapytanie,
+    dwa gdy okres przejściowy PKD daje wybór (ADR-0012, sub-decyzja 4: po jednym na populację),
+    plus po jednym na każde poszerzenie przyjęte po zerze trafień (ADR-0017). Pętla zera
+    trafień zdejmuje przy każdym obrocie jeden filtr, więc ma skończoną długość, a jej koszt
+    stoi na ekranie, zanim operator wybierze. Po decyzji nie pada już żadne; pobranie korzysta
+    z policzonego. Osobno dochodzi jedno zapytanie o listę raportów, gdy raport pokrywa
+    kryteria.
 
     `rocznik_2007`: `None` znaczy „zapytaj, jeśli jest o co", `True` i `False` to jawny wybór
     z flagi albo z pliku zapytania — wtedy nie pytamy i nie liczymy drugi raz.
@@ -324,9 +398,13 @@ def prepare_fetch(
                     criteria=criteria, count=0, threshold=threshold, report=report
                 )
     if source == "raport" and report is None:
-        raise ConfigError(
-            "Żaden gotowy raport nie pokrywa tych kryteriów. Użyj --zrodlo api albo auto."
-        )
+        # Nie wyjątek i nie nazwa flagi: powód plus jedno pytanie. Kreator nie ma `--zrodlo`,
+        # a operator, który stracił tu kryteria, przepisywał opis od zera — przy czym nie
+        # dowiadywał się nawet, **co** poprawić, bo powód nigdy nie padał.
+        statusy = statusy_poza_raportem(criteria)
+        view.block(texts.report_unavailable(_powod_braku_raportu(criteria, statusy), statusy))
+        if not prompter.confirm(prompts.RAPORT_NA_API, default=True):
+            return "wyjdz", FetchPlan(criteria=criteria, count=0, threshold=threshold)
 
     if pytac_o_rocznik and rozsz is not None:
         # Dwa `count` — po jednym na populację — i oba **przed** zgodą. To jest cała cena
@@ -334,28 +412,51 @@ def prepare_fetch(
         # nabierze, zamiast zdania „wynik może być niepełny", na które nie da się odpowiedzieć.
         licznik_waski = count_hits(waskie, deps)
         licznik_szeroki = count_hits(szerokie, deps)
-        wybrane = _zapytaj_o_rocznik(
-            rozsz,
-            waskie,
-            szerokie,
-            prompter,
-            view,
-            licznik_waski=licznik_waski,
-            licznik_szeroki=licznik_szeroki,
-        )
-        if wybrane is None:
-            return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
-        criteria = wybrane
-        # `wybrane` jest jednym z dwóch obiektów, które właśnie podaliśmy — porównanie
-        # tożsamości mówi wprost, którą populację policzono, bez rekonstruowania jej z pola.
-        count = licznik_szeroki if wybrane is szerokie else licznik_waski
+        if licznik_waski == 0 and licznik_szeroki == 0:
+            # Wybór między zerem a zerem nie jest wyborem. Do 2026-09-09 ekran pokazywał
+            # „Tylko PKD 2025: 0 firm. Ze starymi kodami: 0 firm" i mimo to pytał, którą
+            # z tych dwóch pustych populacji operator woli. Oba liczniki są już wydane —
+            # nie da się ich cofnąć — ale pytanie tak, i to ono kosztuje uwagę. Dalej
+            # obowiązuje ścieżka zera trafień, która proponuje poszerzenie.
+            criteria, count = waskie, 0
+        else:
+            wybrane = _zapytaj_o_rocznik(
+                rozsz,
+                waskie,
+                szerokie,
+                prompter,
+                view,
+                licznik_waski=licznik_waski,
+                licznik_szeroki=licznik_szeroki,
+            )
+            if wybrane is None:
+                return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
+            criteria = wybrane
+            # `wybrane` jest jednym z dwóch obiektów, które właśnie podaliśmy — porównanie
+            # tożsamości mówi wprost, którą populację policzono, bez rekonstruowania jej z pola.
+            count = licznik_szeroki if wybrane is szerokie else licznik_waski
     else:
         count = count_hits(criteria, deps)
-    est = estimate(count, deps.profile, max_rekordow=criteria.max_rekordow)
-    view.block(texts.cost_table(est, threshold=threshold, capped=criteria.max_rekordow is not None))
-    if count == 0:
-        view.message("Brak firm spełniających kryteria.")
-        return "wyjdz", FetchPlan(criteria=criteria, count=0, threshold=threshold, estimate=est)
+    # Pętla, nie ciąg prosty: zero trafień wraca tutaj z jednym filtrem mniej, zamiast kończyć
+    # rozmowę. Każdy obrót to jedno zapytanie `count` i jedna decyzja operatora, a lista
+    # kandydatów kurczy się o zdjęty filtr, więc pętla ma z definicji skończoną długość.
+    while True:
+        est = estimate(count, deps.profile, max_rekordow=criteria.max_rekordow)
+        view.block(
+            texts.cost_table(est, threshold=threshold, capped=criteria.max_rekordow is not None)
+        )
+        if count:
+            break
+        propozycje = criteria.poszerzenia()
+        view.block(texts.zero_hits(criteria, propozycje))
+        wybor = prompter.ask(_pytanie_brak_trafien(propozycje))
+        if wybor in ("wyjdz", "popraw"):
+            return cast(Decision, wybor), FetchPlan(
+                criteria=criteria, count=0, threshold=threshold, estimate=est
+            )
+        criteria = dict(propozycje)[wybor]
+        view.block(texts.criteria_block(criteria))
+        count = count_hits(criteria, deps)
 
     if count > threshold and criteria.max_rekordow is None:
         return _over_threshold(criteria, deps, prompter, view, count, est, threshold, today)
@@ -365,6 +466,38 @@ def prepare_fetch(
         return answer, FetchPlan(criteria=criteria, count=count, threshold=threshold, estimate=est)
     updated = criteria.model_copy(update={"szczegoly": answer == "szczegoly"})
     return answer, FetchPlan(criteria=updated, count=count, threshold=threshold, estimate=est)
+
+
+def _powod_braku_raportu(criteria: Criteria, statusy: Sequence[str]) -> texts.PowodBrakuRaportu:
+    """Kod powodu, dla którego ścieżka raportu odpadła. Zdanie układa `texts`.
+
+    Kolejność sprawdzeń idzie od przyczyny **niezależnej od dnia** do zależnej: liczba
+    województw i statusy wynikają z kryteriów i będą prawdziwe jutro tak samo, a brak
+    dzisiejszego zrzutu mija sam. Odwrotna kolejność podpowiadałaby „poczekaj do jutra"
+    komuś, kto pyta o dwa województwa."""
+    if statusy:
+        return "STATUS_SPOZA_RAPORTU"
+    if len(criteria.wojewodztwo) > 1:
+        return "WIELE_WOJEWODZTW"
+    if not criteria.wojewodztwo:
+        return "BRAK_WOJEWODZTWA"
+    return "BRAK_DZISIEJSZEGO"
+
+
+def _pytanie_brak_trafien(propozycje: Sequence[tuple[str, Criteria]]) -> prompts.Question:
+    """Pytanie po zerze trafień — pozycje zależą od tego, jakie filtry w ogóle są w kryteriach.
+
+    Bez propozycji (jedyny filtr) zostają dwie drogi i **żadna z nich nie jest ślepa**:
+    opisać inaczej albo wrócić do menu. Domyślna zostaje „wyjdź”, żeby `--tak` w harmonogramie
+    zachowało dzisiejsze zachowanie."""
+    pozycje = texts.zero_hits_menu(propozycje)
+    return prompts.Question(
+        id=prompts.BRAK_TRAFIEN.id,
+        text=prompts.BRAK_TRAFIEN.text,
+        options=tuple(prompts.Option(wartosc, etykieta) for wartosc, etykieta in pozycje),
+        default=prompts.BRAK_TRAFIEN.default,
+        safe_default=prompts.BRAK_TRAFIEN.safe_default,
+    )
 
 
 def _co_dalej_default(criteria: Criteria) -> prompts.Question:
@@ -547,6 +680,8 @@ def export_and_report(
                 by_status=summary.by_status,
                 with_phone=summary.with_phone,
                 with_email=summary.with_email,
+                bez_kontaktow=summary.bez_kontaktow,
+                tryb_szczegoly=summary.tryb_szczegoly,
                 sheets=summary.sheets,
                 kind=summary.kind,
                 run_ids=summary.run_ids,

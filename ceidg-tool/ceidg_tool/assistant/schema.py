@@ -97,6 +97,16 @@ class AssistantAnswer(BaseModel):
     szczegoly: bool = False
     ograniczenia: tuple[OgraniczenieKod, ...] = ()
 
+    # Runda dopytania (ADR-0017). Do 2026-09-09 zdanie, z którego nie dało się zbudować ani
+    # jednego filtra, wracało jako komplet pustych pól — operator zatwierdzał pustą
+    # interpretację, a `flow` odmawiał zdaniem „Podaj przynajmniej jedno kryterium" i odsyłał
+    # do menu, gubiąc opis. Te dwa pola są jedynym miejscem, w którym model pisze zdanie
+    # **czytane przez operatora**, i dlatego oba są wejściem, nie wynikiem: wybór propozycji
+    # wraca do `interpret` jako nowy opis i kończy się tym samym ekranem interpretacji, który
+    # układa kod ze słownika lokalnego. Nikt nie działa na prozie modelu.
+    pytanie: str = ""
+    propozycje: tuple[str, ...] = ()
+
 
 def _strict(node: Any) -> Any:
     """Domyka schemat: `additionalProperties: false` i wszystkie pola w `required`.

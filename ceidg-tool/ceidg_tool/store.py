@@ -1003,6 +1003,24 @@ class Store:
         ).fetchone()
         return int(row[0])
 
+    def count_details_for_runs(self, run_ids: Sequence[str]) -> int:
+        """Ile rekordów tych runów ma pobrane szczegóły. Liczone z **danych**, nie z etykiety.
+
+        Eksport pyta o to zamiast czytać `run.mode`, dokładnie z tego powodu, dla którego
+        `record_sources` istnieje obok `run.kind`: etykieta opisuje zamiar, a skoroszyt ma
+        opisywać zawartość. Zestaw mieszany (wznowione pobranie, eksport kilku partii) jest
+        wtedy policzony, a nie zgadnięty."""
+        if not run_ids:
+            return 0
+        placeholders = ",".join("?" for _ in run_ids)
+        row = self._conn.execute(
+            f"SELECT COUNT(DISTINCT rf.firma_id) FROM run_firma rf JOIN firma f "
+            f"ON f.id = rf.firma_id WHERE rf.run_id IN ({placeholders}) "
+            f"AND f.detail_json IS NOT NULL",
+            tuple(run_ids),
+        ).fetchone()
+        return int(row[0])
+
     def find_run(
         self,
         criteria_hash: str,

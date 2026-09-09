@@ -391,7 +391,9 @@ def test_split_table_admits_when_even_monthly_batches_are_too_big() -> None:
 # ----------------------------------------------------------------------------- podsumowanie
 
 
-def summary_input(tmp_path: Path, *, kind: str = "firmy", records: int = 4) -> texts.SummaryInput:
+def summary_input(
+    tmp_path: Path, *, kind: str = "firmy", records: int = 4, bez_kontaktow: bool = False
+) -> texts.SummaryInput:
     path = tmp_path / "wynik.xlsx"
     path.write_bytes(b"x" * 2048)
     return texts.SummaryInput(
@@ -400,6 +402,9 @@ def summary_input(tmp_path: Path, *, kind: str = "firmy", records: int = 4) -> t
         by_status={"AKTYWNY": 3, "WYKRESLONY": 1},
         with_phone=1,
         with_email=2,
+        # Domyślnie „kontakty mogły się tu znaleźć", bo odsetek ma wtedy sens. Przypadek
+        # przeciwny — tryb listy, w którym nikt telefonów nie pobierał — ma własny test.
+        bez_kontaktow=bez_kontaktow,
         sheets=("Firmy", "PKD", "Slownik", "Metadane"),
         kind=kind,
         run_ids=("run-1",),
