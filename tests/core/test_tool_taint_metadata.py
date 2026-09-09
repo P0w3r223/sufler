@@ -39,24 +39,30 @@ _PAKIET = (
 # * ``read_events_since`` — ta sama warstwa zdarzeń co ``Activity``, więc ta sama odpowiedź.
 #   Powierzchnia MCP nie ma rozmowy, którą można skazić, ale metadana opisuje NARZĘDZIE, nie
 #   powierzchnię — inaczej ta sama treść miałaby dwie odpowiedzi zależnie od drzwi;
-# * ``Jira``/``Schedule``/``Project``/notatki — treść zza bramek zdolności. Gdyby skaziły, każda
-#   rozmowa byłaby skażona i sygnał nie znaczyłby nic (ADR 0066 R2).
+# * ``Jira``/``get_my_jira_*`` — ``True`` od 2026-09-09 (dopisek do ADR 0066). Akcja ``task``
+#   oddaje ``description`` i pięć komentarzy DOSŁOWNIE, pisanych przez kogokolwiek z kontem
+#   w Jirze — ta sama klasa autorstwa, co treści zgłoszeń GitHuba, wymienione w zbiorze
+#   wyzwalaczy wprost, i co ``Activity``, które ma ``True`` od początku. Wcześniejsze ``False``
+#   uzasadniano tym, że to „treść zza bramek zdolności" — ale bramka zdolności mówi, KTO MOŻE
+#   ZAWOŁAĆ narzędzie, a wyzwalacz pyta, KTO NAPISAŁ TREŚĆ;
+# * ``Schedule``/``Project``/notatki — treść WŁASNA pionu, czytana typowanymi narzędziami.
+#   Gdyby skaziły, każda rozmowa byłaby skażona i sygnał nie znaczyłby nic (ADR 0066 R2).
 _ODPOWIEDZI = {
     "Activity": True,
     "Bash": True,
     "File": True,
+    "Jira": True,
     "ListFiles": True,
     "ReadFile": True,
+    "get_my_jira_history": True,
+    "get_my_jira_tasks": True,
     "read_events_since": True,
     "CreateFile": False,
-    "Jira": False,
     "Project": False,
     "ReplyWithFile": False,
     "Schedule": False,
     "SendDocument": False,
     "SendImage": False,
-    "get_my_jira_history": False,
-    "get_my_jira_tasks": False,
     "get_note": False,
     "get_project_status": False,
     "list_projects": False,

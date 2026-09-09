@@ -23,9 +23,14 @@ def _build_note_read_authorizer(settings: TeamsGraphSettings) -> NoteReadAuthori
     ``None``, gdy ``enable_note_read_authz`` wyłączona (domyślnie) — odczyt zachowuje się jak przed
     ADR 0062. Włączona: config wymusił istnienie mapy tożsamości (ten sam plik co zapis, ADR
     0042/0062), więc składamy authorizer nad ``YamlIdentityDirectory`` (fail-closed). Wpinany w
-    ``_build_responder``: bramkuje per-turowe narzędzia odczytu agenta (``SearchNotes``/``GetNote``/
-    ``ListProjects``) ORAZ komendy ``/szukaj``/``/projekty``. Powłoka i drzwi MCP są POZA zakresem —
-    nie niosą tożsamości nadawcy (ADR 0062 §Decision 4 i addendum).
+    ``_build_responder``: bramkuje per-turową powierzchnię odczytu agenta — **``Project`` oraz**
+    ``SearchNotes``/``GetNote``/``ListProjects`` — ORAZ komendy ``/szukaj``/``/projekty``.
+    ``Project`` jest tu wymieniony PIERWSZY nie dla porządku: jego akcja ``status`` serwuje treść
+    notatek, ADR 0062 wciągnął go za bramkę jako „jedyną drogę odczytu, która przeżyła jej
+    wpięcie", a przy włączonej powłoce jest JEDYNYM narzędziem odczytu, jakie ta bramka wystawia
+    (trójka jest wtedy zbędna). Poprzednia redakcja tego opisu go pomijała.
+    Powłoka i drzwi MCP są POZA zakresem — nie niosą tożsamości nadawcy (ADR 0062 §Decision 4
+    i addendum).
     """
     if not settings.enable_note_read_authz:
         return None

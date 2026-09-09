@@ -6,7 +6,57 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Naprawione
+
+- **Bramka autoryzacji ODCZYTU bazy wiedzy wygasała przy włączonej powłoce**
+  ([ADR 0062](docs/adr/0062-note-read-authorization.md); etap E2.1 planu wykonania).
+  **Wada była UTAJONA, nie czynna, i to rozróżnienie decyduje o pilności:** na flocie
+  `NOTE_READ_AUTHZ` jest wyłączone, więc autoryzatora nie ma i bramka nie działa w ogóle — nie było
+  czego omijać. Ale `ENABLE_SHELL` jest włączone, więc wada zapaliłaby się **w chwili włączenia
+  flagi**: operator dostałby bramkę, która melduje włączenie i nie obejmuje narzędzia serwującego
+  treść. Dlatego ta poprawka jest WARUNKIEM kroku 6.2 karty aktywacji, a nie naprawą wycieku. Warunek brzmiał `note_read_authorizer is not None and shell_factory is None`,
+  z uzasadnieniem „z powłoką narzędzi odczytu i tak nie ma". **Dla trójki `SearchNotes`/`GetNote`/
+  `ListProjects` to prawda, dla `Project` nie:** `build_project_catalog` nie zależy od
+  `shell_available` w ogóle, więc przy `WORKMATE_ENABLE_SHELL=true` `Project` zostawał w katalogu
+  BAZOWYM, poza bramką — a to on serwuje treść (`Project(action='status')` zwraca syntezę z notatek
+  pionu) i to jego ADR 0062 wciągnął za bramkę jako „jedyną drogę odczytu, która przeżyła jej
+  wpięcie". Warunek to odtąd SAMA obecność autoryzatora; `shell_available` steruje wyłącznie
+  trójką, a `Project` jedzie fabryką per turę zawsze.
+  **To ten sam błąd, co przy rozszczepieniu T1/T2, naprawiony w tym pliku po raz drugi** — dwa
+  niezależne warunki splątane w jednej nazwie. Za pierwszym razem naprawiono go tylko w miejscu
+  użycia, nie tam, gdzie powstawał; stąd dwie nazwy zamiast jednej.
+  **Sonda mierzy KATALOG, nie flagę, i WOŁA narzędzie zamiast je liczyć:** na kodzie sprzed
+  poprawki `Project(action='status')` oddaje nierozpoznanemu nadawcy realną treść bazy wiedzy
+  (`{'key': 'workmate', 'company': 'biap', …}`) zamiast odmowy. Pierwsza redakcja sondy liczyła
+  wystąpienia nazwy — i przechodziła na kodzie z usterką, bo liczba nie odróżnia narzędzia
+  bramkowanego od niebramkowanego.
+
+- **`map_task_details` obiecywał w docstringu ochronę, której nie daje.** Twierdził, że przycięcie
+  opisu do 2000 znaków i komentarzy do 500 nie pozwoli „przemycić wektora wstrzyknięcia do
+  promptu". Nie zapobiega temu w żadnym stopniu — wstrzyknięcie mieści się w kilkudziesięciu
+  znakach. Sufity chronią OKNO KONTEKSTU i tyle mają obiecywać; przed wstrzyknięciem broni skaza
+  rozmowy, i to obrona w głębi, nie bariera.
+
 ### Zmienione
+
+- **`Jira` i `get_my_jira_*` skażą rozmowę** (`taints=True`;
+  [ADR 0066 amendment 2026-09-09](docs/adr/0066-content-trust-classes-and-sticky-conversation-taint.md),
+  etap E2.2). Akcja `task` oddaje `description` i pięć komentarzy DOSŁOWNIE, pisanych przez
+  kogokolwiek z kontem w Jirze — ta sama klasa autorstwa, co treści zgłoszeń GitHuba, które **otwarte pytanie
+  o zbiór wyzwalaczy** w ADR 0066 wymienia wprost, i co `Activity`, mające `True` od początku.
+  **Poprzednie `False` miało zapisany powód i to jest tu sedno:** brzmiał „treść zza bramek
+  zdolności", tylko że bramka zdolności mówi, KTO MOŻE ZAWOŁAĆ narzędzie, a wyzwalacz pyta, KTO
+  NAPISAŁ TREŚĆ. Dla notatek i zdarzeń te dwie rzeczy się pokrywają; dla Jiry rozjeżdżają.
+  **Koszt nazwany dokładnie, bo pierwsza redakcja tego wpisu przesadzała.** Skaza dojeżdża do
+  sędziego mutacji (ADR 0065) jako fakt o pochodzeniu tury — i tyle: `note_mutation._decide` **nie
+  rozgałęzia się po niej ani razu**, a prompt systemowy sędziego nie mówi, co z tym faktem zrobić.
+  „Ostrzejsza ścieżka" jest więc w całości uznaniowa po stronie modelu-sędziego, co obcina koszt
+  i korzyść naraz. Do tego **w układzie docelowym koszt jest bliski zeru już dziś**: przy
+  `ENABLE_SHELL=true` przepływ „pokaż WT-5, popraw notatkę o nim" wymaga sięgnięcia po notatkę
+  przez `Bash` albo `File(read)` — oba skażają, więc rozmowa jest skażona, zanim mutacja dojdzie
+  do sędziego. Amendment mówi też wprost, że metadana jest per NARZĘDZIE, a wyzwalacz per AUTOR,
+  więc zmiana świadomie prze-skaża — dokładnie tak, jak `Activity` robi to dla GitHuba od początku,
+  i zapisuje jako follow-up jedno zdanie do promptu sędziego, którego ten PR świadomie nie dokłada.
 
 - **Cztery powierzchnie pokazujące zdarzenia człowiekowi sortują po CZASIE ZAJŚCIA, nie po
   kolejności przyjęcia** ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md)
