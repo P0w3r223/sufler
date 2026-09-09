@@ -463,3 +463,27 @@ Settling the remaining five costs **five requests**, one per field: a middle-sli
 a value known to exist, ANDed with `miasto` (now known to be a fragment filter) to bound the
 population. Until then those five stay on exact comparison, and `matches_criteria`'s docstring
 says which of its choices are measurements and which are defaults.
+
+## Repeated `miasto=` is OR — measured 2026-09-09 (1 request)
+
+The assistant answers *"…we Wrocławiu oraz Gdańsku"* with two cities, and `Criteria.to_params`
+ships them as two `miasto=` parameters in one request. Repeated `pkd=`, `nip=` and `status=`
+had each been measured OR-ed; `miasto=` never had. Under AND the query would return **empty
+with no error**, because no entry has two business addresses in two cities — the silent-subset
+failure, on the path the tool exists to make easy.
+
+    GET /firmy?miasto=Gdańsk&miasto=Wrocław&limit=1  →  HTTP 200, count = 242 415
+
+**One request settles it, and only because the answer is asymmetric.** Under AND the set is
+empty by construction, so any `count > 0` rules AND out. A zero would have ruled out only OR
+and needed a second measurement to say whether the cause was AND or a rejected duplicate
+parameter.
+
+The voivodeship was deliberately left out of the query: added, it would AND against both
+cities (Wrocław is dolnośląskie, Gdańsk pomorskie) and return nothing regardless of the
+semantics — the probe would have measured its own mistake.
+
+Note what this measurement is **not** evidence for. It says nothing about the other repeated
+parameters, and nothing about matching semantics: 2026-09-09 also established that the
+text-field family is not uniform (F12 above), so `pkd` being OR-ed never implied `miasto`
+would be. It had to be measured, and now it is.
