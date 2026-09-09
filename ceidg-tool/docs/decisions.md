@@ -417,3 +417,49 @@ Rows without an identifier, measured in the same pass: **315** carry neither `Ni
 (0.11 %). Their name, surname, given name and start date are filled in **100 %** of those rows and
 distinguish all 315 with **zero collisions**; adding the full address changes nothing, while its own
 fields are filled 23-69 %. That is the evidence behind ADR-0016.
+
+## Which filters match a fragment, and which match exactly
+
+The report path reproduces `/firmy`'s filters locally (`reports.matches_criteria`), so a
+difference in matching semantics makes the two paths return different sets while a comment
+promises they return the same one. Audit item F12. Measured 2026-09-09.
+
+| Field | Semantics | How it was settled |
+|---|---|---|
+| `nazwa` | **fragment**, case-insensitive | phase 1 probe (`adam` = `ADAM` = 82 954) |
+| `miasto` | **fragment**, case-insensitive | **zero requests**, from the operator's store |
+| `kod` | question does not arise | `Criteria` validates it to `15-333`, so a fragment can never be sent, and at a fixed length "contains" and "equals" coincide |
+| `powiat`, `gmina`, `ulica` | **unmeasured** | one production request, inconclusive (below) |
+| `imie`, `nazwisko` | **unmeasured** | one production request, inconclusive (below) |
+
+**`miasto`, settled at zero cost.** Run `eb1df3a8` in the operator's own store was fetched
+with `miasto=['Łomża']` and came back with four records whose city is `Stara Łomża przy
+Szosie` or `Stara Łomża nad Rzeką` — names that *contain* "Łomża" and do not equal it, with
+the match in the middle rather than at the start. Checked further: none of those four carries
+"Łomża" in its correspondence address or in any other address on the record, so the match
+cannot have travelled another route. The same run returned `ŁOMŻA` in capitals, confirming
+case-insensitivity. `matches_criteria` compared the city exactly, so the report path was
+**dropping** those records.
+
+**The other five, two production requests, inconclusive — and instructive anyway.**
+`scripts/ceidg_probe_match_semantics.py` sent middle-slice fragments of one real record's
+values, in two groups (`powiat`+`gmina`+`ulica`, then `imie`+`nazwisko`), each ANDed with
+`wojewodztwo`. **Both returned HTTP 204**, the measured signal for an empty result. Since
+parameters are ANDed, that means at least one field in each group does *not* match by
+fragment — but not which one, and two requests cannot say more.
+
+Two things not to get wrong about that result. The `wojewodztwo` value was not a confound:
+`to_params` upper-cases it regardless of input, so the probe sent exactly what the successful
+runs sent. And the `ulica` fragment carries a caveat worth naming — the stored value includes
+the `ul.` prefix, so a server indexing the bare street name would reject the fragment for a
+reason unrelated to exact matching.
+
+**The conclusion that survives is the one that goes against intuition: the text-field family
+is not uniform.** `nazwa` and `miasto` match by fragment; at least two of the other five do
+not. So the semantics of one field say nothing about its neighbours — which is precisely the
+assumption that kept `miasto` on exact comparison while the register was matching fragments.
+
+Settling the remaining five costs **five requests**, one per field: a middle-slice fragment of
+a value known to exist, ANDed with `miasto` (now known to be a fragment filter) to bound the
+population. Until then those five stay on exact comparison, and `matches_criteria`'s docstring
+says which of its choices are measurements and which are defaults.

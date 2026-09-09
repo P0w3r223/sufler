@@ -270,7 +270,37 @@ def _equals_ci(value: Any, wanted: str) -> bool:
 
 
 def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
-    """Lokalny odpowiednik filtrów `/firmy` dla rekordu z raportu."""
+    """Lokalny odpowiednik filtrów `/firmy` dla rekordu z raportu.
+
+    **Odpowiednik jest dobry dokładnie tam, gdzie semantykę serwera zmierzono.** Audyt
+    2026-09-08 (pozycja F12) zauważył, że siedem pól porównywano tu dokładnie, choć nikt nie
+    sprawdził, jak porównuje je API — a rozjazd oznacza, że ścieżka raportu cicho zwraca inny
+    zbiór niż ścieżka API, przy komentarzu zapewniającym, że zbiory są te same.
+
+    Stan wiedzy na 2026-09-09, pole po polu:
+
+    * `nazwa` — **fragment**, nieczułe na wielkość liter (`adam` = `ADAM` = 82 954 trafienia,
+      `docs/decisions.md`). Stąd `_contains_ci`.
+    * `miasto` — **fragment**, rozstrzygnięte za zero żądań z bazy operatora. Run `eb1df3a8`
+      z filtrem `miasto=['Łomża']` zwrócił cztery wpisy z miejscowości `Stara Łomża przy
+      Szosie` i `Stara Łomża nad Rzeką`. Sprawdzone też, że żaden z tych wpisów nie ma
+      „Łomża" w adresie korespondencyjnym ani w żadnym innym — więc dopasowanie nie mogło
+      pójść inną drogą. Do 2026-09-09 stało tu `_equals_ci`, czyli ścieżka raportu **gubiła**
+      te wpisy.
+    * `kod` — pytanie nie powstaje: `Criteria` waliduje kod pocztowy do postaci `15-333`, więc
+      narzędzie nie potrafi wysłać fragmentu, a przy stałej długości „zawiera" i „równa się"
+      pokrywają się.
+    * `nip`, `regon`, `status`, `pkd`, daty — wartości ze słownika albo znormalizowane;
+      porównanie dokładne jest tu tym, o co pyta wywołujący.
+    * `powiat`, `gmina`, `ulica`, `imie`, `nazwisko` — **niezmierzone i zostają dokładne.**
+      Sonda z 2026-09-09 (`scripts/ceidg_probe_match_semantics.py`, dwa żądania produkcyjne)
+      wysłała fragmenty ze środka prawdziwych wartości w dwóch grupach i obie wróciły puste
+      (HTTP 204). To znaczy tylko tyle, że **co najmniej jedno pole w każdej grupie** nie
+      dopasowuje fragmentem; które — tego te dwa żądania nie mówią. Wniosek praktyczny jest
+      za to mocny i idzie pod prąd intuicji: **rodzina pól tekstowych nie jest jednorodna**,
+      więc semantyki jednego pola nie wolno przenosić na sąsiednie. Dokładnie to założenie
+      trzymało tu `_equals_ci` przy `miasto`.
+    """
     owner = record.get("wlasciciel") or {}
     address = record.get("adresDzialalnosci") or {}
     if criteria.nip and owner.get("nip") not in criteria.nip:
@@ -287,8 +317,10 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
         _equals_ci(owner.get("nazwisko"), v) for v in criteria.nazwisko
     ):
         return False
+    # `miasto` osobno, bo jako jedyne z tej piątki zostało zmierzone — i wyszło fragmentem.
+    if criteria.miasto and not any(_contains_ci(address.get("miasto"), v) for v in criteria.miasto):
+        return False
     for field_name, key in (
-        ("miasto", "miasto"),
         ("powiat", "powiat"),
         ("gmina", "gmina"),
         ("kod", "kod"),
@@ -301,8 +333,10 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
         _equals_ci(address.get("wojewodztwo"), v) for v in criteria.wojewodztwo
     ):
         return False
-    # Oba pola PKD razem, dokładnie jak w `to_params`: ścieżka raportowa musi zwracać ten sam
+    # Oba pola PKD razem, dokładnie jak w `to_params`: ścieżka raportowa ma zwracać ten sam
     # zbiór co API, inaczej „raport zamiast żądań" przestaje być wyborem obojętnym dla wyniku.
+    # „Ma", a nie „zwraca": dla pięciu pól wymienionych w docstringu równość jest założeniem,
+    # nie pomiarem, i zdanie w trybie oznajmującym było właśnie tym, co audyt zgłosił jako F12.
     # Tu rozszerzenie o rocznik 2007 nie kosztuje ani jednego żądania — filtrujemy lokalnie.
     szukane = criteria.wszystkie_pkd()
     if szukane:

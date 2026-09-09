@@ -1197,10 +1197,21 @@ A3 turned out to be 2.96 % rather than 1.21 %, A9 turned out to need **no migrat
 rows in your store), and A10 was confirmed against the production archive rather than argued from
 prose.
 
-**Still open, and it cannot be closed offline:**
+**F12 — the defect is fixed; two of its seven fields remain unmeasured.**
 
-- **F12** — seven `matches_criteria` fields use exact match while only `nazwa`'s server-side
-  semantics were ever measured. Needs two production requests, so it needs your consent.
+The real defect was found at **zero requests**: `miasto` matches by fragment server-side (the
+operator's own store holds four `Stara Łomża …` records returned by `miasto=['Łomża']`), while
+`matches_criteria` compared it exactly — so the report path was dropping them. Fixed and
+mutation-checked 2026-09-09. `kod` needed no measurement either: `Criteria` validates it to
+`15-333`, so a fragment can never be sent.
+
+Two production requests (consent given in session) went to the remaining five and came back
+**inconclusive**: both grouped fragment queries returned empty, which proves at least one
+field per group is not a fragment filter without saying which. The finding that survives is
+that the field family is **not uniform**, so no field's semantics may be inferred from a
+neighbour's. `powiat`, `gmina`, `ulica`, `imie` and `nazwisko` stay on exact comparison and
+the docstring now says which choices are measured and which are defaults. Settling them costs
+**five more requests**, one per field — your call whether it is worth it.
 
 Tiers B, C and D, and the reasoning behind each deferral, are in the audit document.
 

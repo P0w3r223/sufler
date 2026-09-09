@@ -332,3 +332,42 @@ def test_ekran_nazywa_kazdy_status_ktory_lista_odrzuca() -> None:
     brakuje = next(wiersz[1] for wiersz in blok.rows if wiersz[0] == "czego brakuje")
     for nazwa in STATUS_BRAK_W_RAPORCIE.values():
         assert nazwa in brakuje
+
+
+# --------------------------------------------------- F12: parytet filtra miasta z serwerem
+
+
+def test_filtr_miasta_dopasowuje_fragmentem_tak_jak_serwer() -> None:
+    """Rdzeń F12, zmierzony na produkcji za zero żądań (audyt 2026-09-08, zamknięte 09-09).
+
+    Run `eb1df3a8` z filtrem `miasto=['Łomża']` zwrócił z API cztery wpisy z miejscowości
+    „Stara Łomża przy Szosie" i „Stara Łomża nad Rzeką" — nazw zawierających „Łomża", ale jej
+    nierównych. Sprawdzone dodatkowo, że żaden z tych wpisów nie ma „Łomża" w adresie
+    korespondencyjnym ani w żadnym innym, więc dopasowanie nie mogło pójść inną drogą.
+
+    `matches_criteria` porównywał miasto dokładnie, więc ścieżka raportu **gubiła** te wpisy,
+    a komentarz nad funkcją zapewniał, że oba źródła dają ten sam zbiór.
+    """
+    wiersz = row(Miejscowosc="Stara Łomża przy Szosie")
+    rekord = row_to_record(wiersz, wojewodztwo="podlaskie")
+
+    assert matches_criteria(rekord, criteria(miasto="Łomża"))
+
+
+def test_filtr_miasta_nadal_odrzuca_miasto_bez_wspolnego_fragmentu() -> None:
+    """Kontrola pozytywna. „Zawiera" zamienione na „cokolwiek" byłoby tym samym defektem
+    obróconym o 180 stopni: ścieżka raportu zwracałaby nadzbiór zamiast podzbioru."""
+    rekord = row_to_record(row(Miejscowosc="Białystok"), wojewodztwo="podlaskie")
+
+    assert not matches_criteria(rekord, criteria(miasto="Łomża"))
+
+
+def test_pola_niezmierzone_zostaja_przy_porownaniu_doklandym() -> None:
+    """Granica poprawki, i to jest jej istota. Sonda z 2026-09-09 pokazała, że rodzina pól
+    tekstowych **nie jest jednorodna**, więc rozciągnięcie „fragmentu" z `miasto` na sąsiednie
+    pola byłoby zgadywaniem — tym samym, które trzymało `miasto` przy porównaniu dokładnym.
+    Póki nie zmierzono, `powiat` porównuje się dokładnie i test to przypina."""
+    rekord = row_to_record(row(Powiat="łomżyński"), wojewodztwo="podlaskie")
+
+    assert matches_criteria(rekord, criteria(powiat="łomżyński"))
+    assert not matches_criteria(rekord, criteria(powiat="omżyń"))
