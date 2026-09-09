@@ -37,8 +37,21 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true          # zapisywalny jest tylko wolumen stanu
+    # `noexec,nosuid`: /tmp jest jedynym zapisywalnym miejscem w kontenerze poza wolumenem
+    # stanu, czyli jedynym, w którym cokolwiek dałoby się podłożyć i uruchomić.
     tmpfs:
-      - /tmp:size=16m
+      - /tmp:size=16m,noexec,nosuid
+
+    # Proces robi WYŁĄCZNIE wychodzące HTTPS i zapis do jednego wolumenu — nie potrzebuje żadnej
+    # capability. Domyślnie kontener niesie ich cały zestaw, więc odebranie ich nic nie psuje,
+    # a zmniejsza promień rażenia, gdyby coś w procesie udało się przejąć.
+    cap_drop: [ALL]
+
+    # Limity zasobów: usługa bezobsługowa bez nadzoru nie może przy wycieku pamięci albo pętli
+    # tworzącej wątki wywrócić serwera klienta — najwyżej samą siebie, a `unless-stopped`
+    # podniesie ją z powrotem.
+    mem_limit: 512m
+    pids_limit: 256
 
     logging:
       driver: json-file

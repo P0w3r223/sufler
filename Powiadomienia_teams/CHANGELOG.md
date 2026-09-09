@@ -65,6 +65,25 @@ uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrze�
   celowo przepuszczają wyjątki sterujące (`CiszaError`, `AuthExpiredError`, `StateWriteError`),
   a połknięcie ich byłoby regresją groźniejszą niż naprawiana usterka.
 
+### Bezpieczeństwo wdrożenia
+
+- **Hartowanie kontenera wróciło do repozytorium.** Na serwerze kontener biegał z `cap_drop: [ALL]`,
+  `mem_limit`, `pids_limit` i `noexec,nosuid` na `/tmp`; `deploy/docker-compose.yml` w repozytorium
+  **nie miał ani jednej z tych linii** (`git log --all -S cap_drop` po tej ścieżce nie zwracał nic).
+  Hardening dołożono ręcznie na hoście i nigdy nie wrócił do gita, więc odtworzenie wdrożenia
+  z repozytorium — nowy serwer, migracja, `git checkout` po awarii — **po cichu zdejmowało
+  zabezpieczenia działające na produkcji od tygodni**. Nic by nie padło i nic nie zapisałoby się
+  w logu.
+
+  Pilnuje tego teraz `tests/test_hartowanie_wdrozenia.py`: iteruje po CHRONIONYCH RZECZACH
+  (skasowanie którejkolwiek zapala test, dołożenie nowej wymaga świadomego dopisania), a przy
+  okazji broni braku sekcji `ports` — dotąd była to decyzja opisana komentarzem, a komentarz
+  nikogo nie zatrzyma. Plik nie wchodzi do obrazu, więc w etapie `test` strażnik pomija się
+  jawnie, jak `test_wersje` (ADR 0008).
+
+  `deploy/README-docker.md` dostał brakujące wiersze w tabeli decyzji — tabela wymieniała
+  `read_only` i tmpfs, ale milczała o tym, co realnie chroniło kontener u klienta.
+
 ### Testy
 
 Dziewięć nowych sond (503 → 512), każda zweryfikowana jako STRAŻNIK: uruchomiona wobec kodu sprzed
