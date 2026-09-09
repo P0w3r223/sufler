@@ -638,6 +638,8 @@ def _commit(
     *,
     status: str = "",
     awaiting_yes: bool | None = None,
+    interpretacja: bool = False,
+    niejasne: bool = False,
 ) -> None:
     """Utrwal stan RAZEM z przesunięciem watermarku i zmianą statusu — oba naraz albo wcale.
 
@@ -672,7 +674,18 @@ def _commit(
 
     Pusta porcja nie jest już cichym niewypałem: gdy przychodzi ze statusem albo ze zmianą flagi
     (domknięcia i wycofania bez nowych wiadomości), stan i tak trzeba utrwalić.
+
+    ``interpretacja``/``niejasne`` niosą MIARĘ JAKOŚCI (E4) i przechodzą tędy z tego samego powodu
+    co ``status``: licznik podbity przed nieudanym zapisem zostawałby w pamięci procesu, a utrwalał
+    go dopiero czyjś cudzy ``save_state`` — czyli miara rosłaby o zdarzenia, których nie było.
+    ``niejasne`` bez ``interpretacja`` jest sprzecznością (niejasność JEST wynikiem interpretacji)
+    i dlatego jest tu jawnie odrzucane, a nie po cichu tolerowane.
     """
+    if niejasne and not interpretacja:
+        raise ValueError("niejasne=True wymaga interpretacja=True — niejasność jest jej wynikiem")
+    if interpretacja:
+        pending.interpretacje += 1
+        pending.niejasnosci += int(niejasne)
     if status:
         pending.status = status
     if awaiting_yes is not None:
@@ -715,6 +728,12 @@ class _MigawkaCommitu:
     status: str
     resolved: tuple[dict[str, Any], ...]
     resolved_time_off: tuple[dict[str, Any], ...]
+    # Liczniki miary E4 — w migawce, bo `_commit` je podbija. Bez tego niedostarczona prośba
+    # o doprecyzowanie zawyżałaby odsetek niejasności o zdarzenie, którego pracownik nie zobaczył,
+    # a jego wiadomość i tak wraca do interpretacji w kolejnym obiegu (watermark się cofa) —
+    # czyli policzylibyśmy JĄ dwa razy.
+    interpretacje: int
+    niejasnosci: int
 
 
 def _migawka_commitu(pending: st.PendingReminder) -> _MigawkaCommitu:
@@ -734,6 +753,8 @@ def _migawka_commitu(pending: st.PendingReminder) -> _MigawkaCommitu:
         status=pending.status,
         resolved=tuple(pending.resolved),
         resolved_time_off=tuple(pending.resolved_time_off),
+        interpretacje=pending.interpretacje,
+        niejasnosci=pending.niejasnosci,
     )
 
 
@@ -771,6 +792,12 @@ def _wycofaj_commit(pending: st.PendingReminder, migawka: _MigawkaCommitu) -> No
     pending.status = migawka.status
     pending.resolved = [dict(z) for z in migawka.resolved]
     pending.resolved_time_off = [dict(z) for z in migawka.resolved_time_off]
+    # Liczniki miary E4 wracają do wartości sprzed commitu — inaczej niedostarczona prośba
+    # o doprecyzowanie liczyłaby się jako niejasność, a ta sama wiadomość i tak wróci do
+    # interpretacji w kolejnym obiegu (watermark właśnie się cofnął), więc trafiłaby do miary
+    # DRUGI raz. Miara ma opisywać rozmowę, którą pracownik zobaczył.
+    pending.interpretacje = migawka.interpretacje
+    pending.niejasnosci = migawka.niejasnosci
     pending.awaiting_yes = False
 
 
@@ -1490,7 +1517,18 @@ def _interpret_and_confirm(  # noqa: PLR0915
         if decision.schedule.is_empty and not resolved_time_off:
             # Nic konkretnego do zapisania (np. urlop, ale zespół nie ma żadnych powodów czasu
             # wolnego) — nie obiecuj pustego zapisu, poproś o doprecyzowanie.
-            _commit(settings, state, pending, wiadomosci, awaiting_yes=False)
+            # Miara E4: to jest NIEJASNOŚĆ — kończy się prośbą o doprecyzowanie, tak samo jak
+            # gałąź `unclear` niżej. Liczy się po TYM, jak zachował się bot wobec pracownika,
+            # a nie po tym, którą gałęzią kodu tu doszliśmy.
+            _commit(
+                settings,
+                state,
+                pending,
+                wiadomosci,
+                awaiting_yes=False,
+                interpretacja=True,
+                niejasne=True,
+            )
             # `try/finally` BEZ `except`: propagacja zostaje dokładnie taka jak dotąd (nic tu nie
             # było łapane), dochodzi wyłącznie wycofanie commitu. Szeroki handler byłby nowym
             # miejscem do pilnowania przez strażnika szwu, a nie jest do niczego potrzebny.
@@ -1518,6 +1556,7 @@ def _interpret_and_confirm(  # noqa: PLR0915
             wiadomosci,
             status=st.AWAITING_CONFIRM,
             awaiting_yes=True,
+            interpretacja=True,
         )
         confirm = build_confirm_text(
             decision.schedule, resolved_time_off, tz, pominiete=decision.pominiete
@@ -1576,7 +1615,15 @@ def _interpret_and_confirm(  # noqa: PLR0915
             if not dostarczono:
                 _wycofaj_commit(pending, migawka)
     elif decision.action == "decline":
-        _commit(settings, state, pending, wiadomosci, status=st.DECLINED, awaiting_yes=False)
+        _commit(
+            settings,
+            state,
+            pending,
+            wiadomosci,
+            status=st.DECLINED,
+            awaiting_yes=False,
+            interpretacja=True,
+        )
         try:
             do_pracownika(settings, client, pending.chat_id, to_html(DECLINED_TEXT), teraz=now)
         # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
@@ -1591,7 +1638,15 @@ def _interpret_and_confirm(  # noqa: PLR0915
                 etykiety.osoba(pending, settings),
             )
     else:
-        _commit(settings, state, pending, wiadomosci, awaiting_yes=False)
+        _commit(
+            settings,
+            state,
+            pending,
+            wiadomosci,
+            awaiting_yes=False,
+            interpretacja=True,
+            niejasne=True,
+        )
         # Prośba o doprecyzowanie KONKRETNEJ rzeczy (enum z `agent.schema`, nie tekst modelu):
         # pracownik, który nie wie, co było niejasne, odpisuje to samo i okno wygasa.
         #

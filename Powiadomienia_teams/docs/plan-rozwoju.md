@@ -113,9 +113,9 @@ jest niedziela 05:00. Zbyt późna konfiguracja **wycisza** przypomnienie, zamia
 
 | # | Treść | Status |
 |---|---|---|
-| **E0** | Koperta stanu dla trwałych liczników. Log wystarcza pilotażowi; trwały licznik wymaga E0. | `otwarte` |
-| **E1** | Kontrola kosztu modelu — sufit oparty na pomiarze z pilotażu (C2), nie na przypuszczeniu. | `otwarte` |
-| **E4** | Miara jakości interpretacji: **odsetek `unclear` per osoba** (§10.4). Stąd wymóg, żeby powody niejasności były zamkniętym enumem importowanym PO NAZWIE, a nie pozycją. | `otwarte` (podstawa pomiaru gotowa) |
+| **E0** | Koperta stanu dla trwałych liczników. Log wystarcza pilotażowi; trwały licznik wymaga E0. | `otwarte` — ale **E4 jej NIE potrzebowało**. Przesłanka „trwały licznik wymaga E0" jest prawdziwa tylko dla liczników GLOBALNYCH; miara E4 jest z definicji *per osoba*, więc zmieściła się w `PendingReminder` (dwa pola `int`) i sprząta się razem z wpisem. E0 zostaje otwarte dla tego, co naprawdę jest globalne — np. skumulowanego zużycia tokenów. |
+| **E1** | Kontrola kosztu modelu — sufit oparty na pomiarze z pilotażu (C2), nie na przypuszczeniu. | **`otwarte` — rekomendacja: ODRZUCIĆ, po pomiarze.** Pomiar zrobiony (2026-09-08, tabela niżej): **~$0,25–0,60 tygodniowo**, czyli rząd dolara miesięcznie. Sufit broniłby budżetu mniejszego niż koszt jego utrzymania, a granice wobec NIEZAUFANEGO wejścia (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, sufity znaków) już istnieją i mają inne uzasadnienie niż budżet. Decyzja należy do klienta — to ta sama procedura co przy D1: zmierzyć, zapisać wynik, dopiero potem kasować albo podłączać. |
+| **E4** | Miara jakości interpretacji: **odsetek `unclear` per osoba** (§10.4). Stąd wymóg, żeby powody niejasności były zamkniętym enumem importowanym PO NAZWIE, a nie pozycją. | **`zrealizowane`** 2026-09-09 — `PendingReminder.interpretacje`/`niejasnosci` (para, bo plan mówi o ODSETKU, a liczba bez mianownika myli), podbijane przez `_commit` i cofane razem z nim; szybka ścieżka „tak" nie liczy się, bo modelu nie woła. Widoczne w `--stan` (kolumna `niejasne` jako `2/9`) i w podsumowaniu tygodniowym. |
 
 ---
 
@@ -169,6 +169,27 @@ z testami bucketowania historii. Dopiero praca zmianowa czyni tę pozycję opła
   wydaniu 0.2.21.** Wszystkie pięć miejsc wyrównane, zgodności pilnuje `tests/test_wersje.py`
   (iteruje po miejscach deklaracji, więc szóste trzeba dopisać świadomie). Docstring `__init__.py`
   przestał twierdzić, że robi to `[tool.hatch.version]` i nieistniejący skrypt check_versions.
+
+## Pomiar kosztu modelu (2026-09-08, podstawa decyzji o E1)
+
+Zmierzone na drzewie 0.2.22, nie oszacowane z pamięci:
+
+| składnik | wartość |
+|---|---|
+| prompt systemowy `_SYSTEM` | 7 609 znaków |
+| definicje narzędzi (JSON) | 2 635 znaków |
+| schemat wyjścia (JSON) | 3 447 znaków |
+| **stały prefiks każdego żądania** | **13 691 znaków ≈ ~5 000 tokenów** |
+| wywołań tygodniowo (8 osób, 1–4 tury na odpowiedź) | ~30–90 |
+| **koszt tygodniowo** (`claude-haiku-4-5`, $1/$5 za MTok) | **~$0,25–0,60** |
+
+Prompt caching jest WYŁĄCZONY (zero `cache_control` w repo) i włączenie go też się nie opłaca:
+oszczędziłoby ~$0,20 tygodniowo przy koszcie jednego breakpointu i ryzyku cichej inwalidacji.
+
+**Czego ten pomiar NIE rozstrzyga.** Nie mówi, że sufit jest bezwartościowy — mówi, że jego
+wartością nie jest budżet. Gdyby krąg odbiorców urósł o rząd wielkości albo model się zmienił,
+pomiar trzeba powtórzyć; polecenie zliczające jest w `agent/anthropic_llm.py` (wzorzec
+„tokeny wejścia=" w logu, pozycja C2).
 
 ## Czego w tym pliku NIE ma
 

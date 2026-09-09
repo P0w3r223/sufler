@@ -4222,3 +4222,149 @@ def test_przypomnienie_podlega_ciszy_takze_przy_ignoruj_cisze(tmp_path: Path):
 
     assert client.sent == [], "przypomnienie wyszło w godzinach ciszy"
     assert not load_state(state_path)["u1"].przypomniano_at, "temat oznaczony mimo braku wysyłki"
+
+
+# --- E4: miara jakości interpretacji ----------------------------------------------------------
+def _po_prosbie(state_path: Path) -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+
+def test_niejasna_odpowiedz_podbija_OBA_liczniki(tmp_path: Path):
+    """E4 mierzy ODSETEK, więc mianownik jest częścią miary, nie ozdobnikiem."""
+    state_path = tmp_path / "state.json"
+    _po_prosbie(state_path)
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "yyy")]})
+    llm = _FakeLlm('{"action":"unclear","powod_niejasnosci":"brak_godzin"}')
+
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert (wpis.interpretacje, wpis.niejasnosci) == (1, 1)
+
+
+def test_zrozumiana_odpowiedz_podbija_tylko_mianownik(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    _po_prosbie(state_path)
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert (wpis.interpretacje, wpis.niejasnosci) == (1, 0)
+
+
+def test_szybka_sciezka_tak_NIE_liczy_sie_do_miary(tmp_path: Path):
+    """Mierzymy jakość INTERPRETACJI, nie ruch na czacie — „tak" na etapie potwierdzenia nie
+    woła modelu w ogóle (`is_pure_affirmation`), więc nie ma czego oceniać."""
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                awaiting_yes=True,
+                resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "tak")]})
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert wpis.status == APPLIED
+    assert (wpis.interpretacje, wpis.niejasnosci) == (0, 0)
+
+
+def test_niedostarczona_prosba_o_doprecyzowanie_NIE_zawyza_miary(tmp_path: Path):
+    """Wycofanie commitu obejmuje liczniki — inaczej miara rosłaby dwa razy za jedną wiadomość.
+
+    Gdy prośba o doprecyzowanie nie dotrze, watermark się cofa, więc TA SAMA wiadomość wraca do
+    interpretacji w kolejnym obiegu. Bez cofnięcia liczników policzylibyśmy ją drugi raz, a przy
+    okazji zaliczyli niejasność, której pracownik nigdy nie zobaczył.
+    """
+    state_path = tmp_path / "state.json"
+    _po_prosbie(state_path)
+    settings = _settings_calodobowe(state_path)
+
+    class _NieWysyla(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            raise RuntimeError("czat niedostępny")
+
+    client = _NieWysyla({"chat1": [_msg("u1", "2026-07-19T18:00:00Z", "yyy")]})
+    llm = _FakeLlm('{"action":"unclear","powod_niejasnosci":"brak_godzin"}')
+
+    poll_replies(settings, client, llm, now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert (wpis.interpretacje, wpis.niejasnosci) == (0, 0), "miara policzyła nieprzysłaną prośbę"
+    assert wpis.watermark == "", "watermark miał się cofnąć razem z licznikami"
+
+
+def test_niejasne_bez_interpretacji_jest_sprzecznoscia(tmp_path: Path):
+    """Niejasność JEST wynikiem interpretacji — para bez mianownika psułaby odsetek po cichu.
+
+    Odrzucamy jawnie zamiast tolerować: miara, która raz zacznie kłamać, kłamie do końca pilotażu,
+    a nikt tego nie zauważy (założenie A12: logów nikt nie czyta).
+    """
+    from powiadomienia_teams.runtime.listener import _commit
+
+    state_path = tmp_path / "state.json"
+    _po_prosbie(state_path)
+    stan = load_state(state_path)
+    with pytest.raises(ValueError, match="wymaga interpretacja=True"):
+        _commit(_settings(state_path), stan, stan["u1"], (), niejasne=True)
+
+
+def test_podsumowanie_liczy_skutecznosc_przypomnien_i_odsetek_niejasnosci(tmp_path: Path):
+    """Dwie liczby, których do tej pory nie było, a bez których obu dźwigni nie da się ocenić."""
+    from powiadomienia_teams.runtime.service import _liczby_per_tydzien
+
+    def _wpis(mid: str, status: str, *, przypomniano: str = "", interp: int = 0, niejasne: int = 0):
+        return PendingReminder(
+            member_id=mid,
+            member_name=mid,
+            chat_id="c",
+            week_start="2026-07-20",
+            status=status,
+            przypomniano_at=przypomniano,
+            interpretacje=interp,
+            niejasnosci=niejasne,
+        )
+
+    stan = {
+        # przypomniany i skuteczny — bot zapisał po potwierdzeniu
+        "a": _wpis("a", APPLIED, przypomniano="2026-07-18T08:00:00Z", interp=2, niejasne=1),
+        # przypomniany i skuteczny — pracownik uzupełnił sam po zagadnięciu
+        "b": _wpis("b", SELF_FILLED, przypomniano="2026-07-18T08:00:00Z"),
+        # przypomniany, a i tak wygasł
+        "c": _wpis("c", EXPIRED, przypomniano="2026-07-18T08:00:00Z"),
+        # bez przypomnienia
+        "d": _wpis("d", APPLIED, interp=3, niejasne=0),
+    }
+
+    (blok,) = _liczby_per_tydzien(stan)
+
+    assert blok.przypomnienia == 3
+    assert blok.przypomnienia_skuteczne == 2, "SELF_FILLED też jest skutkiem — grafik jest pełny"
+    assert (blok.interpretacje, blok.niejasnosci) == (5, 1)
