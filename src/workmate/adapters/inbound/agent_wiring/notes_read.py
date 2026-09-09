@@ -181,9 +181,19 @@ def _build_notes_read_factory(
 
     def factory(sender_id: str) -> list[ToolSpec]:
         # Z powłoką trójka odczytu jest zbędna — ale ``Project`` zostaje, bo bramka dotyczy
-        # POWIERZCHNI SERWUJĄCEJ TREŚĆ, a nie tego, czy istnieje druga droga do tej samej treści.
-        # (Że powłoka czyta montaż ``ro`` obok bramki, mówi ADR 0062 §Ryzyko resztkowe. To
-        # osobne ryzyko, przyjęte świadomie, i nie jest powodem, żeby otwierać drogę TRZECIĄ.)
+        # POWIERZCHNI SERWUJĄCEJ TREŚĆ, a nie tego, czy istnieją inne drogi do tej samej treści.
+        #
+        # Inne drogi ISTNIEJĄ i lepiej je wyliczyć, niż podać ich liczbę — ta się starzeje:
+        #  1. powłoka czyta montaż ``ro`` bezpośrednio (ADR 0062 §Ryzyko resztkowe, przyjęte
+        #     świadomie; zawężone bramką członkostwa z ADR 0063 — nie-członek nie dostaje ``Bash``);
+        #  2. ``WorkspaceScope`` jest per (kanał, wątek), NIE per nadawca, a ``File(read)`` dostaje
+        #     także nadawca niezmapowany (bramkowane są same akcje MUTUJĄCE, `file_support.py`).
+        #     Członek, który skopiuje notatkę do katalogu rozmowy, udostępnia ją więc każdemu
+        #     uczestnikowi wątku — obok tej bramki i bez powłoki. Wymaga to czynności rozpoznanego
+        #     członka, więc klasa ryzyka jest bliższa punktowi 1 niż wadzie U1; nie zamykamy tego
+        #     tutaj, ale nie udajemy, że tego nie ma.
+        # Żadna z nich nie jest powodem, żeby dokładać drogę przez katalog bazowy — jedyną,
+        # którą ta fabryka umie zamknąć.
         catalog = [
             *build_project_catalog(projects, write_service=write_service),
             *([] if shell_available else build_agent_notes_read_catalog(notes, projects)),

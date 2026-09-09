@@ -689,8 +689,13 @@ class ConversationalResponder:
         wyjście z pętli bez zapisu.
 
         Zbiór wyzwalaczy jest wąski ROZMYŚLNIE (ADR 0066 R2): gdyby skaziło wszystko, sygnał nie
-        znaczyłby nic. Odczyt notatek i zdarzeń własnego pionu typowanymi narzędziami NIE skaża —
-        to treść zza bramek zdolności.
+        znaczyłby nic. Kryterium NIE brzmi jednak „treść zza bramek zdolności" — tak było napisane
+        tutaj do 2026-09-09 i było to nieprawdziwe w obie strony: `Activity` i `read_events_since`
+        (zdarzenia, czyli „własnego pionu") mają ``taints=True`` od początku.
+        **Bramka zdolności mówi, KTO MOŻE ZAWOŁAĆ narzędzie; wyzwalacz pyta, KTO NAPISAŁ TREŚĆ.**
+        Dla notatek te dwie rzeczy się pokrywają — treść pisze pion — i dlatego notatki nie skażą.
+        Dla zdarzeń GitHuba i zgłoszeń Jiry rozjeżdżają się, i dlatego skażą (ADR 0066 wraz
+        z dopiskiem 2026-09-09).
 
         Zapłon jest raz na turę, nie raz na wywołanie: ``mark_tainted`` jest wprawdzie
         idempotentne (źródło z PIERWSZEGO zapłonu), ale osiem rund po kilka wywołań to osiem

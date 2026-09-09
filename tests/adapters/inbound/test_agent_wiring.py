@@ -29,6 +29,7 @@ from workmate.adapters.inbound.responder import (
     SafeResponder,
 )
 from workmate.config import AgentSettings, ConversationSettings, Settings
+from workmate.core.application.tools import ToolSpec
 from workmate.core.domain.workspace import WorkspaceScope
 from workmate.core.errors import NoteAuthorizationError
 from workmate.core.ports.llm import AttachmentQueue
@@ -172,11 +173,19 @@ def test_project_status_is_gated_like_the_rest_of_the_read_surface(tmp_path: Pat
     assert "Brak uprawnień do odczytu bazy wiedzy" in out["error"]
 
 
-def test_base_catalog_offers_no_knowledge_base_tool_when_the_gate_owns_them(tmp_path: Path):
-    """Bramka domyka się tylko wtedy, gdy katalog BAZOWY nie oferuje niczego z bazy wiedzy.
+def test_build_project_catalog_zwraca_sam_Project(tmp_path: Path):
+    """Builder bazowy oferuje DOKŁADNIE ``Project`` — to właśnie znika przy ``suppress_notes_read``.
 
-    Sonda jest po stronie katalogu, bo to on jedzie do modelu: gdyby ``Project`` w nim został,
-    per-turowa odmowa byłaby dekoracją obok czynnego narzędzia o tej samej nazwie.
+    **Przemianowana 2026-09-09 na to, co naprawdę mierzy.** Nazywała się dotąd
+    ``…_offers_no_knowledge_base_tool_when_the_gate_owns_them`` i obiecywała w docstringu, że
+    pilnuje, by katalog BAZOWY nie oferował niczego z bazy wiedzy, „bo gdyby ``Project`` w nim
+    został, per-turowa odmowa byłaby dekoracją obok czynnego narzędzia o tej samej nazwie".
+    Ciało nie dotykało ani ``suppress_notes_read``, ani wiringu — wołało builder wprost, więc
+    asercja była wręcz ODWROTNA do nazwy i przeszłaby przy bramce zepsutej do zera. Sonda stała
+    najbliżej wady U1, opisywała ją co do słowa i jej nie widziała.
+
+    Obietnicę z tamtego docstringa egzekwuje dziś
+    ``test_bramka_odczytu_nie_wygasa_przy_wlaczonej_powloce`` — na zmontowanej powierzchni.
     """
     from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
     from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
@@ -191,6 +200,28 @@ def test_base_catalog_offers_no_knowledge_base_tool_when_the_gate_owns_them(tmp_
     bazowe = build_project_catalog(projects)
 
     assert [t.name for t in bazowe] == ["Project"]  # to właśnie znika przy suppress_notes_read
+
+
+def test_fabryka_zachowuje_akcje_save_dla_drzwi_zaufanych(tmp_path: Path):
+    """Docstring fabryki obiecuje, że ``enable_write`` „inaczej cicho zabrałoby drzwiom zaufanym
+    akcję ``save``" — a nic tego nie mierzyło.
+
+    Macierz właśnie urosła do czterech kombinacji (``enable_write`` × ``shell_available``),
+    z czego sondy pokrywały dwie, obie z ``enable_write=False``. Obietnica bez sondy jest w tym
+    repozytorium klasą wady, nie stylem.
+    """
+    factory = _build_notes_read_factory(
+        _settings(tmp_path), _StubReadAuthz({"aad-ok"}), enable_write=True, shell_available=True
+    )
+    projekt = next(t for t in factory("aad-ok") if t.name == "Project")
+    assert "save" in projekt.description, "wariant rw zniknął — drzwi zaufane straciły zapis"
+
+    korzen_ro = tmp_path / "ro"
+    korzen_ro.mkdir()
+    bez_zapisu = _build_notes_read_factory(
+        _settings(korzen_ro), _StubReadAuthz({"aad-ok"}), shell_available=True
+    )
+    assert "save" not in next(t for t in bez_zapisu("aad-ok") if t.name == "Project").description
 
 
 def test_z_powloka_fabryka_niesie_sam_Project_bez_trojki_odczytu(tmp_path: Path):
@@ -489,15 +520,14 @@ def _zmontowana_powierzchnia(tmp_path, monkeypatch, **kwargs) -> list[str]:
 
 def _zmontowany_katalog(
     tmp_path, monkeypatch, *, powloka: bool, file_reply: bool, authorizer=None
-) -> list:
-    """Zwróć nazwy narzędzi, jakie model dostaje w turze z realnego respondera.
+) -> list[ToolSpec]:
+    """Zwróć SPECYFIKACJE narzędzi, jakie model dostaje w turze z realnego respondera.
 
     GitHub/Jira/Schedule wchodzą jako statyczne STUBY drzwi (ADR 0019/0020) — ich wnętrze ma
     własne testy; tu mierzymy SKŁADANIE powierzchni i bramkę etapu 7, nie ich budowniki. ``Notes``
     i bramka ``ReplyWithFile`` idą przez PRAWDZIWY kod (``build_agent_runtime`` + gating 7.1).
     """
     from workmate.config import ShellSettings, WorkspaceSettings
-    from workmate.core.application.tools import ToolSpec
 
     def _stub(name: str) -> ToolSpec:
         return ToolSpec(name, "", lambda **_kw: {})
@@ -543,7 +573,10 @@ def test_uklad_docelowy_zamrozony_na_piatce_bez_szostego_narzedzia(tmp_path: Pat
     układów A–D nie miała dotąd bramki (przebudowa-harnessu §7.3).
     """
     nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=True, file_reply=True)
-    assert set(nazwy) == {"Bash", "Project", "Activity", "Jira", "Schedule"}
+    # `sorted`, nie `set`: zbiór pięcioelementowy powstaje równie dobrze z SZEŚCIU pozycji, więc
+    # `set()` wymazywał DUPLIKAT — a dwa `Project` w powierzchni (bramkowany obok niebramkowanego)
+    # to dokładnie objaw rodziny wad, którą ten golden ma zamrażać.
+    assert sorted(nazwy) == ["Activity", "Bash", "Jira", "Project", "Schedule"]
     assert "ReplyWithFile" not in nazwy
 
 

@@ -253,10 +253,18 @@ def map_task_details(
     a więc i w każdym z tych limitów. Sufity chronią OKNO KONTEKSTU — jedno zgłoszenie nie ma
     zjeść tury — i tyle mają obiecywać.
 
-    Przed wstrzyknięciem broni co innego, i to leży poza tą funkcją: treść z Jiry zapala lepką
-    skazę rozmowy (``ToolSpec("Jira", …, taints=True)``, ADR 0066), więc mutacja bazy wiedzy
-    idzie po niej ostrzejszą ścieżką sędziego. To jest obrona w głębi, nie bariera — i tak ma
-    być nazywana.
+    Przed wstrzyknięciem bronią dwie rzeczy, obie poza tą funkcją, i warto je wymienić w kolejności
+    SIŁY, bo pierwsza redakcja tego akapitu wskazywała słabszą:
+
+    1. **Koperta ``<dane-obce:… NONCE>``** wokół wyniku narzędzia (``anthropic_llm.py``, ADR 0066;
+       na flocie ``ENABLE_TRUST_LABELS=true``). Nonce jest per tura i nie pochodzi z treści, więc
+       treść nie może zamknąć własnej koperty. To jest granica STRUKTURALNA — najbliżej bariery,
+       co ten system ma.
+    2. **Lepka skaza rozmowy** (``ToolSpec("Jira", …, taints=True)``), która dojeżdża do sędziego
+       mutacji jako fakt o pochodzeniu tury. Obrona w głębi, i słabsza, niż brzmi: ``_decide``
+       nie rozgałęzia się po skazie, a prompt systemowy sędziego nie mówi, co z tym faktem zrobić.
+
+    Ani jedno, ani drugie nie jest barierą przeciw wstrzyknięciu — i tak ma być nazywane.
     """
     key = str(raw_issue.get("key") or "")
     fields = raw_issue.get("fields")

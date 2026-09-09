@@ -329,8 +329,14 @@ def build_conversational_responder(
     # ``build_project_catalog`` nie zależy od niego wcale, więc przy ``ENABLE_SHELL=true``
     # ``Project`` ZOSTAWAŁ w katalogu bazowym — poza bramką. A to on serwuje treść
     # (``Project(action='status')`` zwraca syntezę z notatek pionu) i to jego ADR 0062 wciągnął
-    # za bramkę jako „jedyną drogę odczytu, która przeżyła jej wpięcie". Bramka wygasała więc
-    # dokładnie w układzie docelowym — z włączoną powłoką — i to po cichu.
+    # za bramkę jako „jedyną drogę odczytu, która przeżyła jej wpięcie".
+    #
+    # **Wada była UTAJONA, nie czynna, i to rozróżnienie jest tu treścią.** Na flocie
+    # ``NOTE_READ_AUTHZ`` jest wyłączone, więc autoryzatora nie ma wcale i bramka nie działa
+    # w ogóle — nie było czego omijać. Ale ``ENABLE_SHELL`` jest WŁĄCZONE, więc wada zapaliłaby
+    # się w chwili włączenia flagi: operator dostałby bramkę, która melduje włączenie i nie
+    # obejmuje narzędzia serwującego treść. To jest powód, dla którego ta poprawka jest
+    # WARUNKIEM włączenia flagi (krok 6.2 karty aktywacji), a nie naprawą trwającego wycieku.
     #
     # To ten sam błąd, co przy rozszczepieniu T1/T2 niżej, naprawiony w tym pliku po raz drugi:
     # dwa niezależne warunki splątane w jednej nazwie. Stąd dwie nazwy zamiast jednej.
