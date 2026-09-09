@@ -11,6 +11,7 @@ from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
     czas_na_przypomnienie,
     is_expired,
+    mozna_wznowic,
     prune_terminal,
     przekroczyl_sufit,
     ready_for_self_fill_check,
@@ -20,7 +21,9 @@ from powiadomienia_teams.reminders.lifecycle import (
 )
 from powiadomienia_teams.state import (
     APPLIED,
+    APPLYING,
     AWAITING_REPLY,
+    DECLINED,
     EXPIRED,
     SELF_FILLED,
     PendingReminder,
@@ -444,3 +447,50 @@ def test_przypomnienie_nie_idzie_do_kogos_kto_napisal():
 
 def test_przypomnienie_da_sie_wylaczyc():
     assert czas_na_przypomnienie(_milczacy(), _SOBOTA_10, OKNO, -1) is False
+
+
+# --- D5 połowa druga: wznowienie domkniętego tematu -------------------------------------------
+def _domkniety(status, week_start="2026-07-20"):
+    return PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c",
+        week_start=week_start,
+        status=status,
+        nudged_at=_iso(NOW),
+    )
+
+
+def test_wznawiamy_tylko_stany_w_ktorych_NIC_nie_zapisano():
+    """Lista wykluczeń jest tu ważniejsza niż lista dopuszczeń.
+
+    `APPLIED`/`SELF_FILLED` odpadają, bo grafik JEST już uzupełniony, a klient Graph nie ma
+    kasowania ani zmiany zmiany — cała powierzchnia zapisu to `create_shift` (który NIE
+    deduplikuje) i `create_time_off`. „Poprawka" po zapisie znaczyłaby drugą zmianę NAKŁADAJĄCĄ
+    SIĘ na pierwszą, bez drogi powrotnej. `APPLYING` odpada z N4.
+    """
+    w_tygodniu = NOW  # czwartek przed tygodniem docelowym
+    assert mozna_wznowic(_domkniety(EXPIRED), w_tygodniu, OKNO) is True
+    assert mozna_wznowic(_domkniety(DECLINED), w_tygodniu, OKNO) is True
+    assert mozna_wznowic(_domkniety(APPLIED), w_tygodniu, OKNO) is False
+    assert mozna_wznowic(_domkniety(SELF_FILLED), w_tygodniu, OKNO) is False
+    assert mozna_wznowic(_domkniety(APPLYING), w_tygodniu, OKNO) is False
+    assert mozna_wznowic(_domkniety(AWAITING_REPLY), w_tygodniu, OKNO) is False
+
+
+def test_po_koncu_tygodnia_docelowego_nie_ma_czego_wznawiac():
+    """Kryterium to KONIEC tygodnia, nie początek — kto odzywa się w środę o piątku, ma być
+    usłyszany. Po końcu `still_writable` i tak odsiałoby wszystko, więc czytanie czatu byłoby
+    kosztem bez skutku."""
+    w_srodku = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)  # środa tygodnia docelowego
+    po_koncu = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)  # poniedziałek NASTĘPNEGO tygodnia
+    assert mozna_wznowic(_domkniety(EXPIRED), w_srodku, OKNO) is True
+    assert mozna_wznowic(_domkniety(EXPIRED), po_koncu, OKNO) is False
+
+
+def test_wznowienie_nie_jest_jednorazowe():
+    """Temat wznowiony wraca do ZWYKŁEGO obiegu i podlega tym samym regułom co każdy inny,
+    więc drugie wznowienie po drugim domknięciu jest tak samo uprawnione jak pierwsze."""
+    juz_wznawiany = _domkniety(EXPIRED)
+    juz_wznawiany.wznowiono_at = _iso(NOW)
+    assert mozna_wznowic(juz_wznawiany, NOW, OKNO) is True

@@ -78,6 +78,8 @@ _UWAGA_PO_TERMINIE = "(!) termin minął — wygaśnie po najbliższym udanym, c
 # pilotażu przychodzi tu z pytaniem „czy ten człowiek dostał już drugie zagadnięcie" — bez tego
 # znacznika odpowiedź wymagałaby czytania pliku stanu ręcznie (pozycja D5 planu).
 _UWAGA_PRZYPOMNIANO = "przypomniano"
+# Jak wyżej, bez „(!)": wznowienie to stan rozmowy, nie usterka.
+_UWAGA_WZNOWIONO = "wznowiony"
 
 _BEZ_KOTWICY = "brak"
 _BEZ_TERMINU = "nie do wyznaczenia"
@@ -358,6 +360,10 @@ def _lista_wpisow(
             uwagi.append(_UWAGA_PO_TERMINIE)
         if pending.status in _OTWARTE and pending.przypomniano_at:
             uwagi.append(_UWAGA_PRZYPOMNIANO)
+        if pending.wznowiono_at:
+            # BEZ filtru `_OTWARTE`: wznowiony temat bywa już znów domknięty, a operator pyta
+            # właśnie o to, czy wznowienie do czegoś doprowadziło.
+            uwagi.append(_UWAGA_WZNOWIONO)
         ogon = "".join(f"   {u}" for u in uwagi)
         linie.append(
             f"  {nazwa[pending.member_id]:<{szer}}  {pending.status:<18} {pending.week_start:<12} "

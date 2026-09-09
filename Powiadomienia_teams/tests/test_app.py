@@ -1011,8 +1011,19 @@ def test_reply_referencing_another_person_writes_only_for_addressee(tmp_path: Pa
     assert all(s.user_id == "u1" for s in client.created)  # wyłącznie adresat, nigdy „Adam"
 
 
-def test_decline_ends_listening_without_changes(tmp_path: Path):
-    # Pracownik odmawia („nie chcę zmian") → status DECLINED, komunikat, ZERO zapisów, koniec.
+def test_decline_konczy_pytanie_ale_nie_sluchanie(tmp_path: Path):
+    """Pracownik odmawia → status DECLINED, komunikat, ZERO zapisów. Ale rozmowa da się wznowić.
+
+    **Zmiana kontraktu — pozycja D5, połowa druga.** Do niej ten test nazywał się
+    `..._ends_listening` i utrwalał, że po odmowie „nowa wiadomość NIE jest czytana" —
+    wpis terminalny wypadał z `open_items` i bot milczał na zawsze. To była cena implementacji,
+    nie obietnica wobec pracownika: bot mówi „kończę przypominanie", czyli przestaje PYTAĆ,
+    a nie „przestaję słuchać". Kto po odmowie jednak poda godziny, ma zostać usłyszany.
+
+    Co się NIE zmieniło i jest tu nadal sprawdzane: sama odmowa nie zapisuje niczego, domknięcie
+    idzie dokładnie raz, a wznowienie też nie zapisuje — wraca do prośby o potwierdzenie, bo
+    `awaiting_yes` skasowała ścieżka domykająca (N38).
+    """
     state_path = tmp_path / "state.json"
     save_state(
         state_path,
@@ -1039,13 +1050,21 @@ def test_decline_ends_listening_without_changes(tmp_path: Path):
     assert client.created == [] and client.time_off == []  # NIC nie zapisano
     assert len(client.sent) == 1  # jeden komunikat domknięcia
 
-    # Kolejny przebieg: DECLINED jest terminalny → koniec nasłuchu, nowa wiadomość NIE jest czytana.
+    # Kolejny przebieg: pracownik jednak podaje godziny. Model dostaje TERAZ inną odpowiedź —
+    # atrapa jest jednostrzałowa, a chodzi o to, żeby wznowiona wiadomość poszła zwykłą ścieżką.
+    # +2 h: PO tej nowej wiadomości (20:00), żeby test sprawdzał wznowienie, a nie to, że
+    # wiadomość jest jeszcze w przyszłości względem zegara.
     client.messages["chat1"].append(_msg("u1", "2026-07-19T20:00:00Z", "a jednak pon 8-16"))
-    # +2 h: PO tej nowej wiadomości (20:00), żeby test sprawdzał terminalność DECLINED, a nie to,
-    # że wiadomość jest jeszcze w przyszłości względem zegara.
-    poll_replies(settings, client, llm, now=_NIEDZIELA_19 + timedelta(hours=2))  # type: ignore[arg-type]
-    assert load_state(state_path)["u1"].status == "declined"  # bez zmian
-    assert client.created == [] and len(client.sent) == 1  # brak dalszej reakcji
+    llm_po_odmowie = _FakeLlm(
+        '{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}'
+    )
+    poll_replies(settings, client, llm_po_odmowie, now=_NIEDZIELA_19 + timedelta(hours=2))  # type: ignore[arg-type]
+
+    wznowiony = load_state(state_path)["u1"]
+    assert wznowiony.status == AWAITING_CONFIRM, "odmowa nie może zamykać uszu na zawsze"
+    assert wznowiony.wznowiono_at, "brak znacznika wznowienia"
+    assert client.created == [], "wznowienie SAMO nie zapisuje — czekamy na »tak«"
+    assert len(client.sent) == 2, "doszła prośba o potwierdzenie"
 
 
 def test_expired_pending_closed_and_notified_once(tmp_path: Path):
@@ -4368,3 +4387,156 @@ def test_podsumowanie_liczy_skutecznosc_przypomnien_i_odsetek_niejasnosci(tmp_pa
     assert blok.przypomnienia == 3
     assert blok.przypomnienia_skuteczne == 2, "SELF_FILLED też jest skutkiem — grafik jest pełny"
     assert (blok.interpretacje, blok.niejasnosci) == (5, 1)
+
+
+# --- D5 połowa druga: wznowienie domkniętego tematu --------------------------------------------
+def _domkniety_wpis(state_path: Path, status: str, **extra) -> None:
+    dane = {
+        "member_id": "u1",
+        "member_name": "Ala",
+        "chat_id": "chat1",
+        "week_start": "2026-07-20",
+        "status": status,
+        "proposal": [{"weekday": 0, "start": "08:00", "end": "16:00"}],
+    }
+    dane.update(extra)
+    save_state(state_path, {"u1": PendingReminder(**dane)})
+
+
+# Środa TYGODNIA DOCELOWEGO — po terminie, ale tydzień jeszcze trwa, więc jest co zapisywać.
+_SRODA_W_TYGODNIU = datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc)
+
+
+def test_odpowiedz_po_wygasnieciu_wznawia_temat(tmp_path: Path):
+    """Sedno pozycji: kto odezwie się po terminie, przestaje być ignorowany.
+
+    Do tej pory `poll_replies` czytało wyłącznie wpisy otwarte, więc wiadomość napisana minutę po
+    domknięciu nie była czytana NIGDY — bot milczał, a pracownik nie miał jak się dowiedzieć,
+    że mówi w próżnię.
+    """
+    state_path = tmp_path / "state.json"
+    _domkniety_wpis(state_path, EXPIRED)
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-22T09:00:00Z", "we wtorek 10-18")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":1,"start":"10:00","end":"18:00"}]}')
+
+    poll_replies(settings, client, llm, now=_SRODA_W_TYGODNIU)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert wpis.status == AWAITING_CONFIRM, "temat miał wrócić do obiegu"
+    assert wpis.wznowiono_at, "brak znacznika wznowienia"
+    assert len(client.sent) == 1, "pracownik miał dostać prośbę o potwierdzenie"
+
+
+def test_odpowiedz_po_ODMOWIE_tez_wznawia(tmp_path: Path):
+    """„Nie chcę zmian" nie jest obietnicą, że przestajemy słuchać — tylko że przestajemy pytać."""
+    state_path = tmp_path / "state.json"
+    _domkniety_wpis(state_path, DECLINED)
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-22T09:00:00Z", "jednak pon 8-16")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":0,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(settings, client, llm, now=_SRODA_W_TYGODNIU)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+
+
+def test_ZAPISANY_grafik_NIE_jest_wznawiany_i_nie_dostaje_drugiej_zmiany(tmp_path: Path):
+    """Najważniejsza granica tej pozycji — i powód, dla którego NIE brzmi ona „zdejmij filtr".
+
+    Klient Graph nie ma kasowania ani zmiany zmiany: cała powierzchnia zapisu to `create_shift`
+    (który NIE deduplikuje) i `create_time_off`. Gdyby temat `APPLIED` dało się wznowić, „popraw
+    piątek" znaczyłoby DRUGĄ zmianę nakładającą się na pierwszą, bez drogi powrotnej — czyli
+    uszkodzenie grafiku, którego nikt nie odkręci.
+    """
+    state_path = tmp_path / "state.json"
+    _domkniety_wpis(
+        state_path, APPLIED, resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}]
+    )
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-22T09:00:00Z", "jednak pon 10-18")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":0,"start":"10:00","end":"18:00"}]}')
+
+    poll_replies(settings, client, llm, now=_SRODA_W_TYGODNIU)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert wpis.status == APPLIED, "zapisany temat nie może wrócić do obiegu"
+    assert client.created == [], "DRUGA zmiana w grafiku — nieodwracalne uszkodzenie"
+    assert client.sent == [], "do zapisanego tematu nie piszemy"
+
+
+def test_wznowiony_temat_NIE_zapisuje_po_samym_tak(tmp_path: Path):
+    """Siatka N38 sprawdzona wprost, bo dopiero ta pozycja czyni ją nieteoretyczną.
+
+    Wpis z `awaiting_yes=True` zostawionym na temacie domkniętym (złamany niezmiennik) po
+    wznowieniu MUSI trafić do reinterpretacji, a nie w szybką ścieżkę zapisu — samo „tak"
+    po domknięciu nie wiadomo czego dotyczy.
+    """
+    state_path = tmp_path / "state.json"
+    _domkniety_wpis(
+        state_path,
+        EXPIRED,
+        awaiting_yes=True,  # celowo złamany N38 — to jest przedmiot testu
+        resolved=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+    )
+    settings = _settings_calodobowe(state_path)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-22T09:00:00Z", "tak")]})
+    llm = _FakeLlm('{"action":"unclear","powod_niejasnosci":"brak_godzin"}')
+
+    poll_replies(settings, client, llm, now=_SRODA_W_TYGODNIU)  # type: ignore[arg-type]
+
+    assert client.created == [], "zapis po samym »tak« na wznowionym temacie"
+    assert load_state(state_path)["u1"].awaiting_yes is False
+
+
+def test_wznowiony_temat_nie_wygasa_natychmiast(tmp_path: Path):
+    """Wznowienie następuje PO terminie, więc bez kurtuazji krok 2 zamknąłby temat w tym samym
+    obiegu — zdaniem „nie dostałem odpowiedzi" wysłanym komuś, kto właśnie napisał.
+
+    Chroni go dolna granica kurtuazji: prośba o potwierdzenie ustawia `bot_last_message_at`, a
+    `termin_odpowiedzi` bierze `max(kalendarz, ta chwila + REPLY_MIN_HOURS)`. Atrapa MUSI więc
+    zwracać czas wysyłki zgodny ze scenariuszem — stały znacznik `_FakeClient` pochodzi sprzed
+    tygodnia docelowego i defekt, którego tu szukamy, po prostu by przykrył.
+    """
+    state_path = tmp_path / "state.json"
+    _domkniety_wpis(state_path, EXPIRED)
+    settings = _settings_calodobowe(state_path)
+
+    class _ZegarSerwera(_FakeClient):
+        def send_chat_message(self, chat_id: str, html: str) -> str:
+            self.sent.append((chat_id, html))
+            return "2026-07-22T09:05:00Z"  # czas serwera = chwila scenariusza
+
+    client = _ZegarSerwera({"chat1": [_msg("u1", "2026-07-22T09:00:00Z", "we wtorek 10-18")]})
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":1,"start":"10:00","end":"18:00"}]}')
+
+    poll_replies(settings, client, llm, now=_SRODA_W_TYGODNIU)  # type: ignore[arg-type]
+    poll_replies(settings, client, llm, now=_SRODA_W_TYGODNIU + timedelta(minutes=1))  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM, "temat wygasł tuż po wznowieniu"
+
+
+def test_podsumowanie_liczy_skutecznosc_wznowien(tmp_path: Path):
+    """Druga dźwignia D5 też musi być widoczna — inaczej wdrażamy zmianę, o której wiadomo tylko,
+    że weszła. Ta sama miara co przy przypomnieniu: ilu wróciło i u ilu skończyło się grafikiem."""
+    from powiadomienia_teams.runtime.service import _liczby_per_tydzien
+
+    def _w(mid: str, status: str, wznowiono: str = ""):
+        return PendingReminder(
+            member_id=mid,
+            member_name=mid,
+            chat_id="c",
+            week_start="2026-07-20",
+            status=status,
+            wznowiono_at=wznowiono,
+        )
+
+    stan = {
+        "a": _w("a", APPLIED, "2026-07-22T09:00:00Z"),  # wznowiony i skuteczny
+        "b": _w("b", EXPIRED, "2026-07-22T09:00:00Z"),  # wznowiony, znów wygasł
+        "c": _w("c", APPLIED),  # bez wznowienia
+    }
+    (blok,) = _liczby_per_tydzien(stan)
+
+    assert blok.wznowione == 2
+    assert blok.wznowione_skuteczne == 1

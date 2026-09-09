@@ -62,8 +62,10 @@ from powiadomienia_teams.reminders.detect import (
 )
 from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
 from powiadomienia_teams.reminders.lifecycle import (
+    WZNAWIALNE,
     ReadOutcome,
     czas_na_przypomnienie,
+    mozna_wznowic,
     przekroczyl_sufit,
     ready_for_self_fill_check,
     should_expire,
@@ -429,8 +431,34 @@ def poll_replies(  # noqa: C901, PLR0915
         return PollOutcome(0, None)
     state = st.load_state(settings.state_path)
     open_items = _otwarte_bez_duplikatow(settings, state)
-    if not open_items:
+    # Poszerzamy WYŁĄCZNIE krok 1 (odczyt), i to jest sedno tej pozycji. Plan mówił „D5 zdejmuje
+    # filtr `open_items`", ale zdjęty w całości wpuściłby wpisy terminalne także do kroków 1.5–2,
+    # czyli do samouzupełnienia, sufitu ADR 0007, przypomnienia i wygaszania — a każdy z nich
+    # orzeka o rozmowie TRWAJĄCEJ. Kroki te zachowują własne filtry statusu i dostają dalej
+    # `open_items`; wznowione wejdą do nich dopiero wtedy, gdy naprawdę wrócą do obiegu, czyli
+    # gdy `_process_pending` zmieni im status.
+    #
+    # Lista powstaje PRZED wyjściem na pustym `open_items` i to nie jest kolejność dowolna:
+    # wznawialny wpis jest z definicji TERMINALNY, więc do `open_items` nie wchodzi NIGDY.
+    # Policzona po tamtym `return` nie zostałaby przeczytana ani razu — cała pozycja byłaby
+    # martwa dokładnie w swoim jedynym scenariuszu (wszystkie tematy domknięte, ktoś pisze po
+    # terminie). Sondy „nie wznawiamy zapisanego grafiku" przechodziły wtedy POZORNIE, bo nie
+    # wykonywało się nic.
+    #
+    # Koszt: jeden odczyt czatu na wznawialny wpis na obieg. Wpisy terminalne nie liczą się do
+    # `PollOutcome.open_count` (patrz koniec funkcji), więc przy samych wznawialnych odstęp stoi
+    # na suficie — realnie ~1 odczyt na osobę na godzinę, przez okno retencji.
+    wznawialne = [
+        p
+        for p in state.values()
+        # `chat_id` pusty znaczy wpis, do którego i tak nie ma jak zajrzeć — nie ma po co płacić
+        # za żądanie do Graph, żeby się o tym przekonać.
+        if p.chat_id and mozna_wznowic(p, now, settings.okno_odpowiedzi)
+    ]
+    if not open_items and not wznawialne:
         return PollOutcome(0, None)
+    if wznawialne:
+        logger.debug("Domkniętych tematów do sprawdzenia pod wznowienie: %d", len(wznawialne))
 
     client.refresh_auth()
     me_id = client.get_me()
@@ -455,7 +483,7 @@ def poll_replies(  # noqa: C901, PLR0915
     #    faktycznie udało się przeczytać, a bez niej krok 2 wygaszał także tych, których właśnie
     #    obsłużono albo których czatu nie dało się odczytać.
     outcomes: dict[str, ReadOutcome] = {}
-    for pending in open_items:
+    for pending in [*open_items, *wznawialne]:
         try:
             outcomes[pending.member_id] = _process_pending(
                 settings, client, llm, ctx, pending, me_id, tz, state, now, snapshot
@@ -950,6 +978,34 @@ def _process_pending(
     # Wątek wrócił do porządku (albo nigdy go nie stracił) — zwolnij dławienie, żeby ewentualny
     # nawrót zawołał operatora ponownie zamiast milczeć do restartu procesu.
     _ZGLOSZONE_OBCE.discard(pending.chat_id)
+    # WZNOWIENIE (D5, połowa druga): temat był domknięty, a pracownik właśnie napisał. Wraca do
+    # obiegu, zanim cokolwiek zaczniemy z tą wiadomością robić — dalej idzie już zwykłą ścieżką,
+    # bo od tej chwili niczym się nie różni od rozmowy, która nigdy nie została zamknięta.
+    #
+    # Przez `_commit`, nie przypisaniem, i to jest ta sama reguła co przy `status` w ogóle: status
+    # ustawiony przed nieudanym zapisem zostaje w pamięci PROCESU, a utrwala go dopiero czyjś cudzy
+    # `save_state` — czyli wpis wracałby do obiegu na podstawie wiadomości, której obsługa padła.
+    # Pusta porcja jest tu zamierzona: wiadomości dołoży dopiero commit właściwej gałęzi, razem
+    # z watermarkiem, więc nieudana interpretacja nie zostawi ich w pamięci rozmowy.
+    #
+    # `awaiting_yes=False` jawnie, choć każda ścieżka domykająca już ją skasowała (N38): to jedyne
+    # miejsce, które otwiera temat z powrotem, więc jeśli tamten niezmiennik kiedyś się złamie,
+    # ma się to skończyć prośbą o potwierdzenie, a nie zapisem po samym »tak«.
+    if pending.status in WZNAWIALNE:
+        logger.info(
+            "Wznawiam domknięty temat %s (status %s) — pracownik napisał po domknięciu",
+            etykiety.osoba(pending, settings),
+            pending.status,
+        )
+        pending.wznowiono_at = str(nowe[-1].get("createdDateTime", "")) or to_graph_iso(now)
+        _commit(
+            settings,
+            state,
+            pending,
+            (),
+            status=st.AWAITING_REPLY,
+            awaiting_yes=False,
+        )
     # Cała porcja nowych wiadomości, od najstarszej. Decyzję podejmujemy z OSTATNIEJ, ale
     # wcześniejsze z tej samej porcji wchodzą do kontekstu i do pamięci — inaczej pracownik piszący
     # w dwóch dymkach byłby interpretowany wyłącznie z drugiego (patrz ``incoming_after``).

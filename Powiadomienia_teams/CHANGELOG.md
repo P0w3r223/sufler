@@ -14,6 +14,58 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — D5, połowa druga: wznowienie rozmowy po domknięciu
+
+Domykała pozycję D5 — i zrobiła to **węziej, niż brzmiał plan**. Plan mówił „zdejmuje filtr
+`open_items`"; zdjęty w całości wpuściłby wpisy terminalne także do kroków 1.5–2, a każdy z nich
+orzeka o rozmowie TRWAJĄCEJ. Poszerzony został wyłącznie **krok 1 (odczyt)**.
+
+### Dodane
+
+- **Kto odezwie się po domknięciu tematu, przestaje być ignorowany.** Do tej pory `poll_replies`
+  czytało wyłącznie wpisy otwarte, więc wiadomość napisana minutę po wygaśnięciu nie była czytana
+  NIGDY — bot milczał, a pracownik nie miał jak się dowiedzieć, że mówi w próżnię. Temat wraca do
+  obiegu i dalej idzie zwykłą ścieżką, bo od tej chwili niczym się nie różni od rozmowy, której
+  nikt nie zamykał.
+
+- **`WZNAWIALNE` = {`DECLINED`, `EXPIRED`} — i lista wykluczeń jest tu ważniejsza od listy
+  dopuszczeń.** `APPLIED` i `SELF_FILLED` odpadają **nie z ostrożności, tylko z braku narzędzia**:
+  cała powierzchnia zapisu klienta Graph to `create_shift` (który **nie deduplikuje**, N1)
+  i `create_time_off` — nie ma ani kasowania, ani zmiany zmiany. „Popraw piątek" po zapisie
+  znaczyłoby DRUGĄ zmianę nakładającą się na pierwszą, bez drogi powrotnej. Gdyby kiedyś doszło
+  kasowanie zmian, tę decyzję trzeba przeliczyć od nowa. `APPLYING` odpada z **N4**.
+
+- Drugi warunek: **tydzień docelowy jeszcze się nie skończył**. Po jego końcu `still_writable`
+  i tak odsiałoby wszystko, więc czytanie tych czatów byłoby kosztem bez skutku. Kryterium to
+  KONIEC tygodnia, nie początek — kto odzywa się w środę o piątku, ma prawo zostać usłyszany.
+
+- **Skuteczność wznowień w podsumowaniu** („wznowione po terminie: 2, z tego z uzupełnionym
+  grafikiem: 1") i znacznik w `--stan`. Ta sama miara co przy przypomnieniu, z tego samego
+  powodu: dźwignia bez licznika jest zmianą, o której wiadomo tylko tyle, że weszła.
+
+### Zmienione — kontrakt
+
+- **`DECLINED` przestaje być głuche.** Test `test_decline_ends_listening_without_changes`
+  utrwalał, że po odmowie „nowa wiadomość NIE jest czytana"; został przepisany na
+  `test_decline_konczy_pytanie_ale_nie_sluchanie`. To była cena implementacji, nie obietnica wobec
+  pracownika: bot mówi „kończę przypominanie", czyli przestaje PYTAĆ — a nie „przestaję słuchać".
+
+### Co się NIE zmieniło
+
+Wznowienie **samo nie zapisuje niczego**: temat wraca do `AWAITING_REPLY`, a `awaiting_yes`
+jest jawnie kasowane, więc samo „tak" po domknięciu trafia do reinterpretacji, nie w szybką
+ścieżkę zapisu (**N38** — dopiero ta pozycja czyni ten niezmiennik nieteoretycznym, co jego
+autorzy przewidzieli w komentarzach). Wznowiony temat nie wygasa też natychmiast, mimo że
+wznowienie następuje PO terminie — chroni go dolna granica kurtuazji.
+
+### Usterka złapana w trakcie
+
+Pierwsza wersja liczyła listę wznawialnych **po** wyjściu `if not open_items: return`. Ponieważ
+wpis wznawialny jest z definicji terminalny, do `open_items` nie wchodzi nigdy — cała pozycja była
+martwa dokładnie w swoim jedynym scenariuszu (wszystkie tematy domknięte, ktoś pisze po terminie),
+a sondy „nie wznawiamy zapisanego grafiku" przechodziły POZORNIE, bo nie wykonywało się nic.
+Złapane przez sondę kurtuazji, która jako jedyna sprawdzała skutek, a nie brak skutku.
+
 ## [0.2.23] — 2026-09-09
 
 Wydanie po **pełnym audycie kodu** (architektura + przegląd + weryfikacja własna, 2026-09-08).

@@ -449,6 +449,10 @@ def _liczby_per_tydzien(stan: dict[str, st.PendingReminder]) -> list[LiczbyTygod
             # zasługa".
             if pending.status in (st.APPLIED, st.SELF_FILLED):
                 licz["przypomnienia_skuteczne"] += 1
+        if pending.wznowiono_at:
+            licz["wznowione"] += 1
+            if pending.status in (st.APPLIED, st.SELF_FILLED):
+                licz["wznowione_skuteczne"] += 1
 
     bloki = []
     for week_start, licznik in per_tydzien.items():
