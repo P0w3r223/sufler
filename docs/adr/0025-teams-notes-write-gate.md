@@ -8,6 +8,30 @@ Related to: docs/adr/0006-write-capability-gate-2.md, docs/adr/0015-teams-delega
 
 ---
 
+> **Stan zmierzony 2026-09-09 — decyzja właściciela do podjęcia, `proposed` od 2026-07-17 (54 dni).**
+>
+> Mechanizm z tego ADR-u **nie powstał**: `teams_graph/app.py:378` nadal podaje `enable_write=False`
+> na sztywno, a flagi `WORKMATE_TEAMS_GRAPH_ENABLE_NOTES_WRITE` nie ma w `TeamsGraphSettings`.
+>
+> **Czego ten ADR NIE stracił na rzecz ADR 0065**, choć wygląda, jakby stracił, i sprawdzenie tego
+> jest tu zapisane, żeby nikt nie zamykał go drugi raz na skróty: ADR 0065 uczynił bazę wiedzy
+> mutowalną i **jest na produkcji** (`ENABLE_NOTE_MUTATION=true`), ale obejmuje wyłącznie `edit`
+> i `delete` na notatkach ISTNIEJĄCYCH. `core/domain/mutation.py:25-27` mówi wprost, że
+> **`write` (utworzenie nowej notatki) mutacją NIE jest** i idzie dawną ścieżką create-only.
+> Tworzenie notatek z drzwi Teams — czyli dokładnie przedmiot tego ADR-u — pozostaje więc
+> niezaimplementowane, a `Status: proposed` jest stanem prawdziwym, nie zaległością redakcyjną.
+>
+> Do rozstrzygnięcia jest jedno: **przyjąć i zbudować A1, przejść od razu na A2, czy wycofać ADR.**
+> Koszt A2 spadł od lipca, ale mniej, niż wygląda, i warto to nazwać dokładnie. Mechanizm punktu
+> kontrolnego, którego A2 potrzebuje — zapowiedź + werdykt `confirm` w następnej turze — **istnieje,
+> ale wyłącznie na ścieżce MUTACJI** (`note_mutation.py:279-299`), czyli tam, gdzie notatka już jest;
+> tworzenie idzie `save_note` i punktu kontrolnego nie ma wcale. I dowodzi mniej, niż nazwa sugeruje:
+> kod mówi to wprost (`core/ports/confirmations.py:12-15`) — *„Czego to NIE dowodzi […]: że człowiek
+> się ZGODZIŁ. Dowodzi, że napisał."* Do A2 trzeba by więc ten mechanizm wpiąć w ścieżkę tworzenia,
+> a nie tylko go użyć — i to jest ta praca, która została.
+
+---
+
 ## Context
 
 The `teams_graph` door builds its conversational responder with `enable_write=False` hardcoded

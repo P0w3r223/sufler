@@ -3,7 +3,7 @@
 Date: 2026-08-04
 Status: accepted
 Author: P0w3r223
-Related to: docs/adr/0015-teams-graph-delegated-door.md,
+Related to: docs/adr/0015-teams-delegated-graph-polling.md,
   docs/adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md,
   docs/adr/0048-thread-note-capture-from-teams-mention.md, docs/adr/0059-teams-shifts-schedule-read.md
 

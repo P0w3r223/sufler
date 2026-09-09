@@ -61,7 +61,10 @@ Two structural differences from ADR 0042 must be stated up front, because they c
    `/szukaj` command, the CLI, **and the shell over the `ro` mount**. A membership gate in
    `NotesService` is enforceable on the *typed* paths, where the sender identity is known — which is
    **exactly today's production configuration** (układ A, shell OFF: the agent reads only through the
-   typed `search_notes`/`get_note`). It is **not** enforceable on the shell/CLI path: the executor
+   typed `search_notes`/`get_note`). **[Sprostowanie 2026-09-09: to zdanie przestało być prawdziwe.
+   Powłoka jest WŁĄCZONA na flocie (`WORKMATE_ENABLE_SHELL=true`, zmierzone `docker inspect`), więc
+   obowiązuje wariant opisany zaraz niżej — ścieżka powłoki jest otwarta i bramka jej nie zamyka.
+   Zdanie zostaje jako zapis stanu z dnia decyzji; stanem dzisiejszym jest akapit następny.]** It is **not** enforceable on the shell/CLI path: the executor
    mounts the whole base `ro` and `cat` reads it directly, with no sender identity (infra ADR
    0006/0010, ADR 0057). This is the same boundary those ADRs already draw. Closing the shell path
    requires a **per-conversation / per-sender mount** — the container rebuild infra ADR 0010 defers

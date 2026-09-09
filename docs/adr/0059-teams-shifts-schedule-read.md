@@ -3,9 +3,9 @@
 Date: 2026-08-04
 Status: accepted
 Author: P0w3r223
-Related to: docs/adr/0030-jira-server-read-door.md, docs/adr/0033-jira-cloud-provider-variant.md,
+Related to: docs/adr/0030-jira-server-read-door.md, docs/adr/0033-jira-cloud-support.md,
   docs/adr/0054-reduce-jira-to-read-only-my-tasks.md, docs/adr/0055-withdraw-worklogpro-timesheets.md,
-  docs/adr/0015-teams-graph-delegated-door.md, docs/adr/0022-teams-push-dual-target.md
+  docs/adr/0015-teams-delegated-graph-polling.md, docs/adr/0022-proactive-dual-target-teams-push.md
 
 ---
 
