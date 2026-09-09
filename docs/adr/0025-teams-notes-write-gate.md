@@ -22,9 +22,13 @@ Related to: docs/adr/0006-write-capability-gate-2.md, docs/adr/0015-teams-delega
 > niezaimplementowane, a `Status: proposed` jest stanem prawdziwym, nie zaległością redakcyjną.
 >
 > Do rozstrzygnięcia jest jedno: **przyjąć i zbudować A1, przejść od razu na A2, czy wycofać ADR.**
-> A2 („twarde potwierdzenie w wątku od zweryfikowanej tury użytkownika") jest dziś w systemie
-> zbudowany — to werdykt `confirm` sędziego z ADR 0065 — więc koszt A2 spadł od czasu napisania
-> tego dokumentu i wybór między A1 a A2 wygląda inaczej niż w lipcu.
+> Koszt A2 spadł od lipca, ale mniej, niż wygląda, i warto to nazwać dokładnie. Mechanizm punktu
+> kontrolnego, którego A2 potrzebuje — zapowiedź + werdykt `confirm` w następnej turze — **istnieje,
+> ale wyłącznie na ścieżce MUTACJI** (`note_mutation.py:279-299`), czyli tam, gdzie notatka już jest;
+> tworzenie idzie `save_note` i punktu kontrolnego nie ma wcale. I dowodzi mniej, niż nazwa sugeruje:
+> kod mówi to wprost (`core/ports/confirmations.py:12-15`) — *„Czego to NIE dowodzi […]: że człowiek
+> się ZGODZIŁ. Dowodzi, że napisał."* Do A2 trzeba by więc ten mechanizm wpiąć w ścieżkę tworzenia,
+> a nie tylko go użyć — i to jest ta praca, która została.
 
 ---
 

@@ -116,7 +116,8 @@ person via the identity bridge, runs `handle_submission` (parse → verify owner
 render reply), and with `--send` delivers a **path-fallback** DM via the existing `HttpxTeamsNotifier`
 (no new Graph scope). Submission idempotency (`state.py`, keyed `<source_id>:<week>`) marks only on
 success. Reuses `WorklogiSettings`; `--send` is gated on `WORKMATE_WORKLOGI_HEADERS_CONFIRMED`. See
-`docs/how-to/worklog-selfservice.md`.
+`docs/how-to/worklog-selfservice.md` — **plik usunięty razem z modułem przy wycofaniu
+WorklogPRO (ADR 0055); wskazanie zostaje jako zapis tego, co wtedy istniało**.
 
 Pending (M4/M5): live 1:1 intake (submission via ADR 0016 attachment or pasted text; sender-bound
 attribution replacing the operator's `--source-id`), inbound discovery of unsolicited DMs (Graph
