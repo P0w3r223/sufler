@@ -573,3 +573,51 @@ def test_cancelling_at_the_save_question_names_the_run_to_export(
     assert f"eksportuj --run-id {run_id}" in hint
     assert not list((tmp_path / "dane" / "wyniki").glob("*.xlsx"))
     deps.store.close()
+
+
+# ------------------------------------------- ścieżka opisowa musi być widoczna z menu
+
+
+def test_menu_mowi_ze_wystarczy_opisac_zdaniem_gdy_asystent_dziala(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """Funkcja istniejąca i niewidoczna jest z punktu widzenia operatora nieistniejąca.
+
+    Opis zdaniem jest pierwszym pytaniem tej ścieżki od fazy 4 (ADR-0011, decyzja 5), ale
+    menu mówiło „Pobrać firmy **według kryteriów** — lista albo szczegóły", więc operator
+    czytał „formularz" i nie miał skąd wiedzieć, że wystarczy napisać zdanie. To narzędzie
+    istnieje dla kogoś, kto nie zna API ani kodów PKD — jeśli nie widzi drogi bez kodów PKD,
+    lepiej obsłuży go rządowa wyszukiwarka.
+    """
+    deps = deps_for(tmp_path, clock, FakeApi())
+    deps.assistant = object()  # type: ignore[assignment]
+
+    pozycja = next(i for i in wizard._menu_items(deps) if i.key == "pobierz")
+
+    assert "opisz zdaniem" in pozycja.label.casefold()
+    assert "salony fryzjerskie" in pozycja.hint, "przykład pokazuje zakres, sama zachęta nie"
+    deps.store.close()
+
+
+def test_menu_nie_obiecuje_opisu_gdy_asystenta_nie_ma(tmp_path: Path, clock: FakeClock) -> None:
+    """Kontrola pozytywna, i nie formalna: bez klucza ta droga **nie działa**, więc
+    zapowiedzenie jej byłoby wysłaniem operatora w ścianę — dokładnie odwrotnie niż zamierza
+    ta poprawka."""
+    deps = deps_for(tmp_path, clock, FakeApi())
+    deps.assistant = None
+
+    pozycja = next(i for i in wizard._menu_items(deps) if i.key == "pobierz")
+
+    assert "opisz zdaniem" not in pozycja.label.casefold()
+    assert "według kryteriów" in pozycja.label
+    deps.store.close()
+
+
+def test_pytanie_o_opis_niesie_przyklad_z_dwiema_branzami_i_dwoma_miastami() -> None:
+    """„Opisz, czego szukasz" nie mówi, **jak dużo** wolno napisać. Przykład mówi — i jest
+    zmierzony: to zdanie przeszło przez prawdziwego asystenta 2026-09-09 i dało
+    `miasto: Gdańsk, Wrocław`, `PKD: 6622Z, 9621Z`."""
+    from ceidg_tool.ui.prompts import OPIS
+
+    assert texts.PRZYKLAD_OPISU in OPIS.hint
+    assert "Enter" in OPIS.hint, "wyjście do pytań po kolei musi zostać widoczne"

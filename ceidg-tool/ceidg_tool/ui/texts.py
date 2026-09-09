@@ -50,6 +50,32 @@ class MenuItem:
     hint: str = ""
 
 
+PRZYKLAD_OPISU: Final = "salony fryzjerskie i firmy ubezpieczeniowe we Wrocławiu i Gdańsku"
+"""Zdanie, które naprawdę przeszło przez asystenta (2026-09-09): dwie branże i dwa miasta
+naraz, `miasto: Gdańsk, Wrocław`, `PKD: 6622Z, 9621Z`. Przykład jest tu **zmierzony**, a nie
+wymyślony — obiecywanie na ekranie składni, której nikt nie sprawdził, byłoby tą samą pomyłką,
+co dane wzorcowe pisane z pamięci (CLAUDE.md)."""
+
+
+def pobierz_menu_item(z_asystentem: bool) -> MenuItem:
+    """Pozycja menu dla pobierania — mówi, że **wystarczy opisać zdaniem**, gdy asystent działa.
+
+    Opis zdaniem jest pierwszym pytaniem tej ścieżki od fazy 4 (ADR-0011, decyzja 5:
+    nie osobna pozycja menu, żeby nie dublować drogi po kryteriach). Tyle że menu
+    mówiło „Pobrać firmy **według kryteriów** — lista albo szczegóły”, więc operator
+    czytał „formularz” i o istnieniu tamtej drogi nie miał skąd wiedzieć. Funkcja
+    istniejąca i niewidoczna jest z punktu widzenia operatora funkcją nieistniejącą —
+    a to jest narzędzie dla kogoś, kto nie zna API i nie zna kodów PKD.
+    """
+    if not z_asystentem:
+        return MenuItem("pobierz", "Pobrać firmy według kryteriów", "lista albo szczegóły")
+    return MenuItem(
+        "pobierz",
+        "Pobrać firmy — opisz zdaniem albo podaj kryteria",
+        f"np. „{PRZYKLAD_OPISU}”",
+    )
+
+
 def format_number(value: int) -> str:
     """Spacja jako separator tysięcy — polski zapis, bez zależności od ustawień lokalnych."""
     return f"{value:,}".replace(",", " ")

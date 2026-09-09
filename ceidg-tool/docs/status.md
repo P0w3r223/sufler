@@ -1216,6 +1216,17 @@ the docstring now says which choices are measured and which are defaults. Settli
 Tiers B, C and D, and the reasoning behind each deferral, are in the audit document.
 
 ## Open items
+- **Repeated `miasto=` has never been measured, and a natural-language query depends on it.**
+  The owner's own example — *"salony fryzjerskie, firma ubezpieczeniowa we Wrocławiu oraz
+  Gdańsku"* — goes through the assistant correctly (measured 2026-09-09: `miasto: Gdańsk,
+  Wrocław`, `PKD: 6622Z, 9621Z`) and then sends **two `miasto=` parameters in one request**.
+  Repeated `pkd=`, `nip=` and `status=` were each measured OR-ed; `miasto=` never was. If it
+  is AND-ed instead, no record is in two cities, so the query returns **empty with no error**
+  — the silent-subset failure this project keeps finding, on the path the tool is meant to
+  make easy. One production request settles it: a combined `miasto=Wrocław&miasto=Gdańsk`
+  returning any count at all cannot be AND. Do not infer it from `pkd`: 2026-09-09 also
+  established that the text-field family is **not uniform** (see F12 in `docs/decisions.md`).
+
 - **CI is red, and this entry said it was green.** — `2e29540` did record a green run, but the
   next two pushes (`d5cd71a`, `dfd950f`, 2026-09-08) both **failed** and nobody looked. Fixed
   2026-09-09; the diagnosis is the same shape as the first one and is worth reading twice.

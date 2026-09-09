@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ..errors import ConfigError
+from . import texts
 
 
 @dataclass(frozen=True)
@@ -373,7 +374,11 @@ NIP = Question(id="nip", text="Podaj NIP firmy", hint="10 cyfr, myślniki są do
 OPIS = Question(
     id="opis",
     text="Opisz jednym zdaniem, czego szukasz",
-    hint="Enter = pytania po kolei",
+    # Konkretny przykład zamiast samej zachęty. „Opisz, czego szukasz” nie mówi
+    # operatorowi, **jak dużo** wolno napisać — czy jedna branża, czy jedno miasto.
+    # Przykład z dwiema branżami i dwoma miastami pokazuje zakres jednym zdaniem, a pochodzi
+    # z przebiegu przez prawdziwego asystenta, nie z wyobraźni.
+    hint=f"np. „{texts.PRZYKLAD_OPISU}”; Enter = pytania po kolei",
 )
 
 # `safe_default=False`, więc `--tak` tego nie podejmie za operatora. Harmonogram nie ma prawa

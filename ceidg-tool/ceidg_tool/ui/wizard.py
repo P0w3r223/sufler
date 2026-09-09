@@ -48,7 +48,7 @@ def _menu_items(deps: Deps) -> tuple[texts.MenuItem, ...]:
         )
     items.extend(
         (
-            texts.MenuItem("pobierz", "Pobrać firmy według kryteriów", "lista albo szczegóły"),
+            texts.pobierz_menu_item(deps.assistant is not None),
             texts.MenuItem("aktualizuj", "Zaktualizować bazę o zmiany", "od ostatniego pobrania"),
             texts.MenuItem("raport", "Pobrać gotowy raport", "region i okres, 2 zapytania"),
             texts.MenuItem("nip", "Sprawdzić pojedynczą firmę po NIP", "2 zapytania"),
