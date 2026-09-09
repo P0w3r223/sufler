@@ -306,6 +306,13 @@ class Settings:
     # Po ilu sekundach CISZY pracownika (ta sama kotwica co wygaśnięcie) wolno zajrzeć do Shifts,
     # by wykryć samodzielne uzupełnienie grafiku. -1 wyłącza funkcję; 0 = sprawdzaj co cichy cykl.
     self_fill_check_min_idle_s: int = 3600
+    # Ile godzin PO prośbie bota (`nudged_at`) wolno przypomnieć milczącemu pracownikowi
+    # (pozycja D5 planu). -1 wyłącza. Domyślne 18 h przy przebiegu w piątek 16:00 daje sobotę
+    # rano — świadomie WCZEŚNIE, bo przypomnienie jest prośbą bota i podnosi dolną granicę
+    # kurtuazji o `reply_min_hours`. Wysłane odpowiednio wcześnie mieści się pod terminem
+    # kalendarzowym, więc go NIE przesuwa; pilnuje tego `lifecycle.czas_na_przypomnienie`,
+    # a nie ta wartość — zbyt późna po prostu wycisza przypomnienie zamiast psuć termin.
+    przypomnienie_po_h: int = 18
     catchup_grace_hours: int = 6  # jak długo po minionym terminie wolno nadrobić przebieg (0=off)
     # Twardy sufit WIEKU wpisu, którego nie da się rozstrzygnąć, bo czat nie daje się odczytać
     # (ADR 0007). Liczony od kotwicy `lifecycle._anchor` („jak dawno cokolwiek się tu działo"),
@@ -535,6 +542,10 @@ class Settings:
                 f"self_fill_check_min_idle_s musi być ≥ -1 (-1 wyłącza): "
                 f"{self.self_fill_check_min_idle_s}"
             )
+        if self.przypomnienie_po_h < -1:
+            raise ConfigError(
+                f"przypomnienie_po_h musi być ≥ -1 (-1 wyłącza): {self.przypomnienie_po_h}"
+            )
         if self.catchup_grace_hours < 0:
             raise ConfigError(f"catchup_grace_hours < 0 niedozwolone: {self.catchup_grace_hours}")
         # Sufitu NIE da się wyłączyć zerem — wyłączony przywraca dokładnie tę usterkę, którą
@@ -655,6 +666,7 @@ class Settings:
             poll_interval_s=_int("POLL_INTERVAL_S", 10),
             poll_max_interval_s=_int("POLL_MAX_INTERVAL_S", 3600),
             self_fill_check_min_idle_s=_int("SELF_FILL_CHECK_MIN_IDLE_S", 3600),
+            przypomnienie_po_h=_int("PRZYPOMNIENIE_PO_H", 18),
             catchup_grace_hours=_int("CATCHUP_GRACE_HOURS", 6),
             sufit_wpisu_bez_odczytu_h=_int("SUFIT_WPISU_BEZ_ODCZYTU_H", 144),
             dry_run=_bool("DRY_RUN", True),

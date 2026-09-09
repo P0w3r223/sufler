@@ -129,6 +129,19 @@ class PendingReminder:
     # bezpieczny — cena jest jedna prośba o potwierdzenie więcej, a nie zapis, którego pracownik
     # nie widział.
     awaiting_yes: bool = False
+    # createdDateTime PRZYPOMNIENIA wysłanego milczącemu pracownikowi (pozycja D5 planu, połowa
+    # „ścieżki piszące do milczących"). Niepusty znaczy „już przypomniano" — przypomnienie jest
+    # JEDNO na temat i to pole jest jedyną tego bramką.
+    #
+    # OSOBNE pole, a nie wywodzenie z `bot_last_message_at`: tamto znaczy „bot odezwał się
+    # w odpowiedzi na coś, co pracownik napisał" i karmi kurtuazję. Zlanie obu dałoby jedno pole
+    # o dwóch znaczeniach, a pierwszy przyszły punkt wysyłki do milczącego (plan mówi też
+    # o wznowieniach) po cichu wyłączyłby przypomnienia.
+    #
+    # Pole opcjonalne — stary plik stanu bez niego dostaje pusty napis, czyli „jeszcze nie
+    # przypominano". Po cofnięciu obrazu i powrocie pracownik dostanie najwyżej JEDNO
+    # przypomnienie więcej; kierunek bezpieczny, bo nic tu nie zapisuje do grafiku.
+    przypomniano_at: str = ""
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}

@@ -74,6 +74,10 @@ _UWAGA_NIEZNANY = "(!) status nieznany temu wydaniu"
 # Bez tego zdania operator czyta go jako zawieszenie obiegu — a najczęstszą przyczyną jest
 # uporczywa awaria odczytu, czyli dokładnie sytuacja, w której NIE wolno nikomu nic napisać.
 _UWAGA_PO_TERMINIE = "(!) termin minął — wygaśnie po najbliższym udanym, cichym odczycie"
+# BEZ „(!)": przypomnienie nie jest usterką ani zaległością, tylko stanem rozmowy. Operator
+# pilotażu przychodzi tu z pytaniem „czy ten człowiek dostał już drugie zagadnięcie" — bez tego
+# znacznika odpowiedź wymagałaby czytania pliku stanu ręcznie (pozycja D5 planu).
+_UWAGA_PRZYPOMNIANO = "przypomniano"
 
 _BEZ_KOTWICY = "brak"
 _BEZ_TERMINU = "nie do wyznaczenia"
@@ -352,6 +356,8 @@ def _lista_wpisow(
         # `applied` czytałoby się jak zaległość do obsłużenia.
         if pending.status in _OTWARTE and _po_terminie(pending, teraz, okno):
             uwagi.append(_UWAGA_PO_TERMINIE)
+        if pending.status in _OTWARTE and pending.przypomniano_at:
+            uwagi.append(_UWAGA_PRZYPOMNIANO)
         ogon = "".join(f"   {u}" for u in uwagi)
         linie.append(
             f"  {nazwa[pending.member_id]:<{szer}}  {pending.status:<18} {pending.week_start:<12} "

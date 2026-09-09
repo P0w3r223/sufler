@@ -9,6 +9,7 @@ from powiadomienia_teams.domain.models import TimeOff
 # `past_hard_ceiling` zniknął razem z polityką kotwicy — patrz komentarz na końcu pliku.
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
+    czas_na_przypomnienie,
     is_expired,
     prune_terminal,
     przekroczyl_sufit,
@@ -373,3 +374,73 @@ def test_zly_typ_znacznika_nie_wywraca_kotwicy():
     )
     # Kotwicą zostaje zdrowy `nudged_at`; zepsuty znacznik jest pomijany, nie wywraca wywołania.
     assert ready_for_self_fill_check(chory, NOW + timedelta(hours=2), 3600) is True
+
+
+# --- D5: jedno przypomnienie milczącemu -------------------------------------------------------
+# Scena: przebieg w piątek 2026-07-17 16:00 czasu warszawskiego (14:00 UTC), tydzień docelowy
+# od poniedziałku 2026-07-20, termin kalendarzowy pon. 05:00 (offset 5 h), kurtuazja 24 h.
+_NUDGE = datetime(2026, 7, 17, 14, 0, tzinfo=UTC)  # pt 16:00 w Warszawie
+_SOBOTA_10 = datetime(2026, 7, 18, 8, 0, tzinfo=UTC)  # sb 10:00 — 18 h po prośbie
+_NIEDZIELA_14 = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)  # nd 14:00 — za późno (kurtuazja > termin)
+
+
+def _milczacy(**zmiany):
+    dane = {
+        "member_id": "u1",
+        "member_name": "Ala",
+        "chat_id": "c",
+        "week_start": "2026-07-20",
+        "status": AWAITING_REPLY,
+        "watermark": _iso(_NUDGE),  # nietknięty — pracownik nie napisał nic
+        "nudged_at": _iso(_NUDGE),
+    }
+    dane.update(zmiany)
+    return PendingReminder(**dane)
+
+
+def test_przypomnienie_wychodzi_po_zadanym_czasie_od_prosby():
+    assert czas_na_przypomnienie(_milczacy(), _SOBOTA_10, OKNO, 18) is True
+    # Godzinę za wcześnie — jeszcze nie.
+    assert czas_na_przypomnienie(_milczacy(), _SOBOTA_10 - timedelta(hours=1), OKNO, 18) is False
+
+
+def test_przypomnienie_NIGDY_nie_przesuwa_terminu_odpowiedzi():
+    """Niezmiennik, nie skutek konfiguracji — i najważniejsza własność tej pozycji.
+
+    Każda wiadomość bota podnosi dolną granicę kurtuazji do `teraz + min_h`, a treść PIERWSZEJ
+    prośby obiecała pracownikowi konkretną godzinę (B7). Przypomnienie wysłane blisko terminu
+    przedłużyłoby go, czyli złamało tamtą obietnicę. Zamiast tego po prostu nie wychodzi.
+    """
+    # Niedziela po południu: kurtuazja sięgnęłaby poniedziałku 14:00, a termin to poniedziałek
+    # 05:00 — przypomnienie jest wtedy WYCISZONE, mimo że `po_h` dawno minęło.
+    assert czas_na_przypomnienie(_milczacy(), _NIEDZIELA_14, OKNO, 18) is False
+    # Kontrola: gdyby wyszło, termin faktycznie by się przesunął.
+    po_wyslaniu = _milczacy(bot_last_message_at=_iso(_NIEDZIELA_14))
+    assert termin_odpowiedzi(po_wyslaniu, OKNO) > TERMIN
+
+    # A przypomnienie sobotnie terminu NIE rusza — to jest cała stawka tej reguły.
+    sobotnie = _milczacy(bot_last_message_at=_iso(_SOBOTA_10))
+    assert termin_odpowiedzi(sobotnie, OKNO) == TERMIN
+
+
+def test_przypomnienie_jest_jedno_na_temat():
+    assert (
+        czas_na_przypomnienie(_milczacy(przypomniano_at=_iso(_SOBOTA_10)), _SOBOTA_10, OKNO, 18)
+        is False
+    )
+
+
+def test_przypomnienie_nie_idzie_do_kogos_kto_napisal():
+    """Treść mówi „nie mam jeszcze Twojej odpowiedzi" — komuś, kto napisał, byłby to zarzut.
+
+    Ta sama troska, dla której `NO_CONFIRM_TEXT` istnieje osobno od `EXPIRED_TEXT`: kto odpisał
+    niejasno i dostał prośbę o doprecyzowanie, ma status `AWAITING_REPLY`, ale nie milczał.
+    """
+    napisal = _milczacy(watermark=_iso(_SOBOTA_10 - timedelta(hours=2)))
+    assert czas_na_przypomnienie(napisal, _SOBOTA_10, OKNO, 18) is False
+    bot_odpowiedzial = _milczacy(bot_last_message_at=_iso(_SOBOTA_10 - timedelta(hours=1)))
+    assert czas_na_przypomnienie(bot_odpowiedzial, _SOBOTA_10, OKNO, 18) is False
+
+
+def test_przypomnienie_da_sie_wylaczyc():
+    assert czas_na_przypomnienie(_milczacy(), _SOBOTA_10, OKNO, -1) is False

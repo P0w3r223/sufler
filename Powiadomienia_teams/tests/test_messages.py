@@ -6,6 +6,7 @@ from powiadomienia_teams.messages import (
     LiczbyTygodnia,
     build_confirm_text,
     build_nudge_text,
+    build_przypomnienie_text,
     build_self_filled_text,
     build_summary_text,
     describe_schedule,
@@ -155,3 +156,26 @@ def test_summary_text_pusty_stan_jest_INFORMACJA_a_nie_brakiem_wiadomosci():
     """Cisza znaczy „usługa nie żyje"; „zero spraw" musi wyglądać inaczej niż brak raportu."""
     text = build_summary_text(tygodnie=[], nastepny_przebieg="2026-07-24 16:00")
     assert "nikogo nie trzeba było zagadnąć" in text
+
+
+def test_przypomnienie_mowi_o_terminie_i_o_najkrotszej_drodze():
+    """B7: obietnicę terminu i jego egzekwowanie liczy ten sam kod. N13: tekst jest stałą."""
+    termin = datetime(2026, 7, 20, 5, 0, tzinfo=ZoneInfo("Europe/Warsaw"))
+    tekst = build_przypomnienie_text(
+        "20.07–24.07", termin, ZoneInfo("Europe/Warsaw"), ma_propozycje=True
+    )
+    assert "nie mam jeszcze Twojej odpowiedzi" in tekst
+    assert "20.07–24.07" in tekst
+    assert "odpisać „ok”" in tekst
+    assert "poniedziałku 20.07, godz. 5:00" in tekst
+
+
+def test_przypomnienie_bez_gotowca_nie_obiecuje_ze_jest_co_potwierdzic():
+    """Przy pustym gotowcu zdanie „odpisz »ok«, żeby powtórzyć" byłoby nieprawdziwe —
+    nie ma czego powtórzyć. Ten sam podział, który robi `build_nudge_text`."""
+    tekst = build_przypomnienie_text(
+        "20.07–24.07", None, ZoneInfo("Europe/Warsaw"), ma_propozycje=False
+    )
+    assert "„ok”" not in tekst
+    assert "kiedy pracujesz" in tekst
+    assert "Czekam do" not in tekst, "bez wyznaczalnego terminu nie obiecujemy godziny"

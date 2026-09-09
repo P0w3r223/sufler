@@ -23,6 +23,7 @@
 | `zrealizowane` | pozycja jest w kodzie i cytat opisuje stan obowiązujący |
 | `zrealizowane inaczej` | pozycja weszła, ale w innym kształcie niż zapowiadał plan — cytat mówi, dlaczego |
 | `otwarte` | pozycja cytowana jako przyszła; kod jej dziś nie ma |
+| `zrealizowane w części` | weszła JEDNA z rozdzielnych połówek pozycji; wpis mówi, która i co zostaje |
 | `napisane, niepodłączone` | kod istnieje i nikt go nie woła |
 | `nieodtworzona` | cytat nie niesie treści; wpis czeka na kogoś, kto ją pamięta |
 
@@ -92,7 +93,21 @@ bez cytatu jest dozwolony — plan ma prawo zawierać rzeczy niezrobione.
 |---|---|---|
 | **D1** | Wnioskowanie wzorca pracy z historii czterech tygodni, z poziomem pewności. Dwie reguły nadrzędne: **twarda reguła alfabetu** (proponować wolno wyłącznie grafiki zaobserwowane w historii — żadnego uśredniania) i **dopasowanie dokładne** (6:00–14:00 i 6:15–14:00 to dwa różne grafiki). Priorytet: lepiej częściej pytać, niż częściej zgadywać. | **`odrzucone` 2026-09-07, PO POMIARZE.** Zero osób z pewnością WYSOKA i inną propozycją (tabela niżej) — w tym zespole nikt nie chodzi w rytmie przemiennym, czyli w tym, dla czego D1 powstało. Moduł, skrypt pomiarowy i jego testy skasowane; kod żyje w historii gita, wskrzeszenie to `git show b3188e9~1` po ścieżkach reminders/wzorzec.py i scripts/zbierz_historie.py |
 | **D2** | Poprzedni czytnik grafiku dla narzędzi modelu miał `except Exception` przy każdym wywołaniu Graph; zastąpiony kontraktem `ZrodloTygodnia` z siatką o tej samej szerokości. | `zrealizowane` |
-| **D5** | **Wznowienie rozmowy po statusie terminalnym.** Dziś temat domknięty jest zamknięty na zawsze, a `poll_replies` przetwarza wyłącznie wpisy otwarte. D5 ten filtr zdejmuje i dokłada ścieżki piszące do milczących (przypomnienia, wznowienia). Kilka miejsc w kodzie jest już napisanych tak, żeby przetrwały to zdjęcie — łącznie z kasowaniem `awaiting_yes` tam, gdzie dziś niczego to nie zmienia. | **`otwarte`** |
+| **D5** | **Wznowienie rozmowy po statusie terminalnym.** Dziś temat domknięty jest zamknięty na zawsze, a `poll_replies` przetwarza wyłącznie wpisy otwarte. D5 ten filtr zdejmuje i dokłada ścieżki piszące do milczących (przypomnienia, wznowienia). Kilka miejsc w kodzie jest już napisanych tak, żeby przetrwały to zdjęcie — łącznie z kasowaniem `awaiting_yes` tam, gdzie dziś niczego to nie zmienia. | **`zrealizowane w części`** 2026-09-09 — weszła połowa „ścieżki piszące do milczących": `runtime/przypomnienie.py` wysyła JEDNO przypomnienie pracownikowi, który po prośbie nie napisał ani słowa (krok 1.7 nasłuchu, `PRZYPOMNIENIE_PO_H`, domyślnie sobota rano). **Zostaje** druga połowa — zdjęcie filtru wpisów terminalnych w `poll_replies`, czyli wznowienie rozmowy po wygaśnięciu. |
+
+**Dlaczego akurat ta połowa i akurat teraz.** Pomiar z dwóch tygodni pilotażu: **10 próśb → 4
+domknięte skutkiem, 6 wygasłych bez odpowiedzi**. Bot pytał dokładnie RAZ (piątek 16:00) i milczał
+do terminu (poniedziałek 05:00), więc jedyną dźwignią wobec tej liczby było dołożenie zagadnięcia
+— nie zmiana treści ani interpretacji. Druga połowa D5 (wznowienie po wygaśnięciu) ratuje
+spóźnialskich, ale liczby milczących nie rusza, a dotyka wszystkich pięciu kroków `poll_replies`;
+dlatego rozdzielona.
+
+**Niezmiennik, na którym stoi ta połowa:** przypomnienie NIGDY nie przesuwa terminu odpowiedzi.
+Każda wiadomość bota podnosi dolną granicę kurtuazji o `REPLY_MIN_HOURS` (`termin_odpowiedzi`
+bierze maksimum), a treść pierwszej prośby obiecała pracownikowi konkretną godzinę (**B7**).
+`lifecycle.czas_na_przypomnienie` wysyła więc wyłącznie wtedy, gdy kurtuazja mieści się pod
+terminem kalendarzowym — przy przebiegu w piątek 16:00 i kurtuazji 24 h ostatnią dozwoloną chwilą
+jest niedziela 05:00. Zbyt późna konfiguracja **wycisza** przypomnienie, zamiast łamać obietnicę.
 
 ## E — koszt modelu i pilotaż
 

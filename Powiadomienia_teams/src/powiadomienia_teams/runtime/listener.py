@@ -63,6 +63,7 @@ from powiadomienia_teams.reminders.detect import (
 from powiadomienia_teams.reminders.guards import CrossUserWriteError, ensure_single_owner
 from powiadomienia_teams.reminders.lifecycle import (
     ReadOutcome,
+    czas_na_przypomnienie,
     przekroczyl_sufit,
     ready_for_self_fill_check,
     should_expire,
@@ -88,6 +89,7 @@ from powiadomienia_teams.runtime.domkniecia import (
     zamknij_samodzielnie_uzupelnione,
 )
 from powiadomienia_teams.runtime.pamiec_grafiku import PamiecSamouzupelnien
+from powiadomienia_teams.runtime.przypomnienie import przypomnij_milczacym
 from powiadomienia_teams.runtime.snapshot import SnapshotGrafiku
 from powiadomienia_teams.runtime.wysylka import NIE_POLYKAJ, do_pracownika
 
@@ -544,6 +546,33 @@ def poll_replies(  # noqa: C901, PLR0915
     #    grafiku > SUFIT > wygaszenie. Kolejność ma znaczenie — kto uzupełnił grafik sam, ma dostać
     #    podziękowanie, a nie ciche zamknięcie, choćby jego czat milczał od tygodnia.
     _dogladaj_nierozstrzygniete(settings, state, outcomes, now)
+
+    # 1.7. Kto po prośbie NIE napisał ani słowa, dostaje JEDNO przypomnienie (pozycja D5 planu).
+    #    Miejsce w kolejności nie jest dowolne — rozszerza niezmiennik kroków wyżej o ostatni
+    #    człon: odpowiedź > samouzupełnienie > sufit > PRZYPOMNIENIE > wygaszenie.
+    #      * PO 1.5, żeby nie zagadywać kogoś, kto właśnie sam uzupełnił grafik (dostał już
+    #        podziękowanie i temat jest domknięty);
+    #      * PO 1.6, żeby nie pisać do wpisu zamkniętego przed chwilą sufitem ADR 0007;
+    #      * PRZED 2, bo cała rzecz polega na tym, żeby zagadnąć ZANIM temat wygaśnie.
+    #    Kandydatem jest wyłącznie `AWAITING_REPLY` z `NOTHING_NEW` — reszta warunków (jeden raz,
+    #    pracownik naprawdę milczy, termin się nie przesunie) siedzi w `czas_na_przypomnienie`.
+    do_przypomnienia = [
+        p
+        for p in open_items
+        if p.status == st.AWAITING_REPLY
+        and outcomes.get(p.member_id) is ReadOutcome.NOTHING_NEW
+        and czas_na_przypomnienie(p, now, settings.okno_odpowiedzi, settings.przypomnienie_po_h)
+    ]
+    if do_przypomnienia:
+        przypomnij_milczacym(
+            settings,
+            client,
+            state,
+            do_przypomnienia,
+            tz,
+            now,
+            okno_ciszy=okno_pierwotne,
+        )
 
     # 2. Wygaś te, które PO odczycie wciąż są otwarte, minął im termin I MAMY NA TO DOWÓD: udany
     #    odczyt, który nic nie przyniósł. Domyślne UNKNOWN dla braku wpisu w `outcomes` to

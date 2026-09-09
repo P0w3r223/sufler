@@ -4131,3 +4131,94 @@ def test_nieswiezy_wynik_DODATNI_nie_zamyka_tematu(tmp_path: Path):
         f"temat zamknięty na podstawie nieświeżej pamięci ({po.status})"
     )
     assert client.sent == [], "pracownik dostał nieprawdziwe »grafik jest już uzupełniony«"
+
+
+# --- D5: jedno przypomnienie milczącemu, przez cały obieg --------------------------------------
+_PT_NUDGE = "2026-07-17T14:00:00Z"  # pt 16:00 w Warszawie — przebieg tygodniowy
+_SB_10 = datetime(2026, 7, 18, 8, 0, tzinfo=timezone.utc)  # sb 10:00 — 18 h po prośbie
+
+
+def _milczacy_po_prosbie(state_path: Path) -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat-cisza",
+                week_start="2026-07-20",
+                status="awaiting_reply",
+                watermark=_PT_NUDGE,  # nietknięty — pracownik nie napisał nic
+                nudged_at=_PT_NUDGE,
+                proposal=[{"weekday": 0, "start": "08:00", "end": "16:00"}],
+            )
+        },
+    )
+
+
+def test_milczacy_dostaje_JEDNO_przypomnienie(tmp_path: Path):
+    """Pomiar z pilotażu: 10 próśb, 6 wygasłych bez odpowiedzi. Bot pytał dokładnie raz."""
+    state_path = tmp_path / "state.json"
+    _milczacy_po_prosbie(state_path)
+    settings = _settings(state_path)
+    client = _FakeClient({"chat-cisza": []})
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_SB_10)  # type: ignore[arg-type]
+    assert len(client.sent) == 1, "milczący nie dostał przypomnienia"
+    assert "nie mam jeszcze Twojej odpowiedzi" in client.sent[0][1]
+
+    # Kolejne obiegi tego samego weekendu NIE dokładają drugiego — to ma być przysługa,
+    # nie nagabywanie.
+    for godzin in (1, 5, 20):
+        poll_replies(
+            settings,
+            client,
+            _FakeLlm("{}"),  # type: ignore[arg-type]
+            now=_SB_10 + timedelta(hours=godzin),
+        )
+    assert len(client.sent) == 1, "drugie przypomnienie w tym samym temacie"
+
+
+def test_przypomnienie_nie_przesuwa_terminu_w_pelnym_obiegu(tmp_path: Path):
+    """Najważniejsza własność tej pozycji, sprawdzona na skutku, nie na predykacie.
+
+    Przypomnienie jest prośbą bota, więc podnosi dolną granicę kurtuazji. Gdyby wyszło za późno,
+    przedłużyłoby termin — a treść PIERWSZEJ wiadomości obiecała pracownikowi konkretną godzinę
+    (B7). Po sobotnim przypomnieniu wpis ma wygasnąć DOKŁADNIE tak samo jak bez niego.
+    """
+    state_path = tmp_path / "state.json"
+    _milczacy_po_prosbie(state_path)
+    settings = _settings(state_path)
+    client = _FakeClient({"chat-cisza": []})
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=_SB_10)  # type: ignore[arg-type]
+    assert load_state(state_path)["u1"].przypomniano_at, "brak znacznika przypomnienia"
+
+    # Poniedziałek 10:00 — po terminie kalendarzowym (pon. 05:00). Wpis ma wygasnąć.
+    poll_replies(settings, client, _FakeLlm("{}"), now=_PO_TERMINIE)  # type: ignore[arg-type]
+    assert load_state(state_path)["u1"].status == EXPIRED, "przypomnienie przesunęło termin"
+
+
+def test_przypomnienie_podlega_ciszy_takze_przy_ignoruj_cisze(tmp_path: Path):
+    """Wiadomość do kogoś, kto NIC nie napisał, podlega ciszy nawet gdy wołający ją pominął.
+
+    `--poll-once --ignoruj-cisze` wyłącza ciszę po to, żeby ODPOWIEDZIEĆ tym, którzy właśnie
+    napisali — a nie żeby zagadnąć o piątej rano milczących. Ta sama reguła, którą `do_domkniecia`
+    stosuje do domknięć; przypomnienie dziedziczy ją przez ten sam szew.
+    """
+    state_path = tmp_path / "state.json"
+    _milczacy_po_prosbie(state_path)
+    settings = _settings(state_path)
+    client = _FakeClient({"chat-cisza": []})
+    sobota_5_rano = datetime(2026, 7, 18, 3, 0, tzinfo=timezone.utc)  # sb 05:00 w Warszawie
+
+    poll_replies(
+        settings,
+        client,
+        _FakeLlm("{}"),  # type: ignore[arg-type]
+        now=sobota_5_rano,
+        ignoruj_cisze=True,
+    )
+
+    assert client.sent == [], "przypomnienie wyszło w godzinach ciszy"
+    assert not load_state(state_path)["u1"].przypomniano_at, "temat oznaczony mimo braku wysyłki"
