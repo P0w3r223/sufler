@@ -1,6 +1,7 @@
 # Assistant evaluation — 110 queries, invariance under typos
 
 Date: 2026-09-09
+Model: `claude-opus-5` (`assistant/caller.py: MODEL`), adaptive thinking
 Status: accepted
 Author: P0w3r223
 Related to: ADR-0011 (the assistant), ADR-0017 (the clarification round), docs/test-runs-phase4.md (group A), scripts/eval_asystenta.py, tests/eval/zapytania.yaml
@@ -71,10 +72,50 @@ The clearest case needs no typo at all:
     "stolarze w Białymstoku"                          -> wojewodztwo: ['podlaskie']
     "dzień dobry, poproszę stolarze w Białymstoku"    -> wojewodztwo: []
 
-A greeting flipped it. And note what the seeds say: repeating the *identical* sentence three times
-gave the identical answer every time (pass^3 = 100 %). The instability is invisible to repetition
-and appears only when the surface of the sentence changes in a way that should not matter — which
-is precisely the case a metamorphic test exists to reach and a golden-answer test cannot.
+A greeting flipped it. The first reading of this was that the surface change *causes* the flip,
+because the seeds repeated three times scored pass^3 = 100 %. **That reading was wrong, and the
+data in this same run refutes it.** Two observations settle it:
+
+* Seed S11 (`biura tłumaczeń w Gdańsku`) returned `[]`, `['pomorskie']`, `[]` across its three
+  identical runs. It scored pass^3 anyway, because `wojewodztwo` was not in its gold answer — and
+  **pass^k only measures the fields the gold answer names.** A field nobody wrote down is a field
+  the metric cannot see.
+* Seven of the 75 "perturbations" were textually identical to their seed: stripping diacritics from
+  a sentence that has none is a no-op. One of them (`cukiernie w Toruniu`) still disagreed with its
+  seed.
+
+So the model's decision to add a voivodeship was **non-deterministic on identical input**. The
+perturbations did not cause it; they exposed it, by taking five more samples per seed than
+repetition alone. A golden-answer suite would have missed it twice over — once for lacking the
+samples, and once for not naming the field.
+
+### The fifteen breaks, as the model returned them
+
+Every one is the same field and the same shape: the seed carried a voivodeship and the perturbation
+did not, or the reverse. Nothing else moved.
+
+| Case | Query as typed | Voivodeship returned | Seed returned |
+|---|---|---|---|
+| S03/P5 | `rwdtauracje we wroclawiu` | — | `dolnośląskie` |
+| S04/P3 | `fotogradowie w Krakoeie` | `małopolskie` | — |
+| S05/P2 | `stolarze w Bialymstoku` | — | `podlaskie` |
+| S05/P4 | `dzień dobry, poproszę stolarze w Białymstoku` | — | `podlaskie` |
+| S05/P5 | `stolarzw w nialymstoku` | — | `podlaskie` |
+| S06/P1 | `szkoły nauki jazdy w rzeszowie` | `podkarpackie` | — |
+| S09/P4 | `dzień dobry, poproszę gabinety weterynaryjne w Lublinie` | `lubelskie` | — |
+| S10/P1 | `aktywne kluby fitness w katowicach` | — | `śląskie` |
+| S10/P5 | `aktywne klubt fiyness q katowicach` | — | `śląskie` |
+| S11/P2 | `biura tlumaczen w Gdansku` | `pomorskie` | — |
+| S11/P5 | `boura tlumaczen w gdamsku` | `pomorskie` | — |
+| S13/P3 | `firmy sprxątające w nydgosxczy` | `kujawsko-pomorskie` | — |
+| S13/P4 | `dzień dobry, poproszę firmy sprzątające w Bydgoszczy` | `kujawsko-pomorskie` | — |
+| S15/P1 | `cukiernie w toruniu` | — | `kujawsko-pomorskie` |
+| S15/P2 | `cukiernie w Toruniu` *(no diacritics to strip — identical to the seed)* | — | `kujawsko-pomorskie` |
+
+Note the direction runs both ways — the perturbation sometimes adds the voivodeship and sometimes
+removes it — and the last row is the same sentence as its seed. That is what rules out "typos
+confuse the model": the model was applying a judgement ("is this city unambiguous?") that was not
+stable even when nothing changed.
 
 **Why it is not cosmetic.** `miasto` and `wojewodztwo` are different parameters, so the register
 ANDs them. `miasto=Białystok` and `miasto=Białystok & wojewodztwo=podlaskie` are therefore not the
@@ -135,6 +176,33 @@ producing another. Three seeds were added (S16 names only a voivodeship, S17 the
 city **and** a voivodeship) and run with all five perturbations: **24/24**. The stated voivodeship
 survives; only the inferred one is gone.
 
+## Cost, and the zero confirmed rather than asserted
+
+| Run | Calls | Wall clock | Model time (sum) |
+|---|---|---|---|
+| Smoke | 5 | 11 s | 25 s |
+| Baseline (before the fix) | 140 | 168 s | 664 s |
+| Re-run (after the fix) | 140 | 162 s | 638 s |
+| Counter-cases | 24 | 36 s | 101 s |
+| **Total** | **309** | ~6 min | 1 428 s |
+
+Median call 4.6 s, longest 10.4 s. **The money figure is not measured here** — group A recorded
+roughly 1–9 gr per question depending on whether the PKD dictionary was still in the prompt cache,
+which puts 309 calls in the order of a few złoty, but that is an inference from an old measurement
+and is marked as such rather than reported as a result.
+
+**Zero CEIDG requests, read from `request_log` rather than assumed.** The evaluation runs on the
+`test` environment with the default data directory, so any register request it made would be
+recorded in `store-test.sqlite`. On 2026-09-09 that table holds **zero** rows. For completeness,
+the other two stores on this machine: `store-prod.sqlite` has two rows (`raporty`, `raport`, at
+13:19–13:20Z — the report-path run, before every evaluation window), and `demo/store-test.sqlite`
+has three from the 11:36Z `--demo` walk, which answers from the synthetic register and opens no
+socket. The structural half of the same guarantee: `scripts/eval_asystenta.py` imports neither
+`client` nor `pipeline` nor `store`, so there is no edge in the import graph a request could take.
+
+This paragraph exists because the first version of this document stated the zero as a fact without
+checking it — the exact move the evaluation was written to catch elsewhere.
+
 ## What is open
 
 - ~~**The `wojewodztwo` inference.**~~ — **measured, fixed and re-measured 2026-09-09**, see the
@@ -143,5 +211,10 @@ survives; only the inferred one is gone.
 - **The set is not saturated but it is close** — three of four classes are at 100 %. Anthropic's
   guidance is explicit that an eval passing everything has stopped supplying signal, so the next
   version should add cases drawn from real operator failures rather than from imagination.
+- **`pass^k` measures only the fields the gold answer names.** S11 varied on `wojewodztwo` across
+  three identical runs and still scored pass^3, because nothing had written that field down. The
+  cheap repair is to compare *whole* answers between repetitions of a seed — the same invariance
+  check already used for perturbations, pointed at repetition instead. Not done here; it is the
+  first thing to add to the harness.
 - **The seed sentences are the author's, not operators'.** Group A's eight came from the same place.
   The first real operator session should be mined for sentences and folded in here.
