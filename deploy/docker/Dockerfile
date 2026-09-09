@@ -5,8 +5,17 @@
 # (`workmate`, `workmate-github`, `workmate-teams-graph`, …). ADR 0044.
 #
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
-# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.15.0 .
-# Testy biegną W TRAKCIE budowania (etap `test`) — obraz nie powstanie z czerwonego drzewa.
+# Budowanie ręczne — OBIE flagi są częścią komendy, nie dobrą wolą:
+#   docker build -f deploy/docker/Dockerfile --no-cache-filter test \
+#     --build-arg REWIZJA=$(git rev-parse HEAD) -t workmate:1.15.0 .
+#
+# `--build-arg REWIZJA` wypełnia `org.opencontainers.image.revision`; bez niej obraz mówi
+# `nieznana` i łańcuch kontener→commit jest zerwany (U10 audytu 2026-09-08).
+#
+# `--no-cache-filter test` WYMUSZA etap testowy. Bez niej zdanie „obraz nie powstanie z czerwonego
+# drzewa" jest gwarancją, której ten plik nie ma: marker `/app/.tests-passed` jest PUSTYM plikiem,
+# więc BuildKit podstawia warstwę z cache'u razem ze starą datą i etap `test` nie biegnie wcale.
+# Poprzednia redakcja tego komentarza obiecywała tamtą gwarancję bezwarunkowo.
 
 # Extras całej floty — jedno źródło prawdy dla wszystkich etapów.
 # agent (runtime Claude), github/jira/teams-graph (drzwi mostu; jira = WYŁĄCZNIE odczyt "moje
