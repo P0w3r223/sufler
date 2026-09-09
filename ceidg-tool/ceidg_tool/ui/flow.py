@@ -506,12 +506,9 @@ def _run_batches(
     view.block(texts.batches_table(rows))
     notes: list[str] = []
     if result.missing:
-        notes.append(
-            f"Partie objęły {texts.format_number(result.counted)} z "
-            f"{texts.format_number(result.expected)} trafień; różnica "
-            f"({texts.format_number(result.missing)}) to wpisy bez daty rozpoczęcia "
-            "działalności, których filtr dat nie obejmuje."
-        )
+        notes.append(texts.batches_shortfall(result.counted, result.expected, result.missing))
+    if result.surplus:
+        notes.append(texts.batches_surplus(result.counted, result.expected, result.surplus))
     return ExecuteResult(run_ids=result.run_ids, records=result.records, notes=tuple(notes))
 
 
@@ -553,6 +550,7 @@ def export_and_report(
                 sheets=summary.sheets,
                 kind=summary.kind,
                 run_ids=summary.run_ids,
+                statuses=summary.statuses,
                 log_path=deps.settings.log_dir / LOG_FILE_NAME,
                 extra=tuple(("uwaga", note) for note in notes),
             )

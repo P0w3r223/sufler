@@ -152,7 +152,8 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
   before assuming how the API behaves.
 - `docs/adr/` — architecture decisions: 0008 the phase-3 user layer, 0011 the assistant, 0012 the
   PKD 2007→2025 transition, 0013 the identity of a record identifier (and the schema v3 migration
-  that follows from it), 0014 the register-free mode that `--demo` runs on.
+  that follows from it), 0014 the register-free mode that `--demo` runs on, 0015 open edges in
+  batched queries, 0016 the identity of a report row the register gave no number to.
 - `docs/design/phase2_core.md` — module map and the numbered boundary rules.
 - `docs/resilience-report.md` — the ten resilience scenarios and how each is covered.
 - `docs/test-runs-phase4.md` — the five groups of runs that need a real model or a real register,
@@ -164,6 +165,30 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
   rule is ceremony.
 - `docs/demo-walkthrough.md` — how to walk the demo, and what the recorded run actually proved
   (and did not).
+
+**A batched query must send the same filter as the un-batched one (ADR-0015).** `plan_batches`
+fills a missing date edge with `DATE_FLOOR = 1990-01-01` or `today` so the plan is reproducible and
+an interrupted run stays resumable. Those two substitutes are **planning** values and must not reach
+`Criteria`: until 2026-09-09 they did, so splitting a query silently changed its result set —
+measured at **482 of 16 310 records (2.96 %)** on the operator's own store, 76 registered before
+1990 and 406 with a start date in the future, which CEIDG accepts. The first batch therefore sends
+no `data_od` and the last no `data_do` when the operator gave none, `refine()` carries the open edge
+down, and the split table says `1990-1999 i wcześniej`. Do **not** add a legacy-fingerprint fallback
+for old batches: an old closed `[1990-01-01, …]` batch is a different population, so recognising it
+as fetched would preserve the exact defect. The shortfall sentence used to blame "entries without a
+start date" — there are **zero** such entries in that store; it now names both candidate causes and
+claims neither.
+
+**A report row's identity is a declared subset, never "everything" (ADR-0016).** Rows with neither
+NIP nor REGON are keyed by a hash that included `Lp.`, the ordinal within a download — so the same
+sole trader got a new identity in every archive, which is ADR-0013's defect on the other source.
+The key is now *name + surname + given name + start date*, built in `recordid.py`, taking **values**
+rather than a CSV row so that a future migration reading `firma.list_json` cannot compute a third
+digest. "All columns except `Lp.`" is the tempting wrong answer: a status change or a new phone
+number would mint a new identity. Measured on 287 256 archive rows: 315 such rows, zero collisions
+under that key, and the address adds no discrimination while being 23-69 % filled. The operator's
+store holds **zero** `HASH:` rows, which is why no migration ships with it — re-check that before
+applying this to another store.
 
 ## Structural facts
 

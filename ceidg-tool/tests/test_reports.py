@@ -9,6 +9,7 @@ import pytest
 from ceidg_tool.errors import ExportError
 from ceidg_tool.records import Report
 from ceidg_tool.reports import (
+    STATUSY_SPOZA_RAPORTU,
     iter_report_rows,
     matches_criteria,
     parse_report_name,
@@ -17,6 +18,7 @@ from ceidg_tool.reports import (
     report_covers,
     row_to_record,
     status_to_api,
+    statusy_poza_raportem,
 )
 from tests.support import criteria
 
@@ -269,3 +271,64 @@ def test_iter_report_rows_streams_csv_from_zip(tmp_path: Path) -> None:
         list(iter_report_rows(bad))
     with pytest.raises(ExportError, match="ZIP"):
         list(iter_report_rows(tmp_path / "nie-ma.zip"))
+
+
+# --------------------------------------------------------- A10: czego dziennego zrzutu nie ma
+
+
+def test_raport_odmawia_zapytaniu_o_wpisy_oczekujace_na_rozpoczecie() -> None:
+    """Rdzeń A10, oparty na pomiarze, nie na prozie.
+
+    Zmierzone 2026-09-09 na `probe_out/raport_sample.zip` (287 256 wierszy, wielkopolskie,
+    zero żądań): archiwum niesie dokładnie trzy wartości `StatusDzialalnosci` — „Aktywny",
+    „Zawieszony" i „Działalność prowadzona wyłącznie w formie spółki cywilnej". Wpisów
+    oczekujących na rozpoczęcie nie ma tam ani jednego, a `report_covers` odmawiał wyłącznie
+    przy `WYKRESLONY` — więc takie zapytanie szło ścieżką raportu i wracało puste, bez
+    błędu i bez ostrzeżenia. Ścieżka raportu jest tańsza o cztery rzędy wielkości, więc
+    `--zrodlo auto` wybierał ją domyślnie: cicha pustka była wariantem domyślnym.
+    """
+    pytanie = criteria(wojewodztwo="podlaskie", status="OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI")
+
+    assert not report_covers(pytanie)
+    assert statusy_poza_raportem(pytanie) == ("OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI",)
+
+
+def test_raport_nadal_odmawia_zapytaniu_o_wykreslonych() -> None:
+    """Kontrola regresji: starszy warunek nie mógł zniknąć przy dokładaniu drugiego."""
+    assert not report_covers(criteria(wojewodztwo="podlaskie", status="WYKRESLONY"))
+
+
+def test_raport_pokrywa_statusy_ktore_naprawde_w_nim_sa() -> None:
+    """Kontrola pozytywna. Bez niej „odmawiaj zawsze" przeszłoby oba testy wyżej i zabrało
+    ścieżkę, która oddaje 287 256 rekordów za jedno żądanie."""
+    assert report_covers(criteria(wojewodztwo="podlaskie", status="AKTYWNY"))
+    assert report_covers(criteria(wojewodztwo="podlaskie", status="ZAWIESZONY"))
+    assert statusy_poza_raportem(criteria(wojewodztwo="podlaskie", status="AKTYWNY")) == ()
+
+
+def test_ekran_oferty_wymienia_oba_brakujace_statusy() -> None:
+    """Odmowa działa tylko wtedy, gdy operator wie, czego szukać gdzie indziej. Ekran
+    wymieniał sam WYKREŚLONY, więc drugi brak był niewidoczny również dla człowieka."""
+    from ceidg_tool.ui.texts import report_offer
+
+    blok = report_offer(Report("1", "Raport", ".csv", "u", "2026-09-05 06:00:00"))
+    brakuje = next(wiersz[1] for wiersz in blok.rows if wiersz[0] == "czego brakuje")
+
+    assert "WYKREŚLONYCH" in brakuje
+    assert "OCZEKUJĄCYCH NA ROZPOCZĘCIE" in brakuje
+
+
+def test_ekran_nazywa_kazdy_status_ktory_lista_odrzuca() -> None:
+    """Uwaga z przeglądu: `STATUSY_SPOZA_RAPORTU` decyduje, a `texts.STATUS_BRAK_W_RAPORCIE`
+    nazywa — dwie stałe, bo `texts` musi zostać czyste (reguła 6) i nie może importować
+    `reports`. Dopisanie trzeciego statusu tylko do jednej z nich byłoby A10 jeszcze raz:
+    lista odmawiała dwóch przypadków, a ekran wymieniał jeden. Skoro obie stałe nie mogą się
+    zobaczyć, zgodności pilnuje test — tak jak przy parze `WAIT_SLICE_S`/`DEFAULT_LOCK_STALE_S`."""
+    from ceidg_tool.ui.texts import STATUS_BRAK_W_RAPORCIE, report_offer
+
+    assert set(STATUS_BRAK_W_RAPORCIE) == set(STATUSY_SPOZA_RAPORTU)
+
+    blok = report_offer(Report("1", "Raport", ".csv", "u", "2026-09-05 06:00:00"))
+    brakuje = next(wiersz[1] for wiersz in blok.rows if wiersz[0] == "czego brakuje")
+    for nazwa in STATUS_BRAK_W_RAPORCIE.values():
+        assert nazwa in brakuje

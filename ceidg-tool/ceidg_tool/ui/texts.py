@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
-from ..batching import GRANULARITY_LABEL, BatchPlan
+from ..batching import GRANULARITY_LABEL, Batch, BatchPlan
 from ..config import DEMO_OSTRZEZENIE, TOKEN_SERVICE_URL, Settings
 from ..criteria import STATUSY, WOJEWODZTWA, Criteria
 from ..estimating import Estimate
@@ -140,7 +140,7 @@ ASSISTANT_THINKING: Final = (
 )
 
 ASYSTENT_KOSZT: Final = (
-    "asystent: jedno pytanie to ok. 13 tys. tokenów, ułamek grosza; nie wysyła pobranych rekordów"
+    "asystent: jedno pytanie to ok. 25 tys. tokenów, ułamek grosza; nie wysyła pobranych rekordów"
 )
 
 
@@ -322,7 +322,7 @@ def split_table(
     rows = tuple(
         (
             batch.label,
-            f"{batch.od.isoformat()} – {batch.do.isoformat()}",
+            _zakres_partii(batch),
             f"~{format_number(est.count)}",
             str(requests(est)),
             format_duration(seconds(est)),
@@ -346,10 +346,55 @@ def split_table(
         )
     return Block(
         title=f"Propozycja podziału {GRANULARITY_LABEL[plan.granularity]} "
-        f"({len(plan.batches)} partii, {plan.covers[0]} – {plan.covers[1]})",
+        f"({len(plan.batches)} partii, {_zakres_planu(plan)})",
         headers=("partia", "zakres dat", "szacowane trafienia", "zapytania", "czas"),
         rows=rows,
         notes=tuple(notes),
+    )
+
+
+def _zakres_partii(batch: Batch) -> str:
+    """Zakres dat partii tak, jak trafia do zapytania — z „…" tam, gdzie granicy nie ma.
+
+    Kafel ma zawsze obie daty, ale partia skrajna zapytania niepodzielonego nie wysyła
+    granicy, której operator nie podał (ADR-0015). Wypisanie daty kafla obiecywałoby zakres
+    węższy niż to, co program naprawdę pobierze."""
+    od = "…" if batch.otwarty_od else batch.od.isoformat()
+    do = "…" if batch.otwarty_do else batch.do.isoformat()
+    return f"{od} – {do}"
+
+
+def _zakres_planu(plan: BatchPlan) -> str:
+    """To samo dla nagłówka tabeli podziału: `covers` to granice planistyczne, nie zapytania."""
+    od = "…" if plan.otwarty_od else str(plan.covers[0])
+    do = "…" if plan.otwarty_do else str(plan.covers[1])
+    return f"{od} – {do}"
+
+
+def batches_shortfall(counted: int, expected: int, missing: int) -> str:
+    """Różnica między `count` sprzed podziału a sumą partii — **bez nazywania przyczyny**.
+
+    Do ADR-0015 to zdanie brzmiało „różnica to wpisy bez daty rozpoczęcia działalności,
+    których filtr dat nie obejmuje". Było fałszywe podwójnie: prawdziwą przyczyną były
+    granice dat, które planer dokładał do partii (482 rekordy = 2,96 % na bazie operatora),
+    a wpisów bez daty rozpoczęcia nie było w tej bazie **ani jednego**. Zdanie wskazywało
+    palcem na przyczynę nieistniejącą i zasłaniało istniejącą — czyli robiło coś gorszego
+    niż milczenie, bo zamykało pytanie."""
+    return (
+        f"Partie objęły {format_number(counted)} z {format_number(expected)} trafień; "
+        f"różnicy ({format_number(missing)}) nie da się przypisać jednej przyczynie. "
+        "Rejestr zmienia się między zapytaniem o koszt a pobraniem partii, a wpisy bez daty "
+        "rozpoczęcia nie trafiają do żadnej partii, bo podział idzie po tej dacie. "
+        "Przy dużej różnicy powtórz pobranie."
+    )
+
+
+def batches_surplus(counted: int, expected: int, surplus: int) -> str:
+    """Partie zobaczyły więcej, niż zapowiedziała wycena. Nieszkodliwe i dotąd niewidoczne."""
+    return (
+        f"Partie objęły {format_number(counted)} trafień, o {format_number(surplus)} więcej "
+        f"niż zapowiedziało zapytanie o koszt ({format_number(expected)}). To zwykły dryf "
+        "rejestru w czasie pobierania — nic nie przepadło."
     )
 
 
@@ -370,6 +415,9 @@ class SummaryInput:
     run_ids: tuple[str, ...]
     log_path: Path
     extra: tuple[tuple[str, str], ...] = field(default=())
+    # Stan każdego runu, w kolejności `run_ids`. Bez tego skoroszyt z pobrania przerwanego
+    # w połowie wygląda na ekranie dokładnie tak samo jak komplet (audyt 2026-09-08, A7).
+    statuses: tuple[str, ...] = field(default=())
 
 
 def summary_table(summary: SummaryInput) -> Block:
@@ -395,7 +443,35 @@ def _share(part: int, total: int) -> str:
 
 
 def summary_notes(summary: SummaryInput) -> tuple[str, ...]:
-    """Zdanie o kolumnie `link_ceidg` zależy od źródła danych, nie od stanu bazy."""
+    """Zdanie o kolumnie `link_ceidg` zależy od źródła danych, a zdanie o kompletności — od
+    stanu runów, z których plik powstał."""
+    return (*_niekompletny(summary), *_zrodlo_notes(summary))
+
+
+def _niekompletny(summary: SummaryInput) -> tuple[str, ...]:
+    """Ostrzeżenie tylko wtedy, gdy naprawdę jest o czym mówić.
+
+    Ostrzeżenie stałe uczy operatora je pomijać — ta sama zasada, co przy
+    `vintage_skipped`. Eksport wskazanego, nieskończonego runu jest dozwolony; wadą było
+    milczenie o tym, nie sam eksport."""
+    niepelne = [s for s in summary.statuses if s != "zakonczony"]
+    if not niepelne:
+        return ()
+    stany = ", ".join(sorted(set(niepelne)))
+    if len(summary.statuses) == 1:
+        return (
+            f"Uwaga: to pobranie nie jest zakończone (stan: {stany}), więc skoroszyt zawiera "
+            "tylko to, co zdążyło się pobrać. Dokończ je poleceniem `ceidg-tool wznow` "
+            "i wyeksportuj ponownie.",
+        )
+    return (
+        f"Uwaga: {len(niepelne)} z {len(summary.statuses)} partii nie jest zakończonych "
+        f"(stan: {stany}), więc skoroszyt jest niepełny. Arkusz Metadane podaje stan każdej "
+        "partii z osobna, a `ceidg-tool wznow` dokończy brakujące.",
+    )
+
+
+def _zrodlo_notes(summary: SummaryInput) -> tuple[str, ...]:
     if summary.kind == "raport":
         return (
             "Rekordy z raportu nie mają identyfikatora wpisu, więc kolumna link_ceidg jest "
@@ -435,6 +511,20 @@ def reports_table(reports: Sequence[Report]) -> Block:
     )
 
 
+STATUS_BRAK_W_RAPORCIE: Final = {
+    "WYKRESLONY": "WYKREŚLONYCH",
+    "OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI": "OCZEKUJĄCYCH NA ROZPOCZĘCIE",
+}
+"""Polskie nazwy statusów, których dzienny zrzut nie zawiera — klucze muszą pokrywać się
+z `reports.STATUSY_SPOZA_RAPORTU`. Dwie stałe zamiast jednej, bo `texts` jest modułem czystym
+(reguła 6) i nie importuje `reports`; zgodności pilnuje test, dokładnie tak jak przy parze
+`WAIT_SLICE_S` / `DEFAULT_LOCK_STALE_S`."""
+
+
+def _brakujace_statusy() -> str:
+    return " i ".join(STATUS_BRAK_W_RAPORCIE[kod] for kod in sorted(STATUS_BRAK_W_RAPORCIE))
+
+
 def report_offer(report: Report) -> Block:
     """Oferta ścieżki raportu: koszt i to, czego w raporcie nie ma."""
     return Block(
@@ -445,7 +535,12 @@ def report_offer(report: Report) -> Block:
             ("koszt", "2 zapytania zamiast tysięcy"),
             (
                 "czego brakuje",
-                "firm WYKREŚLONYCH, adresu korespondencyjnego, obywatelstw i spółek",
+                # Statusy z jednej listy, a nie przepisane z ręki: `reports.STATUSY_SPOZA_RAPORTU`
+                # decyduje, a `STATUS_BRAK_W_RAPORCIE` niżej je nazywa. Dopisanie trzeciego
+                # statusu do stałej, a nie do ekranu, byłoby A10 jeszcze raz — lista odmawiała
+                # dwóch, ekran wymieniał jeden. Zgodność obu pilnuje test, bo `texts` musi
+                # zostać czyste (reguła 6) i nie może importować `reports`.
+                f"firm {_brakujace_statusy()}, adresu korespondencyjnego, obywatelstw i spółek",
             ),
         ),
     )
@@ -653,6 +748,19 @@ def firm_card(record: NormalizedRecord | None, *, nip: str) -> Block:
 
 NO_RESUMABLE: Final = "Brak przerwanych pobrań."
 NO_RUNS: Final = "Brak pobrań w bazie."
+
+
+def no_finished_run(total: int) -> str:
+    """`eksportuj` bez `--run-id` bierze ostatnie **zakończone** pobranie — tak brzmi pomoc
+    tej flagi. Do audytu 2026-09-08 (A7) brało najnowsze pobranie dowolnego stanu, więc
+    pobranie przerwane w połowie eksportowało się jako komplet i nic tego nie mówiło."""
+    return (
+        f"Żadne z {format_number(total)} pobrań w bazie nie jest zakończone. Dokończ je "
+        "poleceniem `ceidg-tool wznow` albo wskaż konkretne: "
+        "`ceidg-tool eksportuj --run-id <id>` — wtedy skoroszyt powie, że jest niepełny."
+    )
+
+
 FIX_CRITERIA: Final = "Popraw kryteria i uruchom polecenie ponownie."
 # To samo sprawdzenie stoi w `cli` (przed zbudowaniem zależności) i w `flow` (przed
 # jedynym zapytaniem o `count`). Sprawdzenia są dwa świadomie, zdanie ma być jedno.

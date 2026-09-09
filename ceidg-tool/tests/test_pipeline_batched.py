@@ -253,10 +253,13 @@ def test_a_month_that_is_still_too_large_is_refused_with_advice(
 def test_hits_not_covered_by_any_batch_are_reported_not_hidden(
     tmp_path: Path, clock: FakeClock
 ) -> None:
-    """Wpisy bez daty rozpoczęcia wypadają z filtra dat — różnica musi być widoczna.
+    """Różnica między `count` sprzed podziału a sumą partii musi być widoczna.
 
-    Pierwotny `count` (bez filtra dat) mówi 60 000, a partie po dacie obejmują tylko 2.
-    Reszta to wpisy, których filtr dat nie łapie — i o tym trzeba powiedzieć wprost.
+    Pierwotny `count` mówi 60 000, a partie obejmują 2. Ten docstring twierdził do
+    2026-09-09, że reszta „to wpisy bez daty rozpoczęcia" — powtarzając za komunikatem
+    przyczynę, której nikt nie zmierzył i której na bazie operatora nie ma (zero takich
+    wpisów na 16 310). Prawdziwą przyczyną straty były dokładane granice dat, naprawione
+    w ADR-0015. Test pilnuje **widoczności różnicy**, bo tylko to potrafi sprawdzić.
     """
     api = batch_api({Y2021: 1, Y2022: 1}, records={Y2021: ["a"], Y2022: ["b"]})
     deps = deps_for(tmp_path, clock, api)
@@ -472,3 +475,44 @@ def test_force_is_spent_once_and_not_re_used_for_every_batch(
 
     assert forced == [True, False]  # pierwsza partia wymusza, druga już nie
     deps.store.close()
+
+
+def test_an_open_ended_batch_is_refetched_while_closed_ones_are_skipped(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """Kafel otwarty rośnie, kafel zamknięty nie — więc „już pobrana" jest prawdą tylko
+    o drugim (ADR-0015, uwaga z przeglądu 2026-09-09).
+
+    Przed otwarciem krawędzi ostatnia partia niosła `data_do = dzisiaj` i jej odcisk zmieniał
+    się z dnia na dzień, więc pomijanie jej nie groziło. Otwarcie ustabilizowało odcisk: bez
+    tego rozróżnienia powtórzony `pobierz --partie` meldowałby „pominięta" dla **wszystkich**
+    partii i nie przyniósł ani jednego nowego rekordu — a ścieżka niepodzielona zawsze pobiera
+    od nowa.
+    """
+    otwarty_ogon = "2020-01-01.."
+    dekady = {"..1999-12-31": 1, "2000-01-01..2009-12-31": 1, "2010-01-01..2019-12-31": 1}
+    api = batch_api(
+        {**dekady, otwarty_ogon: 1},
+        records={
+            "..1999-12-31": ["a"],
+            "2000-01-01..2009-12-31": ["b"],
+            "2010-01-01..2019-12-31": ["c"],
+            otwarty_ogon: ["d"],
+        },
+    )
+    deps = deps_for(tmp_path, clock, api)
+    plan = plan_batches(
+        criteria(wojewodztwo="mazowieckie"), 100_000, today=TODAY, threshold=THRESHOLD
+    )
+    assert [b.otwarty_do for b in plan.batches] == [False, False, False, True]
+
+    run_batched_fetch(plan, deps, threshold=THRESHOLD)
+    po_pierwszym = len(api.requests)
+
+    drugi = run_batched_fetch(plan, deps, threshold=THRESHOLD)
+    deps.store.close()
+
+    statusy = [o.status for o in drugi.outcomes]
+    assert statusy[:3] == ["pominięta (już pobrana)"] * 3, statusy
+    assert statusy[3] != "pominięta (już pobrana)", "otwarty ogon musi zostać pobrany ponownie"
+    assert len(api.requests) > po_pierwszym, "ogon kosztuje żądania, i o to chodzi"

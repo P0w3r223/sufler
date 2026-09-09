@@ -39,13 +39,21 @@ _DAY = timedelta(days=1)
 
 @dataclass(frozen=True)
 class Batch:
-    """Jedna partia: zwykłe `Criteria` z zawężonym zakresem dat plus etykieta do tabeli."""
+    """Jedna partia: zwykłe `Criteria` z zawężonym zakresem dat plus etykieta do tabeli.
+
+    `od`/`do` to granice **kafla**, zawsze konkretne — na nich stoi arytmetyka `refine()`
+    i etykieta. `otwarty_od`/`otwarty_do` mówią co innego: że tej granicy nie ma w zapytaniu
+    wysyłanym do API, bo operator jej nie podał (ADR-0015). Rozdzielenie tych dwóch pojęć
+    jest tu celowe — gdyby `od`/`do` mogły być `None`, każdy konsument planu musiałby
+    obsłużyć brak daty, a `refine()` straciłby zakres do podziału."""
 
     criteria: Criteria
     label: str
     od: date
     do: date
     granularity: Granularity
+    otwarty_od: bool = False
+    otwarty_do: bool = False
 
     def fingerprint(self) -> str:
         return self.criteria.fingerprint()
@@ -62,6 +70,11 @@ class BatchPlan:
     exhausted: bool = False
     """`True`, gdy nawet miesięczne partie nie schodzą poniżej progu — trzeba zawęzić
     kryteria inaczej niż datą."""
+
+    otwarty_od: bool = False
+    otwarty_do: bool = False
+    """Czy skrajne granice `covers` są planistyczne (uzupełnione), czy podane przez operatora.
+    Ekran musi umieć napisać „…", bo inaczej obiecuje zakres, którego zapytanie nie ma."""
 
     @property
     def share(self) -> int:
@@ -98,24 +111,71 @@ def _period_label(start: date, granularity: Granularity) -> str:
     return f"{start.year}-{start.month:02d}"
 
 
-def _split(criteria: Criteria, od: date, do: date, granularity: Granularity) -> tuple[Batch, ...]:
-    batches: list[Batch] = []
+def _split(
+    criteria: Criteria,
+    od: date,
+    do: date,
+    granularity: Granularity,
+    *,
+    otwarty_od: bool = False,
+    otwarty_do: bool = False,
+) -> tuple[Batch, ...]:
+    """Kafelkuje `[od, do]`. Skrajne kafle mogą być **otwarte**: nie wysyłają granicy,
+    której operator nie podał (ADR-0015).
+
+    Do audytu 2026-09-08 (A3) każda partia niosła obie granice, także te uzupełnione przez
+    planer. Zapytanie podzielone wysyłało więc filtr, którego to samo zapytanie niepodzielone
+    nie wysyła — a na bazie operatora poza oknem `1990-01-01…dziś` leżały **482 rekordy
+    z 16 310 (2,96 %)**: 76 sprzed 1990 i 406 z datą rozpoczęcia w przyszłości, którą CEIDG
+    przyjmuje. Podział jest proponowany właśnie dla dużych wyników, więc strata trafiała
+    dokładnie w przebiegi, w których najbardziej boli."""
+    kafle: list[tuple[date, date, date]] = []
     cursor = od
     while cursor <= do:
         period_start, period_end = _period_bounds(cursor, granularity)
-        batch_od = max(period_start, od)
-        batch_do = min(period_end, do)
+        kafle.append((period_start, max(period_start, od), min(period_end, do)))
+        cursor = period_end + _DAY
+
+    batches: list[Batch] = []
+    for i, (period_start, batch_od, batch_do) in enumerate(kafle):
+        pierwszy = i == 0
+        ostatni = i == len(kafle) - 1
+        bez_dolnej = pierwszy and otwarty_od
+        bez_gornej = ostatni and otwarty_do
         batches.append(
             Batch(
-                criteria=criteria.model_copy(update={"data_od": batch_od, "data_do": batch_do}),
-                label=_period_label(period_start, granularity),
+                criteria=criteria.model_copy(
+                    update={
+                        "data_od": None if bez_dolnej else batch_od,
+                        "data_do": None if bez_gornej else batch_do,
+                    }
+                ),
+                label=_label(
+                    period_start, granularity, otwarty_od=bez_dolnej, otwarty_do=bez_gornej
+                ),
                 od=batch_od,
                 do=batch_do,
                 granularity=granularity,
+                otwarty_od=bez_dolnej,
+                otwarty_do=bez_gornej,
             )
         )
-        cursor = period_end + _DAY
     return tuple(batches)
+
+
+def _label(
+    period_start: date, granularity: Granularity, *, otwarty_od: bool, otwarty_do: bool
+) -> str:
+    """Etykieta kafla, a przy otwartej krawędzi — tego, co partia naprawdę pobiera.
+
+    Sam okres („1990-1999") byłby przy otwartej krawędzi nieprawdą tego samego rodzaju co
+    defekt, który ADR-0015 naprawia: tabela podziału obiecywałaby zakres węższy niż zapytanie."""
+    base = _period_label(period_start, granularity)
+    if otwarty_od:
+        return f"{base} i wcześniej"
+    if otwarty_do:
+        return f"{base} i później"
+    return base
 
 
 def plan_batches(
@@ -131,6 +191,8 @@ def plan_batches(
     Brakujące granice zakresu uzupełnia `floor` i `today`, żeby plan był powtarzalny
     między sesjami — pytanie użytkownika o rok początkowy zepsułoby wznawianie.
     """
+    otwarty_od = criteria.data_od is None
+    otwarty_do = criteria.data_do is None
     od = criteria.data_od or floor
     do = criteria.data_do or today
     if od > do:
@@ -139,21 +201,40 @@ def plan_batches(
     chosen: Granularity = GRANULARITIES[-1]
     batches: tuple[Batch, ...] = ()
     for granularity in GRANULARITIES:
-        batches = _split(criteria, od, do, granularity)
+        batches = _split(
+            criteria, od, do, granularity, otwarty_od=otwarty_od, otwarty_do=otwarty_do
+        )
         chosen = granularity
         if count <= threshold * len(batches):
             break
 
     exhausted = count > threshold * len(batches)
     return BatchPlan(
-        batches=batches, granularity=chosen, covers=(od, do), count=count, exhausted=exhausted
+        batches=batches,
+        granularity=chosen,
+        covers=(od, do),
+        count=count,
+        exhausted=exhausted,
+        otwarty_od=otwarty_od,
+        otwarty_do=otwarty_do,
     )
 
 
 def refine(batch: Batch) -> tuple[Batch, ...]:
-    """Dzieli jedną partię o poziom drobniej. Pusta krotka = miesiąc, drobniej nie schodzimy."""
+    """Dzieli jedną partię o poziom drobniej. Pusta krotka = miesiąc, drobniej nie schodzimy.
+
+    Otwarta krawędź przechodzi na tę podpartię, która ją dziedziczy — pierwszą albo ostatnią.
+    Bez tego podział partii skrajnej przywracałby granicę, której operator nie podał, czyli
+    odtwarzałby defekt A3 o poziom niżej."""
     index = GRANULARITIES.index(batch.granularity)
     if index + 1 >= len(GRANULARITIES):
         return ()
     finer = GRANULARITIES[index + 1]
-    return _split(batch.criteria, batch.od, batch.do, finer)
+    return _split(
+        batch.criteria,
+        batch.od,
+        batch.do,
+        finer,
+        otwarty_od=batch.otwarty_od,
+        otwarty_do=batch.otwarty_do,
+    )

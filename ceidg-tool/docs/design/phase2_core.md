@@ -157,6 +157,13 @@ Extended on 2026-09-08 for the identity of a record identifier (ADR-0013):
     identifiers share the 8-4-4-4-12 shape, are not hex, and are case-significant because they
     go into the download URL.
 
+    **Extended 2026-09-09 (ADR-0016).** `recordid.py` now has a *second* producer,
+    `id_z_tresci`, which mints the identity of a report row the register gave no number to.
+    The rule is unchanged in substance — one module owns the construction — but the sentence
+    "only `recordid.py` produces a `KanonicznyId`" is now doing more work than it looks: two
+    functions, one module, and the reason the second one takes **values** rather than a CSV row
+    is precisely so that a future migration cannot become a third producer with a third digest.
+
 **The log file is a second terminal-bound channel, and only one seam neutralises it.**
 Rule 10 governs `rich` and nothing else, so `log.*` calls pass every gate — the boundary scan
 explicitly allows `log.error("%s", exc)`. What keeps registry text safe in

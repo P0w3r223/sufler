@@ -24,7 +24,7 @@ Related to: INSTRUKCJA_CLAUDE_CODE.md, UZUPELNIENIE_01.md, docs/decisions.md, do
 | 3h Secret masking + rule 11 | – | done 2026-09-07 | ADR-0011 findings F1 and F2, both live in the tree and independent of phase 4: masking was JWT-shaped, and rule 11's scan was `httpx`-shaped. 679 offline tests. |
 | 4 Language assistant | **ADR-0011 accepted 2026-09-07** | built end to end; exercised against the real API; awaiting gate 3 | `ceidg_tool/assistant/` — schema, PKD 2025 dictionary (728 subclasses), prompt builder, translation to `Criteria`, and `caller.py` over the SDK; boundary rules 6, 12 and 13 enforced; the assistant key resolves keyring → env → `.env` and is masked everywhere the token is; the wizard asks for a description first and `pobierz --opis` shares that implementation. 768 offline tests, none skipped. |
 | 4e Test runs A and B | – | done 2026-09-07 | `docs/test-runs-phase4.md`: two passes of group A plus group B, **zero CEIDG requests**, a few grosze. Group A settled the one thing no offline test can see — whether a real answer fits under adaptive thinking — and closed an open item; group B found two defects, both in *messages*, both fixed and pinned. B4 and groups C-E stay with the owner. |
-| 4f Test run C | – | run 2026-09-07; **it blocks gate 3** | The PKD vintage probe, 3 production requests with the owner's consent, plus a zero-cost measurement over the 21 MB production report already on disk. The `pkd` filter matches the code **as stored**, and the register is mid-transition (to 31.12.2026): of 285 026 real records, 58.6 % still carry PKD 2007 codes and **25.2 % are unreachable by any code in the shipped `pkd2025.yaml`**. `9602Z` (hairdressing) is the most frequent unreachable code, and the gate-3 walk sentence is about hairdressers. No code changed — the fix is a design decision with a cost. See `docs/decisions.md`. |
+| 4f Test run C | – | run 2026-09-07; **it blocks gate 3** | The PKD vintage probe, 3 production requests with the owner's consent, plus a zero-cost measurement over the 21 MB production report already on disk. The `pkd` filter matches the code **as stored**, and the register is mid-transition (to 31.12.2026): of 285 026 real records, 58.6 % still carry PKD 2007 codes and **8.6 % carry no code the shipped `pkd2025.yaml` knows** (corrected 2026-09-09 from 25.2 %, which counts main codes only). `9602Z` (hairdressing) is the most frequent unreachable code, and the gate-3 walk sentence is about hairdressers. No code changed — the fix is a design decision with a cost. See `docs/decisions.md`. |
 | 4g ADR-0012 | **accepted 2026-09-07** | designed; built in 4h | Option E of five: apply the GUS transition key in the input layer, materialise into `Criteria.pkd_2007`, expand silently where clean (55 codes), price both populations and ask where ambiguous (209). Its gate item — never measured — came back good: repeated `pkd=` is **OR-ed** (38 201 + 187 149 = 225 350 exactly), which also proves the vintages disjoint from the API side and puts the national gap at **17 %** for hairdressing. |
 | 4h Vintage coverage | – | built 2026-09-07 | ADR-0012 implemented: `scripts/build_pkd_transition.py`, `ceidg_tool/data/pkd2007_2025.yaml` (264 codes, 159 predecessors, all named), pure `pkdmap.py` (boundary rule 6), `Criteria.pkd_2007`, the vintage step in `ui/flow.py`, `--pkd-2007/--bez-pkd-2007`. Invariant restated and measured: two `count` when the question is asked, one otherwise, none after the choice. Old fingerprints preserved, so interrupted fetches stay resumable. |
 | 4i Verification alone | – | done 2026-09-07 | Everything not needing the owner, at zero CEIDG requests: every vintage screen rendered through real `rich` (found a duplicated sentence no view-model assertion could see), four real model calls proving the step fires on ordinary Polish queries, `Metadane` and the query file checked on real artefacts, three stale `62.01.Z` hints removed. Groups D, E and B4 remain the owner's — the test host is dead and production needs consent. |
@@ -153,8 +153,9 @@ Three items that were blocked on nobody, designed in ADR-0009 and reviewed on co
 - **Targeted production probe run** (3 requests, consent given in session). Results in
   `docs/decisions.md`: repeated `nip=` **is** OR-ed; `ids` batches of 10 and 20 are both rejected,
   so the cap sits between 5 and 9 and `ids_batch_size: 5` stays.
-- **Boundary rules 1-5 closed.** All ten rules are now enforced by `tests/test_boundaries.py`;
-  none rests on review any more. The scan reads both `from ..store import` and
+- **Boundary rules 1-5 closed.** All ten rules **as they stood on 2026-09-06** are enforced by
+  `tests/test_boundaries.py`; none rests on review any more. (There are **fourteen** today: 11-13
+  arrived with ADR-0010 and ADR-0011, and rule 14 is carried by mypy strict rather than the scan.) The scan reads both `from ..store import` and
   `from ceidg_tool.store import` — the review found it saw only the first, which would have made
   rules 2, 5 and 8 stop applying the day an editor auto-imported the absolute form. Both the
   mutation check and the two-import-forms check are now tests rather than notes.
@@ -1182,21 +1183,24 @@ evidence. Every test cluster earns.
 - **A6** — `--lista` could not switch off `szczegoly: true` from a query file.
 - **ADR-0014** — the register-free mode (`--demo`), which also removes the audit's second
   survivability blocker.
+- **A3, A4, A7, A8, A9, A10** — the whole remaining Tier A, closed 2026-09-09 with ADR-0015 and
+  ADR-0016. See the "Stages 4-8" section of the audit document for what each one was and how it
+  was measured.
 
-### Still open from the audit's Tier A
+### Tier A — closed 2026-09-09
 
-- **A3** — batching injects `1990-01-01…today` bounds an un-batched query never sends, so splitting
-  changes the result set (1.21 % measured), and `flow.py:509` blames "entries without a start date"
-  when the snapshot has none. Deferred deliberately: the fix changes `plan_batches`' output shape,
-  hence the split table, hence resume compatibility of in-flight batched runs. That is an ADR.
-- **A4** — a batched export's `Metadane` sheet describes batch 1 only.
-- **A7, A8, A10** — `eksportuj` picks the newest run of any status; list-mode export states
-  `liczba_pkd = 0` as a fact; `report_covers` warns about one of two status gaps.
-- **A9** — report rows without NIP/REGON get a `HASH:` identity that changes on every download.
-  Deferred: deciding what identifies such a row is an ADR-0013-shaped decision and it re-keys rows
-  already in the store.
+**A3, A4, A7, A8, A9 and A10 are fixed**, each mutation-checked, in stages 4-8 of
+`docs/audit-2026-09-09.md`. Two needed an ADR: **ADR-0015** (open edges in batched queries) and
+**ADR-0016** (identity of a report row the register gave no number to); both **accepted
+2026-09-09**. Five zero-request measurements ran first and three of them changed the plan:
+A3 turned out to be 2.96 % rather than 1.21 %, A9 turned out to need **no migration** (zero `HASH:`
+rows in your store), and A10 was confirmed against the production archive rather than argued from
+prose.
+
+**Still open, and it cannot be closed offline:**
+
 - **F12** — seven `matches_criteria` fields use exact match while only `nazwa`'s server-side
-  semantics were ever measured. Needs two production requests.
+  semantics were ever measured. Needs two production requests, so it needs your consent.
 
 Tiers B, C and D, and the reasoning behind each deferral, are in the audit document.
 
@@ -1259,15 +1263,16 @@ Tiers B, C and D, and the reasoning behind each deferral, are in the audit docum
   `ids_batch_size: 5` stays. Narrowing it to the exact value would cost four requests for at
   most a 1.8x saving on detail fetches; not worth it unless that becomes the bottleneck.
 - ~~Boundary rules 1-5 still rest on review~~ — **stale entry, removed 2026-09-06.** It
-  contradicted the phase-3b section two headings above and the design document: all ten rules
-  have been enforced by `tests/test_boundaries.py` since 2026-09-06 (`CORE_FORBIDDEN` covers
+  contradicted the phase-3b section two headings above and the design document: all ten rules of
+  that day have been enforced by `tests/test_boundaries.py` since 2026-09-06 — there are fourteen
+  now, 1-13 by the scan and 14 by mypy (`CORE_FORBIDDEN` covers
   1-4, `test_only_the_pipeline_knows_both_the_network_and_the_database` covers 5). A living
   document that keeps a closed item open is worse than one that says nothing about it.
 - ~~Phase 4: the PKD dictionary and its spot-check, `caller.py`, the second credential, the UI
   wiring~~ — **all closed 2026-09-07** (phases 4a-4d above; the spot-check stopped being owed when
   the file came from GUS itself). **Group C is now run too** (2026-09-07, phase 4f) and it did not
   come back clean: the `pkd` filter matches the code as stored, the register is mid-transition, and
-  a 2025-only dictionary cannot reach 25.2 % of it. So phase 4 is **not** all evidence any more —
+  a 2025-only dictionary cannot reach 8.6 % of it. So phase 4 is **not** all evidence any more —
   there is code to decide and write. Open: the vintage-coverage decision (below), then **group D**
   (gate 3, which is also the assistant's first use through the wizard) and **B4** (the assistant
   under a real network cut).

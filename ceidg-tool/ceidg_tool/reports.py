@@ -10,7 +10,6 @@ normalizer, store i eksporter nie odróżniają źródeł poza kolumną `zrodlo`
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import re
 import unicodedata
@@ -22,6 +21,7 @@ from typing import Any
 
 from .criteria import Criteria, normalize_pkd
 from .errors import ExportError
+from .recordid import id_z_tresci
 from .records import Report
 
 KIND_REGISTERED = "Zarejestrowane działalności"
@@ -44,6 +44,20 @@ STATUS_TEXT_TO_API: dict[str, str] = {
 }
 
 COLUMNS_REQUIRED = ("Nip", "NazwaPodmiotu", "StatusDzialalnosci", "DataRozpoczeciaDzialalnosci")
+
+# Statusy, których dzienny zrzut nie zawiera. **Zmierzone 2026-09-09** na
+# `probe_out/raport_sample.zip` (287 256 wierszy, wielkopolskie, zero żądań): archiwum
+# niesie dokładnie trzy wartości `StatusDzialalnosci` — „Aktywny" (76,52 %), „Zawieszony"
+# (20,32 %) i „Działalność prowadzona wyłącznie w formie spółki cywilnej" (3,16 %).
+# Ani jednego wiersza wykreślonego i ani jednego oczekującego na rozpoczęcie.
+#
+# Lista jest osobną stałą, a nie warunkiem w `report_covers`, bo mówi o **zawartości
+# źródła**, nie o regule decyzyjnej — i bo `STATUS_TEXT_TO_API` niżej mapuje teksty, których
+# ten sam pomiar w archiwum nie znalazł. To mapowanie zostaje (kosztuje nic, a rejestr może
+# je kiedyś wyemitować), ale nie wolno go czytać jak dowodu, że raport te statusy zawiera.
+STATUSY_SPOZA_RAPORTU: frozenset[str] = frozenset(
+    {"WYKRESLONY", "OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI"}
+)
 
 UNFILLED_COLUMNS: frozenset[str] = frozenset(
     {
@@ -140,17 +154,25 @@ def _blank_to_none(value: str | None) -> str | None:
 
 
 def record_id_for(row: Mapping[str, str]) -> str:
-    """Stabilny identyfikator wiersza raportu: NIP, w braku NIP — REGON, w ostateczności skrót."""
+    """Stabilny identyfikator wiersza raportu: NIP, w braku NIP — REGON, w ostateczności skrót.
+
+    „Stabilny" było do 2026-09-09 nieprawdą dla trzeciej gałęzi: skrót liczył się ze
+    wszystkich kolumn, w tym z `Lp.`, czyli z numeru porządkowego w pobraniu. Skład skrótu
+    mieszka teraz w `recordid` razem z uzasadnieniem doboru pól (ADR-0016)."""
     nip = _blank_to_none(row.get("Nip"))
     if nip:
         return f"NIP:{nip}"
     regon = _blank_to_none(row.get("Regon"))
     if regon:
         return f"REGON:{regon}"
-    digest = hashlib.sha256(
-        "|".join(str(row.get(k, "")) for k in sorted(row)).encode("utf-8")
-    ).hexdigest()[:24]
-    return f"HASH:{digest}"
+    return str(
+        id_z_tresci(
+            nazwa=row.get("NazwaPodmiotu"),
+            nazwisko=row.get("Nazwisko"),
+            imie=row.get("Imie"),
+            data_rozpoczecia=row.get("DataRozpoczeciaDzialalnosci"),
+        )
+    )
 
 
 def row_to_record(row: Mapping[str, str], *, wojewodztwo: str | None) -> dict[str, Any]:
@@ -295,9 +317,19 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
     return True
 
 
+def statusy_poza_raportem(criteria: Criteria) -> tuple[str, ...]:
+    """Żądane statusy, których dzienny zrzut w ogóle nie zawiera — posortowane, do komunikatu."""
+    return tuple(sorted(STATUSY_SPOZA_RAPORTU.intersection(criteria.status)))
+
+
 def report_covers(criteria: Criteria) -> bool:
-    """Raport pokrywa zapytanie, gdy jest dokładnie jedno województwo i nie chodzi o firmy
-    wykreślone — dzienny zrzut zawiera tylko wpisy istniejące (sonda 2026-09-05)."""
-    if "WYKRESLONY" in criteria.status:
+    """Raport pokrywa zapytanie, gdy jest dokładnie jedno województwo i żaden z żądanych
+    statusów nie leży poza zrzutem.
+
+    Do audytu 2026-09-08 (A10) warunek wymieniał wyłącznie `WYKRESLONY`, więc zapytanie
+    o wpisy oczekujące na rozpoczęcie działalności szło ścieżką raportu i wracało puste —
+    bez błędu, bez ostrzeżenia i o cztery rzędy wielkości taniej niż ścieżka API, co czyni
+    tę cichą pustkę wyborem domyślnym (`--zrodlo auto`)."""
+    if statusy_poza_raportem(criteria):
         return False
     return len(criteria.wojewodztwo) == 1

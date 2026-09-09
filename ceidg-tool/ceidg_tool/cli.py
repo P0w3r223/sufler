@@ -663,11 +663,18 @@ def eksportuj(
             view.warning(warning)
         try:
             if run_id is None:
-                runs = deps.store.list_runs()
-                if not runs:
-                    view.message(texts.NO_RUNS)
+                # Pomoc flagi obiecuje „ostatni zakończony", a nie „ostatni". Run w stanie
+                # `w_toku` albo `przerwany` ma komplet kolumn i połowę wierszy, więc wybrany
+                # po cichu eksportował się jak pełny (audyt 2026-09-08, A7). Filtr idzie do
+                # zapytania: odsianie po `LIMIT 20` gubiłoby starszy zakończony run.
+                zakonczone = deps.store.list_runs(statuses=("zakonczony",))
+                if not zakonczone:
+                    wszystkie = deps.store.count_runs()
+                    view.message(
+                        texts.NO_RUNS if not wszystkie else texts.no_finished_run(wszystkie)
+                    )
                     return
-                run_id = runs[0].run_id
+                run_id = zakonczone[0].run_id
             _export_after(deps, run_id, out, cel, formaty)
         finally:
             events.close()

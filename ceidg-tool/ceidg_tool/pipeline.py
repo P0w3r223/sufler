@@ -53,7 +53,7 @@ from .normalizer import NormalizedRecord, normalize
 from .pkdmap import TablicaPkd, load_pkd_map
 from .progress import Events, NullEvents
 from .ratelimit import RateLimiter
-from .recordid import KanonicznyId, kanoniczne_id
+from .recordid import PREFIKS_TRESCI, KanonicznyId, kanoniczne_id
 from .records import ZRODLO_RAPORT, Report, RowContext
 from .reports import (
     UNFILLED_COLUMNS,
@@ -469,12 +469,11 @@ def find_resumable(criteria: Criteria, deps: Deps) -> RunInfo | None:
 
 
 def list_resumable(deps: Deps, *, kinds: Sequence[str] = ("firmy",)) -> list[RunInfo]:
-    """Niedokończone pobrania niezależnie od kryteriów — menu pokazuje je bez pytania o filtr."""
-    return [
-        run
-        for run in deps.store.list_runs()
-        if run.status in ("przerwany", "w_toku") and run.kind in kinds
-    ]
+    """Niedokończone pobrania niezależnie od kryteriów — menu pokazuje je bez pytania o filtr.
+
+    Filtr idzie do zapytania, nie za nie: odsiewanie po `LIMIT 20` sprawiało, że przerwany
+    run znikał z menu, gdy tylko powstało dwadzieścia nowszych zakończonych."""
+    return deps.store.list_runs(statuses=("przerwany", "w_toku"), kinds=tuple(kinds))
 
 
 def _acquire_lock(deps: Deps, *, force: bool) -> None:
@@ -698,7 +697,12 @@ def run_report_fetch(
             deps.events.on_message(f"Raport pobrany: {report.nazwa} ({report.utworzono}).")
             matched = 0
             seen_ids: set[str] = set()
+            # Dwa liczniki, bo to dwie różne wiadomości. Powtórzony NIP to rejestr
+            # wymieniający jeden wpis dwa razy — zwyczajne. Powtórzony skrót treści to
+            # **nasz wniosek**, że dwa wiersze opisują tę samą firmę, i może być błędny
+            # (ADR-0016). Jeden licznik na oba kazałby operatorowi zgadywać, co się stało.
             duplicates = 0
+            duplikaty_tresci = 0
             page_index = 0
             scanned = 0
             reported = 0  # dopasowania, które już trafiły na pasek
@@ -709,7 +713,11 @@ def run_report_fetch(
                 if matches_criteria(record, criteria):
                     rid = str(record["id"])
                     if rid in seen_ids:
-                        duplicates += 1  # ten sam NIP w dwóch wierszach: wygrywa późniejszy
+                        # wygrywa późniejszy wiersz
+                        if rid.startswith(PREFIKS_TRESCI):
+                            duplikaty_tresci += 1
+                        else:
+                            duplicates += 1
                     else:
                         seen_ids.add(rid)
                         matched += 1
@@ -748,6 +756,17 @@ def run_report_fetch(
                 deps.events.on_message(
                     f"Raport zawierał {duplicates} wierszy o powtórzonym identyfikatorze "
                     "(NIP/REGON); zachowano po jednym rekordzie."
+                )
+            if duplikaty_tresci:
+                # Osobne zdanie, bo osobna sytuacja i osobna pewność. Wierszy bez NIP i bez
+                # REGON było w zmierzonym archiwum 315 i **żadne dwa** nie miały tych samych
+                # czterech pól tożsamości. Zero zmierzone raz nie jest zerem na zawsze, więc
+                # zlanie się dwóch firm w jedną musi mieć obserwatora — i musi powiedzieć, że
+                # jest wnioskiem, a nie odczytem z rejestru.
+                deps.events.on_message(
+                    f"{duplikaty_tresci} wierszy bez NIP i bez REGON miało tę samą nazwę, "
+                    "nazwisko, imię i datę rozpoczęcia, więc potraktowano je jako jeden wpis. "
+                    "To wniosek narzędzia, nie dana z rejestru — warto te wpisy sprawdzić."
                 )
             store.set_stage(run_id, "gotowe")
             store.update_run_status(run_id, "zakonczony")
@@ -1060,9 +1079,25 @@ class BatchResult:
 
     @property
     def missing(self) -> int:
-        """Trafienia z pierwotnego `count`, których nie objęła żadna partia — zwykle wpisy
-        bez daty rozpoczęcia. Raportujemy je zamiast ukrywać (ADR-0008, decyzja 3)."""
+        """Trafienia z pierwotnego `count`, których nie objęła żadna partia.
+
+        Do ADR-0015 ta własność miała w docstringu przyczynę („wpisy bez daty rozpoczęcia")
+        i to samo zdanie szło na ekran. Przyczyną było co innego: partie wysyłały granice
+        dat, których zapytanie niepodzielone nie wysyła, i traciły 2,96 % rekordów na bazie
+        operatora. Po naprawie różnica bywa nadal niezerowa — rejestr zmienia się między
+        zapytaniem o `count` a pobraniem partii — ale **której przyczyny dotyczy, tego ta
+        liczba nie wie**, więc jej nie nazywa."""
         return max(0, self.expected - self.counted)
+
+    @property
+    def surplus(self) -> int:
+        """Partie zobaczyły **więcej**, niż zapowiedział `count`.
+
+        `max(0, …)` wyżej odrzucał ten przypadek bez śladu, więc ten sam dryf rejestru
+        w drugą stronę nie miał ani jednego obserwatora (audyt 2026-09-08). Liczba jest
+        nieszkodliwa i właśnie dlatego warto ją zobaczyć: rośnie razem z opóźnieniem między
+        wyceną a pobraniem."""
+        return max(0, self.counted - self.expected)
 
 
 def run_batched_fetch(
@@ -1096,7 +1131,17 @@ def run_batched_fetch(
         done = deps.store.find_run(
             fingerprint, statuses=("zakonczony",), profile_hash=deps.profile.profile_hash()
         )
-        if done is not None:
+        # Partia o otwartej górnej krawędzi **nigdy nie jest ostateczna**: obejmuje „od daty X
+        # w górę", więc rośnie o każdą nową rejestrację. Kafel zamknięty to populacja, która
+        # się nie powiększa, i tam „już pobrana" jest prawdą.
+        #
+        # Do ADR-0015 ostatnia partia niosła `data_do = dzisiaj`, więc jej odcisk zmieniał się
+        # z dnia na dzień i pomijanie jej nie groziło. Otwarcie krawędzi ustabilizowało odcisk
+        # i zamieniło ten przypadkowy mechanizm w cichą pułapkę: powtórzony `pobierz --partie`
+        # meldował „pominięta (już pobrana)" dla **wszystkich** partii i nie przynosił ani
+        # jednego nowego rekordu, choć ścieżka niepodzielona zawsze pobiera od nowa
+        # (przegląd 2026-09-09). Przerwana partia nadal wznawia się z checkpointu — niżej.
+        if done is not None and not batch.otwarty_do:
             run_ids.append(done.run_id)
             counted += done.count_api or done.records_seen
             emit(
@@ -1232,6 +1277,10 @@ class ExportSummary:
     sheets: tuple[str, ...]
     kind: str = "firmy"
     run_ids: tuple[str, ...] = ()
+    # Stan każdego runu w tej samej kolejności co `run_ids`. Podsumowanie musi umieć
+    # powiedzieć, że plik powstał z pobrania niedokończonego — arkusz `Metadane` to wie,
+    # ale operator bez wiedzy o API czyta przede wszystkim ekran.
+    statuses: tuple[str, ...] = ()
 
 
 def output_name(
@@ -1280,11 +1329,24 @@ def build_metadata(
     parts: Sequence[RunInfo] = (),
     hidden_columns: Collection[str] = (),
 ) -> list[tuple[str, Any]]:
-    criteria_text = run.criteria_json
-    try:
-        criteria_text = Criteria.model_validate_json(run.criteria_json).describe()
-    except ValidationError:
-        pass
+    czesci = tuple(parts) if parts else (run,)
+    criteria_text, criteria_json = _union_criteria(czesci)
+    statusy = [p.status for p in czesci]
+    status_txt = (
+        statusy[0]
+        if len(set(statusy)) == 1
+        else "mieszany: " + ", ".join(f"{s}×{statusy.count(s)}" for s in sorted(set(statusy)))
+    )
+    # `count` bywa nieznany dla partii, która padła przed pierwszą odpowiedzią. Suma po
+    # znanych z adnotacją mówi prawdę; sama suma udawałaby, że policzono wszystkie.
+    znane_count = [p.count_api for p in czesci if p.count_api is not None]
+    if len(znane_count) == len(czesci):
+        count_txt: Any = sum(znane_count)
+    elif znane_count:
+        count_txt = f"{sum(znane_count)} (znany dla {len(znane_count)} z {len(czesci)} partii)"
+    else:
+        count_txt = ""
+    bledy = [(p.run_id, p.error) for p in czesci if p.error]
     meta: list[tuple[str, Any]] = []
     if deps.demo:
         # Znacznik numer dwa z ADR-0014, i jedyny, który **podróżuje razem z plikiem**.
@@ -1294,20 +1356,22 @@ def build_metadata(
         meta.append(("UWAGA", DEMO_OSTRZEZENIE))
     meta += [
         ("kryteria", criteria_text),
-        ("kryteria_json", run.criteria_json),
+        ("kryteria_json", criteria_json),
         ("cel_pobrania", cel_pobrania or ""),
         ("srodowisko", run.environment),
-        ("run_id", run.run_id),
-        ("tryb", run.mode),
-        ("status_runu", run.status),
-        ("pobranie_start_utc", run.created_utc),
-        ("pobranie_koniec_utc", run.updated_utc),
+        ("run_id", ", ".join(p.run_id for p in czesci)),
+        ("tryb", ", ".join(sorted({p.mode for p in czesci}))),
+        ("status_runu", status_txt),
+        ("pobranie_start_utc", min(p.created_utc for p in czesci)),
+        ("pobranie_koniec_utc", max(p.updated_utc for p in czesci)),
         ("eksport_utc", utc_iso(deps.clock.wall())),
-        ("liczba_trafien_count", run.count_api if run.count_api is not None else ""),
+        ("liczba_trafien_count", count_txt),
         ("liczba_pobranych_rekordow", records),
-        ("liczba_stron", run.pages_done),
-        ("wersja_narzedzia", run.tool_version),
-        ("profil_api_hash", run.profile_hash),
+        ("liczba_stron", sum(p.pages_done for p in czesci)),
+        # Partie pobrane przed aktualizacją i po niej mają różne wersje narzędzia; branie
+        # wersji pierwszej partii opisywałoby plik, którego część powstała czym innym.
+        ("wersja_narzedzia", ", ".join(sorted({p.tool_version for p in czesci}))),
+        ("profil_api_hash", ", ".join(sorted({p.profile_hash for p in czesci}))),
         ("zrodlo", "CEIDG_API / CEIDG_RAPORT wg kolumny zrodlo"),
     ]
     if hidden_columns:
@@ -1325,19 +1389,45 @@ def build_metadata(
         meta.append(("liczba_partii", len(parts)))
         meta.append(("partie_run_id", ", ".join(p.run_id for p in parts)))
         meta.append(("partie_kryteria", " | ".join(_batch_label(p) for p in parts)))
-    if run.error:
-        meta.append(("ostrzezenie", run.error))
+    if bledy:
+        # Błąd każdej partii z jej identyfikatorem. Samo `run.error` opisywało partię
+        # pierwszą, więc partia przerwana w połowie nie zostawiała w pliku żadnego śladu.
+        meta.append(("ostrzezenie", " | ".join(f"{rid}: {err}" for rid, err in bledy)))
     return meta
 
 
+def _union_criteria(czesci: Sequence[RunInfo]) -> tuple[str, str]:
+    """Kryteria **całego** eksportu: opis dla człowieka i JSON do powtórzenia zapytania.
+
+    Partie różnią się wyłącznie zakresem dat — `batching` dzieli po dacie rozpoczęcia —
+    więc sumą jest kryterium pierwszej partii z zakresem rozciągniętym na skrajne daty.
+    Opis pierwszej partii nazywałby jedną dwunastą pliku i robił to bez ostrzeżenia."""
+    try:
+        criteria = [Criteria.model_validate_json(p.criteria_json) for p in czesci]
+    except ValidationError:
+        return czesci[0].criteria_json, czesci[0].criteria_json
+    if len(criteria) == 1:
+        return criteria[0].describe(), czesci[0].criteria_json
+    od = [c.data_od for c in criteria]
+    do = [c.data_do for c in criteria]
+    suma = criteria[0].model_copy(
+        update={
+            "data_od": None if None in od else min(d for d in od if d is not None),
+            "data_do": None if None in do else max(d for d in do if d is not None),
+        }
+    )
+    return suma.describe(), suma.model_dump_json()
+
+
 def _batch_label(run: RunInfo) -> str:
+    """Etykieta partii ze **stanem**: bez niego przerwana partia wygląda jak każda inna."""
     try:
         criteria = Criteria.model_validate_json(run.criteria_json)
     except ValidationError:
         return run.run_id
     od = criteria.data_od.isoformat() if criteria.data_od else "…"
     do = criteria.data_do.isoformat() if criteria.data_do else "…"
-    return f"{od}–{do}: {run.records_seen}"
+    return f"{od}–{do}: {run.records_seen} ({run.status})"
 
 
 def run_export(
@@ -1441,6 +1531,7 @@ def run_export(
         # zapowiadać pusty `link_ceidg` przy skoroszycie, w którym nic nie ukryto.
         kind="raport" if from_report else run.kind,
         run_ids=run_ids,
+        statuses=tuple(r.status for r in runs),
     )
 
 

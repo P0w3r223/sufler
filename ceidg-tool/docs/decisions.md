@@ -87,7 +87,7 @@ it did not happen.
 the next section. The reading first written here, that the API "carries a translation layer", was an
 inference stated with more confidence than three counts can carry, and it was wrong.
 
-## The register is mid-transition: a 2025-only dictionary reaches three quarters of it
+## The register is mid-transition: a 2025-only dictionary misses 8.6 % of the records
 
 Measured 2026-09-07 on `probe_out/raport_sample.zip`, the 21 MB production report already on disk —
 **285 026 real records, zero requests.** The report CSV carries `GlownyKodPkd`, `PozostaleKodyPkd`
@@ -208,7 +208,9 @@ touch:
 So a gate-3 walk asking for hairdressers in Łomża would find roughly **one in four**. Note these
 per-code figures must not be summed into a register-wide total — `9602Z` appears under two 2025
 codes and `4520Z` under three, so a naive sum double-counts. The de-duplicated register-wide number
-is the one in the table above: **25.2 % unreachable**.
+is the one in the table above: **8.6 % unreachable by any code the record carries**. The 25.2 %
+in the row above it answers a different question — records whose *main* code is absent — and it
+is the figure this file, `CLAUDE.md` and two ADRs quoted for the wrong sentence until 2026-09-09.
 
 Both directions are therefore wrong by default: not expanding loses most of an industry, expanding
 blindly merges industries the operator asked to distinguish — for 209 of the 264 codes.
@@ -292,8 +294,8 @@ have read "brak firm" — a confidently wrong answer with no error anywhere.
 2026-09-07**, and not the way this paragraph expected. The filter matches the code **as stored on the
 record**, and records carry one vintage each while the transition to PKD 2025 runs (to 31.12.2026).
 So both vintages return hits and their result sets are disjoint. See "Which vintage does the `pkd`
-parameter index?" and the section after it, which measures the coverage gap this opens: 25.2 % of the
-register cannot be reached by any code in the shipped 2025 dictionary.
+parameter index?" and the section after it, which measures the coverage gap this opens: 8.6 % of the
+sample carries no code at all from the shipped 2025 dictionary.
 
 ## Facts beyond the question list
 
@@ -386,3 +388,32 @@ earlier probes had already saved, so no request was spent getting them.
 - Exact `ids` cap (now narrowed to 6-9, was 6-24); `nazwa` with Polish diacritics; contact fill
   rates on a larger sample (the report CSV can answer this offline for a whole region).
 - Layout of the `.xml` variant and of "Złożone wnioski" reports.
+
+## What statuses the daily report actually contains
+
+**Measured 2026-09-09 on `probe_out/raport_sample.zip`, zero requests** — 287 256 rows, one
+voivodeship (wielkopolskie), one daily snapshot.
+
+| `StatusDzialalnosci` | Rows | Share |
+|---|---|---|
+| `Aktywny` | 219 798 | 76.52 % |
+| `Zawieszony` | 58 370 | 20.32 % |
+| `Działalność prowadzona wyłącznie w formie spółki cywilnej` | 9 088 | 3.16 % |
+
+**Three values, and that is the whole list.** Neither `WYKRESLONY` nor any spelling of "oczekuje na
+rozpoczęcie działalności" appears. `report_covers` refused the report path only for the first of
+those, so a query for entries awaiting their start date took the report path and came back **empty,
+with no error** — and since the report path costs four orders of magnitude less, `--zrodlo auto`
+chose it. Fixed as audit item A10.
+
+Two things worth keeping separate. The measurement covers one voivodeship on one day, so "absent
+from this snapshot" is not "impossible" — it is, however, exactly the question `report_covers` asks.
+And `STATUS_TEXT_TO_API` maps seven texts of which this archive emits **one**; the extra entries
+cost nothing and may be right, but they are not evidence that the report contains those statuses.
+This is the distinction the project got wrong once already, when a hand-written fixture was cited
+as a measurement of the API.
+
+Rows without an identifier, measured in the same pass: **315** carry neither `Nip` nor `Regon`
+(0.11 %). Their name, surname, given name and start date are filled in **100 %** of those rows and
+distinguish all 315 with **zero collisions**; adding the full address changes nothing, while its own
+fields are filled 23-69 %. That is the evidence behind ADR-0016.

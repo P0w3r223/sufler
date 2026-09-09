@@ -570,11 +570,48 @@ class Store:
             )
         return info
 
-    def list_runs(self, limit: int = 20) -> list[RunInfo]:
+    def list_runs(
+        self,
+        limit: int = 20,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        kinds: tuple[str, ...] | None = None,
+    ) -> list[RunInfo]:
+        """Ostatnie runy, filtrowane **w zapytaniu**, nie po jego wyniku.
+
+        Filtr nalozony w Pythonie na wynik `LIMIT 20` znaczy "przejrzyj dwadziescia
+        ostatnich i zostaw pasujace", a nie "pokaz ostatnie pasujace". Przy dwudziestu
+        nowszych zakonczonych pobraniach `wznow` meldowal, ze nie ma czego wznawiac, choc
+        przerwany run stal na pozycji dwudziestej pierwszej. Ta sama luka kazala
+        `eksportuj` brac najnowszy run **dowolnego** stanu wbrew wlasnej pomocy
+        (audyt 2026-09-08, pozycja A7 i sasiedztwo `list_resumable`)."""
+        if statuses is not None and not statuses:
+            return []
+        if kinds is not None and not kinds:
+            return []
+        warunki: list[str] = []
+        argumenty: list[object] = []
+        if statuses is not None:
+            warunki.append("status IN ({})".format(",".join("?" for _ in statuses)))
+            argumenty += list(statuses)
+        if kinds is not None:
+            warunki.append("kind IN ({})".format(",".join("?" for _ in kinds)))
+            argumenty += list(kinds)
+        gdzie = (" WHERE " + " AND ".join(warunki)) if warunki else ""
         rows = self._conn.execute(
-            "SELECT * FROM run ORDER BY created_utc DESC, rowid DESC LIMIT ?", (limit,)
+            f"SELECT * FROM run{gdzie} ORDER BY created_utc DESC, rowid DESC LIMIT ?",
+            (*argumenty, limit),
         ).fetchall()
         return [self._run_info(r) for r in rows]
+
+    def count_runs(self) -> int:
+        """Ile runów jest w bazie **naprawdę**, bez okna `LIMIT`.
+
+        `len(list_runs())` zwracało rozmiar strony, nie liczbę wierszy, więc zdanie „żadne
+        z 20 pobrań nie jest zakończone" mówiło o dwudziestu przy dwudziestu pięciu. Rozmiar
+        strony podany jako liczba w bazie — w zestawie poprawek o liczbach podawanych jako
+        fakty (przegląd 2026-09-09)."""
+        return int(self._conn.execute("SELECT COUNT(*) FROM run").fetchone()[0])
 
     def update_run_status(self, run_id: str, status: str, error: str | None = None) -> None:
         if status not in RUN_STATUSES:

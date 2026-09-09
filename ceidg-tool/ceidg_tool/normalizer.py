@@ -158,14 +158,41 @@ def _public_link(record_id: Any) -> str | None:
     return None
 
 
+def _zna_szczegoly(rec: Mapping[str, Any]) -> bool:
+    """Czy źródło tego rekordu w ogóle niosło pola, które są tylko w szczegółach.
+
+    Zmierzone na `tests/fixtures/firmy_page0_limit5.json`: rekord z `/firmy` ma dokładnie
+    siedem pól (`id`, `nazwa`, `status`, `link`, `wlasciciel`, `adresDzialalnosci`,
+    `dataRozpoczecia`) i **nie ma wśród nich ani `pkd`, ani `spolki`**."""
+    return bool(rec.get("dane_szczegolowe"))
+
+
+def _liczba_pkd(rec: Mapping[str, Any]) -> int | None:
+    """Puste, a nie zero, gdy źródło nie podawało kodów PKD (audyt 2026-09-08, A8).
+
+    Ten sam kształt co `liczba_spolek`. Ścieżka listy nie zwraca PKD w ogóle, więc długość
+    pustej listy dawała `0` w każdym wierszu — a to jest twierdzenie „ten wpis nie ma ani
+    jednego kodu PKD", którego źródło nie potrafi wypowiedzieć i które dla jednoosobowej
+    działalności jest z definicji fałszywe, bo kod przeważający jest obowiązkowy przy
+    rejestracji. Wiersz z raportu **niesie** kolumnę kodów, więc tam zero jest odczytem, a nie
+    domysłem — i bywa prawdziwe: w zmierzonym archiwum 2 230 z 287 256 wierszy ma pustą
+    kolumnę `GlownyKodPkd`. Rozstrzyga więc to, czy źródło kolumnę **podało**, a nie to, czy
+    prawo wymaga kodu."""
+    if not (_zna_szczegoly(rec) or rec.get("zrodlo") == ZRODLO_RAPORT):
+        return None
+    return len(_pkd_items(rec))
+
+
 def _liczba_spolek(rec: Mapping[str, Any]) -> int | None:
-    """Puste, a nie zero, gdy rekord pochodzi z dziennego raportu.
+    """Puste, a nie zero, gdy źródło nie podawało spółek cywilnych.
 
     Raport nie niesie spółek cywilnych, więc zliczanie pustej listy dawało `0` w każdym
     wierszu — zdanie „ta firma nie ma spółki cywilnej", którego źródło nie jest w stanie
-    powiedzieć. Filtr `liczba_spolek = 0` zwracał wtedy wszystko. W ścieżce API brak klucza
-    `spolki` naprawdę znaczy zero, bo API pomija pola puste zamiast wysyłać `null`."""
-    if rec.get("zrodlo") == ZRODLO_RAPORT:
+    powiedzieć. Filtr `liczba_spolek = 0` zwracał wtedy wszystko. Dokładnie to samo robiła
+    ścieżka listy, o czym audyt 2026-09-08 (A8) przypomniał: `/firmy` bez szczegółów też
+    nie niesie klucza `spolki`. W ścieżce API **ze szczegółami** brak tego klucza naprawdę
+    znaczy zero, bo API pomija pola puste zamiast wysyłać `null`."""
+    if rec.get("zrodlo") == ZRODLO_RAPORT or not _zna_szczegoly(rec):
         return None
     return len(_spolki_items(rec))
 
@@ -324,12 +351,18 @@ FIRMY_FIELDS: tuple[FieldSpec, ...] = (
         "text",
         "Wszystkie kody PKD rozdzielone średnikiem",
     ),
-    FieldSpec("liczba_pkd", lambda r: len(_pkd_items(r)), "int", "Liczba kodów PKD we wpisie"),
+    FieldSpec(
+        "liczba_pkd",
+        _liczba_pkd,
+        "int",
+        "Liczba kodów PKD we wpisie; puste, gdy źródło (lista bez szczegółów) tego nie podaje",
+    ),
     FieldSpec(
         "liczba_spolek",
         _liczba_spolek,
         "int",
-        "Liczba spółek cywilnych we wpisie; puste, gdy źródło (dzienny raport) tego nie podaje",
+        "Liczba spółek cywilnych we wpisie; puste, gdy źródło (lista bez szczegółów albo "
+        "dzienny raport) tego nie podaje",
     ),
     FieldSpec("obywatelstwa", _obywatelstwa, "text", "Obywatelstwa przedsiębiorcy"),
     FieldSpec(

@@ -18,9 +18,11 @@ narzędzie nigdy nie wysyła zapisu, którego API by nie zwróciło.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Iterable
-from typing import NewType
+from typing import Final, NewType
 
 KanonicznyId = NewType("KanonicznyId", str)
 
@@ -46,3 +48,55 @@ def kanoniczny_id(value: str) -> KanonicznyId:
 def kanoniczne_id(values: Iterable[str]) -> list[KanonicznyId]:
     """Kanonizuje sekwencję identyfikatorów, zachowując kolejność i powtórzenia."""
     return [kanoniczny_id(v) for v in values]
+
+
+PREFIKS_TRESCI: Final = "HASH:"
+"""Prefiks tożsamości liczonej z treści. Stała, bo czyta ją także `pipeline`, żeby odróżnić
+sklejenie po NIP-ie od sklejenia po treści — a prefiks wpisany tam z ręki rozjechałby się
+z tym modułem bez żadnego obserwatora."""
+
+POLA_TOZSAMOSCI_RAPORTU: Final = ("nazwa", "nazwisko", "imię", "data rozpoczęcia")
+"""Pola, z których liczy się tożsamość wiersza raportu bez NIP i bez REGON (ADR-0016).
+
+Lista jest **jawna i zamknięta**, a nie „wszystkie kolumny poza `Lp.`". Status, kody PKD,
+telefon i adres zmieniają się w trakcie życia firmy, więc tożsamość liczona ze wszystkiego
+nadawałaby ten sam wpis na nowo przy każdej zwykłej aktualizacji — czyli ten sam defekt,
+tylko o poziom rzadszy i trudniejszy do zauważenia, bo do wyzwolenia potrzebuje realnej
+zmiany w rejestrze.
+
+Adresu tu nie ma i to jest wynik pomiaru, nie oszczędność: na 315 wierszach bez NIP i REGON
+(`probe_out/raport_sample.zip`, 287 256 wierszy) te cztery pola dają **zero kolizji**, a
+dołożenie pełnego adresu nie zmienia ani jednej — przy wypełnieniu kodu pocztowego 61 %,
+numeru budynku 69 % i numeru lokalu 23 %. Adres uzależniłby tożsamość od tego, jak starannie
+ktoś wypełnił formularz."""
+
+
+def id_z_tresci(
+    *,
+    nazwa: str | None,
+    nazwisko: str | None,
+    imie: str | None,
+    data_rozpoczecia: str | None,
+) -> KanonicznyId:
+    """Tożsamość wiersza, któremu rejestr nie nadał numeru — stała między pobraniami.
+
+    Do 2026-09-09 skrót liczył się ze **wszystkich** kolumn wiersza CSV, a więc i z `Lp.` —
+    numeru porządkowego w konkretnym pobraniu. Kolejność w rejestrze zmienia się z dnia na
+    dzień, więc ten sam przedsiębiorca dostawał w każdym archiwum **nową tożsamość**: baza
+    zbierała duplikaty, których żaden `ON CONFLICT` nie scalał, a porównanie dwóch pobrań
+    meldowało zmianę tam, gdzie nic się nie zmieniło. To jest defekt ADR-0013 przeniesiony
+    na drugie źródło (audyt 2026-09-08, A9; 315 wierszy na pobranie).
+
+    Funkcja bierze **wartości**, nie wiersz CSV, i sama je normalizuje. Powód jest
+    praktyczny: ewentualna przyszła migracja liczy tożsamość z `firma.list_json`, gdzie
+    `_drop_none` usunął już pola puste — gdyby normalizacja siedziała po stronie wołającego,
+    wejście i migracja miałyby dwa różne pojęcia „pustego" i policzyłyby dwa różne skróty."""
+    czesci = [(wartosc or "").strip() for wartosc in (nazwa, nazwisko, imie, data_rozpoczecia)]
+    # Granica pól nie może zależeć od ich treści. `"|".join(...)` wyglądał niewinnie, ale `|`
+    # jest legalnym znakiem w nazwie z rejestru, a nazwy z rejestru są **wrogim wejściem**
+    # (CLAUDE.md): `("A|B", "C", …)` i `("A", "B|C", …)` dawały ten sam skrót. ADR-0016 mierzył
+    # zero kolizji na **krotce** czterech pól, a kod liczył skrót ze sklejonego napisu — to nie
+    # jest to samo twierdzenie, i akurat ta różnica jest sterowalna przez wpisującego.
+    surowe = json.dumps(czesci, ensure_ascii=False, separators=(",", ":"))
+    skrot = hashlib.sha256(surowe.encode("utf-8")).hexdigest()[:24]
+    return KanonicznyId(f"{PREFIKS_TRESCI}{skrot}")
