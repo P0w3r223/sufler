@@ -201,6 +201,43 @@ def build_nudge_text(
     return "\n".join(lines)
 
 
+def build_przypomnienie_text(
+    week_label: str, termin: datetime | None, tz: ZoneInfo, *, ma_propozycje: bool
+) -> str:
+    """Jedno przypomnienie dla pracownika, który po prośbie nie napisał ani słowa (pozycja D5).
+
+    KRÓTKIE z rozmysłem. Pierwsza wiadomość niosła gotowiec i pełne instrukcje, i została
+    zignorowana; powtórzenie jej w całości nie dokłada informacji, a wygląda jak nagabywanie.
+    Ta ma przypomnieć o sprawie i pokazać najkrótszą drogę do jej zamknięcia.
+
+    ``ma_propozycje`` rozstrzyga, czy ta najkrótsza droga w ogóle istnieje: przy pustym gotowcu
+    (brak grafiku z zeszłego tygodnia) nie ma czego potwierdzić, więc zdanie „odpisz »ok«, żeby
+    powtórzyć" byłoby nieprawdziwe — ten sam podział, który robi ``build_nudge_text``.
+
+    ``termin`` liczy KOD (**B7**), a ``None`` znaczy „nie da się wyznaczyć" i wtedy zdania o nim
+    po prostu nie ma: lepiej nie obiecać nic, niż obiecać datę wziętą z niczego. Zgodność z **N13**
+    zostaje — tekst jest stałą tego modułu, zmienne są wyłącznie WARTOŚCI.
+    """
+    lines = [
+        f"Przypominam o grafiku na tydzień {week_label} — nie mam jeszcze Twojej odpowiedzi 🙂"
+    ]
+    if ma_propozycje:
+        lines.append(
+            "Wystarczy odpisać „ok”, żeby zapisać propozycję z poprzedniej wiadomości, "
+            "albo napisz, co zmienić (np. „w piątek 10–20, reszta bez zmian”)."
+        )
+    else:
+        lines.append("Napisz proszę, kiedy pracujesz (np. „pon–pt 8–16”).")
+    if termin is not None:
+        lokalnie = termin.astimezone(tz)
+        lines.append(
+            f"Czekam do {_DNI_DOPELNIACZ[lokalnie.weekday()]} "
+            f"{lokalnie:%d.%m}, godz. {lokalnie.hour}:{lokalnie:%M} — "
+            "potem kończę przypominanie o tym tygodniu."
+        )
+    return "\n".join(lines)
+
+
 def describe_schedule(schedule: WeekSchedule, tz: ZoneInfo) -> str:
     """Opis grafiku do potwierdzenia z trybem pracy jako emotka: 🟢 stacjonarnie, 🔵 zdalnie.
 

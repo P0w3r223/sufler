@@ -288,6 +288,47 @@ def ready_for_self_fill_check(pending: PendingReminder, now: datetime, min_idle_
     return anchor is not None and now >= anchor + timedelta(seconds=min_idle_s)
 
 
+def czas_na_przypomnienie(
+    pending: PendingReminder, now: datetime, okno: OknoOdpowiedzi, po_h: int
+) -> bool:
+    """Czy wolno TERAZ przypomnieć milczącemu pracownikowi (pozycja D5 planu). Czysty predykat.
+
+    Cztery warunki, każdy z własnego powodu:
+
+    1. **``po_h >= 0``** — wyłącznik funkcji.
+    2. **Jeszcze nie przypominano** (``przypomniano_at`` pusty). Przypomnienie jest JEDNO na temat:
+       drugie byłoby nagabywaniem, a nie przysługą.
+    3. **Pracownik NIE napisał ani słowa.** Kotwicą jest ``nudged_at`` (niezmienny czas prośby),
+       a warunkiem — nietknięty ``watermark`` i pusty ``bot_last_message_at``. Bez tego
+       przypomnienie trafiałoby do kogoś, kto odpisał niejasno i dostał prośbę o doprecyzowanie,
+       ze zdaniem „nie mam Twojej odpowiedzi" — czyli zarzutem postawionym komuś, kto napisał.
+       Ta sama troska, dla której ``messages.NO_CONFIRM_TEXT`` istnieje osobno od ``EXPIRED_TEXT``.
+    4. **Przypomnienie NIE MOŻE przesunąć terminu** — i to jest tu niezmiennik, nie skutek
+       konfiguracji. Każda wiadomość bota podnosi dolną granicę kurtuazji do ``teraz + min_h``
+       (``termin_odpowiedzi`` bierze maksimum), więc przypomnienie wysłane blisko terminu
+       przedłużyłoby go — a treść pierwszej prośby OBIECAŁA konkretną godzinę (**B7**: obietnicę
+       i egzekwowanie liczy ten sam kod). Wysyłamy więc tylko wtedy, gdy kurtuazja zmieści się
+       pod terminem kalendarzowym. Przy przebiegu w piątek 16:00, terminie w poniedziałek 05:00
+       i ``min_h`` 24 h ostatnią dozwoloną chwilą jest niedziela 05:00; domyślne ``po_h`` 18
+       daje sobotę rano, czyli z zapasem.
+
+       Kierunek przy złej konfiguracji jest bezpieczny: zbyt późna wartość ``po_h`` po prostu
+       WYCISZA przypomnienie (nikt nie dostaje nic ponad to, co dziś), zamiast wydłużać termin
+       komuś, komu obiecano inną godzinę. Milczenie jest tu tańsze niż złamana obietnica.
+    """
+    if po_h < 0 or pending.przypomniano_at:
+        return False
+    if pending.bot_last_message_at or pending.watermark != pending.nudged_at:
+        return False
+    prosba = _najpozniejszy(pending.nudged_at)
+    if prosba is None or now < prosba + timedelta(hours=po_h):
+        return False
+    termin = termin_kalendarzowy(pending.week_start, okno)
+    # `>` a nie `>=`: kurtuazja kończąca się DOKŁADNIE w terminie jeszcze go nie przesuwa
+    # (`termin_odpowiedzi` bierze `max`, a maksimum z dwóch równych to ta sama chwila).
+    return termin is not None and now + timedelta(hours=okno.min_h) <= termin
+
+
 class _MaZakonczenie(Protocol):
     """Cokolwiek, co ma koniec w czasie — ``Shift`` i ``TimeOff`` spełniają to strukturalnie."""
 

@@ -14,6 +14,51 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — D5, połowa pierwsza: jedno przypomnienie milczącemu
+
+### Dodane
+
+- **Pracownik, który po piątkowej prośbie nie napisał ANI SŁOWA, dostaje w sobotę rano jedno
+  przypomnienie.** Powód jest zmierzony, nie przeczuty: dwa tygodnie pilotażu to **10 próśb →
+  4 domknięte skutkiem, 6 wygasłych bez odpowiedzi**. Bot pytał dokładnie RAZ i milczał do terminu,
+  więc jedyną dźwignią wobec tej liczby było dołożenie zagadnięcia — nie zmiana treści ani
+  interpretacji.
+
+  Nowy `runtime/przypomnienie.py` (osobny moduł, nie kolejna funkcja w 1545-linijkowym
+  `listener`), czysty predykat `lifecycle.czas_na_przypomnienie`, treść w `messages`
+  (**N13**), krok **1.7** nasłuchu. Kolejność kroków rozszerza się spójnie:
+  odpowiedź > samouzupełnienie > sufit ADR 0007 > **przypomnienie** > wygaszenie — po 1.5, żeby
+  nie zagadywać kogoś, kto właśnie sam uzupełnił grafik; po 1.6, żeby nie pisać do wpisu
+  zamkniętego przed chwilą; przed 2, bo o to właśnie chodzi.
+
+  **Niezmiennik, na którym to stoi: przypomnienie NIGDY nie przesuwa terminu odpowiedzi.** Każda
+  wiadomość bota podnosi dolną granicę kurtuazji o `REPLY_MIN_HOURS` (`termin_odpowiedzi` bierze
+  maksimum), a treść PIERWSZEJ prośby obiecała pracownikowi konkretną godzinę (**B7**). Predykat
+  wysyła więc wyłącznie wtedy, gdy kurtuazja zmieści się pod terminem kalendarzowym — przy
+  przebiegu w piątek 16:00 i kurtuazji 24 h ostatnią dozwoloną chwilą jest niedziela 05:00.
+  Wartość `PRZYPOMNIENIE_PO_H` zbyt późna **wycisza** przypomnienie, zamiast łamać obietnicę:
+  milczenie jest tańsze niż zmieniony termin.
+
+  Pozostałe bramki: przypomnienie jest JEDNO na temat (nowe pole stanu `przypomniano_at`), nie
+  tworzy drugiego wpisu (**N15** — to wiadomość w istniejącym temacie, nie druga prośba), nie
+  idzie do kogoś, kto napisał cokolwiek (zdanie „nie mam jeszcze Twojej odpowiedzi" byłoby wtedy
+  zarzutem — ta sama troska, dla której `NO_CONFIRM_TEXT` istnieje osobno od `EXPIRED_TEXT`),
+  i podlega godzinom ciszy przez szew `domkniecia.do_domkniecia` **także przy `--ignoruj-cisze`**
+  (ta flaga jest po to, żeby odpowiadać piszącym, a nie zagadywać milczących o piątej rano).
+  Znacznik zapisywany PRZED wysyłką — proces ubity w połowie ma kosztować jedno przypomnienie
+  nieprzysłane, nie dwa przysłane.
+
+- `POWIADOMIENIA_PRZYPOMNIENIE_PO_H` (domyślnie 18 h po prośbie = sobota rano; `-1` wyłącza)
+  wraz z opisem w `deploy/env.example`.
+- Raport `--stan` znaczy wpisy, do których przypomnienie już poszło — bez „(!)", bo to stan
+  rozmowy, nie usterka.
+
+### Czego ta pozycja NIE obejmuje
+
+Druga połowa D5 — zdjęcie filtru wpisów terminalnych w `poll_replies`, czyli wznowienie rozmowy
+po wygaśnięciu. Ratuje spóźnialskich, ale liczby milczących nie rusza, a dotyka wszystkich pięciu
+kroków obiegu. Rozdzielone świadomie; `docs/plan-rozwoju.md` notuje D5 jako `zrealizowane w części`.
+
 ## [Nieopublikowane] — audyt 2026-09-08, fala 1: idempotencja i odporność stanu
 
 Dwie usterki znalezione pełnym audytem kodu (architektura + przegląd), obie potwierdzone
