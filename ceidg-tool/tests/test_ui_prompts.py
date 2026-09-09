@@ -9,6 +9,8 @@ inaczej nowe pytanie w przepływie przeszłoby niezauważone.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from ceidg_tool.errors import ConfigError
@@ -534,3 +536,98 @@ def test_the_declared_default_matches_the_one_callers_pass(
     to dwa zapisy tej samej decyzji. Rozjazd oznaczałby, że harmonogram i kreator odpowiadają
     inaczej na to samo pytanie — cicho, bo żaden z nich nie widzi drugiego."""
     assert (question.default == "tak") is expected
+
+
+# ------------------------------------------- lista wyboru: dwa zaznaczenia naraz (bramka 3)
+
+
+class _ZapisujacyBackend:
+    """Atrapa zapamiętująca **argumenty** wywołania — o nie tu chodzi, nie o odpowiedź."""
+
+    def __init__(self, value: object = "popraw") -> None:
+        self._value = value
+        self.kwargs: dict[str, object] = {}
+        self.args: tuple[object, ...] = ()
+
+    def select(self, *args: object, **kwargs: object) -> _Answer:
+        self.args, self.kwargs = args, kwargs
+        return _Answer(self._value)
+
+    text = confirm = select
+
+
+def test_questionary_znakuje_domyslna_na_stale_i_dlatego_jej_nie_podajemy() -> None:
+    """Przyczyna defektu z bramki 3, przypięta na zachowaniu **biblioteki**, nie naszym.
+
+    `InquirerControl` wkłada wartość podaną jako `default=` do `selected_options`, a przy
+    rysowaniu (`_get_choice_tokens`) klasa `selected` stoi w `elif` **przed** `pointed_at`.
+    Wiersz domyślny jest więc oznaczony niezależnie od kursora — operator widział dwa
+    zaznaczenia naraz. Ten test pilnuje, że wniosek, na którym stoi nasza poprawka, jest
+    prawdziwy; gdyby biblioteka to zmieniła, dowiemy się stąd, a nie z ekranu operatora.
+    """
+    from questionary.prompts.common import InquirerControl
+
+    wybory = ["popraw — popraw kryteria", "partie — podziel na partie"]
+
+    z_domyslna = InquirerControl(wybory, default=wybory[0])
+    assert z_domyslna.selected_options == [wybory[0]], "to jest trwały znacznik, który usuwamy"
+
+    bez_domyslnej = InquirerControl(wybory)
+    assert bez_domyslnej.selected_options == [], "bez `default=` nic nie jest zaznaczone"
+    assert bez_domyslnej.pointed_at == 0, "kursor startuje na pierwszej pozycji"
+
+
+def test_lista_wyboru_nie_dostaje_parametru_default() -> None:
+    """Rdzeń poprawki. Podanie `default=` przywraca trwały znacznik na wierszu domyślnym."""
+    backend = _ZapisujacyBackend()
+
+    ConsolePrompter(backend=backend).ask(PODZIAL)
+
+    assert "default" not in backend.kwargs, backend.kwargs
+
+
+def test_lista_wyboru_dostaje_styl_bez_klasy_selected() -> None:
+    """Podświetlenie na odwróconych kolorach, bo domyślny motyw rysował je barwą, której ten
+    terminal nie pokazywał: strzałka szła w dół, podświetlenie stało (bramka 3).
+
+    Klasy `selected` w stylu nie ma celowo — nadanie jej wyglądu przywróciłoby defekt, gdyby
+    `default=` kiedyś wróciło."""
+    import questionary
+
+    class _ZeStylem(_ZapisujacyBackend):
+        Style = questionary.Style
+
+    backend = _ZeStylem()
+    ConsolePrompter(backend=backend).ask(PODZIAL)
+
+    styl = cast(questionary.Style, backend.kwargs["style"])
+    klasy = {nazwa for nazwa, _ in styl.style_rules}
+    assert "pointer" in klasy and "highlighted" in klasy
+    assert "selected" not in klasy, "styl na `selected` to dokładnie ten defekt"
+
+
+def test_domyslna_odpowiedz_staje_na_pierwszej_pozycji() -> None:
+    """Bez `default=` kursor startuje na pierwszej pozycji, więc to ona musi być domyślną.
+    Porządkowanie siedzi w `ask`, a nie w deklaracjach, bo `CO_DALEJ` wylicza domyślną
+    z kryteriów podanych wcześniej — deklaracja nie zna jej z góry."""
+    backend = _ZapisujacyBackend()
+
+    ConsolePrompter(backend=backend).ask(PODZIAL)
+
+    wybory = backend.kwargs["choices"]
+    assert isinstance(wybory, list)
+    assert wybory[0].startswith(PODZIAL.default), wybory
+    assert len(wybory) == len(PODZIAL.options), "porządkowanie nie może gubić opcji"
+
+
+def test_domyslna_spoza_listy_opcji_jest_bledem_przy_budowie() -> None:
+    """Domyślna, której nie da się wybrać, jest błędem programisty, nie operatora — więc
+    pytanie nie powstaje. Pierwsza wersja tego sprawdzenia wymagała, żeby domyślna była
+    opcją *pierwszą*, i była za mocna: `CO_DALEJ` zmienia domyślną w zależności od kryteriów."""
+    with pytest.raises(ValueError, match="nie jest żadną z opcji"):
+        Question(
+            id="zle",
+            text="?",
+            options=(Option("a", "A"), Option("b", "B")),
+            default="c",
+        )

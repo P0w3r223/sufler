@@ -36,6 +36,20 @@ class Question:
     safe_default: bool = True
     hint: str = ""
 
+    def __post_init__(self) -> None:
+        """Domyślna odpowiedź musi być **jedną z opcji** — inaczej nie da się jej wybrać.
+
+        Pierwsza wersja tego sprawdzenia wymagała, żeby domyślna była opcją *pierwszą*, i to
+        było za mocne: `CO_DALEJ` wylicza domyślną z kryteriów, które operator już podał, więc
+        raz jest nią „lista", a raz „szczegóły". Kolejność, w jakiej opcje trafiają na ekran,
+        porządkuje `_domyslna_na_czele` w chwili zadawania pytania — tam, gdzie znana jest
+        wartość domyślna tej konkretnej tury."""
+        if self.options and self.default not in self.values():
+            raise ValueError(
+                f"Pytanie {self.id!r}: domyślna {self.default!r} nie jest żadną z opcji "
+                f"({', '.join(self.values())})."
+            )
+
     def values(self) -> tuple[str, ...]:
         return tuple(option.value for option in self.options)
 
@@ -207,6 +221,45 @@ class CancelledError(ConfigError):
     """Operator przerwał pytanie (Ctrl+C albo koniec wejścia) — akcja wraca do menu."""
 
 
+def _domyslna_na_czele(question: Question) -> tuple[Option, ...]:
+    """Opcje z domyślną na pierwszym miejscu — bo to pierwsza pozycja wyznacza start kursora.
+
+    Nie podajemy `questionary` parametru `default=` (powód w `_select`), a bez niego kursor
+    startuje na pozycji pierwszej. Żeby zaczynał na odpowiedzi domyślnej, to ona musi tam
+    stanąć. Porządkowanie siedzi tutaj, a nie w deklaracjach pytań, bo `CO_DALEJ` wylicza
+    domyślną z kryteriów podanych wcześniej — deklaracja nie zna jej z góry."""
+    domyslna = [o for o in question.options if o.value == question.default]
+    reszta = [o for o in question.options if o.value != question.default]
+    return (*domyslna, *reszta)
+
+
+def _select(backend: Any, tekst: str, choices: list[str]) -> Any:
+    """Lista wyboru bez `default=` i z jawnym stylem — obie połowy jednej poprawki.
+
+    **Bez `default=`**, bo `questionary` wkłada tę wartość do `selected_options`, a klasa
+    `selected` wygrywa przy rysowaniu z `pointed_at`: wiersz domyślny zostawał oznaczony na
+    stałe i operator widział dwa zaznaczenia naraz (bramka 3, 2026-09-09). Kursor startuje
+    wtedy na pozycji pierwszej — i dlatego `Question` wymaga, żeby domyślna nią była.
+
+    **Z jawnym stylem**, bo domyślny motyw podświetla kolorem, którego ten terminal nie
+    pokazywał: strzałka szła w dół, podświetlenie stało. `reverse` nie potrzebuje palety.
+
+    Klasy `selected` w stylu nie ma celowo. Skoro nie podajemy `default=`, nic jej nie
+    użyje — a nadanie jej wyglądu przywróciłoby dokładnie ten defekt, gdyby `default=`
+    kiedyś wróciło."""
+    styl = getattr(backend, "Style", None)
+    if styl is None:
+        # Atrapa w testach albo starsza biblioteka: brak stylu nie jest powodem, żeby
+        # rezygnować z listy — `_run` traktuje wyjątek jako awarię rysowania i wyłącza
+        # backend na stałe, co byłoby lekarstwem gorszym od choroby.
+        return backend.select(tekst, choices=choices)
+    return backend.select(
+        tekst,
+        choices=choices,
+        style=styl([("pointer", "reverse bold"), ("highlighted", "reverse bold")]),
+    )
+
+
 class ConsolePrompter:
     """Pytania na konsoli. `questionary` daje strzałki i podpowiedzi; gdy się nie uruchomi
     ani nie narysuje (stara konsola Windows, przekierowane wejście), schodzimy do `input`.
@@ -230,23 +283,16 @@ class ConsolePrompter:
     def ask(self, question: Question) -> str:
         if not question.options:
             return question.check(self.text(question))
-        choices = [f"{o.value} — {o.label}" for o in question.options]
-        default = next(
-            (
-                choice
-                for choice, option in zip(choices, question.options, strict=True)
-                if option.value == question.default
-            ),
-            None,
-        )
-        answer = self._run(
-            lambda backend: backend.select(question.text, choices=choices, default=default)
-        )
+        opcje = _domyslna_na_czele(question)
+        choices = [f"{o.value} — {o.label}" for o in opcje]
+        answer = self._run(lambda backend: _select(backend, question.text, choices))
         if answer is None:
             raise CancelledError("Przerwano wybór.")
         if answer is not _MISSING:
             return question.check(str(answer).split(" — ", 1)[0])
-        labels = ", ".join(f"{o.value} ({o.label})" for o in question.options)
+        # Ta sama kolejność co na liście: ścieżka awaryjna nie może pokazywać opcji
+        # w innym porządku niż ta, której operator przed chwilą nie mógł narysować.
+        labels = ", ".join(f"{o.value} ({o.label})" for o in opcje)
         raw = _input(f"{question.text} [{labels}] (domyślnie {question.default}): ")
         return question.check(raw or question.default)
 
