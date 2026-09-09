@@ -9,7 +9,7 @@
 
 services:
   powiadomienia:
-    image: powiadomienia-teams:0.2.23
+    image: powiadomienia-teams:0.2.24
     container_name: powiadomienia-teams
 
     env_file:
