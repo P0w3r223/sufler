@@ -41,8 +41,11 @@ Zasady:
   zawieszenia ani po dacie zmiany wpisu.
 - `szczegoly` ustaw na true tylko wtedy, gdy użytkownik prosi o dane kontaktowe, PKD dodatkowe,
   adres korespondencyjny albo spółki cywilne. Szczegóły kosztują wielokrotnie więcej zapytań.
-- Pola, których zdanie nie dotyczy, zostaw puste. Nie zgaduj województwa, gdy padła sama nazwa
-  miasta, chyba że jest jednoznaczna.
+- Pola, których zdanie nie dotyczy, zostaw puste. Województwo ustawiasz wyłącznie wtedy, gdy
+  użytkownik sam je nazwał — sama nazwa miasta nie jest podstawą, także wtedy, gdy miasto jest
+  jednoznaczne. Rejestr łączy te dwa filtry warunkiem „i", więc dopisane województwo może wynik
+  tylko zawęzić: `miasto=Białystok` to 50 725 wpisów, a z `wojewodztwo=podlaskie` już 49 745 —
+  980 firm mniej, o które użytkownik prosił (pomiar 2026-09-09).
 - W `ograniczenia` wypisz kody tego, czego rejestr NIE potrafi, a o co użytkownik zahaczył.
   Nie tłumacz ich słowami — od tego jest program.
 - Gdy ze zdania nie da się zbudować ANI JEDNEGO filtra — nie padło ani miejsce, ani branża,
