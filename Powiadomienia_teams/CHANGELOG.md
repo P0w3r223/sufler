@@ -14,6 +14,38 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — dwie decyzje klienta: E1 odrzucone, uprawnienia jako przyjęte ryzyko
+
+Bez zmian w kodzie. Dwie otwarte pozycje przestają być otwarte — obie przez DECYZJĘ, nie przez
+wykonanie pracy, i obie zapisane tak, żeby było widać, która jest która.
+
+### Odrzucone
+
+- **E1 (sufit kosztu modelu) — `odrzucone` po pomiarze.** Zmierzone na żywym modelu: **$0,0060 za
+  wiadomość, ~$0,03–0,06 tygodniowo, ~$2–3 rocznie**. Zweryfikowano też wykonaniem, że koszt zależy
+  od LICZBY WIADOMOŚCI, a nie od czasu (20 obiegów nasłuchu bez wiadomości → zero wywołań modelu),
+  więc nie istnieje scenariusz rozbiegowy, którego sufit miałby pilnować. Ta sama procedura co przy
+  D1: zmierzyć, zapisać wynik, dopiero potem skasować.
+
+  **Co ZOSTAJE i nie jest częścią tego odrzucenia:** sufity wobec NIEZAUFANEGO wejścia
+  (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, `_MAX_ZNAKOW_ODPOWIEDZI`, `_MAX_ZNAKOW_HISTORII`).
+  Bronią przed spreparowaną wiadomością, nie przed rachunkiem, i to one trzymają najgorszy
+  przypadek jednej wiadomości na ~$0,024. Skasowanie ich pod hasłem „E1 odrzucone" byłoby
+  nieporozumieniem — dlatego stoi to w planie wprost.
+
+### Zamknięte jako przyjęte ryzyko
+
+- **Zawężenie uprawnień rejestracji aplikacji (`deploy/DO-WYKONANIA.md` §7).** Pozycja przestaje
+  być zadaniem, ale **nie dlatego, że praca została zrobiona** — ryzyko zostało świadomie przyjęte.
+  Zapis zostaje w dokumencie, bo skasowanie prawdziwego ustalenia zamieniłoby go w źródło
+  nieprawdy; zmienia się jego STATUS, nie jego treść.
+
+  Przy okazji sprostowana liczba: token niesie **27 uprawnień**, nie 25 jak mówił zapis z lipca —
+  zmierzone odczytem cache na produkcji. Kod prosi o 8. Czternaście nadmiarowych wypisano
+  imiennie, razem z tym, co konkretnie daje ich obecność przy wycieku cache tokenu (zapis do
+  plików SharePoint/OneDrive, kasowanie kanałów Teams, odczyt transkrypcji spotkań) oraz
+  z instrukcją odwrócenia decyzji, gdyby się zmieniła.
+
 ## [0.2.24] — 2026-09-09
 
 Domknięcie pozycji **D5** i pomiar do **E1**. Dwie rzeczy w jednym wydaniu, obie wynikające
