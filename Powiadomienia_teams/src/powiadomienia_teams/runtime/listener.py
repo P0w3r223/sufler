@@ -527,10 +527,27 @@ def poll_replies(  # noqa: C901, PLR0915
     #    zapisie (krok 1) nie ma tu żadnego nowego pobrania. Skutek uboczny do zapamiętania: kto
     #    uzupełnił grafik W TRAKCIE tego przebiegu, zostanie zauważony dopiero w następnym — czyli
     #    z opóźnieniem podziękowania, nigdy z błędnym zapisem. Kierunek bezpieczny.
+    #
+    #    **Kandydatem jest też temat już DOMKNIĘTY** (`WZNAWIALNE`), i to nie jest rozszerzenie
+    #    kosmetyczne. Termin wypada w poniedziałek 05:00, domknięcie wychodzi po godzinach ciszy
+    #    o 07:00, a człowiek siada do grafiku o dziewiątej — czyli najczęstsza kolejność w praktyce
+    #    to „najpierw »Nie dostałem odpowiedzi«, POTEM uzupełnia sam". Dopóki ten krok patrzył
+    #    wyłącznie na wpisy otwarte, taka osoba zostawała `EXPIRED` na zawsze: dostawała zarzut
+    #    milczenia, nie dostawała podziękowania, a podsumowanie liczyło ją jako porażkę, mimo że
+    #    tydzień był domknięty. Poprawka kroku 1 (odczyt czatu, D5) tego nie obejmowała — czytała
+    #    czat, a nie grafik.
+    #
+    #    Statusy z `WZNAWIALNE` (`EXPIRED`, `DECLINED`) są tu bezpieczne z tego samego powodu co
+    #    przy wznawianiu rozmowy: nie zapisano dla nich NIC, więc nie ma czego zdublować, a ten
+    #    krok i tak niczego nie zapisuje — kończy się wiadomością albo niczym. `APPLIED`
+    #    i `SELF_FILLED` pozostają poza nim: tam grafik już jest, więc „widzę, że jest uzupełniony"
+    #    byłoby albo powtórzeniem, albo (przy `APPLIED`) przypisaniem sobie cudzej zasługi.
+    #    Domknięcie samouzupełnieniem daje status `SELF_FILLED`, który do `WZNAWIALNE` nie należy —
+    #    więc podziękowanie idzie DOKŁADNIE RAZ, a nie w każdym kolejnym obiegu.
     kandydaci = [
         p
-        for p in open_items
-        if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)
+        for p in [*open_items, *wznawialne]
+        if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM, *WZNAWIALNE)
         and outcomes.get(p.member_id) is ReadOutcome.NOTHING_NEW
         and ready_for_self_fill_check(p, now, settings.self_fill_check_min_idle_s)
     ]
