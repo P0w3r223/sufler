@@ -153,6 +153,40 @@ class SqliteEventStore:
     def recent(
         self, *, source: str | None = None, project: str | None = None, limit: int = 20
     ) -> list[Event]:
+        return self._okno("id DESC", source=source, project=project, limit=limit)
+
+    def recent_by_time(
+        self, *, source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> list[Event]:
+        """Okno po CZASIE ZDARZENIA. ``datetime(occurred_at)``, nie sam tekst kolumny.
+
+        ``occurred_at`` zapisujemy przez ``isoformat()``, czyli z offsetem, jaki niosło zdarzenie —
+        a porządek leksykalny napisów z RÓŻNYMI offsetami nie jest chronologiczny: sprawdzone,
+        ``2026-09-07T13:30:00+02:00`` (11:30 UTC) wypada tekstowo PRZED ``…T12:00:00+00:00``,
+        choć jest wcześniejsze. Dziś w produkcji wszystkie wiersze mają ``+00:00``, więc różnica
+        byłaby niewidoczna — i właśnie dlatego trzeba ją domknąć teraz, a nie po pierwszym
+        zdarzeniu z innym offsetem. ``datetime()`` normalizuje do UTC.
+
+        Cena: sortowanie po WYRAŻENIU nie skorzysta z indeksu na kolumnie. Indeksu na
+        ``occurred_at`` i tak nie ma, a okno jest ograniczone ``limit``.
+        """
+        return self._okno(
+            "datetime(occurred_at) DESC, id DESC", source=source, project=project, limit=limit
+        )
+
+    def _okno(
+        self,
+        order_by: str,
+        *,
+        source: str | None,
+        project: str | None,
+        limit: int,
+    ) -> list[Event]:
+        """Okno zdarzeń z filtrami — jedno miejsce składania ``WHERE`` dla obu porządków.
+
+        ``order_by`` jest wstawiane do SQL wprost, więc NIE MOŻE pochodzić od wołającego spoza tej
+        klasy: obie wartości są literałami w metodach wyżej. Filtry idą parametrami, jak dotąd.
+        """
         clauses: list[str] = []
         params: list[Any] = []
         if source is not None:
@@ -164,7 +198,7 @@ class SqliteEventStore:
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM events" + where + " ORDER BY id DESC LIMIT ?",
+                f"SELECT * FROM events{where} ORDER BY {order_by} LIMIT ?",
                 [*params, limit],
             ).fetchall()
         return [_event(r) for r in rows]

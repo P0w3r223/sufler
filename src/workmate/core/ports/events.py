@@ -46,5 +46,23 @@ class EventStore(Protocol):
     def recent(
         self, *, source: str | None = None, project: str | None = None, limit: int = 20
     ) -> list[Event]:
-        """Ostatnie zdarzenia (najnowsze pierwsze) do podglądu przez narzędzie agenta."""
+        """Ostatnie zdarzenia w kolejności PRZYJĘCIA (malejąco po ``id``).
+
+        Kolejność po ``id`` jest tu kontraktem, nie szczegółem: na tej metodzie stoi bootstrap
+        kursora MCP (ADR 0040), którego zamrożony opis mówi „``latest_cursor`` to najwyższe
+        ZWRÓCONE ``id``". Konsument pytający o czas ma wołać ``recent_by_time`` — patrz amendment
+        ADR 0071 z 2026-09-07, gdzie zapisano, dlaczego te dwa pytania nie mogą dzielić jednej
+        metody.
+        """
+        ...
+
+    def recent_by_time(
+        self, *, source: str | None = None, project: str | None = None, limit: int = 20
+    ) -> list[Event]:
+        """Ostatnie zdarzenia w kolejności CZASU ZDARZENIA (``occurred_at`` malejąco).
+
+        Osobna metoda, bo ``recent`` odpowiada na inne pytanie. Do backfillu (ADR 0071 decyzja 9)
+        kolejność przyjęcia przybliżała czas zdarzenia i różnica była niewidoczna; backfill łamie
+        to przybliżenie TRWALE — lipcowe zdarzenia dostają najwyższe ``id`` w bazie.
+        """
         ...

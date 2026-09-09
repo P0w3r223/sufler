@@ -230,6 +230,15 @@ def test_drzwi_MCP_niosa_to_samo_roszczenie_co_drzwi_agenta() -> None:
         def recent(self, *, source=None, limit=20):
             return []
 
+        def recent_by_time(self, *, source=None, project=None, limit=20):
+            """Jak ``recent``, ale po CZASIE ZDARZENIA — wiernie wobec magazynu (ADR 0071).
+
+            Nie alias: alias ukryłby różnicę, o którą w tej zmianie chodzi, a atrapa odpowiadałaby
+            na pytanie o czas kolejnością przyjęcia.
+            """
+            okno = self.recent(source=source, project=project, limit=limit)
+            return sorted(okno, key=lambda e: e.occurred_at, reverse=True)
+
     opis = build_events_since_catalog(_PusteZdarzenia())[0].description  # type: ignore[arg-type]
 
     assert _mowi_ze_nie_zapisuje(opis) != _zamkniecia_sa_zapisywane()

@@ -1,11 +1,14 @@
 """Złożenie digestu „co się zmieniło od <data>" (ADR 0052, F5) — read-only, deterministyczne.
 
-Fold zdarzeń warstwy spajającej: ``EventService.recent`` (najnowsze pierwsze) filtrowany po
-``occurred_at.date() >= since``, pogrupowany po projekcie i źródle. Magazyn nie ma zapytania po
-dacie, więc skanujemy ``scan_limit`` najnowszych (``recent`` sortuje po id/ingestii) i filtrujemy
-w pamięci. Poller ingeruje ~na bieżąco, więc id ≈ ``occurred_at``; przy trafieniu w sufit skanu z
-trafieniami w oknie ustawiamy ``truncated`` (okno mogło mieć więcej — nie ucinamy po cichu). Duży
-backfill starych zdarzeń osłabiłby to założenie, ale pipeline go nie robi. Brak mostu → pusto.
+Fold zdarzeń warstwy spajającej: ``EventService.recent_by_time`` (najnowsze wg CZASU ZDARZENIA)
+filtrowany po ``occurred_at.date() >= since``, pogrupowany po projekcie i źródle. Magazyn nie ma
+zapytania po dacie, więc skanujemy ``scan_limit`` najnowszych i filtrujemy w pamięci; przy
+trafieniu w sufit skanu z trafieniami w oknie ustawiamy ``truncated`` (okno mogło mieć więcej —
+nie ucinamy po cichu). Brak mostu → pusto.
+
+Do 2026-09-07 skan szedł po ``id`` (kolejności PRZYJĘCIA), a ten docstring mówił: „duży backfill
+starych zdarzeń osłabiłby to założenie, ale pipeline go nie robi". Decyzja 9 ADR 0071 **jest tym
+backfillem**, więc założenie przestało obowiązywać i skan przeszedł na czas (amendment ADR 0071).
 """
 
 from __future__ import annotations
@@ -39,13 +42,17 @@ class ChangeDigestService:
         """Złóż digest zmian od ``day`` (włącznie). Bez mostu zdarzeń → pusty digest."""
         if self._events is None:
             return ChangeDigest(since=day, total=0, by_source=(), projects=(), truncated=False)
-        scanned = self._events.recent(limit=self._scan_limit)  # najnowsze wg ingestii (id) pierwsze
+        scanned = self._events.recent_by_time(limit=self._scan_limit)  # najnowsze wg CZASU
         window = [e for e in scanned if e.occurred_at.date() >= day]
         # Ucięcie NIEZALEŻNE od kolejności: trafienie w sufit skanu Z trafieniami w oknie znaczy, że
-        # poza sufitem mogą być kolejne zdarzenia z okna. Skan idzie po id (ingestii), a poller
-        # ingeruje ~na bieżąco, więc id ≈ occurred_at — bardzo stara ``since`` na dużej bazie jest
-        # wtedy przybliżeniem, SYGNALIZOWANYM flagą (nie ucinanym po cichu). NIE opieramy flagi na
-        # tożsamości/pozycji elementu, bo ``recent`` nie gwarantuje sortu po ``occurred_at``.
+        # poza sufitem mogą być kolejne zdarzenia z okna.
+        #
+        # Docstring tej klasy mówił do 2026-09-07: „duży backfill starych zdarzeń osłabiłby to
+        # założenie, ale pipeline go nie robi". Decyzja 9 ADR 0071 JEST tym backfillem — dlatego
+        # skan idzie teraz po ``occurred_at``, a nie po ``id``. Przy sorcie po czasie ucięcie
+        # przestaje być przybliżeniem dla starej ``since``: okno jest prefiksem skanu, więc flaga
+        # mówi dokładnie to, co znaczy. Zostaje liczona z DŁUGOŚCI, nie z pozycji elementu —
+        # równe ``occurred_at`` nie dają gwarancji, który wiersz baza zwróci pierwszy.
         truncated = len(scanned) >= self._scan_limit and bool(window)
         return ChangeDigest(
             since=day,

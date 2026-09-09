@@ -70,6 +70,15 @@ class _RaisingService:
     def recent(self, *, source=None, project=None, limit=20):
         raise RepositoryError("magazyn zdarzeń niedostępny")
 
+    def recent_by_time(self, *, source=None, project=None, limit=20):
+        """Jak ``recent``, ale po CZASIE ZDARZENIA — wiernie wobec magazynu (ADR 0071).
+
+        Nie alias: alias ukryłby różnicę, o którą w tej zmianie chodzi, a atrapa odpowiadałaby
+        na pytanie o czas kolejnością przyjęcia.
+        """
+        okno = self.recent(source=source, project=project, limit=limit)
+        return sorted(okno, key=lambda e: e.occurred_at, reverse=True)
+
     def read_since(self, after_id, *, source=None, project=None, limit=50):
         raise RepositoryError("magazyn zdarzeń niedostępny")
 
@@ -248,3 +257,45 @@ def test_source_description_says_it_is_the_recording_door():
     # pełną historię mostu, nie stan systemu zewnętrznego.
     assert "BEZ tego filtru" not in spec.description
     assert "HISTORIA" in spec.description
+
+
+def test_bootstrap_zostaje_na_kolejnosci_ID_take_gdy_backfill_rozjedzie_ja_z_czasem():
+    """Wariant B amendmentu ADR 0071: `recent()` NIE przechodzi na czas, i to jest decyzja.
+
+    Cztery powierzchnie pokazujące zdarzenia człowiekowi sortują od 2026-09-07 po czasie zajścia.
+    Ta piąta — bootstrap kursora MCP — zostaje przy ``id``, bo na tym stoi zamrożony opis
+    („``latest_cursor`` to najwyższe ZWRÓCONE ``id``") i kontrakt ADR 0040. Przestawienie jej
+    „dla spójności" wygląda na porządki, a jest zamrożeniem świeżo fałszywego zdania w tej samej
+    powierzchni, z której poprzedni etap fałszywe zdanie właśnie usunął.
+
+    Sonda ustawia kształt BACKFILLU — najwyższe ``id`` przy najstarszym czasie — bo tylko wtedy
+    obie kolejności się rozjeżdżają i widać, którą narzędzie faktycznie oddaje.
+    """
+    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+
+    service = EventService(SqliteEventStore(":memory:"))
+    service.ingest(
+        NewEvent(
+            source="github",
+            kind="issue_opened",
+            external_id="swieze",
+            occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    )
+    service.ingest(
+        NewEvent(
+            source="github",
+            kind="issue_opened",
+            external_id="lipcowe",  # wyższe id, starszy czas — wiersz backfillu
+            occurred_at=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+    )
+
+    wynik = _tool(build_events_since_catalog(service))()
+
+    ids = [e["id"] for e in wynik["events"]]
+    assert ids == sorted(ids)  # kontrakt ADR 0040: zawsze rosnąco po id
+    assert wynik["latest_cursor"] == max(ids)  # i to jest najwyższe ZWRÓCONE id
+    # Gdyby okno szło po czasie, „lipcowe" (id 2) trafiłoby przed „swieze" (id 1) i po odwróceniu
+    # kolejność id byłaby malejąca — czyli asercja wyżej padłaby.
+    assert [e["external_id"] for e in wynik["events"]] == ["swieze", "lipcowe"]
