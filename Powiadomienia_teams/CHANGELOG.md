@@ -14,14 +14,29 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
-## [Nieopublikowane] — E4: widać wreszcie, czy bot rozumie i czy przypomnienie działa
+## [0.2.23] — 2026-09-09
+
+Wydanie po **pełnym audycie kodu** (architektura + przegląd + weryfikacja własna, 2026-09-08).
+Trzy fale w jednym wydaniu: naprawy dwóch usterek wysokich, pierwsza połowa pozycji D5 i miara,
+bez której obie dźwignie działałyby na ślepo.
+
+Nic z tego nie jest zmianą kosmetyczną, ale **jedna rzecz jest widoczna dla pracowników**: od tego
+wydania osoba, która po piątkowej prośbie nie napisze ani słowa, dostaje w sobotę rano jedno
+przypomnienie (`PRZYPOMNIENIE_PO_H=18`, `-1` wyłącza). Termin odpowiedzi się przy tym NIE zmienia —
+to niezmiennik kodu, nie skutek konfiguracji.
+
+Kontrakt stanu: trzy nowe pola opcjonalne (`przypomniano_at`, `interpretacje`, `niejasnosci`),
+wszystkie z bezpieczną wartością domyślną. Zweryfikowane na ŻYWYM pliku stanu produkcji przed
+wydaniem: 6/6 wpisów wczytanych, żaden nieutracony.
+
+### Miara: widać wreszcie, czy bot rozumie i czy przypomnienie działa (E4)
 
 Audyt postawił zarzut ostrzejszy niż którakolwiek pojedyncza usterka: **system jest inżyniersko
 dopracowany do zadania, którego skuteczności nikt nie śledzi.** Poprzednie wydanie dołożyło do tego
 sobotnie przypomnienie — czyli kolejną dźwignię, której działania NIE BYŁO WIDAĆ. To wydanie
 zamyka jedno i drugie.
 
-### Dodane
+#### Dodane
 
 - **Miara jakości interpretacji (pozycja E4, §10.4).** `PendingReminder.interpretacje` /
   `niejasnosci` — PARA, bo plan mówi o ODSETKU, a liczba bez mianownika myli: „trzy niejasności"
@@ -48,7 +63,7 @@ zamyka jedno i drugie.
 - Oba wiersze podsumowania pojawiają się **tylko wtedy, gdy było co mierzyć**. Wiersz z zerami
   czyta się jak wynik, a znaczy „nie było przedmiotu" — i uczy administratora przewijać raport.
 
-### Ustalenia bez zmiany kodu
+#### Ustalenia bez zmiany kodu
 
 - **E0 (koperta stanu) nie była potrzebna.** Przesłanka planu „trwały licznik wymaga E0" jest
   prawdziwa wyłącznie dla liczników GLOBALNYCH; miara E4 jest z definicji *per osoba*, więc
@@ -62,9 +77,9 @@ zamyka jedno i drugie.
   zostają. Pełna tabela pomiaru w `docs/plan-rozwoju.md`; decyzja należy do klienta, tak samo jak
   przy D1.
 
-## [Nieopublikowane] — D5, połowa pierwsza: jedno przypomnienie milczącemu
+### Jedno przypomnienie milczącemu (D5, połowa pierwsza)
 
-### Dodane
+#### Dodane
 
 - **Pracownik, który po piątkowej prośbie nie napisał ANI SŁOWA, dostaje w sobotę rano jedno
   przypomnienie.** Powód jest zmierzony, nie przeczuty: dwa tygodnie pilotażu to **10 próśb →
@@ -101,18 +116,18 @@ zamyka jedno i drugie.
 - Raport `--stan` znaczy wpisy, do których przypomnienie już poszło — bez „(!)", bo to stan
   rozmowy, nie usterka.
 
-### Czego ta pozycja NIE obejmuje
+#### Czego ta pozycja NIE obejmuje
 
 Druga połowa D5 — zdjęcie filtru wpisów terminalnych w `poll_replies`, czyli wznowienie rozmowy
 po wygaśnięciu. Ratuje spóźnialskich, ale liczby milczących nie rusza, a dotyka wszystkich pięciu
 kroków obiegu. Rozdzielone świadomie; `docs/plan-rozwoju.md` notuje D5 jako `zrealizowane w części`.
 
-## [Nieopublikowane] — audyt 2026-09-08, fala 1: idempotencja i odporność stanu
+### Fala 1: idempotencja i odporność stanu
 
 Dwie usterki znalezione pełnym audytem kodu (architektura + przegląd), obie potwierdzone
 uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrzeżeń.
 
-### Naprawione
+#### Naprawione
 
 - **Idempotencja opierała się na jedynym w projekcie porównaniu znak w znak — groziła podwójnym
   zapisem do grafiku.** `runtime/nudge.run_once` szukał istniejącego wpisu przez
@@ -158,7 +173,7 @@ uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrze�
   celowo przepuszczają wyjątki sterujące (`CiszaError`, `AuthExpiredError`, `StateWriteError`),
   a połknięcie ich byłoby regresją groźniejszą niż naprawiana usterka.
 
-### Wydajność i prawdziwość sygnałów
+#### Wydajność i prawdziwość sygnałów
 
 - **Przebieg tygodniowy pobierał całą kolekcję zmian DWA RAZY.** `read_shifts` ściąga komplet
   zmian zespołu i filtruje po stronie klienta (`$filter` odpada — cztery powody w jego docstringu),
@@ -191,7 +206,7 @@ uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrze�
   treść: przy `APPLYING` nie chodzi o uzgodnienie, które nie trafiło do grafiku, tylko o zapis,
   który mógł trafić CZĘŚCIOWO — inna instrukcja dla człowieka, który to sprawdza.
 
-### Bezpieczeństwo wdrożenia
+#### Bezpieczeństwo wdrożenia
 
 - **Hartowanie kontenera wróciło do repozytorium.** Na serwerze kontener biegał z `cap_drop: [ALL]`,
   `mem_limit`, `pids_limit` i `noexec,nosuid` na `/tmp`; `deploy/docker-compose.yml` w repozytorium
@@ -210,7 +225,7 @@ uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrze�
   `deploy/README-docker.md` dostał brakujące wiersze w tabeli decyzji — tabela wymieniała
   `read_only` i tmpfs, ale milczała o tym, co realnie chroniło kontener u klienta.
 
-### Testy
+#### Testy
 
 Dziewięć nowych sond (503 → 512), każda zweryfikowana jako STRAŻNIK: uruchomiona wobec kodu sprzed
 naprawy pada, i to z przewidzianym błędem (`TypeError: fromisoformat`, `AttributeError: 'int'
