@@ -32,13 +32,14 @@ and global interception can be awkward with parallel tests.
 
 **B as the architectural seam, C as a convenience in selected tests.** `respx` stays
 in dev dependencies for tests where URL matching reads better; no design decision
-depends on it.
+depends on it. — **Half of this is withdrawn; see the amendment below.**
 
 Also:
 
 - The clock is injected everywhere time matters: limiter (`monotonic`),
   `pobrano_utc` and `Metadane` (`wall`). `time.sleep` exists only inside
-  `SystemClock`. Without this the `Metadane` sheet is untestable.
+  `SystemClock` — **true when written, false since phase 4; see the amendment.**
+  Without this the `Metadane` sheet is untestable.
 - The client is synchronous. With forced 3.6 s spacing concurrency gains nothing and
   complicates the limiter, SQLite transactions and typer integration. Reversible:
   `ratelimit`, `store`, `normalizer`, `exporter` are I/O-model agnostic; only
@@ -46,6 +47,37 @@ Also:
 - A fixture loader reads the probe sample format 1:1 from `tests/fixtures/*.json` and
   builds a `MockTransport` from it. Fixtures are literally what the API returned, not a
   hand-written idea of the API.
+
+---
+
+## Amendment 2026-09-09 — one clause withdrawn, one corrected
+
+Date: 2026-09-09
+Author: P0w3r223
+Related to: docs/audit-2026-09-09.md (addendum), pyproject.toml
+
+Two sentences above stopped being true and nothing observed it. Both are recorded here rather
+than edited away, because the reasoning that produced them is still the reasoning that would
+produce them again.
+
+**`respx` is withdrawn from the dev dependencies.** The decision kept it for "tests where URL
+matching reads better". The suite is now 1248 tests and **not one imports it** — the
+`MockTransport` seam of option B carried every case, including the ones the decision expected to
+be awkward. So the convenience half of "B as the seam, C as a convenience" describes an intention
+nobody acted on, while costing an install on all four legs of the CI matrix. **Option B is
+unaffected and remains the seam.** If URL-pattern matching is ever wanted, this ADR is the record
+that it was tried by omission first.
+
+**`time.sleep` is not confined to `SystemClock`.** `ceidg_tool/assistant/caller.py:229` sleeps on
+the real clock inside the SDK retry ladder, because `AnthropicCaller` takes no `Clock`. The claim
+had been false since phase 4 and was carried in two places — this bullet and `clock.py`'s module
+docstring — which is how a guarantee with no observer survives: it is repeated, not checked. The
+docstring now names both sites; the practical consequence is that a replayed 429 from the model
+sleeps for real, including under `--demo`.
+
+Not touched here, and still owed: the "forced 3.6 s spacing" in the bullet below is 3.75 since
+2026-09-06 (`ceidg_tool/profiles/*.yaml`). The argument it supports — synchronous client — does
+not depend on the number.
 
 ## Test plan mapped to the instruction
 

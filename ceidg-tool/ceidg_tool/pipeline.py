@@ -74,7 +74,6 @@ LOG_WAIT_S = 5.0
 
 RESUME_GAP_S = 180.0
 REPORT_PAGE_SIZE = 1000
-DETAIL_TTL_DAYS_DEFAULT = 7
 
 
 # ----------------------------------------------------------------------------- zależności

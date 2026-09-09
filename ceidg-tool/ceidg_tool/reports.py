@@ -25,8 +25,6 @@ from .recordid import id_z_tresci
 from .records import Report
 
 KIND_REGISTERED = "Zarejestrowane działalności"
-KIND_APPLICATIONS = "Złożone wnioski"
-PKD_SEPARATOR = "$##$"
 CSV_DELIMITER = ";"
 CSV_ENCODING = "utf-8-sig"
 
