@@ -431,12 +431,29 @@ def _liczby_per_tydzien(stan: dict[str, st.PendingReminder]) -> list[LiczbyTygod
     samą podmianą wersji. Ta gałąź jest siatką na jego złamanie, nie realizacją.
     """
     per_tydzien: dict[str, Counter[str]] = defaultdict(Counter)
+    # Pozycje NIEWYWODZONE ze statusu, liczone tym samym przebiegiem po stanie. Osobny licznik,
+    # a nie kolejne klucze w `per_tydzien`, bo tamten trzyma STATUSY i miesza się z mapą
+    # `STATUS_DO_POZYCJI` — a strażnik kontraktu (`test_kontrakty`) pilnuje, żeby każdy jej klucz
+    # był znanym statusem. Wrzucenie tu „przypomnienia" zapaliłoby go słusznie.
+    dodatkowe: dict[str, Counter[str]] = defaultdict(Counter)
     for pending in stan.values():
         per_tydzien[pending.week_start][pending.status] += 1
+        licz = dodatkowe[pending.week_start]
+        licz["interpretacje"] += pending.interpretacje
+        licz["niejasnosci"] += pending.niejasnosci
+        if pending.przypomniano_at:
+            licz["przypomnienia"] += 1
+            # „Skuteczne" znaczy: grafik jest uzupełniony. Obie drogi się liczą — bot zapisał po
+            # potwierdzeniu (`APPLIED`) albo pracownik zrobił to sam po zagadnięciu
+            # (`SELF_FILLED`). Pytanie brzmi „czy tydzień jest domknięty", nie „czy to nasza
+            # zasługa".
+            if pending.status in (st.APPLIED, st.SELF_FILLED):
+                licz["przypomnienia_skuteczne"] += 1
 
     bloki = []
     for week_start, licznik in per_tydzien.items():
         pozycje = {pozycja: licznik[status] for status, pozycja in STATUS_DO_POZYCJI.items()}
+        pozycje.update(dodatkowe[week_start])
         nierozpoznane = sum(n for s, n in licznik.items() if s not in ZLICZANE_STATUSY)
         if nierozpoznane:
             # Jedno ostrzeżenie na tydzień, nie na wpis: log ma zwrócić uwagę, a nie zostać zalany.

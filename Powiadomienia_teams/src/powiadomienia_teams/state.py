@@ -142,6 +142,24 @@ class PendingReminder:
     # przypominano". Po cofnięciu obrazu i powrocie pracownik dostanie najwyżej JEDNO
     # przypomnienie więcej; kierunek bezpieczny, bo nic tu nie zapisuje do grafiku.
     przypomniano_at: str = ""
+    # MIARA JAKOŚCI INTERPRETACJI (pozycja E4 planu, §10.4). Dwa liczniki, bo sensowna jest
+    # wyłącznie ich RELACJA: „trzy niejasności" u osoby, która napisała dziesięć wiadomości, znaczy
+    # co innego niż u tej, która napisała jedną. Plan mówi wprost o ODSETKU, nie o liczbie.
+    #
+    # `interpretacje` rośnie przy każdej odpowiedzi, która doszła do decyzji modelu (confirm /
+    # modify / decline / unclear); `niejasnosci` — przy tej ostatniej. Szybka ścieżka „tak"
+    # (`is_pure_affirmation`) modelu NIE woła i słusznie nie jest liczona: mierzymy jakość
+    # interpretacji, a nie ruch na czacie.
+    #
+    # PER OSOBA, a nie globalnie, i to jest cała konstrukcja tej pozycji: licznik globalny wymagałby
+    # koperty stanu (E0), a odsetek liczony na całym zespole zlewa osobę, której bot nie rozumie
+    # NIGDY, z dziewięcioma, które rozumie zawsze. Sprząta się razem z wpisem (`prune_terminal`),
+    # więc nic nie puchnie.
+    #
+    # Oba pola przechodzą przez `_commit` i przez migawkę wycofania — inaczej niedostarczona prośba
+    # o doprecyzowanie zawyżałaby miarę o zdarzenie, którego pracownik nigdy nie zobaczył.
+    interpretacje: int = 0
+    niejasnosci: int = 0
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}

@@ -406,6 +406,17 @@ class LiczbyTygodnia:
     samodzielne: int = 0
     niepotwierdzone: int = 0
     nierozpoznane: int = 0
+    # Pozycje NIEWYWODZONE ze statusu — dlatego nie ma ich w `service.STATUS_DO_POZYCJI` i dlatego
+    # strażnik kontraktu ich nie obejmuje (iteruje po wpisach mapy, nie po polach tej klasy).
+    #
+    # Skuteczność przypomnienia (D5): ile wpisów dostało przypomnienie i ile z nich skończyło się
+    # uzupełnionym grafikiem. Bez tej pary sobotnie zagadnięcie jest dźwignią, której działania
+    # NIE WIDAĆ — a to był główny zarzut audytu wobec całego produktu.
+    przypomnienia: int = 0
+    przypomnienia_skuteczne: int = 0
+    # Miara jakości interpretacji (E4, §10.4). Liczba bez mianownika myli, więc idą parą.
+    interpretacje: int = 0
+    niejasnosci: int = 0
 
     @property
     def domkniety(self) -> bool:
@@ -468,6 +479,21 @@ def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg:
         # tej podstawie, do kogo napisać ręcznie, więc etykieta musi być prawdziwa dla wszystkich.
         lines.append(f"• zamknięte bez zapisu: {t.wygasle}")
         lines.append(f"• uzupełnione samodzielnie: {t.samodzielne}")
+        if t.przypomnienia:
+            # Odpowiedź na pytanie „czy sobotnie przypomnienie ma sens" — jedyna liczba, po której
+            # da się je ocenić bez czytania logu (założenie A12: logów nikt nie czyta).
+            lines.append(
+                f"• przypomnienia (sobota): {t.przypomnienia}, "
+                f"z tego z uzupełnionym grafikiem: {t.przypomnienia_skuteczne}"
+            )
+        if t.interpretacje:
+            # Odsetek, nie sama liczba: „trzy niejasności" u osoby, która napisała dziesięć razy,
+            # znaczy co innego niż u tej, która napisała raz (E4 mówi wprost o ODSETKU).
+            procent = round(100 * t.niejasnosci / t.interpretacje)
+            lines.append(
+                f"• odpowiedzi zinterpretowane: {t.interpretacje}, "
+                f"w tym niejasne: {t.niejasnosci} ({procent}%)"
+            )
         if t.nierozpoznane:
             # Osobna pozycja, bo bez niej takie wpisy znikały z LICZB, zostawiając blok z samymi
             # zerami — czyli tydzień opisany jako „domknięty" z powodu braku informacji o nim.

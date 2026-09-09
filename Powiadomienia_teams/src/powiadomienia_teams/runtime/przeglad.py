@@ -346,7 +346,7 @@ def _lista_wpisow(
         # przychodzi tutaj sprawdzić, ile wpisów stoi i jak blisko sufitu są — bez tej kolumny
         # miałby alert bez sposobu jego sprawdzenia.
         f"  {'osoba':<{szer}}  {'status':<18} {'tydzień od':<12} {'termin':<18} "
-        f"{'kotwica':>9}  {'błędy':>5}  {'bez odcz.':>9}",
+        f"{'kotwica':>9}  {'błędy':>5}  {'bez odcz.':>9}  {'niejasne':>9}",
     ]
     for pending in wpisy:
         uwagi = []
@@ -363,9 +363,22 @@ def _lista_wpisow(
             f"  {nazwa[pending.member_id]:<{szer}}  {pending.status:<18} {pending.week_start:<12} "
             f"{_termin(pending, okno):<18} "
             f"{_wiek(pending, teraz):>9}  {pending.fail_count:>5}  "
-            f"{pending.unknown_count:>9}{ogon}"
+            f"{pending.unknown_count:>9}  {_niejasne(pending):>9}{ogon}"
         )
     return linie
+
+
+def _niejasne(pending: PendingReminder) -> str:
+    """``2/9`` — niejasności na tle WSZYSTKICH interpretacji tej osoby (miara E4, §10.4).
+
+    Ułamek, nie sama liczba: „trzy niejasności" u kogoś, kto napisał dziesięć razy, znaczy co
+    innego niż u kogoś, kto napisał raz. Bez ani jednej interpretacji (pracownik milczy, albo
+    odpowiedział samym „tak" szybką ścieżką) piszemy kreskę — zero z zera nie jest odsetkiem
+    i „0/0" czytałoby się jak zmierzone zero.
+    """
+    if not pending.interpretacje:
+        return "—"
+    return f"{pending.niejasnosci}/{pending.interpretacje}"
 
 
 def _po_terminie(pending: PendingReminder, teraz: datetime, okno: OknoOdpowiedzi) -> bool:

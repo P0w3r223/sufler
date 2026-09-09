@@ -179,3 +179,32 @@ def test_przypomnienie_bez_gotowca_nie_obiecuje_ze_jest_co_potwierdzic():
     assert "„ok”" not in tekst
     assert "kiedy pracujesz" in tekst
     assert "Czekam do" not in tekst, "bez wyznaczalnego terminu nie obiecujemy godziny"
+
+
+def test_podsumowanie_pokazuje_skutecznosc_przypomnien_i_odsetek():
+    """Dwie dźwignie, których działania dotąd NIE BYŁO WIDAĆ: sobotnie przypomnienie (D5)
+    i jakość interpretacji (E4). Bez nich ocena wymagała czytania logu — a A12 zakłada,
+    że logów nikt nie czyta."""
+    t = LiczbyTygodnia(
+        week_start="2026-07-20",
+        zapisane=2,
+        wygasle=1,
+        przypomnienia=3,
+        przypomnienia_skuteczne=2,
+        interpretacje=9,
+        niejasnosci=2,
+    )
+    tresc = build_summary_text(tygodnie=[t], nastepny_przebieg="2026-07-24 16:00")
+    assert "przypomnienia (sobota): 3, z tego z uzupełnionym grafikiem: 2" in tresc
+    assert "zinterpretowane: 9, w tym niejasne: 2 (22%)" in tresc
+
+
+def test_podsumowanie_milczy_o_miarach_ktorych_nie_ma():
+    """Tydzień bez przypomnień i bez interpretacji nie dostaje wierszy z zerami.
+
+    „przypomnienia: 0" i „niejasne: 0 (0%)" czytają się jak zmierzone zero, a znaczą »nie było
+    czego mierzyć« — a raport z wierszami bez treści uczy administratora go przewijać."""
+    t = LiczbyTygodnia(week_start="2026-07-20", zapisane=1)
+    tresc = build_summary_text(tygodnie=[t], nastepny_przebieg="2026-07-24 16:00")
+    assert "przypomnienia" not in tresc
+    assert "zinterpretowane" not in tresc

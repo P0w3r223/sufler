@@ -14,6 +14,54 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — E4: widać wreszcie, czy bot rozumie i czy przypomnienie działa
+
+Audyt postawił zarzut ostrzejszy niż którakolwiek pojedyncza usterka: **system jest inżyniersko
+dopracowany do zadania, którego skuteczności nikt nie śledzi.** Poprzednie wydanie dołożyło do tego
+sobotnie przypomnienie — czyli kolejną dźwignię, której działania NIE BYŁO WIDAĆ. To wydanie
+zamyka jedno i drugie.
+
+### Dodane
+
+- **Miara jakości interpretacji (pozycja E4, §10.4).** `PendingReminder.interpretacje` /
+  `niejasnosci` — PARA, bo plan mówi o ODSETKU, a liczba bez mianownika myli: „trzy niejasności"
+  u osoby, która napisała dziesięć razy, znaczy co innego niż u tej, która napisała raz.
+
+  Liczniki przechodzą przez `_commit` z tego samego powodu co `status`: podbite przed nieudanym
+  zapisem zostawałyby w pamięci procesu, a utrwalał je dopiero czyjś cudzy `save_state`. Są też
+  w migawce wycofania — niedostarczona prośba o doprecyzowanie **nie liczy się**, bo watermark
+  się wtedy cofa i ta sama wiadomość wraca do interpretacji w kolejnym obiegu; bez cofnięcia
+  policzylibyśmy ją dwa razy, zaliczając przy okazji niejasność, której pracownik nie zobaczył.
+  Szybka ścieżka „tak" (`is_pure_affirmation`) modelu nie woła i słusznie nie jest liczona —
+  mierzymy jakość interpretacji, nie ruch na czacie. `niejasne` bez `interpretacja` jest jawnie
+  odrzucane: miara, która raz zacznie kłamać, kłamie do końca pilotażu.
+
+- **Skuteczność sobotniego przypomnienia (D5) w podsumowaniu tygodniowym.** „przypomnienia
+  (sobota): 3, z tego z uzupełnionym grafikiem: 2". `SELF_FILLED` liczy się jako skutek na równi
+  z `APPLIED` — pytanie brzmi „czy tydzień jest domknięty", nie „czy to nasza zasługa".
+  Wyprowadzone z istniejącego `przypomniano_at`, więc **bez jednego nowego pola i bez zmiany
+  schematu**.
+
+- Raport `--stan` dostał kolumnę `niejasne` (`2/9` — per osoba, jak mówi plan; kreska, gdy nie było
+  ani jednej interpretacji, bo „0/0" czytałoby się jak zmierzone zero).
+
+- Oba wiersze podsumowania pojawiają się **tylko wtedy, gdy było co mierzyć**. Wiersz z zerami
+  czyta się jak wynik, a znaczy „nie było przedmiotu" — i uczy administratora przewijać raport.
+
+### Ustalenia bez zmiany kodu
+
+- **E0 (koperta stanu) nie była potrzebna.** Przesłanka planu „trwały licznik wymaga E0" jest
+  prawdziwa wyłącznie dla liczników GLOBALNYCH; miara E4 jest z definicji *per osoba*, więc
+  zmieściła się w dwóch polach `int` istniejącego wpisu i sprząta się razem z nim. E0 zostaje
+  otwarte dla tego, co naprawdę globalne.
+
+- **E1 (sufit kosztu modelu) — rekomendacja: odrzucić, po pomiarze.** Zmierzone: stały prefiks
+  żądania to ~5 000 tokenów, a cały rachunek **~$0,25–0,60 tygodniowo**. Sufit broniłby budżetu
+  mniejszego niż koszt jego utrzymania. Granice wobec niezaufanego wejścia (`_MAX_OBIEGOW`,
+  `_MAX_NARZEDZI_NA_TURE`, sufity znaków) już istnieją i mają INNE uzasadnienie niż budżet —
+  zostają. Pełna tabela pomiaru w `docs/plan-rozwoju.md`; decyzja należy do klienta, tak samo jak
+  przy D1.
+
 ## [Nieopublikowane] — D5, połowa pierwsza: jedno przypomnienie milczącemu
 
 ### Dodane
