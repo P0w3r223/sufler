@@ -318,6 +318,9 @@ Treść odpowiedzi Graph trafia do logu na poziomie ERROR — tam jest prawdziwa
 | `--extra agent` obowiązkowe | `anthropic` jest formalnie opcjonalne, ale import jest leniwy — brak ujawniłby się dopiero przy pierwszej odpowiedzi |
 | `USER 10001`, kod jako root | Skompromitowany proces nie podmieni własnego kodu |
 | `read_only: true` + tmpfs | Zapisywalny jest wyłącznie wolumen stanu |
+| `/tmp` z `noexec,nosuid` | To jedyne zapisywalne miejsce poza wolumenem, czyli jedyne, w którym dałoby się cokolwiek podłożyć i uruchomić |
+| `cap_drop: [ALL]` | Proces robi wyłącznie wychodzące HTTPS i zapis do jednego wolumenu — nie potrzebuje żadnej capability, a domyślnie niesie cały zestaw |
+| `mem_limit`, `pids_limit` | Usługa bezobsługowa nie może przy wycieku pamięci ani pętli tworzącej wątki wywrócić serwera klienta — najwyżej samą siebie, a `unless-stopped` ją podniesie |
 | `tini` jako PID 1 | Przekazuje SIGTERM, więc `docker stop` kończy pętlę czysto zamiast SIGKILL po 10 s |
 | `LANG=C.UTF-8`, `PYTHONUTF8=1` | Emoji w wiadomościach i polskie znaki w cache MSAL; bez tego `UnicodeEncodeError` |
 | `restart: unless-stopped` | Usługa ma wracać po reboocie hosta bez człowieka; utrata sesji jest zgłaszana alertem, a nie ukrywana martwym kontenerem |

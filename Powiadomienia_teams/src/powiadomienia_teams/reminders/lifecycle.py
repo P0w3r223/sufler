@@ -74,7 +74,12 @@ def _najpozniejszy(*znaczniki: str) -> datetime | None:
             continue
         try:
             kandydaci.append(parse_graph_datetime(iso))
-        except ValueError:
+        # `TypeError`/`AttributeError` obok `ValueError`: „nieparsowalne" ma znaczyć także ZŁY TYP,
+        # nie tylko zły napis. `parse_graph_datetime(123)` nie rzuca `ValueError`, tylko
+        # `AttributeError` na `.replace` — a `if not iso` przepuszcza każdą niezerową liczbę.
+        # Filtr typów w `state._wczytaj` zamyka drogę z pliku; ta gałąź jest siatką na wołającego,
+        # który zbuduje `PendingReminder` w kodzie (test, przyszły moduł) z pominięciem odczytu.
+        except (ValueError, TypeError, AttributeError):
             continue
     return max(kandydaci) if kandydaci else None
 
@@ -105,7 +110,11 @@ def _poczatek_tygodnia(week_start: str, tz: tzinfo) -> datetime | None:
     """
     try:
         dzien = date.fromisoformat(week_start)
-    except ValueError:
+    # `TypeError` obok `ValueError` — patrz `_najpozniejszy`. Tutaj stawka była najwyższa w całym
+    # module: `should_expire` woła tę funkcję z list-comprehension kroku 2 `poll_replies`, czyli
+    # POZA izolacją per-osoba, więc `week_start` będący liczbą kładł cały obieg nasłuchu
+    # deterministycznie, w każdym ticku, przy bijącym pulsie.
+    except (ValueError, TypeError):
         return None
     return datetime(dzien.year, dzien.month, dzien.day, tzinfo=tz)
 

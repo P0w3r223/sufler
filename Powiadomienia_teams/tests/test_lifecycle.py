@@ -333,3 +333,43 @@ def test_termin_kalendarzowy_sam_z_siebie_nie_wisi_na_kotwicy():
     goly = _pending()  # watermark="" i nudged_at=""
     assert termin_odpowiedzi(goly, OKNO) == TERMIN
     assert is_expired(goly, TERMIN + timedelta(seconds=1), OKNO) is True
+
+
+def test_zly_typ_week_start_nie_wywraca_wygaszania():
+    """Siatka na wołającego, który zbuduje `PendingReminder` z pominięciem `state._wczytaj`.
+
+    `should_expire` jest wołane w list-comprehension kroku 2 `poll_replies` — POZA izolacją
+    per-osoba — więc wyjątek stąd kładł cały obieg nasłuchu deterministycznie, w każdym ticku,
+    przy bijącym pulsie i zielonym healthchecku. Brak terminu ma znaczyć „nie wygaszam",
+    a nie „przewracam usługę".
+    """
+    chory = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c",
+        week_start=20260720,  # type: ignore[arg-type]  # celowo zły typ — to jest przedmiot testu
+        status=AWAITING_REPLY,
+        nudged_at=_iso(NOW),
+    )
+    assert termin_odpowiedzi(chory, OKNO) is None
+    assert should_expire(chory, NOW, OKNO, read=ReadOutcome.NOTHING_NEW) is False
+
+
+def test_zly_typ_znacznika_nie_wywraca_kotwicy():
+    """`_najpozniejszy` pomija nieparsowalne znaczniki — „nieparsowalne" obejmuje ZŁY TYP.
+
+    `parse_graph_datetime(123)` nie rzuca `ValueError`, tylko `AttributeError`, a `if not iso`
+    przepuszcza każdą niezerową liczbę. Kotwica karmi `ready_for_self_fill_check` (krok 1.5)
+    i `prune_terminal`, więc wyjątek stąd kładł obieg tak samo jak zły `week_start`.
+    """
+    chory = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c",
+        week_start="2026-07-20",
+        status=AWAITING_REPLY,
+        watermark=17530000,  # type: ignore[arg-type]  # celowo zły typ
+        nudged_at=_iso(NOW),
+    )
+    # Kotwicą zostaje zdrowy `nudged_at`; zepsuty znacznik jest pomijany, nie wywraca wywołania.
+    assert ready_for_self_fill_check(chory, NOW + timedelta(hours=2), 3600) is True

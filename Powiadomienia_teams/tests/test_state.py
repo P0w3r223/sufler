@@ -7,6 +7,7 @@ from powiadomienia_teams.state import (
     AWAITING_REPLY,
     SELF_FILLED,
     PendingReminder,
+    klucz_wpisu,
     load_state,
     save_state,
 )
@@ -257,3 +258,74 @@ def test_known_time_off_weekdays_and_memory_round_trip(tmp_path: Path):
     assert loaded["u1"].known_time_off_weekdays == [4, 5]
     assert loaded["u1"].employee_memory == ["pon-pt 8-16", "a piątek zdalnie"]
     assert loaded["u1"].memory_started_at == "2026-07-19T18:00:00Z"
+
+
+def test_zly_typ_pola_wymaganego_pomija_wpis(tmp_path: Path):
+    """`week_start` jako liczba kładł CAŁY obieg nasłuchu — `should_expire` woła
+    `_poczatek_tygodnia` z list-comprehension kroku 2, czyli poza izolacją per-osoba,
+    a `date.fromisoformat(liczba)` rzuca `TypeError`, którego tamten `except ValueError`
+    nie łapie. Awaria deterministyczna, więc powtarzała się w każdym ticku przy bijącym pulsie."""
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"zly": {"member_id":"u1","member_name":"Ala","chat_id":"c",'
+        '"week_start":20260914,"status":"awaiting_reply"},'
+        '"dobry": {"member_id":"u2","member_name":"Ola","chat_id":"c2",'
+        '"week_start":"2026-09-14","status":"awaiting_reply"}}',
+        encoding="utf-8",
+    )
+    loaded = load_state(path)
+    assert "zly" not in loaded, "wpis z liczbą w week_start ma zostać pominięty, nie wczytany"
+    assert loaded["dobry"].week_start == "2026-09-14", "zdrowe wpisy przechodzą nietknięte"
+
+
+def test_zly_typ_pola_opcjonalnego_wraca_do_domyslnej(tmp_path: Path):
+    """Jak przy `null`: pole opcjonalne o złym typie wraca do wartości domyślnej, a wpis żyje.
+    `employee_memory` jako napis dawał `TypeError` w `advance_memory` — dokładnie tam, gdzie
+    `_record_failure` miał już tylko odpuścić wiadomość, więc pending grzązł w pętli ponowień."""
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"u1": {"member_id":"u1","member_name":"Ala","chat_id":"c",'
+        '"week_start":"2026-09-14","status":"awaiting_reply",'
+        '"employee_memory":"nie-lista","fail_count":"nie-liczba","awaiting_yes":"nie-bool"}}',
+        encoding="utf-8",
+    )
+    wpis = load_state(path)["u1"]
+    assert wpis.employee_memory == []
+    assert wpis.fail_count == 0
+    assert wpis.awaiting_yes is False
+
+
+def test_klucz_wpisu_znajduje_po_tozsamosci_nie_znak_w_znak():
+    """Idempotencja N15 opierała się na jedynym w projekcie porównaniu znak w znak. Graph nie
+    obiecuje tej samej wielkości liter, a rozminięcie się z wpisem dawało DRUGĄ prośbę i drugi
+    wpis na ten sam tydzień — oba mogące dojść do `create_shift`, który nie deduplikuje."""
+    stan = {
+        "ABC-DEF": PendingReminder(
+            member_id="ABC-DEF",
+            member_name="Ala",
+            chat_id="c",
+            week_start="2026-09-14",
+            status=AWAITING_REPLY,
+        )
+    }
+    assert klucz_wpisu(stan, "abc-def") == "ABC-DEF", "inna wielkość liter to ta sama osoba"
+    assert klucz_wpisu(stan, "{ABC-DEF}") == "ABC-DEF", "klamry z portalu Azure też"
+    assert klucz_wpisu(stan, "inny") == "inny", "brak wpisu → własny identyfikator wołającego"
+
+
+def test_klucz_wpisu_zwraca_klucz_a_nie_znormalizowany_identyfikator():
+    """`domain.tozsamosc` ZAKAZUJE normalizowania żywej strony: klucze w pliku to surowe id
+    z Graph, a `member_id` idzie stąd wprost do POST-a tworzącego zmianę. Wolno zmienić sposób
+    ODNAJDYWANIA wpisu, nie postać, w której leży."""
+    stan = {
+        "ABC-DEF": PendingReminder(
+            member_id="ABC-DEF",
+            member_name="Ala",
+            chat_id="c",
+            week_start="2026-09-14",
+            status=AWAITING_REPLY,
+        )
+    }
+    klucz = klucz_wpisu(stan, "abc-def")
+    assert klucz in stan, "zwrócony klucz musi dać się użyć wprost na słowniku stanu"
+    assert stan[klucz].member_id == "ABC-DEF", "postać zapisana zostaje nietknięta"

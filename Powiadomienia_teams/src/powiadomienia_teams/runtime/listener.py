@@ -320,6 +320,47 @@ def _grafik_kroku_1_5(
     )
 
 
+def _otwarte_bez_duplikatow(
+    settings: Settings, state: dict[str, st.PendingReminder]
+) -> list[st.PendingReminder]:
+    """Otwarte wpisy, najwyżej JEDEN na (osoba, tydzień) — reszta to naruszenie, nie dane.
+
+    Siatka pod N15, niezależna od tego, czy prośbę wysłał dzisiejszy kod. `state.klucz_wpisu`
+    zamyka drogę, którą duplikat powstawał (`runtime.nudge` szukał wpisu znak w znak), ale nie
+    cofa duplikatów już leżących w pliku stanu ani nie broni przed ręczną edycją. A dwa otwarte
+    wpisy tej samej osoby na ten sam tydzień znaczą dwa przejścia przez `_apply_confirmed_yes`
+    po jednym „tak" pracownika, czyli **podwójny komplet zmian w Shifts** — skutek nieodwracalny,
+    którego nie łapie ani sprawdzenie świeżości (`SnapshotGrafiku` memoizuje odczyt na cały
+    przebieg), ani `ensure_single_owner` (obie strony jego porównania są z tego samego wpisu).
+
+    Pomijamy nadmiarowy wpis, zamiast go kasować: obieg ma być bezpieczny, a nie sprzątać stan,
+    o którym nie wie, jak powstał. Waga KRYTYCZNA, bo to ta sama klasa co tripwire tożsamości —
+    odrzucona próba zapisu, nie awaria sieci.
+    """
+    widziane: dict[tuple[str, str], st.PendingReminder] = {}
+    for pending in state.values():
+        if pending.status not in (st.AWAITING_REPLY, st.AWAITING_CONFIRM):
+            continue
+        klucz = (znormalizuj(pending.member_id), pending.week_start)
+        if klucz in widziane:
+            logger.critical(
+                "NARUSZENIE: dwa otwarte wpisy dla %s na tydzień %s — obsługuję pierwszy",
+                etykiety.osoba(pending, settings),
+                pending.week_start,
+            )
+            operator.alert(
+                settings,
+                "NARUSZENIE: dwa otwarte wpisy na tę samą osobę i tydzień",
+                f"{etykiety.osoba(pending, settings)}, tydzień od {pending.week_start}. "
+                "Obsługuję pierwszy, drugi pomijam — inaczej jedno »tak« dałoby podwójny komplet "
+                "zmian w grafiku. Sprawdź plik stanu ręcznie.",
+                waga=alerts.KRYTYCZNY,
+            )
+            continue
+        widziane[klucz] = pending
+    return list(widziane.values())
+
+
 # Sufit funkcji przekroczony ŚWIADOMIE: orkiestracja pięciu kroków obiegu, których KOLEJNOŚĆ
 # jest niezmiennikiem bezpieczeństwa (odpowiedź > samouzupełnienie > sufit ADR 0007 >
 # wygaszenie). Wyniesienie kroków do osobnych funkcji rozprasza tę kolejność po module i czyni
@@ -385,7 +426,7 @@ def poll_replies(  # noqa: C901, PLR0915
         # o samym odstępie, więc zostaje kolejność warunków, ale zapisana jako reguła, nie zbieg.
         return PollOutcome(0, None)
     state = st.load_state(settings.state_path)
-    open_items = [p for p in state.values() if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM)]
+    open_items = _otwarte_bez_duplikatow(settings, state)
     if not open_items:
         return PollOutcome(0, None)
 
