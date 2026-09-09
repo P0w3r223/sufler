@@ -114,7 +114,7 @@ jest niedziela 05:00. Zbyt późna konfiguracja **wycisza** przypomnienie, zamia
 | # | Treść | Status |
 |---|---|---|
 | **E0** | Koperta stanu dla trwałych liczników. Log wystarcza pilotażowi; trwały licznik wymaga E0. | `otwarte` — ale **E4 jej NIE potrzebowało**. Przesłanka „trwały licznik wymaga E0" jest prawdziwa tylko dla liczników GLOBALNYCH; miara E4 jest z definicji *per osoba*, więc zmieściła się w `PendingReminder` (dwa pola `int`) i sprząta się razem z wpisem. E0 zostaje otwarte dla tego, co naprawdę jest globalne — np. skumulowanego zużycia tokenów. |
-| **E1** | Kontrola kosztu modelu — sufit oparty na pomiarze z pilotażu (C2), nie na przypuszczeniu. | **`otwarte` — rekomendacja: ODRZUCIĆ, po pomiarze.** Pomiar zrobiony (2026-09-08, tabela niżej): **~$0,25–0,60 tygodniowo**, czyli rząd dolara miesięcznie. Sufit broniłby budżetu mniejszego niż koszt jego utrzymania, a granice wobec NIEZAUFANEGO wejścia (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, sufity znaków) już istnieją i mają inne uzasadnienie niż budżet. Decyzja należy do klienta — to ta sama procedura co przy D1: zmierzyć, zapisać wynik, dopiero potem kasować albo podłączać. |
+| **E1** | Kontrola kosztu modelu — sufit oparty na pomiarze z pilotażu (C2), nie na przypuszczeniu. | **`otwarte` — rekomendacja: ODRZUCIĆ, po POMIARZE na żywym modelu (2026-09-09, tabela niżej): $0,0060 za wiadomość, ~$0,03–0,06 tygodniowo, ~$2–3 ROCZNIE.** Dodatkowo zweryfikowano wykonaniem, że koszt zależy od liczby wiadomości, a nie od czasu — nie istnieje scenariusz rozbiegowy, którego sufit miałby pilnować. Sufit broniłby budżetu mniejszego niż koszt jego utrzymania, a granice wobec NIEZAUFANEGO wejścia (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, sufity znaków) już istnieją i mają inne uzasadnienie niż budżet. Decyzja należy do klienta — to ta sama procedura co przy D1: zmierzyć, zapisać wynik, dopiero potem kasować albo podłączać. |
 | **E4** | Miara jakości interpretacji: **odsetek `unclear` per osoba** (§10.4). Stąd wymóg, żeby powody niejasności były zamkniętym enumem importowanym PO NAZWIE, a nie pozycją. | **`zrealizowane`** 2026-09-09 — `PendingReminder.interpretacje`/`niejasnosci` (para, bo plan mówi o ODSETKU, a liczba bez mianownika myli), podbijane przez `_commit` i cofane razem z nim; szybka ścieżka „tak" nie liczy się, bo modelu nie woła. Widoczne w `--stan` (kolumna `niejasne` jako `2/9`) i w podsumowaniu tygodniowym. |
 
 ---
@@ -170,26 +170,49 @@ z testami bucketowania historii. Dopiero praca zmianowa czyni tę pozycję opła
   (iteruje po miejscach deklaracji, więc szóste trzeba dopisać świadomie). Docstring `__init__.py`
   przestał twierdzić, że robi to `[tool.hatch.version]` i nieistniejący skrypt check_versions.
 
-## Pomiar kosztu modelu (2026-09-08, podstawa decyzji o E1)
+## Pomiar kosztu modelu (2026-09-09, podstawa decyzji o E1)
 
-Zmierzone na drzewie 0.2.22, nie oszacowane z pamięci:
+> **Ten rozdział zastąpił OSZACOWANIE z 2026-09-08.** Tamto mówiło „~$0,25–0,60 tygodniowo"
+> i było **zawyżone 5–10×**, bo zakładało 30–90 wywołań tygodniowo (2–4 tury na wiadomość).
+> Pomiar na żywym modelu pokazał **1,00 tury na wiadomość**. Zostawiam ten akapit zamiast po cichu
+> podmienić liczby: pozycja E1 mówi wprost „sufit oparty na POMIARZE, nie na przypuszczeniu",
+> a różnica między jednym a drugim jest tu właśnie rzędem wielkości.
 
-| składnik | wartość |
+**Sonda:** 10 syntetycznych wiadomości pracownika (żadnych danych z produkcji) przez
+`interpret_reply` na `claude-haiku-4-5`, liczone z linii logu C2 (`tokeny wejścia=…`), czyli tym
+samym mechanizmem, który plan przewidział do tego celu.
+
+| miara | zmierzone |
 |---|---|
-| prompt systemowy `_SYSTEM` | 7 609 znaków |
-| definicje narzędzi (JSON) | 2 635 znaków |
-| schemat wyjścia (JSON) | 3 447 znaków |
-| **stały prefiks każdego żądania** | **13 691 znaków ≈ ~5 000 tokenów** |
-| wywołań tygodniowo (8 osób, 1–4 tury na odpowiedź) | ~30–90 |
-| **koszt tygodniowo** (`claude-haiku-4-5`, $1/$5 za MTok) | **~$0,25–0,60** |
+| wejście na TURĘ | **5 081 tokenów** (odchylenie 5 072–5 101) |
+| wyjście na turę | **176 tokenów** |
+| tur na wiadomość | **1,00** — model zbiegał do decyzji bez pętli narzędziowej |
+| **koszt jednej wiadomości** | **$0,0060** ($1/$5 za MTok) |
+| cache promptu | **wyłączony**, potwierdzone (`cache-zapis=0, cache-odczyt=0`) |
 
-Prompt caching jest WYŁĄCZONY (zero `cache_control` w repo) i włączenie go też się nie opłaca:
-oszczędziłoby ~$0,20 tygodniowo przy koszcie jednego breakpointu i ryzyku cichej inwalidacji.
+**Stały prefiks to ~98 % każdego żądania** (system + narzędzia + schemat = 13 691 znaków wobec
+14 063 znaków całej tury). Wiadomość pracownika jest przy nim szumem — i to jest najważniejsza
+własność tego rozkładu, bo mówi, gdzie leżałaby jakakolwiek oszczędność, gdyby kiedyś była
+potrzebna.
 
-**Czego ten pomiar NIE rozstrzyga.** Nie mówi, że sufit jest bezwartościowy — mówi, że jego
-wartością nie jest budżet. Gdyby krąg odbiorców urósł o rząd wielkości albo model się zmienił,
-pomiar trzeba powtórzyć; polecenie zliczające jest w `agent/anthropic_llm.py` (wzorzec
-„tokeny wejścia=" w logu, pozycja C2).
+**Koszt tygodniowy.** Kosztują wyłącznie wiadomości pracowników; przy 8 osobach, z których
+odpisuje 2–3, to ~5–10 wiadomości tygodniowo → **$0,03–0,06 na tydzień, czyli ~$2–3 rocznie.**
+
+**Zweryfikowany mechanizm, ważniejszy od samej liczby:** koszt jest proporcjonalny do LICZBY
+WIADOMOŚCI, nie do czasu ani do częstotliwości odpytywania. Sprawdzone wykonaniem: 20 obiegów
+nasłuchu bez nowej wiadomości → **0 wywołań modelu**; 1 wiadomość + 19 obiegów ciszy → **1
+wywołanie**. Usługa nie ma jak przepalać pieniędzy stojąc, więc nie istnieje scenariusz
+„rozbiegowy", którego sufit miałby pilnować.
+
+**Czego pomiar NIE obejmuje.** Żadna z dziesięciu wiadomości nie uruchomiła pętli narzędziowej,
+więc koszt tury 2–4 pozostaje niezmierzony. Ogranicza go KOD (`_MAX_OBIEGOW=4`), więc najgorszy
+przypadek jednej wiadomości to ~4 × 5 081 ≈ 20 tys. tokenów ≈ **$0,024** — nadal poniżej grosza
+za trzy wiadomości.
+
+**Kiedy to przeliczyć od nowa:** przy zmianie modelu, przy wzroście kręgu odbiorców o rząd
+wielkości albo gdyby pętla narzędziowa zaczęła się realnie uruchamiać. Polecenie zliczające
+z logu stoi w §7; od 0.2.23 liczbę wywołań widać też wprost w podsumowaniu tygodniowym
+(`interpretacje`, pozycja E4), bo ten licznik przeżywa domknięcie tematu.
 
 ## Czego w tym pliku NIE ma
 

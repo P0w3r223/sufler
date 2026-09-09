@@ -14,6 +14,59 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [Nieopublikowane] — E1: pomiar kosztu modelu (bez zmian w kodzie usługi)
+
+Pozycja E1 mówi: „sufit oparty na POMIARZE z pilotażu, nie na przypuszczeniu". Pomiar wykonany —
+i **obalił moje własne oszacowanie sprzed doby, zawyżone 5–10×**.
+
+### Zmierzone
+
+Sonda: 10 syntetycznych wiadomości (żadnych danych z produkcji) przez `interpret_reply` na
+`claude-haiku-4-5`, liczone linią logu C2 — czyli mechanizmem, który plan do tego przewidział.
+
+| miara | zmierzone | wcześniejsze oszacowanie |
+|---|---|---|
+| wejście na turę | **5 081 tok** | ~5 000 tok |
+| tur na wiadomość | **1,00** | 1–3 |
+| koszt wiadomości | **$0,0060** | — |
+| **koszt tygodniowo** | **$0,03–0,06** | $0,25–0,60 |
+| rocznie | **~$2–3** | ~$15–30 |
+
+Cache promptu potwierdzony jako WYŁĄCZONY (`cache-zapis=0, cache-odczyt=0`). Stały prefiks to
+**~98 % każdego żądania** — wiadomość pracownika jest przy nim szumem.
+
+### Zweryfikowany mechanizm — ważniejszy od samej liczby
+
+Koszt jest proporcjonalny do LICZBY WIADOMOŚCI, nie do czasu ani częstotliwości odpytywania.
+Sprawdzone wykonaniem: 20 obiegów nasłuchu bez nowej wiadomości → **0 wywołań modelu**;
+1 wiadomość + 19 obiegów ciszy → **1 wywołanie**. Usługa nie ma jak przepalać pieniędzy stojąc,
+więc **nie istnieje scenariusz „rozbiegowy", którego sufit miałby pilnować** — a to była jedyna
+hipoteza, przy której E1 broniłaby się mimo znikomej kwoty.
+
+### Dwie przeszkody, na które pomiar natrafił
+
+Obie warto znać, zanim ktoś zaplanuje kolejny pomiar „z logu":
+
+- **Log nie przeżywa wdrożenia.** Logi kontenera mają retencję 10 MB × 5, ale przede wszystkim
+  **giną przy każdym `docker compose up -d` z nowym obrazem**, a `/var/lib/docker` jest root-only.
+  Okno pomiarowe kończy się więc przy każdej podmianie wersji — czyli dokładnie wtedy, gdy
+  najbardziej chce się porównać koszt przed i po.
+- **Danych o ruchu nie da się odtworzyć wstecz z pliku stanu**, bo `employee_memory` jest
+  **celowo wygaszane** przy domknięciu tematu (prywatność, A10/N28). To działa jak trzeba —
+  ale znaczy, że liczbę wymian trzeba liczyć NA BIEŻĄCO. Robi to od 0.2.23 licznik `interpretacje`
+  (E4), który domknięcie przeżywa.
+
+### Rekomendacja
+
+**Odrzucić E1** — sufit broniłby budżetu rzędu dwóch dolarów rocznie, a mechanizm wyklucza
+rozbieg. Sufity wobec NIEZAUFANEGO wejścia (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, sufity
+znaków) zostają: mają inne uzasadnienie niż budżet i to one ograniczają najgorszy przypadek
+jednej wiadomości do ~$0,024. Włączanie cache'owania promptu też się nie opłaca, mimo że prefiks
+to 98 % żądania — 90 % z $0,04 tygodniowo to nadal nic.
+
+**Decyzja należy do klienta.** Pozycja zostaje w planie jako `otwarte — rekomendacja: odrzucić`,
+z pełną tabelą; skasuję ją tak, jak skasowano `wzorzec.py`, na jedno słowo.
+
 ## [Nieopublikowane] — D5, połowa druga: wznowienie rozmowy po domknięciu
 
 Domykała pozycję D5 — i zrobiła to **węziej, niż brzmiał plan**. Plan mówił „zdejmuje filtr
