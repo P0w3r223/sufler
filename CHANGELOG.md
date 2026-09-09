@@ -8,6 +8,20 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Zmienione
 
+- **ADR 0071 decyzja 8 traci mechanizm, zachowuje cel** (amendment 2026-09-07, **przed** kodem
+  etapu 3 — reguła 10). Decyzja opierała się na zdaniu „kontrakt jest TRZYMANY, nie zmieniany",
+  które nie przeżyło sprawdzenia: zamrożony opis mówi „`latest_cursor` to najwyższe **zwrócone**
+  `id`", a decyzja wymagała **maksimum MAGAZYNU** — innej wielkości dokładnie w przypadku, który
+  sama wprowadza. Regeneracja baseline'u zamroziłaby świeżo fałszywe zdanie w zmianie, której tezą
+  jest usunięcie fałszywego zdania z tej powierzchni; to samo twierdzenie stoi też w ADR 0040.
+  Druga rozbieżność jest gorsza od redakcyjnej: kursor ustawiony na maksimum magazynu **po cichu
+  gubi zdarzenia**, bo odczyt przyrostowy przyjmuje `source`/`project`, a zdarzenia spoza
+  filtrowanego okna zostają na zawsze pod kursorem. Dziś tego defektu nie ma.
+  **Wariant B:** `recent()` zostaje nietknięte (sortowanie po `id`, obsługuje bootstrap MCP),
+  a cztery konsumenty CZASU dostają drugą metodę odczytu (`occurred_at DESC, id DESC`). Kontrakt
+  jest nietknięty w faktach, nie w intencji: golden regeneruje się **zero razy**, port zyskuje
+  jedną metodę zamiast dwóch, a bramka `assert ids == sorted(ids)` zostaje bez zmian — zamiast być
+  przepisywana w stronę akceptowania mniej.
 - **Strażnik pętli self-ping pyta o ECHO naszych drzwi zapisu, a nie o konto autora**
   ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md) decyzja 6;
   etap 2 z czterech). Dotychczasowa reguła stała na przesłance „nasze konto ⇒ nasze narzędzie",
