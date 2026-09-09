@@ -5,7 +5,7 @@
 # (`workmate`, `workmate-github`, `workmate-teams-graph`, …). ADR 0044.
 #
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
-# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.14.0 .
+# Budowanie ręczne:  docker build -f deploy/docker/Dockerfile -t workmate:1.15.0 .
 # Testy biegną W TRAKCIE budowania (etap `test`) — obraz nie powstanie z czerwonego drzewa.
 
 # Extras całej floty — jedno źródło prawdy dla wszystkich etapów.
@@ -150,8 +150,14 @@ USER 10001:10001
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["workmate"]
 
-ARG WERSJA=1.14.0
+ARG WERSJA=1.15.0
+# Commit, z którego powstał obraz. BEZ tego jedyną kotwicą wersji obrazu była PROZA CHANGELOG-a:
+# tagi gita stały na `v1.3.0` przy pakiecie 1.14.0, więc z biegnącego kontenera nie dawało się
+# dojść do kodu inaczej niż przez wiarę w dokumentację (U10 audytu 2026-09-08). Budowanie bez
+# `--build-arg REWIZJA=...` zostawia `nieznana` — jawnie, zamiast udawać, że łańcuch jest cały.
+ARG REWIZJA=nieznana
 LABEL org.opencontainers.image.title="workmate" \
+      org.opencontainers.image.revision="${REWIZJA}" \
       org.opencontainers.image.description="Serwer MCP pionu + drzwi mostu GitHub/Jira/Teams (flota)" \
       org.opencontainers.image.version="${WERSJA}" \
       org.opencontainers.image.source="https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate"
