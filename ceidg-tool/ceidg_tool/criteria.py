@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import Any, Literal
 
@@ -157,12 +157,61 @@ def bledy_po_polsku(exc: ValidationError) -> str:
     """
     linie = []
     for blad in exc.errors():
-        pole = ".".join(str(part) for part in blad["loc"]) or "kryteria"
-        # Pydantic dokleja do komunikatu własnego walidatora angielski prefiks
-        # („Value error, "), więc nasze polskie zdanie zaczynałoby się od cudzego.
-        tresc = blad["msg"].removeprefix("Value error, ").removeprefix("Assertion failed, ")
-        linie.append(f"  {pole}: {tresc}")
+        # Indeks w krotce jest szumem: „status.0" nic operatorowi nie mówi, a wartość,
+        # o którą chodzi, i tak wchodzi do zdania niżej. Nazwy pól zostają.
+        czesci = [str(part) for part in blad["loc"] if not isinstance(part, int)]
+        pole = ".".join(czesci) or "kryteria"
+        linie.append(f"  {pole}: {_tresc_bledu(blad)}")
     return "\n".join(linie)
+
+
+def _lista_po_polsku(oczekiwane: str) -> str:
+    """`"'A', 'B' or 'C'"` → `A, B, C` — bez cudzysłowów i bez angielskiego „or"."""
+    return oczekiwane.replace("' or '", ", ").replace("', '", ", ").strip("'")
+
+
+def _tresc_bledu(blad: Mapping[str, Any]) -> str:
+    """Jedno zdanie po polsku dla jednego błędu walidacji.
+
+    Powód, dla którego to nie jest samo `blad["msg"]`: pydantic mówi po angielsku, a odbiorcą
+    tego programu jest z założenia ktoś, kto nie zna API — i nie musi znać angielskiego.
+    Zmierzone przy przejściu bramki 3 (2026-09-09) na dziewięciu omyłkach, jakie realnie
+    popełnia laik: pięć narzędzie wchłaniało, **cztery wracały po angielsku**, w tym `status`,
+    które jest pytaniem otwartym z podpowiedzią „np. AKTYWNY", więc wpisanie polskiego słowa
+    jest tam błędem oczekiwanym, a nie egzotycznym.
+
+    Rozpoznajemy po **kodzie typu**, nie po treści komunikatu: treść jest tekstem dla ludzi
+    i zmienia się między wersjami pydantica, a `type` jest jego API. Nieznany kod wraca
+    dotychczasową ścieżką, więc nowy rodzaj błędu czyta się gorzej, ale nigdy nie ginie.
+    """
+    typ = str(blad.get("type", ""))
+    ctx = blad.get("ctx") or {}
+    wartosc = blad.get("input")
+    podano = f"{wartosc!r} — " if wartosc is not None and wartosc != "" else ""
+
+    if typ == "literal_error":
+        return f"{podano}dozwolone wartości: {_lista_po_polsku(str(ctx.get('expected', '')))}"
+    if typ.startswith(("date_", "datetime_")):
+        return f"{podano}to nie jest data w postaci RRRR-MM-DD (na przykład 2020-01-31)"
+    if typ in ("int_parsing", "int_type", "int_from_float"):
+        return f"{podano}to nie jest liczba całkowita"
+    if typ in ("bool_parsing", "bool_type"):
+        return f"{podano}wartość musi być odpowiedzią tak albo nie"
+    if typ in ("greater_than_equal", "greater_than"):
+        granica = ctx.get("ge", ctx.get("gt"))
+        return f"{podano}wartość musi być nie mniejsza niż {granica}"
+    if typ in ("less_than_equal", "less_than"):
+        granica = ctx.get("le", ctx.get("lt"))
+        return f"{podano}wartość musi być nie większa niż {granica}"
+    if typ == "missing":
+        return "brak wymaganej wartości"
+    if typ in ("string_type", "str_type"):
+        return f"{podano}wartość musi być tekstem"
+
+    # `value_error` i `assertion_error` to nasze własne walidatory — ich treść jest już polska,
+    # a pydantic dokleja do niej angielski prefiks, przez który zdanie zaczynałoby się od cudzego.
+    tresc = str(blad["msg"])
+    return tresc.removeprefix("Value error, ").removeprefix("Assertion failed, ")
 
 
 def _as_tuple(value: Any) -> tuple[Any, ...]:

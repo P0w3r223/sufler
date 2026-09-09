@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -556,3 +556,85 @@ def test_the_cli_does_not_blame_a_missing_key_for_the_operators_own_choice() -> 
     w pokazie wyżej (przebieg B6)."""
     assert "kreator" in texts.OPIS_PORZUCONY
     assert "brakuje klucza" not in texts.OPIS_PORZUCONY
+
+
+# ---------------------------------------------- błędy pydantica też są dla operatora (bramka 3)
+
+# Dziewięć omyłek, jakie realnie popełnia ktoś, kto nie zna danych firmowych. Lista pochodzi
+# z przejścia bramki 3 na produkcji (2026-09-09), gdzie cztery z nich wracały po angielsku.
+OMYLKI_LAIKA: tuple[tuple[str, Any, str], ...] = (
+    ("status", "czynna", "dozwolone wartości"),
+    ("status", "aktywne", "dozwolone wartości"),
+    ("data_od", "01.01.2020", "RRRR-MM-DD"),
+    ("data_do", "wczoraj", "RRRR-MM-DD"),
+    ("max_rekordow", "dziesiec", "liczba całkowita"),
+    ("max_rekordow", "0", "nie mniejsza niż 1"),
+    ("szczegoly", "moze", "tak albo nie"),
+    ("wojewodztwo", "wielkopolska", "nieznane województwo"),
+    ("pkd", "fryzjer", "musi mieć postać"),
+)
+
+# Ślady, po których poznaje się, że na ekran trafił komunikat pydantica zamiast naszego zdania.
+ANGIELSZCZYZNA: tuple[str, ...] = (
+    "Input should",
+    "unable to parse",
+    "valid date",
+    "valid integer",
+    "Value error",
+    "Assertion failed",
+    "pydantic",
+)
+
+
+@pytest.mark.parametrize(("pole", "wartosc", "oczekiwane"), OMYLKI_LAIKA)
+def test_bledy_walidacji_sa_po_polsku_takze_te_z_pydantica(
+    pole: str, wartosc: Any, oczekiwane: str
+) -> None:
+    """Operator tego narzędzia z założenia nie zna API — i nie musi znać angielskiego.
+
+    `bledy_po_polsku` brało `blad["msg"]`, które jest polskie tylko wtedy, gdy przyszło
+    z naszego walidatora. Wbudowane błędy pydantica (`literal_error`, `date_*`, `int_parsing`,
+    `bool_parsing`) szły na ekran po angielsku, a poprawka z fazy 6 czytała się, jakby
+    domknęła sprawę: zdjęła odnośnik do errors.pydantic.dev i prefiks „Value error, ”,
+    czyli to, co czyniło stare zrzuty nieczytelnymi, ale nigdy nie tłumaczyła.
+
+    `status` jest pytaniem otwartym z podpowiedzią „np. AKTYWNY”, więc wpisanie polskiego
+    słowa jest tam błędem **oczekiwanym**. Zmierzone na bramce 3 (2026-09-09).
+    """
+    with pytest.raises(ValidationError) as exc:
+        # Wartości są niepoprawne z rozmysłu — one **są** treścią tego testu.
+        Criteria(**{pole: wartosc})
+
+    tekst = bledy_po_polsku(exc.value)
+
+    assert oczekiwane in tekst, tekst
+    for slad in ANGIELSZCZYZNA:
+        assert slad not in tekst, f"komunikat pydantica przeciekł na ekran: {tekst}"
+
+
+def test_komunikat_nazywa_wartosc_ktora_operator_wpisal() -> None:
+    """Bez wartości zdanie nie mówi, **co** poprawić — a przy kilku wpisach nie mówi które."""
+    with pytest.raises(ValidationError) as exc:
+        Criteria(status=("aktywny", "czynna"))  # type: ignore[arg-type]
+
+    tekst = bledy_po_polsku(exc.value)
+
+    assert "CZYNNA" in tekst
+    # „status.0” to indeks w krotce, nie nazwa pola; dla operatora jest szumem, a wartość
+    # wyżej niesie tę samą informację precyzyjniej.
+    assert "status.0" not in tekst and "status.1" not in tekst
+
+
+def test_nieznany_kod_bledu_nie_ginie() -> None:
+    """Nowy rodzaj błędu ma czytać się gorzej, nigdy nie znikać.
+
+    Mapujemy po `type`, bo treść komunikatu pydantica to tekst dla ludzi i zmienia się
+    między wersjami. Nierozpoznany kod musi więc wrócić dotychczasową ścieżką.
+    """
+    with pytest.raises(ValidationError) as exc:
+        Criteria(data_od=date(2024, 1, 2), data_do=date(2024, 1, 1))
+
+    tekst = bledy_po_polsku(exc.value)
+
+    assert tekst.strip(), "błąd bez zdania jest gorszy niż zdanie niezgrabne"
+    assert "Value error" not in tekst
