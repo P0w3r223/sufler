@@ -14,7 +14,7 @@ Related to: INSTRUKCJA_CLAUDE_CODE.md, UZUPELNIENIE_01.md, docs/decisions.md, do
 | 0 Environment | – | done | `pyproject.toml`, `.venv`, `requirements.lock`, `scripts/ceidg_probe.py`, `docs/api_notes.md` |
 | 1 API probe | gate 1 accepted 2026-09-05 | done | `docs/decisions.md`; probe + mini-probe run on **production** with the owner's consent (test host unreachable); anonymised fixtures in `tests/fixtures/` |
 | 2 Core | **gate 2 accepted 2026-09-06** | done | At the gate (2026-09-05): `ceidg_tool/` (19 modules), 188 offline tests, ruff + mypy strict clean, CI on Linux + Windows; two production runs (API path 11 requests, report path 2 requests); three code reviews and one test review applied. Before acceptance (2026-09-06): the two workbooks were verified against the phase-2 specification point by point — tables, autofilter, frozen header, text-typed identifiers, real dates, provenance with no gaps, `Slownik` covering 100 % of columns, zero formula cells — then the ergonomics pass below, a code review of it, and a rebuild of both files from the database. |
-| 3 User interface | gate 3 | built, awaiting acceptance | `ceidg_tool/ui/` (texts, prompts, render, flow, wizard), `batching.py`, `estimating.py`; wizard on `ceidg-tool` with no arguments, plus `kreator`, `sprawdz-nip` and `--partie`; design in ADR-0008; `mypy ceidg_tool tests` clean, resilience scenario 9 automated |
+| 3 User interface | gate 3 | **walked on production 2026-09-09**; mechanically green, awaiting the owner's reading | `ceidg_tool/ui/` (texts, prompts, render, flow, wizard), `batching.py`, `estimating.py`; wizard on `ceidg-tool` with no arguments, plus `kreator`, `sprawdz-nip` and `--partie`; design in ADR-0008; `mypy ceidg_tool tests` clean, resilience scenario 9 automated |
 | 3b Invariants | – | done 2026-09-06 | ADR-0009: boundary rules 9 and 10 closed and enforced by scan, `richtext.py` as the single `rich` seam, `--force` on `pobierz`/`wznow` (the flag the lock message already promised), resilience scenarios 1, 2 and 8 automated; 565 offline tests |
 | 3c Workbook ergonomics | – | done 2026-09-06 | Assessment of the gate-2 artifacts turned up usability defects the specification never named; fixed, reviewed, and pinned by tests. See "Gate review 2026-09-06" below. |
 | 3d Rate limits | – | done 2026-09-06 | Measured, not assumed: the limiter's busiest 180 s window held 49 requests against an API limit of 50. Spacing corrected to 3.75 s, the server's own budget header turned into a brake, the probes moved onto the shared request log, `profile_hash` narrowed to the dialect. |
@@ -93,9 +93,11 @@ be delegated: the requirement is that a person without API knowledge reaches a f
    arguments (with `PYTHONUTF8=1`) and go through one fetch end to end. Everything below the
    terminal is covered by offline tests; how it reads and feels is the part only the owner can judge.
    Note the practical obstacle: the test host does not answer from this network, so a walk that
-   reaches a file needs `--srodowisko prod --produkcja` and fresh consent. The cheapest complete
-   walk is about 6 requests — one town, one PKD code, a record cap of 20, details on. This is also
-   the first time the assistant will be used through the wizard rather than through a probe script.
+   reaches a file needs `--srodowisko prod --produkcja` and fresh consent. — **Walked on
+   2026-09-09 with a scripted operator; see "Gate 3 — the walk" below.** Two passes reached two
+   real workbooks for 25 requests. What that walk cannot supply is the half the gate is actually
+   about: whether the screens *read* well to somebody who does not know the API. That judgement
+   is still yours, and the transcripts are there to be read rather than re-run.
 2. **Run resilience scenarios 1, 2 and 8 by hand** (`docs/resilience-report.md`, group E). Each has
    an automated equivalent that passes; §E asks for a real killed process, a real network cut and a
    real full disk, dated in the report. **Group B4 belongs with them**: the assistant under a real
@@ -1281,6 +1283,96 @@ closed anyway.
 
 **Open after this phase:** the model's proposals are generic when the description carries
 nothing to work from, which is inherent but worth re-reading after gate 3.
+
+## Gate 3 — the walk (2026-09-09)
+
+**How it was driven.** The same technique as the phase-6 UX pass, aimed at production instead of
+the demo: `wizard.run_wizard`, `flow`, `ConsoleView`, `build_deps` and `ScriptedPrompter` are all
+the production objects, and the only substitution is the human. `CEIDG_DATA_DIR` pointed at a
+scratch directory, so the owner's 51 MB store was never opened. Two passes, both to a finished
+workbook, both `zakonczony`.
+
+**Cost, measured from `request_log` rather than estimated: 25 requests, every one HTTP 200**, no
+retry and no 429. Seventeen `/firma`, seven `/firmy`, one `/raporty`. The pre-walk forecast said
+about eleven, and the gap has a cause worth keeping: **the assistant path cannot set a record cap
+— by design (ADR-0011) — so pass 1 fetched all 71 hits** instead of a capped 20. A forecast that
+assumes a cap the operator has no way to give on that path is wrong on every assistant walk, not
+just this one.
+
+| Pass | Input | Result |
+|---|---|---|
+| 1 | *"salony fryzjerskie w Gnieźnie"* (assistant) | `miasto: Gniezno; PKD: 9621Z`, 71 firms, 6 sheets, 48 KB |
+| 2 | the eight questions, `max_rekordow: 10` | 3 740 hits counted, 10 fetched, 4 sheets, 20 KB |
+
+**What the walk confirmed on production for the first time.**
+
+- **The ADR-0013 identity invariant holds against the real register.** The two passes returned
+  71 and 10 records, and the store ended with **79 firms and zero duplicates under canonicalisation**
+  — the two entries common to both queries were merged, not written twice. This is the defect that
+  cost 2 681 requests and delivered nothing on 2026-09-08, and until now it had only ever been
+  checked offline.
+- **The vintage question states sizes, not warnings.** `9621Z` alone: **71 firms**; with the PKD
+  2007 predecessor: **486**; difference **415** — both counted before the question was asked, and
+  the screen named what the wider choice drags in (`9622Z`, beauty services). ADR-0012's whole
+  argument, visible on real numbers.
+- **The assistant's answer survived the confirmation screen it does not control.** The PKD name
+  (*Działalność fryzjerska*) came from the vendored dictionary, not from the model — which is the
+  one control the operator has over a wrong code.
+- **The report offer fired on pass 2** and named what the archive lacks (OCZEKUJĄCE and WYKREŚLONE
+  entries, correspondence address, citizenships, companies) before offering "2 requests instead of
+  thousands".
+- **Both workbooks are what the specification asks for**: Excel tables with autofilter, header and
+  identity columns frozen at `C2`, `nip`/`regon`/`kod_pocztowy` as text, dates as real dates,
+  **zero formula cells**, and `Metadane` agreeing with the screen (`liczba_trafien_count` 71 =
+  `liczba_pobranych_rekordow` 71, three pages).
+
+**One observation, not a defect.** The operator's summary carries `run_id` as a bare UUID. It is
+needed — `eksportuj --run-id` consumes it — but it is the one line on that screen written in the
+program's vocabulary rather than the operator's.
+
+**And one non-finding worth recording, because it looked like a finding.** No log file appeared,
+while the summary named its path. That is the harness, not the tool: `setup_logging` is called by
+`cli.py`, and driving `run_wizard` directly skips it. Checked before it was written down, which is
+the rule this project keeps re-learning.
+
+### The walk's own blind spot, and the defect found by closing it
+
+A scripted operator types what the source says is valid. That is the opposite of the gate's
+subject, so the inputs were re-run as **what somebody who does not know company data would
+actually type** — nine of them, at zero requests, because `Criteria` validates before any
+request goes out.
+
+**Five are absorbed, and that is the tool working**: `aktywny` → `AKTYWNY`, `Wielkopolskie` →
+`wielkopolskie`, `96.21.Z` → `9621Z` (the notation GUS itself prints), `9621z` → `9621Z`, and a
+NIP with dashes or spaces → ten digits. Leading and trailing spaces are trimmed and
+`"Gniezno, Poznań"` splits into two values in `CriteriaAnswers.set_list`.
+
+**Four are refused in English.** `bledy_po_polsku` passes `blad["msg"]` through, which is Polish
+only when the message came from one of our own validators. Pydantic's built-in errors arrive in
+English and go to the screen that way:
+
+| What the operator types | What the operator is told |
+|---|---|
+| `status: czynna` (or `aktywne`) | `Input should be 'AKTYWNY', 'WYKRESLONY', …` |
+| `data_od: 01.01.2020` | `Input should be a valid date or datetime, invalid character in year` |
+| `max_rekordow: dziesięć` | `Input should be a valid integer, unable to parse string as an integer` |
+
+Compare the half that works: `wojewodztwo: wielkopolska` answers *"nieznane województwo
+'wielkopolska'; dozwolone: dolnośląskie, …"* — the whole list, in Polish, ready to copy from.
+`pkd: fryzjer` answers *"PKD 'fryzjer' musi mieć postać 62.01.Z albo 6201Z"*.
+
+So the phase-6 repair that replaced three `ValidationError` dumps with one `bledy_po_polsku` did
+half the job and reads as if it did all of it: it strips the pydantic URL and the `Value error, `
+prefix, which is what made the old dumps unreadable — but it never translated, and nothing
+observes that. `status` is a free-text question with the hint `np. AKTYWNY`, so guessing a Polish
+word for it is the expected mistake, not an exotic one. **This is a gate-3 finding: it lands on
+the exact person the gate is about, and it is invisible from every offline test, because the
+tests assert the message the code produces.**
+
+**What is still owed.** The gate asks whether a person without API knowledge reaches a finished
+file, and a scripted operator cannot answer the *reading* half of that. The transcripts of both
+passes are the evidence to read; acceptance stays with the owner. The English-message defect above
+is open and is the one thing this walk found that changes code rather than documents.
 
 ## Open items
 - ~~Repeated `miasto=` has never been measured~~ — **measured 2026-09-09, it is OR** (one
