@@ -21,8 +21,12 @@ The initial commit (`d6a46e9`, 157 files) went to the **`ceidg-tool` branch** of
 unrelated product (WorkMate: `src/workmate`, Teams notifications, its own ADRs 0064+). The owner
 chose this after being shown that the two share no history. Two consequences worth holding on to:
 never push to `Main` and never force-push anything here, because that branch is another team's
-active work; and `on: push:` in our `.github/workflows/ci.yml` has no branch filter, so every push
-spends the organisation's Actions minutes on a four-way matrix.
+active work. CI in `.github/workflows/ci.yml` is filtered to `branches: [ceidg-tool]` on both
+`push` and `pull_request` since 2026-09-09 — until then it was unfiltered and every push, a typo
+fix included, spent the organisation's Actions minutes on a four-way matrix. Keep the filter:
+its second half guards a case that has not happened yet, because a `pull_request` trigger takes
+its workflow file from the PR's **base** branch, so an unfiltered copy landing in `Main` would
+run our matrix on another team's every pull request.
 
 **The token in `.env` belongs to the owner.** It is not a borrowed credential and needs no action
 before 2026-09-30; from that date, remind them to refresh it. Its payload carries a PESEL, so it

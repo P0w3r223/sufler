@@ -1,7 +1,21 @@
 name: ci
+# Filtr gałęzi, a nie jego brak, i to z dwóch różnych powodów.
+#
+# `push`: ta gałąź żyje w cudzym repozytorium (`PIWorkmate`, którego `Main` to nieznajomy
+# produkt), a matryca niżej jest czterodrożna — dwa systemy razy dwie wersje Pythona. Bez
+# filtra każdy push, także poprawka literówki w dokumencie, wydawał minuty Actions organizacji
+# na cztery pełne przebiegi suity.
+#
+# `pull_request`: dziś nadmiarowy, bo GitHub bierze plik workflow z gałęzi **bazowej** PR-a,
+# a ten plik istnieje tylko na `ceidg-tool` — czyli i tak odpalałby się wyłącznie dla PR-ów
+# do niej. Filtr jest tu na wypadek, gdyby ta gałąź kiedyś trafiła do `Main`: bez niego plik
+# zacząłby wtedy odpalać naszą matrycę przy każdym PR-ze cudzego zespołu, a to jest awaria,
+# której nikt by z nami nie skojarzył.
 on:
   push:
+    branches: [ceidg-tool]
   pull_request:
+    branches: [ceidg-tool]
 jobs:
   test:
     runs-on: ${{ matrix.os }}

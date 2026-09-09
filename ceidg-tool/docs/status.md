@@ -1395,7 +1395,8 @@ nothing to work from, which is inherent but worth re-reading after gate 3.
   `BIAP-Inteligentne-Technologie/PIWorkmate`. That repository's `Main` carries an unrelated
   product, and the owner chose this target after being shown the two share no history — so the
   standing constraints are: never push to `Main`, never force-push, and remember that our
-  unfiltered `on: push:` CI spends the organisation's Actions minutes on every push. Secrets and
+  unfiltered `on: push:` CI spends the organisation's Actions minutes on every push (**filtered
+  to `branches: [ceidg-tool]` on 2026-09-09**, on both triggers). Secrets and
   production data stay out by `.gitignore`, verified before the push: `.env`, `probe_out/`,
   `*.sqlite`, `wyniki/`, `PKD/`. The three JWT-shaped strings in the test suite were compared
   against the real token and are synthetic.
