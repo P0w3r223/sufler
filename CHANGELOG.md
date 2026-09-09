@@ -6,6 +6,28 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-09-09
+
+**Wydanie bezpieczeństwa i odwracalności.** Dwie poprawki zamykają luki nazwane audytem
+2026-09-08 (U1, U3), trzecia domyka łańcuch kontener→commit (U10). Kolejność i warunki twarde:
+`docs/plan-realizacji-2026-09-09.md` w repozytorium paczki (etapy E0–E3).
+
+**Jak czytać tę sekcję.** Wpisy przeniesione z `[Unreleased]` powstawały przez ostatnie dni
+i obejmują też etapy mostu GitHub (ADR 0071), scalone do `Main` przed tym wydaniem. **1.15.0 jest
+pierwszym obrazem, który je niesie** — most był kompletny w `Main` i zerowy na produkcji, i to
+właśnie ten rozjazd wydanie zamyka.
+
+### Dodane
+
+- **`org.opencontainers.image.revision` w obrazie** (U10 audytu 2026-09-08). Do 1.14.0 jedyną
+  kotwicą wersji obrazu była **proza CHANGELOG-a**: tagi gita stały na `v1.3.0` przy pakiecie
+  1.14.0, więc z biegnącego kontenera nie dawało się dojść do kodu inaczej niż przez wiarę
+  w dokumentację. Budowanie bez `--build-arg REWIZJA=…` zostawia `nieznana` — **jawnie**, zamiast
+  udawać, że łańcuch jest cały.
+  **Czego to wydanie NIE naprawia, i lepiej mieć to zapisane:** tagi `v1.4.0`–`v1.14.0` nadal nie
+  istnieją, a stopka odsyłaczy tego pliku urywa się na `1.3.2`. Odtworzenie ich wstecz byłoby
+  zgadywaniem po datach; od 1.15.0 łańcuch jest ciągły w przód, a dziura zostaje nazwana.
+
 ### Naprawione
 
 - **Bramka autoryzacji ODCZYTU bazy wiedzy wygasała przy włączonej powłoce**
@@ -1682,7 +1704,8 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
-[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.15.0
 [1.3.2]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.2
 [1.3.1]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.1
 [1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0

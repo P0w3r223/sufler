@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml/badge.svg)](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml)
-[![Wersja](https://img.shields.io/badge/wersja-1.14.0-green.svg)](CHANGELOG.md)
+[![Wersja](https://img.shields.io/badge/wersja-1.15.0-green.svg)](CHANGELOG.md)
 [![Licencja](https://img.shields.io/badge/licencja-Proprietary-red.svg)](LICENSE)
 
 **Wewnętrzny serwer MCP i runtime agenta pionu Inteligentnych Technologii BIAP** — wspólna baza
