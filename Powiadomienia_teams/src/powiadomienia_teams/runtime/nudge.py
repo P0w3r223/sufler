@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import TypeGuard
 
 from powiadomienia_teams import state as st
 from powiadomienia_teams.agent.interpreter import schedule_to_intervals
@@ -36,6 +37,58 @@ from powiadomienia_teams.scheduler.weekly import week_windows
 
 logger = logging.getLogger(__name__)
 _UTC = timezone.utc
+
+
+def _nadpisanie_warte_zgloszenia(
+    existing: st.PendingReminder | None,
+) -> TypeGuard[st.PendingReminder]:
+    """Czy zastąpienie tego wpisu nowym tygodniem jest stratą, o której operator MUSI wiedzieć.
+
+    Dwa przypadki, z różnych powodów:
+
+    * **wpis OTWARTY** — przepada uzgodniony grafik, którego nikt nie zapisał (od 0.2.11);
+    * **``APPLYING``** — przepada JEDYNY ślad zapisu przerwanego w połowie.
+
+    Ten drugi był do 2026-09-08 nadpisywany po cichu, bo ``APPLYING`` należy do ``TERMINALNE``
+    i wypadał z warunku „status not in TERMINALNE". Powstawała z tego sprzeczność między dwoma
+    dobrze uzasadnionymi regułami: ``lifecycle.prune_terminal`` chroni ``APPLYING`` BEZTERMINOWO
+    („to DOWÓD, nie ślad", N4), a ten przebieg kasował go w najbliższy piątek — i to dokładnie
+    w najgorszym wariancie, bo osoba, której zapis NIE doszedł, wraca do ``missing``. Wtedy też
+    milkł ``service.zglos_zawieszone_zapisy``, czyli cotygodniowe przypomnienie „sprawdź ten
+    grafik ręcznie" po prostu znikało.
+
+    ``APPLIED``/``DECLINED``/``EXPIRED``/``SELF_FILLED`` zostają poza tą regułą: ich nadpisanie
+    niczego nie gubi, bo temat domknął się rozstrzygnięciem.
+    """
+    if existing is None:
+        return False
+    return existing.status not in st.TERMINALNE or existing.status == st.APPLYING
+
+
+def _alert_o_nadpisaniu(
+    existing: st.PendingReminder, osoba: str, week_start_iso: str
+) -> tuple[str, str]:
+    """(tytuł, treść) alertu o nadpisaniu — komunikat MUSI opisywać to, co faktycznie przepadło.
+
+    Wspólna treść byłaby dla ``APPLYING`` nieprawdziwa: nie chodzi o uzgodnienie, które nie
+    trafiło do grafiku, tylko o zapis, który mógł trafić CZĘŚCIOWO — i to jest zupełnie inna
+    instrukcja dla człowieka, który to sprawdza.
+    """
+    if existing.status == st.APPLYING:
+        return (
+            "Skasowany ślad zapisu przerwanego w połowie",
+            f"{osoba}: wpis o tygodniu od {existing.week_start} miał status APPLYING — zapis do "
+            f"Shifts zaczął się i nigdy nie potwierdził. Przebieg zaczyna tydzień {week_start_iso} "
+            "i ten wpis zastępuje, więc znika JEDYNY jego ślad. Grafik tamtego tygodnia może być "
+            "uzupełniony częściowo albo wcale — sprawdź go ręcznie.",
+        )
+    return (
+        "Nadpisana otwarta rozmowa z poprzedniego tygodnia",
+        f"{osoba}: rozmowa o tygodniu od {existing.week_start} była wciąż otwarta "
+        f"(status {existing.status}), a przebieg zaczyna tydzień {week_start_iso}. "
+        "Jeśli pracownik zdążył coś uzgodnić, to uzgodnienie NIE trafiło do grafiku — "
+        "sprawdź ręcznie.",
+    )
 
 
 # Sufit funkcji przekroczony ŚWIADOMIE: jeden przebieg tygodniowy, od wykrycia luk do utrwalenia
@@ -111,8 +164,16 @@ def run_once(  # noqa: PLR0915
 
     prior_monday, target_monday, target_end = week_windows(now, tz)
 
-    next_shifts = client.read_shifts(
-        ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
+    # JEDNO pobranie na oba okna. `read_shifts` ściąga całą kolekcję zespołu i filtruje po stronie
+    # klienta (`$filter` odpada — powody w jego docstringu), więc dwa wywołania znaczyły dwa pełne
+    # przejścia przez `_MAX_PAGES` po te same ~2000 wpisów. Przy okazji oba okna widzą teraz TEN SAM
+    # stan grafiku: gotowiec nie może już pochodzić z innej chwili niż wykrycie luk.
+    next_shifts, prior_shifts = client.read_shifts_w_oknach(
+        ctx.team_id,
+        (
+            (target_monday.astimezone(_UTC), target_end.astimezone(_UTC)),
+            (prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)),
+        ),
     )
     next_time_off = client.read_time_off(
         ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
@@ -140,9 +201,6 @@ def run_once(  # noqa: PLR0915
             przed,
             len(settings.only_user_ids),
         )
-    prior_shifts = client.read_shifts(
-        ctx.team_id, prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)
-    )
     week_start_iso = target_monday.date().isoformat()
     week_label = f"{target_monday:%d.%m}–{(target_end - timedelta(days=1)):%d.%m}"
 
@@ -195,7 +253,7 @@ def run_once(  # noqa: PLR0915
         # udanym zapisem ma już zmianę w grafiku i nie występuje w `missing`.
         if existing is not None and existing.week_start == week_start_iso:
             continue
-        if existing is not None and existing.status not in st.TERMINALNE:
+        if _nadpisanie_warte_zgloszenia(existing):
             # Klucz stanu to `member_id`, więc wpis na NOWY tydzień nadpisze otwartą rozmowę
             # z tygodnia poprzedniego — razem z uzgodnionym już grafikiem, którego nikt nie
             # zapisał. Do 0.2.11 działo się to bez śladu. Osiągalne, gdy odczyt czatu uporczywie
@@ -301,19 +359,14 @@ def run_once(  # noqa: PLR0915
         # Zapis PO KAŻDEJ wysyłce: awaria w połowie nie gubi już-wysłanych pendingów (ich odpowiedzi
         # będą czytane), a ponowienie pominie ich dzięki sprawdzeniu wyżej („co najmniej raz").
         st.save_state(settings.state_path, state)
-        if existing is not None and existing.status not in st.TERMINALNE:
-            # Dopiero TERAZ otwarta rozmowa naprawdę przepadła — wpis pod kluczem `member_id`
-            # został zastąpiony i utrwalony. Alert stoi za `save_state`, nie przed wysyłką, bo
-            # obiecuje operatorowi szkodę dokonaną i każe ją ręcznie sprawdzić.
-            operator.alert(
-                settings,
-                "Nadpisana otwarta rozmowa z poprzedniego tygodnia",
-                f"{etykiety.czlonek(member, settings)}: rozmowa o tygodniu "
-                f"od {existing.week_start} była wciąż "
-                f"otwarta (status {existing.status}), a przebieg zaczyna tydzień {week_start_iso}. "
-                "Jeśli pracownik zdążył coś uzgodnić, to uzgodnienie NIE trafiło do grafiku — "
-                "sprawdź ręcznie.",
+        if _nadpisanie_warte_zgloszenia(existing):
+            # Dopiero TERAZ wpis naprawdę przepadł — został zastąpiony i utrwalony. Alert stoi za
+            # `save_state`, nie przed wysyłką, bo obiecuje operatorowi szkodę DOKONANĄ i każe ją
+            # ręcznie sprawdzić.
+            tytul, tresc = _alert_o_nadpisaniu(
+                existing, etykiety.czlonek(member, settings), week_start_iso
             )
+            operator.alert(settings, tytul, tresc)
         logger.info("Wysłano powiadomienie do %s", etykiety.czlonek(member, settings))
         sent += 1
 

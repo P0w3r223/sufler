@@ -65,6 +65,39 @@ uruchomieniem, obie POZA granicą modelu — ta wytrzymała próbę bez zastrze�
   celowo przepuszczają wyjątki sterujące (`CiszaError`, `AuthExpiredError`, `StateWriteError`),
   a połknięcie ich byłoby regresją groźniejszą niż naprawiana usterka.
 
+### Wydajność i prawdziwość sygnałów
+
+- **Przebieg tygodniowy pobierał całą kolekcję zmian DWA RAZY.** `read_shifts` ściąga komplet
+  zmian zespołu i filtruje po stronie klienta (`$filter` odpada — cztery powody w jego docstringu),
+  więc okno nie zmniejsza kosztu ani o bajt. `run_once` potrzebuje dwóch okien (tydzień docelowy
+  i poprzedni, na gotowiec) i wołał `read_shifts` dwukrotnie: drugie pobranie nie wnosiło ani
+  jednego nowego bajtu, a kosztowało kolejne pełne przejście przez `_MAX_PAGES` z własnym budżetem
+  `Retry-After` — czyli dławiony Graph dostawał podwójną porcję dokładnie wtedy, gdy już nie
+  nadążał, przy podwójnym ryzyku `GraphTruncatedReadError`. Nowe `read_shifts_w_oknach` pobiera raz
+  i filtruje na oba okna; `read_shifts` jest teraz jego opakowaniem. Skutek uboczny, cichszy
+  i ważniejszy: **oba okna widzą TEN SAM stan grafiku** — gotowiec nie może już pochodzić z innej
+  chwili niż wykrycie luk.
+
+- **`get_me()` pytał sieć przy każdym wywołaniu.** `poll_replies` woła je RAZ NA OBIEG NASŁUCHU, więc
+  przy otwartej rozmowie i odstępie 10 s szło do Graph kilka tysięcy identycznych żądań na dobę po
+  wartość, która nie ma jak się zmienić: wybór konta ustala `--login`, czyli osobne polecenie
+  i osobny proces, a `graph.auth` odmawia startu przy dwóch kontach w cache MSAL. Klient pamięta
+  teraz WYŁĄCZNIE sukces — dzięki temu izolacja per adresat w `_send_summary` (`get_me` w pętli,
+  świadomie) zostaje nietknięta.
+
+  Przy okazji sprostowany komentarz w `runtime/service.py`, który twierdził, że „klient buforuje
+  odpowiedź w obrębie przebiegu tylko dla `run_once`" — nie buforował niczego; `run_once` trzymał
+  wynik w zmiennej lokalnej.
+
+- **Nadpisanie wpisu `APPLYING` przestaje dziać się po cichu.** `APPLYING` to jedyny ślad zapisu
+  przerwanego w połowie, a dwie dobrze uzasadnione reguły przeczyły sobie: `prune_terminal` chroni
+  go BEZTERMINOWO („to DOWÓD, nie ślad", N4), a `run_once` kasował go w najbliższy piątek, bo
+  `APPLYING` należy do `TERMINALNE` i wypadał z warunku ostrzegającego. Trafiało to w najgorszy
+  wariant — osoba, której zapis NIE doszedł, wraca do `missing` — i razem ze śladem milkł
+  `zglos_zawieszone_zapisy`, czyli cotygodniowe „sprawdź ten grafik ręcznie". Alert ma własną
+  treść: przy `APPLYING` nie chodzi o uzgodnienie, które nie trafiło do grafiku, tylko o zapis,
+  który mógł trafić CZĘŚCIOWO — inna instrukcja dla człowieka, który to sprawdza.
+
 ### Bezpieczeństwo wdrożenia
 
 - **Hartowanie kontenera wróciło do repozytorium.** Na serwerze kontener biegał z `cap_drop: [ALL]`,

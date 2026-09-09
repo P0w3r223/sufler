@@ -93,8 +93,15 @@ class _FakeClient:
     def list_members(self, team_id: str) -> tuple[Any, ...]:
         return self._members
 
+    # Kształt jak w `GraphClient`: pobranie jest JEDNO, a okna są tylko filtrem po stronie
+    # klienta. Dzięki temu licznik w `_LiczacyClient` mierzy to samo, co kosztuje na żywo.
+    def read_shifts_w_oknach(self, team_id: str, okna: Any) -> tuple[tuple[Any, ...], ...]:
+        return tuple(
+            tuple(s for s in self._shifts if start <= s.start < end) for start, end in okna
+        )
+
     def read_shifts(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
-        return tuple(s for s in self._shifts if start <= s.start < end)
+        return self.read_shifts_w_oknach(team_id, ((start, end),))[0]
 
     def read_time_off(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
         return tuple(t for t in self._time_offs if t.start < end and t.end > start)
@@ -528,6 +535,69 @@ def test_run_once_przenosi_wpis_pod_swieza_postac_identyfikatora(tmp_path: Path)
     (klucz,) = stan
     assert klucz == stan[klucz].member_id == "u1-abc", "klucz musi zgadzać się z `member_id`"
     assert stan[klucz].week_start == "2026-07-20", "wpis ma dotyczyć NOWEGO tygodnia"
+
+
+def test_nadpisanie_wpisu_APPLYING_nie_dzieje_sie_po_cichu(tmp_path: Path, monkeypatch):
+    """`APPLYING` to jedyny ślad zapisu przerwanego w połowie — a znikał bez słowa.
+
+    Dwie dobrze uzasadnione reguły przeczyły sobie: `lifecycle.prune_terminal` chroni `APPLYING`
+    BEZTERMINOWO („to DOWÓD, nie ślad", N4), a `run_once` kasował go w najbliższy piątek, bo
+    `APPLYING` należy do `TERMINALNE` i wypadał z warunku ostrzegającego. Trafiało to dokładnie
+    w najgorszy wariant: osoba, której zapis NIE doszedł, wraca do `missing`. Razem ze śladem
+    milkł `service.zglos_zawieszone_zapisy`, czyli cotygodniowe „sprawdź ten grafik ręcznie".
+    """
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Mikołaj",
+                chat_id="chat1",
+                week_start="2026-07-13",  # tydzień POPRZEDNI
+                status=APPLYING,
+                watermark="2026-07-10T15:00:00Z",
+                nudged_at="2026-07-10T15:00:00Z",
+            )
+        },
+    )
+    client = _FakeClient({}, members=(Member("u1", "Mikołaj"),), shifts=())
+    settings = _settings(state_path)
+    alerty: list[str] = []
+    monkeypatch.setattr(
+        "powiadomienia_teams.alerts.send_alert",
+        lambda url, tytul, tresc, **kw: alerty.append(tytul) or True,
+    )
+
+    run_once(settings, client, now=_FRI_16, teraz=_w_oknie())
+
+    assert any("przerwanego w połowie" in t for t in alerty), alerty
+    assert load_state(state_path)["u1"].week_start == "2026-07-20", "wpis miał zostać zastąpiony"
+
+
+def test_run_once_pobiera_kolekcje_zmian_raz_na_oba_okna(tmp_path: Path):
+    """Przebieg potrzebuje dwóch okien (tydzień docelowy i poprzedni, na gotowiec), ale
+    `read_shifts` ściąga CAŁĄ kolekcję zespołu i filtruje po stronie klienta — okno nie zmniejsza
+    kosztu ani o bajt. Dwa wywołania znaczyły więc dwa pełne przejścia przez `_MAX_PAGES` po te
+    same ~2000 wpisów, każde z własnym budżetem `Retry-After`, i podwójne ryzyko ucięcia.
+
+    Drugi, cichszy skutek: oba okna czytano w RÓŻNYCH chwilach, więc gotowiec mógł pochodzić
+    z innego stanu grafiku niż wykrycie luk.
+    """
+
+    class _Liczacy(_FakeClient):
+        pobran = 0
+
+        def read_shifts_w_oknach(self, team_id: str, okna: Any) -> tuple[tuple[Any, ...], ...]:
+            type(self).pobran += 1
+            return super().read_shifts_w_oknach(team_id, okna)
+
+    client = _Liczacy({}, members=(Member("u1", "Mikołaj"),), shifts=())
+    settings = _settings(tmp_path / "state.json")
+
+    run_once(settings, client, now=_FRI_16, teraz=_w_oknie())
+
+    assert _Liczacy.pobran == 1, "kolekcja zmian pobrana więcej niż raz na przebieg"
 
 
 def test_dwa_otwarte_wpisy_na_te_sama_osobe_daja_alert_i_jedno_przejscie(
@@ -3834,9 +3904,12 @@ class _LiczacyOdczyty(_FakeClient):
         super().__init__(*args, **kwargs)
         self.odczytow = 0
 
-    def read_shifts(self, team_id: str, start: Any, end: Any) -> tuple[Any, ...]:
+    # Liczymy POBRANIA, nie okna: `read_shifts_w_oknach` jest w prawdziwym kliencie prymitywem,
+    # a `read_shifts` tylko jego opakowaniem na jedno okno. Liczenie po opakowaniu pokazywałoby
+    # dwa odczyty tam, gdzie na żywo idzie jedno żądanie do Graph.
+    def read_shifts_w_oknach(self, team_id: str, okna: Any) -> tuple[tuple[Any, ...], ...]:
         self.odczytow += 1
-        return super().read_shifts(team_id, start, end)
+        return super().read_shifts_w_oknach(team_id, okna)
 
 
 def _pending_milczacy(state_path: Path, nudge: str, week_start: str = "2026-07-20") -> None:

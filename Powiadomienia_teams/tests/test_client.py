@@ -614,3 +614,76 @@ def test_create_or_get_chat_bez_id_jest_bledem():
 
     with pytest.raises(RuntimeError, match="id czatu"):
         _graph(handler).create_or_get_chat("me", "u1")
+
+
+def test_get_me_pyta_siec_raz_na_proces():
+    """`poll_replies` woła `get_me` RAZ NA OBIEG NASŁUCHU, a wartość nie ma jak się zmienić.
+
+    Przy otwartej rozmowie i odstępie 10 s to kilka tysięcy identycznych żądań na dobę po
+    identyfikator, który ustala `--login` — czyli osobne polecenie i osobny proces.
+    """
+    trafienia = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        trafienia["n"] += 1
+        return httpx.Response(200, json={"id": "me-1"})
+
+    gc = _graph(handler)
+    assert [gc.get_me() for _ in range(5)] == ["me-1"] * 5
+    assert trafienia["n"] == 1, "tożsamość bota pobierana z sieci więcej niż raz"
+
+
+def test_get_me_nie_zapamietuje_porazki():
+    """Zapamiętanie awarii utrwaliłoby ją jako stan klienta.
+
+    `runtime.service._send_summary` woła `get_me` W PĘTLI po adresatach właśnie po to, żeby jedna
+    awaria nie zgasiła sygnału życia wszystkim — cache zapamiętujący porażkę odebrałby tę izolację.
+    """
+    odpowiedzi = [httpx.Response(200, json={}), httpx.Response(200, json={"id": "me-1"})]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return odpowiedzi.pop(0)
+
+    gc = _graph(handler)
+    with pytest.raises(RuntimeError):
+        gc.get_me()  # puste id — Graph odpowiedział, ale bez tożsamości
+    assert gc.get_me() == "me-1", "po nieudanej próbie klient musi spytać jeszcze raz"
+
+
+def test_read_shifts_w_oknach_pobiera_kolekcje_raz():
+    """Okno nie zmniejsza kosztu ani o bajt — `$filter` odpada, więc filtrujemy po stronie klienta.
+
+    Dwa wywołania `read_shifts` znaczyły dwa pełne przejścia przez `_MAX_PAGES` po te same wpisy,
+    każde z własnym budżetem `Retry-After`, i podwójne ryzyko `GraphTruncatedReadError`.
+    """
+    trafienia = {"n": 0}
+    zmiany = [
+        {
+            "id": "s1",
+            "userId": "u1",
+            "sharedShift": {
+                "startDateTime": "2026-07-13T08:00:00Z",
+                "endDateTime": "2026-07-13T16:00:00Z",
+            },
+        },
+        {
+            "id": "s2",
+            "userId": "u1",
+            "sharedShift": {
+                "startDateTime": "2026-07-20T08:00:00Z",
+                "endDateTime": "2026-07-20T16:00:00Z",
+            },
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        trafienia["n"] += 1
+        return httpx.Response(200, json={"value": zmiany})
+
+    poprzedni = (datetime(2026, 7, 13, tzinfo=UTC), datetime(2026, 7, 20, tzinfo=UTC))
+    docelowy = (datetime(2026, 7, 20, tzinfo=UTC), datetime(2026, 7, 27, tzinfo=UTC))
+    stary, nowy = _graph(handler).read_shifts_w_oknach("T", (poprzedni, docelowy))
+
+    assert trafienia["n"] == 1, "kolekcja pobrana raz na oba okna"
+    assert [s.start.date().isoformat() for s in stary] == ["2026-07-13"]
+    assert [s.start.date().isoformat() for s in nowy] == ["2026-07-20"]

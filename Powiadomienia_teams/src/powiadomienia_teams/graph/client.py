@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -254,6 +254,9 @@ class GraphClient:
         # ostrzeżeniami musiałby czekać dobę.
         self._teraz = teraz or (lambda: datetime.now(timezone.utc))
         self._ostatnie_ostrzezenie: dict[str, datetime] = {}
+        # Tożsamość „głosu bota" — patrz `get_me`. Zapamiętywana na czas życia PROCESU, bo tyle
+        # żyje wybór konta: ustala go `--login`, czyli osobne polecenie i osobny proces.
+        self._me: str | None = None
 
     def refresh_auth(self) -> None:
         """Ustaw nagłówek Authorization świeżym tokenem (MSAL zwykle odświeża po cichu)."""
@@ -391,10 +394,25 @@ class GraphClient:
         wtedy odsiewać konto bota (bot pisze sam do siebie), a ``create_or_get_chat`` buduje
         ``users('')`` i dostaje 400 dla KAŻDEJ osoby. Wyjątki łapie izolacja per-osoba, więc
         przebieg kończyłby się „sukcesem" bez jednej wysłanej prośby i bez alertu.
+
+        **Wynik zapamiętujemy na czas życia procesu**, bo tyle żyje wybór konta: ustala go
+        ``--login``, czyli osobne polecenie i osobny proces, a ``graph.auth`` odmawia startu, gdy
+        w cache MSAL są dwa konta (``AmbiguousAccountError``). Do 0.2.22 każde wywołanie szło do
+        sieci, a ``runtime.listener.poll_replies`` woła je RAZ NA OBIEG NASŁUCHU — czyli przy
+        otwartej rozmowie i odstępie 10 s do kilku tysięcy identycznych żądań na dobę po wartość,
+        która nie ma jak się zmienić.
+
+        Zapamiętujemy WYŁĄCZNIE sukces: nieudane wywołanie ma zostać powtórzone przy następnej
+        próbie, a nie utrwalić się jako stan klienta. Dzięki temu izolacja per-adresat
+        w ``runtime.service._send_summary`` (``get_me`` w pętli, świadomie — patrz tam) nadal
+        działa, tylko przestaje płacić za sieć po pierwszym powodzeniu.
         """
+        if self._me is not None:
+            return self._me
         me = str(self._get(f"{GRAPH}/me").get("id", ""))
         if not me:
             raise RuntimeError("Graph /me nie zwrócił id — nie wiadomo, czyją tożsamością pisać")
+        self._me = me
         return me
 
     def list_members(self, team_id: str) -> tuple[Member, ...]:
@@ -429,11 +447,34 @@ class GraphClient:
         awarię głośną. Zmiany-sieroty po byłych członkach są tu wciąż zwracane — odsiewa je
         dopiero wykrywanie luk po aktualnym rosterze.
         """
+        return self.read_shifts_w_oknach(team_id, ((window_start, window_end),))[0]
+
+    def read_shifts_w_oknach(
+        self, team_id: str, okna: Sequence[tuple[datetime, datetime]]
+    ) -> tuple[tuple[Shift, ...], ...]:
+        """To samo co ``read_shifts``, ale dla KILKU okien naraz — jedno pobranie zamiast wielu.
+
+        Pobranie jest tu niepodzielne: ``$filter`` odpada (powody w ``read_shifts``), więc każde
+        wywołanie ściąga CAŁĄ kolekcję zespołu i filtruje po stronie klienta. Okno nie zmniejsza
+        więc kosztu ani o bajt — a ``runtime.nudge.run_once`` potrzebuje dwóch okien (tydzień
+        docelowy i poprzedni, na gotowiec) i do 0.2.22 wołał ``read_shifts`` dwa razy, ściągając
+        te same ~2000 wpisów po raz drugi bez jednego nowego bajtu.
+
+        Koszt nie sprowadzał się do sekund: każde pobranie idzie przez ``_MAX_PAGES`` żądań
+        z własnym budżetem ``Retry-After``, więc dławiony Graph dostawał podwójną porcję dokładnie
+        wtedy, gdy już nie nadążał, a ryzyko ``GraphTruncatedReadError`` liczyło się dwa razy.
+        Drugi, cichszy skutek: oba okna czytano w RÓŻNYCH chwilach, więc gotowiec mógł pochodzić
+        z innego stanu grafiku niż wykrycie luk.
+
+        Zwracamy krotkę wyników W KOLEJNOŚCI okien — wołający rozpakowuje ją pozycyjnie.
+        """
         raw = self._get_all(f"{GRAPH}/teams/{team_id}/schedule/shifts")
         zmapowane = [s for s in (shift_from_json(x) for x in raw) if s is not None]
         _zglos_odrzucone(len(raw), len(zmapowane), "zmian")
-        shifts = [s for s in zmapowane if window_start <= s.start < window_end]
-        return tuple(sorted(shifts, key=lambda s: s.start))
+        return tuple(
+            tuple(sorted((s for s in zmapowane if start <= s.start < end), key=lambda s: s.start))
+            for start, end in okna
+        )
 
     def read_time_off(
         self, team_id: str, window_start: datetime, window_end: datetime

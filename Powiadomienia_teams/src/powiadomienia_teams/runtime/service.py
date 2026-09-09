@@ -484,11 +484,16 @@ def _send_summary(settings: Settings, client: GraphClient, nastepny_przebieg: da
     # wysyłki do PIERWSZEJ osoby (jej czat, jej uprawnienia, jej 404) kasowała sygnał życia
     # wszystkim pozostałym — czyli redundancja adresatów byłaby pozorna.
     #
-    # `get_me()` jest W PĘTLI, choć wynik jest ten sam dla wszystkich: to wywołanie SIECIOWE
-    # (`GET /me`) bez ponowień, więc przed pętlą byłoby wspólnym punktem awarii — jeden przejściowy
-    # 5xx gasiłby sygnał wszystkim, mimo sprawnych czatów. Koszt: jedno dodatkowe GET tygodniowo
-    # na adresata. Klient buforuje odpowiedź w obrębie przebiegu tylko dla `run_once`, więc liczymy
-    # to jawnie, zamiast zakładać.
+    # `get_me()` jest W PĘTLI, choć wynik jest ten sam dla wszystkich: wyniesione przed pętlę
+    # byłoby wspólnym punktem awarii — jeden przejściowy 5xx gasiłby sygnał życia WSZYSTKIM
+    # adresatom, mimo sprawnych czatów.
+    #
+    # Do 2026-09-08 stało tu zdanie, że „klient buforuje odpowiedź w obrębie przebiegu tylko dla
+    # `run_once`" — nieprawda: `GraphClient` nie buforował niczego, a `run_once` po prostu trzymał
+    # wynik w zmiennej lokalnej. Dziś `get_me` pamięta SUKCES na czas życia procesu (uzasadnienie
+    # tam), więc ta pętla płaci za sieć najwyżej raz. Izolacja per adresat zostaje nietknięta,
+    # bo zapamiętywany jest wyłącznie wynik udany — awaria nadal wypada u tego adresata,
+    # u którego zaszła.
     dostarczone = 0
     for admin_id in settings.admin_user_ids:
         try:
