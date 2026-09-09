@@ -28,6 +28,7 @@ from pathlib import Path
 import httpx
 import pytest
 from openpyxl import load_workbook
+from typer import rich_utils
 from typer.testing import CliRunner
 
 import ceidg_tool.config as config
@@ -60,6 +61,17 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.setenv("TERM", "dumb")
     monkeypatch.setattr(cli.console, "width", 200)
+    # …i to **nie wystarcza dla `--help`**. Pomocy nie rysuje `cli.console`, tylko własna
+    # konsola typera (`typer.rich_utils._get_rich_console`), która przy `MAX_WIDTH is None`
+    # wykrywa terminal sama: na Windowsie szeroko, na Linuksie 80 kolumn. Dwa przebiegi CI
+    # były przez to czerwone (2026-09-08), a komentarz wyżej przez cały ten czas twierdził,
+    # że sprawa jest załatwiona — bo nikt nie sprawdził, która konsola rysuje `--help`.
+    #
+    # Uczciwie o tej linijce: **nie jest nośna dla asercji**. Sprawdzone mutacją — jej
+    # usunięcie zostawia testy zielone, bo porównania idą przez `_bez_lamania`, które nie
+    # zależy od szerokości. Zostaje po to, żeby renderowanie było powtarzalne między
+    # Windowsem a Linuksem, a nie po to, żeby cokolwiek gwarantować.
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", 200)
     # Katalog domyślny przekierowany pod `tmp_path`. Nie jest to ozdoba: przy regresji, w której
     # `_settings_demo` przestaje czytać `CEIDG_DATA_DIR`, testy niżej pisałyby do
     # `%LOCALAPPDATA%\\ceidg-tool` — czyli obok prawdziwej bazy operatora. Sprawdzone mutacją:
@@ -413,6 +425,21 @@ def test_bez_demo_prod_nadal_wymaga_zgody_a_nie_dostaje_odmowy_o_pokazie(
 # --------------------------------------------------- powierzchnia poleceń
 
 
+def _bez_lamania(pomoc: str) -> str:
+    """Sama treść pomocy: bez ramek tabeli i bez miejsca łamania wiersza.
+
+    Samo sklejenie białych znaków nie wystarcza i to jest tu sedno. Pomoc jest tabelą
+    w ramce, więc opis przełamany na dwa wiersze wygląda tak:
+
+        │ --demo    Pokaz bez rejestru: dane syntetyczne, zero      │
+        │           żądań do CEIDG…                                 │
+
+    — między „zero" a „żądań" stoją dwie pionowe kreski ramki, nie spacja. Usuwamy więc
+    cały blok Unicode „Box Drawing" (U+2500–U+257F), a dopiero potem sklejamy odstępy."""
+    bez_ramek = "".join(" " if "─" <= znak <= "╿" else znak for znak in pomoc)
+    return " ".join(bez_ramek.split())
+
+
 @pytest.mark.parametrize("polecenie", POLECENIA_Z_DEMO)
 def test_flaga_demo_jest_w_pomocy_polecenia(runner: CliRunner, polecenie: str) -> None:
     """Flaga bez opisu w `--help` jest funkcją, o której nikt się nie dowie.
@@ -424,4 +451,39 @@ def test_flaga_demo_jest_w_pomocy_polecenia(runner: CliRunner, polecenie: str) -
 
     assert result.exit_code == 0, result.output
     assert "--demo" in result.output
-    assert "zero żądań" in result.output
+    # Porównanie po **sklejeniu białych znaków**, bo pomoc jest tabelą i łamie opis w miejscu
+    # zależnym od szerokości. Przy 80 kolumnach fraza padała między wiersze jako „zero" +
+    # „żądań" i asercja była fałszywa mimo poprawnej pomocy; przy 60 kolumnach łamała się
+    # gdzie indziej i przechodziła. Test zależny od miejsca łamania mierzy terminal, a nie
+    # program — to ta sama diagnoza, co przy pierwszym przebiegu CI (`docs/status.md`).
+    assert "zero żądań" in _bez_lamania(result.output)
+
+
+@pytest.mark.parametrize("szerokosc", [60, 80, 100, 200])
+@pytest.mark.parametrize("polecenie", POLECENIA_Z_DEMO)
+def test_pomoc_dokumentuje_tryb_pokazu_przy_kazdej_szerokosci(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, polecenie: str, szerokosc: int
+) -> None:
+    """Strażnik, którego brak kosztował dwa czerwone przebiegi CI (2026-09-08).
+
+    Pomoc `--help` rysuje **własna konsola typera**, nie `cli.console`, więc przypięcie tej
+    drugiej niczego nie ustalało: na Windowsie wychodziło szeroko, na Linuksie 80 kolumn.
+    Przy 80 opis flagi łamał się w środku frazy — „…zero" na końcu wiersza, „żądań" na
+    początku następnego — i asercja `"zero żądań" in output` była fałszywa mimo poprawnej
+    pomocy. Przy 60, 100 i 200 fraza łamie się gdzie indziej i przechodzi, więc samo
+    „sprawdź na wąskim" by tego nie złapało; dlatego szerokości są tu cztery, nie jedna.
+
+    Polecenia też są wszystkie, i to nie z ostrożności. Przy 80 kolumnach fraza rozpada się
+    w `kreator`, `aktualizuj`, `wznow`, `eksportuj` i `runy`, a **`pobierz` jako jedyne
+    przechodzi** — ma najdłuższą listę opcji i inaczej rozkłada kolumny. Pierwsza wersja
+    tego strażnika sprawdzała właśnie `pobierz` i przechodziła po przywróceniu defektu.
+
+    Gwarancja jest o **treści pomocy**, nie o tym, ile kolumn ma terminal — ta sama lekcja,
+    którą projekt odrobił przy pierwszym przebiegu CI (`docs/status.md`).
+    """
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", szerokosc)
+
+    pomoc = _bez_lamania(runner.invoke(app, [polecenie, "--help"]).output)
+
+    assert "--demo" in pomoc
+    assert "zero żądań" in pomoc

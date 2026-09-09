@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from typer import rich_utils
 from typer.testing import CliRunner
 
 import ceidg_tool.config as config
@@ -41,6 +42,17 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.setenv("TERM", "dumb")
     monkeypatch.setattr(cli.console, "width", 200)
+    # …i to **nie wystarcza dla `--help`**. Pomocy nie rysuje `cli.console`, tylko własna
+    # konsola typera (`typer.rich_utils._get_rich_console`), która przy `MAX_WIDTH is None`
+    # wykrywa terminal sama: na Windowsie szeroko, na Linuksie 80 kolumn. Dwa przebiegi CI
+    # były przez to czerwone (2026-09-08), a komentarz wyżej przez cały ten czas twierdził,
+    # że sprawa jest załatwiona — bo nikt nie sprawdził, która konsola rysuje `--help`.
+    #
+    # Uczciwie o tej linijce: **nie jest nośna dla asercji**. Sprawdzone mutacją — jej
+    # usunięcie zostawia testy zielone, bo porównania idą przez `_bez_lamania`, które nie
+    # zależy od szerokości. Zostaje po to, żeby renderowanie było powtarzalne między
+    # Windowsem a Linuksem, a nie po to, żeby cokolwiek gwarantować.
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", 200)
     return CliRunner()
 
 

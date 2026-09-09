@@ -1205,9 +1205,20 @@ prose.
 Tiers B, C and D, and the reasoning behind each deferral, are in the audit document.
 
 ## Open items
-- ~~**CI ran for the first time on 2026-09-08, and it failed.**~~ — **green since 2026-09-08**
-  (commit `2e29540` records the first green run; this entry stayed under Open items after the
-  fact, which the audit caught). Kept for the diagnosis, which is worth reading: There had never been a commit, so
+- **CI is red, and this entry said it was green.** — `2e29540` did record a green run, but the
+  next two pushes (`d5cd71a`, `dfd950f`, 2026-09-08) both **failed** and nobody looked. Fixed
+  2026-09-09; the diagnosis is the same shape as the first one and is worth reading twice.
+  `tests/test_demo_markers.py` asserted the phrase *"zero żądań"* in `--help` output. At 80
+  columns rich wraps the option description mid-phrase and puts two table borders between the
+  words, so the assertion is false while the help is perfectly correct — and `pobierz` is the
+  **only** command wide enough to escape it, which is why the first version of the new guard,
+  written against `pobierz`, passed with the defect restored. Widths 60, 100 and 200 all pass
+  too, so "check it narrow" would not have found it either. The fix compares against help with
+  the box-drawing block and whitespace normalised away, guarded by a test over every command ×
+  four widths. The deeper cause is a comment that was wrong: both CLI fixtures pinned
+  `cli.console.width` and claimed that settled help rendering. It does not — `--help` is drawn
+  by typer's own console (`typer.rich_utils`), which nothing was pinning. A false comment kept
+  the real question from being asked for two red runs. Kept below, the earlier diagnosis: There had never been a commit, so
   the workflow had never executed — "CI runs the same four gates on Linux and Windows" was a
   configuration, not an observation. The first Linux run turned up ten tests that were measuring
   the **terminal width of the machine they ran on**: `rich` drops an option's name from `--help`
