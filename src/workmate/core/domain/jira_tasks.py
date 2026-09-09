@@ -245,8 +245,18 @@ def map_task_details(
     """Zmapuj surowe issue + komentarze Jiry na ``JiraTaskDetails`` (biała lista pól, przycięcie).
 
     Opis/komentarze to DANE ze źródła zewnętrznego: wycinamy z nich znaki sterujące i przycinamy do
-    limitów (opis ≤2000, komentarz ≤500, najwyżej 5 najnowszych), żeby jedno zgłoszenie nie zjadło
-    okna kontekstu ani nie przemyciło wektora wstrzyknięcia do promptu.
+    limitów (opis ≤2000, komentarz ≤500, najwyżej 5 najnowszych).
+
+    **Czego to przycięcie NIE robi — bo poprzednia redakcja tego zdania obiecywała właśnie to.**
+    Twierdziła, że limity nie pozwolą „przemycić wektora wstrzyknięcia do promptu". Nie
+    zapobiegają temu w żadnym stopniu: wstrzyknięcie mieści się w kilkudziesięciu znakach,
+    a więc i w każdym z tych limitów. Sufity chronią OKNO KONTEKSTU — jedno zgłoszenie nie ma
+    zjeść tury — i tyle mają obiecywać.
+
+    Przed wstrzyknięciem broni co innego, i to leży poza tą funkcją: treść z Jiry zapala lepką
+    skazę rozmowy (``ToolSpec("Jira", …, taints=True)``, ADR 0066), więc mutacja bazy wiedzy
+    idzie po niej ostrzejszą ścieżką sędziego. To jest obrona w głębi, nie bariera — i tak ma
+    być nazywana.
     """
     key = str(raw_issue.get("key") or "")
     fields = raw_issue.get("fields")

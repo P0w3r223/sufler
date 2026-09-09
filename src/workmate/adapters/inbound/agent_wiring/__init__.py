@@ -318,15 +318,31 @@ def build_conversational_responder(
     # (rozjazd na platformie bez wykonawcy zostawiłby agenta bez powłoki I bez ``ReplyWithFile``).
     if shell_factory is not None:
         thread_tool_factory = None
-    # Autoryzacja ODCZYTU (ADR 0062): bramka działa na TYPOWANYCH ścieżkach. Dla narzędzi agenta
-    # ma sens tylko BEZ powłoki — z powłoką narzędzi odczytu i tak nie ma (czyta montaż ``ro``,
-    # poza zakresem). Gdy działa: narzędzia odczytu schodzą z katalogu bazowego (``suppress``) do
-    # per-turowej fabryki bramkowanej nadawcą. Komenda ``/szukaj``/``/projekty`` dostaje authorizer
-    # niezależnie od powłoki (to osobna ścieżka odczytu). ``None`` → wszystko jak przed ADR 0062.
-    notes_read_gated = note_read_authorizer is not None and shell_factory is None
+    # Autoryzacja ODCZYTU (ADR 0062): bramka działa na TYPOWANYCH ścieżkach. Gdy działa,
+    # powierzchnia bazy wiedzy schodzi z katalogu BAZOWEGO (``suppress``) do per-turowej fabryki
+    # bramkowanej nadawcą. Komenda ``/szukaj``/``/projekty`` dostaje authorizer niezależnie
+    # od powłoki (osobna ścieżka odczytu). ``None`` → wszystko jak przed ADR 0062.
+    #
+    # WARUNEK TO SAMA OBECNOŚĆ AUTORYZATORA. Poprzedni zapis niósł dodatkowo ``shell_factory is
+    # None`` i uzasadniał to zdaniem „z powłoką narzędzi odczytu i tak nie ma". Zdanie jest
+    # nieprawdziwe dla ``Project``: trójkę odczytu istotnie zdejmuje ``shell_available``, ale
+    # ``build_project_catalog`` nie zależy od niego wcale, więc przy ``ENABLE_SHELL=true``
+    # ``Project`` ZOSTAWAŁ w katalogu bazowym — poza bramką. A to on serwuje treść
+    # (``Project(action='status')`` zwraca syntezę z notatek pionu) i to jego ADR 0062 wciągnął
+    # za bramkę jako „jedyną drogę odczytu, która przeżyła jej wpięcie". Bramka wygasała więc
+    # dokładnie w układzie docelowym — z włączoną powłoką — i to po cichu.
+    #
+    # To ten sam błąd, co przy rozszczepieniu T1/T2 niżej, naprawiony w tym pliku po raz drugi:
+    # dwa niezależne warunki splątane w jednej nazwie. Stąd dwie nazwy zamiast jednej.
+    bramka_odczytu_dziala = note_read_authorizer is not None
     notes_read_factory = (
-        _build_notes_read_factory(settings, note_read_authorizer, enable_write=enable_write)
-        if notes_read_gated and note_read_authorizer is not None
+        _build_notes_read_factory(
+            settings,
+            note_read_authorizer,
+            enable_write=enable_write,
+            shell_available=shell_factory is not None,
+        )
+        if note_read_authorizer is not None
         else None
     )
     # Bramka MUTACJI bazy wiedzy (ADR 0065). Dwa warunki i oba są konieczne: przełącznik
@@ -399,8 +415,9 @@ def build_conversational_responder(
         # (POSIX-only). Rozjazd oznaczałby agenta bez powłoki I bez narzędzi odczytu, czyli
         # bez jakiejkolwiek drogi do bazy wiedzy — po cichu.
         shell_available=shell_factory is not None,
-        # Bez powłoki i z bramką odczytu (ADR 0062): narzędzia odczytu przejmuje fabryka per turę.
-        suppress_notes_read=notes_read_gated,
+        # Z bramką odczytu (ADR 0062) całą powierzchnię bazy wiedzy przejmuje fabryka per turę —
+        # także przy włączonej powłoce, bo ``Project`` serwuje treść niezależnie od niej.
+        suppress_notes_read=bramka_odczytu_dziala,
     )
     store = SqliteConversationStore(conversation_settings.db_path)
     conversations = ConversationService(
@@ -496,12 +513,15 @@ def build_conversational_responder(
         # Rozszczepienie T1/T2 jedzie za bramką 0062, bo obie zależą od kompletności mapy:
         # ten sam autoryzator, jedno rozwiązanie tożsamości na turę (ADR 0066 R4).
         #
-        # Warunek to SAMA obecność autoryzatora — NIE ``notes_read_gated``. Tamten niesie
-        # dodatkowo ``shell_factory is None``, bo z powłoką typowane narzędzia odczytu i tak
-        # nie wchodzą do katalogu. Pochodzenie treści nie ma z tym nic wspólnego: pod tamtym
-        # warunkiem rozszczepienie WYGASAŁO po cichu przy włączonej powłoce — czyli dokładnie
-        # w układzie docelowym — a tekst gościa wracał do rangi instrukcji i audyt notował
-        # „unknown". Splątanie dwóch niezależnych warunków w jednej nazwie.
+        # Warunek to SAMA obecność autoryzatora. Historycznie stała tu obrona przed
+        # ``notes_read_gated``, który niósł dodatkowo ``shell_factory is None`` — pod nim
+        # rozszczepienie WYGASAŁO po cichu przy włączonej powłoce, czyli dokładnie w układzie
+        # docelowym, a tekst gościa wracał do rangi instrukcji i audyt notował „unknown".
+        #
+        # Ta pułapka zniknęła u ŹRÓDŁA: warunek bramki odczytu to dziś ``bramka_odczytu_dziala``
+        # i też jest samą obecnością autoryzatora (patrz wyżej — ten sam błąd naprawiony w tym
+        # pliku po raz drugi, bo za pierwszym razem naprawiono go tylko tutaj, a nie tam, gdzie
+        # powstawał). Zdanie zostaje jako zapis, dlaczego oba warunki brzmią tak, a nie inaczej.
         sender_trust=(
             note_read_authorizer.trust_class if note_read_authorizer is not None else None
         ),

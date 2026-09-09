@@ -91,15 +91,19 @@ def build_my_jira_tasks_catalog(service: MyJiraTasksService) -> list[ToolSpec]:
 
         return _envelope(build, errors=(WorkMateError, ValidationError))
 
+    # ``taints=True`` na OBU powierzchniach — pochodzenie treści jest identyczne, a metadana
+    # opisuje NARZĘDZIE, nie drzwi (ADR 0073). Powierzchnia MCP nie ma rozmowy, którą można
+    # skazić, ale rozjazd wartości między powierzchniami znaczyłby, że ta sama treść ma dwie
+    # odpowiedzi zależnie od tego, którymi drzwiami weszła.
     return [
         ToolSpec(
-            "get_my_jira_tasks", get_my_jira_tasks.__doc__ or "", get_my_jira_tasks, taints=False
+            "get_my_jira_tasks", get_my_jira_tasks.__doc__ or "", get_my_jira_tasks, taints=True
         ),
         ToolSpec(
             "get_my_jira_history",
             get_my_jira_history.__doc__ or "",
             get_my_jira_history,
-            taints=False,
+            taints=True,
         ),
     ]
 
@@ -351,4 +355,13 @@ def build_jira_catalog(  # noqa: C901
 
         return _envelope(szukaj, errors=(WorkMateError, ValidationError))
 
-    return [ToolSpec("Jira", _JIRA_DESC, jira, taints=False)]
+    # ``taints=True`` (ADR 0066, dopisek 2026-09-09). Akcja ``task`` oddaje ``description``
+    # i do pięciu komentarzy DOSŁOWNIE, a pisze je ktokolwiek z kontem w Jirze — czyli ta sama
+    # klasa autorstwa, co treści zgłoszeń GitHuba, które zbiór wyzwalaczy ADR 0066 wymienia
+    # wprost. ``Activity``, stojące nad tą samą klasą, ma ``True`` od początku.
+    #
+    # Poprzednie ``False`` miało zapisany powód („treść zza bramek zdolności; gdyby skaziła,
+    # każda rozmowa byłaby skażona"), tylko że ten powód mierzy, KTO MOŻE ZAWOŁAĆ narzędzie,
+    # a wyzwalacz z ADR 0066 pyta, KTO NAPISAŁ TREŚĆ. Te dwie rzeczy rozjeżdżają się dokładnie
+    # tutaj: Jira stoi za bramką zdolności i jednocześnie niesie tekst osób spoza mapy.
+    return [ToolSpec("Jira", _JIRA_DESC, jira, taints=True)]

@@ -134,6 +134,7 @@ def _build_notes_read_factory(
     authorizer: NoteReadAuthorizer,
     *,
     enable_write: bool = False,
+    shell_available: bool = False,
 ) -> Callable[[str], list[ToolSpec]]:
     """Per-turowa fabryka CAŁEJ powierzchni bazy wiedzy, bramkowana NADAWCĄ (ADR 0062).
 
@@ -152,6 +153,12 @@ def _build_notes_read_factory(
 
     ``enable_write`` przenosi profil zapisu drzwi (ADR 0006) na tę fabrykę — inaczej złożenie
     ``Project`` tutaj cicho zabrałoby drzwiom zaufanym akcję ``save``.
+
+    ``shell_available`` steruje SAMĄ TRÓJKĄ odczytu, nie bramką. Z powłoką trójka jest zbędna
+    (``workmate-search`` plus ``cat`` na montażu ``ro``), więc fabryka niesie sam ``Project`` —
+    ale niesie go NADAL, bo to on serwuje treść i to on musi zostać za bramką. Wcześniej cała
+    fabryka wygasała przy włączonej powłoce i ``Project`` wracał do katalogu bazowego, czyli
+    obok bramki. Patrz ``agent_wiring.__init__`` przy ``bramka_odczytu_dziala``.
     """
     notes, projects = _read_services(settings)
     write_service = (
@@ -173,11 +180,13 @@ def _build_notes_read_factory(
         return refuse
 
     def factory(sender_id: str) -> list[ToolSpec]:
-        # Fabryka wpina się WYŁĄCZNIE bez powłoki (``notes_read_gated``), bo z powłoką agent
-        # czyta montaż ``ro`` i bramka i tak nie sięga.
+        # Z powłoką trójka odczytu jest zbędna — ale ``Project`` zostaje, bo bramka dotyczy
+        # POWIERZCHNI SERWUJĄCEJ TREŚĆ, a nie tego, czy istnieje druga droga do tej samej treści.
+        # (Że powłoka czyta montaż ``ro`` obok bramki, mówi ADR 0062 §Ryzyko resztkowe. To
+        # osobne ryzyko, przyjęte świadomie, i nie jest powodem, żeby otwierać drogę TRZECIĄ.)
         catalog = [
             *build_project_catalog(projects, write_service=write_service),
-            *build_agent_notes_read_catalog(notes, projects),
+            *([] if shell_available else build_agent_notes_read_catalog(notes, projects)),
         ]
         try:
             authorizer.authorize(sender_id)

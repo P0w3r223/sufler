@@ -292,3 +292,44 @@ wrong about a knowledge-base mutation.
 **Not changed:** stickiness, restart survival, first-source-wins, and the rollover/compaction rules of
 Decision 3 — the taint is still one row-level fact, written idempotently, and the observer lights it
 once per turn rather than once per call.
+
+---
+
+## Amendment 2026-09-09 — Jira joins the taint trigger set
+
+**What changes.** `Jira` (agent surface) and `get_my_jira_tasks` / `get_my_jira_history`
+(MCP surface) move from `taints=False` to `taints=True`.
+
+**Why the previous answer did not survive comparison.** The `False` was not undocumented — the
+ADR 0073 registry carried a reason: *"content from behind capability gates; if it tainted, every
+conversation would be tainted and the signal would mean nothing (R2)"*. The reason is real, but it
+answers a different question than the trigger set asks. **A capability gate says who may CALL the
+tool. The trigger set asks who WROTE the content.** For notes and events those two coincide — the
+content is the division's own. For Jira they do not: the tool sits behind a capability gate and
+still returns `description` plus up to five comments **verbatim**, written by anyone holding a Jira
+account, mapped or not.
+
+The open question above already names the neighbouring case explicitly — *"GitHub issue/PR/comment
+bodies whose author is not mapped"* taints — and `Activity`, which stands over exactly that class,
+has carried `taints=True` from the start. Jira comments are the same authorship class by every
+property that matters here. Leaving the two apart meant the same kind of foreign text tainted or
+did not depending on which external system it arrived from.
+
+**Why this does not re-open R2.** R2 is about content the bot reads *constantly*. Jira reads are a
+deliberate, requested action on a channel that averages single-digit turns per month; notes and
+events — the genuinely constant reads — keep `False`. The signal stays rare enough to mean something.
+
+**The cost, stated plainly rather than discovered later.** After any Jira read, the conversation is
+tainted, so a subsequent knowledge-base mutation in that same conversation takes the stricter judge
+path of ADR 0065. That is a real cost paid by a real workflow ("show me WT-5, now correct the note
+about it"), and it is the content of this amendment, not a side effect. **If the owner judges the
+cost too high, the way to say so is a decision recorded here that names what distinguishes Jira
+from `Activity`** — not a flag returned to `False`.
+
+**Coarseness accepted, and named.** The trigger set is written per *author* ("whose author is not
+mapped"), while `ToolSpec.taints` is static per *tool*. This amendment therefore over-taints: a Jira
+issue written entirely by a mapped member taints all the same. That coarsening is not new — it is
+exactly how `Activity` has always implemented the GitHub half of the same sentence. Per-author
+taint would need provenance to travel with each returned item; that is a larger change, and this
+amendment deliberately does not make it. It is recorded here so the next reader does not mistake
+the coarseness for an oversight.

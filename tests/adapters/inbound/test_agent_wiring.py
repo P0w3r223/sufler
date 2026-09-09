@@ -127,6 +127,12 @@ class _StubReadAuthz:
         if requester_aad_id not in self._allowed:
             raise NoteAuthorizationError("nierozpoznany nadawca (stub, ADR 0062)")
 
+    def trust_class(self, requester_aad_id: str) -> str:
+        """Rozszczepienie T1/T2 (ADR 0066) jedzie za tą samą bramką i z tego samego rozwiązania
+        tożsamości (R4), więc atrapa musi umieć jedno i drugie — inaczej sonda powierzchni
+        wywraca się na wiringu, a nie na regule, którą mierzy."""
+        return "T1" if requester_aad_id in self._allowed else "T2"
+
 
 def test_notes_read_factory_recognized_member_gets_real_tools(tmp_path: Path):
     factory = _build_notes_read_factory(_settings(tmp_path), _StubReadAuthz({"aad-ok"}))
@@ -185,6 +191,23 @@ def test_base_catalog_offers_no_knowledge_base_tool_when_the_gate_owns_them(tmp_
     bazowe = build_project_catalog(projects)
 
     assert [t.name for t in bazowe] == ["Project"]  # to właśnie znika przy suppress_notes_read
+
+
+def test_z_powloka_fabryka_niesie_sam_Project_bez_trojki_odczytu(tmp_path: Path):
+    """Z powłoką trójka odczytu jest zbędna, ale ``Project`` MUSI zostać za bramką.
+
+    To on serwuje treść (``action='status'`` zwraca syntezę z notatek pionu), więc zdjęcie go
+    razem z trójką otworzyłoby drogę obok bramki — dokładnie tę, którą ADR 0062 zamykał.
+    """
+    factory = _build_notes_read_factory(
+        _settings(tmp_path), _StubReadAuthz({"aad-ok"}), shell_available=True
+    )
+
+    assert [t.name for t in factory("aad-ok")] == ["Project"]
+
+    odmowa = next(t for t in factory("aad-obcy") if t.name == "Project")
+    out = odmowa.fn(action="status", project="workmate")
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out["error"]
 
 
 # --- build_conversational_responder: SafeResponder vs goły ----------------------
@@ -448,18 +471,25 @@ class _RecordingLLM:
 
     def __init__(self, *_a: object, **_k: object) -> None:
         self.tool_names: list[str] = []
+        self.tools: list = []
 
     def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
         from workmate.core.domain.pricing import TokenUsage
         from workmate.core.ports.llm import LLMResponse
 
+        self.tools = list(tools)
         self.tool_names = [spec.name for spec in tools]
         return LLMResponse(text="ok", stop_reason="end_turn", usage=TokenUsage())
 
 
-def _zmontowana_powierzchnia(
-    tmp_path, monkeypatch, *, powloka: bool, file_reply: bool
-) -> list[str]:
+def _zmontowana_powierzchnia(tmp_path, monkeypatch, **kwargs) -> list[str]:
+    """Same NAZWY — dla sond, które pytają o skład powierzchni."""
+    return [spec.name for spec in _zmontowany_katalog(tmp_path, monkeypatch, **kwargs)]
+
+
+def _zmontowany_katalog(
+    tmp_path, monkeypatch, *, powloka: bool, file_reply: bool, authorizer=None
+) -> list:
     """Zwróć nazwy narzędzi, jakie model dostaje w turze z realnego respondera.
 
     GitHub/Jira/Schedule wchodzą jako statyczne STUBY drzwi (ADR 0019/0020) — ich wnętrze ma
@@ -472,6 +502,8 @@ def _zmontowana_powierzchnia(
     def _stub(name: str) -> ToolSpec:
         return ToolSpec(name, "", lambda **_kw: {})
 
+    tmp_path = Path(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
     recording = _RecordingLLM()
     monkeypatch.setattr(
         "workmate.adapters.outbound.anthropic_llm.AnthropicLLMClient",
@@ -497,9 +529,10 @@ def _zmontowana_powierzchnia(
         extra_catalog=[_stub("Activity"), _stub("Schedule")],
         my_jira_tasks_factory=lambda sender: [_stub("Jira")],
         thread_tool_factory=(lambda ext: [_stub("ReplyWithFile")]) if file_reply else None,
+        note_read_authorizer=authorizer,
     )
     asyncio.run(responder.respond(InboundMessage(text="q", conversation_id="c", sender_id="u-1")))
-    return recording.tool_names
+    return recording.tools
 
 
 def test_uklad_docelowy_zamrozony_na_piatce_bez_szostego_narzedzia(tmp_path: Path, monkeypatch):
@@ -512,6 +545,57 @@ def test_uklad_docelowy_zamrozony_na_piatce_bez_szostego_narzedzia(tmp_path: Pat
     nazwy = _zmontowana_powierzchnia(tmp_path, monkeypatch, powloka=True, file_reply=True)
     assert set(nazwy) == {"Bash", "Project", "Activity", "Jira", "Schedule"}
     assert "ReplyWithFile" not in nazwy
+
+
+def test_bramka_odczytu_nie_wygasa_przy_wlaczonej_powloce(tmp_path: Path, monkeypatch):
+    """Regresja U1, mierzona na ZMONTOWANEJ POWIERZCHNI — tej, którą dostaje model.
+
+    Przed poprawką warunek bramki brzmiał ``authorizer is not None and shell_factory is None``,
+    z uzasadnieniem „z powłoką narzędzi odczytu i tak nie ma". Dla trójki to prawda, dla
+    ``Project`` nie: ``build_project_catalog`` nie zależy od ``shell_available`` wcale, więc
+    przy ``ENABLE_SHELL=true`` ``Project`` zostawał w katalogu BAZOWYM — poza bramką, i po cichu.
+    Bramka wygasała dokładnie w układzie docelowym.
+
+    **Sonda WOŁA narzędzie, zamiast je liczyć, i to jest jej treść.** Pierwsza redakcja pytała
+    o ``count("Project") == 1`` — a to przechodzi także dla stanu SPRZED poprawki, gdzie
+    jedyny ``Project`` w powierzchni jest tym spoza bramki. Liczba narzędzi nie odróżnia
+    bramkowanego od niebramkowanego; odróżnia je dopiero odpowiedź dla obcego nadawcy.
+    """
+    katalog = _zmontowany_katalog(
+        tmp_path / "obcy",
+        monkeypatch,
+        powloka=True,
+        file_reply=False,
+        authorizer=_StubReadAuthz(set()),  # nadawca `u-1` NIE jest zmapowany
+    )
+    nazwy = [spec.name for spec in katalog]
+    projekty = [spec for spec in katalog if spec.name == "Project"]
+    assert len(projekty) == 1, f"drugi ``Project`` obok bramki: {nazwy}"
+
+    out = projekty[0].fn(action="status", project="workmate")
+    assert "Brak uprawnień do odczytu bazy wiedzy" in out.get("error", ""), (
+        "``Project`` w powierzchni modelu NIE jest tym zza bramki — czyli bramka odczytu "
+        f"wygasła przy włączonej powłoce. Powierzchnia: {nazwy}"
+    )
+    assert "Bash" in nazwy  # powłoka nietknięta — bramka dotyczy powierzchni notatek
+
+
+def test_bramka_odczytu_z_powloka_daje_zmapowanemu_dzialajacy_Project(tmp_path: Path, monkeypatch):
+    """Druga połowa: bramka ma PRZEPUSZCZAĆ, a nie tylko odmawiać.
+
+    Bez tej sondy poprzednią spełniałby też kod, który zawsze odmawia — a to nie jest bramka,
+    tylko awaria wyglądająca na bezpieczeństwo.
+    """
+    katalog = _zmontowany_katalog(
+        tmp_path / "zmapowany",
+        monkeypatch,
+        powloka=True,
+        file_reply=False,
+        authorizer=_StubReadAuthz({"u-1"}),
+    )
+    projekt = next(spec for spec in katalog if spec.name == "Project")
+    out = projekt.fn(action="status", project="workmate")
+    assert "Brak uprawnień" not in str(out.get("error", ""))
 
 
 def test_bez_powloki_reply_with_file_jest_w_zmontowanej_powierzchni(tmp_path: Path, monkeypatch):
