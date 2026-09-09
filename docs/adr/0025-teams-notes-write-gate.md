@@ -8,6 +8,26 @@ Related to: docs/adr/0006-write-capability-gate-2.md, docs/adr/0015-teams-delega
 
 ---
 
+> **Stan zmierzony 2026-09-09 — decyzja właściciela do podjęcia, `proposed` od 2026-07-17 (54 dni).**
+>
+> Mechanizm z tego ADR-u **nie powstał**: `teams_graph/app.py:378` nadal podaje `enable_write=False`
+> na sztywno, a flagi `WORKMATE_TEAMS_GRAPH_ENABLE_NOTES_WRITE` nie ma w `TeamsGraphSettings`.
+>
+> **Czego ten ADR NIE stracił na rzecz ADR 0065**, choć wygląda, jakby stracił, i sprawdzenie tego
+> jest tu zapisane, żeby nikt nie zamykał go drugi raz na skróty: ADR 0065 uczynił bazę wiedzy
+> mutowalną i **jest na produkcji** (`ENABLE_NOTE_MUTATION=true`), ale obejmuje wyłącznie `edit`
+> i `delete` na notatkach ISTNIEJĄCYCH. `core/domain/mutation.py:25-27` mówi wprost, że
+> **`write` (utworzenie nowej notatki) mutacją NIE jest** i idzie dawną ścieżką create-only.
+> Tworzenie notatek z drzwi Teams — czyli dokładnie przedmiot tego ADR-u — pozostaje więc
+> niezaimplementowane, a `Status: proposed` jest stanem prawdziwym, nie zaległością redakcyjną.
+>
+> Do rozstrzygnięcia jest jedno: **przyjąć i zbudować A1, przejść od razu na A2, czy wycofać ADR.**
+> A2 („twarde potwierdzenie w wątku od zweryfikowanej tury użytkownika") jest dziś w systemie
+> zbudowany — to werdykt `confirm` sędziego z ADR 0065 — więc koszt A2 spadł od czasu napisania
+> tego dokumentu i wybór między A1 a A2 wygląda inaczej niż w lipcu.
+
+---
+
 ## Context
 
 The `teams_graph` door builds its conversational responder with `enable_write=False` hardcoded

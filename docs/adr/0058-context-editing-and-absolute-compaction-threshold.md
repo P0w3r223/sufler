@@ -3,7 +3,7 @@
 Date: 2026-08-05
 Status: accepted
 Author: P0w3r223
-Related to: docs/adr/0011-adaptive-thinking-and-replayable-turns.md,
+Related to: docs/adr/0011-stateful-lossless-conversation-memory.md,
   docs/adr/0014-conversation-compaction.md
 Amends: ADR 0014 (compaction threshold: fraction of the model window → absolute token count)
 

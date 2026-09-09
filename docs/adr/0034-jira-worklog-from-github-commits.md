@@ -4,7 +4,7 @@ Date: 2026-07-20
 Status: superseded in part by ADR 0035 (write path removed 2026-07-21)
 Author: P0w3r223
 Related to: docs/adr/0006-write-capability-gate-2.md,
-  docs/adr/0020-github-read-door.md,
+  docs/adr/0020-github-delegated-polling-door.md,
   docs/adr/0021-github-write-capability-gate-4.md,
   docs/adr/0031-jira-write-capability-gate-5.md,
   docs/adr/0032-jira-status-transition-capability.md,

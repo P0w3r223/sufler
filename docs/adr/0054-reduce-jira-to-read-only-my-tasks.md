@@ -5,7 +5,7 @@ Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0028-project-repo-jira-mapping-and-event-dimension.md,
   docs/adr/0030-jira-server-read-door.md, docs/adr/0031-jira-write-capability-gate-5.md,
-  docs/adr/0032-jira-status-transition-capability.md, docs/adr/0033-jira-cloud-provider-variant.md,
+  docs/adr/0032-jira-status-transition-capability.md, docs/adr/0033-jira-cloud-support.md,
   docs/adr/0042-meeting-note-sender-authorization.md
 
 ---

@@ -39,6 +39,11 @@ _NAZWA_PLIKU = re.compile(r"^(\d{4})[-_][a-z0-9_-]+\.md$")
 # więcej niż wnosi, a numer da się odczytać z każdej z nich.
 _NAGLOWEK = re.compile(r"^#\s*(?:ADR\s+)?(\d{4})\s*[.—-]")
 
+# Dwie postaci cytowania ADR żyjące w tym drzewie obok siebie. Pierwsza — ścieżka od korzenia —
+# stoi w nagłówkach `Related to:`. Druga — odsyłacz względny — w `roadmap.md` i w `docs/how-to/`.
+_ODSYLACZ_OD_KORZENIA = re.compile(r"docs/adr/(\d{4}[-_][a-z0-9_-]+\.md)")
+_ODSYLACZ_WZGLEDNY = re.compile(r"\]\(((?:\.\./)*)adr/(\d{4}[-_][a-z0-9_-]+\.md)(?:#[^)]*)?\)")
+
 
 def _pliki_adr() -> list[Path]:
     return sorted(p for p in _ADR_DIR.glob("*.md") if p.name != "README.md")
@@ -67,7 +72,36 @@ def test_kazdy_numer_nalezy_do_jednej_decyzji() -> None:
     assert not kolizje, f"numer ADR użyty więcej niż raz: {kolizje}"
 
 
-def test_wejsciowe_dokumenty_nie_maja_martwych_odsylaczy_do_adr() -> None:
+def _odsylacze_do_adr(dokument: Path) -> list[tuple[int, str, Path]]:
+    """Zwróć `(numer_linii, tekst_odsyłacza, ścieżka_celu)` dla każdego cytowania ADR.
+
+    Dwie postaci, bo repozytorium używa obu i **poprzednia wersja tej bramki widziała
+    tylko pierwszą**: ścieżkę od korzenia (`docs/adr/0008-….md`, tak piszą nagłówki
+    `Related to:`) oraz odsyłacz względny (`](adr/0008-….md)`, `](../adr/0008-….md)` —
+    tak cytuje `roadmap.md` i cały `docs/how-to/`. Postać względna była poza zasięgiem
+    wyrażenia, więc renumeracja mogła zerwać odsyłacz w roadmapie przy bramce zielonej.
+    """
+    trafienia: list[tuple[int, str, Path]] = []
+    for numer, linia in enumerate(dokument.read_text(encoding="utf-8").splitlines(), 1):
+        for cel in _ODSYLACZ_OD_KORZENIA.findall(linia):
+            trafienia.append((numer, f"docs/adr/{cel}", _ADR_DIR / cel))
+        for przedrostek, cel in _ODSYLACZ_WZGLEDNY.findall(linia):
+            trafienia.append((numer, f"{przedrostek}adr/{cel}", dokument.parent / przedrostek / "adr" / cel))
+    return trafienia
+
+
+def _dokumenty_objete_bramka() -> list[Path]:
+    """README i CHANGELOG z korzenia plus **całe `docs/`**, razem z samymi ADR-ami.
+
+    Podprojekty (`Powiadomienia_teams/`, `claude_summary/`) mają własne katalogi decyzji
+    i własne numeracje — ich odsyłacze rozwiązują się względem ich korzeni, nie tego.
+    """
+    korzen = _ADR_DIR.parents[1]
+    z_korzenia = [korzen / nazwa for nazwa in ("README.md", "CHANGELOG.md")]
+    return [p for p in [*z_korzenia, *sorted((korzen / "docs").rglob("*.md"))] if p.is_file()]
+
+
+def test_dokumenty_nie_maja_martwych_odsylaczy_do_adr() -> None:
     """Renumeracja bez poprawienia cytowań daje odsyłacz do pliku, którego nie ma.
 
     Ta klasa błędu przeżyła renumerację `0056/0057` → `0059/0060`: w `README.md` poprawiony
@@ -75,23 +109,42 @@ def test_wejsciowe_dokumenty_nie_maja_martwych_odsylaczy_do_adr() -> None:
     został pominięty. Pozostałe bramki tego modułu patrzą na nazwy plików i nagłówki,
     więc żadna nie mogła tego zobaczyć.
 
-    Zakres to dokumenty WEJŚCIOWE. Wzajemne odsyłacze między samymi ADR-ami niosą dług
-    historyczny (nagłówki `Related to:` wskazują decyzje wycofane albo nigdy niezapisane),
-    którego porządkowanie jest osobną pracą — bramka zapalona na nim od pierwszego dnia
-    uczyłaby ignorowania bramki.
+    **Zakres poszerzony 2026-09-09 — i to jest właściwa treść zmiany.** Bramka sprawdzała
+    rozwiązywalność od pierwszego dnia, ale wyłącznie w dokumentach WEJŚCIOWYCH, świadomie
+    omijając odsyłacze między samymi ADR-ami: niosły dług historyczny, a bramka zapalona na
+    nim od pierwszego dnia uczyłaby ignorowania bramki. Dług został spłacony w tym samym
+    commicie — siedem martwych odsyłaczy w nagłówkach `Related to:` ADR-ów 0034/0054/0058/
+    0059/0060, wszystkie ten sam wzorzec: **numer poprawny, slug ze starej nazwy pliku**
+    (`0020-github-read-door` → `0020-github-delegated-polling-door`). Powód wyłączenia
+    zniknął razem z długiem, więc wyłączenie znika też.
+
+    Czego ta bramka nadal NIE sprawdza, żeby następna sesja nie odkrywała tego drugi raz:
+    odsyłaczy `.md` **innych niż do ADR** (zmierzone 2026-09-09: 406 w drzewie, zero
+    martwych) i podprojektów, które mają własne katalogi decyzji.
     """
-    korzen = _ADR_DIR.parents[1]
-    odsylacz = re.compile(r"docs/adr/(\d{4}[-_][a-z0-9_-]+\.md)")
-    martwe: list[str] = []
-    for nazwa in ("README.md", "CHANGELOG.md"):
-        dokument = korzen / nazwa
-        if not dokument.is_file():
-            continue
-        for numer, linia in enumerate(dokument.read_text(encoding="utf-8").splitlines(), 1):
-            for cel in odsylacz.findall(linia):
-                if not (_ADR_DIR / cel).is_file():
-                    martwe.append(f"{nazwa}:{numer} → docs/adr/{cel}")
+    martwe = [
+        f"{dokument.relative_to(_ADR_DIR.parents[1])}:{numer} → {tekst}"
+        for dokument in _dokumenty_objete_bramka()
+        for numer, tekst, cel in _odsylacze_do_adr(dokument)
+        if not cel.is_file()
+    ]
     assert not martwe, f"odsyłacze do nieistniejących ADR: {martwe}"
+
+
+def test_bramka_odsylaczy_widzi_obie_postaci_cytowania(tmp_path: Path) -> None:
+    """Sprawdzenie samej bramki: martwy cel ma być widziany w obu postaciach zapisu.
+
+    Bez tego poszerzenie zakresu byłoby nieodróżnialne od poszerzenia, które nic nie łapie —
+    a właśnie tego rodzaju strażnika ten projekt znalazł u siebie już pięć razy.
+    """
+    dokument = tmp_path / "przyklad.md"
+    dokument.write_text(
+        "od korzenia: docs/adr/9999-nie-ma-takiego.md\n"
+        "wzglednie: [ADR 9998](../adr/9998-tez-nie-ma.md)\n",
+        encoding="utf-8",
+    )
+    znalezione = {tekst for _, tekst, cel in _odsylacze_do_adr(dokument) if not cel.is_file()}
+    assert znalezione == {"docs/adr/9999-nie-ma-takiego.md", "../adr/9998-tez-nie-ma.md"}
 
 
 def test_numer_w_naglowku_zgadza_sie_z_nazwa_pliku() -> None:

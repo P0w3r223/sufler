@@ -102,6 +102,7 @@ schemat, opis do rozróżnienia i pozycję do rozważenia w każdej turze. Dlate
 się w jedno narzędzie z polem `action`.
 
 **Zanim dołożysz cokolwiek — sprawdź, czy powłoka `Bash` tego nie robi.** Kryterium z ADR 0009
+**paczki wdrożeniowej** (`docs/decyzje/0009-konsolidacja-powierzchni-narzedziowej.md`, nie lokalnego 0009)
 to *bariera*, nie *temat*: narzędzie typowane powstaje tylko tam, gdzie powłoka w kontenerze
 wykonawcy **nie może** dosięgnąć — brak sieci (Jira, GitHub, Shifts), brak wolumenu `workmate-state`
 (`events.db`), brak drogi do kontekstu modelu (binaria), skutek poza kontenerem (dostawa, zapis
