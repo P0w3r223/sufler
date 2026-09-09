@@ -125,7 +125,7 @@ expire on 31.12.2026.
 
 - **Pros**: zero effort, zero new data, zero new surface, nothing to delete later. The problem
   genuinely does end by itself in under four months.
-- **Cons**: every PKD query keeps returning a silent subset (25.2 % of the register) for those four
+- **Cons**: every PKD query keeps returning a silent subset (8.6 % of the sample) for those four
   months. Worse, it changes what gate 3 *measures*: the acceptance criterion is "a person without
   API knowledge reaches a finished file", and steering the walk away from the affected trades makes
   the gate pass on the easy case while the failure mode it was meant to expose stays live. The
@@ -200,7 +200,7 @@ table; no further count is spent.
 
 ## Decision
 
-**Option E.** The gap is 25.2 % of the register and lands hardest on ordinary trades; the argument
+**Option E.** The gap is 8.6 % of the sample and lands hardest on ordinary trades; the argument
 for doing nothing is a fact about a regulation rather than about the data, and gate 3's own walk is
 the case the tool handles worst. Between the sub-options, the deciding argument is that this project
 has twice held that a screen the operator acts on must carry the *consequence*, not just the fact:

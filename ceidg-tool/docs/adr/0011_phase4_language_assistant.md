@@ -249,7 +249,16 @@ empty register. The dictionary is the only thing standing between that sentence 
 **Where it lives**: `ceidg_tool/data/pkd2007.yaml`, a mapping `kod -> nazwa` in the canonical compact
 form the validator produces (`6201Z`), **sorted by code**, one entry per line, with a header comment
 naming the legal source (rozporządzenie RM z 24.12.2007 w sprawie PKD, Dz.U. 2007 nr 251 poz. 1885),
-the retrieval date and the retrieval URL. `pyproject.toml`'s `[tool.setuptools.package-data]` gains
+the retrieval date and the retrieval URL.
+
+> **Corrected 2026-09-09.** The file that shipped is **`ceidg_tool/data/pkd2025.yaml`** (728
+> subclasses), and its legal basis is therefore **rozporządzenie RM z 18.12.2024, Dz.U. 2024 poz.
+> 1936**, in force from 1.01.2025 with the transition from PKD 2007 running to 31.12.2026 — the
+> header of the generated file is the authority, not this paragraph. The vintage correction is
+> recorded further down; the Dz.U. reference above was left pointing at the 2007 regulation, which
+> is exactly the reference-data-from-memory trap this project names as its worst.
+
+`pyproject.toml`'s `[tool.setuptools.package-data]` gains
 `data/*.yaml` beside the existing `profiles/*.yaml`. Loading mirrors `apiprofile.load_profile`: a
 pure `load_pkd(path=DEFAULT)` so tests can substitute a five-entry dictionary.
 
@@ -282,8 +291,11 @@ messages= [ user: today's date + the operator's sentence ]   <- after the breakp
 Order matters: stable content first, volatile last. Claude Opus 5's minimum cacheable prefix is 512
 tokens, so the dictionary caches comfortably.
 
-Estimated cost, to be **replaced by a measurement** with `client.messages.count_tokens` before
-shipping (this project's habit since phase 3d is measured, not assumed): 654 entries × ~62 characters
+Estimated cost, ~~to be **replaced by a measurement**~~ — **measured 2026-09-07, run A7: 24 854
+tokens read from cache on every call after the first**, so the operator-facing figure is ~25k, not
+the 13k that reached `ui/texts.py` from an earlier draft (corrected 2026-09-09). The estimate below
+also predates the shipped dictionary, which has **728** subclasses rather than 654, and it assumed
+PKD 2007. Estimate as written: 654 entries × ~62 characters
 of Polish ≈ 40 kB ≈ **15-20k tokens**, plus ~1.5k of instructions. At $5/MTok input that is roughly
 **$0.09 uncached, $0.11 on the first call including the 1.25× write premium, ~$0.01 on a follow-up
 within five minutes**. Output at low effort is a small JSON object plus adaptive thinking, another
@@ -304,7 +316,8 @@ fixture. Measurement says **2025**: every `rokPkd` the register returned carries
 2025; the rejection message names the vintage explicitly, because rejecting a code from another
 vintage looks to the operator exactly like a model error. What the `pkd` query parameter indexes was
 measured on 2026-09-07: it matches the code **as stored**, and each record carries one vintage while
-the transition runs, so a 2025-only dictionary cannot reach 25.2 % of the register. See
+the transition runs, so a 2025-only dictionary cannot reach 8.6 % of the sampled records at all
+(corrected 2026-09-09 from 25.2 %, which counts records whose *main* code is absent). See
 `docs/decisions.md`.
 
 ---
@@ -339,7 +352,12 @@ The instruction is explicit and this is how it is met structurally rather than b
 ```
 SPOLKI_W_KRS · BRAK_DANYCH_FINANSOWYCH · DATA_TYLKO_ROZPOCZECIE · KONTAKTY_OPCJONALNE
 BRAK_FILTRA_WIELKOSCI · BRAK_FILTRA_BRANZY_POZA_PKD · TYLKO_JDG · RAPORT_BEZ_WYKRESLONYCH
+KOD_PKD_Z_INNEGO_ROCZNIKA
 ```
+
+The ninth member was added after test run A5 (2026-09-07), which found the model translating a PKD
+2007 code the operator typed into its 2025 successor **silently**; this ADR listed eight until
+2026-09-09.
 
 The model chooses **which** limitations apply. The Polish sentence for each lives in `ui/texts.py`,
 authored by us, in the message-catalogue style ADR-0009 established for `cli.py`. The confirmation
@@ -547,7 +565,7 @@ All offline, no TTY, no network, on a `ScriptedAssistant` / `ScriptedCaller` and
 | **F4** | **Medium** | `ui/texts.py:84` hard-codes *"dokąd wysyła dane: wyłącznie do API CEIDG (…); brak telemetrii"*. §A makes the first screen an acceptance criterion, and `tests/test_ui_texts.py` pins its content. Shipping the assistant without changing that row makes an acceptance-criterion screen state a falsehood about where personal-adjacent text goes. |
 | **F5** | **Medium** | The `anthropic` SDK resolves credentials from an ambient chain (`ANTHROPIC_API_KEY` → `ANTHROPIC_AUTH_TOKEN` → an `ant auth login` profile on disk → workload-identity env vars). A bare `Anthropic()` would therefore spend a credential the tool never asked for, which `sprawdz-token` could not describe, and would make the offline suite's behaviour depend on the developer's `~/.config/anthropic/`. `api_key=` must always be explicit; rule 12 is what makes that checkable. |
 | **F6** | **Medium** | `progress.Events` carries five channels (`on_request`/`on_wait` aside: `on_page`, `on_details`, `on_export`, `on_download`, plus `on_message`). ADR-0010's closing paragraph named **five** as the trigger to generalise the protocol into one stage-keyed event. Phase 4 needs a sixth, so the trigger has fired. This ADR takes the sixth channel and defers the refactor deliberately (Decision 8, option C) rather than letting the trigger pass unremarked. |
-| **F7** | **Medium — confirmed 2026-09-07, and the conclusion inverted** | The finding was right that nothing in the tree distinguishes PKD vintages, and wrong about which vintage applies. It cited `tests/conftest.py` as evidence that "the API returns `rokPkd: 2007`" — but that line is a **hand-written test double**, not a measurement. Every `rokPkd` in real API data says **2025** (11 occurrences, three files; see `docs/decisions.md`). The dictionary is therefore PKD **2025**, and the risk the finding described was real but pointing the other way: a 2007 dictionary would have rejected codes the register actually uses, such as `4933Z`, which exists only in the newer classification. The fixture has been corrected so the double no longer contradicts the API. **Measured 2026-09-07**: the `pkd` **query parameter** matches the code as stored on the record, and the register is mid-transition — 58.6 % of 285 026 real records still carry PKD 2007 codes, and 25.2 % of them are unreachable by any code in the 2025 dictionary. The dictionary stays 2025 (that is what the register returns in `rokPkd` and where the confirmation screen's names come from), but it is **not sufficient on its own** until the transition ends on 31.12.2026. See `docs/decisions.md`. |
+| **F7** | **Medium — confirmed 2026-09-07, and the conclusion inverted** | The finding was right that nothing in the tree distinguishes PKD vintages, and wrong about which vintage applies. It cited `tests/conftest.py` as evidence that "the API returns `rokPkd: 2007`" — but that line is a **hand-written test double**, not a measurement. Every `rokPkd` in real API data says **2025** (11 occurrences, three files; see `docs/decisions.md`). The dictionary is therefore PKD **2025**, and the risk the finding described was real but pointing the other way: a 2007 dictionary would have rejected codes the register actually uses, such as `4933Z`, which exists only in the newer classification. The fixture has been corrected so the double no longer contradicts the API. **Measured 2026-09-07**: the `pkd` **query parameter** matches the code as stored on the record, and the register is mid-transition — 58.6 % of 285 026 real records still carry PKD 2007 codes, and **8.6 %** of them carry no code the 2025 dictionary knows (corrected 2026-09-09; the 25.2 % this row carried counts records whose *main* code is absent, which is a different question). The dictionary stays 2025 (that is what the register returns in `rokPkd` and where the confirmation screen's names come from), but it is **not sufficient on its own** until the transition ends on 31.12.2026. See `docs/decisions.md`. |
 | **F8** | **Low-Medium** | `docs/decisions.md:31` records that an unrecognised `pkd` value returns **204 (no match), not 400**. Nothing guards the consequence: a well-shaped but nonexistent code produces `count = 0` and the flow's "Brak firm spełniających kryteria", which is indistinguishable from an empty register. That measured behaviour is the whole argument for the dictionary, and it is currently recorded in `decisions.md` without any code reflecting it. |
 | **F9** | **Low** | `pyproject.toml` declares `httpx>=0.27` with no upper bound and no notion of a second HTTP stack; §B requires pinned dependencies in a lock file. Adding `anthropic` introduces `httpx2` as a transitive dependency nobody chose directly. Making `anthropic` an optional extra is what keeps "usable without the assistant" true at install time as well as at runtime. |
 

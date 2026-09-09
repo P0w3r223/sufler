@@ -3,8 +3,8 @@
 Po co istnieje: rejestr trzyma **przy rekordzie** jeden rocznik klasyfikacji (`rokPkd`), a filtr
 `pkd` dopasowuje kod tak, jak go zapisano. Kod z PKD 2025 nie sięga więc rekordów jeszcze
 nieprzeniesionych, a okres przejściowy trwa do 31.12.2026. Zmierzone 2026-09-07
-(`docs/decisions.md`): 25,2 % rejestru jest nieosiągalne żadnym kodem z PKD 2025, a zapytanie
-o fryzjerów kodem `9621Z` sięga 17 % fryzjerów — bez błędu gdziekolwiek po drodze.
+(`docs/decisions.md`): 8,6 % rekordów w próbce nie niesie **żadnego** kodu ze słownika PKD 2025,
+a zapytanie o fryzjerów kodem `9621Z` sięga 17 % fryzjerów — bez błędu gdziekolwiek po drodze.
 
 Czego ten moduł **nie** robi: nie decyduje. Rozszerzenie bywa niejednoznaczne — `9602Z`
 „Fryzjerstwo i pozostałe zabiegi kosmetyczne" prowadzi zarówno do `9621Z`, jak i `9622Z`, więc

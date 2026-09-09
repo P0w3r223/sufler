@@ -170,7 +170,7 @@ class ConsoleEvents:
         progress.update(self._task_download, completed=done_bytes // MIB)
 
     def on_model(self, elapsed_s: float, tokens: int) -> None:
-        """Pytanie do asystenta: jedno żądanie, ale kilkanaście sekund nad 13 tys. tokenów.
+        """Pytanie do asystenta: jedno żądanie, ale kilkanaście sekund nad 25 tys. tokenów.
 
         Suma jest nieznana (`total=None`), bo długości odpowiedzi nie da się przewidzieć;
         `_CountColumn` pokazuje wtedy `?`, co jest prawdą, a nie zmyśloną liczbą. Sam licznik

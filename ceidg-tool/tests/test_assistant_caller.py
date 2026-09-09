@@ -226,7 +226,7 @@ def test_the_system_block_is_cached_and_the_question_is_not() -> None:
 
 
 def test_progress_is_reported_from_before_the_first_token() -> None:
-    """Kilkanaście sekund nad 13 tys. tokenów promptu to cisza, którą trzeba przerwać."""
+    """Kilkanaście sekund nad 25 tys. tokenów promptu to cisza, którą trzeba przerwać."""
     zapis = Zapis()
     rozmowa, _ = caller([json.dumps(DOBRA_ODPOWIEDZ)], zapis)
 

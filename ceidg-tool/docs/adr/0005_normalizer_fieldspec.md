@@ -4,6 +4,7 @@ Date: 2026-09-05
 Status: accepted
 Author: P0w3r223
 Related to: ADR-0004, INSTRUKCJA_CLAUDE_CODE.md (workbook specification)
+Amended by: ADR-0007 (the row-limit consequence below: the exporter splits, it does not refuse)
 
 ---
 
@@ -79,8 +80,11 @@ Details:
 - Column order is deterministic and `run_firma.position` fixes row order, so two
   exports of the same run produce identical files.
 - Excel's row limit is 1 048 576. A whole voivodeship (about 300 k firms) exceeds it
-  on the `PKD` sheet. The exporter counts rows before writing and refuses with a clear
-  message pointing to CSV/JSONL. Silent row loss would be the worst possible behaviour.
+  on the `PKD` sheet. The exporter counts rows before writing and **splits into parts**
+  (`_czesc01`, `_czesc02`, …), each with the full sheet set and a `czesc i/N` entry in
+  `Metadane` — **amended by ADR-0007**; this ADR said "refuses with a message pointing to
+  CSV/JSONL" until 2026-09-09, which no longer describes `exporter.plan_export()`. Silent
+  row loss would be the worst possible behaviour, and neither option commits it.
 - Large sets use `openpyxl` in `write_only=True` mode, streaming chunks from SQLite;
   the table range is known from `SELECT COUNT(*)`, so ListObjects still work. The
   switch-over threshold is configuration, not a constant.

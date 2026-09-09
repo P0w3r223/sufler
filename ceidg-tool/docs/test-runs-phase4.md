@@ -243,14 +243,15 @@ filter matches the code **as stored on the record** — and while the transition
 31.12.2026) each record carries one vintage or the other.
 
 **Settled offline, at zero further cost.** `probe_out/raport_sample.zip` — the 21 MB production
-report already on disk — carries `RokPKD` per record. Across **285 026 real records**: 58.6 % still
-carry PKD 2007 codes, and **25.2 % of the register cannot be reached by any code in the shipped
-`pkd2025.yaml`**. The full measurement is in `docs/decisions.md`.
+report already on disk — carries `RokPKD` per record. Across **285 026 real records** (one
+voivodeship, wielkopolskie): 58.6 % still carry PKD 2007 codes, and **8.6 % carry no code at all
+that the shipped `pkd2025.yaml` knows** — corrected 2026-09-09 from 25.2 %, which counts records
+whose *main* code is absent and so answers a different question. The full measurement is in `docs/decisions.md`.
 
 ### Group C blocked group D — unblocked again by ADR-0012 (2026-09-07)
 
 The walk sentence below is *"salony fryzjerskie w Łomży"*. `9602Z`, PKD 2007's hairdressing code, is
-the **single most frequent unreachable code** in the register (6 811 of 285 026); PKD 2025 splits it
+the **single most frequent unreachable code** in the sample (6 811 of 285 026); PKD 2025 splits it
 into `9621Z`/`9622Z`. The assistant would answer `9621Z`, the register would return only the
 migrated salons, and the workbook would look complete. A gate-3 walk in that state would be
 measuring the wrong thing: the operator cannot judge a result whose incompleteness is invisible.

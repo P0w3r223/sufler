@@ -150,8 +150,8 @@ def main() -> int:
         print("Kody ze słownika 2025 działają — ale to NIE znaczy, że sięgają całego rejestru.")
         print("Rejestr jest w trakcie przejścia na PKD 2025 (do 31.12.2026), a filtr dopasowuje")
         print("kod tak, jak zapisano go w rekordzie, więc oba zbiory są ROZŁĄCZNE. Zmierzone")
-        print("na 285 026 rekordach: 58,6 % nadal ma kody 2007, a 25,2 % rejestru jest")
-        print("nieosiągalne żadnym kodem ze słownika 2025. Szczegóły: docs/decisions.md.")
+        print("na 285 026 rekordach (wielkopolskie): 58,6 % nadal ma kody 2007, a 8,6 %")
+        print("nie niesie żadnego kodu ze słownika 2025. Szczegóły: docs/decisions.md.")
     else:
         print("Oba kody zwróciły zero mimo działającej kontroli — wynik nierozstrzygający.")
     return 0

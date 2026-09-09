@@ -41,7 +41,7 @@ MODEL = "claude-opus-5"
 
 # Sufit **z zapasem na myślenie**, nie na sam wynik. Opus 5 ma myślenie włączone domyślnie
 # (pominięcie `thinking` znaczy „adaptive", inaczej niż w 4.7/4.8), a tokeny myślenia liczą się
-# do `max_tokens`. Przy 2048 nad promptem ~13 tys. tokenów odpowiedź kończyłaby się
+# do `max_tokens`. Przy 2048 nad promptem ~25 tys. tokenów odpowiedź kończyłaby się
 # `stop_reason="max_tokens"` **zanim** padłby JSON — i wracała do operatora jako „to nie jest
 # poprawny JSON", czyli komunikat mylący co do przyczyny. Sufit nic nie kosztuje: płaci się za
 # wygenerowane tokeny, nie za limit.

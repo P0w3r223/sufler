@@ -3,7 +3,7 @@
 
 Po co: rejestr jest w połowie przejścia z PKD 2007 na PKD 2025 (do 31.12.2026), a filtr `pkd`
 dopasowuje kod tak, jak zapisano go w rekordzie. Zmierzone 2026-09-07 (`docs/decisions.md`):
-58,6 % rekordów nadal ma kody 2007, a 25,2 % rejestru jest nieosiągalne żadnym kodem z PKD 2025.
+58,6 % rekordów nadal ma kody 2007, a 8,6 % nie niesie żadnego kodu ze słownika PKD 2025.
 Zapytanie o fryzjerów kodem `9621Z` sięga 17 % fryzjerów — bez błędu gdziekolwiek po drodze.
 Tablica pozwala dołożyć do zapytania poprzedników z 2007 (ADR-0012).
 
