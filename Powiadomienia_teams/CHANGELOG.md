@@ -46,6 +46,43 @@ wykonanie pracy, i obie zapisane tak, żeby było widać, która jest która.
   plików SharePoint/OneDrive, kasowanie kanałów Teams, odczyt transkrypcji spotkań) oraz
   z instrukcją odwrócenia decyzji, gdyby się zmieniła.
 
+## [Nieopublikowane] — samouzupełnienie zauważane także PO domknięciu tematu
+
+Domknięcie luki znalezionej przy weryfikacji dwóch przypadków zgłoszonych z produkcji. Pierwszy
+(odpowiedź po terminie) naprawiło 0.2.24; drugi okazał się naprawiony **tylko w połowie**.
+
+### Naprawione
+
+- **Pracownik, który uzupełnił grafik SAM już PO wygaśnięciu tematu, przestaje być liczony jako
+  milczący.** Krok 1.5 nasłuchu patrzył wyłącznie na wpisy otwarte, a to jest najrzadsza z realnych
+  kolejności — nie najczęstsza. Termin wypada w poniedziałek 05:00, domknięcie wychodzi po
+  godzinach ciszy o 07:00, a człowiek siada do grafiku o dziewiątej. Taka osoba zostawała
+  `EXPIRED` na zawsze: dostawała zarzut milczenia („Nie dostałem odpowiedzi"), **nie dostawała
+  podziękowania**, a podsumowanie liczyło ją jako porażkę, mimo że tydzień był domknięty.
+
+  Poprawka odczytu czatu z 0.2.24 (D5, wznowienie rozmowy) tego **nie obejmowała** i obejmować nie
+  mogła: tamta czyta CZAT, a ta patrzy w GRAFIK. To dwie różne ścieżki do tego samego wpisu.
+
+  Krok 1.5 przyjmuje teraz także statusy z `WZNAWIALNE` (`EXPIRED`, `DECLINED`) — bezpieczne
+  z tego samego powodu co przy wznawianiu rozmowy: nie zapisano dla nich NIC, a sam krok i tak
+  niczego nie zapisuje, kończy się wiadomością albo niczym.
+
+  `APPLIED` i `SELF_FILLED` pozostają poza nim. Przy `APPLIED` grafik jest z NASZEGO zapisu, więc
+  „widzę, że Twój grafik jest już uzupełniony" byłoby nazwaniem samodzielnym czegoś, co bot zrobił
+  sam minutę wcześniej.
+
+- **Podziękowanie idzie dokładnie raz.** Domknięcie daje `SELF_FILLED`, a ten status do
+  `WZNAWIALNE` nie należy, więc wpis wypada z kandydatów po pierwszym razie. Bez tego każdy kolejny
+  obieg — a przy otwartej rozmowie jest ich sześć na minutę — dokładałby kolejne „dziękuję".
+
+  Pracownik widzi wtedy sekwencję samokorygującą: „Nie dostałem odpowiedzi…", a po uzupełnieniu
+  „Widzę, że Twój grafik … jest już uzupełniony ✅ Dziękuję!". Druga wiadomość prostuje pierwszą.
+
+### Testy
+
+Trzy nowe sondy (551 → 554), każda sprawdzona jako strażnik — wobec kodu sprzed poprawki padają
+na `assert 'expired' == 'self_filled'` i na braku podziękowania.
+
 ## [0.2.24] — 2026-09-09
 
 Domknięcie pozycji **D5** i pomiar do **E1**. Dwie rzeczy w jednym wydaniu, obie wynikające

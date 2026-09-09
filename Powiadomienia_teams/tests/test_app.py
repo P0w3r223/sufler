@@ -4540,3 +4540,87 @@ def test_podsumowanie_liczy_skutecznosc_wznowien(tmp_path: Path):
 
     assert blok.wznowione == 2
     assert blok.wznowione_skuteczne == 1
+
+
+# --- samouzupełnienie PO domknięciu tematu -----------------------------------------------------
+def _zmiana_w_tygodniu(dzien: int = 0) -> Shift:
+    d = datetime(2026, 7, 20 + dzien, 8, tzinfo=timezone.utc)
+    return Shift("u1", d, d + timedelta(hours=8))
+
+
+def _po_wygasnieciu(state_path: Path, status: str = EXPIRED) -> None:
+    nudge = "2026-07-16T09:00:00Z"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=status,
+                watermark=nudge,
+                nudged_at=nudge,
+            )
+        },
+    )
+
+
+def test_samouzupelnienie_zauwazone_takze_PO_wygasnieciu(tmp_path: Path):
+    """Najczęstsza kolejność w praktyce — i do 0.2.24 jedyna, której bot NIE widział.
+
+    Termin wypada w poniedziałek 05:00, domknięcie wychodzi po godzinach ciszy o 07:00, a człowiek
+    siada do grafiku o dziewiątej. Dopóki krok 1.5 patrzył wyłącznie na wpisy otwarte, taka osoba
+    zostawała `EXPIRED` na zawsze: dostawała zarzut milczenia, nie dostawała podziękowania,
+    a podsumowanie liczyło ją jako porażkę — mimo że tydzień był domknięty.
+
+    Poprawka odczytu czatu (D5) tego nie obejmowała: tamta czyta CZAT, a ta patrzy w GRAFIK.
+    """
+    state_path = tmp_path / "state.json"
+    _po_wygasnieciu(state_path)
+    settings = _settings_self_fill(state_path)
+    client = _FakeClient({"chat1": []}, shifts=(_zmiana_w_tygodniu(),))
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    wpis = load_state(state_path)["u1"]
+    assert wpis.status == SELF_FILLED, "domknięty temat nie zauważył samouzupełnienia"
+    assert len(client.sent) == 1 and "uzupełniony" in client.sent[0][1]
+
+
+def test_podziekowanie_po_wygasnieciu_idzie_DOKLADNIE_RAZ(tmp_path: Path):
+    """`SELF_FILLED` nie należy do `WZNAWIALNE`, więc wpis wypada z kandydatów po pierwszym razie.
+
+    Bez tego każdy kolejny obieg — a przy otwartej rozmowie jest ich sześć na minutę — dokładałby
+    kolejne „dziękuję" do czatu osoby, która niczego nie napisała.
+    """
+    state_path = tmp_path / "state.json"
+    _po_wygasnieciu(state_path)
+    settings = _settings_self_fill(state_path)
+    client = _FakeClient({"chat1": []}, shifts=(_zmiana_w_tygodniu(),))
+    start = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    for i in range(5):
+        poll_replies(settings, client, _FakeLlm("{}"), now=start + timedelta(hours=i))  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1, f"powtórzone podziękowania: {len(client.sent)}"
+    assert load_state(state_path)["u1"].status == SELF_FILLED
+
+
+def test_ZAPISANY_grafik_nie_dostaje_podziekowania_za_samouzupelnienie(tmp_path: Path):
+    """`APPLIED` zostaje poza tym krokiem: grafik jest tam z NASZEGO zapisu.
+
+    „Widzę, że Twój grafik jest już uzupełniony" byłoby wtedy przypisaniem sobie cudzej zasługi
+    — a dokładniej: nazwaniem samodzielnym czegoś, co bot zrobił sam minutę wcześniej.
+    """
+    state_path = tmp_path / "state.json"
+    _po_wygasnieciu(state_path, status=APPLIED)
+    settings = _settings_self_fill(state_path)
+    client = _FakeClient({"chat1": []}, shifts=(_zmiana_w_tygodniu(),))
+    now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+
+    poll_replies(settings, client, _FakeLlm("{}"), now=now)  # type: ignore[arg-type]
+
+    assert client.sent == [], "bot napisał do tematu zamkniętego własnym zapisem"
+    assert load_state(state_path)["u1"].status == APPLIED
