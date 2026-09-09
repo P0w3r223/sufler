@@ -17,7 +17,7 @@ from typing import Protocol, TypeVar
 
 from powiadomienia_teams.config import OknoOdpowiedzi
 from powiadomienia_teams.domain.czas import parse_graph_datetime
-from powiadomienia_teams.state import APPLYING, PendingReminder
+from powiadomienia_teams.state import APPLYING, DECLINED, EXPIRED, PendingReminder
 from powiadomienia_teams.state import TERMINALNE as _TERMINAL
 
 # ``_TERMINAL`` mieszka w ``state`` obok samych statusów, bo ma DWÓCH odbiorców: sprzątanie stanu
@@ -327,6 +327,54 @@ def czas_na_przypomnienie(
     # `>` a nie `>=`: kurtuazja kończąca się DOKŁADNIE w terminie jeszcze go nie przesuwa
     # (`termin_odpowiedzi` bierze `max`, a maksimum z dwóch równych to ta sama chwila).
     return termin is not None and now + timedelta(hours=okno.min_h) <= termin
+
+
+#: Statusy, z których temat wolno WZNOWIĆ, gdy pracownik odezwie się po domknięciu (D5).
+#:
+#: Wypisane wprost, a nie jako „wszystko terminalne poza…", bo wykluczenia mają RÓŻNE powody
+#: i różną trwałość — każdy musi zostać widoczny przy dopisywaniu kolejnego statusu:
+#:
+#: * ``APPLIED`` i ``SELF_FILLED`` — grafik na ten tydzień JEST już uzupełniony, a klient Graph
+#:   nie ma ani kasowania, ani zmiany zmiany: cała jego powierzchnia zapisu to ``create_shift``
+#:   i ``create_time_off``, przy czym pierwszy NIE deduplikuje (N1). „Poprawka" po zapisie
+#:   znaczyłaby więc DRUGĄ zmianę obok pierwszej, nakładającą się na nią, bez drogi powrotnej.
+#:   To nie jest ostrożność, tylko BRAK NARZĘDZIA — gdyby doszło kasowanie zmian, tę decyzję
+#:   trzeba przeliczyć od nowa.
+#: * ``APPLYING`` — **N4**: zapis rozpoczęty i niepotwierdzony nie jest wznawiany automatycznie,
+#:   bo drugie podejście mogłoby zdublować wpisy nieodwracalnie.
+#:
+#: Zostają dwa stany, w których na ten tydzień nie zapisano NIC, więc każdy zapis po wznowieniu
+#: jest zapisem PIERWSZYM — a przed duplikatem wobec grafiku uzupełnionego w międzyczasie przez
+#: menedżera broni sprawdzenie świeżości (``listener._odsiej_juz_zapisane``).
+WZNAWIALNE = frozenset({DECLINED, EXPIRED})
+
+
+def mozna_wznowic(pending: PendingReminder, now: datetime, okno: OknoOdpowiedzi) -> bool:
+    """Czy domknięty temat wolno wznowić, gdyby pracownik teraz napisał (D5, połowa druga).
+
+    Dwa warunki, oba konieczne:
+
+    1. **Status z ``WZNAWIALNE``** — patrz tam; wykluczenia mają różne powody.
+    2. **Tydzień docelowy jeszcze się nie skończył.** Po jego końcu nie ma czego zapisać
+       (``still_writable`` odsiewa wszystko, co się zakończyło), więc czytanie tych czatów byłoby
+       kosztem bez skutku. Kryterium to KONIEC tygodnia, nie początek: pracownik, który odzywa się
+       w środę o tym, że w piątek będzie inaczej, ma prawo zostać usłyszany — i to jest właśnie
+       przypadek, dla którego ta pozycja powstała.
+
+    Czego ten predykat **nie** sprawdza: czy pracownik faktycznie coś napisał — to rozstrzyga
+    dopiero odczyt czatu; tutaj odpowiadamy na pytanie „czy w ogóle warto tam zajrzeć". Nie
+    sprawdza też ``wznowiono_at``: wznowienie NIE jest jednorazowe. Temat wznowiony wraca do
+    zwykłego obiegu i podlega tym samym regułom co każdy inny (termin, kurtuazja, wygasanie),
+    więc drugie wznowienie po drugim domknięciu jest tak samo uprawnione jak pierwsze.
+
+    Twardą granicę stawia i tak retencja: ``prune_terminal`` usuwa wpisy terminalne starsze niż
+    ``TERMINAL_RETAIN_HOURS``, zachowując te z bieżącego tygodnia docelowego — czyli dokładnie te,
+    dla których wznowienie ma sens.
+    """
+    if pending.status not in WZNAWIALNE:
+        return False
+    poczatek = _poczatek_tygodnia(pending.week_start, okno.tz)
+    return poczatek is not None and now < poczatek + timedelta(days=7)
 
 
 class _MaZakonczenie(Protocol):

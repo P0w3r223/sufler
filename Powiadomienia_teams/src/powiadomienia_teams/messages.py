@@ -414,6 +414,10 @@ class LiczbyTygodnia:
     # NIE WIDAĆ — a to był główny zarzut audytu wobec całego produktu.
     przypomnienia: int = 0
     przypomnienia_skuteczne: int = 0
+    # Skuteczność wznowienia (D5, połowa druga): ile domkniętych tematów wróciło do obiegu, bo
+    # pracownik odezwał się po terminie, i ile z nich skończyło się uzupełnionym grafikiem.
+    wznowione: int = 0
+    wznowione_skuteczne: int = 0
     # Miara jakości interpretacji (E4, §10.4). Liczba bez mianownika myli, więc idą parą.
     interpretacje: int = 0
     niejasnosci: int = 0
@@ -485,6 +489,13 @@ def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg:
             lines.append(
                 f"• przypomnienia (sobota): {t.przypomnienia}, "
                 f"z tego z uzupełnionym grafikiem: {t.przypomnienia_skuteczne}"
+            )
+        if t.wznowione:
+            # Druga dźwignia D5 — bez tej liczby wznowienie byłoby zmianą, o której wiadomo tylko
+            # tyle, że weszła.
+            lines.append(
+                f"• wznowione po terminie: {t.wznowione}, "
+                f"z tego z uzupełnionym grafikiem: {t.wznowione_skuteczne}"
             )
         if t.interpretacje:
             # Odsetek, nie sama liczba: „trzy niejasności" u osoby, która napisała dziesięć razy,

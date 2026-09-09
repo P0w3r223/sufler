@@ -160,6 +160,14 @@ class PendingReminder:
     # o doprecyzowanie zawyżałaby miarę o zdarzenie, którego pracownik nigdy nie zobaczył.
     interpretacje: int = 0
     niejasnosci: int = 0
+    # createdDateTime chwili, w której temat DOMKNIĘTY wrócił do obiegu, bo pracownik napisał
+    # po terminie (pozycja D5 planu, połowa druga). Wyłącznie do obserwowalności — o tym, czy
+    # wolno wznowić, rozstrzyga `lifecycle.mozna_wznowic` na podstawie STATUSU i tygodnia, nie
+    # tego pola. Gdyby rozstrzygało, jedno wznowienie blokowałoby drugie, a nie ma powodu:
+    # rozmowa wznowiona wraca do zwykłego obiegu i podlega tym samym regułom co każda inna.
+    #
+    # Pole opcjonalne — stare pliki stanu bez niego dostają pusty napis („nie wznawiano").
+    wznowiono_at: str = ""
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}
