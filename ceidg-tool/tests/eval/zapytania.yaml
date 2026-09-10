@@ -1,0 +1,173 @@
+# Zestaw ewaluacyjny asystenta — dane, nie kod.
+#
+# Wzorce PKD są **nazwami do wyszukania w słowniku**, nie kodami wpisanymi z pamięci.
+# `CLAUDE.md` zabrania zapisywania danych referencyjnych z głowy, a kod PKD wpisany
+# ręcznie przechodziłby każdą automatyczną kontrolę, będąc po cichu złym. Harness
+# rozwiązuje wzorzec na zbiór kodów przez `assistant.pkd.load_pkd()` i odmawia startu,
+# gdy wzorzec nie trafia w nic albo trafia w zbyt wiele.
+
+# ---------------------------------------------------------------- klasa I: niezmienniczość
+# Każde ziarno dostaje 5 przekształceń zachowujących znaczenie. Odpowiedź nie ma prawa
+# się zmienić, więc przekształcenie nie potrzebuje własnego wzorca — asercją jest zgodność
+# z ziarnem (testowanie metamorficzne).
+ziarna:
+  - id: S01
+    zdanie: "salony fryzjerskie w Gnieźnie"
+    miasto: [Gniezno]
+    pkd_nazwa: "ryzjer"
+
+  - id: S02
+    zdanie: "gabinety kosmetyczne w Poznaniu"
+    miasto: [Poznań]
+    pkd_nazwa: "kosmetyczn"
+
+  - id: S03
+    zdanie: "restauracje we Wrocławiu"
+    miasto: [Wrocław]
+    pkd_nazwa: "restaurac"
+
+  - id: S04
+    zdanie: "fotografowie w Krakowie"
+    miasto: [Kraków]
+    pkd_nazwa: "fotograf"
+
+  - id: S05
+    zdanie: "stolarze w Białymstoku"
+    miasto: [Białystok]
+    pkd_nazwa: "stolar"
+
+  - id: S06
+    zdanie: "szkoły nauki jazdy w Rzeszowie"
+    miasto: [Rzeszów]
+    pkd_nazwa: "nauki jazdy"
+
+  - id: S07
+    zdanie: "biura rachunkowe w Olsztynie"
+    miasto: [Olsztyn]
+    pkd_nazwa: "rachunkowo"
+
+  - id: S08
+    zdanie: "kwiaciarnie w Szczecinie, potrzebuję telefonów"
+    miasto: [Szczecin]
+    pkd_nazwa: "kwiat"
+    szczegoly: true
+
+  - id: S09
+    zdanie: "gabinety weterynaryjne w Lublinie"
+    miasto: [Lublin]
+    pkd_nazwa: "weterynar"
+
+  - id: S10
+    zdanie: "aktywne kluby fitness w Katowicach"
+    miasto: [Katowice]
+    pkd_nazwa: "fitness"
+    status: [AKTYWNY]
+
+  - id: S11
+    zdanie: "biura tłumaczeń w Gdańsku"
+    miasto: [Gdańsk]
+    pkd_nazwa: "tłumacz"
+
+  - id: S12
+    zdanie: "agencje reklamowe w Łodzi założone w 2023 roku"
+    miasto: [Łódź]
+    pkd_nazwa: "reklam"
+    data_od: "2023-01-01"
+    data_do: "2023-12-31"
+
+  - id: S13
+    zdanie: "firmy sprzątające w Bydgoszczy"
+    miasto: [Bydgoszcz]
+    pkd_nazwa: "sprzątan"
+
+  - id: S14
+    zdanie: "hotele w Zakopanem"
+    miasto: [Zakopane]
+    pkd_nazwa: "hotel"
+
+  - id: S15
+    zdanie: "cukiernie w Toruniu"
+    miasto: [Toruń]
+    pkd_nazwa: "cukiernicz"
+
+
+  # Przypadki przeciwne do poprawki z 2026-09-09. Zdjęcie województwa dopisywanego do miasta
+  # nie ma prawa zabrać województwa, które operator **nazwał sam** — inaczej poprawka leczy
+  # jedną cichą stratę, produkując drugą. Zestaw bez przypadków przeciwnych optymalizuje
+  # w jedną stronę i tego nie widzi.
+  - id: S16
+    zdanie: "kluby fitness w województwie śląskim"
+    wojewodztwo: [śląskie]
+    pkd_nazwa: "fitness"
+
+  - id: S17
+    zdanie: "biura rachunkowe w województwie małopolskim"
+    wojewodztwo: [małopolskie]
+    pkd_nazwa: "rachunkowo"
+
+  - id: S18
+    zdanie: "hotele w Zakopanem w województwie małopolskim"
+    miasto: [Zakopane]
+    wojewodztwo: [małopolskie]
+    pkd_nazwa: "hotel"
+
+# ------------------------------------------------------- klasa II: zdanie bez użytecznego filtru
+# Poprawnym wynikiem jest **ścieżka**, nie wartości pól: ADR-0017 każe wejść w rundę
+# dopytania, a wejście zależy od `kryteria.is_empty()`, nie od tego, czy model zapytał.
+# Zmyślenie tu filtra jest defektem, bo zapytanie wygląda wtedy na odpowiedziane.
+niedookreslone:
+  - id: N01
+    zdanie: "wszystkie firmy"
+  - id: N02
+    zdanie: "chcę wszystko"
+  - id: N03
+    zdanie: "dane"
+  - id: N04
+    zdanie: "firmy"
+  - id: N05
+    zdanie: "pomocy"
+  - id: N06
+    zdanie: "nie wiem czego szukam"
+  - id: N07
+    zdanie: "daj mi coś"
+  - id: N08
+    zdanie: "asdf"
+  - id: N09
+    zdanie: "."
+  - id: N10
+    zdanie: "szukam firm"
+
+# ------------------------------------------- klasa III: filtr, którego rejestr nie ma
+# Wolno zwrócić część wykonalną (miasto, branżę), ale **nie wolno udać**, że część
+# niewykonalna została uwzględniona. Asercja: właściwy kod ograniczenia jest obecny.
+niewykonalne:
+  - id: X01
+    zdanie: "firmy budowlane z obrotem powyżej miliona"
+    ograniczenie: BRAK_DANYCH_FINANSOWYCH
+  - id: X02
+    zdanie: "firmy zatrudniające ponad 10 osób w Poznaniu"
+    ograniczenie: BRAK_FILTRA_WIELKOSCI
+  - id: X03
+    zdanie: "spółki z o.o. w Warszawie"
+    ograniczenie: SPOLKI_W_KRS
+  - id: X04
+    zdanie: "duże firmy informatyczne w Krakowie"
+    ograniczenie: BRAK_FILTRA_WIELKOSCI
+  - id: X05
+    zdanie: "firmy z przychodem powyżej 500 tysięcy w Gdańsku"
+    ograniczenie: BRAK_DANYCH_FINANSOWYCH
+  - id: X06
+    zdanie: "spółki akcyjne we Wrocławiu"
+    ograniczenie: SPOLKI_W_KRS
+  - id: X07
+    zdanie: "firmy fryzjerskie z zyskiem powyżej 100 tysięcy"
+    ograniczenie: BRAK_DANYCH_FINANSOWYCH
+  - id: X08
+    zdanie: "małe firmy budowlane w Lublinie"
+    ograniczenie: BRAK_FILTRA_WIELKOSCI
+  - id: X09
+    zdanie: "restauracje w Poznaniu, chcę e-maile"
+    ograniczenie: KONTAKTY_OPCJONALNE
+  - id: X10
+    zdanie: "firmy z PKD 62.01.Z"
+    ograniczenie: KOD_PKD_Z_INNEGO_ROCZNIKA

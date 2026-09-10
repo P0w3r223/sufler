@@ -1,0 +1,119 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?limit=5&page=1",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "3146",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "993",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 2.547,
+  "body": {
+    "firmy": [
+      {
+        "id": "B8DB0672-F42D-47CC-80D4-AF5974273CA3",
+        "nazwa": "Wzorcysława Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Syntetyczna",
+          "nip": "2669784803",
+          "regon": "184514621"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/B8DB0672-F42D-47CC-80D4-AF5974273CA3"
+      },
+      {
+        "id": "5CEC4EB5-EDD9-4831-9CA3-5CFB04FC6D82",
+        "nazwa": "Przykładzia Fikcyjna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Przykładowa",
+          "budynek": "31",
+          "lokal": "2",
+          "miasto": "Bochnia",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "bocheński",
+          "gmina": "Bochnia",
+          "kraj": "PL",
+          "kod": "32-346",
+          "terc": "1201011",
+          "simc": "0981682",
+          "ulic": "84364"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Fikcyjna",
+          "nip": "9281489321",
+          "regon": "528809572"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/5CEC4EB5-EDD9-4831-9CA3-5CFB04FC6D82"
+      },
+      {
+        "id": "5F987C71-A65E-488E-ABF3-AD39FEC21BBE",
+        "nazwa": "Testomir Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Testowa",
+          "nip": "8182278247",
+          "regon": "896383464"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/5F987C71-A65E-488E-ABF3-AD39FEC21BBE"
+      },
+      {
+        "id": "5496F63C-DC11-40C1-880A-ADFBE7C99B26",
+        "nazwa": "Wzorcysława Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Syntetyczna",
+          "nip": "8133150984",
+          "regon": "393010318"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/5496F63C-DC11-40C1-880A-ADFBE7C99B26"
+      },
+      {
+        "id": "DD2467AC-778E-4DB3-A93D-FFBC6C6FA611",
+        "nazwa": "Testomir Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Syntetyczna",
+          "nip": "4473829974",
+          "regon": "376311651"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/DD2467AC-778E-4DB3-A93D-FFBC6C6FA611"
+      }
+    ],
+    "count": 6316121,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=2",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=0",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=1",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=1263224"
+    },
+    "properties": {
+      "dc:title": "firmy",
+      "dc:description": "Zwraca listę firm",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:31:21"
+    }
+  }
+}

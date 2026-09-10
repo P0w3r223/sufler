@@ -1,0 +1,117 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?wojewodztwo=podlaskie&limit=3",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "3040",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "984",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 1.265,
+  "body": {
+    "firmy": [
+      {
+        "id": "1238D630-743B-45A2-9C0F-2FCFB3F6FE0D",
+        "nazwa": "Próbomira Fikcyjna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "34",
+          "lokal": "19",
+          "miasto": "Czarna Białostocka",
+          "wojewodztwo": "PODLASKIE",
+          "powiat": "białostocki",
+          "gmina": "Czarna Białostocka",
+          "kraj": "PL",
+          "kod": "16-777",
+          "terc": "2002024",
+          "simc": "0922886",
+          "ulic": "35928"
+        },
+        "wlasciciel": {
+          "imie": "Próbomira",
+          "nazwisko": "Fikcyjna",
+          "nip": "2232812066",
+          "regon": "797403440"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/1238D630-743B-45A2-9C0F-2FCFB3F6FE0D"
+      },
+      {
+        "id": "8A3C3B5E-801E-41DA-85B1-ED25F1533AE8",
+        "nazwa": "Wzorcysława Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "57",
+          "lokal": "3",
+          "miasto": "Fasty",
+          "wojewodztwo": "PODLASKIE",
+          "powiat": "białostocki",
+          "gmina": "Dobrzyniewo Duże",
+          "kraj": "PL",
+          "kod": "15-712",
+          "terc": "2002032",
+          "simc": "0027134",
+          "ulic": "15224"
+        },
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Testowa",
+          "nip": "9324210249",
+          "regon": "994717461"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/8A3C3B5E-801E-41DA-85B1-ED25F1533AE8"
+      },
+      {
+        "id": "6F962882-95D8-4980-BF37-D19C2E76128B",
+        "nazwa": "Wzorcysława Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "12",
+          "lokal": "16",
+          "miasto": "Wysokie Mazowieckie",
+          "wojewodztwo": "PODLASKIE",
+          "powiat": "wysokomazowiecki",
+          "gmina": "Wysokie Mazowieckie",
+          "kraj": "PL",
+          "kod": "18-456",
+          "terc": "2013011",
+          "simc": "0957620",
+          "ulic": "63523"
+        },
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Wzorcowy",
+          "nip": "6940139903",
+          "regon": "490278744"
+        },
+        "dataRozpoczecia": "2026-09-04",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/6F962882-95D8-4980-BF37-D19C2E76128B"
+      }
+    ],
+    "count": 137693,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?wojewodztwo=podlaskie&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=3&page=1",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?wojewodztwo=podlaskie&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=3&page=0",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?wojewodztwo=podlaskie&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=3&page=0",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?wojewodztwo=podlaskie&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=3&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?wojewodztwo=podlaskie&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=3&page=45897"
+    },
+    "properties": {
+      "dc:title": "firmy",
+      "dc:description": "Zwraca listę firm",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:32:12"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+# Profil API — środowisko TESTOWE.
+# Host testowy był nieosiągalny 2026-09-05; wartości przeniesione z sondy produkcyjnej
+# (docs/decisions.md). Zmiana po kolejnej sondzie = edycja tego pliku, nie kodu.
+base_url: "https://test-dane.biznes.gov.pl/api/ceidg/v3"
+
+# Paginacja: links = podążaj za links.next (numeracją zarządza serwer);
+# numeric = klient sam liczy strony od page_start.
+paging_mode: links
+page_start: 0                 # sonda: page=0 i page=1 zwracają różne rekordy
+send_page_on_first_request: false
+
+default_limit: 25
+max_limit_firmy: 25           # sonda: limit=50 -> 400 NIEPOPRAWNY_ROZMIAR_STRONY (zakres 1-25)
+max_limit_zmiana: 500         # mini-sonda 2026-09-05: limit=500 zwraca 500 id
+count_semantics: total          # total = liczba wszystkich trafień | page = pozycji na stronie
+
+# Szczegóły: ile identyfikatorów w jednym /firma?ids=… (1 = brak batchowania)
+ids_batch_size: 5             # sonda: 5 id działa; 25 i 50 -> 400 NIEPOPRAWNA_ILOSC_IDENTYFIKATOROW
+max_url_length: 4000
+detail_mode: query              # query = /firma?ids=… | path = /firma/{id}
+
+list_root_key: firmy
+detail_root_key: firma
+changes_root_key: identyfikatoryWpisow
+reports_root_key: raporty
+empty_result_statuses: [204]
+
+# Rendering parametrów zapytania
+list_param_suffix: ""           # "" -> nip=1&nip=2 ; "[]" -> nip[]=1&nip[]=2
+wojewodztwo_case: upper         # sonda: wielkość liter bez znaczenia (ten sam count)
+pkd_format: compact             # sonda: 62.01.Z -> 204 (brak trafień); 6201Z / 6201z działa
+date_format: "%Y-%m-%d"
+
+max_pages: 10000
+
+rate:
+  windows: [[48, 180], [960, 3600]]   # 48/180 s i 960/3600 s — oba dają 3,75 s na żądanie
+  # Musi być >= 180/48 = 3600/960 = 3,75 s, inaczej limiter puszcza żądania gęściej niż
+  # okno i nadrabia postojem — szczyt rośnie wtedy do 49 na 180 s (pomiar 2026-09-06).
+  # Pilnuje tego `test_ratelimit.py::test_shipped_profiles_cannot_burst_past_their_window`.
+  min_spacing_s: 3.75
+  cooldown_s: 185                     # 180 s blokady + margines na dryf zegara
+  max_retries_5xx: 3
+  backoff_base_s: 5
+  timeout_s: 60

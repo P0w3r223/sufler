@@ -1,0 +1,510 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?limit=25&page=1",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "11775",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "991",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 10.922,
+  "body": {
+    "firmy": [
+      {
+        "id": "4D71C366-B41B-4143-8B10-550CD5704F32",
+        "nazwa": "Testomir Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Wzorcowa",
+          "budynek": "84",
+          "miasto": "Kalisz",
+          "wojewodztwo": "WIELKOPOLSKIE",
+          "powiat": "Kalisz",
+          "gmina": "Kalisz",
+          "kraj": "PL",
+          "kod": "62-641",
+          "terc": "3061011",
+          "simc": "0936569",
+          "ulic": "11025"
+        },
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Testowa",
+          "nip": "8991183849",
+          "regon": "251354278"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/4D71C366-B41B-4143-8B10-550CD5704F32"
+      },
+      {
+        "id": "D89A40C0-E87D-4C78-A7C4-21C740497B71",
+        "nazwa": "Przykładzia Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Syntetyczna",
+          "nip": "5124118241",
+          "regon": "493534870"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/D89A40C0-E87D-4C78-A7C4-21C740497B71"
+      },
+      {
+        "id": "5CEC4EB5-EDD9-4831-9CA3-5CFB04FC6D82",
+        "nazwa": "Przykładzia Fikcyjna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Testowa",
+          "budynek": "12",
+          "lokal": "14",
+          "miasto": "Bochnia",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "bocheński",
+          "gmina": "Bochnia",
+          "kraj": "PL",
+          "kod": "32-949",
+          "terc": "1201011",
+          "simc": "0981682",
+          "ulic": "46265"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Fikcyjna",
+          "nip": "9281489321",
+          "regon": "528809572"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/5CEC4EB5-EDD9-4831-9CA3-5CFB04FC6D82"
+      },
+      {
+        "id": "0AB54BDE-20A0-4502-AE06-809725E97977",
+        "nazwa": "Testomir Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Testowa",
+          "nip": "6242786800",
+          "regon": "112805984"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/0AB54BDE-20A0-4502-AE06-809725E97977"
+      },
+      {
+        "id": "CD5F4822-6966-48AA-AE49-F329C84A7B28",
+        "nazwa": "Fikcjan Fikcyjna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "35",
+          "miasto": "Dzbenin",
+          "wojewodztwo": "MAZOWIECKIE",
+          "powiat": "ostrołęcki",
+          "gmina": "Rzekuń",
+          "kraj": "PL",
+          "kod": "07-263",
+          "terc": "1415102",
+          "simc": "0519400",
+          "ulic": "24168"
+        },
+        "wlasciciel": {
+          "imie": "Fikcjan",
+          "nazwisko": "Fikcyjna",
+          "nip": "1533158690",
+          "regon": "232260253"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/CD5F4822-6966-48AA-AE49-F329C84A7B28"
+      },
+      {
+        "id": "D7FA2D8D-FB2C-4025-ADF4-E62D6651529E",
+        "nazwa": "Wzorcysława Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Testowa",
+          "nip": "8337543308",
+          "regon": "365414581"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/D7FA2D8D-FB2C-4025-ADF4-E62D6651529E"
+      },
+      {
+        "id": "41357E8C-30A9-40AD-939B-462DE645F129",
+        "nazwa": "Syntetyk Fikcyjna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Fikcyjna",
+          "nip": "1142940191",
+          "regon": "655698163"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/41357E8C-30A9-40AD-939B-462DE645F129"
+      },
+      {
+        "id": "8DEDF9FB-4BB0-4F20-B27C-40266703B636",
+        "nazwa": "Testomir Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "25",
+          "lokal": "14",
+          "miasto": "Łódź",
+          "wojewodztwo": "ŁÓDZKIE",
+          "powiat": "Łódź",
+          "gmina": "Łódź-Widzew",
+          "kraj": "PL",
+          "kod": "92-780",
+          "terc": "1061069",
+          "simc": "0958453",
+          "ulic": "59695"
+        },
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Wzorcowy",
+          "nip": "7088356155",
+          "regon": "951484651"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/8DEDF9FB-4BB0-4F20-B27C-40266703B636"
+      },
+      {
+        "id": "7922BAC2-82DC-4C8E-B6B5-229AACF5E81E",
+        "nazwa": "Przykładzia Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Wzorcowy",
+          "nip": "3994680445",
+          "regon": "369957775"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/7922BAC2-82DC-4C8E-B6B5-229AACF5E81E"
+      },
+      {
+        "id": "A1384DDC-E2D9-4E5D-AA18-CE4C74962764",
+        "nazwa": "Przykładzia Próbny FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Próbny",
+          "nip": "2489513439",
+          "regon": "320037917"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/A1384DDC-E2D9-4E5D-AA18-CE4C74962764"
+      },
+      {
+        "id": "AAE65FC1-76F2-4BFE-8D29-A36F222282E1",
+        "nazwa": "Syntetyk Próbny FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Próbny",
+          "nip": "7763201636",
+          "regon": "287083176"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/AAE65FC1-76F2-4BFE-8D29-A36F222282E1"
+      },
+      {
+        "id": "620E99D3-3B33-43D8-A69C-D696236C7B87",
+        "nazwa": "Syntetyk Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "91",
+          "miasto": "Kalisz",
+          "wojewodztwo": "WIELKOPOLSKIE",
+          "powiat": "Kalisz",
+          "gmina": "Kalisz",
+          "kraj": "PL",
+          "kod": "62-319",
+          "terc": "3061011",
+          "simc": "0936569",
+          "ulic": "18418"
+        },
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Syntetyczna",
+          "nip": "8434873476",
+          "regon": "143455818"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/620E99D3-3B33-43D8-A69C-D696236C7B87"
+      },
+      {
+        "id": "D5F25073-F414-42B1-A442-9EBBDA7B9095",
+        "nazwa": "Wzorcysława Przykładowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "69",
+          "miasto": "Korzeniew",
+          "wojewodztwo": "WIELKOPOLSKIE",
+          "powiat": "kaliski",
+          "gmina": "Mycielin",
+          "kraj": "PL",
+          "kod": "62-865",
+          "terc": "3007072",
+          "simc": "0204234"
+        },
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Przykładowy",
+          "nip": "6876036693",
+          "regon": "096705467"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/D5F25073-F414-42B1-A442-9EBBDA7B9095"
+      },
+      {
+        "id": "06F028FF-A9BA-4A27-907B-FE36978648F8",
+        "nazwa": "Przykładzia Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Testowa",
+          "budynek": "83",
+          "lokal": "14",
+          "miasto": "Bochnia",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "bocheński",
+          "gmina": "Bochnia",
+          "kraj": "PL",
+          "kod": "32-238",
+          "terc": "1201011",
+          "simc": "0981682",
+          "ulic": "70515"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Syntetyczna",
+          "nip": "4734670657",
+          "regon": "627298066"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/06F028FF-A9BA-4A27-907B-FE36978648F8"
+      },
+      {
+        "id": "C7FEE39F-1190-4938-A66F-D7F739669FA7",
+        "nazwa": "Próbomira Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Testowa",
+          "budynek": "97",
+          "lokal": "1",
+          "miasto": "Gdańsk",
+          "wojewodztwo": "POMORSKIE",
+          "powiat": "Gdańsk",
+          "gmina": "Gdańsk",
+          "kraj": "PL",
+          "kod": "80-353",
+          "terc": "2261011",
+          "simc": "0933016",
+          "ulic": "36130"
+        },
+        "wlasciciel": {
+          "imie": "Próbomira",
+          "nazwisko": "Testowa",
+          "nip": "5653755640",
+          "regon": "641708056"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/C7FEE39F-1190-4938-A66F-D7F739669FA7"
+      },
+      {
+        "id": "4FDC6E1B-EDCB-4CB6-8692-DC639424AED5",
+        "nazwa": "Testomir Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Syntetyczna",
+          "nip": "3327193749",
+          "regon": "529912415"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/4FDC6E1B-EDCB-4CB6-8692-DC639424AED5"
+      },
+      {
+        "id": "033D2BCE-575A-4D2C-A5C5-650C8186A576",
+        "nazwa": "Syntetyk Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "63",
+          "lokal": "4",
+          "miasto": "Chełmno",
+          "wojewodztwo": "KUJAWSKO-POMORSKIE",
+          "powiat": "chełmiński",
+          "gmina": "Chełmno",
+          "kraj": "PL",
+          "kod": "86-543",
+          "terc": "0404011",
+          "simc": "0983066",
+          "ulic": "57472"
+        },
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Wzorcowy",
+          "nip": "7631931496",
+          "regon": "190586515"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/033D2BCE-575A-4D2C-A5C5-650C8186A576"
+      },
+      {
+        "id": "91E1AA96-76F7-4255-801F-36BF3E6DD58B",
+        "nazwa": "Przykładzia Przykładowy FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Przykładowy",
+          "nip": "3628498774",
+          "regon": "694531470"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/91E1AA96-76F7-4255-801F-36BF3E6DD58B"
+      },
+      {
+        "id": "3DC98290-15EA-4B27-B0E9-12F2F2B43ABF",
+        "nazwa": "Syntetyk Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Wzorcowy",
+          "nip": "7507527355",
+          "regon": "454948084"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/3DC98290-15EA-4B27-B0E9-12F2F2B43ABF"
+      },
+      {
+        "id": "FF233D5F-6CED-415D-9800-7C0287EA7FF5",
+        "nazwa": "Przykładzia Przykładowy FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Przykładowy",
+          "nip": "8837770148",
+          "regon": "363495782"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/FF233D5F-6CED-415D-9800-7C0287EA7FF5"
+      },
+      {
+        "id": "5496F63C-DC11-40C1-880A-ADFBE7C99B26",
+        "nazwa": "Wzorcysława Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Wzorcysława",
+          "nazwisko": "Syntetyczna",
+          "nip": "8133150984",
+          "regon": "393010318"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/5496F63C-DC11-40C1-880A-ADFBE7C99B26"
+      },
+      {
+        "id": "C29CFC0C-FA02-4AEC-96EF-2AD6B97E6703",
+        "nazwa": "Przykładzia Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Syntetyczna",
+          "nip": "6574443131",
+          "regon": "518233743"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/C29CFC0C-FA02-4AEC-96EF-2AD6B97E6703"
+      },
+      {
+        "id": "7DAA39F0-C0B6-4CE2-9E53-790AA34B6CF6",
+        "nazwa": "Syntetyk Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Syntetyczna",
+          "nip": "5134352406",
+          "regon": "824008423"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/7DAA39F0-C0B6-4CE2-9E53-790AA34B6CF6"
+      },
+      {
+        "id": "F2F9E5FA-9016-4161-8FA7-01CD2631D00B",
+        "nazwa": "Testomir Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Testowa",
+          "nip": "5777520474",
+          "regon": "116719023"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/F2F9E5FA-9016-4161-8FA7-01CD2631D00B"
+      },
+      {
+        "id": "F5C9B047-9C10-4572-8F6B-40D09EFBA58B",
+        "nazwa": "Fikcjan Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Testowa",
+          "budynek": "98",
+          "miasto": "Gdańsk",
+          "wojewodztwo": "POMORSKIE",
+          "powiat": "Gdańsk",
+          "gmina": "Gdańsk",
+          "kraj": "PL",
+          "kod": "80-312",
+          "terc": "2261011",
+          "simc": "0933016",
+          "ulic": "91987"
+        },
+        "wlasciciel": {
+          "imie": "Fikcjan",
+          "nazwisko": "Testowa",
+          "nip": "4186999384",
+          "regon": "677496494"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/F5C9B047-9C10-4572-8F6B-40D09EFBA58B"
+      }
+    ],
+    "count": 6316121,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&page=2",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&page=0",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&page=1",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&page=252644"
+    },
+    "properties": {
+      "dc:title": "firmy",
+      "dc:description": "Zwraca listę firm",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:31:42"
+    }
+  }
+}
