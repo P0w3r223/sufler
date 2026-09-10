@@ -11,11 +11,11 @@ import json
 import math
 import uuid
 import zipfile
-from collections.abc import Callable, Collection, Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -1329,6 +1329,43 @@ def _record_source(
     return source
 
 
+PowodUkrycia = Literal["raport", "lista"]
+
+POWOD_UKRYCIA: dict[PowodUkrycia, str] = {
+    "raport": "niedostępne w źródle CEIDG_RAPORT",
+    "lista": "niedostępne w liście podstawowej — pobrano bez szczegółów z /firma",
+}
+"""Dlaczego kolumny zniknęły ze skoroszytu — po jednym zdaniu na niepełne źródło.
+
+Zdanie było jedno, a źródła są dwa, więc plik z trybu `lista` obwiniał CEIDG_RAPORT,
+którego w tym pobraniu nie było. Ekran mówił prawdę (`texts._zrodlo_notes`), `Metadane` nie —
+a to `Metadane` podróżują razem z plikiem i to je czyta ktoś, kto przy pobraniu nie siedział.
+"""
+
+
+@dataclass(frozen=True)
+class UkryteKolumny:
+    """Ukryte kolumny razem z powodem ukrycia — nierozdzielnie.
+
+    Powód jako osobny argument dałoby się z kolumnami rozjechać, a rozjazd jest tu dokładnie
+    tym defektem, który ta klasa zamyka. `None` znaczy „nic nie ukryto"; pustego zbioru
+    z powodem nie da się zbudować, bo nie ma go po co budować."""
+
+    powod: PowodUkrycia
+    kolumny: frozenset[str]
+
+    def __post_init__(self) -> None:
+        """Zdanie z docstringu wyżej egzekwowane, a nie tylko obiecane.
+
+        Bez tego `UkryteKolumny("lista", frozenset())` przechodziło, a `build_metadata`
+        dopisywało wtedy wiersz `kolumny_ukryte` kończący się dwukropkiem i niczym — czyli
+        ostrzeżenie o niczym w arkuszu, który jedzie razem z plikiem. Dziś nie da się tego
+        wywołać, bo oba zbiory źródłowe są stałymi i są niepuste; strażnik pilnuje trzeciego
+        źródła, którego jeszcze nie ma."""
+        if not self.kolumny:
+            raise ValueError("UkryteKolumny bez kolumn: użyj None, gdy nic nie zostało ukryte.")
+
+
 def build_metadata(
     run: RunInfo,
     deps: Deps,
@@ -1336,7 +1373,7 @@ def build_metadata(
     cel_pobrania: str | None,
     records: int,
     parts: Sequence[RunInfo] = (),
-    hidden_columns: Collection[str] = (),
+    ukryte: UkryteKolumny | None = None,
 ) -> list[tuple[str, Any]]:
     czesci = tuple(parts) if parts else (run,)
     criteria_text, criteria_json = _union_criteria(czesci)
@@ -1383,14 +1420,14 @@ def build_metadata(
         ("profil_api_hash", ", ".join(sorted({p.profile_hash for p in czesci}))),
         ("zrodlo", "CEIDG_API / CEIDG_RAPORT wg kolumny zrodlo"),
     ]
-    if hidden_columns:
+    if ukryte is not None:
         # Ukrycie bez wyjaśnienia wygląda jak brakująca kolumna. Wiersz mówi, że kolumny
         # są w pliku i dlaczego są puste — inaczej operator szuka błędu tam, gdzie go nie ma.
         meta.append(
             (
                 "kolumny_ukryte",
-                "niedostępne w źródle CEIDG_RAPORT (pokaż je w Excelu przez Odkryj): "
-                + ", ".join(sorted(hidden_columns)),
+                f"{POWOD_UKRYCIA[ukryte.powod]} (pokaż je w Excelu przez Odkryj): "
+                + ", ".join(sorted(ukryte.kolumny)),
             )
         )
     if len(parts) > 1:
@@ -1483,14 +1520,16 @@ def run_export(
     # było. Liczone z danych, nie z `run.mode` — etykieta opisuje zamiar, plik zawartość.
     szczegolow = store.count_details_for_runs(run_ids)
     bez_kontaktow = szczegolow == 0 and ZRODLO_RAPORT not in zrodla
+    # Powód jedzie razem ze zbiorem: `Metadane` mają powiedzieć, **które** źródło tych kolumn
+    # nie zna, a dwa niepełne źródła miały do 2026-09-10 jedno zdanie na spółkę.
+    ukryte: UkryteKolumny | None = None
     if from_report:
-        hidden = UNFILLED_COLUMNS
+        ukryte = UkryteKolumny("raport", UNFILLED_COLUMNS)
     elif bez_kontaktow:
-        hidden = KOLUMNY_TYLKO_ZE_SZCZEGOLOW
-    else:
-        hidden = frozenset[str]()
+        ukryte = UkryteKolumny("lista", KOLUMNY_TYLKO_ZE_SZCZEGOLOW)
+    hidden = ukryte.kolumny if ukryte is not None else frozenset[str]()
     metadata = build_metadata(
-        run, deps, cel_pobrania=cel_pobrania, records=records, parts=runs, hidden_columns=hidden
+        run, deps, cel_pobrania=cel_pobrania, records=records, parts=runs, ukryte=ukryte
     )
 
     by_status: dict[str, int] = {}

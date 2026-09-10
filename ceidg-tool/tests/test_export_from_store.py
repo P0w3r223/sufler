@@ -17,8 +17,12 @@ from openpyxl import load_workbook
 from ceidg_tool.config import Settings
 from ceidg_tool.errors import ConfigError
 from ceidg_tool.exporter import write_workbook
-from ceidg_tool.normalizer import NormalizedRecord, normalize
-from ceidg_tool.pipeline import build_deps, count_hits, run_export
+from ceidg_tool.normalizer import (
+    KOLUMNY_TYLKO_ZE_SZCZEGOLOW,
+    NormalizedRecord,
+    normalize,
+)
+from ceidg_tool.pipeline import UkryteKolumny, build_deps, count_hits, run_export
 from ceidg_tool.records import RowContext
 from ceidg_tool.store import Store
 from tests.conftest import FakeClock, detail_record, list_record
@@ -255,6 +259,43 @@ def test_report_export_hides_the_columns_the_csv_cannot_fill(
         for r in load_workbook(summary.paths[0])["Metadane"].iter_rows(min_row=2)
     }
     assert "link_ceidg" in meta["kolumny_ukryte"]
+    assert "CEIDG_RAPORT" in meta["kolumny_ukryte"]
+    deps.store.close()
+
+
+def test_list_export_blames_the_list_and_not_the_report(tmp_path: Path, clock: FakeClock) -> None:
+    """Run z API bez szczegółów też chowa kolumny — ale z innego powodu i innym zdaniem.
+
+    Do 2026-09-10 `Metadane` miały jedno zdanie na dwa niepełne źródła, więc plik z trybu
+    `lista` twierdził, że kolumny są „niedostępne w źródle CEIDG_RAPORT" — źródle, którego
+    w tym pobraniu nie było. Ekran mówił prawdę, arkusz nie, a to arkusz zostaje przy pliku.
+    """
+    settings = Settings(token="tok", environment="test", data_dir=tmp_path / "dane")
+    deps = build_deps(settings, clock=clock, online=False)
+    run_id = deps.store.start_run(
+        run_id="run-lista",
+        criteria_json='{"wojewodztwo":["podlaskie"]}',
+        criteria_hash="abc",
+        profile_hash="prof",
+        mode="lista",
+        tool_version="0.1.0",
+        cursor_mode="links",
+    )
+    deps.store.save_page(run_id, page_index=0, records=[list_record(1)], next_cursor=None)
+    deps.store.set_stage(run_id, "gotowe")
+    deps.store.update_run_status(run_id, "zakonczony")
+
+    summary = run_export(run_id, tmp_path / "lista.xlsx", deps)
+
+    assert "telefon" in hidden_columns_of(summary.paths[0])
+    meta = {
+        r[0].value: r[1].value
+        for r in load_workbook(summary.paths[0])["Metadane"].iter_rows(min_row=2)
+    }
+    assert "telefon" in meta["kolumny_ukryte"]
+    assert "CEIDG_RAPORT" not in meta["kolumny_ukryte"]
+    assert "liście podstawowej" in meta["kolumny_ukryte"]
+    assert meta["zrodlo"].startswith("CEIDG_API")
     deps.store.close()
 
 
@@ -340,3 +381,19 @@ def test_the_export_command_speaks_while_it_writes(tmp_path: Path, clock: FakeCl
 
     assert "Zapisuję skoroszyt" in bufor.getvalue()
     deps.store.close()
+
+
+def test_ukryte_kolumny_bez_kolumn_sa_odmawiane() -> None:
+    """Pusty zbiór z powodem to ostrzeżenie o niczym — `None` znaczy „nic nie ukryto".
+
+    Docstring `UkryteKolumny` obiecywał to od początku, ale `dataclass` sam z siebie niczego
+    nie sprawdza: `UkryteKolumny("lista", frozenset())` przechodziło, a `build_metadata`
+    dopisywało wtedy do arkusza wiersz `kolumny_ukryte` zakończony dwukropkiem i niczym.
+    Dziś nie ma jak tego wywołać — oba źródła są niepustymi stałymi — więc test pilnuje
+    trzeciego źródła, którego jeszcze nie ma.
+    """
+    with pytest.raises(ValueError, match="użyj None"):
+        UkryteKolumny("lista", frozenset())
+
+    dozwolone = UkryteKolumny("lista", KOLUMNY_TYLKO_ZE_SZCZEGOLOW)
+    assert dozwolone.kolumny == KOLUMNY_TYLKO_ZE_SZCZEGOLOW
