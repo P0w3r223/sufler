@@ -518,3 +518,32 @@ column** — it is taken from the report's name — and the four dates it does c
 (`DataZakonczenia`, `DataZawieszenia`, `DataWznowienia` beside the start date) are *content*, not
 filters. `/firmy` has no parameter for any of them, so the register cannot be asked "who suspended
 in 2025"; the report can answer it only after the whole archive is downloaded and filtered locally.
+
+## `imie` and `nazwisko` match exactly — measured 2026-09-10 (4 requests, production)
+
+Two of the five fields ADR-0018 left `unmeasured` are now settled, and they came for free: the
+queries were being chosen for a demo on the owner's own industry, so the pair test cost two extra
+requests on top of a selection that was happening anyway. Consent for the production calls was
+given in session.
+
+The shape is a pair differing **only** in truncation, with everything else identical:
+
+| Criteria | `count` |
+|---|---|
+| `nazwisko=Nowak` + `pkd=6210B` + `miasto=Poznań` | **23** |
+| `nazwisko=Nowa` + `pkd=6210B` + `miasto=Poznań` | **0** |
+| `imie=Marek` + `nazwisko=Nowak` + `miasto=Poznań` | **27** |
+| `imie=Mare` + `nazwisko=Nowak` + `miasto=Poznań` | **0** |
+
+**Both fields match exactly.** The truncated value is a *prefix*, so zero rules out "contains" and
+"starts with" in one measurement; the full value returning 23 and 27 under the same criteria is the
+positive control that keeps the zero from being an artefact of an empty population.
+
+Two consequences. `reports.matches_criteria` was already comparing both with `_equals_ci` — so the
+report path was **right about these two by luck, and is now right on evidence**; the docstring says
+so. And three fields remain unmeasured (`powiat`, `gmina`, `ulica`), which is the remainder of
+ADR-0018's option B3 — three requests, not five.
+
+Worth keeping straight: this says nothing about `ulica`, which carries the `ul.` prefix in the
+stored value and is the field where a fragment would be most useful. The text-field family is not
+uniform (2026-09-09), and that lesson survives this measurement intact.

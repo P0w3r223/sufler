@@ -141,3 +141,22 @@ Three things this does not change, and one it sharpens:
 What it sharpens: the hand-kept agreement now spans seven fields across two copies of the predicate,
 which is exactly the drift argument option A makes. The addendum is deliberately not a decision —
 the owner's choice between A+B3 and B still stands open.
+
+---
+
+## Addendum 2026-09-10 — two of the five are measured, three remain
+
+`imie` and `nazwisko` match **exactly** (`docs/decisions.md`, 4 production requests: `Nowak` → 23
+against `Nowa` → 0, `Marek` → 27 against `Mare` → 0, everything else identical). The pair test came
+out of choosing queries for a demo, so the cost above the work already happening was two requests.
+
+What this changes for the decision this ADR proposes:
+
+- **B3 is now three requests, not five** — `powiat`, `gmina` and `ulica` are what is left.
+- `reports.matches_criteria` compared these two exactly on a documented default and turns out to
+  have been right; the docstring now separates "measured" from "chosen" for them.
+- Option A's `unmeasured` state still has occupants, so the argument for a single parameterised
+  predicate is unchanged in kind, only smaller in scope.
+- `ulica` is the field where a fragment would matter most and it is still unmeasured — the stored
+  value carries the `ul.` prefix, which is exactly why an exact comparison there is a guess with a
+  known way of being wrong.

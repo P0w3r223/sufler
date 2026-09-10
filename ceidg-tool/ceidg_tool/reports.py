@@ -299,7 +299,11 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
     * `nip_sc`, `regon_sc` — **tutaj nie docierają.** Dzienny zrzut nie ma takiej kolumny
       (nagłówek zmierzony 2026-09-10), więc `report_covers` odrzuca całą ścieżkę, a
       `pipeline.run_report_fetch` odmawia drugi raz, po swojej stronie bramki.
-    * `powiat`, `gmina`, `ulica`, `imie`, `nazwisko` — **niezmierzone i zostają dokładne.**
+    * `imie`, `nazwisko` — **zmierzone 2026-09-10: dopasowanie dokładne.** Para różniąca się samym
+      obcięciem wartości przy identycznej reszcie kryteriów: `nazwisko=Nowak` dała 23 trafienia,
+      `nazwisko=Nowa` zero; `imie=Marek` 27, `imie=Mare` zero. Porównanie przez `_equals_ci` stało
+      tu wcześniej jako domysł i **trafiło** — od tej daty stoi jako pomiar.
+    * `powiat`, `gmina`, `ulica` — **niezmierzone i zostają dokładne.**
       Sonda z 2026-09-09 (`scripts/ceidg_probe_match_semantics.py`, dwa żądania produkcyjne)
       wysłała fragmenty ze środka prawdziwych wartości w dwóch grupach i obie wróciły puste
       (HTTP 204). To znaczy tylko tyle, że **co najmniej jedno pole w każdej grupie** nie
