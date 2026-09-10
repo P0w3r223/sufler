@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "krs-tool"
+version = "0.1.0"
+description = "Raport o ryzyku spółki z KRS na podstawie odpisu dostarczonego przez operatora"
+requires-python = ">=3.11"
+# Bez własnego pola `license`: licencję całego drzewa niesie `LICENSE` w korzeniu,
+# tak samo jak w pozostałych pod-projektach.
+#
+# UWAGA PRZY DOPISYWANIU ZALEŻNOŚCI. Ta lista jest przedmiotem reguły granic 2
+# (`docs/design/etap1_core.md`): `tests/test_granice.py` czyta ją i każdą grupę
+# `optional-dependencies` przeciw białej liście. Pakiet, który potrafi otworzyć gniazdo,
+# nie przejdzie — i tak ma być, bo etap 1 nie łączy się z rejestrem z powodu prawnego,
+# nie technicznego (`docs/adr/0001`, decyzja 2).
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "questionary>=2.0",
+    "platformdirs>=4.2",
+]
+
+# Świadomie nieobecne, żeby nikt nie szukał ich w historii:
+#   httpx     — reguła granic 2; wraca razem z adapterem sieciowym (ADR-0001, decyzja 3)
+#   keyring   — etap 1 nie ma żadnego sekretu
+#   openpyxl  — artefaktem jest raport w markdown, nie skoroszyt; arkusz to cała
+#               powierzchnia wstrzyknięcia formuły za coś, czego etap 1 nie potrzebuje
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+krs-tool = "krs_tool.__main__:app"
+
+[tool.setuptools.packages.find]
+include = ["krs_tool*"]
+
+[tool.setuptools.package-data]
+krs_tool = ["signals/reguly/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Bez `addopts = "-q"`. W `ceidg-tool` ten wpis powodował, że udokumentowane polecenie
+# bramki (z jawnym `-q`) dawało `-qq`, a przy tej gadatliwości pytest nie drukuje linii
+# podsumowania — trzy wersje dokumentacji cytowały wtedy liczbę, której to polecenie nie
+# było w stanie wypisać.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Oba zestawy bramek naraz: `E F I B UP N W` jak w `ceidg-tool`, plus sufit funkcji,
+# którego `ceidg-tool` nie ma. Sufit jest darmowy na zielonym polu i drogi później,
+# a parser sprawozdań i silnik wskaźników etapu 2 to dwa miejsca w tym drzewie
+# najbardziej narażone na trzystulinijkową metodę.
+select = ["E", "F", "I", "B", "UP", "N", "W", "C901", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+# Zakres jawnie w konfiguracji, bo bramka repozytorium woła `uv run mypy` BEZ argumentów.
+# `scripts` dołącza w kroku 2, razem z pierwszym skryptem — tam powstaje anonimizator, czyli
+# miejsce, w którym wytwarza się materiał dowodowy (`docs/niezmierzone.md`), więc ma podlegać
+# tym samym regułom co pakiet. Katalog wpisany tu przed swoim powstaniem wywraca bramkę.
+files = ["krs_tool", "tests"]
