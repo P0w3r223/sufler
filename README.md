@@ -36,8 +36,9 @@ gałęzi oraz nocą.
 
 Repozytorium mieści cztery jednostki. Każda ma osobne środowisko `uv` i własny wpis w matrycy CI
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Czwarta dostaje dodatkowo przebieg na
-Windows i na drugiej wersji Pythona, instalowany `pipem` z `requirements.lock`
-([`.github/workflows/ceidg-tool.yml`](.github/workflows/ceidg-tool.yml)). Opis każdej mieszka
+Windows i na drugiej wersji Pythona, instalowany `pipem` wprost z `pyproject.toml`
+([`.github/workflows/ceidg-tool.yml`](.github/workflows/ceidg-tool.yml)) — czyli na świeżo
+rozwiązanym zestawie zależności, w odróżnieniu od przypiętego `uv.lock` w matrycy. Opis każdej mieszka
 u niej — tutaj jest tylko wskazówka, dokąd iść.
 
 **Rdzeń `workmate`** (`src/`, `tests/`, `docs/`, `deploy/`, `eval/`, `scripts/`) — to, co opisuje

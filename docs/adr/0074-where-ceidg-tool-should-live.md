@@ -125,7 +125,9 @@ old number resolvable in the meantime.
   rewritten, so that anyone mid-work on it loses nothing. It is also the one thing here that can go
   stale silently: a commit pushed to it after 2026-09-10 does not reach `Main`. Deleting it, with
   a named owner, is the follow-up this ADR asks for.
-- **A pull request against the old branch is now a trap.** The workflow file that used to serve it
-  no longer exists there under that trigger, and its base is a history `Main` does not share.
+- **A pull request against the old branch is now a trap.** Its base is a history `Main` does not
+  share, so nothing merged there can reach `Main` by any ordinary route. CI still runs on that
+  branch — the branch was deliberately left untouched, workflow included — which makes the trap
+  quieter, not smaller: green checks on a pull request that leads nowhere.
 - **Delay was not neutral, and was not free.** The branch grew from 33 to 36 commits between the
   draft and the decision — three commits' worth of extra surface for the import to move.
