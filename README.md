@@ -16,7 +16,9 @@ bez opuszczania rozmowy.
 **Produkcyjny — kod Fazy 1–4 domknięty.** Serwer MCP, runtime agenta w rdzeniu, drzwi
 Teams/CLI/GitHub, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira, grafik
 Shifts oraz lokalny retrieval leksykalny notatek. Powłoka `Bash` w kontenerze-wykonawcy i narzędzie
-`File` z mutacją bazy wiedzy są wdrożone i włączone na flocie.
+`File` są wdrożone i włączone na flocie w zakresie `read` i `edit`; kasowanie notatek stoi za
+osobną bramką, związaną z działającą kopią zapasową, i na flocie jest zamknięte
+([`docs/roadmap.md`](docs/roadmap.md), pomiar 2026-09-09).
 
 Decyzje architektoniczne żyją w [`docs/adr/`](docs/adr/); co niesie które wydanie, mówi
 [`CHANGELOG.md`](CHANGELOG.md). Wersję pakietu, obrazu i badge'a wyżej wiąże jedna bramka
@@ -27,13 +29,15 @@ Otwarte: meta Fazy 1, czyli wdrożenie HTTP na serwerze firmowym
 Karty czasu (WorklogPRO) zostały wycofane z projektu w całości, nie wstrzymane
 ([ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)).
 
-Stan bramek jakości pokazuje badge CI na górze — biegają na `Main`, `Dev`, każdym PR-ze oraz nocą.
+Stan bramek jakości pokazuje badge CI na górze — biegają na `Main`, `Dev`, PR-ach do tych dwóch
+gałęzi oraz nocą.
 
 ## Mapa repozytorium
 
-Repozytorium mieści cztery jednostki z osobnymi środowiskami `uv`. Trzy pierwsze mają własny wpis
-w matrycy CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)); czwarta ma własne CI na
-własnej gałęzi. Opis każdej mieszka u niej — tutaj jest tylko wskazówka, dokąd iść.
+Repozytorium mieści cztery jednostki. Trzy pierwsze mają osobne środowiska `uv` i własny wpis
+w matrycy CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)); czwarta stoi na `pip`
+i `requirements.lock`, z własnym CI na własnej gałęzi. Opis każdej mieszka u niej — tutaj jest
+tylko wskazówka, dokąd iść.
 
 **Rdzeń `workmate`** (`src/`, `tests/`, `docs/`, `deploy/`, `eval/`, `scripts/`) — to, co opisuje
 reszta tego pliku: serwer MCP, runtime agenta, drzwi i most zdarzeń.
@@ -65,10 +69,10 @@ mieszkać, jest przedmiotem osobnej decyzji:
 
 | Obszar | Co potrafi |
 |--------|-----------|
-| **Baza wiedzy (MCP)** | 4 narzędzia odczytu (wyszukiwanie, odczyt notatki, lista projektów, status projektu) + jedno bramkowane narzędzie zapisu (`save_note`, tylko dokłada, nigdy nie nadpisuje). Do tego trzy narzędzia **addytywne**, każde pod własnym warunkiem konfiguracji: odczyt zdarzeń mostu ([ADR 0040](docs/adr/0040-eventstore-to-mcp-session-cursor-read.md)) oraz para „moje zadania"/„moja historia" w Jirze. |
+| **Baza wiedzy (MCP)** | 4 narzędzia odczytu (wyszukiwanie, odczyt notatki, lista projektów, status projektu) + jedno bramkowane narzędzie zapisu (`save_note`, tylko dokłada, nigdy nie nadpisuje). Do tego trzy narzędzia **addytywne**, wchodzące pod dwoma warunkami konfiguracji: odczyt zdarzeń mostu, gdy podłączony jest most zdarzeń ([ADR 0040](docs/adr/0040-eventstore-to-mcp-session-cursor-read.md)), oraz para „moje zadania"/„moja historia" w Jirze, gdy operator skonfigurował stałe konto — jeden rejestrator wystawia obie. |
 | **Agent na drzwiach Teams/CLI/GitHub** | Ten sam katalog narzędzi napędza runtime agenta (model Claude w pętli) z pamięcią rozmów i kompaktowaniem historii. |
 | **Powłoka `Bash`** | Polecenia od modelu biegną w osobnym kontenerze-wykonawcy **bez sieci**, stawianym per rozmowa i widzącym wyłącznie jej brudnopis; wejście za bramką członkostwa pionu ([ADR 0057](docs/adr/0057-shell-executor-container-without-network.md), [ADR 0063](docs/adr/0063-shell-membership-gate-and-conversation-isolation.md)). |
-| **Narzędzie `File` i mutacja bazy wiedzy** | `read` materializuje plik (obraz/PDF/HTML) do kontekstu modelu; `edit` i `delete` zmieniają istniejącą notatkę — przez niezależnego sędziego-model, migawkę przed zmianą i punkt kontrolny człowieka przy werdykcie `confirm` ([ADR 0064](docs/adr/0064-file-tool-and-model-initiated-materialization.md), [ADR 0065](docs/adr/0065-mutable-knowledge-base-and-model-judged-writes.md)). |
+| **Narzędzie `File` i mutacja bazy wiedzy** | `read` materializuje plik (obraz/PDF/HTML) do kontekstu modelu; `edit` zmienia istniejącą notatkę — przez niezależnego sędziego-model, migawkę przed zmianą i punkt kontrolny człowieka przy werdykcie `confirm`. Trzecia akcja, `delete`, ma **osobną bramkę** i przy jej zamknięciu nie wchodzi nawet do listy akcji ([ADR 0064](docs/adr/0064-file-tool-and-model-initiated-materialization.md), [ADR 0065](docs/adr/0065-mutable-knowledge-base-and-model-judged-writes.md)). |
 | **Most GitHub ↔ EventStore ↔ Teams** | Ingest zdarzeń issue/PR/komentarzy/recenzji/CI oraz zamknięć issue ([ADR 0071](docs/adr/0071-issue-closures-and-what-self-skip-was-actually-skipping.md)); push na kanał i czat 1:1; dwukierunkowe wątki; z Teams zakładanie issue i odpowiedź w wątku na GitHubie. |
 | **Jira — odczyt (moje/członka zespołu, historia, szczegóły)** | Moje otwarte i zakończone zadania, szczegóły jednego zgłoszenia (+komentarze), wyszukiwanie, zadania/historia INNEGO członka pionu przez zaufaną mapę tożsamości — nadal zero zapisu ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md), [ADR 0059](docs/adr/0059-teams-shifts-schedule-read.md)). |
 | **Grafik Teams Shifts (odczyt)** | Kto pracuje dziś/w tygodniu, stacjonarnie czy zdalnie, kto ma wolne — tożsamość pożyczona z cache bota powiadomienia-teams, bez osobnej rejestracji aplikacji ([ADR 0059](docs/adr/0059-teams-shifts-schedule-read.md)). |
@@ -91,8 +95,8 @@ Pełna specyfikacja parametrów i wyników narzędzi: [`docs/reference/tools.md`
 
 Kilka z tych granic jest wynikiem świadomego wycofania, a nie braku czasu:
 
-- **Jira: wyłącznie odczyt.** Nie zakłada zgłoszeń, nie komentuje, nie zmienia statusów; token ma
-  minimalny zakres, a Jira nie jest częścią mostu zdarzeń
+- **Jira: wyłącznie odczyt.** Nie zakłada zgłoszeń, nie komentuje, nie zmienia statusów — w kodzie
+  nie ma ścieżki zapisu, a Jira nie jest częścią mostu zdarzeń
   ([ADR 0054](docs/adr/0054-reduce-jira-to-read-only-my-tasks.md)). Konto Jira nigdy nie przychodzi
   od modelu.
 - **Karty czasu (WorklogPRO) wycofane w całości** — cotygodniowe arkusze i tryb self-service nie
@@ -227,8 +231,8 @@ Pozostałe drzwi i zdolności wymagają dodatkowych extras `uv sync --extra <naz
 
 ### Polecenia
 
-Każde drzwi i każde narzędzie operatorskie to osobny console-script, dostępny po instalacji
-odpowiedniego extra:
+Każde drzwi i każde narzędzie operatorskie to osobny console-script. Część działa po samym
+`uv sync`; drzwi Teams, GitHub i Jiry wymagają odpowiedniego extra z tabeli wyżej:
 
 | Polecenie | Co uruchamia |
 |-----------|--------------|
@@ -256,8 +260,12 @@ Pełna macierz zmiennych `WORKMATE_*` (co każda bramka włącza i czego wymaga)
 [`.env.example`](.env.example) — wartości sekretów i identyfikatorów tenanta trzymamy wyłącznie
 w `.env` (gitignorowany), nigdy w dokumentacji czy kodzie.
 
-Bramka włączona, ale niekompletnie skonfigurowana, jest twardym błędem startu, a nie cichym brakiem
-funkcji: każda klasa ustawień ma własne `validate()`, wołane przez drzwi przed pierwszą turą.
+**Bramka zdolności mutującej**, włączona a niekompletnie skonfigurowana, jest twardym błędem startu,
+a nie cichym brakiem funkcji: drzwi wołają `validate()` na swoich klasach ustawień, zanim ruszy
+pierwsza tura. **Zdolności addytywne zachowują się odwrotnie i jest to zamierzone** — niekompletna
+konfiguracja Jiry daje ciche pominięcie narzędzia zamiast zatrzymania procesu, a błędy tokenu czy
+zgody administratora przy grafiku Shifts materializują się dopiero przy wywołaniu narzędzia.
+Zdolność, której nie ma, ma nie wywracać drzwi, przez które i tak przechodzą wszystkie pozostałe.
 
 ## Testy i bramki
 
@@ -273,19 +281,22 @@ uv run --no-sync lint-imports                                   # granice core �
 `--no-sync` omija blokadę pliku wykonywalnego na Windows. Powyższe to komplet bramki jakości z CI
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), z dwoma szczegółami, o które łatwo się
 potknąć: **`ruff format --check` jest osobnym krokiem, nie skutkiem `ruff check`**, a `lint-imports`
-biega wyłącznie dla rdzenia, bo pod-projekty nie mają import-lintera. Każdy krok ma warunek
-`!cancelled()`, żeby czerwony test nie przykrył wyniku pozostałych.
+biega wyłącznie dla rdzenia, bo pod-projekty nie mają import-lintera. Każdy krok **bramki** ma
+warunek `!cancelled()`, żeby czerwony test nie przykrył wyniku pozostałych.
 
-Pod-projekty mają własne środowiska i uruchamia się je osobno:
+Pod-projekty mają własne środowiska i uruchamia się je osobno, z tym samym zestawem extras, którego
+używa CI — inaczej ten sam pakiet testów biegnie u Ciebie i w bramce w dwóch różnych środowiskach:
 
 ```bash
-cd Powiadomienia_teams && uv run pytest
+cd Powiadomienia_teams && uv run --extra agent pytest
 cd claude_summary && uv run pytest
 ```
 
-Bramka jakości biegnie też **w trakcie budowania obrazów** — CI buduje obraz floty
-(`deploy/docker/Dockerfile`) i obraz pod-projektu powiadomień, więc ścieżka wdrożeniowa nie stoi na
-zdaniu, którego nikt nie sprawdza.
+CI buduje też oba obrazy — floty (`deploy/docker/Dockerfile`) i pod-projektu powiadomień — więc
+ścieżka wdrożeniowa nie stoi na zdaniu, którego nikt nie sprawdza. **Etap `test` wewnątrz
+`Dockerfile` floty nie jest jednak gwarancją**, że obraz nie powstanie z czerwonego drzewa: jego
+marker to pusty plik, więc bez `--no-cache-filter test` BuildKit podstawia warstwę z cache'u. W CI
+etap biegnie tylko dlatego, że runner startuje z pustym cache'em.
 
 ## Wdrożenie
 
@@ -323,8 +334,8 @@ Dokumentacja jest uporządkowana wg [Diátaxis](https://diataxis.fr/) — patrz 
 - **How-to** (`docs/how-to/`) — konkretne procedury operacyjne: wdrożenie, aktywacja drzwi, smoke test.
 - **Reference** (`docs/reference/`) — fakty do sprawdzenia: narzędzia, konfiguracja, schemat notatki.
 - **Explanation** (`docs/explanation/`) — kontekst i uzasadnienie: architektura systemu.
-- **ADR** ([`docs/adr/`](docs/adr/)) — zapis decyzji architektonicznych, od układu heksagonalnego po
-  klasy zaufania treści.
+- **ADR** ([`docs/adr/`](docs/adr/)) — zapis decyzji architektonicznych, od układu heksagonalnego
+  wzwyż; numeracja rośnie z każdą decyzją, więc katalog jest jedynym aktualnym spisem.
 - **Research** (`docs/research/`) — notatki badawcze uzasadniające wybory techniczne.
 
 Zmiany między wersjami: [`CHANGELOG.md`](CHANGELOG.md). Chcesz coś zmienić? →
