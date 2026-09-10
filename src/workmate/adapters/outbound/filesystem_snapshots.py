@@ -46,7 +46,13 @@ class FilesystemNoteSnapshots:
         tmp = katalog / f"{znacznik}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         try:
             katalog.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(content, encoding="utf-8")
+            # BAJTY, NIE TEKST: migawka ma dać się skopiować z powrotem CO DO BAJTU, a tryb
+            # tekstowy zamieniał na Windows każdy LF na CRLF — odtworzona notatka różniłaby się
+            # od tej sprzed zmiany, czyli dokładnie w punkcie, na którym stoi odwracalność
+            # mutacji z ADR 0065. Port typuje ``content`` jako ``str``, choć docstring mówi
+            # „bajty pliku z dysku" — kodowanie stoi więc tutaj, na ostatnim kroku przed
+            # dyskiem, zamiast liczyć na tryb otwarcia pliku (#146).
+            tmp.write_bytes(content.encode("utf-8"))
             os.replace(tmp, cel)
         except OSError as exc:
             raise WriteError(f"nie udało się zapisać migawki notatki {note_id}: {exc}") from exc
