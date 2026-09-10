@@ -1,0 +1,1813 @@
+# Klucz przejścia PKD 2007 → PKD 2025 — poprzednicy podklas (ADR-0012).
+#
+# Do czego służy: rejestr trzyma przy rekordzie jeden rocznik klasyfikacji, a filtr
+# `pkd` dopasowuje kod tak, jak go zapisano. Kod z PKD 2025 nie sięga więc rekordów
+# jeszcze nieprzeniesionych. `poprzednicy[kod2025]` to kody PKD 2007, które trzeba
+# dołożyć do zapytania, żeby je objąć.
+#
+# Podstawa prawna: Dz.U. 2024 poz. 1936 (rozporządzenie RM z 18.12.2024)
+# Wyszukiwarka GUS: https://klasyfikacje.stat.gov.pl/Pkd2025
+#
+# Zbudowane: 2026-09-07 przez scripts/build_pkd_transition.py
+# Plik źródłowy: KluczePKD_2007_2025.xlsx
+# SHA-256 źródła: f9a3c1b68fa91443c8d38c2c8ae664352ea9d49851f8adbde250f5316714d58c
+#
+# Wygasa: 2026-12-31 — koniec okresu przejściowego. Po tej dacie zmierz udział
+# rocznika 2007 w świeżym raporcie dziennym (offline, zero żądań) i jeśli jest
+# znikomy, usuń ten plik razem z ceidg_tool/pkdmap.py i krokiem w ui/flow.py.
+#
+# Plik jest generowany. Nie edytuj go ręcznie — popraw źródło i zbuduj ponownie,
+# inaczej prowenienacja w tym nagłówku przestaje opisywać zawartość.
+nazwy_2007:
+  0119Z: Pozostałe uprawy rolne inne niż wieloletnie
+  0128Z: Uprawa roślin przyprawowych i aromatycznych oraz roślin wykorzystywanych do produkcji leków i wyrobów farmaceutycznych
+  0142Z: Chów i hodowla pozostałego bydła i bawołów
+  0149Z: Chów i hodowla pozostałych zwierząt
+  0162Z: Działalność usługowa wspomagająca chów i hodowlę zwierząt gospodarskich
+  0164Z: Obróbka nasion dla celów rozmnażania roślin
+  0311Z: Rybołówstwo w wodach morskich
+  0312Z: Rybołówstwo w wodach śródlądowych
+  0321Z: Chów i hodowla ryb oraz pozostałych organizmów wodnych w wodach morskich
+  0322Z: Chów i hodowla ryb oraz pozostałych organizmów wodnych w wodach śródlądowych
+  1086Z: Produkcja artykułów spożywczych homogenizowanych i żywności dietetycznej
+  1089Z: Produkcja pozostałych artykułów spożywczych, gdzie indziej niesklasyfikowana
+  1310A: Produkcja przędzy bawełnianej
+  1310B: Produkcja przędzy wełnianej
+  1310C: Produkcja przędzy z włókien chemicznych
+  1310D: Produkcja przędzy z pozostałych włókien tekstylnych, włączając produkcję nici
+  1320A: Produkcja tkanin bawełnianych
+  1320B: Produkcja tkanin wełnianych
+  1320C: Produkcja tkanin z włókien chemicznych
+  1320D: Produkcja pozostałych tkanin
+  1392Z: Produkcja gotowych wyrobów tekstylnych
+  1411Z: Produkcja odzieży skórzanej
+  1412Z: Produkcja odzieży roboczej
+  1413Z: Produkcja pozostałej odzieży wierzchniej
+  1414Z: Produkcja bielizny
+  1419Z: Produkcja pozostałej odzieży i dodatków do odzieży
+  1420Z: Produkcja wyrobów futrzarskich
+  1431Z: Produkcja wyrobów pończoszniczych
+  1439Z: Produkcja pozostałej odzieży dzianej
+  1610Z: Produkcja wyrobów tartacznych
+  1621Z: Produkcja arkuszy fornirowych i płyt wykonanych na bazie drewna
+  1622Z: Produkcja gotowych parkietów podłogowych
+  1623Z: Produkcja pozostałych wyrobów stolarskich i ciesielskich dla budownictwa
+  1624Z: Produkcja opakowań drewnianych
+  1629Z: Produkcja pozostałych wyrobów z drewna; produkcja wyrobów z korka, słomy i materiałów używanych do wyplatania
+  1729Z: Produkcja pozostałych wyrobów z papieru i tektury
+  1812Z: Pozostałe drukowanie
+  2011Z: Produkcja gazów technicznych
+  2014Z: Produkcja pozostałych podstawowych chemikaliów organicznych
+  2020Z: Produkcja pestycydów i pozostałych środków agrochemicznych
+  2051Z: Produkcja materiałów wybuchowych
+  2052Z: Produkcja klejów
+  2053Z: Produkcja olejków eterycznych
+  2059Z: Produkcja pozostałych wyrobów chemicznych, gdzie indziej niesklasyfikowana
+  2219Z: Produkcja pozostałych wyrobów z gumy
+  2221Z: Produkcja płyt, arkuszy, rur i kształtowników z tworzyw sztucznych
+  2222Z: Produkcja opakowań z tworzyw sztucznych
+  2223Z: Produkcja wyrobów dla budownictwa z tworzyw sztucznych
+  2229Z: Produkcja pozostałych wyrobów z tworzyw sztucznych
+  2312Z: Kształtowanie i obróbka szkła płaskiego
+  2319Z: Produkcja i obróbka pozostałego szkła, włączając szkło techniczne
+  2342Z: Produkcja ceramicznych wyrobów sanitarnych
+  2349Z: Produkcja pozostałych wyrobów ceramicznych
+  2369Z: Produkcja pozostałych wyrobów z betonu, gipsu i cementu
+  2370Z: Cięcie, formowanie i wykańczanie kamienia
+  2453Z: Odlewnictwo metali lekkich
+  2521Z: Produkcja grzejników i kotłów centralnego ogrzewania
+  2529Z: Produkcja pozostałych zbiorników, cystern i pojemników metalowych
+  2530Z: Produkcja wytwornic pary, z wyłączeniem kotłów do centralnego ogrzewania gorącą wodą
+  2540Z: Produkcja broni i amunicji
+  2550Z: Kucie, prasowanie, wytłaczanie i walcowanie metali; metalurgia proszków
+  2561Z: Obróbka metali i nakładanie powłok na metale
+  2562Z: Obróbka mechaniczna elementów metalowych
+  2571Z: Produkcja wyrobów nożowniczych i sztućców
+  2572Z: Produkcja zamków i zawiasów
+  2573Z: Produkcja narzędzi
+  2620Z: Produkcja komputerów i urządzeń peryferyjnych
+  2630Z: Produkcja sprzętu (tele)komunikacyjnego
+  2680Z: Produkcja magnetycznych i optycznych niezapisanych nośników informacji
+  2711Z: Produkcja elektrycznych silników, prądnic i transformatorów
+  2712Z: Produkcja aparatury rozdzielczej i sterowniczej energii elektrycznej
+  2790Z: Produkcja pozostałego sprzętu elektrycznego
+  2811Z: Produkcja silników i turbin, z wyłączeniem silników lotniczych, samochodowych i motocyklowych
+  2821Z: Produkcja pieców, palenisk i palników piecowych
+  2823Z: Produkcja maszyn i sprzętu biurowego, z wyłączeniem komputerów i urządzeń peryferyjnych
+  2825Z: Produkcja przemysłowych urządzeń chłodniczych i wentylacyjnych
+  2829Z: Produkcja pozostałych maszyn ogólnego przeznaczenia, gdzie indziej niesklasyfikowana
+  2849Z: Produkcja pozostałych narzędzi mechanicznych
+  2892Z: Produkcja maszyn dla górnictwa i do wydobywania oraz budownictwa
+  2896Z: Produkcja maszyn do obróbki gumy lub tworzyw sztucznych oraz wytwarzania wyrobów z tych materiałów
+  2899Z: Produkcja pozostałych maszyn specjalnego przeznaczenia, gdzie indziej niesklasyfikowana
+  3011Z: Produkcja statków i konstrukcji pływających
+  3030Z: Produkcja statków powietrznych, statków kosmicznych i podobnych maszyn
+  3040Z: Produkcja wojskowych pojazdów bojowych
+  3091Z: Produkcja motocykli
+  3101Z: Produkcja mebli biurowych i sklepowych
+  3102Z: Produkcja mebli kuchennych
+  3103Z: Produkcja materaców
+  3109Z: Produkcja pozostałych mebli
+  3230Z: Produkcja sprzętu sportowego
+  3250Z: Produkcja urządzeń, instrumentów oraz wyrobów medycznych, włączając dentystyczne
+  3299Z: Produkcja pozostałych wyrobów, gdzie indziej niesklasyfikowana
+  3311Z: Naprawa i konserwacja metalowych wyrobów gotowych
+  3312Z: Naprawa i konserwacja maszyn
+  3315Z: Naprawa i konserwacja statków i łodzi
+  3316Z: Naprawa i konserwacja statków powietrznych i statków kosmicznych
+  3319Z: Naprawa i konserwacja pozostałego sprzętu i wyposażenia
+  3511Z: Wytwarzanie energii elektrycznej
+  3512Z: Przesyłanie energii elektrycznej
+  3513Z: Dystrybucja energii elektrycznej
+  3514Z: Handel energią elektryczną
+  3523Z: Handel paliwami gazowymi w systemie sieciowym
+  3821Z: Obróbka i usuwanie odpadów innych niż niebezpieczne
+  3822Z: Przetwarzanie i unieszkodliwianie odpadów niebezpiecznych
+  3831Z: Demontaż wyrobów zużytych
+  3832Z: Odzysk surowców z materiałów segregowanych
+  4110Z: Realizacja projektów budowlanych związanych ze wznoszeniem budynków
+  4120Z: Roboty budowlane związane ze wznoszeniem budynków mieszkalnych i niemieszkalnych
+  4211Z: Roboty związane z budową dróg i autostrad
+  4299Z: Roboty związane z budową pozostałych obiektów inżynierii lądowej i wodnej, gdzie indziej niesklasyfikowane
+  4329Z: Wykonywanie pozostałych instalacji budowlanych
+  4339Z: Wykonywanie pozostałych robót budowlanych wykończeniowych
+  4391Z: Wykonywanie konstrukcji i pokryć dachowych
+  4399Z: Pozostałe specjalistyczne roboty budowlane, gdzie indziej niesklasyfikowane
+  4511Z: Sprzedaż hurtowa i detaliczna samochodów osobowych i furgonetek
+  4519Z: Sprzedaż hurtowa i detaliczna pozostałych pojazdów samochodowych, z wyłączeniem motocykli
+  4520Z: Konserwacja i naprawa pojazdów samochodowych, z wyłączeniem motocykli
+  4531Z: Sprzedaż hurtowa części i akcesoriów do pojazdów samochodowych, z wyłączeniem motocykli
+  4532Z: Sprzedaż detaliczna części i akcesoriów do pojazdów samochodowych, z wyłączeniem motocykli
+  4540Z: Sprzedaż hurtowa i detaliczna motocykli, ich naprawa i konserwacja oraz sprzedaż hurtowa i detaliczna części i akcesoriów do nich
+  4611Z: Działalność agentów zajmujących się sprzedażą płodów rolnych, żywych zwierząt, surowców dla przemysłu tekstylnego i półproduktów
+  4621Z: Sprzedaż hurtowa zboża, nieprzetworzonego tytoniu, nasion i pasz dla zwierząt
+  4638Z: Sprzedaż hurtowa pozostałej żywności, włączając ryby, skorupiaki i mięczaki
+  4643Z: Sprzedaż hurtowa elektrycznych artykułów użytku domowego
+  4651Z: Sprzedaż hurtowa komputerów, urządzeń peryferyjnych i oprogramowania
+  4652Z: Sprzedaż hurtowa sprzętu elektronicznego i telekomunikacyjnego oraz części do niego
+  4665Z: Sprzedaż hurtowa mebli biurowych
+  4666Z: Sprzedaż hurtowa pozostałych maszyn i urządzeń biurowych
+  4669Z: Sprzedaż hurtowa pozostałych maszyn i urządzeń
+  4671Z: Sprzedaż hurtowa paliw i produktów pochodnych
+  4672Z: Sprzedaż hurtowa metali i rud metali
+  4673Z: Sprzedaż hurtowa drewna, materiałów budowlanych i wyposażenia sanitarnego
+  4674Z: Sprzedaż hurtowa wyrobów metalowych oraz sprzętu i dodatkowego wyposażenia hydraulicznego i grzejnego
+  4675Z: Sprzedaż hurtowa wyrobów chemicznych
+  4676Z: Sprzedaż hurtowa pozostałych półproduktów
+  4677Z: Sprzedaż hurtowa odpadów i złomu
+  4711Z: Sprzedaż detaliczna prowadzona w niewyspecjalizowanych sklepach z przewagą żywności, napojów i wyrobów tytoniowych
+  4719Z: Pozostała sprzedaż detaliczna prowadzona w niewyspecjalizowanych sklepach
+  4721Z: Sprzedaż detaliczna owoców i warzyw prowadzona w wyspecjalizowanych sklepach
+  4722Z: Sprzedaż detaliczna mięsa i wyrobów z mięsa prowadzona w wyspecjalizowanych sklepach
+  4723Z: Sprzedaż detaliczna ryb, skorupiaków i mięczaków prowadzona w wyspecjalizowanych sklepach
+  4724Z: Sprzedaż detaliczna pieczywa, ciast, wyrobów ciastkarskich i cukierniczych prowadzona w wyspecjalizowanych sklepach
+  4725Z: Sprzedaż detaliczna napojów alkoholowych i bezalkoholowych prowadzona w wyspecjalizowanych sklepach
+  4726Z: Sprzedaż detaliczna wyrobów tytoniowych prowadzona w wyspecjalizowanych sklepach
+  4729Z: Sprzedaż detaliczna pozostałej żywności prowadzona w wyspecjalizowanych sklepach
+  4730Z: Sprzedaż detaliczna paliw do pojazdów silnikowych na stacjach paliw
+  4741Z: Sprzedaż detaliczna komputerów, urządzeń peryferyjnych i oprogramowania prowadzona w wyspecjalizowanych sklepach
+  4742Z: Sprzedaż detaliczna sprzętu telekomunikacyjnego prowadzona w wyspecjalizowanych sklepach
+  4743Z: Sprzedaż detaliczna sprzętu audiowizualnego prowadzona w wyspecjalizowanych sklepach
+  4751Z: Sprzedaż detaliczna wyrobów tekstylnych prowadzona w wyspecjalizowanych sklepach
+  4752Z: Sprzedaż detaliczna drobnych wyrobów metalowych, farb i szkła prowadzona w wyspecjalizowanych sklepach
+  4753Z: Sprzedaż detaliczna dywanów, chodników i innych pokryć podłogowych oraz pokryć ściennych prowadzona w wyspecjalizowanych sklepach
+  4754Z: Sprzedaż detaliczna elektrycznego sprzętu gospodarstwa domowego prowadzona w wyspecjalizowanych sklepach
+  4759Z: Sprzedaż detaliczna mebli, sprzętu oświetleniowego i pozostałych artykułów użytku domowego prowadzona w wyspecjalizowanych sklepach
+  4761Z: Sprzedaż detaliczna książek prowadzona w wyspecjalizowanych sklepach
+  4762Z: Sprzedaż detaliczna gazet i artykułów piśmiennych prowadzona w wyspecjalizowanych sklepach
+  4763Z: Sprzedaż detaliczna nagrań dźwiękowych i audiowizualnych prowadzona w wyspecjalizowanych sklepach
+  4764Z: Sprzedaż detaliczna sprzętu sportowego prowadzona w wyspecjalizowanych sklepach
+  4765Z: Sprzedaż detaliczna gier i zabawek prowadzona w wyspecjalizowanych sklepach
+  4771Z: Sprzedaż detaliczna odzieży prowadzona w wyspecjalizowanych sklepach
+  4772Z: Sprzedaż detaliczna obuwia i wyrobów skórzanych prowadzona w wyspecjalizowanych sklepach
+  4773Z: Sprzedaż detaliczna wyrobów farmaceutycznych prowadzona w wyspecjalizowanych sklepach
+  4774Z: Sprzedaż detaliczna wyrobów medycznych, włączając ortopedyczne, prowadzona w wyspecjalizowanych sklepach
+  4775Z: Sprzedaż detaliczna kosmetyków i artykułów toaletowych prowadzona w wyspecjalizowanych sklepach
+  4776Z: Sprzedaż detaliczna kwiatów, roślin, nasion, nawozów, żywych zwierząt domowych, karmy dla zwierząt domowych prowadzona w wyspecjalizowanych sklepach
+  4777Z: Sprzedaż detaliczna zegarków, zegarów i biżuterii prowadzona w wyspecjalizowanych sklepach
+  4778Z: Sprzedaż detaliczna pozostałych nowych wyrobów prowadzona w wyspecjalizowanych sklepach
+  4779Z: Sprzedaż detaliczna artykułów używanych prowadzona w wyspecjalizowanych sklepach
+  4781Z: Sprzedaż detaliczna żywności, napojów i wyrobów tytoniowych prowadzona na straganach i targowiskach
+  4782Z: Sprzedaż detaliczna wyrobów tekstylnych, odzieży i obuwia prowadzona na straganach i targowiskach
+  4789Z: Sprzedaż detaliczna pozostałych wyrobów prowadzona na straganach i targowiskach
+  4791Z: Sprzedaż detaliczna prowadzona przez domy sprzedaży wysyłkowej lub Internet
+  4799Z: Pozostała sprzedaż detaliczna prowadzona poza siecią sklepową, straganami i targowiskami
+  4910Z: Transport kolejowy pasażerski międzymiastowy
+  4931Z: Transport lądowy pasażerski, miejski i podmiejski
+  4932Z: Działalność taksówek osobowych
+  4939Z: Pozostały transport lądowy pasażerski, gdzie indziej niesklasyfikowany
+  4941Z: Transport drogowy towarów
+  5210A: Magazynowanie i przechowywanie paliw gazowych
+  5210B: Magazynowanie i przechowywanie pozostałych towarów
+  5221Z: Działalność usługowa wspomagająca transport lądowy
+  5229A: Działalność morskich agencji transportowych
+  5229B: Działalność śródlądowych agencji transportowych
+  5229C: Działalność pozostałych agencji transportowych
+  5610A: Restauracje i inne stałe placówki gastronomiczne
+  5610B: Ruchome placówki gastronomiczne
+  5629Z: Pozostała usługowa działalność gastronomiczna
+  5812Z: Wydawanie wykazów oraz list (np. adresowych, telefonicznych)
+  5813Z: Wydawanie gazet
+  5814Z: Wydawanie czasopism i pozostałych periodyków
+  6110Z: Działalność w zakresie telekomunikacji przewodowej
+  6120Z: Działalność w zakresie telekomunikacji bezprzewodowej, z wyłączeniem telekomunikacji satelitarnej
+  6130Z: Działalność w zakresie telekomunikacji satelitarnej
+  6190Z: Działalność w zakresie pozostałej telekomunikacji
+  6201Z: Działalność związana z oprogramowaniem
+  6202Z: Działalność związana z doradztwem w zakresie informatyki
+  6203Z: Działalność związana z zarządzaniem urządzeniami informatycznymi
+  6209Z: Pozostała działalność usługowa w zakresie technologii informatycznych i komputerowych
+  6311Z: Przetwarzanie danych; zarządzanie stronami internetowymi (hosting) i podobna działalność
+  6312Z: Działalność portali internetowych
+  6391Z: Działalność agencji informacyjnych
+  6399Z: Pozostała działalność usługowa w zakresie informacji, gdzie indziej niesklasyfikowana
+  6420Z: Działalność holdingów finansowych
+  6430Z: Działalność trustów, funduszów i podobnych instytucji finansowych
+  6492Z: Pozostałe formy udzielania kredytów
+  6499Z: Pozostała finansowa działalność usługowa, gdzie indziej niesklasyfikowana, z wyłączeniem ubezpieczeń i funduszów emerytalnych
+  6619Z: Pozostała działalność wspomagająca usługi finansowe, z wyłączeniem ubezpieczeń i funduszów emerytalnych
+  6810Z: Kupno i sprzedaż nieruchomości na własny rachunek
+  6820Z: Wynajem i zarządzanie nieruchomościami własnymi lub dzierżawionymi
+  6831Z: Pośrednictwo w obrocie nieruchomościami
+  6832Z: Zarządzanie nieruchomościami wykonywane na zlecenie
+  6920Z: Działalność rachunkowo-księgowa; doradztwo podatkowe
+  7010Z: Działalność firm centralnych (head offices) i holdingów, z wyłączeniem holdingów finansowych
+  7021Z: Stosunki międzyludzkie (public relations) i komunikacja
+  7022Z: Pozostałe doradztwo w zakresie prowadzenia działalności gospodarczej i zarządzania
+  7112Z: Działalność w zakresie inżynierii i związane z nią doradztwo techniczne
+  7120B: Pozostałe badania i analizy techniczne
+  7211Z: Badania naukowe i prace rozwojowe w dziedzinie biotechnologii
+  7219Z: Badania naukowe i prace rozwojowe w dziedzinie pozostałych nauk przyrodniczych i technicznych
+  7312A: Pośrednictwo w sprzedaży czasu i miejsca na cele reklamowe w radio i telewizji
+  7312B: Pośrednictwo w sprzedaży miejsca na cele reklamowe w mediach drukowanych
+  7312C: Pośrednictwo w sprzedaży miejsca na cele reklamowe w mediach elektronicznych (Internet)
+  7312D: Pośrednictwo w sprzedaży miejsca na cele reklamowe w pozostałych mediach
+  7410Z: Działalność w zakresie specjalistycznego projektowania
+  7420Z: Działalność fotograficzna
+  7490Z: Pozostała działalność profesjonalna, naukowa i techniczna, gdzie indziej niesklasyfikowana
+  7712Z: Wynajem i dzierżawa pozostałych pojazdów samochodowych, z wyłączeniem motocykli
+  7729Z: Wypożyczanie i dzierżawa pozostałych artykułów użytku osobistego i domowego
+  7739Z: Wynajem i dzierżawa pozostałych maszyn, urządzeń oraz dóbr materialnych, gdzie indziej niesklasyfikowane
+  7740Z: Dzierżawa własności intelektualnej i podobnych produktów, z wyłączeniem prac chronionych prawem autorskim
+  7830Z: Pozostała działalność związana z udostępnianiem pracowników
+  7911A: Działalność agentów turystycznych
+  7911B: Działalność pośredników turystycznych
+  7990A: Działalność pilotów wycieczek i przewodników turystycznych
+  7990B: Działalność w zakresie informacji turystycznej
+  7990C: Pozostała działalność usługowa w zakresie rezerwacji, gdzie indziej niesklasyfikowana
+  8010Z: Działalność ochroniarska, z wyłączeniem obsługi systemów bezpieczeństwa
+  8020Z: Działalność ochroniarska w zakresie obsługi systemów bezpieczeństwa
+  8030Z: Działalność detektywistyczna
+  8121Z: Niespecjalistyczne sprzątanie budynków i obiektów przemysłowych
+  8122Z: Specjalistyczne sprzątanie budynków i obiektów przemysłowych
+  8129Z: Pozostałe sprzątanie
+  8211Z: Działalność usługowa związana z administracyjną obsługą biura
+  8219Z: Wykonywanie fotokopii, przygotowywanie dokumentów i pozostała specjalistyczna działalność wspomagająca prowadzenie biura
+  8230Z: Działalność związana z organizacją targów, wystaw i kongresów
+  8299Z: Pozostała działalność wspomagająca prowadzenie działalności gospodarczej, gdzie indziej niesklasyfikowana
+  8531A: Gimnazja
+  8531B: Licea ogólnokształcące
+  8532C: Szkoły specjalne przysposabiające do pracy
+  8532D: Branżowe szkoły II stopnia
+  8541A: Szkoły policealne
+  8541B: Kolegia pracowników służb społecznych
+  8541C: Placówki doskonalenia nauczycieli
+  8542Z: Szkoły wyższe
+  8551Z: Pozaszkolne formy edukacji sportowej oraz zajęć sportowych i rekreacyjnych
+  8559B: Pozostałe pozaszkolne formy edukacji, gdzie indziej niesklasyfikowane
+  8560Z: Działalność wspomagająca edukację
+  8690A: Działalność fizjoterapeutyczna
+  8690B: Działalność pogotowia ratunkowego
+  8690C: Praktyka pielęgniarek i położnych
+  8690D: Działalność paramedyczna
+  8690E: Pozostała działalność w zakresie opieki zdrowotnej, gdzie indziej niesklasyfikowana
+  8790Z: Pozostała pomoc społeczna z zakwaterowaniem
+  9001Z: Działalność związana z wystawianiem przedstawień artystycznych
+  9002Z: Działalność wspomagająca wystawianie przedstawień artystycznych
+  9003Z: Artystyczna i literacka działalność twórcza
+  9004Z: Działalność obiektów kulturalnych
+  9101A: Działalność bibliotek
+  9101B: Działalność archiwów
+  9102Z: Działalność muzeów
+  9103Z: Działalność historycznych miejsc i budynków oraz podobnych atrakcji turystycznych
+  9104Z: Działalność ogrodów botanicznych i zoologicznych oraz obszarów i obiektów ochrony przyrody
+  9311Z: Działalność obiektów sportowych
+  9319Z: Pozostała działalność związana ze sportem
+  9321Z: Działalność wesołych miasteczek i parków rozrywki
+  9329B: Pozostała działalność rozrywkowa i rekreacyjna, gdzie indziej niesklasyfikowana
+  9511Z: Naprawa i konserwacja komputerów i urządzeń peryferyjnych
+  9512Z: Naprawa i konserwacja sprzętu (tele)komunikacyjnego
+  9601Z: Pranie i czyszczenie wyrobów włókienniczych i futrzarskich
+  9602Z: Fryzjerstwo i pozostałe zabiegi kosmetyczne
+  9603Z: Pogrzeby i działalność pokrewna
+  9604Z: Działalność usługowa związana z poprawą kondycji fizycznej
+  9609Z: Pozostała działalność usługowa, gdzie indziej niesklasyfikowana
+nazwy_2025:
+  0113Z: Uprawa warzyw, włączając melony oraz uprawa roślin korzeniowych i roślin bulwiastych
+  0119Z: Pozostałe uprawy rolne inne niż wieloletnie
+  0128Z: Uprawa roślin przyprawowych i aromatycznych oraz roślin wykorzystywanych do produkcji leków i wyrobów farmaceutycznych
+  0141Z: Chów i hodowla bydła mlecznego
+  0142Z: Chów i hodowla pozostałego bydła i bawołów
+  0147Z: Chów i hodowla drobiu
+  0148Z: Chów i hodowla pozostałych zwierząt
+  0162Z: Działalność usługowa wspomagająca chów i hodowlę zwierząt gospodarskich
+  0163Z: Działalność usługowa następująca po zbiorach oraz obróbka nasion dla celów rozmnażania roślin
+  0311Z: Rybołówstwo w wodach morskich
+  0312Z: Rybołówstwo w wodach śródlądowych
+  0321Z: Akwakultura w wodach morskich
+  0322Z: Akwakultura w wodach śródlądowych
+  0330Z: Działalność usługowa wspomagająca rybołówstwo i akwakulturę
+  1061Z: Wytwarzanie produktów przemiału zbóż
+  1062Z: Wytwarzanie skrobi i wyrobów skrobiowych
+  1071Z: Produkcja pieczywa; produkcja świeżych wyrobów ciastkarskich i ciastek
+  1072Z: Produkcja sucharów, herbatników, konserwowanych wyrobów ciastkarskich i ciastek
+  1073Z: Produkcja wyrobów mącznych
+  1086Z: Produkcja artykułów spożywczych homogenizowanych i żywności dietetycznej
+  1089A: Produkcja suplementów diety
+  1089B: Produkcja substytutów mięsa
+  1089C: Produkcja roślinnych substytutów dla jaj, nabiału i innych produktów mlecznych, z wyłączeniem napojów
+  1089D: Produkcja pozostałych artykułów spożywczych, z wyłączeniem suplementów diety, substytutów mięsa, roślinnych substytutów dla jaj, nabiału i innych produktów mlecznych, gdzie indziej niesklasyfikowana
+  1107Z: Produkcja napojów bezalkoholowych i wód butelkowanych
+  1310Z: Przygotowanie i przędzenie włókien tekstylnych
+  1320Z: Produkcja tkanin
+  1330Z: Wykończanie wyrobów tekstylnych
+  1392Z: Produkcja wyrobów tekstylnych dla gospodarstw domowych i gotowych artykułów wyposażenia wnętrz
+  1396Z: Produkcja pozostałych technicznych i przemysłowych wyrobów tekstylnych
+  1410Z: Produkcja odzieży dzianej
+  1421Z: Produkcja odzieży wierzchniej
+  1422Z: Produkcja bielizny
+  1423Z: Produkcja odzieży roboczej
+  1424Z: Produkcja odzieży skórzanej i wyrobów futrzarskich
+  1429Z: Produkcja pozostałej odzieży i dodatków do odzieży, gdzie indziej niesklasyfikowana
+  1520Z: Produkcja obuwia
+  1611Z: Produkcja wyrobów tartacznych
+  1612Z: Obróbka i wykończanie wyrobów tartacznych
+  1621Z: Produkcja arkuszy fornirowych i płyt wykonanych na bazie drewna
+  1622Z: Produkcja gotowych parkietów podłogowych
+  1623Z: Produkcja pozostałych wyrobów stolarskich i ciesielskich dla budownictwa
+  1624Z: Produkcja opakowań drewnianych
+  1625Z: Produkcja drzwi i okien z drewna
+  1626Z: Produkcja paliw stałych z biomasy roślinnej
+  1627Z: Wykończanie wyrobów drewnianych
+  1628Z: Produkcja pozostałych wyrobów z drewna oraz wyrobów z korka, słomy i materiałów używanych do wyplatania
+  1725Z: Produkcja pozostałych wyrobów z papieru i tektury
+  1812Z: Pozostałe drukowanie
+  2011Z: Produkcja gazów technicznych
+  2014Z: Produkcja pozostałych podstawowych chemikaliów organicznych
+  2016Z: Produkcja tworzyw sztucznych w formach podstawowych
+  2020A: Produkcja pestycydów
+  2020B: Produkcja środków dezynfekujących
+  2020C: Produkcja pozostałych środków agrochemicznych
+  2051Z: Produkcja biopaliw płynnych
+  2059Z: Produkcja pozostałych wyrobów chemicznych, gdzie indziej niesklasyfikowana
+  2212Z: Produkcja pozostałych wyrobów z gumy
+  2221Z: Produkcja płyt, arkuszy, rur i kształtowników z tworzyw sztucznych
+  2222Z: Produkcja opakowań z tworzyw sztucznych
+  2223Z: Produkcja drzwi i okien z tworzyw sztucznych
+  2224Z: Produkcja wyrobów dla budownictwa z tworzyw sztucznych
+  2225Z: Obróbka i wykończanie wyrobów z tworzyw sztucznych
+  2226Z: Produkcja pozostałych wyrobów z tworzyw sztucznych
+  2312Z: Kształtowanie i obróbka szkła płaskiego
+  2315Z: Produkcja i obróbka pozostałego szkła, włączając szkło techniczne
+  2342Z: Produkcja ceramicznych wyrobów sanitarnych
+  2345Z: Produkcja pozostałych wyrobów ceramicznych
+  2366Z: Produkcja pozostałych wyrobów z betonu, cementu i gipsu
+  2370A: Produkcja nagrobków, grobowców i płyt nagrobnych z kamienia
+  2370B: Produkcja pozostałych wyrobów z kamienia oraz cięcie, formowanie i wykończanie kamienia
+  2399Z: Produkcja pozostałych wyrobów z mineralnych surowców niemetalicznych, gdzie indziej niesklasyfikowana
+  2453Z: Odlewnictwo metali lekkich
+  2454B: Odlewnictwo pozostałych metali nieżelaznych, gdzie indziej niesklasyfikowane
+  2521Z: Produkcja grzejników centralnego ogrzewania, wytwornic pary i kotłów
+  2522Z: Produkcja pozostałych zbiorników, cystern i pojemników metalowych
+  2530Z: Produkcja broni i amunicji
+  2540Z: Kucie i formowanie metali oraz metalurgia proszków
+  2551Z: Nakładanie powłok na metale
+  2552Z: Obróbka cieplna metali
+  2553Z: Obróbka mechaniczna elementów metalowych
+  2561Z: Produkcja wyrobów nożowniczych i sztućców
+  2562Z: Produkcja zamków i zawiasów
+  2563Z: Produkcja narzędzi
+  2620Z: Produkcja komputerów i urządzeń peryferyjnych
+  2630Z: Produkcja sprzętu (tele)komunikacyjnego
+  2640Z: Produkcja elektronicznego sprzętu powszechnego użytku
+  2651Z: Produkcja instrumentów i przyrządów pomiarowych, kontrolnych i nawigacyjnych
+  2660Z: Produkcja urządzeń napromieniowujących, sprzętu elektromedycznego i elektroterapeutycznego
+  2670Z: Produkcja instrumentów optycznych, niezapisanych magnetycznych i optycznych nośników informacji oraz sprzętu fotograficznego
+  2711Z: Produkcja elektrycznych silników, prądnic i transformatorów
+  2712Z: Produkcja aparatury rozdzielczej i sterowniczej energii elektrycznej
+  2790Z: Produkcja pozostałego sprzętu elektrycznego
+  2811Z: Produkcja silników i turbin, z wyłączeniem silników lotniczych, samochodowych i motocyklowych
+  2821Z: Produkcja pieców, palenisk i stałych urządzeń grzewczych dla gospodarstw domowych
+  2823Z: Produkcja maszyn i sprzętu biurowego, z wyłączeniem komputerów i urządzeń peryferyjnych
+  2825Z: Produkcja przemysłowych urządzeń chłodniczych, wentylacyjnych i klimatyzacyjnych
+  2829Z: Produkcja pozostałych maszyn ogólnego przeznaczenia, gdzie indziej niesklasyfikowana
+  2830Z: Produkcja maszyn dla rolnictwa i leśnictwa
+  2841Z: Produkcja maszyn do formowania metalu i obrabiarek do metalu
+  2842Z: Produkcja pozostałych narzędzi mechanicznych
+  2892Z: Produkcja maszyn dla górnictwa i do wydobywania oraz budownictwa
+  2893Z: Produkcja maszyn stosowanych w przetwórstwie żywności, tytoniu i produkcji napojów
+  2896Z: Produkcja maszyn do obróbki gumy lub tworzyw sztucznych
+  2897Z: Produkcja maszyn do wytwarzania przyrostowego
+  2899Z: Produkcja pozostałych maszyn specjalnego przeznaczenia, gdzie indziej niesklasyfikowana
+  2910A: Produkcja silników do pojazdów silnikowych, z wyłączeniem motocykli
+  2931Z: Produkcja wyposażenia elektrycznego i elektronicznego do pojazdów silnikowych
+  2932Z: Produkcja pozostałych części i akcesoriów do pojazdów silnikowych, z wyłączeniem motocykli
+  3011Z: Produkcja cywilnych statków i konstrukcji pływających
+  3013Z: Produkcja wojskowych okrętów i jednostek pływających
+  3031Z: Produkcja cywilnych statków powietrznych, statków kosmicznych i podobnych maszyn
+  3032Z: Produkcja wojskowych statków powietrznych, statków kosmicznych i podobnych maszyn
+  3040Z: Produkcja wojskowych pojazdów bojowych
+  3091Z: Produkcja motocykli
+  3092Z: Produkcja rowerów i wózków inwalidzkich
+  3100Z: Produkcja mebli
+  3230Z: Produkcja sprzętu sportowego
+  3250A: Produkcja urządzeń, instrumentów oraz wyrobów dentystycznych
+  3250B: Pozostała produkcja urządzeń, instrumentów oraz wyrobów medycznych
+  3299Z: Produkcja pozostałych wyrobów, gdzie indziej niesklasyfikowana
+  3311Z: Naprawa i konserwacja metalowych wyrobów gotowych
+  3312Z: Naprawa i konserwacja maszyn
+  3315Z: Naprawa i konserwacja cywilnych statków i łodzi
+  3316Z: Naprawa i konserwacja cywilnych statków powietrznych i statków kosmicznych
+  3317Z: Naprawa i konserwacja pozostałego cywilnego sprzętu transportowego
+  3318Z: Naprawa i konserwacja wojskowych pojazdów bojowych, okrętów, łodzi, statków powietrznych i statków kosmicznych
+  3319Z: Naprawa i konserwacja pozostałego sprzętu i wyposażenia
+  3511Z: Wytwarzanie energii elektrycznej ze źródeł nieodnawialnych
+  3512A: Energetyka wiatrowa
+  3512B: Energetyka słoneczna
+  3512C: Energetyka geotermalna
+  3512D: Energetyka biogazowa
+  3512E: Energetyka wodna
+  3512F: Wytwarzanie energii elektrycznej z pozostałych źródeł odnawialnych
+  3513Z: Przesyłanie energii elektrycznej
+  3514Z: Dystrybucja energii elektrycznej
+  3515Z: Handel energią elektryczną
+  3516Z: Magazynowanie energii elektrycznej
+  3523Z: Handel paliwami gazowymi w systemie sieciowym
+  3524Z: Magazynowanie paliw gazowych w ramach usług zaopatrzenia sieciowego
+  3540Z: Działalność brokerów i agentów w zakresie energii elektrycznej i gazu ziemnego
+  3821Z: Odzysk surowców
+  3822Z: Odzysk energii
+  3823Z: Pozostały odzysk związany z odpadami
+  3831Z: Spalanie odpadów bez odzysku energii
+  3832Z: Składowanie odpadów
+  3833Z: Pozostałe unieszkodliwianie odpadów
+  4100A: Roboty budowlane związane ze wznoszeniem budynków mieszkalnych
+  4100B: Roboty budowlane związane ze wznoszeniem budynków niemieszkalnych
+  4211Z: Roboty związane z budową dróg i autostrad
+  4299Z: Roboty związane z budową pozostałych obiektów inżynierii lądowej i wodnej, gdzie indziej niesklasyfikowane
+  4322Z: Wykonywanie instalacji wodno-kanalizacyjnych, cieplnych i klimatyzacyjnych
+  4323Z: Montaż izolacji
+  4324Z: Wykonywanie pozostałych instalacji budowlanych
+  4331Z: Tynkowanie
+  4332Z: Zakładanie stolarki budowlanej
+  4333Z: Posadzkarstwo; tapetowanie i oblicowywanie ścian
+  4334Z: Malowanie i szklenie
+  4335Z: Wykonywanie pozostałych robót budowlanych wykończeniowych
+  4341Z: Wykonywanie konstrukcji i pokryć dachowych
+  4342Z: Wykonywanie pozostałych specjalistycznych robót budowlanych w zakresie budowy budynków
+  4350Z: Roboty budowlane specjalistyczne w zakresie inżynierii lądowej i wodnej
+  4360Z: Pośrednictwo w zakresie specjalistycznych usług budowlanych
+  4391Z: Roboty murarskie
+  4399Z: Pozostałe specjalistyczne roboty budowlane, gdzie indziej niesklasyfikowane
+  4611A: Działalność agentów zajmujących się sprzedażą hurtową zbóż i nasion oleistych
+  4611B: Działalność agentów zajmujących się sprzedażą hurtową pozostałych płodów rolnych, żywych zwierząt, surowców dla przemysłu tekstylnego i półproduktów
+  4612Z: Działalność agentów zajmujących się sprzedażą hurtową paliw, rud, metali i chemikaliów przemysłowych
+  4613Z: Działalność agentów zajmujących się sprzedażą hurtową drewna i materiałów budowlanych
+  4614Z: Działalność agentów zajmujących się sprzedażą hurtową maszyn, urządzeń przemysłowych, statków i samolotów
+  4615Z: Działalność agentów zajmujących się sprzedażą hurtową mebli, artykułów gospodarstwa domowego i drobnych wyrobów metalowych
+  4616Z: Działalność agentów zajmujących się sprzedażą hurtową wyrobów tekstylnych, odzieży, wyrobów futrzarskich, obuwia i artykułów skórzanych
+  4617Z: Działalność agentów zajmujących się sprzedażą hurtową żywności, napojów i wyrobów tytoniowych
+  4618Z: Działalność agentów zajmujących się sprzedażą hurtową wyspecjalizowaną pozostałych towarów
+  4619Z: Działalność agentów zajmujących się sprzedażą hurtową niewyspecjalizowaną
+  4621A: Sprzedaż hurtowa zboża i nasion roślin oleistych
+  4621B: Sprzedaż hurtowa nieprzetworzonego tytoniu i pasz dla zwierząt
+  4632Z: Sprzedaż hurtowa mięsa i wyrobów z mięsa oraz ryb i wyrobów z ryb
+  4638Z: Sprzedaż hurtowa pozostałej żywności
+  4643Z: Sprzedaż hurtowa elektrycznych artykułów użytku domowego
+  4647Z: Sprzedaż hurtowa mebli do użytku domowego, biurowego i sklepowego, dywanów i sprzętu oświetleniowego
+  4649Z: Sprzedaż hurtowa pozostałych artykułów użytku domowego
+  4650Z: Sprzedaż hurtowa urządzeń technologii informacyjnej i komunikacyjnej
+  4664Z: Sprzedaż hurtowa pozostałych maszyn i urządzeń
+  4671Z: Sprzedaż hurtowa pojazdów silnikowych, z wyłączeniem motocykli
+  4672Z: Sprzedaż hurtowa części i akcesoriów do pojazdów silnikowych, z wyłączeniem motocykli
+  4673Z: Sprzedaż hurtowa motocykli oraz części i akcesoriów do nich
+  4681Z: Sprzedaż hurtowa paliw stałych, ciekłych, gazowych oraz produktów pochodnych
+  4682Z: Sprzedaż hurtowa metali i rud metali
+  4683Z: Sprzedaż hurtowa drewna, materiałów budowlanych i wyposażenia sanitarnego
+  4684Z: Sprzedaż hurtowa wyrobów metalowych oraz sprzętu i dodatkowego wyposażenia hydraulicznego i grzejnego
+  4685A: Sprzedaż hurtowa chemicznych nawozów i środków ochrony roślin
+  4685B: Pozostała sprzedaż hurtowa wyrobów chemicznych
+  4686Z: Sprzedaż hurtowa pozostałych półproduktów
+  4687Z: Sprzedaż hurtowa odpadów i złomu
+  4711Z: Sprzedaż detaliczna niewyspecjalizowana z przewagą żywności, napojów lub wyrobów tytoniowych
+  4712Z: Pozostała sprzedaż detaliczna niewyspecjalizowana
+  4721Z: Sprzedaż detaliczna owoców i warzyw
+  4722Z: Sprzedaż detaliczna mięsa i wyrobów z mięsa
+  4723Z: Sprzedaż detaliczna ryb, skorupiaków i mięczaków
+  4724Z: Sprzedaż detaliczna pieczywa, ciast, wyrobów ciastkarskich i cukierniczych
+  4725Z: Sprzedaż detaliczna napojów alkoholowych i bezalkoholowych
+  4726Z: Sprzedaż detaliczna wyrobów tytoniowych
+  4727Z: Sprzedaż detaliczna pozostałej żywności
+  4730Z: Sprzedaż detaliczna paliw do pojazdów silnikowych
+  4740Z: Sprzedaż detaliczna narzędzi technologii informacyjnej i komunikacyjnej
+  4751Z: Sprzedaż detaliczna wyrobów tekstylnych
+  4752Z: Sprzedaż detaliczna drobnych wyrobów metalowych, materiałów budowlanych, farb i szkła
+  4753Z: Sprzedaż detaliczna dywanów, chodników i innych pokryć podłogowych oraz pokryć ściennych
+  4754Z: Sprzedaż detaliczna elektrycznego sprzętu gospodarstwa domowego
+  4755Z: Sprzedaż detaliczna mebli, sprzętu oświetleniowego, artykułów stołowych oraz pozostałych artykułów użytku domowego
+  4761Z: Sprzedaż detaliczna książek
+  4762Z: Sprzedaż detaliczna gazet i pozostałych periodyków oraz artykułów papierniczych
+  4763Z: Sprzedaż detaliczna sprzętu sportowego
+  4764Z: Sprzedaż detaliczna gier i zabawek
+  4769A: Sprzedaż detaliczna instrumentów muzycznych i nut
+  4769B: Sprzedaż detaliczna dzieł sztuki
+  4769C: Sprzedaż detaliczna pozostałych wyrobów związanych z kulturą i rekreacją, gdzie indziej niesklasyfikowana
+  4771Z: Sprzedaż detaliczna odzieży
+  4772Z: Sprzedaż detaliczna obuwia i wyrobów skórzanych
+  4773Z: Sprzedaż detaliczna wyrobów farmaceutycznych
+  4774Z: Sprzedaż detaliczna wyrobów medycznych i ortopedycznych
+  4775Z: Sprzedaż detaliczna kosmetyków i artykułów toaletowych
+  4776A: Sprzedaż detaliczna kwiatów, roślin, nasion, nawozów i środków ochrony roślin
+  4776B: Sprzedaż detaliczna żywych zwierząt domowych, karmy dla zwierząt domowych
+  4777Z: Sprzedaż detaliczna zegarków i biżuterii
+  4778Z: Sprzedaż detaliczna pozostałych nowych wyrobów
+  4779A: Sprzedaż detaliczna używanych lub antykwarycznych książek
+  4779B: Sprzedaż detaliczna antyków
+  4779C: Sprzedaż detaliczna pozostałych artykułów używanych
+  4781Z: Sprzedaż detaliczna pojazdów silnikowych, z wyłączeniem motocykli
+  4782Z: Sprzedaż detaliczna części i akcesoriów do pojazdów silnikowych, z wyłączeniem motocykli
+  4783Z: Sprzedaż detaliczna motocykli oraz części i akcesoriów do nich
+  4791Z: Pośrednictwo w sprzedaży detalicznej niewyspecjalizowanej
+  4792Z: Pośrednictwo w sprzedaży detalicznej wyspecjalizowanej
+  4911Z: Transport kolejowy pasażerski ciężki
+  4912Z: Pozostały szynowy transport pasażerski
+  4931Z: Transport drogowy pasażerski rozkładowy
+  4932Z: Transport drogowy pasażerski inny niż rozkładowy
+  4933Z: Transport pasażerski na żądanie pojazdem z kierowcą
+  4934Z: Transport pasażerski kolejami linowymi i wyciągami narciarskimi
+  4939Z: Pozostały transport lądowy pasażerski, gdzie indziej niesklasyfikowany
+  4941Z: Transport drogowy towarów
+  5210A: Magazynowanie i przechowywanie zbóż i nasion oleistych
+  5210B: Magazynowanie i przechowywanie pozostałych towarów
+  5221A: Pomoc drogowa
+  5221B: Pozostała działalność usługowa wspomagająca transport lądowy
+  5224C: Przeładunek towarów w pozostałych punktach przeładunkowych
+  5225Z: Działalność logistyczna
+  5226Z: Pozostała działalność usługowa wspomagająca transport
+  5231Z: Pośrednictwo w transporcie towarów
+  5232Z: Pośrednictwo w transporcie pasażerskim
+  5320Z: Pozostała działalność pocztowa i kurierska
+  5330Z: Pośrednictwo w zakresie działalności pocztowej i kurierskiej
+  5540Z: Pośrednictwo w zakwaterowaniu
+  5590Z: Pozostałe zakwaterowanie
+  5611Z: Restauracje
+  5612Z: Ruchome placówki gastronomiczne
+  5622Z: Regularne przygotowywanie i dostarczanie żywności dla odbiorców zewnętrznych (katering regularny) i pozostała gastronomiczna działalność usługowa
+  5640Z: Pośrednictwo w zakresie działalności usługowej związanej z wyżywieniem
+  5812Z: Wydawanie gazet
+  5813Z: Wydawanie czasopism i pozostałych periodyków
+  5819Z: Pozostała działalność wydawnicza, z wyłączeniem w zakresie oprogramowania
+  6020Z: Nadawanie programów telewizyjnych ogólnodostępnych i abonamentowych oraz dystrybucja nagrań wideo
+  6031Z: Działalność agencji informacyjnych
+  6039Z: Pozostała działalność związana z dystrybucją treści
+  6110A: Działalność w zakresie wymiany ruchu internetowego
+  6110B: Pozostała działalność w zakresie telekomunikacji przewodowej, bezprzewodowej i satelitarnej
+  6120Z: Działalność w zakresie odsprzedaży usług telekomunikacyjnych oraz pośrednictwo w telekomunikacji
+  6190A: Działalność w obszarze komunikacji internetowej
+  6190B: Działalność w zakresie pozostałej telekomunikacji, gdzie indziej niesklasyfikowana
+  6210A: Działalność w zakresie programowania gier komputerowych
+  6210B: Pozostała działalność w zakresie programowania
+  6220A: Działalność w zakresie cyberbezpieczeństwa
+  6220B: Pozostała działalność związana z doradztwem w zakresie informatyki oraz zarządzaniem urządzeniami informatycznymi
+  6290Z: Pozostała działalność usługowa w zakresie technologii informatycznych i komputerowych
+  6310A: Działalność w zakresie kolokacji centrów danych oraz przetwarzania w chmurze
+  6310B: Działalność usługowa w zakresie DNS
+  6310C: Działalność w zakresie serwerów sieci dostarczania treści (content delivery network)
+  6310D: Pozostała działalność usługowa w zakresie infrastruktury obliczeniowej, przetwarzania danych, zarządzania stronami internetowymi (hosting) i działalności powiązane
+  6391Z: Działalność wyszukiwarek internetowych
+  6392Z: Pozostała działalność usługowa w zakresie informacji
+  6421Z: Działalność spółek holdingowych
+  6422Z: Działalność spółek pozyskujących finansowanie na rzecz innych podmiotów
+  6431Z: Działalność funduszy rynku pieniężnego i funduszy inwestycyjnych niebędących funduszami rynku pieniężnego
+  6432Z: Działalność instytucji powierniczych
+  6492A: Działalność lombardów
+  6492B: Pozostałe formy udzielania kredytów, gdzie indziej niesklasyfikowane
+  6499Z: Pozostała finansowa działalność usługowa, z wyłączeniem ubezpieczeń i funduszy emerytalnych, gdzie indziej niesklasyfikowana
+  6619Z: Pozostała działalność wspomagająca usługi finansowe, z wyłączeniem ubezpieczeń i funduszy emerytalnych
+  6630Z: Działalność związana z zarządzaniem funduszami
+  6811Z: Kupno i sprzedaż nieruchomości na własny rachunek
+  6812A: Realizacja projektów budowlanych związanych ze wznoszeniem budynków mieszkalnych
+  6812B: Realizacja projektów budowlanych związanych ze wznoszeniem budynków niemieszkalnych
+  6812C: Realizacja pozostałych projektów budowlanych
+  6820Z: Wynajem i zarządzanie nieruchomościami własnymi lub dzierżawionymi
+  6831Z: Pośrednictwo w obrocie nieruchomościami
+  6832A: Działalność związana z wyceną nieruchomości
+  6832B: Działalność związana z zarządzaniem nieruchomościami wykonywanym na zlecenie
+  6832C: Pozostała działalność związana z obsługą rynku nieruchomości wykonywana na zlecenie, gdzie indziej niesklasyfikowana
+  6920A: Działalność rachunkowo-księgowa
+  6920B: Doradztwo podatkowe
+  6920C: Działalność w zakresie audytu finansowego
+  7010A: Działalność biur głównych
+  7010B: Działalność central usług wspólnych
+  7020Z: Doradztwo w zakresie prowadzenia działalności gospodarczej i pozostałe doradztwo w zakresie zarządzania
+  7112A: Działalność w zakresie geodezji i kartografii
+  7112B: Pozostała działalność w zakresie inżynierii i związane z nią doradztwo techniczne
+  7120B: Kontrola i wydawanie opinii o stanie technicznym przewodów kominowych oraz wentylacyjnych
+  7120C: Pozostałe badania i analizy techniczne
+  7210Z: Badania naukowe i prace rozwojowe w dziedzinie nauk przyrodniczych i technicznych
+  7312Z: Reklama poprzez środki masowego przekazu
+  7330A: Działalność lobbingowa
+  7330B: Działalność pozostała w zakresie public relations i komunikacji
+  7411Z: Działalność w zakresie wzornictwa przemysłowego i projektowania mody
+  7412Z: Działalność w zakresie projektowania graficznego i komunikacji wizualnej
+  7413Z: Działalność w zakresie projektowania wnętrz
+  7414Z: Pozostała działalność w zakresie specjalistycznego projektowania
+  7420Z: Działalność fotograficzna
+  7491Z: Działalność rzeczników patentowych i działalność marketingowa
+  7499Z: Wszelka pozostała działalność profesjonalna, naukowa i techniczna, gdzie indziej niesklasyfikowana
+  7711Z: Wynajem i dzierżawa samochodów osobowych i lekkich pojazdów silnikowych, w tym motocykli
+  7712Z: Wynajem i dzierżawa samochodów ciężarowych
+  7722Z: Wypożyczanie i dzierżawa pozostałych artykułów użytku osobistego i domowego
+  7739Z: Wynajem i dzierżawa pozostałych maszyn, urządzeń oraz dóbr materialnych, gdzie indziej niesklasyfikowane
+  7740A: Działalność związana z dzierżawą i rejestracją nazw domen internetowych
+  7740B: Pozostała dzierżawa własności intelektualnej i podobnych produktów, z wyłączeniem prac chronionych prawem autorskim
+  7751Z: Pośrednictwo w wynajmie i dzierżawie samochodów osobowych, samochodów kempingowych i przyczep
+  7752Z: Pośrednictwo w wynajmie i dzierżawie pozostałych dóbr materialnych oraz niefinansowych wartości niematerialnych i prawnych
+  7820Z: Działalność agencji pracy tymczasowej i pozostała działalność związana z udostępnianiem pracowników
+  7911Z: Działalność agentów turystycznych
+  7990Z: Pozostała działalność usługowa w zakresie rezerwacji oraz działalności z nią związane
+  8001Z: Działalność detektywistyczna i działalność ochroniarska w zakresie ochrony osobistej
+  8009Z: Działalność ochroniarska, gdzie indziej niesklasyfikowana
+  8121Z: Niespecjalistyczne sprzątanie budynków
+  8122A: Czyszczenie kominów i palenisk, pieców, przewodów wentylacyjnych
+  8122B: Pozostałe sprzątanie budynków i obiektów przemysłowych, gdzie indziej niesklasyfikowane
+  8123A: Działalność usługowa związana z dezynfekcją, dezynsekcją i deratyzacją
+  8123B: Pozostała działalność związana ze sprzątaniem, gdzie indziej niesklasyfikowana
+  8210Z: Działalność związana z administracyjną obsługą biura, włączając działalność wspomagającą
+  8230Z: Działalność związana z organizacją targów, wystaw i kongresów
+  8240Z: Pośrednictwo w zakresie działalności wspomagającej prowadzenie działalności gospodarczej, gdzie indziej niesklasyfikowane
+  8291Z: Działalność świadczona przez agencje inkasa i biura kredytowe
+  8299A: Finansowanie społecznościowe dla przedsięwzięć gospodarczych
+  8299B: Działalność wspomagająca prowadzenie działalności gospodarczej, gdzie indziej niesklasyfikowana
+  8425Z: Ochrona przeciwpożarowa
+  8531Z: Szkoły średnie ogólnokształcące
+  8532C: Branżowe szkoły II stopnia
+  8532D: Szkoły specjalne przysposabiające do pracy
+  8533A: Szkoły policealne
+  8533B: Kolegia pracowników służb społecznych
+  8540Z: Szkoły wyższe
+  8551Z: Pozostałe formy edukacji sportowej oraz zajęć sportowych i rekreacyjnych
+  8559B: Kursy i szkolenia związane ze zdobywaniem wiedzy, umiejętności i kwalifikacji zawodowych w formach pozaszkolnych
+  8559C: Placówki doskonalenia nauczycieli
+  8559D: Pozostałe pozaszkolne formy edukacji, gdzie indziej niesklasyfikowane
+  8561Z: Pośrednictwo w zakresie prowadzenia kursów i korepetycji
+  8569Z: Działalność wspomagająca edukację, gdzie indziej niesklasyfikowana
+  8691A: Działalność w zakresie diagnostyki obrazowej
+  8691B: Działalność samodzielnych laboratoriów medycznych
+  8692Z: Transport pacjentów karetką
+  8693Z: Działalność psychologiczna i psychoterapeutyczna, z wyłączeniem lekarskiej
+  8694Z: Działalność pielęgniarska i położnicza
+  8695Z: Działalność w zakresie fizjoterapii
+  8696Z: Działalność w zakresie medycyny tradycyjnej, uzupełniającej i alternatywnej
+  8697Z: Pośrednictwo związane z działalnością lekarską, dentystyczną i pozostałą działalnością w zakresie opieki zdrowotnej
+  8699A: Opieka farmaceutyczna
+  8699B: Działalność dietetyczna
+  8699C: Działalność logopedyczna
+  8699D: Działalność w zakresie pozostałej opieki zdrowotnej
+  8791Z: Pośrednictwo w zakresie pomocy społecznej z zakwaterowaniem
+  8799Z: Pozostała pomoc społeczna z zakwaterowaniem, gdzie indziej niesklasyfikowana
+  9011Z: Działalność literacka i działalność związana z komponowaniem muzyki
+  9012Z: Działalność twórcza w zakresie sztuk wizualnych
+  9013Z: Pozostała działalność twórcza
+  9020A: Działalność artystyczna filharmonii, orkiestr i chórów
+  9020B: Działalność teatralna
+  9020C: Pozostała działalność związana z wystawianiem przedstawień artystycznych
+  9031A: Działalność centrów kultury, domów i ośrodków kultury, klubów i świetlic
+  9031B: Działalność pozostałych obiektów kulturalnych
+  9039Z: Pozostała działalność wspomagająca działalność twórczą i działalność związaną z wystawianiem przedstawień artystycznych
+  9111Z: Działalność bibliotek
+  9112Z: Działalność archiwów
+  9121A: Działalność muzeów
+  9121B: Działalność galerii sztuki
+  9121C: Działalność pozostałych podmiotów prezentujących kolekcje dzieł sztuki
+  9122Z: Działalność związana z miejscami historycznymi i pomnikami
+  9130Z: Działalność w zakresie konserwacji i renowacji oraz pozostała działalność wspomagająca na rzecz dziedzictwa kulturowego
+  9141A: Działalność ogrodów botanicznych
+  9141B: Działalność ogrodów zoologicznych
+  9142Z: Działalność obszarów i obiektów ochrony przyrody
+  9311Z: Działalność obiektów sportowych
+  9312Z: Działalność klubów sportowych
+  9313Z: Działalność klubów fitness
+  9319Z: Działalność sportowa, gdzie indziej niesklasyfikowana
+  9321Z: Działalność wesołych miasteczek i parków rozrywki
+  9329A: Działalność pokojów zagadek, domów strachu, miejsc do tańczenia i w zakresie innych form rozrywki lub rekreacji organizowanych w pomieszczeniach lub w innych miejscach o zamkniętej przestrzeni
+  9329B: Pozostała działalność rozrywkowa i rekreacyjna, gdzie indziej niesklasyfikowana
+  9510Z: Naprawa i konserwacja komputerów i sprzętu (tele)komunikacyjnego
+  9531A: Naprawa mechaniczna i serwisowa pojazdów silnikowych, z wyłączeniem motocykli
+  9531B: Naprawa blacharsko-lakiernicza oraz konserwacja pojazdów silnikowych, z wyłączeniem motocykli
+  9531C: Działalność usługowa detailingu pojazdów silnikowych, z wyłączeniem motocykli
+  9532Z: Naprawa i konserwacja motocykli
+  9540Z: Pośrednictwo w naprawie i konserwacji komputerów, artykułów użytku osobistego i domowego oraz pojazdów silnikowych, w tym motocykli
+  9610Z: Pranie i czyszczenie wyrobów tekstylnych i futrzarskich
+  9621Z: Działalność fryzjerska
+  9622Z: Działalność w zakresie pielęgnacji urody i pozostała działalność kosmetyczna
+  9623Z: Działalność spa, saun i łaźni parowych
+  9630Z: Pogrzeby i działalność pokrewna
+  9640Z: Pośrednictwo w zakresie usług indywidualnych
+  9691Z: Działalność usługowa na rzecz osób w miejscu zamieszkania
+  9699Z: Pozostała działalność usługowa, gdzie indziej niesklasyfikowana
+poprzednicy:
+  0113Z:
+  - 0119Z
+  - 0128Z
+  0141Z:
+  - 0142Z
+  0147Z:
+  - 0149Z
+  - 0162Z
+  0148Z:
+  - 0149Z
+  - 0322Z
+  0163Z:
+  - 0164Z
+  0330Z:
+  - 0311Z
+  - 0312Z
+  - 0321Z
+  - 0322Z
+  - 3311Z
+  1061Z:
+  - 1086Z
+  1062Z:
+  - 1086Z
+  1071Z:
+  - 1086Z
+  1072Z:
+  - 1086Z
+  1073Z:
+  - 1086Z
+  1089A:
+  - 1089Z
+  1089B:
+  - 1089Z
+  1089C:
+  - 1089Z
+  1089D:
+  - 1089Z
+  1107Z:
+  - 1089Z
+  1310Z:
+  - 1310A
+  - 1310B
+  - 1310C
+  - 1310D
+  1320Z:
+  - 1320A
+  - 1320B
+  - 1320C
+  - 1320D
+  1330Z:
+  - 1812Z
+  1396Z:
+  - 1320D
+  - 1392Z
+  1410Z:
+  - 1413Z
+  - 1414Z
+  - 1419Z
+  - 1431Z
+  - 1439Z
+  1421Z:
+  - 1413Z
+  - 1414Z
+  - 1419Z
+  1422Z:
+  - 1414Z
+  - 1419Z
+  1423Z:
+  - 1412Z
+  1424Z:
+  - 1411Z
+  - 1420Z
+  1429Z:
+  - 1419Z
+  1520Z:
+  - 1629Z
+  - 2219Z
+  - 2229Z
+  1611Z:
+  - 1610Z
+  1612Z:
+  - 1610Z
+  1625Z:
+  - 1623Z
+  1626Z:
+  - 1629Z
+  1627Z:
+  - 1621Z
+  - 1622Z
+  - 1623Z
+  - 1624Z
+  - 1629Z
+  1628Z:
+  - 1629Z
+  1725Z:
+  - 1729Z
+  1812Z:
+  - 7420Z
+  - 8219Z
+  2014Z:
+  - 2011Z
+  2016Z:
+  - 3832Z
+  2020A:
+  - 2020Z
+  2020B:
+  - 2020Z
+  2020C:
+  - 2020Z
+  2051Z:
+  - 2014Z
+  - 2059Z
+  2059Z:
+  - 2051Z
+  - 2052Z
+  - 2053Z
+  2212Z:
+  - 2219Z
+  2221Z:
+  - 2229Z
+  2224Z:
+  - 2223Z
+  2225Z:
+  - 2221Z
+  - 2222Z
+  - 2223Z
+  - 2229Z
+  2226Z:
+  - 2229Z
+  2315Z:
+  - 2319Z
+  2345Z:
+  - 2349Z
+  2366Z:
+  - 2223Z
+  - 2369Z
+  2370A:
+  - 2370Z
+  2370B:
+  - 2370Z
+  2399Z:
+  - 1320D
+  2454B:
+  - 2453Z
+  2521Z:
+  - 2530Z
+  2522Z:
+  - 2529Z
+  2530Z:
+  - 2540Z
+  2540Z:
+  - 2550Z
+  2551Z:
+  - 2561Z
+  2552Z:
+  - 2561Z
+  2553Z:
+  - 2561Z
+  - 2562Z
+  2561Z:
+  - 2571Z
+  2562Z:
+  - 2572Z
+  2563Z:
+  - 2573Z
+  2620Z:
+  - 2823Z
+  2640Z:
+  - 2620Z
+  2651Z:
+  - 2630Z
+  2660Z:
+  - 3250Z
+  2670Z:
+  - 2680Z
+  2711Z:
+  - 2712Z
+  - 2790Z
+  2790Z:
+  - 2849Z
+  2821Z:
+  - 2521Z
+  2825Z:
+  - 2821Z
+  2830Z:
+  - 2892Z
+  2841Z:
+  - 2849Z
+  2842Z:
+  - 2849Z
+  2893Z:
+  - 2829Z
+  2897Z:
+  - 2896Z
+  - 2899Z
+  2910A:
+  - 2711Z
+  2931Z:
+  - 2790Z
+  2932Z:
+  - 2312Z
+  - 2811Z
+  - 2825Z
+  3013Z:
+  - 3011Z
+  3031Z:
+  - 3030Z
+  3032Z:
+  - 3030Z
+  3091Z:
+  - 2811Z
+  3092Z:
+  - 3091Z
+  3100Z:
+  - 2342Z
+  - 3101Z
+  - 3102Z
+  - 3103Z
+  - 3109Z
+  3250A:
+  - 3250Z
+  3250B:
+  - 3250Z
+  - 3299Z
+  3299Z:
+  - 2790Z
+  - 3230Z
+  3315Z:
+  - 3312Z
+  3317Z:
+  - 3311Z
+  3318Z:
+  - 3040Z
+  - 3312Z
+  - 3315Z
+  - 3316Z
+  3512A:
+  - 3511Z
+  3512B:
+  - 3511Z
+  3512C:
+  - 3511Z
+  3512D:
+  - 3511Z
+  3512E:
+  - 3511Z
+  3512F:
+  - 3511Z
+  3513Z:
+  - 3512Z
+  3514Z:
+  - 3513Z
+  3515Z:
+  - 3514Z
+  3516Z:
+  - 3511Z
+  3524Z:
+  - 5210A
+  3540Z:
+  - 3514Z
+  - 3523Z
+  3821Z:
+  - 3831Z
+  - 3832Z
+  3822Z:
+  - 3821Z
+  3823Z:
+  - 3821Z
+  - 3822Z
+  3831Z:
+  - 3821Z
+  - 3822Z
+  3832Z:
+  - 3821Z
+  - 3822Z
+  3833Z:
+  - 3821Z
+  - 3822Z
+  4100A:
+  - 4120Z
+  4100B:
+  - 4120Z
+  4299Z:
+  - 4399Z
+  4322Z:
+  - 4399Z
+  4323Z:
+  - 4329Z
+  - 4339Z
+  - 4399Z
+  4324Z:
+  - 4329Z
+  4331Z:
+  - 4339Z
+  4332Z:
+  - 4339Z
+  4333Z:
+  - 4339Z
+  4334Z:
+  - 4339Z
+  4335Z:
+  - 4339Z
+  - 4399Z
+  4341Z:
+  - 4391Z
+  - 4399Z
+  4342Z:
+  - 4399Z
+  4350Z:
+  - 4211Z
+  - 4399Z
+  4360Z:
+  - 8299Z
+  4391Z:
+  - 4399Z
+  4399Z:
+  - 4120Z
+  4611A:
+  - 4611Z
+  - 8299Z
+  4611B:
+  - 4611Z
+  - 8299Z
+  4612Z:
+  - 8299Z
+  4613Z:
+  - 8299Z
+  4614Z:
+  - 8299Z
+  4615Z:
+  - 8299Z
+  4616Z:
+  - 8299Z
+  4617Z:
+  - 8299Z
+  4618Z:
+  - 4511Z
+  - 4519Z
+  - 4531Z
+  - 4540Z
+  - 8299Z
+  4619Z:
+  - 8299Z
+  4621A:
+  - 4621Z
+  4621B:
+  - 4621Z
+  4632Z:
+  - 4638Z
+  4647Z:
+  - 4665Z
+  4649Z:
+  - 4643Z
+  4650Z:
+  - 4651Z
+  - 4652Z
+  - 4666Z
+  4664Z:
+  - 4643Z
+  - 4669Z
+  4671Z:
+  - 4511Z
+  - 4519Z
+  4672Z:
+  - 4531Z
+  4673Z:
+  - 4540Z
+  4681Z:
+  - 4671Z
+  4682Z:
+  - 4672Z
+  4683Z:
+  - 4673Z
+  4684Z:
+  - 4674Z
+  4685A:
+  - 4675Z
+  4685B:
+  - 4675Z
+  4686Z:
+  - 4676Z
+  4687Z:
+  - 4677Z
+  4711Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4712Z:
+  - 4719Z
+  - 4782Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4721Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4722Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4723Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4724Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4725Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4726Z:
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4727Z:
+  - 4729Z
+  - 4781Z
+  - 4791Z
+  - 4799Z
+  4740Z:
+  - 4741Z
+  - 4742Z
+  - 4743Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4751Z:
+  - 4782Z
+  - 4791Z
+  - 4799Z
+  4752Z:
+  - 4759Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4753Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4754Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4755Z:
+  - 4759Z
+  - 4778Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4761Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4762Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4763Z:
+  - 4764Z
+  - 4778Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4764Z:
+  - 4765Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4769A:
+  - 4759Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4769B:
+  - 4778Z
+  - 4791Z
+  - 4799Z
+  4769C:
+  - 4763Z
+  - 4778Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4771Z:
+  - 4782Z
+  - 4791Z
+  - 4799Z
+  4772Z:
+  - 4782Z
+  - 4791Z
+  - 4799Z
+  4773Z:
+  - 4791Z
+  4774Z:
+  - 4778Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4775Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4776A:
+  - 4776Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4776B:
+  - 4776Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4777Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4778Z:
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4779A:
+  - 4779Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4779B:
+  - 4779Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4779C:
+  - 4779Z
+  - 4782Z
+  - 4789Z
+  - 4791Z
+  - 4799Z
+  4781Z:
+  - 4511Z
+  - 4519Z
+  4782Z:
+  - 4532Z
+  4783Z:
+  - 4540Z
+  4791Z:
+  - 4711Z
+  - 4719Z
+  - 4779Z
+  - 4799Z
+  - 8299Z
+  4792Z:
+  - 4511Z
+  - 4519Z
+  - 4532Z
+  - 4540Z
+  - 4721Z
+  - 4722Z
+  - 4723Z
+  - 4724Z
+  - 4725Z
+  - 4726Z
+  - 4729Z
+  - 4730Z
+  - 4741Z
+  - 4742Z
+  - 4743Z
+  - 4751Z
+  - 4752Z
+  - 4753Z
+  - 4754Z
+  - 4759Z
+  - 4761Z
+  - 4762Z
+  - 4763Z
+  - 4764Z
+  - 4765Z
+  - 4771Z
+  - 4772Z
+  - 4773Z
+  - 4774Z
+  - 4775Z
+  - 4776Z
+  - 4777Z
+  - 4778Z
+  - 4779Z
+  - 4791Z
+  - 4799Z
+  - 8299Z
+  4911Z:
+  - 4910Z
+  4912Z:
+  - 4910Z
+  - 4931Z
+  4931Z:
+  - 4939Z
+  4932Z:
+  - 4939Z
+  4933Z:
+  - 4932Z
+  4934Z:
+  - 4931Z
+  - 4939Z
+  5210A:
+  - 5210B
+  5221A:
+  - 5221Z
+  5221B:
+  - 5221Z
+  5224C:
+  - 4941Z
+  5225Z:
+  - 5229A
+  - 5229B
+  - 5229C
+  5226Z:
+  - 5229A
+  - 5229B
+  - 5229C
+  5231Z:
+  - 5229A
+  - 5229B
+  - 5229C
+  5232Z:
+  - 4932Z
+  - 5229A
+  - 5229B
+  - 5229C
+  - 7911A
+  - 7911B
+  - 7990C
+  5320Z:
+  - 9601Z
+  5330Z:
+  - 8299Z
+  5540Z:
+  - 7911A
+  - 7911B
+  - 7990C
+  5590Z:
+  - 6820Z
+  5611Z:
+  - 5610A
+  5612Z:
+  - 5610B
+  5622Z:
+  - 5629Z
+  5640Z:
+  - 7990C
+  5812Z:
+  - 5813Z
+  5813Z:
+  - 5814Z
+  5819Z:
+  - 5812Z
+  6020Z:
+  - 6311Z
+  6031Z:
+  - 6391Z
+  6039Z:
+  - 4791Z
+  - 6311Z
+  - 6312Z
+  6110A:
+  - 6110Z
+  - 6120Z
+  - 6130Z
+  6110B:
+  - 6110Z
+  - 6120Z
+  - 6130Z
+  6120Z:
+  - 6190Z
+  - 8299Z
+  6190A:
+  - 6190Z
+  6190B:
+  - 6120Z
+  - 6190Z
+  6210A:
+  - 6201Z
+  6210B:
+  - 6201Z
+  6220A:
+  - 6202Z
+  6220B:
+  - 6202Z
+  - 6203Z
+  6290Z:
+  - 6209Z
+  6310A:
+  - 6311Z
+  6310B:
+  - 6311Z
+  6310C:
+  - 6311Z
+  6310D:
+  - 5210B
+  - 6311Z
+  6391Z:
+  - 6312Z
+  6392Z:
+  - 6399Z
+  6421Z:
+  - 6420Z
+  6422Z:
+  - 6420Z
+  - 6499Z
+  6431Z:
+  - 6430Z
+  6432Z:
+  - 6430Z
+  6492A:
+  - 6492Z
+  6492B:
+  - 6492Z
+  - 6499Z
+  6630Z:
+  - 6619Z
+  6811Z:
+  - 6810Z
+  6812A:
+  - 4110Z
+  6812B:
+  - 4110Z
+  6812C:
+  - 4110Z
+  - 4299Z
+  6832A:
+  - 6831Z
+  6832B:
+  - 6832Z
+  6832C:
+  - 6831Z
+  - 6832Z
+  6920A:
+  - 6920Z
+  6920B:
+  - 6920Z
+  6920C:
+  - 6920Z
+  7010A:
+  - 7010Z
+  7010B:
+  - 7010Z
+  7020Z:
+  - 7022Z
+  7112A:
+  - 7112Z
+  7112B:
+  - 7112Z
+  7120C:
+  - 7120B
+  7210Z:
+  - 7211Z
+  - 7219Z
+  7312Z:
+  - 7312A
+  - 7312B
+  - 7312C
+  - 7312D
+  7330A:
+  - 7021Z
+  7330B:
+  - 7021Z
+  7411Z:
+  - 7410Z
+  7412Z:
+  - 7410Z
+  7413Z:
+  - 7410Z
+  7414Z:
+  - 7410Z
+  7491Z:
+  - 7490Z
+  7499Z:
+  - 7490Z
+  7711Z:
+  - 7712Z
+  - 7739Z
+  7712Z:
+  - 7739Z
+  7722Z:
+  - 7729Z
+  7740A:
+  - 7740Z
+  7740B:
+  - 7740Z
+  7751Z:
+  - 7911A
+  - 7911B
+  - 7990C
+  - 8299Z
+  7752Z:
+  - 8299Z
+  7820Z:
+  - 7830Z
+  7911Z:
+  - 7911A
+  - 7911B
+  7990Z:
+  - 7990A
+  - 7990B
+  - 7990C
+  8001Z:
+  - 8010Z
+  - 8030Z
+  8009Z:
+  - 7490Z
+  - 8020Z
+  8122A:
+  - 8122Z
+  8122B:
+  - 4339Z
+  - 4399Z
+  - 8122Z
+  8123A:
+  - 8129Z
+  8123B:
+  - 8129Z
+  8210Z:
+  - 8211Z
+  - 8219Z
+  8240Z:
+  - 7990C
+  - 8299Z
+  8291Z:
+  - 8299Z
+  8299A:
+  - 8299Z
+  8299B:
+  - 8299Z
+  8425Z:
+  - 9329B
+  8531Z:
+  - 8531A
+  - 8531B
+  8532C:
+  - 8532D
+  8532D:
+  - 8532C
+  8533A:
+  - 8541A
+  8533B:
+  - 8541B
+  8540Z:
+  - 8542Z
+  8559C:
+  - 8541C
+  8559D:
+  - 8559B
+  8561Z:
+  - 8299Z
+  8569Z:
+  - 8560Z
+  8691A:
+  - 8690E
+  8691B:
+  - 8690E
+  8692Z:
+  - 8690B
+  8693Z:
+  - 8690E
+  8694Z:
+  - 8690C
+  8695Z:
+  - 8690A
+  8696Z:
+  - 8690D
+  8697Z:
+  - 8299Z
+  8699A:
+  - 8690E
+  8699B:
+  - 8690E
+  8699C:
+  - 8690E
+  8699D:
+  - 8690E
+  8791Z:
+  - 8299Z
+  8799Z:
+  - 8790Z
+  9011Z:
+  - 9003Z
+  9012Z:
+  - 9003Z
+  9013Z:
+  - 9003Z
+  9020A:
+  - 9001Z
+  9020B:
+  - 9001Z
+  9020C:
+  - 9001Z
+  9031A:
+  - 9004Z
+  9031B:
+  - 9004Z
+  9039Z:
+  - 9002Z
+  9111Z:
+  - 9101A
+  9112Z:
+  - 9101B
+  9121A:
+  - 9102Z
+  9121B:
+  - 9102Z
+  9121C:
+  - 9102Z
+  9122Z:
+  - 9103Z
+  9130Z:
+  - 3319Z
+  - 4120Z
+  - 9003Z
+  9141A:
+  - 9104Z
+  9141B:
+  - 9104Z
+  9142Z:
+  - 9104Z
+  9311Z:
+  - 9329B
+  9312Z:
+  - 9311Z
+  - 9329B
+  9313Z:
+  - 8551Z
+  9319Z:
+  - 9329B
+  9329A:
+  - 9311Z
+  9329B:
+  - 8230Z
+  - 9319Z
+  - 9321Z
+  9510Z:
+  - 9511Z
+  - 9512Z
+  9531A:
+  - 4520Z
+  9531B:
+  - 4520Z
+  9531C:
+  - 4520Z
+  9532Z:
+  - 4540Z
+  9540Z:
+  - 8299Z
+  9610Z:
+  - 9601Z
+  9621Z:
+  - 9602Z
+  9622Z:
+  - 9602Z
+  9623Z:
+  - 9604Z
+  9630Z:
+  - 9603Z
+  9640Z:
+  - 8299Z
+  9691Z:
+  - 8121Z
+  - 9601Z
+  9699Z:
+  - 9609Z
+zywe_2025:
+- 0119Z
+- 0128Z
+- 0142Z
+- 0162Z
+- 0311Z
+- 0312Z
+- 0321Z
+- 0322Z
+- 1086Z
+- 1392Z
+- 1621Z
+- 1622Z
+- 1623Z
+- 1624Z
+- 1812Z
+- 2011Z
+- 2014Z
+- 2051Z
+- 2059Z
+- 2221Z
+- 2222Z
+- 2223Z
+- 2312Z
+- 2342Z
+- 2453Z
+- 2521Z
+- 2530Z
+- 2540Z
+- 2561Z
+- 2562Z
+- 2620Z
+- 2630Z
+- 2711Z
+- 2712Z
+- 2790Z
+- 2811Z
+- 2821Z
+- 2823Z
+- 2825Z
+- 2829Z
+- 2892Z
+- 2896Z
+- 2899Z
+- 3011Z
+- 3040Z
+- 3091Z
+- 3230Z
+- 3299Z
+- 3311Z
+- 3312Z
+- 3315Z
+- 3316Z
+- 3319Z
+- 3511Z
+- 3513Z
+- 3514Z
+- 3523Z
+- 3821Z
+- 3822Z
+- 3831Z
+- 3832Z
+- 4211Z
+- 4299Z
+- 4391Z
+- 4399Z
+- 4638Z
+- 4643Z
+- 4671Z
+- 4672Z
+- 4673Z
+- 4711Z
+- 4721Z
+- 4722Z
+- 4723Z
+- 4724Z
+- 4725Z
+- 4726Z
+- 4730Z
+- 4751Z
+- 4752Z
+- 4753Z
+- 4754Z
+- 4761Z
+- 4762Z
+- 4763Z
+- 4764Z
+- 4771Z
+- 4772Z
+- 4773Z
+- 4774Z
+- 4775Z
+- 4777Z
+- 4778Z
+- 4781Z
+- 4782Z
+- 4791Z
+- 4931Z
+- 4932Z
+- 4939Z
+- 4941Z
+- 5210A
+- 5210B
+- 5812Z
+- 5813Z
+- 6120Z
+- 6391Z
+- 6499Z
+- 6619Z
+- 6820Z
+- 6831Z
+- 7120B
+- 7420Z
+- 7712Z
+- 7739Z
+- 8121Z
+- 8230Z
+- 8532C
+- 8532D
+- 8551Z
+- 8559B
+- 9311Z
+- 9319Z
+- 9321Z
+- 9329B

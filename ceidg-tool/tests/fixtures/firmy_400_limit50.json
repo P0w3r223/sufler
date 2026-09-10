@@ -1,0 +1,21 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?limit=50&page=1",
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "93",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "990",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 0.203,
+  "body": {
+    "code": "NIEPOPRAWNY_ROZMIAR_STRONY",
+    "message": "Rozmiar strony powinien być z zakresu 1-25"
+  }
+}

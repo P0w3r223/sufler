@@ -4,9 +4,11 @@ version = "1.15.0"
 description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/CLI, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira 'moje zadania' oraz lokalny retrieval leksykalny notatek."
 readme = "README.md"
 # 3.11 to jedyna wersja, na której cokolwiek tu biega: `.python-version` mówi 3.11, a oba etapy
-# obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`. Macierz CI nie ma osi wersji
-# Pythona wcale — jej wpisy to pod-projekty (workmate/powiadomienia-teams/claude-summary), a
-# wersja bierze się z `.python-version` czytanego przez `setup-uv`. CI nie jest więc niezależnym
+# obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`. Macierz w `ci.yml` nie ma osi
+# wersji Pythona wcale — jej wpisy to cztery pod-projekty (workmate/powiadomienia-teams/
+# claude-summary/ceidg-tool), a wersja bierze się z `.python-version` czytanego przez `setup-uv`.
+# Oś 3.11/3.12 istnieje od 2026-09-10 w `ceidg-tool.yml`, ale dotyczy INNEGO pakietu i nie mówi
+# nic o tym. CI nie jest więc niezależnym
 # dowodem: czyta ten sam plik. Wiąże je `tests/deploy/test_python_version_floor.py`.
 # Deklarowane wcześniej `>=3.10` nie było testowane NIGDZIE — i kosztowało:
 # `tests/test_version_consistency.py` czytał `pyproject.toml` regexem zamiast `tomllib` (3.11+)

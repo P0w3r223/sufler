@@ -1,0 +1,155 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?limit=5&page=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "3766",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "994",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 2.156,
+  "body": {
+    "firmy": [
+      {
+        "id": "B74D0FB1-32E7-4629-8FAD-C1A606CB0FB3",
+        "nazwa": "Przykładzia Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Testowa",
+          "nip": "1433218197",
+          "regon": "600133892"
+        },
+        "dataRozpoczecia": "2026-10-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/B74D0FB1-32E7-4629-8FAD-C1A606CB0FB3"
+      },
+      {
+        "id": "580D7B71-D8F5-4413-9BE6-128E18C26797",
+        "nazwa": "Przykładzia Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Wzorcowa",
+          "budynek": "34",
+          "miasto": "Bytom Odrzański",
+          "wojewodztwo": "LUBUSKIE",
+          "powiat": "nowosolski",
+          "gmina": "Bytom Odrzański",
+          "kraj": "PL",
+          "kod": "67-926",
+          "terc": "0804024",
+          "simc": "0988359",
+          "ulic": "15695"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Wzorcowy",
+          "nip": "9637940267",
+          "regon": "542351168"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/580D7B71-D8F5-4413-9BE6-128E18C26797"
+      },
+      {
+        "id": "A2BC372F-7412-4293-8729-4739614FF3D7",
+        "nazwa": "Przykładzia Przykładowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Przykładowa",
+          "budynek": "21",
+          "lokal": "12",
+          "miasto": "Kraków",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "Kraków",
+          "gmina": "Kraków",
+          "kraj": "PL",
+          "kod": "30-463",
+          "terc": "1261011",
+          "simc": "0950463"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Przykładowy",
+          "nip": "9161849596",
+          "regon": "310341310"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/A2BC372F-7412-4293-8729-4739614FF3D7"
+      },
+      {
+        "id": "3602F8AC-10F1-4C81-848A-AA9E66B2BC5B",
+        "nazwa": "Próbomira Wzorcowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Wzorcowa",
+          "budynek": "92",
+          "miasto": "Jarosław",
+          "wojewodztwo": "PODKARPACKIE",
+          "powiat": "jarosławski",
+          "gmina": "Jarosław",
+          "kraj": "PL",
+          "kod": "37-422",
+          "terc": "1804011",
+          "simc": "0972192",
+          "ulic": "37869"
+        },
+        "wlasciciel": {
+          "imie": "Próbomira",
+          "nazwisko": "Wzorcowy",
+          "nip": "5192832761",
+          "regon": "483503050"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/3602F8AC-10F1-4C81-848A-AA9E66B2BC5B"
+      },
+      {
+        "id": "0C0FD195-C17A-408A-9745-D6D87E570DDF",
+        "nazwa": "Przykładzia Przykładowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Testowa",
+          "budynek": "20",
+          "lokal": "6",
+          "miasto": "Ryki",
+          "wojewodztwo": "LUBELSKIE",
+          "powiat": "rycki",
+          "gmina": "Ryki",
+          "kraj": "PL",
+          "kod": "08-911",
+          "terc": "0616044",
+          "simc": "0956980",
+          "ulic": "99192"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Przykładowy",
+          "nip": "7724238842",
+          "regon": "969653281"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/0C0FD195-C17A-408A-9745-D6D87E570DDF"
+      }
+    ],
+    "count": 6316121,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=1",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=0",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=0",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=1263224"
+    },
+    "properties": {
+      "dc:title": "firmy",
+      "dc:description": "Zwraca listę firm",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:31:14"
+    }
+  }
+}

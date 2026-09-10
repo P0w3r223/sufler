@@ -1,7 +1,7 @@
 # 0074 — Where `ceidg-tool` should live
 
 Date: 2026-09-10
-Status: proposed (draft — awaiting the team's decision; no code or workflow is touched by it)
+Status: accepted (2026-09-10 — option A, decided by the owner; carried out in the same pull request)
 Author: P0w3r223
 Related to: [ADR 0044](0044-linux-container-deployment.md) (the deployment shape this repository
 assumes), [ADR 0046](0046-workmate-powiadomienia-teams-coexistence.md) (the precedent for a second
@@ -43,7 +43,29 @@ Teams, Graph, the same tenant. `ceidg-tool` shares none of the four.
 
 ## Decision
 
-**To be taken by the team.** Three options are on the table; the draft recommends the third.
+**Option A.** The owner decided on 2026-09-10, against this draft's recommendation, and the
+import happened in the same pull request. What the draft listed under A's "Against" had to be
+answered rather than accepted, so each answer is recorded here — that is the part a later reader
+needs, not the recommendation that lost.
+
+- **The missing merge base.** History was preserved, not squashed: the branch was rewritten into
+  a `ceidg-tool/` subdirectory with `git filter-repo` and merged with
+  `--allow-unrelated-histories`, so all 36 commits of reasoning are reachable from `Main`.
+- **Authorship.** The rewrite also unified the author to `P0w3r223`,
+  because the `autorstwo` gate added on 2026-09-10 checks the whole history reachable
+  from `Main` — a plain merge would have turned it red on the first push. Every commit number
+  therefore changed.
+- **The two CI shapes.** Neither lost. The root matrix gained a fourth entry (ubuntu, `uv`) and is
+  the gate; the sub-project's own workflow kept the axis the root does not have — Windows and a
+  second Python version, installed with `pip` — narrowed by `paths` instead of by branch. Issues
+  #146 and #147 were Windows-only defects that survived weeks of green CI, which is what that axis
+  is for.
+- **The licence.** The `license = { text = "MIT" }` field was removed rather than rewritten to
+  `Proprietary`: neither sibling sub-project declares a licence, and the root `LICENSE` governs the
+  tree. One statement, one place.
+
+The branch `ceidg-tool` is left in place, unrewritten, as the transition copy; deleting it is a
+separate, irreversible step for the owner to take once they are satisfied with `Main`.
 
 ### A. Merge into `Main` as a fourth sub-project
 
@@ -82,22 +104,30 @@ period, then delete it here.
 
 ## Consequences
 
-Whichever option wins, two things follow.
+**The root description states the outcome.** `README.md` now lists `ceidg-tool/` as the fourth
+sub-project of this tree, and `CLAUDE.md` names it in the sub-project section — the paragraph that
+described a branch is gone. The failure mode this whole audit exists to fix is a description that
+reads as a statement of fact while describing a plan; leaving that paragraph would have reinstated
+it from the other side.
 
-**The root description must state the outcome, not the intention.** The current draft of
-`README.md` describes the branch as it stands today. If the team picks C, that paragraph becomes a
-pointer to another repository; if it picks A, it becomes a fourth sub-project entry in the map. The
-failure mode this whole audit exists to fix is a description that reads as a statement of fact while
-describing a plan.
+**`ci.yml` changed, as option A required.** The fourth matrix entry runs `uv sync --extra dev
+--extra asystent`, lints `ceidg_tool tests scripts` (a flat layout, so the directories are named
+rather than `.`), and `[tool.mypy]` in the sub-project gained `files = [...]` because the shared
+step calls `uv run mypy` with no arguments.
 
-**Option A is the only one that touches `ci.yml`.** Options B and C leave the root workflow exactly
-as it is. This draft touches no workflow file at all.
+**Two clones of one project exist for a while.** The old branch still holds the pre-import history
+under its old commit numbers. Anyone working from it should move to `Main`; the SHA map makes an
+old number resolvable in the meantime.
 
 ## Risks
 
-- **Delay is not neutral.** Every commit on the branch widens the gap and adds to what a decision
-  has to move. The branch was created 2026-09-08 and had 33 commits by 2026-09-10.
-- **Option C has a window in which two copies exist.** Naming an owner and a date for deleting the
-  branch here is part of choosing it, not a follow-up to it.
-- **Option B is the default if nobody decides.** That is worth saying out loud, because it is the
-  only option that requires no action and therefore wins by silence.
+- **The old branch outlives the decision.** It is deliberately left in place and deliberately not
+  rewritten, so that anyone mid-work on it loses nothing. It is also the one thing here that can go
+  stale silently: a commit pushed to it after 2026-09-10 does not reach `Main`. Deleting it, with
+  a named owner, is the follow-up this ADR asks for.
+- **A pull request against the old branch is now a trap.** Its base is a history `Main` does not
+  share, so nothing merged there can reach `Main` by any ordinary route. CI still runs on that
+  branch — the branch was deliberately left untouched, workflow included — which makes the trap
+  quieter, not smaller: green checks on a pull request that leads nowhere.
+- **Delay was not neutral, and was not free.** The branch grew from 33 to 36 commits between the
+  draft and the decision — three commits' worth of extra surface for the import to move.

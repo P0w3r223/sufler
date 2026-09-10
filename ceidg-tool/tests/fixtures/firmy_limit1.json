@@ -1,0 +1,50 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?limit=1",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "1554",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "995",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 2.578,
+  "body": {
+    "firmy": [
+      {
+        "id": "B74D0FB1-32E7-4629-8FAD-C1A606CB0FB3",
+        "nazwa": "Przykładzia Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Testowa",
+          "nip": "1433218197",
+          "regon": "600133892"
+        },
+        "dataRozpoczecia": "2026-10-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/B74D0FB1-32E7-4629-8FAD-C1A606CB0FB3"
+      }
+    ],
+    "count": 6316121,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=1&page=1",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=1&page=0",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=1&page=0",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=1&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=1&page=6316120"
+    },
+    "properties": {
+      "dc:title": "firmy",
+      "dc:description": "Zwraca listę firm",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:31:08"
+    }
+  }
+}

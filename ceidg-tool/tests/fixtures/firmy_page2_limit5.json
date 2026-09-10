@@ -1,0 +1,132 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?limit=5&page=2",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "3377",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "992",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 2.735,
+  "body": {
+    "firmy": [
+      {
+        "id": "DB20A56E-DC81-4FE7-8EDA-8BBB71710434",
+        "nazwa": "Przykładzia Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Wzorcowa",
+          "budynek": "13",
+          "lokal": "2",
+          "miasto": "Warszawa",
+          "wojewodztwo": "MAZOWIECKIE",
+          "powiat": "Warszawa",
+          "gmina": "Praga-Południe",
+          "kraj": "PL",
+          "kod": "04-767",
+          "terc": "1465078",
+          "simc": "0918838",
+          "ulic": "80855"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Testowa",
+          "nip": "2065133383",
+          "regon": "726247313"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/DB20A56E-DC81-4FE7-8EDA-8BBB71710434"
+      },
+      {
+        "id": "27A0C3D7-7C96-4F79-B7E9-9ACAA97065E1",
+        "nazwa": "Testomir Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "38",
+          "lokal": "7",
+          "miasto": "Piaseczno",
+          "wojewodztwo": "MAZOWIECKIE",
+          "powiat": "piaseczyński",
+          "gmina": "Piaseczno",
+          "kraj": "PL",
+          "kod": "05-159",
+          "terc": "1418044",
+          "simc": "0921438",
+          "ulic": "85914"
+        },
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Testowa",
+          "nip": "4267736022",
+          "regon": "606474683"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/27A0C3D7-7C96-4F79-B7E9-9ACAA97065E1"
+      },
+      {
+        "id": "DD2467AC-778E-4DB3-A93D-FFBC6C6FA611",
+        "nazwa": "Testomir Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Testomir",
+          "nazwisko": "Syntetyczna",
+          "nip": "4473829974",
+          "regon": "376311651"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/DD2467AC-778E-4DB3-A93D-FFBC6C6FA611"
+      },
+      {
+        "id": "E3E9DE99-F10C-418B-9EB0-E38A675DD5AF",
+        "nazwa": "Przykładzia Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Syntetyczna",
+          "nip": "1500978821",
+          "regon": "081219132"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/E3E9DE99-F10C-418B-9EB0-E38A675DD5AF"
+      },
+      {
+        "id": "EF8C485B-C07A-40F2-ADD4-253B50F0FD0A",
+        "nazwa": "Syntetyk Próbny FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Próbny",
+          "nip": "1916998540",
+          "regon": "353462477"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/EF8C485B-C07A-40F2-ADD4-253B50F0FD0A"
+      }
+    ],
+    "count": 6316121,
+    "links": {
+      "next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=3",
+      "prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=1",
+      "self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=2",
+      "first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=0",
+      "last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZONY&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=5&page=1263224"
+    },
+    "properties": {
+      "dc:title": "firmy",
+      "dc:description": "Zwraca listę firm",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:31:27"
+    }
+  }
+}

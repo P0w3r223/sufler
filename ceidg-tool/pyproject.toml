@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ceidg-tool"
+version = "0.1.0"
+description = "Pobieranie danych JDG z API v3 Hurtowni Danych CEIDG do skoroszytu Excel"
+readme = "README.md"
+requires-python = ">=3.11"
+# Bez własnego pola `license`: licencję całego drzewa niesie `LICENSE` w korzeniu
+# (Proprietary), tak samo jak w pozostałych pod-projektach. Deklaracja MIT pochodziła
+# z czasu, gdy ten projekt żył na osobnej gałęzi — decyzja o wyrównaniu: ADR 0074.
+dependencies = [
+    # Górna granica, bo gwarancja wyjścia z §B opiera się na **wewnętrznym** zachowaniu httpx
+    # (`allow_env_proxies = trust_env and transport is None`), a nie na jego publicznym API.
+    "httpx>=0.27,<0.29",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "openpyxl>=3.1",
+    "typer>=0.12",
+    "questionary>=2.0",
+    "pyyaml>=6.0",
+    "rich>=13.7",
+    "platformdirs>=4.2",
+    "keyring>=25.0",
+]
+
+[project.optional-dependencies]
+# Asystent językowy fazy 4 (ADR-0011, decyzja 10). **Extra, nie zależność**: „kreator i CLI
+# działają bez asystenta" ma być prawdą także przy instalacji, a nie tylko w czasie wykonania.
+# Uwaga na koszt ukryty: `anthropic` 1.x stoi na `httpx2`, więc lock niesie **dwa** stosy HTTP —
+# `httpx` i `httpx2` — a tego drugiego nikt nie wybierał wprost.
+asystent = ["anthropic>=1,<2"]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+ceidg-tool = "ceidg_tool.__main__:app"
+
+[tool.setuptools.packages.find]
+include = ["ceidg_tool*"]
+
+[tool.setuptools.package-data]
+ceidg_tool = ["profiles/*.yaml", "data/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["ceidg_probe.py", "scripts/ceidg_probe.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+# Zakres jawnie w konfiguracji, bo bramka repozytorium woła `uv run mypy` BEZ
+# argumentów (jeden krok dla wszystkich pod-projektów). Wcześniej zakres żył tylko
+# w wierszu poleceń workflow — czyli w miejscu, którego drugie wywołanie nie widzi.
+files = ["ceidg_tool", "tests"]

@@ -1,0 +1,55 @@
+name: ceidg-tool (systemy i wersje Pythona)
+# Ten plik pokrywa OŚ, której matryca `ci.yml` nie ma: drugi system i drugą wersję Pythona.
+# Bramką jakości pod-projektu jest wpis `ceidg-tool` w matrycy `ci.yml` (ubuntu + uv) i to on
+# jest warunkiem scalenia; tutaj zostaje wyłącznie to, czego tamten nie zobaczy. Ta oś nie jest
+# ozdobą: #146 i #147 to były usterki widoczne WYŁĄCZNIE na Windows, obie przeżyły w repozytorium
+# tygodnie zielonego CI i obie znalazł człowiek, nie bramka.
+#
+# Filtr `paths` zastąpił filtr gałęzi (`branches: [ceidg-tool]`), którym ten plik żył, dopóki
+# pod-projekt stał poza `Main` (ADR 0074). Powód zawężenia się nie zmienił: matryca jest
+# czterodrożna, więc bez filtra literówka w cudzym katalogu wydawałaby minuty Actions na cztery
+# pełne przebiegi tej suity. Zmieniło się tylko to, po czym zawężamy — katalog zamiast gałęzi.
+on:
+  push:
+    branches: [Main, Dev]
+    paths:
+      - 'ceidg-tool/**'
+      - '.github/workflows/ceidg-tool.yml'
+  pull_request:
+    branches: [Main, Dev]
+    paths:
+      - 'ceidg-tool/**'
+      - '.github/workflows/ceidg-tool.yml'
+jobs:
+  test:
+    name: ceidg-tool (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ceidg-tool
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # `asystent` obowiązkowo: bez niego `tests/test_assistant_caller.py` nie zbierze się
+      # (importuje `httpx2`), a skany granic 11 i 12 nie widzą prawdziwego grafu importów —
+      # nazwa `httpx2` w `HTTP_CLIENT_MODULES` byłaby wtedy założeniem, nie faktem.
+      - run: python -m pip install -e .[dev,asystent]
+      # Cały `scripts/` od kiedy sondy dzielą limiter z narzędziem (`scripts/probe_support.py`) —
+      # wyliczanka plików gubiłaby każdy nowy. Dostarczony oryginał `ceidg_probe.py` leży
+      # w katalogu głównym pod-projektu i celowo zostaje poza tym.
+      - run: ruff check ceidg_tool tests scripts
+      - run: ruff format --check ceidg_tool tests scripts
+      - run: mypy ceidg_tool tests
+      # UZUPELNIENIE_01 §E: scenariusze 4 i 7 przy każdym uruchomieniu (tests/resilience/)
+      # Bez `-q`: `addopts = "-q"` jest w pyproject.toml, więc jawne dawało `-qq` — a przy tej
+      # gadatliwości pytest nie drukuje linii podsumowania i log przebiegu nie mówił, ile testów
+      # przeszło. Trzy wersje CLAUDE.md cytowały liczbę, której żadna bramka nie umiała wypisać.
+      - run: python -m pytest -p no:warnings

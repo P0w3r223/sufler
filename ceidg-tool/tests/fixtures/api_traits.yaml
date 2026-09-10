@@ -1,0 +1,128 @@
+# Zmierzone własności odpowiedzi API — twierdzenie osobno od próbki.
+#
+# Fixture jest kopią odpowiedzi przepuszczoną przez `scripts/anonymize_samples.py`, więc
+# każda własność, której anonimizator nie zachowa, znika z materiału dowodowego bez śladu.
+# Tak zginęła wielkość liter identyfikatorów: anonimizator podnosił je do wielkich, przez co
+# 768 testów offline zgadzało się co do świata, którego nie ma, a `aktualizuj` gubił na
+# produkcji wszystkie szczegóły (ADR-0013).
+#
+# Ten plik mówi, co zmierzono na surowych próbkach. `tests/test_api_traits.py` sprawdza, że
+# fixtures są z nim zgodne (biegnie w CI), a tamtejszy `test_audyt_pomiaru_na_surowych_probkach`
+# konfrontuje go z `probe_out/` i uczciwie się pomija, gdy surowych próbek nie ma. Dzięki temu
+# fixture nie może zostać wygenerowany do zgodności z samym sobą: zgadza się z zapisanym
+# pomiarem albo test jest czerwony.
+
+zmierzono: "2026-09-05 (sonda fazy 1), potwierdzone 2026-09-08 na bazie produkcyjnej"
+# Trzy katalogi, nie jeden. Do 2026-09-09 stało tu samo `probe_out/samples/`, i to jedno
+# pominięcie kosztowało pomiar: `mini/` i `nip_ids/` niosą jedyne dwie próbki ze stroną
+# końcową, więc własność kończąca stronicowanie wyglądała na niezmierzoną i została z tego
+# pliku wypisana (audyt architektury 2026-09-09, F-E1). Wskaźnik na materiał dowodowy jest
+# częścią dowodu — niepełny wskaźnik kasuje własność równie skutecznie jak anonimizator.
+zrodlo_surowe: ["probe_out/samples/", "probe_out/mini/", "probe_out/nip_ids/"]
+
+identyfikatory:
+  # Rejestr zwraca jeden identyfikator wpisu w dwóch pisowniach, zależnie od endpointu.
+  # To nie jest kosmetyka: `firma.id` był kluczem głównym wrażliwym na wielkość liter.
+  - endpoint: firmy
+    fixture: firmy_page0_limit5.json
+    probka: 02_200_firmy.json
+    sciezka: [firmy, id]
+    ksztalt: guid_hex
+    wielkosc_liter: upper
+    uwaga: "Lista wpisów — identyfikator wielkimi literami."
+
+  - endpoint: firma
+    fixture: firma_by_ids.json
+    probka: 24_200_firma.json
+    sciezka: [firma, id]
+    ksztalt: guid_hex
+    wielkosc_liter: upper
+    uwaga: >-
+      Szczegóły. `ids=` dopasowuje **bez względu na wielkość liter**, ale odpowiedź zawsze
+      niesie pisownię wielkimi: zapytanie z identyfikatorami z `/zmiana` (małe) wraca
+      rekordami pisanymi wielkimi. Zmierzone na bazie operatora 2026-09-08 — `detail_utc`
+      wierszy pisanych wielkimi pokrywa się z oknem żądań runu, który pytał małymi.
+
+  - endpoint: zmiana
+    fixture: zmiana.json
+    probka: 26_200_zmiana.json
+    sciezka: [identyfikatoryWpisow]
+    ksztalt: guid_hex
+    wielkosc_liter: lower
+    uwaga: >-
+      Strumień zmian — identyfikator **małymi** literami. To jest ta różnica, przez którą
+      każda zmieniona firma trafiała do bazy dwa razy.
+
+  - endpoint: raporty
+    fixture: raporty.json
+    probka: 25_200_raporty.json
+    sciezka: [raporty, id]
+    ksztalt: guid_niehex
+    wielkosc_liter: mieszana
+    uwaga: >-
+      Identyfikator raportu ma kształt 8-4-4-4-12, ale **nie jest szesnastkowy** i jest
+      istotny co do wielkości liter — wchodzi wprost do adresu pobrania archiwum. Dlatego
+      kanonizacja identyfikatorów wpisów pilnuje wzorca `[0-9A-Fa-f]`: rozluźnienie go do
+      `[0-9A-Za-z]` zepsułoby pobieranie raportów. Produkcyjny przykład kształtu:
+      `F3Aj3APe-9rud-A9rR-IId9-jMe3FedeR3e9`.
+
+# Własności odpowiedzi niezwiązane z identyfikatorem. Stoją tu, a nie tylko w profilu
+# środowiska, bo od 2026-09-08 obowiązują **dwie** strony: fixtures sondy i syntetyczny
+# rejestr trybu demo (ADR-0014). Atrapa zgadzająca się wyłącznie sama ze sobą jest w tym
+# projekcie najczęściej powtórzonym defektem, a demo dokłada trzecią jej odmianę: atrapę,
+# którą operator ogląda na ekranie i bierze za obraz rejestru.
+#
+# Wpisuje się tu wyłącznie to, co **zmierzono** — stąd `probki` przy każdej pozycji.
+#
+# Do 2026-09-09 stało tu zdanie, że koniec stronicowania (`links.next == links.self`)
+# świadomie się tu nie znajduje, „bo sonda nigdy nie dotarła do ostatniej strony
+# `count = 6 316 121`". **To było nieprawdą co do faktu.** Do ostatniej strony
+# sześciomilionowego wyniku nie trzeba docierać: przy `count = 1` jedyna strona **jest**
+# ostatnią, i sonda zmierzyła to dwa razy. Własność stoi teraz niżej. Wniosek ogólniejszy,
+# wart zapamiętania: uzasadnienie pominięcia jest twierdzeniem jak każde inne i podlega
+# sprawdzeniu — to pominięcie przetrwało, bo nikt go nie skonfrontował z próbkami.
+odpowiedzi:
+  - wlasnosc: pusty_wynik
+    endpoint: firmy
+    fixture: firmy_204_nazwa.json
+    probki: "11, 15"
+    status: 204
+    ma_tresc: false
+    pole_profilu: empty_result_statuses
+    uwaga: >-
+      Brak trafień to **204 z pustą treścią**, nigdy 200 z `firmy: []` — tego drugiego nie
+      zaobserwowano ani razu. Parser przyjmuje oba, ale profil zna tylko 204, więc atrapa
+      oddająca pustą listę przechodziłaby przez inną gałąź niż produkcja.
+
+  - wlasnosc: count
+    endpoint: firmy
+    fixture: firmy_limit1.json
+    probki: "01"
+    semantyka: total
+    pole_profilu: count_semantics
+    uwaga: >-
+      `count` opisuje **wszystkie** trafienia, nie pozycje na stronie: przy `limit=1` wynosi
+      6 316 121. Na tym stoi tabela kosztów, czyli jedyna liczba, którą operator dostaje
+      przed wydaniem żądań — atrapa licząca stronę wyceniałaby każde zapytanie na 25 firm.
+
+  - wlasnosc: koniec_stronicowania
+    endpoint: firmy
+    # Żaden fixture nie niesie strony końcowej — i to jest stan, nie przeoczenie tego wpisu.
+    # Anonimizator buduje fixtures z `probe_out/samples/`, gdzie wszystkie 18 stronicowanych
+    # odpowiedzi ma `next != self`. Dopóki to się nie zmieni, własności pilnują wyłącznie
+    # surowe próbki (lokalnie) i atrapa demo (w CI).
+    fixture: null
+    probki: "mini/06_200_firmy.json (count=1), nip_ids/1_200_firmy.json (count=2)"
+    probki_probe_out:
+      - "mini/06_200_firmy.json"
+      - "nip_ids/1_200_firmy.json"
+    next_rowne_self: true
+    pole_profilu: paging_mode
+    uwaga: >-
+      Na ostatniej stronie `links.next` **jest obecny i równy** `links.self`. To jedyna
+      własność, która kończy stronicowanie na tym API: strażnik 2 z ADR-0002 (brak `next`)
+      nie odpala tu nigdy, co notuje `docs/decisions.md`. Zmierzone na dwóch próbkach, obu
+      spoza `probe_out/samples/` — przy `count = 1` i `count = 2` jedyna strona jest zarazem
+      ostatnią, więc nie trzeba przechodzić 1 263 224 stron, żeby to zobaczyć. Atrapa, która
+      oddawałaby `next` wskazujący kolejną stronę bez końca, zapętliłaby pobieranie aż do
+      `max_pages`, czyli po 10 000 żądaniach i około dziesięciu godzinach.

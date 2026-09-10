@@ -1,0 +1,323 @@
+{
+  "url": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma?ids=1AC70EC0-AB8D-4EB4-9230-DFBD5553B2FE&ids=6961929E-546E-435A-A92B-D156DB946570&ids=A99F1318-49C8-443F-BED7-0ED7B194990B&ids=A2BC372F-7412-4293-8729-4739614FF3D7&ids=06F028FF-A9BA-4A27-907B-FE36978648F8",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "5975",
+    "X-Rate-Limit-Limit": "1000",
+    "X-Rate-Limit-Remaining": "972",
+    "X-Rate-Limit-Reset": "1788600609032",
+    "Strict-Transport-Security": "max-age=15552000",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Pragma": "no-cache",
+    "Connection": "close",
+    "Server-Timing": "cdn-cache; desc=MISS"
+  },
+  "elapsed_s": 0.297,
+  "body": {
+    "firma": [
+      {
+        "id": "A2BC372F-7412-4293-8729-4739614FF3D7",
+        "nazwa": "Przykładzia Przykładowy FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "98",
+          "lokal": "18",
+          "miasto": "Kraków",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "Kraków",
+          "gmina": "Kraków",
+          "kraj": "PL",
+          "kod": "30-137",
+          "terc": "1261011",
+          "simc": "0950463"
+        },
+        "adresKorespondencyjny": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "12",
+          "lokal": "11",
+          "miasto": "Kraków",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "Kraków",
+          "gmina": "Kraków",
+          "kraj": "PL",
+          "kod": "30-358",
+          "terc": "1261011",
+          "simc": "0950463"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Przykładowy",
+          "nip": "9161849596",
+          "regon": "310341310"
+        },
+        "obywatelstwa": [
+          {
+            "symbol": "UA",
+            "kraj": "Ukraina"
+          }
+        ],
+        "rokPkd": "2025",
+        "pkd": [
+          {
+            "kod": "9622Z",
+            "nazwa": "Działalność w zakresie pielęgnacji urody i pozostała działalność kosmetyczna"
+          },
+          {
+            "kod": "4775Z",
+            "nazwa": "Sprzedaż detaliczna kosmetyków i artykułów toaletowych"
+          }
+        ],
+        "pkdGlowny": {
+          "kod": "9622Z",
+          "nazwa": "Działalność w zakresie pielęgnacji urody i pozostała działalność kosmetyczna"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "numerStatusu": 1,
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/A2BC372F-7412-4293-8729-4739614FF3D7"
+      },
+      {
+        "id": "1AC70EC0-AB8D-4EB4-9230-DFBD5553B2FE",
+        "nazwa": "Fikcjan Testowa FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "37",
+          "miasto": "Łódź",
+          "wojewodztwo": "ŁÓDZKIE",
+          "powiat": "Łódź",
+          "gmina": "Łódź",
+          "kraj": "PL",
+          "kod": "90-548",
+          "terc": "1061011",
+          "simc": "0957650"
+        },
+        "adresKorespondencyjny": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "16",
+          "miasto": "Łódź",
+          "wojewodztwo": "ŁÓDZKIE",
+          "powiat": "Łódź",
+          "gmina": "Łódź",
+          "kraj": "PL",
+          "kod": "90-129",
+          "terc": "1061011",
+          "simc": "0957650"
+        },
+        "wlasciciel": {
+          "imie": "Fikcjan",
+          "nazwisko": "Testowa",
+          "nip": "7808760388",
+          "regon": "597703489"
+        },
+        "obywatelstwa": [
+          {
+            "symbol": "PL",
+            "kraj": "Polska"
+          }
+        ],
+        "rokPkd": "2025",
+        "pkd": [
+          {
+            "kod": "7722Z",
+            "nazwa": "Wypożyczanie i dzierżawa pozostałych artykułów użytku osobistego i domowego"
+          },
+          {
+            "kod": "8552Z",
+            "nazwa": "Pozostałe formy edukacji artystycznej"
+          }
+        ],
+        "pkdGlowny": {
+          "kod": "7722Z",
+          "nazwa": "Wypożyczanie i dzierżawa pozostałych artykułów użytku osobistego i domowego"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "numerStatusu": 1,
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/1AC70EC0-AB8D-4EB4-9230-DFBD5553B2FE"
+      },
+      {
+        "id": "6961929E-546E-435A-A92B-D156DB946570",
+        "nazwa": "Przykładzia Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {},
+        "adresKorespondencyjny": {
+          "ulica": "ul. Syntetyczna",
+          "budynek": "62",
+          "miasto": "Pilawa",
+          "wojewodztwo": "MAZOWIECKIE",
+          "powiat": "garwoliński",
+          "gmina": "Pilawa",
+          "kraj": "PL",
+          "kod": "08-583",
+          "adresat": "Wzorcysława Syntetyczna",
+          "terc": "1403104",
+          "simc": "0975753",
+          "ulic": "41946"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Syntetyczna",
+          "nip": "4248086132",
+          "regon": "171274845"
+        },
+        "obywatelstwa": [
+          {
+            "symbol": "PL",
+            "kraj": "Polska"
+          }
+        ],
+        "rokPkd": "2025",
+        "pkd": [
+          {
+            "kod": "6619Z",
+            "nazwa": "Pozostała działalność wspomagająca usługi finansowe, z wyłączeniem ubezpieczeń i funduszy emerytalnych"
+          },
+          {
+            "kod": "6630Z",
+            "nazwa": "Działalność związana z zarządzaniem funduszami"
+          },
+          {
+            "kod": "8210Z",
+            "nazwa": "Działalność związana z administracyjną obsługą biura, włączając działalność wspomagającą"
+          }
+        ],
+        "pkdGlowny": {
+          "kod": "6619Z",
+          "nazwa": "Pozostała działalność wspomagająca usługi finansowe, z wyłączeniem ubezpieczeń i funduszy emerytalnych"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "numerStatusu": 1,
+        "email": "przykładzia.syntetyczna@example.test",
+        "wspolnoscMajatkowa": 2,
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/6961929E-546E-435A-A92B-D156DB946570"
+      },
+      {
+        "id": "06F028FF-A9BA-4A27-907B-FE36978648F8",
+        "nazwa": "Przykładzia Syntetyczna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "50",
+          "lokal": "7",
+          "miasto": "Bochnia",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "bocheński",
+          "gmina": "Bochnia",
+          "kraj": "PL",
+          "kod": "32-713",
+          "terc": "1201011",
+          "simc": "0981682",
+          "ulic": "76616"
+        },
+        "adresKorespondencyjny": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "9",
+          "lokal": "9",
+          "miasto": "Bochnia",
+          "wojewodztwo": "MAŁOPOLSKIE",
+          "powiat": "bocheński",
+          "gmina": "Bochnia",
+          "kraj": "PL",
+          "kod": "32-891",
+          "terc": "1201011",
+          "simc": "0981682",
+          "ulic": "64387"
+        },
+        "wlasciciel": {
+          "imie": "Przykładzia",
+          "nazwisko": "Syntetyczna",
+          "nip": "4734670657",
+          "regon": "627298066"
+        },
+        "obywatelstwa": [
+          {
+            "symbol": "FI",
+            "kraj": "Finlandia"
+          }
+        ],
+        "rokPkd": "2025",
+        "pkd": [
+          {
+            "kod": "9319Z",
+            "nazwa": "Działalność sportowa, gdzie indziej niesklasyfikowana"
+          }
+        ],
+        "pkdGlowny": {
+          "kod": "9319Z",
+          "nazwa": "Działalność sportowa, gdzie indziej niesklasyfikowana"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "numerStatusu": 1,
+        "telefon": "+48 600 448 906",
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/06F028FF-A9BA-4A27-907B-FE36978648F8"
+      },
+      {
+        "id": "A99F1318-49C8-443F-BED7-0ED7B194990B",
+        "nazwa": "Syntetyk Fikcyjna FIRMA TESTOWA",
+        "adresDzialalnosci": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "90",
+          "lokal": "8",
+          "miasto": "Łódź",
+          "wojewodztwo": "ŁÓDZKIE",
+          "powiat": "Łódź",
+          "gmina": "Łódź-Śródmieście",
+          "kraj": "PL",
+          "kod": "90-685",
+          "terc": "1061059",
+          "simc": "0958430",
+          "ulic": "60196"
+        },
+        "adresKorespondencyjny": {
+          "ulica": "ul. Fikcyjna",
+          "budynek": "53",
+          "lokal": "2",
+          "miasto": "Łódź",
+          "wojewodztwo": "ŁÓDZKIE",
+          "powiat": "Łódź",
+          "gmina": "Łódź-Śródmieście",
+          "kraj": "PL",
+          "kod": "90-425",
+          "terc": "1061059",
+          "simc": "0958430",
+          "ulic": "71993"
+        },
+        "wlasciciel": {
+          "imie": "Syntetyk",
+          "nazwisko": "Fikcyjna",
+          "nip": "1449972784",
+          "regon": "755886750"
+        },
+        "obywatelstwa": [
+          {
+            "symbol": "PL",
+            "kraj": "Polska"
+          }
+        ],
+        "rokPkd": "2025",
+        "pkd": [
+          {
+            "kod": "4933Z",
+            "nazwa": "Transport pasażerski na żądanie pojazdem z kierowcą"
+          }
+        ],
+        "pkdGlowny": {
+          "kod": "4933Z",
+          "nazwa": "Transport pasażerski na żądanie pojazdem z kierowcą"
+        },
+        "dataRozpoczecia": "2026-09-05",
+        "status": "AKTYWNY",
+        "numerStatusu": 1,
+        "link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/A99F1318-49C8-443F-BED7-0ED7B194990B"
+      }
+    ],
+    "properties": {
+      "dc:title": "firma",
+      "dc:description": "Zwraca szczegółowe dane firmy",
+      "dc:language": "pl-PL",
+      "schema:provider": "Ministerstwo Rozwoju i Technologii",
+      "schema:datePublished": "2026-09-05 10:33:29"
+    }
+  }
+}
