@@ -46,6 +46,8 @@ def to_criteria(answer: AssistantAnswer, slownik: Mapping[str, str]) -> Criteria
             nazwa=tuple(answer.nazwa),
             nip=tuple(answer.nip),
             regon=tuple(answer.regon),
+            nip_sc=tuple(answer.nip_sc),
+            regon_sc=tuple(answer.regon_sc),
             imie=tuple(answer.imie),
             nazwisko=tuple(answer.nazwisko),
             wojewodztwo=tuple(answer.wojewodztwo),
@@ -53,6 +55,8 @@ def to_criteria(answer: AssistantAnswer, slownik: Mapping[str, str]) -> Criteria
             gmina=tuple(answer.gmina),
             miasto=tuple(answer.miasto),
             ulica=tuple(answer.ulica),
+            budynek=tuple(answer.budynek),
+            lokal=tuple(answer.lokal),
             kod=tuple(answer.kod),
             pkd=pkd,
             # `Criteria.status` jest typowane jako `Literal`, a od modelu przychodzi zwykły

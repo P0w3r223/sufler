@@ -84,12 +84,18 @@ class AssistantAnswer(BaseModel):
     gmina: tuple[str, ...] = ()
     miasto: tuple[str, ...] = ()
     ulica: tuple[str, ...] = ()
+    budynek: tuple[str, ...] = ()
+    lokal: tuple[str, ...] = ()
     kod: tuple[str, ...] = ()
     nazwa: tuple[str, ...] = ()
     imie: tuple[str, ...] = ()
     nazwisko: tuple[str, ...] = ()
     nip: tuple[str, ...] = ()
     regon: tuple[str, ...] = ()
+    # Spółka cywilna, do której należy przedsiębiorca — osobny filtr rejestru, nie odmiana
+    # `nip`. Model ma je wypełniać tylko wtedy, gdy użytkownik sam nazwie spółkę.
+    nip_sc: tuple[str, ...] = ()
+    regon_sc: tuple[str, ...] = ()
     pkd: tuple[str, ...] = ()
     status: tuple[str, ...] = ()
     data_od: str | None = None

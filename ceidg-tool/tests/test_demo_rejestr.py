@@ -415,3 +415,62 @@ def test_atrapa_nie_dokleja_pol_ktorych_rejestr_nie_zwraca(rejestr: RejestrDemo)
     assert {"pkd", "rokPkd", "telefon", "email"} <= braki
     puste: list[Any] = [v for v in lista.values() if v is None]
     assert puste == [], "rejestr pomija pola, nie zwraca ich jako null"
+
+
+def test_filtr_po_spolce_cywilnej_wybiera_wspolnikow(rejestr: RejestrDemo, korpus: Korpus) -> None:
+    """`nip_sc` pyta o spółkę, do której należy przedsiębiorca — nie o niego samego.
+
+    Rozróżnienie jest całą treścią tego filtru: gdyby atrapa porównywała `nip_sc` z NIP-em
+    wpisu, zapytanie o spółkę oddawałoby jej wspólnika tylko przez przypadek, a operator
+    dostawałby w pokazie wynik, którego rejestr by nie dał.
+    """
+    wspolnik = next(w for w in korpus.wpisy if w.spolka_nip)
+
+    po_spolce = zapytaj(rejestr, "firmy", nip_sc=wspolnik.spolka_nip, limit="25").json()
+    po_wlasnym = zapytaj(rejestr, "firmy", nip_sc=wspolnik.nip, limit="25")
+
+    assert {r["id"] for r in po_spolce["firmy"]} == {wspolnik.id}
+    # NIP samego przedsiębiorcy w polu spółki nie trafia w nikogo — 204, nie „ten sam wpis".
+    assert po_wlasnym.status_code == 204
+
+
+def test_filtr_po_numerze_domu_dopasowuje_sie_dokladnie(
+    rejestr: RejestrDemo, korpus: Korpus
+) -> None:
+    """Numer porównuje się dokładnie — tak samo tu i w `reports.matches_criteria` (ADR-0018).
+
+    Fragment dopasowywałby „1" do „1", „12" i „19" naraz, czyli filtr adresowy przestałby
+    zawężać. Test pilnuje obu stron: właściwe wpisy wchodzą, a wpis o numerze zaczynającym
+    się tak samo — nie.
+    """
+    z_lokalem = next(w for w in korpus.wpisy if w.numer_lokalu and not w.bez_adresu)
+    oczekiwane = {
+        w.id
+        for w in korpus.wpisy
+        if not w.bez_adresu and str(w.numer_budynku) == str(z_lokalem.numer_budynku)
+    }
+
+    strony = [
+        zapytaj(rejestr, "firmy", budynek=str(z_lokalem.numer_budynku), limit="25", page=str(n))
+        for n in range(4)
+    ]
+    znalezione = {r["id"] for s in strony if s.status_code == 200 for r in s.json()["firmy"]}
+
+    assert znalezione == oczekiwane
+    assert zapytaj(rejestr, "firmy", budynek="999", limit="25").status_code == 204
+
+
+def test_wpis_bez_adresu_nie_wchodzi_pod_filtr_numeru(rejestr: RejestrDemo, korpus: Korpus) -> None:
+    """Dwie na pięć firm mają w rejestrze pusty adres — filtr adresowy ich nie zwraca.
+
+    To jest własność, przez którą filtrowanie po adresie zwraca mniej, niż operator zakłada,
+    i pokaz ma ją nieść tak samo jak rejestr.
+    """
+    bez_adresu = next(w for w in korpus.wpisy if w.bez_adresu)
+
+    odpowiedz = zapytaj(rejestr, "firmy", budynek=str(bez_adresu.numer_budynku), limit="25")
+    znalezione = (
+        {r["id"] for r in odpowiedz.json()["firmy"]} if odpowiedz.status_code == 200 else set()
+    )
+
+    assert bez_adresu.id not in znalezione

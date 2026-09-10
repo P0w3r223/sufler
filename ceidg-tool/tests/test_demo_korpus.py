@@ -63,7 +63,13 @@ from tests.support import criteria
 # korpusu tego dnia: przejściu nazw PKD na słownik i doprowadzeniu rekordu `/firmy` do
 # kształtu, jaki ma w rejestrze (pełny `wlasciciel`, `link`, cały adres, część wpisów bez
 # adresu). Każda z nich zmieniła tę wartość z definicji.
-ODCISK_KORPUSU = "3657ef6e765e8abd"
+#
+# Zmieniona 2026-09-10 przez trzecią świadomą zmianę: numer lokalu i spółka cywilna wspólnika,
+# czyli dane dla filtrów `lokal`, `nip_sc` i `regon_sc` dopisanych dla parytetu z publiczną
+# wyszukiwarką. Oba pola liczą się z numeru wpisu, a nie z `rng`, więc **reszta korpusu jest
+# bit w bit ta sama** — odcisk zmienia się wyłącznie o zawartość nowych pól, a liczby, które
+# `docs/demo-walkthrough.md` podaje jako przebieg pokazu, zostają w mocy.
+ODCISK_KORPUSU = "a6dfb061705dd7c2"
 
 # Wpis o indeksie 0 niesie nazwę wrogą i leży w wielkopolskiem, czyli w tym województwie,
 # o które pokaz pyta. Wroga nazwa w podlaskiem nie pokazałaby niczego.
@@ -416,7 +422,7 @@ def test_lista_niesie_mniej_pol_niz_szczegoly() -> None:
     # i numer statusu. Pierwsza wersja atrapy okrajała listę do NIP-u, REGON-u i dwóch pól
     # adresu, przez co demo namawiało na szczegóły dowodem, którego rejestr nie dostarcza.
     dokladane = set(szczegoly) - set(lista)
-    assert dokladane == {
+    zawsze = {
         "pkd",
         "pkdGlowny",
         "rokPkd",
@@ -426,8 +432,36 @@ def test_lista_niesie_mniej_pol_niz_szczegoly() -> None:
         "obywatelstwa",
         "numerStatusu",
     }
+    # `spolki` dochodzi **warunkowo**, bo rejestr pomija pole, gdy przedsiębiorca nie jest
+    # wspólnikiem. Twarde dopisanie go do zbioru przechodziłoby tylko dlatego, że wpis nr 0
+    # akurat spółkę ma — czyli test opisywałby jeden wpis, a nie regułę.
+    assert dokladane == zawsze | ({"spolki"} if wpis.spolka_nip else set())
     assert set(lista["wlasciciel"]) == {"imie", "nazwisko", "nip", "regon"}
     assert lista["link"] and "ulica" in lista["adresDzialalnosci"]
     # Ten sam wpis, ten sam identyfikator — kształt się różni, tożsamość nie.
     assert lista["id"] == szczegoly["id"] == wpis.id
     assert json.dumps(szczegoly, ensure_ascii=False)  # rekord musi dać się serializować
+
+
+def test_lokal_i_spolka_sa_w_korpusie_i_nie_sa_sprzezone_z_adresem(korpus: Korpus) -> None:
+    """Filtry `lokal`, `nip_sc` i `regon_sc` muszą mieć w pokazie co zwracać — i co pominąć.
+
+    Dwie własności naraz, bo obie da się zepsuć jedną liczbą. Rozkład: numer lokalu jest
+    w rejestrze wypełniony w 23 % wierszy (ADR-0016), a korpus, w którym byłby zawsze albo
+    nigdy, czyniłby filtr niesprawdzalnym w jedną albo w drugą stronę. Niezależność: dzielniki
+    (13 i 11) są pierwsze wobec długości `MIASTA` (5) i `ULICE` (6), więc lokale i spółki nie
+    zbierają się w jednym mieście — to ten sam defekt sprzężenia, przez który każde
+    województwo miało kiedyś zawsze ten sam status.
+    """
+    z_lokalem = [w for w in korpus.wpisy if w.numer_lokalu]
+    ze_spolka = [w for w in korpus.wpisy if w.spolka_nip]
+
+    assert 0.15 <= len(z_lokalem) / len(korpus) <= 0.32
+    assert len(ze_spolka) >= 10
+    assert len({w.miasto for w in z_lokalem}) > 1
+    assert len({w.miasto for w in ze_spolka}) > 1
+    # Spółka to jeden podmiot: NIP bez REGON-u albo odwrotnie opisywałby dane, których
+    # rejestr nie wydaje.
+    assert all(bool(w.spolka_nip) == bool(w.spolka_regon) for w in korpus.wpisy)
+    assert all(nip_checksum_ok(w.spolka_nip) for w in ze_spolka)
+    assert all(regon_checksum_ok(w.spolka_regon) for w in ze_spolka)

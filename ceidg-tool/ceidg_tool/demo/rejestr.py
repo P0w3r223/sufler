@@ -82,9 +82,17 @@ def _pasuje(wpis: WpisDemo, params: list[tuple[str, str]]) -> bool:
         ("kod", wpis.kod_pocztowy),
         ("nip", wpis.nip),
         ("regon", wpis.regon),
+        ("nip_sc", wpis.spolka_nip),
+        ("regon_sc", wpis.spolka_regon),
         ("imie", wpis.imie),
         ("nazwisko", wpis.nazwisko),
         ("status", wpis.status),
+        # Numery adresu dopasowują się dokładnie — tak samo jak w `reports.matches_criteria`,
+        # i to jest cała treść tej linijki: dwie kopie tego samego predykatu mają zgadzać się
+        # co do pola, a nie każda z osobna wyglądać rozsądnie (ADR-0018). Wpis bez adresu ma
+        # tu pusty napis, więc filtr po numerze go nie zwróci — tak jak rejestr.
+        ("budynek", "" if wpis.bez_adresu else str(wpis.numer_budynku)),
+        ("lokal", "" if wpis.bez_adresu else wpis.numer_lokalu),
     ]
     for nazwa_param, wartosc in proste:
         # Bez względu na wielkość liter — zmierzone na produkcji (`docs/decisions.md`:

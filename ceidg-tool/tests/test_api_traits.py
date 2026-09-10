@@ -35,7 +35,8 @@ from ceidg_tool.demo.rejestr import RejestrDemo
 from ceidg_tool.recordid import GUID_WPISU, kanoniczny_id
 
 FIXTURES = Path(__file__).parent / "fixtures"
-PROBKI = Path(__file__).resolve().parents[1] / "probe_out" / "samples"
+PROBE_OUT = Path(__file__).resolve().parents[1] / "probe_out"
+PROBKI = PROBE_OUT / "samples"
 TRAITS = yaml.safe_load((FIXTURES / "api_traits.yaml").read_text(encoding="utf-8"))
 KSZTALT_GUID = re.compile(
     r"^[0-9A-Za-z]{8}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{12}$"
@@ -248,6 +249,56 @@ def test_atrapa_demo_zgadza_sie_z_wlasnosciami_odpowiedzi(demo_rejestr: RejestrD
     assert (brak.content != b"") == pusty["ma_tresc"]
     assert licznik["semantyka"] == "total"
     assert strona.json()["count"] > len(strona.json()["firmy"]) == 5
+
+
+def test_koniec_stronicowania_zmierzony_na_probkach_spoza_samples() -> None:
+    """`links.next == links.self` na ostatniej stronie — zmierzone, nie wywnioskowane.
+
+    Ten test istnieje, bo ta własność była z `api_traits.yaml` **wypisana** z uzasadnieniem,
+    że sonda nigdy nie dotarła do ostatniej strony `count = 6 316 121` (audyt architektury
+    2026-09-09, F-E1). Do ostatniej strony sześciomilionowego wyniku nie trzeba docierać:
+    przy `count = 1` jedyna strona jest zarazem ostatnią. Obie próbki leżą poza
+    `probe_out/samples/`, w które celuje `PROBKI` — i to jedno zawężenie wskaźnika wystarczyło,
+    żeby pomiar przestał być widoczny.
+
+    Pomijany bez `probe_out/`, tak samo i z tego samego powodu co `test_audyt_pomiaru_...`.
+    """
+    cecha = ODPOWIEDZI["koniec_stronicowania"]
+
+    sprawdzone = 0
+    for wzgledna in cecha["probki_probe_out"]:
+        probka = PROBE_OUT / str(wzgledna)
+        if not probka.exists():
+            continue
+        body = json.loads(probka.read_text(encoding="utf-8"))["body"]
+        links = body["links"]
+        assert (links["next"] == links["self"]) == cecha["next_rowne_self"], (
+            f"{wzgledna}: strona końcowa nie zachowuje się jak zmierzono"
+        )
+        sprawdzone += 1
+
+    if not sprawdzone:
+        pytest.skip("brak surowych próbek strony końcowej — audyt wymaga probe_out/")
+
+
+def test_atrapa_demo_konczy_stronicowanie_tak_jak_rejestr(demo_rejestr: RejestrDemo) -> None:
+    """Druga strona tego samego pomiaru — atrapa zamiast próbki, i ta biegnie w CI.
+
+    Bez tego nowa własność byłaby twierdzeniem, którego nic nie czyta poza katalogiem
+    nieobecnym w CI. Kształt zapytania jest celowo ten sam co w pomiarze: filtr zwracający
+    jeden wpis, więc jedyna strona **jest** ostatnią.
+
+    Stawka jest konkretna: atrapa oddająca `next` wskazujący wciąż kolejną stronę zapętla
+    pobieranie aż do `max_pages`, czyli 10 000 żądań i około dziesięciu godzin.
+    """
+    strona = _demo_odpowiedz(demo_rejestr, "firmy", **DEMO_ZAPYTANIA["firmy"]).json()
+    nip = str(strona["firmy"][0]["wlasciciel"]["nip"])
+
+    jedna = _demo_odpowiedz(demo_rejestr, "firmy", nip=nip).json()
+
+    assert jedna["count"] == len(jedna["firmy"]) == 1, "filtr po NIP miał zwrócić jeden wpis"
+    links = jedna["links"]
+    assert (links["next"] == links["self"]) == ODPOWIEDZI["koniec_stronicowania"]["next_rowne_self"]
 
 
 def test_atrapa_demo_nie_udaje_raportow_ktorych_nie_ma(demo_rejestr: RejestrDemo) -> None:

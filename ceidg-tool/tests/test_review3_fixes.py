@@ -54,13 +54,9 @@ def test_wyczysc_wszystko_removes_database_and_open_log(runner: CliRunner, tmp_p
 def test_maks_overrides_yaml_query(tmp_path: Path) -> None:
     query = tmp_path / "q.yaml"
     query.write_text("wojewodztwo: podlaskie\nmax_rekordow: 1000\n", encoding="utf-8")
-    criteria = _criteria_from_options(
-        query, [], [], [], [], [], [], [], [], [], None, None, False, 500
-    )
+    criteria = _criteria_from_options(query, szczegoly=False, maks=500)
     assert criteria.max_rekordow == 500 and criteria.wojewodztwo == ("podlaskie",)
-    unchanged = _criteria_from_options(
-        query, [], [], [], [], [], [], [], [], [], None, None, False, None
-    )
+    unchanged = _criteria_from_options(query, szczegoly=False)
     assert unchanged.max_rekordow == 1000
 
 

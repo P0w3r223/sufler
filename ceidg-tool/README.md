@@ -48,7 +48,15 @@ w `requirements.lock`.
 
 ```
 ceidg-tool pobierz --demo -w wielkopolskie --szczegoly
+ceidg-tool sprawdz-nip --demo 9995237548     # karta jednej firmy z rejestru syntetycznego
 ```
+
+Flagę `--demo` przyjmują `kreator`, `pobierz`, `aktualizuj`, `wznow`, `eksportuj`, `runy`
+i `sprawdz-nip`. Nie przyjmują jej `raporty`, `token`, `sprawdz-token` ani `wyczysc`: pierwsze
+pobiera archiwum, którego atrapa nie udaje, trzy pozostałe dotyczą poświadczeń i katalogu,
+a nie pobierania. To wyliczenie nie jest notatką — pilnuje go
+`tests/test_demo_markers.py::test_lista_polecen_z_demo_zgadza_sie_z_tym_co_cli_naprawde_przyjmuje`,
+w obie strony.
 
 Tryb `--demo` odpowiada z syntetycznego rejestru w pamięci procesu: nie wychodzi ani jedno
 żądanie do CEIDG, nie jest czytany żaden token i nie ma tu niczyich danych. Środowisko
@@ -123,8 +131,26 @@ ceidg-tool wyczysc --wszystko                                # kasuje bazę, log
 ceidg-tool wyczysc --wszystko --tak --potwierdzam-usuniecie  # to samo w harmonogramie
 ```
 
-Plik zapytania YAML ma pola takie jak `Criteria` (`wojewodztwo`, `miasto`, `pkd`,
-`status`, `data_od`, `data_do`, `nazwa`, `nip`, `szczegoly`, `max_rekordow`).
+Każde kryterium ma własną flagę: adres (`--wojewodztwo`, `--powiat`, `--gmina`, `--miasto`,
+`--ulica`, `--budynek`, `--lokal`, `--kod`), podmiot (`--nazwa`, `--imie`, `--nazwisko`, `--nip`,
+`--regon`, `--nip-sc`, `--regon-sc`), branża i stan (`--pkd`, `--status`, `--od`, `--do`).
+Flagę można powtórzyć — `--miasto Wrocław --miasto Gdańsk` znaczy „albo tam, albo tam".
+
+```
+ceidg-tool pobierz -w wielkopolskie --nazwisko Nowak --imie Marek
+ceidg-tool pobierz -m Poznań --ulica Kwiatowa --budynek 12A
+ceidg-tool pobierz --nip-sc 356-345-79-32     # wspólnicy danej spółki cywilnej
+```
+
+Te same pola nazywa plik zapytania YAML (`wojewodztwo`, `powiat`, `gmina`, `miasto`, `ulica`,
+`budynek`, `lokal`, `kod`, `pkd`, `status`, `data_od`, `data_do`, `nazwa`, `imie`, `nazwisko`,
+`nip`, `regon`, `nip_sc`, `regon_sc`, `szczegoly`, `max_rekordow`) — to zapis tego samego
+zapytania do pliku, przydatny w harmonogramie i wtedy, gdy kryteria mają być powtarzalne.
+
+Czego w tej liście nie ma — numeru KRS, PESEL-u, nazwy skróconej, obywatelstwa, dat innych niż
+data rozpoczęcia — tego nie ma również API v3, więc publiczna wyszukiwarka CEIDG odpowie na kilka
+pytań, na które to narzędzie nie odpowie; pełne porównanie stoi w
+`docs/research/public-search-parity.md`.
 
 Dla zapytań „województwo + okres” narzędzie proponuje raport dzienny CEIDG
 (jeden plik zamiast tysięcy żądań); wybór ścieżki: `--zrodlo auto|api|raport`.
@@ -293,7 +319,7 @@ i pytest jest zniekształcone. **Ustawia się je inaczej w każdej powłoce**, a
 ```powershell
 $env:PYTHONUTF8 = "1"
 .venv\Scripts\python -m ceidg_tool
-.venv\Scripts\python -m pytest -q
+.venv\Scripts\python -m pytest
 .venv\Scripts\python -m mypy ceidg_tool tests
 .venv\Scripts\ruff check ceidg_tool tests scripts
 .venv\Scripts\ruff format --check ceidg_tool tests scripts
@@ -305,13 +331,21 @@ paść**, więc w roli bramki niczego nie pilnuje; CI uruchamia wariant z `--che
 **cmd**: `set PYTHONUTF8=1` raz na sesję. **bash (Git Bash)**: `PYTHONUTF8=1 polecenie`
 albo `export PYTHONUTF8=1`.
 
-**1247 testów przechodzi, jeden jest pomijany**, żaden nie łączy się z siecią. To samo
-uruchamia CI (`.github/workflows/ci.yml`) na Linuksie i Windowsie, dla Pythona 3.11 i 3.12.
+**Nie dopisuj `-q`.** `addopts = "-q"` stoi już w `pyproject.toml`, więc jawne `-q` daje `-qq`,
+a przy tej gadatliwości pytest nie drukuje linii podsumowania — same kropki postępu. Liczby
+cytowane niżej pochodzą z polecenia **bez** `-q`.
 
-Pominięcie jest jedno i nie jest szumem: atrapa trybu demo nie obsługuje końcówki
-`/raporty`, więc test pisowni identyfikatorów nie ma dla niej czego sprawdzić. To ta sama
-otwarta krawędź dema, którą wymienia `docs/status.md`, i jedyne miejsce, w którym widać ją
-z poziomu bramki. Suita mówiąca **1248 passed** znaczy, że ścieżka raportowa dostała atrapę.
+**Lokalnie: 1272 testy przechodzą, jeden jest pomijany.** Żaden nie łączy się z siecią. To samo
+uruchamia CI (`.github/workflows/ci.yml`) na Linuksie i Windowsie, dla Pythona 3.11 i 3.12 —
+ale **w CI liczby są inne**: katalog `probe_out/` jest poza repozytorium (niesie dane osobowe),
+więc pięć testów konfrontujących pomiar z surowymi próbkami pomija się uczciwie i to samo drzewo
+raportuje 1267 przechodzących i 6 pominiętych.
+
+Pominięcie, które coś znaczy, jest jedno: atrapa trybu demo nie obsługuje końcówki `/raporty`,
+więc test pisowni identyfikatorów nie ma dla niej czego sprawdzić. To ta sama otwarta krawędź
+dema, którą wymienia `docs/status.md`, i jedyne miejsce, w którym widać ją z poziomu bramki.
+Wartownikiem jest **nazwa tego testu, nie liczba** — gdy przestanie być pomijany, ścieżka
+raportowa dostała atrapę. Liczba tej roli nie udźwignie, bo zależy od środowiska.
 
 Sonda API: `PYTHONUTF8=1 python scripts/ceidg_probe.py --env prod --skip-raport` (raport
 w `probe_out/`; host testowy nie odpowiada, więc sonda wymaga zgody na produkcję).

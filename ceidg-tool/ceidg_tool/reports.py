@@ -290,6 +290,15 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
       pokrywają się.
     * `nip`, `regon`, `status`, `pkd`, daty — wartości ze słownika albo znormalizowane;
       porównanie dokładne jest tu tym, o co pyta wywołujący.
+    * `budynek`, `lokal` — **niezmierzone i dokładne z wyboru.** Dokumentacja publicznej
+      wyszukiwarki każe podać „pełny numer nieruchomości" i „pełny numer lokalu", więc
+      dokładne porównanie jest tu zgodne z jedynym opisem, jaki istnieje; fragment
+      dopasowywałby „12" do „112" i „12A", co przy numerze jest raczej pomyłką niż pomocą.
+      To wybór, nie pomiar — gdyby kiedyś padło pytanie „czemu ten adres nie wchodzi",
+      zaczyna się od tego zdania.
+    * `nip_sc`, `regon_sc` — **tutaj nie docierają.** Dzienny zrzut nie ma takiej kolumny
+      (nagłówek zmierzony 2026-09-10), więc `report_covers` odrzuca całą ścieżkę, a
+      `pipeline.run_report_fetch` odmawia drugi raz, po swojej stronie bramki.
     * `powiat`, `gmina`, `ulica`, `imie`, `nazwisko` — **niezmierzone i zostają dokładne.**
       Sonda z 2026-09-09 (`scripts/ceidg_probe_match_semantics.py`, dwa żądania produkcyjne)
       wysłała fragmenty ze środka prawdziwych wartości w dwóch grupach i obie wróciły puste
@@ -323,6 +332,8 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
         ("gmina", "gmina"),
         ("kod", "kod"),
         ("ulica", "ulica"),
+        ("budynek", "budynek"),
+        ("lokal", "lokal"),
     ):
         wanted = getattr(criteria, field_name)
         if wanted and not any(_equals_ci(address.get(key), v) for v in wanted):
@@ -354,14 +365,34 @@ def statusy_poza_raportem(criteria: Criteria) -> tuple[str, ...]:
     return tuple(sorted(STATUSY_SPOZA_RAPORTU.intersection(criteria.status)))
 
 
+def filtry_poza_raportem(criteria: Criteria) -> tuple[str, ...]:
+    """Żądane filtry, których dzienny zrzut nie ma **jako kolumny** — posortowane, do komunikatu.
+
+    Zmierzone 2026-09-10 na nagłówku `probe_out/raport_sample.zip`: archiwum ma 24 kolumny
+    (`Lp.`, `Nip`, `Regon`, `NazwaPodmiotu`, `Nazwisko`, `Imie`, kontakt, adres z `NrBudynku`
+    i `NrLokalu`, PKD, status, cztery daty) i **ani jednej o spółce cywilnej**. Filtr, którego
+    kolumny nie ma, nie odsiewa niczego — odsiewa wszystko, bo porównanie z brakiem zawsze
+    wypada fałszywie. To jest ta sama cicha pustka co przy statusach spoza zrzutu (A10),
+    tylko wejściem przez adres zamiast przez status."""
+    poza: list[str] = []
+    if criteria.nip_sc:
+        poza.append("nip_sc")
+    if criteria.regon_sc:
+        poza.append("regon_sc")
+    return tuple(poza)
+
+
 def report_covers(criteria: Criteria) -> bool:
-    """Raport pokrywa zapytanie, gdy jest dokładnie jedno województwo i żaden z żądanych
-    statusów nie leży poza zrzutem.
+    """Raport pokrywa zapytanie, gdy jest dokładnie jedno województwo, żaden z żądanych
+    statusów nie leży poza zrzutem i żaden filtr nie odwołuje się do kolumny, której zrzut nie ma.
 
     Do audytu 2026-09-08 (A10) warunek wymieniał wyłącznie `WYKRESLONY`, więc zapytanie
     o wpisy oczekujące na rozpoczęcie działalności szło ścieżką raportu i wracało puste —
     bez błędu, bez ostrzeżenia i o cztery rzędy wielkości taniej niż ścieżka API, co czyni
-    tę cichą pustkę wyborem domyślnym (`--zrodlo auto`)."""
+    tę cichą pustkę wyborem domyślnym (`--zrodlo auto`). Filtry spółki cywilnej dokładają
+    2026-09-10 drugi przypadek tego samego kształtu: kolumny nie ma w ogóle."""
     if statusy_poza_raportem(criteria):
+        return False
+    if filtry_poza_raportem(criteria):
         return False
     return len(criteria.wojewodztwo) == 1

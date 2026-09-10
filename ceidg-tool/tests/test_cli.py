@@ -7,6 +7,7 @@ Produkcja to jedyne miejsce, gdzie narzędzie dotyka prawdziwych danych osobowyc
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from typer.testing import CliRunner
 import ceidg_tool.config as config
 from ceidg_tool import cli
 from ceidg_tool.cli import app
+from ceidg_tool.criteria import Criteria
 from ceidg_tool.errors import ProdWithoutConsentError
 
 TOKEN = "token-testowy-nie-jwt"
@@ -199,3 +201,92 @@ def test_bare_enter_at_the_production_prompt_is_not_consent(
     assert result.exit_code == EXIT_CONFIG
     assert "wymaga jawnej zgody" in result.output
     assert not (tmp_path / "dane").exists()
+
+
+# ------------------------------------------------- flagi kryteriów (parytet z `Criteria`)
+
+# Pola `Criteria`, które **nie** mają być zwykłą flagą listową, i powód dla każdego:
+POLA_BEZ_WLASNEJ_FLAGI_LISTOWEJ = {
+    # Rocznik przejściowy nie jest wyborem kodów, tylko decyzją „szukać też po starych" —
+    # stąd flaga trójstanowa `--pkd-2007/--bez-pkd-2007`, a nie lista kodów (ADR-0012).
+    "pkd_2007",
+    "data_od",  # `--od`
+    "data_do",  # `--do`
+    "szczegoly",  # `--szczegoly/--lista`
+    "max_rekordow",  # `--maks`
+}
+
+
+def _opcje_polecenia(nazwa: str) -> set[str]:
+    """Nazwy parametrów Pythona przyjmowanych przez polecenie — z typera, nie z siatki nazw."""
+    funkcje = [c.callback for c in app.registered_commands if c.callback is not None]
+    polecenie = next(f for f in funkcje if (f.__name__.replace("_", "-")) == nazwa)
+    return set(inspect.signature(polecenie).parameters)
+
+
+def test_kazde_pole_kryteriow_ma_flage_w_wierszu_polecen() -> None:
+    """Pole `Criteria` bez flagi jest dostępne tylko przez plik zapytania albo asystenta.
+
+    Tak było do 2026-09-10 z `imie`, `nazwisko`, `ulica` i `kod`: filtr istniał, przechodził
+    walidację, jechał do API — a operator wiersza poleceń nie miał jak go podać i nie miał skąd
+    się o nim dowiedzieć, bo `--help` go nie wymieniał. Test porównuje **spisy**, więc następne
+    dopisane pole albo dostanie flagę, albo trafi na listę wyjątków wraz z powodem.
+    """
+    brakujace = (
+        set(Criteria.model_fields) - POLA_BEZ_WLASNEJ_FLAGI_LISTOWEJ - _opcje_polecenia("pobierz")
+    )
+
+    assert brakujace == set()
+    # Kontrola odwrotna: wyjątek wpisany „na zapas" dla pola, którego nie ma, ukrywałby braki.
+    assert POLA_BEZ_WLASNEJ_FLAGI_LISTOWEJ <= set(Criteria.model_fields)
+
+
+@pytest.mark.parametrize(
+    ("flaga", "wartosc", "pole", "oczekiwane"),
+    [
+        ("--imie", "Marek", "imie", ("Marek",)),
+        ("--nazwisko", "Nowak", "nazwisko", ("Nowak",)),
+        ("--ulica", "Kwiatowa", "ulica", ("Kwiatowa",)),
+        ("--kod", "15-333", "kod", ("15-333",)),
+        ("--budynek", "12A", "budynek", ("12A",)),
+        ("--lokal", "3", "lokal", ("3",)),
+        ("--nip-sc", "356-345-79-32", "nip_sc", ("3563457932",)),
+        ("--regon-sc", "618155359", "regon_sc", ("618155359",)),
+    ],
+)
+def test_nowa_flaga_dociera_do_kryteriow(
+    flaga: str, wartosc: str, pole: str, oczekiwane: tuple[str, ...]
+) -> None:
+    """Flaga w `--help` bez połączenia z `Criteria` byłaby filtrem, który nic nie filtruje."""
+    kryteria = cli._criteria_from_options(None, {pole: [wartosc]})
+
+    assert getattr(kryteria, pole) == oczekiwane
+    assert flaga.lstrip("-").replace("-", "_") == pole
+
+
+def test_pomoc_wymienia_nowe_flagi(runner: CliRunner) -> None:
+    """`--help` jest jedynym miejscem, gdzie operator wiersza poleceń widzi, co da się podać."""
+    pomoc = runner.invoke(app, ["pobierz", "--help"]).output
+
+    for flaga in ("--imie", "--nazwisko", "--ulica", "--kod", "--budynek", "--lokal"):
+        assert flaga in pomoc, f"brak {flaga} w pomocy"
+    assert "--nip-sc" in pomoc and "--regon-sc" in pomoc
+
+
+def test_zla_wartosc_w_fladze_wraca_zdaniem_po_polsku(
+    runner: CliRunner, env: dict[str, str]
+) -> None:
+    """Błąd walidacji ma być zdaniem, nie zrzutem pydantica — jak w kreatorze i u asystenta.
+
+    Do 2026-09-10 wiersz poleceń był jedynym z czterech wejść do `Criteria`, które oddawało
+    surowe `[type=value_error, input_value=…]` z odnośnikiem do errors.pydantic.dev.
+    """
+    zly_kod = runner.invoke(app, ["pobierz", "--kod", "15333", "--tak"], env=env)
+    zla_data = runner.invoke(
+        app, ["pobierz", "-w", "podlaskie", "--od", "2020-13-01", "--tak"], env=env
+    )
+
+    assert zly_kod.exit_code == EXIT_CONFIG
+    assert "15-333" in zly_kod.output and "pydantic" not in zly_kod.output
+    assert zla_data.exit_code == EXIT_CONFIG
+    assert "RRRR-MM-DD" in zla_data.output and "isoformat" not in zla_data.output

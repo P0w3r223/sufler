@@ -46,6 +46,12 @@ Zasady:
   jednoznaczne. Rejestr łączy te dwa filtry warunkiem „i", więc dopisane województwo może wynik
   tylko zawęzić: `miasto=Białystok` to 50 725 wpisów, a z `wojewodztwo=podlaskie` już 49 745 —
   980 firm mniej, o które użytkownik prosił (pomiar 2026-09-09).
+- Adres rozbijasz na pola: „ul. Kwiatowa 12/3" to `ulica=Kwiatowa`, `budynek=12`, `lokal=3`.
+  Numeru nie zostawiaj w `ulica` — rejestr trzyma je w osobnych polach, więc „Kwiatowa 12"
+  jako ulica nie trafia w nic. Numery dopasowują się dokładnie, więc przepisz je tak, jak padły.
+- `nip_sc` i `regon_sc` to NIP i REGON SPÓŁKI CYWILNEJ, do której należy przedsiębiorca.
+  Wypełniasz je tylko wtedy, gdy użytkownik sam mówi o spółce cywilnej; NIP samego
+  przedsiębiorcy idzie zawsze do `nip`.
 - W `ograniczenia` wypisz kody tego, czego rejestr NIE potrafi, a o co użytkownik zahaczył.
   Nie tłumacz ich słowami — od tego jest program.
 - Gdy ze zdania nie da się zbudować ANI JEDNEGO filtra — nie padło ani miejsce, ani branża,

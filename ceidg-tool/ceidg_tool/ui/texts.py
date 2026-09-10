@@ -317,6 +317,8 @@ def hints_block() -> Block:
 POLE_PO_POLSKU: Final[dict[str, str]] = {
     "nazwa": "fragmentu nazwy",
     "ulica": "ulicy",
+    "budynek": "numeru nieruchomości",
+    "lokal": "numeru lokalu",
     "kod": "kodu pocztowego",
     "imie": "imienia",
     "nazwisko": "nazwiska",
@@ -333,6 +335,8 @@ POLE_PO_POLSKU: Final[dict[str, str]] = {
 DLACZEGO_PUSTO: Final[dict[str, str]] = {
     "nazwa": "dopasowuje się dosłownie, więc odmiana albo skrót w rejestrze go omija",
     "ulica": "rejestr zapisuje ją różnie („Kwiatowa”, „ul. Kwiatowa”), więc łatwo się rozminąć",
+    "budynek": "numer bywa zapisany jako „12A”, „12 A” albo „12/3” — „12” nie trafia w żaden",
+    "lokal": "numer lokalu jest wypełniony w niespełna co czwartym wpisie, więc częściej go brak",
     "kod": "jedna cyfra obok i nie pasuje już nic",
     "imie": "wpis nosi imię przedsiębiorcy, nie nazwę firmy — łatwo je pomylić",
     "nazwisko": "wpis nosi nazwisko przedsiębiorcy, nie nazwę firmy — łatwo je pomylić",
@@ -787,6 +791,7 @@ PowodBrakuRaportu = Literal[
     "WIELE_WOJEWODZTW",
     "BRAK_WOJEWODZTWA",
     "STATUS_SPOZA_RAPORTU",
+    "FILTR_SPOZA_RAPORTU",
     "BRAK_DZISIEJSZEGO",
 ]
 """Zamknięty zbiór powodów, dla których ścieżka raportu odpada.
@@ -810,6 +815,10 @@ RAPORT_NIEDOSTEPNY: Final[dict[PowodBrakuRaportu, str]] = {
     "STATUS_SPOZA_RAPORTU": (
         "Dzienny zrzut nie zawiera wpisów o statusie, o który pytasz, więc wynik z raportu "
         "byłby pusty — i to bez ostrzeżenia."
+    ),
+    "FILTR_SPOZA_RAPORTU": (
+        "Pytasz o spółkę cywilną (NIP albo REGON spółki), a dzienny zrzut w ogóle nie ma "
+        "takiej kolumny — z raportu nie da się tego odsiać, więc wynik byłby pusty."
     ),
     "BRAK_DZISIEJSZEGO": (
         "Dla tego województwa nie ma dziś gotowego raportu. Rejestr wydaje je nad ranem "

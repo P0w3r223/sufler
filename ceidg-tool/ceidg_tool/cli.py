@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import UTC, date, datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -31,7 +32,7 @@ from .config import (
     store_token_in_keyring,
 )
 from .console import ConsoleEvents
-from .criteria import Criteria
+from .criteria import Criteria, bledy_po_polsku
 from .demo import TOKEN_DEMO, Demo, zbuduj_demo
 from .errors import CeidgError, ConfigError
 from .logsetup import close_file_handlers, get_logger, setup_logging
@@ -276,20 +277,22 @@ OpisOpt = Annotated[
 
 def _criteria_from_options(
     zapytanie: Path | None,
-    wojewodztwo: list[str],
-    miasto: list[str],
-    powiat: list[str],
-    gmina: list[str],
-    nazwa: list[str],
-    nip: list[str],
-    regon: list[str],
-    pkd: list[str],
-    status: list[str],
-    od: str | None,
-    do: str | None,
-    szczegoly: bool | None,
-    maks: int | None,
+    pola: Mapping[str, Sequence[str]] | None = None,
+    *,
+    od: str | None = None,
+    do: str | None = None,
+    szczegoly: bool | None = None,
+    maks: int | None = None,
 ) -> Criteria:
+    """Kryteria z flag wiersza poleceń albo z pliku zapytania.
+
+    Pola listowe przychodzą **słownikiem**, a nie jako kolejne argumenty pozycyjne. Powód jest
+    mechaniczny: przy dziewięciu polach wywołania testowe wyglądały jak `plik, [], [], [], [],
+    [], [], [], [], [], None, None, False, None`, więc przestawienie dwóch sąsiadów było
+    niewidoczne dla czytającego i dla mypy — obie listy mają ten sam typ. Przy siedemnastu
+    polach (2026-09-10) byłoby to już tylko kwestią czasu. Nazwy w słowniku są nazwami pól
+    `Criteria`, więc literówka wywraca się na `extra="forbid"`, a nie po cichu gubi filtr.
+    """
     if zapytanie is not None:
         base = criteria_from_yaml(zapytanie)
         overrides: dict[str, object] = {}
@@ -304,26 +307,30 @@ def _criteria_from_options(
             overrides["max_rekordow"] = maks
         return base.model_copy(update=overrides) if overrides else base
     try:
-        return Criteria(
-            wojewodztwo=tuple(wojewodztwo),
-            miasto=tuple(miasto),
-            powiat=tuple(powiat),
-            gmina=tuple(gmina),
-            nazwa=tuple(nazwa),
-            nip=tuple(nip),
-            regon=tuple(regon),
-            pkd=tuple(pkd),
-            status=tuple(status),  # type: ignore[arg-type]
-            data_od=date.fromisoformat(od) if od else None,
-            data_do=date.fromisoformat(do) if do else None,
-            # Bez pliku YAML nie ma czego nadpisywać, więc brak flagi znaczy tu domyślne
-            # „bez szczegółów" — trójstanowość jest potrzebna wyłącznie tam, gdzie istnieje
-            # wartość spod spodu, którą `--lista` ma umieć wyłączyć.
-            szczegoly=bool(szczegoly),
-            max_rekordow=maks,
+        return Criteria.model_validate(
+            {
+                **{nazwa: tuple(wartosci) for nazwa, wartosci in (pola or {}).items()},
+                # Daty idą do walidatora **napisem**, zamiast przez `date.fromisoformat` tutaj.
+                # Ta funkcja rzuca „Invalid isoformat string: '2020-13-01'" — po angielsku
+                # i o klasie, której operator nie zna; pydantic rozpoznaje ten sam błąd jako
+                # `date_from_datetime_parsing`, a `bledy_po_polsku` ma dla niego zdanie
+                # „to nie jest data w postaci RRRR-MM-DD (na przykład 2020-01-31)".
+                "data_od": od or None,
+                "data_do": do or None,
+                # Bez pliku YAML nie ma czego nadpisywać, więc brak flagi znaczy tu domyślne
+                # „bez szczegółów" — trójstanowość jest potrzebna wyłącznie tam, gdzie istnieje
+                # wartość spod spodu, którą `--lista` ma umieć wyłączyć.
+                "szczegoly": bool(szczegoly),
+                "max_rekordow": maks,
+            }
         )
-    except ValueError as exc:
-        raise ConfigError(f"Niepoprawne kryteria: {exc}") from exc
+    except ValidationError as exc:
+        # Ta sama funkcja, co w kreatorze i u asystenta. Do 2026-09-10 stał tu surowy zrzut
+        # pydantica — z `[type=value_error, input_value=…]` i odnośnikiem do errors.pydantic.dev
+        # — czyli jedyne z czterech wejść do `Criteria`, które nadal mówiło do operatora
+        # językiem biblioteki. Przy ośmiu nowych flagach adresowych to jest ta ścieżka, którą
+        # literówka w kodzie pocztowym pokonuje najczęściej.
+        raise ConfigError(f"Niepoprawne kryteria:\n{bledy_po_polsku(exc)}") from exc
 
 
 @app.callback(invoke_without_command=True)
@@ -385,13 +392,25 @@ def sprawdz_nip(
     srodowisko: EnvOpt = None,
     produkcja: ProdOpt = False,
     tak: YesOpt = False,
+    demo: DemoOpt = False,
 ) -> None:
     """Sprawdza jedną firmę po NIP: suma kontrolna lokalnie, potem dwa zapytania."""
+    # Docstring zostaje **jednowierszowy**, bo typer drukuje go operatorowi jako `--help` —
+    # historia zmiany na tym ekranie to opis błędu, którego operator nie umie już wywołać.
+    # Sprawdzone: wielowierszowa wersja wyszła na ekran w całości, z gwiazdkami markdownu.
+    #
+    # Tryb pokazu doszedł tu 2026-09-10 i był potrzebny bardziej niż gdziekolwiek indziej: to
+    # jedyne polecenie, którego wynikiem jest karta jednej osoby — imię, nazwisko, adres,
+    # telefon — więc pokazanie tej drogi wymagało produkcji, czyli czyichś danych osobowych na
+    # ekranie. Lukę ukrywał kreator, który miał tę samą drogę w pokazie od początku, więc droga
+    # *była* pokryta, tylko z jednego z dwóch wejść.
     try:
-        settings = _settings(srodowisko, produkcja, tak)
-        _banner(settings)
+        settings = (
+            _settings_demo(srodowisko, produkcja) if demo else _settings(srodowisko, produkcja, tak)
+        )
+        _banner(settings, demo=demo)
         events = ConsoleEvents(console, quiet=True)
-        deps = build_deps(settings, events=events)
+        deps = _demo_deps(settings, events)[0] if demo else build_deps(settings, events=events)
         for warning in deps.warnings:
             view.warning(warning)
         try:
@@ -414,9 +433,29 @@ def pobierz(
     miasto: Annotated[list[str] | None, typer.Option("--miasto", "-m")] = None,
     powiat: Annotated[list[str] | None, typer.Option("--powiat")] = None,
     gmina: Annotated[list[str] | None, typer.Option("--gmina")] = None,
+    ulica: Annotated[
+        list[str] | None, typer.Option("--ulica", help="rejestr zapisuje ją różnie: „ul. Polna”")
+    ] = None,
+    budynek: Annotated[
+        list[str] | None, typer.Option("--budynek", help="numer nieruchomości, np. 12A")
+    ] = None,
+    lokal: Annotated[list[str] | None, typer.Option("--lokal", help="numer lokalu")] = None,
+    kod: Annotated[list[str] | None, typer.Option("--kod", help="kod pocztowy, np. 15-333")] = None,
     nazwa: Annotated[list[str] | None, typer.Option("--nazwa", "-n", help="fragment nazwy")] = None,
+    imie: Annotated[
+        list[str] | None, typer.Option("--imie", help="imię przedsiębiorcy, nie nazwa firmy")
+    ] = None,
+    nazwisko: Annotated[
+        list[str] | None, typer.Option("--nazwisko", help="nazwisko przedsiębiorcy")
+    ] = None,
     nip: Annotated[list[str] | None, typer.Option("--nip")] = None,
     regon: Annotated[list[str] | None, typer.Option("--regon")] = None,
+    nip_sc: Annotated[
+        list[str] | None, typer.Option("--nip-sc", help="NIP spółki cywilnej, nie przedsiębiorcy")
+    ] = None,
+    regon_sc: Annotated[
+        list[str] | None, typer.Option("--regon-sc", help="REGON spółki cywilnej")
+    ] = None,
     pkd: Annotated[list[str] | None, typer.Option("--pkd", help="np. 62.10.B")] = None,
     status: Annotated[
         list[str] | None, typer.Option("--status", help="AKTYWNY, ZAWIESZONY, …")
@@ -467,19 +506,29 @@ def pobierz(
         _banner(settings, demo=demo)
         criteria = _criteria_from_options(
             zapytanie,
-            wojewodztwo or [],
-            miasto or [],
-            powiat or [],
-            gmina or [],
-            nazwa or [],
-            nip or [],
-            regon or [],
-            pkd or [],
-            status or [],
-            od,
-            do,
-            szczegoly,
-            maks,
+            {
+                "wojewodztwo": wojewodztwo or [],
+                "powiat": powiat or [],
+                "gmina": gmina or [],
+                "miasto": miasto or [],
+                "ulica": ulica or [],
+                "budynek": budynek or [],
+                "lokal": lokal or [],
+                "kod": kod or [],
+                "nazwa": nazwa or [],
+                "imie": imie or [],
+                "nazwisko": nazwisko or [],
+                "nip": nip or [],
+                "regon": regon or [],
+                "nip_sc": nip_sc or [],
+                "regon_sc": regon_sc or [],
+                "pkd": pkd or [],
+                "status": status or [],
+            },
+            od=od,
+            do=do,
+            szczegoly=szczegoly,
+            maks=maks,
         )
         if zrodlo not in KNOWN_SOURCES:
             raise ConfigError(f"Nieznane źródło {zrodlo!r}. Dozwolone: auto, api, raport.")

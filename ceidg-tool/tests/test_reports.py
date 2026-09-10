@@ -10,6 +10,7 @@ from ceidg_tool.errors import ExportError
 from ceidg_tool.records import Report
 from ceidg_tool.reports import (
     STATUSY_SPOZA_RAPORTU,
+    filtry_poza_raportem,
     iter_report_rows,
     matches_criteria,
     parse_report_name,
@@ -371,3 +372,51 @@ def test_pola_niezmierzone_zostaja_przy_porownaniu_doklandym() -> None:
 
     assert matches_criteria(rekord, criteria(powiat="łomżyński"))
     assert not matches_criteria(rekord, criteria(powiat="omżyń"))
+
+
+# ------------------------------- parytet z publiczną wyszukiwarką: numer domu i spółka cywilna
+
+
+def test_filtr_po_numerze_domu_i_lokalu_dziala_na_scieżce_raportu() -> None:
+    """`NrBudynku` i `NrLokalu` są w zrzucie, więc raport potrafi po nich odsiać.
+
+    Porównanie jest **dokładne** — ta sama decyzja, co w atrapie rejestru, i to jest jej cała
+    treść: dwie kopie tego predykatu mają zgadzać się co do pola (ADR-0018), bo rozjazd
+    znaczy, że ścieżka raportu i ścieżka API oddają różne zbiory przy komentarzu obiecującym
+    ten sam. Dokumentacja publicznej wyszukiwarki mówi o „pełnym numerze", więc dokładne
+    porównanie jest zgodne z jedynym opisem, jaki istnieje.
+    """
+    rekord = row_to_record(row(NrBudynku="12A", NrLokalu="3"), wojewodztwo="podlaskie")
+
+    assert matches_criteria(rekord, criteria(budynek="12A", lokal="3"))
+    assert matches_criteria(rekord, criteria(budynek="12a"))  # wielkość liter bez znaczenia
+    assert not matches_criteria(rekord, criteria(budynek="12"))
+    assert not matches_criteria(rekord, criteria(lokal="30"))
+
+
+def test_wiersz_bez_numeru_lokalu_odpada_pod_filtrem_lokalu() -> None:
+    """Puste pole to nie „pasuje do wszystkiego" — 77 % wierszy nie ma numeru lokalu."""
+    rekord = row_to_record(row(NrLokalu=""), wojewodztwo="podlaskie")
+
+    assert not matches_criteria(rekord, criteria(lokal="3"))
+    assert matches_criteria(rekord, criteria(budynek="1"))
+
+
+def test_raport_odmawia_filtrowi_ktorego_kolumny_nie_ma() -> None:
+    """Zmierzone 2026-09-10 na nagłówku `probe_out/raport_sample.zip`: 24 kolumny, żadna
+    o spółce cywilnej.
+
+    Filtr bez kolumny nie odsiewa części — odsiewa wszystko, bo porównanie z brakiem zawsze
+    wypada fałszywie. Kształt jest ten sam co w A10 i tak samo prowadzi do cichej pustki na
+    ścieżce, którą `--zrodlo auto` wybiera jako tańszą.
+    """
+    ze_spolka = criteria(wojewodztwo="podlaskie", nip_sc="3563457932")
+
+    assert not report_covers(ze_spolka)
+    assert filtry_poza_raportem(ze_spolka) == ("nip_sc",)
+    assert filtry_poza_raportem(criteria(wojewodztwo="podlaskie", regon_sc="618155359")) == (
+        "regon_sc",
+    )
+    # Kontrola pozytywna: numer domu kolumnę **ma**, więc drogi raportu nie zabiera.
+    assert filtry_poza_raportem(criteria(wojewodztwo="podlaskie", budynek="12A")) == ()
+    assert report_covers(criteria(wojewodztwo="podlaskie", budynek="12A", lokal="3"))

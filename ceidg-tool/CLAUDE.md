@@ -133,7 +133,7 @@ the only module allowed to hand `rich` a string from outside — that is boundar
 ## Commands
 
 ```
-PYTHONUTF8=1 .venv/Scripts/python -m pytest -q      # 1247 pass + 1 skip, no network
+PYTHONUTF8=1 .venv/Scripts/python -m pytest         # no network; no `-q` — see below
 PYTHONUTF8=1 .venv/Scripts/python -m mypy ceidg_tool tests
 .venv/Scripts/ruff check ceidg_tool tests scripts
 .venv/Scripts/ruff format --check ceidg_tool tests scripts   # --check, because bare `format` rewrites and cannot fail
@@ -141,10 +141,21 @@ PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool     # the wizard
 PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool pobierz --demo -w wielkopolskie --szczegoly
 ```
 
-The single skip is `tests/test_api_traits.py::test_atrapa_demo_zgadza_sie_ze_zmierzona_pisownia[raporty]`:
-the demo double serves no `/raporty`, which is the open demo edge `docs/status.md` names. It is the
-one place that gap is visible from a gate, so a suite reporting **1248 passed** means the report path
-got a double — not that the skip was tidied away.
+**Do not add `-q` to that command.** `addopts = "-q"` is already in `pyproject.toml:51`, so an
+explicit one makes it `-qq` — and at that verbosity pytest prints no summary line at all, only the
+progress dots. Three of this file's revisions quoted a pass count that the documented gate is
+incapable of printing; that is the mechanical reason the number kept drifting. `ci.yml` had the
+same duplicate and lost it on 2026-09-10.
+
+The skip that matters is `tests/test_api_traits.py::test_atrapa_demo_zgadza_sie_ze_zmierzona_pisownia[raporty]`:
+the demo double serves no `/raporty`, which is the open demo edge `docs/status.md` names, and it is
+the one place that gap is visible from a gate. **The sentinel is that test's name, not a total** —
+when it stops being skipped, the report path got a double. Do not restate it as a count: the count
+is not stable enough to carry it. Locally, with `probe_out/` present, the suite is **1302 passed,
+1 skipped**; in CI, where `probe_out/` is git-ignored and therefore absent, five further tests skip
+honestly and the same tree reports **1297 passed, 6 skipped** — both measured on 2026-09-10, the
+second by moving `probe_out/` aside for one run rather than by subtracting five. A total quoted without naming its
+environment has been wrong three times here.
 
 The last one needs no token and reaches no register — use it to see the tool work before
 touching anything real.

@@ -135,16 +135,33 @@ WASKIE = criteria(miasto="Łomża", pkd="9621Z")
 SZEROKIE = criteria(miasto="Łomża", pkd="9621Z", pkd_2007="9602Z")
 
 
-def odcisk_sprzed_adr_0012(c: Criteria) -> str:
-    """Odcisk policzony algorytmem sprzed dodania pola — czyli po prostu bez `pkd_2007`.
+# Pola dopisane do `Criteria` już po tym, jak narzędzie zaczęło zapisywać odciski w bazie.
+# Każde z nich musi znikać z `canonical_json`, dopóki jest puste — inaczej pierwsza
+# aktualizacja po przerwanym pobraniu zabiera operatorowi wznowienie.
+POLA_DOPISANE_PO_FAKCIE = ("pkd_2007", "nip_sc", "regon_sc", "budynek", "lokal")
+
+
+def odcisk_bez_pol(c: Criteria, pola: tuple[str, ...]) -> str:
+    """Odcisk policzony algorytmem sprzed dopisania `pola` — czyli po prostu bez nich.
 
     Liczony tutaj, a nie wołany z produkcji: gdyby test sięgnął po `canonical_json()`,
     sprawdzałby zgodność funkcji z samą sobą. Chodzi o coś innego — czy odciski zapisane
     w bazie **przed** aktualizacją nadal wskazują te same kryteria.
     """
-    dane = {k: v for k, v in c.model_dump(mode="json").items() if k != "pkd_2007"}
+    dane = {k: v for k, v in c.model_dump(mode="json").items() if k not in pola}
     surowy = json.dumps(dane, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(surowy.encode("utf-8")).hexdigest()[:16]
+
+
+def odcisk_sprzed_adr_0012(c: Criteria) -> str:
+    """Odcisk sprzed ADR-0012, czyli sprzed **wszystkich** dopisanych od tamtej pory pól.
+
+    Przez rok istnienia tej funkcji dopisanym polem było wyłącznie `pkd_2007`, więc pomijała
+    jedno. Po 2026-09-10 pomija pięć, i to nie jest kosmetyka: gdyby została przy jednym,
+    test poniżej mówiłby „odciski sprzed aktualizacji przetrwały", sprawdzając odcisk, którego
+    żadna wersja narzędzia nigdy nie policzyła.
+    """
+    return odcisk_bez_pol(c, POLA_DOPISANE_PO_FAKCIE)
 
 
 def test_pkd_2007_is_validated_and_deduplicated_like_pkd() -> None:
@@ -221,3 +238,86 @@ def test_the_vintage_field_alone_is_still_a_query() -> None:
     """`pkd_2007` liczy się jako filtr — inaczej wznowienie szerokiego przebiegu z pliku
     zapytania zostałoby odrzucone jako „brak kryteriów"."""
     assert not criteria(pkd_2007="9602Z").is_empty()
+
+
+# ------------------------------------------- parytet z publiczną wyszukiwarką (2026-09-10)
+
+# Poprawne sumy kontrolne, inaczej `Criteria` odrzuci wartość, zanim test cokolwiek sprawdzi.
+NIP_SPOLKI = "3563457932"
+REGON_SPOLKI = "618155359"
+
+
+def test_spolka_cywilna_jest_osobnym_filtrem_a_nie_odmiana_nipu(profile: ApiProfile) -> None:
+    """`nip_sc` i `regon_sc` to własne parametry API — wspólne z `nip` byłyby innym pytaniem.
+
+    Publiczna wyszukiwarka CEIDG ma je w sekcji danych podstawowych i pyta nimi o spółkę,
+    do której należy przedsiębiorca, a nie o niego samego. Sklejenie ich z `nip` dałoby
+    zapytanie o firmę o NIP-ie spółki — czyli o nikogo.
+    """
+    c = criteria(nip_sc=f" {NIP_SPOLKI} ", regon_sc=REGON_SPOLKI)
+    params = dict(c.to_params(profile))
+
+    assert c.nip_sc == (NIP_SPOLKI,) and c.regon_sc == (REGON_SPOLKI,)
+    assert params["nip_sc"] == NIP_SPOLKI
+    assert params["regon_sc"] == REGON_SPOLKI
+    assert "nip" not in params and "regon" not in params
+
+
+def test_spolka_cywilna_przechodzi_te_sama_sume_kontrolna_co_nip() -> None:
+    """Literówka ma paść lokalnie, a nie po żądaniu — tak samo jak przy `nip`."""
+    with pytest.raises(ValidationError, match="sumę kontrolną"):
+        criteria(nip_sc="3563457933")
+    with pytest.raises(ValidationError, match="9 albo 14 cyfr"):
+        criteria(regon_sc="1234")
+
+
+def test_numer_budynku_i_lokalu_ida_do_api_jako_tekst(profile: ApiProfile) -> None:
+    """Rejestr trzyma „12A" i „3/5", więc numer jest tekstem — `int` odrzuciłby oba."""
+    c = criteria(budynek="12A", lokal="3/5")
+    params = dict(c.to_params(profile))
+
+    assert params["budynek"] == "12A"
+    assert params["lokal"] == "3/5"
+
+
+@pytest.mark.parametrize("pole", POLA_DOPISANE_PO_FAKCIE)
+def test_kazde_dopisane_pole_znika_z_odcisku_dopoki_jest_puste(pole: str) -> None:
+    """Odcisk jest kluczem do wznowienia, więc dopisanie pola nie może go zmienić.
+
+    Test parametryzowany po **spisie** pól, a nie napisany dla jednego z nich: piąte pole
+    dopisane bez wpisu w `canonical_json` przewraca się tu dopiero wtedy, gdy zostanie
+    dopisane także do spisu — i to jest jedyne miejsce, w którym ta zależność jest widoczna.
+    """
+    assert pole not in WASKIE.canonical_json()
+    assert WASKIE.fingerprint() == odcisk_bez_pol(WASKIE, POLA_DOPISANE_PO_FAKCIE)
+
+
+def test_kazde_dopisane_pole_zmienia_odcisk_gdy_jest_uzyte() -> None:
+    """Kontrola pozytywna: pole pomijane **zawsze** kasowałoby różnicę między populacjami.
+
+    Bez tego testu poprawnym sposobem przejścia poprzedniego byłoby wyrzucenie czwórki
+    z `canonical_json` na stałe — a wtedy pobranie z filtrem po numerze lokalu i bez niego
+    dzieliłyby jeden odcisk, czyli jeden przebieg w bazie.
+    """
+    uzycia = {
+        "pkd_2007": criteria(miasto="Łomża", pkd_2007="9602Z"),
+        "nip_sc": criteria(miasto="Łomża", nip_sc=NIP_SPOLKI),
+        "regon_sc": criteria(miasto="Łomża", regon_sc=REGON_SPOLKI),
+        "budynek": criteria(miasto="Łomża", budynek="12A"),
+        "lokal": criteria(miasto="Łomża", lokal="3"),
+    }
+    baza = criteria(miasto="Łomża")
+
+    assert set(uzycia) == set(POLA_DOPISANE_PO_FAKCIE)
+    odciski = {baza.fingerprint(), *(c.fingerprint() for c in uzycia.values())}
+    assert len(odciski) == len(uzycia) + 1
+
+
+def test_numer_bez_ulicy_jest_kandydatem_do_zdjecia_przy_zerze_trafien() -> None:
+    """Numer domu zeruje wynik częściej niż miejscowość, więc ma stać wyżej w poszerzeniach."""
+    c = criteria(miasto="Łomża", ulica="Kwiatowa", budynek="12A", lokal="3")
+    pola = [pole for pole, _ in c.poszerzenia()]
+
+    assert pola.index("budynek") < pola.index("miasto")
+    assert pola.index("lokal") < pola.index("miasto")
+    assert all(not kandydat.is_empty() for _, kandydat in c.poszerzenia())

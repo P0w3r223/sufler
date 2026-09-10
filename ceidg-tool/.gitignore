@@ -20,7 +20,16 @@ demo/recordings/
 demo/raw/
 scripts/demo/recordings/
 scripts/demo/raw/
-!tests/fixtures/**
+# Wyjątek zawężony 2026-09-09 (audyt architektury, pozycja F-O1). Stało tu
+# `!tests/fixtures/**`, które odignorowywało **cały** katalog — razem z rozszerzeniami
+# zakazanymi wyżej dlatego, że niosą dane osobowe. `git check-ignore` pokazywał, że
+# `tests/fixtures/raport.csv`, `dane.sqlite` i `probka.ndjson` trafiłyby do commita, a to
+# jest katalog, do którego **pisze anonimizator** i w którym naturalnie ląduje „szybka
+# próbka". Wyjątek licencjonował więc dokładnie ten defekt, przed którym stoi reguła — przy
+# zdalnym repozytorium należącym do innego zespołu. Wpuszczamy jawnie tylko te dwa
+# rozszerzenia, które fixtures mają; każde następne dopisuje się tu świadomie.
+!tests/fixtures/*.json
+!tests/fixtures/*.yaml
 .ceidg/
 wyniki/
 

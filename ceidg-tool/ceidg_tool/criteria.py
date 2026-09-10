@@ -70,6 +70,8 @@ _LIST_FIELDS = (
     "nazwa",
     "nip",
     "regon",
+    "nip_sc",
+    "regon_sc",
     "imie",
     "nazwisko",
     "wojewodztwo",
@@ -77,6 +79,8 @@ _LIST_FIELDS = (
     "gmina",
     "miasto",
     "ulica",
+    "budynek",
+    "lokal",
     "kod",
     "pkd",
     "pkd_2007",
@@ -240,6 +244,11 @@ class Criteria(BaseModel):
     nazwa: tuple[str, ...] = ()
     nip: tuple[str, ...] = ()
     regon: tuple[str, ...] = ()
+    # NIP i REGON **spółki cywilnej**, do której należy przedsiębiorca — osobne parametry API
+    # (`nip_sc`, `regon_sc`), nie odmiana `nip`. Publiczna wyszukiwarka CEIDG ma je w sekcji
+    # danych podstawowych, więc ich brak był luką wobec formularza, a nie wobec API.
+    nip_sc: tuple[str, ...] = ()
+    regon_sc: tuple[str, ...] = ()
     imie: tuple[str, ...] = ()
     nazwisko: tuple[str, ...] = ()
     wojewodztwo: tuple[str, ...] = ()
@@ -247,6 +256,10 @@ class Criteria(BaseModel):
     gmina: tuple[str, ...] = ()
     miasto: tuple[str, ...] = ()
     ulica: tuple[str, ...] = ()
+    # Numer nieruchomości i lokalu. Tekst, nie liczba: rejestr trzyma „12A", „3/5", „18 m. 2",
+    # a `int` odrzuciłby każdy z nich albo — gorzej — obciął do samej cyfry.
+    budynek: tuple[str, ...] = ()
+    lokal: tuple[str, ...] = ()
     kod: tuple[str, ...] = ()
     pkd: tuple[str, ...] = ()
     # Poprzednicy z PKD 2007 dokładani do zapytania w okresie przejściowym (ADR-0012). Osobne
@@ -270,12 +283,12 @@ class Criteria(BaseModel):
     def _status_upper(cls, value: Any) -> tuple[str, ...]:
         return _dedupe(str(v).strip().upper() for v in _as_tuple(value))
 
-    @field_validator("nip")
+    @field_validator("nip", "nip_sc")
     @classmethod
     def _nip(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _dedupe(normalize_nip(v) for v in value)
 
-    @field_validator("regon")
+    @field_validator("regon", "regon_sc")
     @classmethod
     def _regon(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _dedupe(normalize_regon(v) for v in value)
@@ -304,7 +317,9 @@ class Criteria(BaseModel):
             out.append(name)
         return _dedupe(out)
 
-    @field_validator("nazwa", "imie", "nazwisko", "powiat", "gmina", "miasto", "ulica")
+    @field_validator(
+        "nazwa", "imie", "nazwisko", "powiat", "gmina", "miasto", "ulica", "budynek", "lokal"
+    )
     @classmethod
     def _plain_text(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         for v in value:
@@ -335,7 +350,10 @@ class Criteria(BaseModel):
         daje się sprawdzić testem bez terminala.
 
         Kolejność nie jest dowolna. Filtry tekstowe dopasowują się dosłownie, więc jedna
-        literówka zeruje wynik i to one idą pierwsze. `miasto` jest w tej grupie mimo pozorów:
+        literówka zeruje wynik i to one idą pierwsze. `budynek` i `lokal` stoją tuż za `ulica`,
+        bo są z tej grupy najostrzejsze: rejestr zapisuje numer jako „12A", „12 A" albo „12/3",
+        a operator wpisuje „12" i nie trafia w nic, mimo że adres ma dobry.
+        `miasto` jest w tej grupie mimo pozorów:
         rejestr trzyma nazwę urzędową, a operator pisze potocznie albo podaje dzielnicę.
         `pkd` jest osobnym przypadkiem i dlatego stoi zaraz za nimi — kod może być poprawny,
         żywy w PKD 2025 i mimo to nie występować na żadnym wpisie w regionie, bo 58,6 %
@@ -353,6 +371,8 @@ class Criteria(BaseModel):
         kolejnosc = (
             "nazwa",
             "ulica",
+            "budynek",
+            "lokal",
             "kod",
             "imie",
             "nazwisko",
@@ -396,6 +416,8 @@ class Criteria(BaseModel):
         add("nazwa", self.nazwa)
         add("nip", self.nip)
         add("regon", self.regon)
+        add("nip_sc", self.nip_sc)
+        add("regon_sc", self.regon_sc)
         add("imie", self.imie)
         add("nazwisko", self.nazwisko)
         add(
@@ -406,6 +428,8 @@ class Criteria(BaseModel):
         add("gmina", self.gmina)
         add("miasto", self.miasto)
         add("ulica", self.ulica)
+        add("budynek", self.budynek)
+        add("lokal", self.lokal)
         add("kod", self.kod)
         # Oba pola renderują się do tego samego parametru: API zna jeden filtr `pkd`, a
         # powtórzone `pkd=` działa jak OR (zmierzone 2026-09-07, `docs/decisions.md`).
@@ -423,12 +447,16 @@ class Criteria(BaseModel):
 
     def canonical_json(self) -> str:
         dane = self.model_dump(mode="json")
-        # Puste `pkd_2007` znika z odcisku, żeby dodanie tego pola (ADR-0012) nie unieważniło
+        # Puste pola dopisane po fakcie znikają z odcisku, żeby ich dodanie nie unieważniło
         # odcisków wszystkich wcześniejszych przebiegów — a wraz z nimi możliwości wznowienia
-        # tego, co ktoś zaczął przed aktualizacją. Zapytanie rozszerzone ma pole niepuste, więc
-        # od wąskiego różni się nadal, co jest tym, czego wymaga wznawianie.
-        if not dane.get("pkd_2007"):
-            dane.pop("pkd_2007", None)
+        # tego, co ktoś zaczął przed aktualizacją. Zapytanie, które ich używa, ma pole niepuste,
+        # więc od zapytania bez nich różni się nadal, co jest tym, czego wymaga wznawianie.
+        # `pkd_2007` przyszło z ADR-0012, czwórka adresowo-spółkowa z parytetu z publiczną
+        # wyszukiwarką (2026-09-10). Każde następne dopisane pole należy tu dopisać razem
+        # z sobą — inaczej pierwszy przerwany run po aktualizacji przestaje być wznawialny.
+        for pole in ("pkd_2007", "nip_sc", "regon_sc", "budynek", "lokal"):
+            if not dane.get(pole):
+                dane.pop(pole, None)
         return json.dumps(dane, sort_keys=True, separators=(",", ":"))
 
     def fingerprint(self) -> str:
@@ -442,6 +470,8 @@ class Criteria(BaseModel):
             "nazwa": "nazwa",
             "nip": "NIP",
             "regon": "REGON",
+            "nip_sc": "NIP spółki cywilnej",
+            "regon_sc": "REGON spółki cywilnej",
             "imie": "imię",
             "nazwisko": "nazwisko",
             "wojewodztwo": "województwo",
@@ -449,6 +479,8 @@ class Criteria(BaseModel):
             "gmina": "gmina",
             "miasto": "miasto",
             "ulica": "ulica",
+            "budynek": "numer nieruchomości",
+            "lokal": "numer lokalu",
             "kod": "kod pocztowy",
             "pkd": "PKD",
             "status": "status",

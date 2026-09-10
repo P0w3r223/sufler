@@ -32,6 +32,7 @@ from ceidg_tool.criteria import Criteria, bledy_po_polsku
 from ceidg_tool.normalizer import KOLUMNY_TYLKO_ZE_SZCZEGOLOW, SHEET_FIRMY, columns, normalize
 from ceidg_tool.pipeline import Deps, build_deps
 from ceidg_tool.records import RawRecord, RowContext
+from ceidg_tool.reports import filtry_poza_raportem, report_covers
 from ceidg_tool.ui import flow, texts
 from ceidg_tool.ui.prompts import CancelledError, DefaultsPrompter, ScriptedPrompter
 from tests.conftest import FakeClock
@@ -347,9 +348,32 @@ def test_every_reason_the_report_path_declines_has_a_sentence() -> None:
         flow._powod_braku_raportu(criteria(miasto="Poznań"), ()),
         flow._powod_braku_raportu(criteria(wojewodztwo="podlaskie"), ()),
         flow._powod_braku_raportu(criteria(wojewodztwo="podlaskie"), ("WYKRESLONY",)),
+        flow._powod_braku_raportu(
+            criteria(wojewodztwo="podlaskie", nip_sc="3563457932"),
+            (),
+        ),
     }
 
     assert powody == set(texts.RAPORT_NIEDOSTEPNY)
+
+
+def test_filtr_po_spolce_cywilnej_odbiera_droge_raportu() -> None:
+    """Dzienny zrzut nie ma kolumny o spółce cywilnej, więc filtr po niej dałby pustkę.
+
+    Zmierzone 2026-09-10 na nagłówku `probe_out/raport_sample.zip`: 24 kolumny, żadna
+    o spółce. To ten sam kształt defektu co A10 — źródło milczy o polu, po którym filtrujemy,
+    a `--zrodlo auto` wybiera je właśnie dlatego, że jest tanie. Bramka stoi w dwóch
+    miejscach, bo `run_report_fetch` wołane jest także z `--zrodlo raport` i ze wznowienia.
+    """
+    pytanie = criteria(wojewodztwo="podlaskie", nip_sc="3563457932")
+
+    assert not report_covers(pytanie)
+    assert filtry_poza_raportem(pytanie) == ("nip_sc",)
+    assert report_covers(criteria(wojewodztwo="podlaskie"))
+    # Numer domu i lokalu **nie** odbierają tej drogi: `NrBudynku` i `NrLokalu` są w zrzucie,
+    # a `matches_criteria` je porównuje. Bez tej asercji równie dobrze przechodziłaby
+    # poprawka odrzucająca ścieżkę raportu dla każdego nowego pola.
+    assert report_covers(criteria(wojewodztwo="podlaskie", budynek="12A", lokal="3"))
 
 
 # ------------------------------------------ skoroszyt i podsumowanie: zero to nie pomiar

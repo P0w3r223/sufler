@@ -1492,3 +1492,59 @@ is open and is the one thing this walk found that changes code rather than docum
   production data stay out by `.gitignore`, verified before the push: `.env`, `probe_out/`,
   `*.sqlite`, `wyniki/`, `PKD/`. The three JWT-shaped strings in the test suite were compared
   against the real token and are synthetic.
+
+## Parity with the public search form — four parameters, and one report path closed (2026-09-10)
+
+The owner asked whether this tool can run every search the public CEIDG form offers. It cannot, and
+the comparison is written up in `docs/research/public-search-parity.md`: the form drives the
+register's internal engine, we drive `GET /firmy`, and most of the gap (KRS, PESEL, short name,
+citizenship, dates other than the start date, address type) is absent from the **API**, not from the
+tool. Four parameters, though, were ours to close — the API had them and `Criteria` did not:
+
+- `nip_sc`, `regon_sc` — the civil partnership a sole trader belongs to. Validated by the same
+  checksums as `nip`/`regon`, and deliberately not merged with them: a partnership's NIP asked as
+  `nip` is a query about nobody.
+- `budynek`, `lokal` — building and flat number. **Text**, because the register stores "12A" and
+  "3/5"; matched **exactly** on both local filters (report path and demo double), which agrees with
+  the manual's "full number" and is recorded as a choice rather than a measurement.
+
+What this cost elsewhere, and why each piece exists:
+
+- **The report path now declines partnership filters.** The daily archive's header was read
+  (0 requests): 24 columns, none about a civil partnership. A filter without a column empties the
+  result instead of narrowing it, and `--zrodlo auto` prefers that path because it is cheap — the
+  A10 shape again. `report_covers` refuses, `texts.PowodBrakuRaportu` gained
+  `FILTR_SPOZA_RAPORTU`, and `pipeline.run_report_fetch` refuses independently, because
+  `--zrodlo raport` and resume do not pass through the wizard's gate.
+- **The fingerprint list is now five names long.** Empty `nip_sc`, `regon_sc`, `budynek` and `lokal`
+  stay out of `canonical_json` exactly as `pkd_2007` does, so runs interrupted before the update
+  remain resumable. A parametrised test walks the list, so a sixth field cannot be added silently.
+- **The demo corpus carries the new data** — a flat number in 23 % of entries (the measured fill
+  rate) and a partnership for every eleventh — computed from the entry number rather than from the
+  shared RNG, so the rest of the corpus is **bit for bit unchanged** (verified: the fingerprint
+  computed without the new fields still equals the previous `ODCISK_KORPUSU`). The numbers in
+  `docs/demo-walkthrough.md` therefore still hold.
+
+Gates: 1291 passed, 1 skipped locally (`probe_out/` present), mypy clean over `ceidg_tool` and
+`tests`, ruff check and format clean. Both new filters were walked end to end on the demo register.
+
+Still open, unchanged by this: the five unmeasured matching semantics (ADR-0018 B3, five requests),
+which now have two more fields sitting on a documented choice rather than a measurement.
+
+### Every criterion now has a flag (2026-09-10, same day)
+
+The owner's follow-up: give the missing fields CLI flags rather than leaving them to the query file.
+Eight added — `--imie`, `--nazwisko`, `--ulica`, `--kod`, `--budynek`, `--lokal`, `--nip-sc`,
+`--regon-sc` — so `pobierz` now exposes every filtering field of `Criteria`.
+
+- `test_kazde_pole_kryteriow_ma_flage_w_wierszu_polecen` compares the two lists, with a named
+  exception per field that deliberately has no list flag. A field added without one fails the suite.
+- `_criteria_from_options` takes the fields as a **dict** now. Nine same-typed positional lists were
+  already unreadable at the call sites (`plik, [], [], [], …, None, None, False, None`); seventeen
+  would have been a defect waiting for a rename.
+- The CLI was the last entry into `Criteria` still printing a raw pydantic dump on a bad value. It
+  uses `bledy_po_polsku` now, like the wizard and the assistant.
+
+Gates after this: **1302 passed, 1 skipped** locally, **1297 passed, 6 skipped** without
+`probe_out/` (measured, not subtracted), mypy and ruff clean. Walked on the demo: `--nazwisko` with
+`--imie` returns three firms, `--kod 15333` answers in Polish.

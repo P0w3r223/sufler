@@ -43,9 +43,7 @@ def test_podana_liczba_dni_ma_pierwszenstwo_nad_konfiguracja() -> None:
 def _z_pliku(tmp_path: Path, tresc: str, *, szczegoly: bool | None):  # type: ignore[no-untyped-def]
     plik = tmp_path / "zapytanie.yaml"
     plik.write_text(tresc, encoding="utf-8")
-    return _criteria_from_options(
-        plik, [], [], [], [], [], [], [], [], [], None, None, szczegoly, None
-    )
+    return _criteria_from_options(plik, szczegoly=szczegoly)
 
 
 def test_lista_wylacza_szczegoly_wlaczone_w_pliku(tmp_path: Path) -> None:

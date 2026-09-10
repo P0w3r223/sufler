@@ -689,3 +689,31 @@ def test_the_progress_bar_is_closed_before_the_interpretation_is_printed() -> No
     )
 
     assert kolejnosc.index("close") < kolejnosc.index("block"), kolejnosc
+
+
+def test_kazde_pole_schematu_dociera_do_kryteriow() -> None:
+    """Pole dopisane do schematu, a nie przepisane w `to_criteria`, ginie po cichu.
+
+    To jest kształt, który tu grozi: model wypełnia `budynek`, ekran potwierdzenia pokazuje
+    kryteria zbudowane **z Criteria**, więc brakujące pole nie pojawia się nigdzie — ani jako
+    błąd, ani jako różnica. Zapytanie leci szersze, niż operator poprosił, i nikt tego nie
+    widzi. Test porównuje spisy pól, a nie wylicza ich ręcznie, więc obejmuje też następne.
+    """
+    przenoszone = set(AssistantAnswer.model_fields) - {"ograniczenia", "pytanie", "propozycje"}
+
+    assert przenoszone <= set(Criteria.model_fields)
+
+    answer = AssistantAnswer(
+        miasto=("Białystok",),
+        ulica=("Kwiatowa",),
+        budynek=("12A",),
+        lokal=("3",),
+        nip_sc=("3563457932",),
+        regon_sc=("618155359",),
+    )
+    kryteria = to_criteria(answer, SLOWNIK)
+
+    assert kryteria.budynek == ("12A",) and kryteria.lokal == ("3",)
+    assert kryteria.nip_sc == ("3563457932",) and kryteria.regon_sc == ("618155359",)
+    # Spółka nie może wyciec do filtru po samym przedsiębiorcy — to byłoby inne pytanie.
+    assert kryteria.nip == () and kryteria.regon == ()

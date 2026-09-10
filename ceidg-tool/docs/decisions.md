@@ -487,3 +487,34 @@ Note what this measurement is **not** evidence for. It says nothing about the ot
 parameters, and nothing about matching semantics: 2026-09-09 also established that the
 text-field family is not uniform (F12 above), so `pkd` being OR-ed never implied `miasto`
 would be. It had to be measured, and now it is.
+
+## What columns the daily report actually has — measured 2026-09-10 (0 requests)
+
+Read from the header of `probe_out/raport_sample.zip` (wielkopolskie, one daily snapshot), so it
+cost nothing. Twenty-four columns, in this order:
+
+    Lp., Nip, Regon, NazwaPodmiotu, Nazwisko, Imie, Telefon, Email, AdresWWW, KodPocztowy,
+    Powiat, Gmina, Miejscowosc, Ulica, NrBudynku, NrLokalu, GlownyKodPkd, PozostaleKodyPkd,
+    RokPKD, StatusDzialalnosci, DataRozpoczeciaDzialalnosci, DataZakonczeniaDzialalnosci,
+    DataZawieszeniaDzialalnosci, DataWznowieniaDzialalnosci
+
+Two consequences, both acted on the same day when `Criteria` gained the four parameters that
+brought it level with the public search form (`docs/research/public-search-parity.md`).
+
+**`NrBudynku` and `NrLokalu` are there**, so the report path can filter on the new `budynek` and
+`lokal` criteria locally, at no extra request. `row_to_record` had been mapping both columns since
+phase 3 — only the filter was missing.
+
+**Nothing about a civil partnership is there.** No `NipSC`, no `RegonSC`, no column from which one
+could be derived. A filter whose column does not exist does not narrow a result set, it empties it:
+every comparison against a missing value is false. Since the report path is four orders of magnitude
+cheaper, `--zrodlo auto` would have picked exactly that silent emptiness — the A10 shape, entered
+through a filter instead of through a status. `report_covers` therefore declines when criteria carry
+`nip_sc` or `regon_sc`, and `pipeline.run_report_fetch` refuses independently, because `--zrodlo
+raport` and resume reach it without passing the wizard's gate.
+
+Also worth noting for anyone comparing the two sources: the archive carries **no voivodeship
+column** — it is taken from the report's name — and the four dates it does carry
+(`DataZakonczenia`, `DataZawieszenia`, `DataWznowienia` beside the start date) are *content*, not
+filters. `/firmy` has no parameter for any of them, so the register cannot be asked "who suspended
+in 2025"; the report can answer it only after the whole archive is downloaded and filtered locally.

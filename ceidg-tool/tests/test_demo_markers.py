@@ -27,6 +27,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import typer.main
 from openpyxl import load_workbook
 from typer import rich_utils
 from typer.testing import CliRunner
@@ -36,6 +37,7 @@ from ceidg_tool import cli
 from ceidg_tool.cli import app
 from ceidg_tool.config import DEMO_OSTRZEZENIE, Settings
 from ceidg_tool.demo import TOKEN_DEMO
+from ceidg_tool.demo.korpus import zbuduj_korpus
 from ceidg_tool.pipeline import Deps, build_deps, output_name
 from ceidg_tool.ui import texts
 from tests.conftest import FakeClock
@@ -44,10 +46,30 @@ from tests.support import FakeApi, criteria, load_fixture
 EXIT_CONFIG = 3
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 VERSION = "0.1.0"
-# Polecenia przyjmujące `--demo`. `raporty`, `token` i `wyczysc` świadomie nie są tu wymienione:
-# pierwsze pobiera archiwum, którego atrapa nie udaje, dwa pozostałe dotyczą poświadczeń
-# i katalogu, a nie pobierania.
-POLECENIA_Z_DEMO = ("kreator", "pobierz", "aktualizuj", "wznow", "eksportuj", "runy")
+# Polecenia przyjmujące `--demo`. `raporty`, `token`, `sprawdz-token` i `wyczysc` świadomie nie są
+# tu wymienione: pierwsze pobiera archiwum, którego atrapa nie udaje, trzy pozostałe dotyczą
+# poświadczeń i katalogu, a nie pobierania. Ten spis nie jest notatką — `test_lista_polecen_…`
+# na końcu pliku porównuje go z tym, co CLI naprawdę przyjmuje, w obie strony.
+POLECENIA_Z_DEMO = (
+    "kreator",
+    "pobierz",
+    "aktualizuj",
+    "wznow",
+    "eksportuj",
+    "runy",
+    "sprawdz-nip",
+)
+# Argumenty pozycyjne, bez których polecenie nie doszłoby do swojego ciała. `sprawdz-nip` jest
+# jedynym takim przypadkiem i **NIP musi być poprawny**, inaczej testy niżej przechodziłyby
+# z niewłaściwego powodu: kod 3 padłby z walidacji sumy kontrolnej, a nie z odmowy produkcji.
+# To ta sama lekcja, którą zapisano w `test_odmowa_produkcji_nie_zalezy_od_wielkosci_liter`.
+# NIP brany **z korpusu**, a nie przepisany z jego wydruku: korpus jest deterministyczny
+# (`ziarno=20260908`), więc snapshot byłby poprawny do pierwszej zmiany zawartości — a wtedy
+# `test_karta_nip_pokazuje_wroga_nazwe…` padłby z komunikatem o obronie przed znacznikami,
+# wysyłając czytelnika w złą stronę. `wpisy[0]` to wpis z wrogą nazwą i to jest sprzężenie,
+# na którym stoi tamten test; tutaj zostaje wypowiedziane, zamiast być pamiętane.
+NIP_Z_KORPUSU = zbuduj_korpus().wpisy[0].nip
+ARGUMENTY_WYMAGANE: dict[str, list[str]] = {"sprawdz-nip": [NIP_Z_KORPUSU]}
 
 
 @pytest.fixture
@@ -381,7 +403,8 @@ def test_demo_odmawia_polaczenia_z_produkcja(
     Sama flaga `--produkcja` bez `--srodowisko` też jest odmową: nie ma czego dotyczyć, skoro
     odpowiada rejestr syntetyczny, a razem z nią łatwo pomylić, co jest na ekranie.
     """
-    result = runner.invoke(app, [polecenie, *flagi, "--demo"], env=env_demo)
+    argumenty = ARGUMENTY_WYMAGANE.get(polecenie, [])
+    result = runner.invoke(app, [polecenie, *argumenty, *flagi, "--demo"], env=env_demo)
 
     assert result.exit_code == EXIT_CONFIG, result.output
     assert "demo" in result.output.lower()
@@ -487,3 +510,116 @@ def test_pomoc_dokumentuje_tryb_pokazu_przy_kazdej_szerokosci(
 
     assert "--demo" in pomoc
     assert "zero żądań" in pomoc
+
+
+# --------------------------------------- karta NIP: jedyna droga, której wynikiem jest osoba
+
+
+def test_sprawdz_nip_dochodzi_do_karty_w_pokazie(
+    runner: CliRunner, env_demo: dict[str, str], tmp_path: Path
+) -> None:
+    """`sprawdz-nip --demo` istnieje od 2026-09-10; wcześniej odpowiadało `No such option`.
+
+    To polecenie różni się od pozostałych tym, co zostawia na ekranie: **kartę jednej osoby**
+    — imię, nazwisko, adres, telefon. Pokazanie go na rzucie z produkcji stawia czyjeś dane
+    osobowe na ścianie, więc brak trybu pokazu akurat tutaj był luką najgorzej ustawioną.
+    Kreator miał tę drogę w pokazie od początku (menu, punkt „sprawdź firmę po NIP") i to
+    ukrywało brak: droga była pokryta, ale tylko z jednego z dwóch wejść.
+
+    Asercja o katalogu jest znacznikiem numer cztery na tej ścieżce: karta trafia do bazy
+    (`eksportuj` ma z czego zrobić skoroszyt), więc jest co pomylić z bazą produkcyjną.
+    """
+    result = runner.invoke(app, ["sprawdz-nip", NIP_Z_KORPUSU, "--demo"], env=env_demo)
+
+    assert result.exit_code == 0, result.output
+    assert NIP_Z_KORPUSU in result.output
+    # Dwie asercje o **trafieniu**, dopisane po przeglądzie 2026-09-10, bo bez nich test
+    # przechodził także wtedy, gdy karty nie ma. Sprawdzone: `sprawdz-nip 1234563218 --demo`
+    # (suma kontrolna poprawna, wpisu brak) kończy się kodem 0, drukuje numer w tytule, mówi
+    # „POKAZ" i zakłada katalog demo — czyli spełniał wszystkie cztery poprzednie asercje.
+    # Test nazwany „dochodzi do karty" nie sprawdzał wtedy niczego o dochodzeniu do karty,
+    # a mutacja, która by to obnażyła, to podmiana `NIP_Z_KORPUSU`, nie zepsucie trybu demo.
+    assert "brak wpisu" not in result.output, "to jest ekran pudła, nie karta"
+    assert "REGON" in result.output, "karta trafienia niesie REGON; ekran pudła nie"
+    assert "POKAZ" in result.output, "znacznik 1 — pierwszy ekran nie nazwał trybu"
+    katalog_pokazu = tmp_path / "dane" / "demo"
+    assert katalog_pokazu.exists(), "znacznik 4 — pokaz nie pracuje we własnym katalogu"
+
+
+def test_karta_nip_pokazuje_wroga_nazwe_jako_tekst_a_nie_jako_znaczniki(
+    runner: CliRunner, env_demo: dict[str, str]
+) -> None:
+    """Terminalowa połowa obrony przed wrogim wejściem, sprawdzona na prawdziwym wyjściu CLI.
+
+    Korpus demo trzyma wpis o nazwie `=HIPERŁĄCZE("http://zły.invalid")[red]Fryzjer[/red]`,
+    bo rejestr jest publiczny i każdy może w niego wpisać jedno i drugie. `safetext` odpowiada
+    za połowę arkuszową (wiodący apostrof), a `richtext.safe` za tę — `rich` czyta nawiasy
+    kwadratowe jako znaczniki, więc nazwa z `[/b]` kończyła kiedyś program tracebackiem,
+    a `[link=…]` robiła klikalny odnośnik pod adres wybrany przez napastnika (ADR-0008, 7).
+
+    Asercja jest odwrócona i to jest w niej sedno: `[red]` ma **zostać** w wyjściu jako
+    zwykły tekst. Gdyby `rich` potraktował je jak znacznik, skonsumowałby je — a przy
+    `TERM=dumb` kolor i tak zostaje zdjęty, więc na ekranie zostałoby samo `Fryzjer`
+    i nic by nie krzyknęło. Test przechodzi wtedy, gdy obrona **nie** zadziałała, o ile
+    sprawdza się obecność koloru; dlatego sprawdza się obecność znacznika.
+    """
+    result = runner.invoke(app, ["sprawdz-nip", NIP_Z_KORPUSU, "--demo"], env=env_demo)
+
+    assert result.exit_code == 0, result.output
+    assert "[red]" in result.output, "`rich` zinterpretował nazwę z rejestru jako znaczniki"
+
+
+def test_skoroszyt_z_karty_nip_ma_prefiks_demo_takze_pod_nazwa_operatora(
+    runner: CliRunner, env_demo: dict[str, str], tmp_path: Path
+) -> None:
+    """Znacznik 3 na `--out`, czyli w miejscu, którego audyt z 2026-09-09 nie znalazł pokrytym.
+
+    `sprawdz-nip` jest jedynym poleceniem, w którym `--out` stoi obok karty osoby, i to jest
+    **ten** plik, który po pokazie najłatwiej wysłać dalej: ktoś go świadomie nazwał, więc
+    traktuje go jak swój. Prefiks dokleja `cli._sanitised`, a nie `output_name`, więc droga
+    przez operatorską nazwę jest osobnym szwem i wymaga osobnej asercji.
+    """
+    result = runner.invoke(
+        app, ["sprawdz-nip", NIP_Z_KORPUSU, "--demo", "--out", "moj_wpis"], env=env_demo
+    )
+    assert result.exit_code == 0, result.output
+
+    plik = skoroszyt(tmp_path / "dane" / "demo" / "wyniki")
+    klucze = [r[0].value for r in load_workbook(plik)["Metadane"].iter_rows(min_row=2)]
+
+    assert plik.name == "DEMO_moj_wpis.xlsx"
+    # Znacznik 2 na tej samej ścieżce. ADR-0014 mówi, że pięć znaczników obowiązuje **łącznie**,
+    # a to jest jedyny, który podróżuje razem z plikiem: nazwę widzi ten, kto go zapisywał,
+    # a arkusz `Metadane` mówi sam o sobie po przesłaniu dalej. Skoroszyt i tak jest już w ręku.
+    assert "UWAGA" in klucze, "znacznik 2 — skoroszyt z pokazu nie mówi o sobie w Metadanych"
+
+
+# ------------------------------------------- lista poleceń z `--demo` jako twierdzenie, nie spis
+
+
+def test_lista_polecen_z_demo_zgadza_sie_z_tym_co_cli_naprawde_przyjmuje() -> None:
+    """`POLECENIA_Z_DEMO` steruje trzema rodzinami testów, więc spis niepełny **cichnie** je.
+
+    Dopisanie `--demo` do polecenia bez dopisania go tutaj nie zapala niczego na czerwono:
+    trzy parametryzacje niżej po prostu przestają obejmować nową drogę, a odmowa produkcji
+    i pomoc zostają na niej niesprawdzone. Dokładnie tak przez dwa dni żyła luka w
+    `sprawdz-nip` — kreator miał tę drogę w pokazie, więc nic nie wyglądało na brakujące.
+
+    Asercja jest **równością zbiorów**, nie zawieraniem, bo obie strony niosą twierdzenie.
+    W jedną: każde polecenie z `--demo` ma być objęte testami. W drugą: `raporty`, `token`,
+    `sprawdz-token` i `wyczysc` mają `--demo` **nie mieć** — pierwsze pobiera archiwum,
+    którego atrapa nie udaje (otwarta krawędź dema, ta sama, którą widać w jedynym pominięciu
+    suity), a pozostałe dotyczą poświadczeń i katalogu, nie pobierania. Zawieranie
+    przepuściłoby ciche dodanie flagi tam, gdzie ADR-0014 jej nie chce.
+
+    To samo wyliczenie stoi w `README.md`; ten test jest jedynym miejscem, w którym
+    rozjechanie się go z kodem ma jak krzyknąć.
+    """
+    grupa = typer.main.get_command(app)
+    z_flaga = {
+        nazwa
+        for nazwa, polecenie in grupa.commands.items()  # type: ignore[attr-defined]
+        if any("--demo" in getattr(param, "opts", []) for param in polecenie.params)
+    }
+
+    assert z_flaga == set(POLECENIA_Z_DEMO)

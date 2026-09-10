@@ -151,6 +151,24 @@ def regon(rng: random.Random) -> str:
             return "".join(map(str, [*cyfry, kontrolna]))
 
 
+def _spolka(numer: int, ziarno: int) -> tuple[str, str]:
+    """NIP i REGON spółki cywilnej co jedenastego wpisu; dla reszty dwa puste napisy.
+
+    Własny `Random`, zasiany numerem i ziarnem, a nie strumień korpusu — z tego samego
+    powodu, dla którego numer lokalu liczy się z `numer`: dołożenie losowania do wspólnego
+    strumienia przestawiłoby każdy późniejszy wpis. Ziarno wchodzi do zasiewu, bo bez niego
+    dwa korpusy o różnych ziarnach opisywałyby różne firmy w tej samej spółce — to ta sama
+    pułapka, którą `_id_demo` opisuje przy identyfikatorach.
+
+    Jedno wywołanie zwraca **parę**, bo to jest jedna spółka: dwa niezależne wywołania
+    dawałyby NIP jednego podmiotu przy REGON-ie innego, czyli dane, które nie mogą istnieć.
+    """
+    if numer % 11:
+        return "", ""
+    rng = random.Random(f"spolka-{ziarno}-{numer}")
+    return nip(rng), regon(rng)
+
+
 def _id_demo(numer: int, ziarno: int) -> str:
     """Identyfikator wpisu: kształt 8-4-4-4-12, szesnastkowy, z prefiksem demo.
 
@@ -188,6 +206,17 @@ class WpisDemo:
     telefon: str
     email: str
     numer_budynku: int
+    # Numer lokalu bywa pusty częściej, niż bywa wypełniony: 23 % wierszy archiwum (ADR-0016).
+    # Pusty napis, a nie `None`, bo tak zachowuje się reszta pól tekstowych tego wpisu.
+    numer_lokalu: str
+    # NIP i REGON spółki cywilnej wspólnika — puste dla większości wpisów. Proporcja
+    # (co dwunasty) jest **wybrana, nie zmierzona**: nikt nie policzył, jaka część wpisów
+    # należy do spółki cywilnej, a wiadomo tylko, że 3,16 % archiwum ma status „wyłącznie
+    # w formie spółki cywilnej", co jest innym pytaniem — wspólnik może prowadzić też
+    # działalność własną i mieć status aktywny. Korpus bez ani jednej spółki uczyniłby
+    # filtr `nip_sc` niesprawdzalnym w pokazie, a to jedyne miejsce, gdzie go widać offline.
+    spolka_nip: str
+    spolka_regon: str
     # Rejestr oddaje `adresDzialalnosci: {}` dla części wpisów (76 z 196 zmierzonych).
     bez_adresu: bool
 
@@ -200,7 +229,7 @@ class WpisDemo:
         pusta w dwóch przypadkach na pięć."""
         if self.bez_adresu:
             return {}
-        return {
+        adres = {
             "wojewodztwo": self.wojewodztwo,
             "powiat": self.powiat,
             "gmina": self.miasto,
@@ -210,6 +239,11 @@ class WpisDemo:
             "kod": self.kod_pocztowy,
             "kraj": "Polska",
         }
+        # Brakujące pole jest **pomijane**, nie wysyłane jako puste — tak zwraca rejestr
+        # (`docs/decisions.md`: „absent fields are omitted, not null").
+        if self.numer_lokalu:
+            adres["lokal"] = self.numer_lokalu
+        return adres
 
     def jako_lista(self) -> dict[str, Any]:
         """Rekord w kształcie `/firmy`.
@@ -243,6 +277,7 @@ class WpisDemo:
         Nazwy kodów przychodzą z zewnątrz, bo pochodzą ze słownika, a nie z tego modułu.
         Wpis nie ma prawa ich znać: gdyby je pamiętał, wróciłaby lista pisana z pamięci."""
         kody = nazwy
+        spolki = [{"nip": self.spolka_nip, "regon": self.spolka_regon}] if self.spolka_nip else []
         return {
             "id": self.id,
             "nazwa": self.nazwa,
@@ -266,6 +301,10 @@ class WpisDemo:
             "status": self.status,
             "dataRozpoczecia": self.data_rozpoczecia.isoformat(),
             "link": f"https://przykład.invalid/demo/{self.id}",
+            # Spółki cywilne są w rejestrze wyłącznie w szczegółach — jak adres
+            # korespondencyjny. Pole znika, gdy wspólnikiem nie jest: rejestr pomija
+            # brakujące, zamiast wysyłać pustą listę.
+            **({"spolki": spolki} if spolki else {}),
         }
 
 
@@ -308,6 +347,7 @@ def zbuduj_korpus(*, ile: int = 240, ziarno: int = 20260908) -> Korpus:
         glowny = kody[numer % len(kody)]
         pozostale = tuple(k for k in rng.sample(kody, k=rng.randint(0, 2)) if k != glowny)
         imie, nazwisko = IMIONA[numer % len(IMIONA)], NAZWISKA[numer % len(NAZWISKA)]
+        spolka_nip, spolka_regon = _spolka(numer, ziarno)
         # Garść wpisów sprzed 1990 — to one wypadają z zakresu przy pobieraniu w partiach.
         if numer % 47 == 0:
             start = date(1957 + numer % 30, 1 + numer % 12, 1 + numer % 28)
@@ -327,6 +367,18 @@ def zbuduj_korpus(*, ile: int = 240, ziarno: int = 20260908) -> Korpus:
                 kod_pocztowy=kod,
                 ulica=ULICE[numer % len(ULICE)],
                 numer_budynku=1 + numer % 90,
+                # Oba pola liczą się z `numer`, a **nie** z `rng`, i to jest decyzja, nie skrót:
+                # każde nowe losowanie przesuwa strumień, więc dopisanie jednego pola zmieniłoby
+                # statusy, daty i kontakty wszystkich pozostałych wpisów — czyli dołożenie
+                # numeru lokalu unieważniłoby liczby, które `docs/demo-walkthrough.md` podaje
+                # jako przebieg pokazu. Dzielniki są pierwsze wobec długości `MIASTA` (5),
+                # `ULICE` (6), `IMIONA` (8) i `NAZWISKA` (7), żeby nie powtórzyć defektu
+                # sprzężenia z `numer % 5`, przez który każde województwo miało zawsze
+                # ten sam status.
+                # 23 % wypełnienia — proporcja zmierzona na 287 256 wierszach archiwum.
+                numer_lokalu=str(1 + numer % 29) if numer % 13 < 3 else "",
+                spolka_nip=spolka_nip,
+                spolka_regon=spolka_regon,
                 # Około dwóch na pięć wpisów bez adresu — proporcja zmierzona (76/196).
                 bez_adresu=rng.random() < 0.39,
                 rok_pkd=rok_pkd,

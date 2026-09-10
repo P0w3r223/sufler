@@ -57,6 +57,7 @@ from .recordid import PREFIKS_TRESCI, KanonicznyId, kanoniczne_id
 from .records import ZRODLO_RAPORT, Report, RowContext
 from .reports import (
     UNFILLED_COLUMNS,
+    filtry_poza_raportem,
     iter_report_rows,
     matches_criteria,
     pick_registered_report,
@@ -640,6 +641,17 @@ def run_report_fetch(
     criteria: Criteria, deps: Deps, report: Report, *, force_lock: bool = False
 ) -> RunResult:
     """Pobiera raport (1 żądanie), filtruje lokalnie wg kryteriów i zapisuje jako run."""
+    # Filtr, którego dzienny zrzut nie ma jako kolumny, dałby tu pustkę bez jednego słowa —
+    # a pustka po godzinie pobierania czyta się jak „nie ma takich firm", nie jak „to źródło
+    # nie umie odpowiedzieć na to pytanie". `flow` bramkuje tę drogę przez `report_covers`,
+    # ale `run_report_fetch` jest wołane także z `--zrodlo raport` i z wznowienia, więc
+    # gwarancja bez własnego obserwatora byłaby gwarancją tylko na jednej z trzech dróg.
+    if poza := filtry_poza_raportem(criteria):
+        raise ConfigError(
+            "Gotowy raport dzienny nie zawiera kolumn o spółce cywilnej "
+            f"({', '.join(poza)}), więc nie da się z niego odsiać tych kryteriów. "
+            "Te dane pobiera się zwykłą drogą przez API."
+        )
     client = _client(deps)
     store = deps.store
     serce = deps.heartbeat or LockHeartbeat(deps.store, deps.events, deps.clock)

@@ -49,7 +49,7 @@ from ..pipeline import (
 )
 from ..pkdmap import Rozszerzenie
 from ..records import Report
-from ..reports import report_covers, statusy_poza_raportem
+from ..reports import filtry_poza_raportem, report_covers, statusy_poza_raportem
 from . import prompts, texts
 from .prompts import Prompter
 from .texts import Block, SummaryInput
@@ -472,11 +472,13 @@ def _powod_braku_raportu(criteria: Criteria, statusy: Sequence[str]) -> texts.Po
     """Kod powodu, dla którego ścieżka raportu odpadła. Zdanie układa `texts`.
 
     Kolejność sprawdzeń idzie od przyczyny **niezależnej od dnia** do zależnej: liczba
-    województw i statusy wynikają z kryteriów i będą prawdziwe jutro tak samo, a brak
-    dzisiejszego zrzutu mija sam. Odwrotna kolejność podpowiadałaby „poczekaj do jutra"
-    komuś, kto pyta o dwa województwa."""
+    województw, statusy i filtry bez kolumny w zrzucie wynikają z kryteriów i będą prawdziwe
+    jutro tak samo, a brak dzisiejszego zrzutu mija sam. Odwrotna kolejność podpowiadałaby
+    „poczekaj do jutra" komuś, kto pyta o dwa województwa."""
     if statusy:
         return "STATUS_SPOZA_RAPORTU"
+    if filtry_poza_raportem(criteria):
+        return "FILTR_SPOZA_RAPORTU"
     if len(criteria.wojewodztwo) > 1:
         return "WIELE_WOJEWODZTW"
     if not criteria.wojewodztwo:
