@@ -100,7 +100,8 @@ usterek importu 0.2.19 została zamknięta (patrz CHANGELOG).
 
 Od 2026-09-07 `src/` podlega WSZYSTKIM regułom, łącznie z `ruff format` i sufitem funkcji.
 Wyłączenia były uzasadnione wiernością wobec obrazu 0.2.19; ta wierność żyje dziś w commicie
-importu `7c7fe8c`, a u klienta stoi obraz zbudowany z tego drzewa. Sześć funkcji przekraczających
+importu `f273dc2` (przed przepisaniem historii 2026-09-10: `7c7fe8c`), a u klienta stoi obraz
+zbudowany z tego drzewa. Sześć funkcji przekraczających
 sufit ma punktowe `noqa` z powodem — dług policzalny, nie hurtowe wyciszenie.
 
 Testy biegają na atrapach, więc jedynym sprawdzeniem na ŻYWYM

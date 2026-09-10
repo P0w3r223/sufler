@@ -6,8 +6,28 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ## [Unreleased]
 
+### Uwagi wdrożeniowe
+
+- **Historia gita przepisana 2026-09-10 — każdy SHA na `Main` i `Dev` jest nowy.** Ujednolicenie
+  autorstwa: wszystkie 559 commitów mają odtąd autora `P0w3r223 <p0w3r2243@gmail.com>` (wcześniej
+  osiem wariantów tożsamości). **Drzewo jest nietknięte** — hash drzewa `Main` (`8259ce5b…`) jest ten sam
+  przed i po, więc nie zmienił się ani jeden bajt kodu, testów czy dokumentacji.
+  **Dwa skutki, o których trzeba wiedzieć:**
+  1. **Łańcuch kontener→commit jest chwilowo zerwany.** Obraz stojący u klienta niesie
+     `org.opencontainers.image.revision` wskazujący SHA sprzed przepisania — ten commit już nie
+     istnieje. Łańcuch wraca przy najbliższej przebudowie obrazu z `REWIZJA` wziętą z nowego
+     `Main`.
+  2. **Każdy istniejący klon jest rozjechany** i wymaga `git fetch` + `git reset --hard
+     origin/Main`, a nie `git pull`. Pięć tagów (`v1.0.0`–`v1.3.0`, `v1.15.0`) zostało przesuniętych
+     na commity nowej historii.
+
 ### Naprawione
 
+- **Trzy żywe cytowania SHA przestały się rozwiązywać po przepisaniu historii.** `CLAUDE.md`
+  i `Powiadomienia_teams/README.md` kotwiczyły wierność wobec obrazu 0.2.19 w commicie importu,
+  a `CHANGELOG.md` cytował commit zdejmujący martwą obietnicę z opisu `File`. Wszystkie trzy
+  wskazują teraz commity nowej historii, ze starym SHA podanym obok — kotwica ma działać także
+  dla kogoś, kto czyta starszy wydruk.
 - **`REWIZJA` wchodzi do `build.args` compose'a, a komentarz budowania niesie obie flagi.**
   1.15.0 dołożyło etykietę `org.opencontainers.image.revision`, ale **nic jej nie utrwalało**:
   `build.args` podawał tylko `WERSJA`, więc każde `docker compose build` dawało
@@ -343,7 +363,8 @@ właśnie ten rozjazd wydanie zamyka.
 
   Reguła żyła dotąd wyłącznie w komentarzu w `tools/project.py`, czyli dokładnie w tym stanie,
   w którym była, gdy `File` obiecywał „poprawki zapisuj jako nową notatkę" przy wyłączonym
-  `Project(save)`. Tamto zdanie zdjął `d989a64` razem z sondą na TO JEDNO zdanie; ta bramka
+  `Project(save)`. Tamto zdanie zdjął `515e140` (przed przepisaniem historii 2026-09-10:
+  `d989a64`) razem z sondą na TO JEDNO zdanie; ta bramka
   uogólnia ją na repertuar akcji wszystkich narzędzi.
 
 - **Nocny bieg CI (`schedule` 04:17 UTC) i ręczne uruchomienie (`workflow_dispatch`).** CI biegało
