@@ -292,6 +292,7 @@ używa CI — inaczej ten sam pakiet testów biegnie u Ciebie i w bramce w dwóc
 ```bash
 cd Powiadomienia_teams && uv run --extra agent pytest
 cd claude_summary && uv run pytest
+cd ceidg-tool && uv run --extra dev --extra asystent pytest
 ```
 
 CI buduje też oba obrazy — floty (`deploy/docker/Dockerfile`) i pod-projektu powiadomień — więc

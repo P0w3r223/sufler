@@ -24,7 +24,7 @@ Układ heksagonalny: `core/{domain,ports,application,agent}` · `adapters/{inbou
 - `uv sync` (extras: agent, teams, teams-graph, github, jira, retrieval, retrieval-dense, file-reply, seed)
 - `uv run --no-sync pytest --testmon` · bramka: `uv run --no-sync pytest` (`--no-sync` omija blokadę `workmate.exe`)
 - `uv run ruff check .` · **`uv run ruff format --check src tests eval deploy scripts`** · `uv run mypy` (obejmuje `src`, limit linii 100) · `uv run lint-imports`
-  `ruff check` egzekwuje też SUFIT FUNKCJI (`C901` złożoność 15, `PLR0915` 50 instrukcji) — do 2026-09-02 sufit żył wyłącznie w prozie, więc 36-parametrowa fabryka i 326-linijkowa metoda przechodziły w ciszy. Wyjątki są punktowe (`noqa` przy funkcji, z powodem) i mają zniknąć razem z długiem; te same reguły mają oba pod-projekty.
+  `ruff check` egzekwuje też SUFIT FUNKCJI (`C901` złożoność 15, `PLR0915` 50 instrukcji) — do 2026-09-02 sufit żył wyłącznie w prozie, więc 36-parametrowa fabryka i 326-linijkowa metoda przechodziły w ciszy. Wyjątki są punktowe (`noqa` przy funkcji, z powodem) i mają zniknąć razem z długiem; ten sam sufit mają `Powiadomienia_teams` i `claude_summary`. `ceidg-tool` go NIE ma — jego `select` to `E F I B UP N W`, bez `C901`/`PLR0915`, za to z `mypy` w trybie `strict`, którego nie ma żaden inny. Wyrównanie tych zestawów jest decyzją, nie redakcją, i nie zapadła przy imporcie (ADR 0074).
   Format to osobny krok CI (`.github/workflows/ci.yml`), nie skutek `ruff check`; obejmuje tę samą listę katalogów, z `deploy` i `scripts` włącznie.
 - `uv run workmate` · `uv run mcp dev src/workmate/server.py` · `uv run workmate-github`
 - Pod-projekty (własny venv): `cd Powiadomienia_teams|claude_summary|ceidg-tool && uv run pytest`

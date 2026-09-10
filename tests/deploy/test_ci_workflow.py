@@ -78,7 +78,7 @@ def test_warunek_krokow_nie_gubi_zawezenia_do_projektu_workmate(kroki: list[dict
     """``lint-imports`` dotyczy TYLKO rdzenia workmate — pod-projekty nie mają import-lintera.
 
     Dokładając warunek ``!cancelled()`` łatwo nadpisać istniejące ``if: matrix.name == 'workmate'``
-    i puścić krok na wszystkich wpisach macierzy; wtedy dwa z trzech wpisów padają na braku
+    i puścić krok na wszystkich wpisach macierzy; wtedy trzy z czterech wpisów padają na braku
     konfiguracji.
     """
     krok = kroki[_indeks(kroki, "Granice architektoniczne (import-linter)")]
