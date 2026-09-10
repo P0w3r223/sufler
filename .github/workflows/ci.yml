@@ -130,3 +130,49 @@ jobs:
 
       - name: Zbuduj obraz (etap test wewnątrz Dockerfile pokrywa gałąź POSIX)
         run: docker build -f deploy/docker/Dockerfile .
+
+  # Jeden autor w historii. Reguła istniała od przepisania historii 2026-09-10 wyłącznie jako
+  # ZAPAMIĘTANA — czyli w tym samym stanie, w którym stała etykieta `revision` przed poprawką
+  # opisaną w `[Unreleased]`: warunek pamiętany zamiast zapisanego. Ten job zamienia ją w bramkę.
+  #
+  # Bieg NOCNY jest tu warunkiem sensu, nie ozdobą. Commit scalający powstaje PO kontroli PR-a,
+  # a merge przyciskiem GitHuba bierze autora z NAZWY PROFILU konta, ignorując `git config
+  # user.name` — więc drift wchodzi dokładnie w chwili, której kontrola PR-a nie widzi. Złapie go
+  # dopiero przebieg na `Main`: pierwszy push albo najbliższy bieg o 04:17 UTC.
+  autorstwo:
+    name: Jeden autor w historii
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Domyślny checkout jest PŁYTKI (jeden commit), więc `git log` widziałby jeden wiersz
+          # i bramka przechodziłaby zawsze — najgorszy możliwy tryb awarii dla strażnika.
+          fetch-depth: 0
+
+      - name: Każdy commit ma autora P0w3r223
+        env:
+          OCZEKIWANY: "P0w3r223 <p0w3r2243@gmail.com>"
+          # Puste poza zdarzeniem `pull_request` — na tym opiera się wybór zakresu niżej.
+          BAZA: ${{ github.event.pull_request.base.sha }}
+          GLOWA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Na `pull_request` checkout podstawia EFEMERYCZNY commit scalający, który tworzy sam
+          # GitHub — jego autorem jest `GitHub <noreply@github.com>`. Bramka bez zawężenia zakresu
+          # byłaby więc czerwona na KAŻDYM PR-ze, z powodu commita, którego nikt nie napisał
+          # i który nigdzie nie wyląduje. Dlatego na PR-ze patrzymy na commity samej gałęzi.
+          if [ -n "$BAZA" ]; then zakres="$BAZA..$GLOWA"; else zakres="HEAD"; fi
+          obcy=$(git log --format='%H %an <%ae>' "$zakres" | grep -v "$OCZEKIWANY" || true)
+          if [ -n "$obcy" ]; then
+            echo "Commity z autorem innym niż $OCZEKIWANY:"
+            echo "$obcy"
+            echo
+            echo "Merge przyciskiem GitHuba bierze autora z nazwy profilu konta."
+            echo "Scal lokalnie (git merge --no-ff + push) albo zmień nazwę profilu."
+            exit 1
+          fi
+          echo "Zakres $zakres: wszyscy autorzy to $OCZEKIWANY."
+
+          # Pole COMMITTERA celowo nie jest sprawdzane: na 123 starszych merge'ach stoi tam
+          # `GitHub <noreply@github.com>` i to opisuje prawdę — commit stworzyła maszyneria
+          # przycisku, nie człowiek. Przedmiotem ujednolicenia był autor.
