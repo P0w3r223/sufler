@@ -12,12 +12,14 @@ uruchamiający ją niezależnie od wyniku wcześniejszych kroków.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
 _CI = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+_CONTRIBUTING = Path(__file__).resolve().parents[2] / "CONTRIBUTING.md"
 
 # Ten sam wzorzec co w `tests/test_version_consistency.py`: pakiet biegnie także WEWNĄTRZ obrazu
 # (etap `test` Dockerfile'a), a obraz nie wozi konfiguracji CI — bez tej bramki cała ta grupa
@@ -83,3 +85,34 @@ def test_warunek_krokow_nie_gubi_zawezenia_do_projektu_workmate(kroki: list[dict
     """
     krok = kroki[_indeks(kroki, "Granice architektoniczne (import-linter)")]
     assert "matrix.name" in str(krok.get("if", ""))
+
+
+# Lista katalogów lintera bywała przepisywana do prozy, a proza nie ma bramki. Gdy 2026-08-06
+# doszły do CI `deploy` i `scripts`, `CONTRIBUTING.md` został z listą sprzed tej zmiany
+# w OBU miejscach — i przez miesiąc „Definicja ukończenia" opisywała przebieg słabszy niż
+# bramka. Osoba idąca dokładnie za nią dotykała pliku w `deploy/`, przechodziła lokalnie
+# i padała w CI na kroku, którego checklista w ogóle nie wymieniała (#148).
+_POLECENIE_LINTERA = re.compile(r"ruff (?:check|format)(?: --check)? ([^`\n]+)")
+
+
+@pytest.fixture(scope="module")
+def katalogi_lintera() -> str:
+    """Zakres lintera rdzenia — z matrycy, czyli z jedynego miejsca, które CI naprawdę czyta."""
+    workflow = yaml.safe_load(_CI.read_text(encoding="utf-8"))
+    wpisy = workflow["jobs"]["quality-gate"]["strategy"]["matrix"]["include"]
+    (rdzen,) = [wpis for wpis in wpisy if wpis["name"] == "workmate"]
+    return str(rdzen["lint_paths"])
+
+
+@pytest.mark.skipif(not _CONTRIBUTING.is_file(), reason="CONTRIBUTING.md nie wjeżdża do obrazu")
+def test_contributing_cytuje_ten_sam_zakres_lintera_co_bramka(katalogi_lintera: str):
+    """Każde polecenie lintera w `CONTRIBUTING.md` wymienia dokładnie katalogi z matrycy CI.
+
+    Sonda celowo nie sprawdza, ILE tych poleceń jest ani gdzie stoją — dokument wolno
+    przeredagować. Sprawdza jedno: że żadne z nich nie obiecuje węższego przebiegu niż ten,
+    który odrzuci zmianę w CI.
+    """
+    tresc = _CONTRIBUTING.read_text(encoding="utf-8")
+    cytowane = {dopasowanie.group(1).strip() for dopasowanie in _POLECENIE_LINTERA.finditer(tresc)}
+    assert cytowane, "CONTRIBUTING.md przestał cytować polecenia lintera — sonda straciła przedmiot"
+    assert cytowane == {katalogi_lintera}

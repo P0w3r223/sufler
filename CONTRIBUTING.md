@@ -49,12 +49,20 @@ Nowe „drzwi" (adapter): [`docs/how-to/add-a-door.md`](docs/how-to/add-a-door.m
 - Konfiguracja tylko przez `config/` (zmienne środowiskowe) — żadnych zaszytych ścieżek. Nowa
   domena ustawień = nowy moduł `config/<domena>.py` + re-eksport w `config/__init__.py`.
 - Proza po polsku; ADR i `docs/research/` po angielsku.
-- Style: `uv run ruff format src tests eval` i `uv run ruff check src tests eval`; typy: `uv run mypy`.
+- Style: `uv run ruff format src tests eval deploy scripts` i `uv run ruff check src tests eval deploy scripts`; typy: `uv run mypy`.
+  Listę katalogów wiąże z `ci.yml` bramka `tests/deploy/test_ci_workflow.py` — przepisana
+  do prozy starzeje się przy pierwszej zmianie w workflow, a wtedy „Definicja ukończenia"
+  przepuszcza lokalnie zmianę, którą CI odrzuci.
 
 ## 5. Definicja ukończenia
 
 - [ ] `uv run pytest` przechodzi
-- [ ] `uv run ruff check src tests eval` i `uv run mypy` bez błędów
+- [ ] `uv run ruff check src tests eval deploy scripts` bez błędów
+- [ ] `uv run ruff format --check src tests eval deploy scripts` bez różnic — w CI to
+      OSOBNY krok, nie skutek `ruff check`
+- [ ] `uv run mypy` bez błędów
+- [ ] `uv run lint-imports` bez naruszeń — granice `core ↛ adapters` są krokiem bramki
+      i twardą regułą projektu, nie zaleceniem
 - [ ] zmiana ma test, jeśli dotyka logiki
 - [ ] decyzja architektoniczna? → ADR w `docs/adr/`
 - [ ] przegląd kodu przed scaleniem
