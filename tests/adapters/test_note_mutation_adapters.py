@@ -212,7 +212,9 @@ def test_snapshot_is_a_byte_copy_of_the_file_including_fields_outside_the_schema
         "\n"
         "treść\n"
     )
-    plik.write_text(oryginal, encoding="utf-8")
+    # ``newline=""`` także tutaj: sonda porównuje SKRÓT bajtów pliku, więc atrapa zapisana
+    # z translacją mierzyłaby na Windows własny sposób zapisu, a nie adapter migawek.
+    plik.write_text(oryginal, encoding="utf-8", newline="")
     writer = MarkdownNotesWriter(tmp_path)
     snapshots = FilesystemNoteSnapshots(tmp_path / "snapshots")
 

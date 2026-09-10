@@ -238,7 +238,12 @@ def _atomic_create(path: Path, content: str) -> None:
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
-        tmp.write_text(content, encoding="utf-8")
+        # ``newline=""`` WYŁĄCZA translację końców linii. Bez niego tryb tekstowy Pythona
+        # zamienia na Windows każdy LF na CRLF — także w treści, którą wołający przepisał
+        # BAJTOWO z pliku, więc obietnica „nagłówek przepisujemy bajtowo" z docstringu była
+        # prawdziwa wyłącznie na Linuksie. Produkcja stoi na Linuksie, ale bramka biega
+        # też u ludzi (#146).
+        tmp.write_text(content, encoding="utf-8", newline="")
         os.link(tmp, path)
     except FileExistsError as exc:
         raise NoteExistsError(f"notatka już istnieje: {path.name}") from exc
@@ -261,7 +266,8 @@ def _atomic_replace(path: Path, content: str) -> None:
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
-        tmp.write_text(content, encoding="utf-8")
+        # ``newline=""`` z tego samego powodu co w ``_atomic_create`` — patrz komentarz tam.
+        tmp.write_text(content, encoding="utf-8", newline="")
         os.replace(tmp, path)
     except OSError as exc:
         raise WriteError(f"nie udało się podmienić notatki {path.name}: {exc}") from exc
