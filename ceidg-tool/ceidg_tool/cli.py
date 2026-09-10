@@ -1,7 +1,7 @@
-"""Interfejs wiersza poleceń (typer): flagi, plik YAML i wejście do kreatora.
+"""Interfejs wiersza poleceń (typer): flagi i wejście do kreatora.
 
-Cienki adapter — decyzje i teksty należą do `ui` (ADR-0008, reguła granic 9), żeby
-flagi, plik zapytania, tryb `--tak` i kreator pokazywały dosłownie to samo.
+Cienki adapter — decyzje i teksty należą do `ui` (ADR-0008, reguła granic 9), żeby flagi,
+tryb `--tak` i kreator pokazywały dosłownie to samo.
 """
 
 from __future__ import annotations
@@ -39,7 +39,6 @@ from .logsetup import close_file_handlers, get_logger, setup_logging
 from .pipeline import (
     Deps,
     build_deps,
-    criteria_from_yaml,
     list_resumable,
     lookup_nip,
     purge_report_files,
@@ -276,15 +275,14 @@ OpisOpt = Annotated[
 
 
 def _criteria_from_options(
-    zapytanie: Path | None,
     pola: Mapping[str, Sequence[str]] | None = None,
     *,
     od: str | None = None,
     do: str | None = None,
-    szczegoly: bool | None = None,
+    szczegoly: bool = False,
     maks: int | None = None,
 ) -> Criteria:
-    """Kryteria z flag wiersza poleceń albo z pliku zapytania.
+    """Kryteria z flag wiersza poleceń — jedyne wejście CLI od czasu wycofania pliku YAML.
 
     Pola listowe przychodzą **słownikiem**, a nie jako kolejne argumenty pozycyjne. Powód jest
     mechaniczny: przy dziewięciu polach wywołania testowe wyglądały jak `plik, [], [], [], [],
@@ -292,20 +290,13 @@ def _criteria_from_options(
     niewidoczne dla czytającego i dla mypy — obie listy mają ten sam typ. Przy siedemnastu
     polach (2026-09-10) byłoby to już tylko kwestią czasu. Nazwy w słowniku są nazwami pól
     `Criteria`, więc literówka wywraca się na `extra="forbid"`, a nie po cichu gubi filtr.
+
+    `szczegoly` przestało być trójstanowe razem z plikiem (ADR-0022). Trzeci stan istniał po to,
+    żeby `--lista` umiało **wyłączyć** `szczegoly: true` zapisane w pliku — bez pliku nie ma
+    wartości spod spodu, więc „nie podano" i „podano nie" prowadzą do tego samego wyniku, a
+    `bool | None` byłoby rozróżnieniem bez odbiorcy. Naprawa A6 z audytu 2026-09-08 zniknęła
+    razem ze swoim przedmiotem; ślad po niej stoi w `tests/test_flagi_trojstanowe.py`.
     """
-    if zapytanie is not None:
-        base = criteria_from_yaml(zapytanie)
-        overrides: dict[str, object] = {}
-        # `szczegoly` jest trójstanowe: `--szczegoly` (True), `--lista` (False), brak flagi
-        # (None = zostaw wartość z pliku). Jako zwykły `bool` para `--szczegoly/--lista` nie
-        # umiała **wyłączyć** `szczegoly: true` z pliku YAML, bo `False` było nieodróżnialne
-        # od „nie podano": `pobierz -z plik.yaml --lista --tak` po cichu szedł drogą droższą,
-        # a tabela kosztów potwierdzała tę, której operator właśnie odmówił (audyt, A6).
-        if szczegoly is not None:
-            overrides["szczegoly"] = szczegoly
-        if maks is not None:  # flaga CLI ma pierwszeństwo nad plikiem
-            overrides["max_rekordow"] = maks
-        return base.model_copy(update=overrides) if overrides else base
     try:
         return Criteria.model_validate(
             {
@@ -317,10 +308,7 @@ def _criteria_from_options(
                 # „to nie jest data w postaci RRRR-MM-DD (na przykład 2020-01-31)".
                 "data_od": od or None,
                 "data_do": do or None,
-                # Bez pliku YAML nie ma czego nadpisywać, więc brak flagi znaczy tu domyślne
-                # „bez szczegółów" — trójstanowość jest potrzebna wyłącznie tam, gdzie istnieje
-                # wartość spod spodu, którą `--lista` ma umieć wyłączyć.
-                "szczegoly": bool(szczegoly),
+                "szczegoly": szczegoly,
                 "max_rekordow": maks,
             }
         )
@@ -368,8 +356,8 @@ def kreator(srodowisko: EnvOpt = None, produkcja: ProdOpt = False, demo: DemoOpt
             stdin_tty=sys.stdin.isatty(), stdout_tty=sys.stdout.isatty(), yes=False
         ):
             raise ConfigError(
-                "Kreator wymaga terminala. W harmonogramie użyj `pobierz --zapytanie plik.yaml "
-                "--tak`."
+                "Kreator wymaga terminala. W harmonogramie użyj `pobierz` z flagami "
+                "kryteriów i `--tak` — kreator wypisuje gotowe polecenie po zebraniu kryteriów."
             )
         events = ConsoleEvents(console)
         deps = _demo_deps(settings, events)[0] if demo else build_deps(settings, events=events)
@@ -463,12 +451,9 @@ def pobierz(
     od: Annotated[str | None, typer.Option("--od", help="data rozpoczęcia od (YYYY-MM-DD)")] = None,
     do: Annotated[str | None, typer.Option("--do", help="data rozpoczęcia do (YYYY-MM-DD)")] = None,
     szczegoly: Annotated[
-        bool | None, typer.Option("--szczegoly/--lista", help="pełne szczegóły firm")
-    ] = None,
+        bool, typer.Option("--szczegoly/--lista", help="pełne szczegóły firm")
+    ] = False,
     maks: Annotated[int | None, typer.Option("--maks", help="maksymalna liczba rekordów")] = None,
-    zapytanie: Annotated[
-        Path | None, typer.Option("--zapytanie", "-z", help="plik YAML z kryteriami")
-    ] = None,
     out: Annotated[
         Path | None,
         typer.Option("--out", "-o", help="nazwa pliku .xlsx (zawsze w katalogu wyniki/)"),
@@ -505,7 +490,6 @@ def pobierz(
         )
         _banner(settings, demo=demo)
         criteria = _criteria_from_options(
-            zapytanie,
             {
                 "wojewodztwo": wojewodztwo or [],
                 "powiat": powiat or [],
@@ -570,15 +554,13 @@ def pobierz(
                 # w przebiegu B5. Harmonogram zachowuje dzisiejsze zachowanie i dostaje o tym
                 # jedno zdanie; szerzej wybiera się jawnie flagą.
                 #
-                # `and not criteria.pkd_2007`: plik zapytania z zapisanym wyborem **jest**
-                # decyzją operatora i to on ma wygrać, a nie domyślne zawężenie wynikające
-                # z trybu nieinteraktywnego. Bez tego warunku kanoniczne uruchomienie
-                # z harmonogramu — plik plus `--tak` — odbijałoby się o sprzeczność.
-                rocznik_2007=(
-                    pkd_2007
-                    if pkd_2007 is not None
-                    else (False if tak and not criteria.pkd_2007 else None)
-                ),
+                # Warunek `and not criteria.pkd_2007` stał tu do 2026-09-10 po to, żeby wybór
+                # zapisany w pliku zapytania wygrywał z domyślnym zawężeniem trybu `--tak`.
+                # Po wycofaniu pliku (ADR-0022) `criteria.pkd_2007` nie ma tu skąd przyjść —
+                # flagi listy starych kodów nie ma, a asystent tego pola nie wypełnia — więc
+                # warunek był od tej chwili zawsze prawdziwy i mówił o drodze, której nie ma.
+                # Rocznik w harmonogramie wybiera się jawnie flagą `--pkd-2007`.
+                rocznik_2007=(pkd_2007 if pkd_2007 is not None else (False if tak else None)),
             )
             if decision in ("wyjdz", "anuluj"):
                 return

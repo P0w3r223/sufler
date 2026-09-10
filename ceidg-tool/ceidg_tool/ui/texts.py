@@ -7,6 +7,7 @@ plik YAML, tryb `--tak` i kreator pokazują dosłownie te same zdania.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -294,6 +295,120 @@ def menu_block(items: Sequence[MenuItem]) -> Block:
 
 def criteria_block(criteria: Criteria) -> Block:
     return Block(title="Kryteria", rows=(("wybrane", criteria.describe()),))
+
+
+FLAGI_KRYTERIOW: Final[dict[str, str]] = {
+    "wojewodztwo": "--wojewodztwo",
+    "powiat": "--powiat",
+    "gmina": "--gmina",
+    "miasto": "--miasto",
+    "ulica": "--ulica",
+    "budynek": "--budynek",
+    "lokal": "--lokal",
+    "kod": "--kod",
+    "nazwa": "--nazwa",
+    "imie": "--imie",
+    "nazwisko": "--nazwisko",
+    "nip": "--nip",
+    "regon": "--regon",
+    "nip_sc": "--nip-sc",
+    "regon_sc": "--regon-sc",
+    "pkd": "--pkd",
+    "status": "--status",
+}
+"""Pole `Criteria` → flaga `pobierz`, dla pól przyjmujących listę wartości.
+
+Mapa mieszka tutaj, a nie w `cli.py`, bo powstaje z niej **zdanie dla operatora** (reguła 9).
+Wiąże ją z rzeczywistością test w `tests/test_cli.py`, który porównuje klucze z parametrami
+polecenia: flaga przemianowana bez poprawki tutaj zapaliłaby się na czerwono, zamiast wypisywać
+operatorowi polecenie, którego program już nie zna."""
+
+# Znaki, po których wartość trzeba objąć cudzysłowem. Domyślny jest apostrof: w bashu
+# `"…$x…"` rozwija zmienną, a `'…'` nie — i tak samo jest w PowerShellu, więc jeden zapis
+# działa w obu powłokach, których używa ten projekt.
+_WYMAGA_CUDZYSLOWU = re.compile(r"[^0-9A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż._/-]")
+# Wartość z apostrofem w środku — `O'Brien`, `D'Angelo` — nie jest przypadkiem egzotycznym,
+# więc dostaje **podwójny** cudzysłów. Działa w obu powłokach, o ile w wartości nie ma nic,
+# co podwójny cytat interpretuje: `$` i backtick rozwijają, `"` i `\` rozbijają zapis.
+_BEZPIECZNA_W_PODWOJNYM = re.compile(r'^[^"$`\\\x00-\x1f]*$')
+# Znaków sterujących nie umiemy przenieść żadnym cytowaniem, tak samo jak wartości, która
+# ma naraz apostrof i coś z listy wyżej. Wtedy polecenia nie budujemy — zdanie „tego nie da
+# się wkleić" jest uczciwe, a polecenie, które po wklejeniu znaczy co innego, niż pokazał
+# ekran, jest tym samym cichym rozjazdem, który ten projekt tępi.
+_ZNAK_STERUJACY = re.compile(r"[\x00-\x1f]")
+
+
+def _cytuj(wartosc: str) -> str | None:
+    if _ZNAK_STERUJACY.search(wartosc):
+        return None
+    if "'" in wartosc:
+        return f'"{wartosc}"' if _BEZPIECZNA_W_PODWOJNYM.match(wartosc) else None
+    return f"'{wartosc}'" if _WYMAGA_CUDZYSLOWU.search(wartosc) else wartosc
+
+
+def polecenie_powtarzajace(criteria: Criteria, *, demo: bool = False) -> str | None:
+    """Gotowe `pobierz …` odtwarzające te kryteria — albo `None`, gdy nie da się go zacytować.
+
+    Zastępuje plik zapytania YAML, wycofany 2026-09-10 (ADR-0022): każde pole filtrujące ma
+    dziś własną flagę, więc plik przestał być jedyną drogą do harmonogramu, a był drogą, której
+    operator musiał się osobno nauczyć.
+
+    Jedno miejsce, w którym polecenie **nie** jest równe plikowi, i dlatego jest o tym zdanie
+    na ekranie: rocznik 2007 wchodzi jako przełącznik `--pkd-2007`, a nie jako lista kodów.
+    Plik zapisywał konkretne kody, więc powtarzał populację co do wpisu nawet po zmianie
+    tablicy przejścia; polecenie powtarza **decyzję**, a kody dobiera tablica z chwili
+    uruchomienia. Dla żywej tablicy to jest to samo, po jej aktualizacji — niekoniecznie.
+    """
+    czesci = ["ceidg-tool", "pobierz"]
+    if demo:
+        czesci.append("--demo")
+    for pole, flaga in FLAGI_KRYTERIOW.items():
+        for wartosc in getattr(criteria, pole):
+            zacytowana = _cytuj(str(wartosc))
+            if zacytowana is None:
+                return None
+            czesci.extend((flaga, zacytowana))
+    if criteria.data_od:
+        czesci.extend(("--od", criteria.data_od.isoformat()))
+    if criteria.data_do:
+        czesci.extend(("--do", criteria.data_do.isoformat()))
+    if criteria.pkd_2007:
+        czesci.append("--pkd-2007")
+    if criteria.szczegoly:
+        czesci.append("--szczegoly")
+    if criteria.max_rekordow:
+        czesci.extend(("--maks", str(criteria.max_rekordow)))
+    czesci.append("--tak")
+    return " ".join(czesci)
+
+
+POLECENIE_NIE_DO_ZAPISANIA: Final = (
+    "Tych kryteriów nie da się zapisać jako jedno polecenie — któraś wartość zawiera znak, "
+    "którego powłoka nie przeniesie bez zmiany znaczenia (cudzysłów, znak sterujący albo "
+    "apostrof razem z $ lub `). Powtórz to zapytanie przez kreator."
+)
+
+POLECENIE_ROCZNIK: Final = (
+    "Uwaga o starych kodach PKD: polecenie niesie decyzję („szukaj też po rocznik 2007”), a nie "
+    "listę kodów — dobierze je tablica przejścia z chwili uruchomienia."
+)
+
+
+def repeat_command_block(criteria: Criteria, *, demo: bool = False) -> Block:
+    """Ekran „tak to powtórzysz" — polecenie do skopiowania, także do harmonogramu."""
+    polecenie = polecenie_powtarzajace(criteria, demo=demo)
+    if polecenie is None:
+        return Block(title="Powtórzenie tego zapytania", notes=(POLECENIE_NIE_DO_ZAPISANIA,))
+    uwagi = [
+        "To samo polecenie nadaje się do harmonogramu — `--tak` przyjmuje decyzje domyślne.",
+    ]
+    if criteria.pkd_2007:
+        uwagi.append(POLECENIE_ROCZNIK)
+    return Block(
+        title="Powtórzenie tego zapytania",
+        rows=(("polecenie", polecenie),),
+        notes=tuple(uwagi),
+    )
 
 
 def hints_block() -> Block:

@@ -156,3 +156,9 @@ A1/ADR-0013 in the audit, where repairing one silent loss activated another. Cor
 whether the *source* can carry contacts at all, verified by re-exporting the same run from the
 store at **zero further requests**, and pinned by
 `test_the_report_path_has_contacts_without_any_details_fetched`.
+
+---
+
+**Note 2026-09-10:** the `dopytanie` row's rationale — "schedules have the YAML query
+file" — now reads: schedules have the command the wizard prints (**ADR-0022**). The safe default
+is unchanged.

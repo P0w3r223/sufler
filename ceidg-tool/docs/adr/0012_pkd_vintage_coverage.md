@@ -381,3 +381,12 @@ The three-request probe answers gate item 1 (immediately — the design branches
 delete `pkdmap.py`, its data file and the flow step if the 2007 share is negligible; or earlier, if
 the register's share of 2007 codes drops far enough that the widened and narrow counts stop
 differing materially — at which point the question stops earning its screen.
+
+---
+
+**Note 2026-09-10:** sub-decision 5 said the vintage choice reaches the query file, which
+**ADR-0022** withdrew. The promise ("a rerun repeats the operator's actual choice") holds through
+the printed command, with one honest difference stated on screen and held by
+`tests/test_wizard_vintage_command.py`: the file stored the 2007 **codes**, the command carries the
+**decision** (`--pkd-2007`) and the codes come from the transition table at run time. Same table,
+same population; after the table changes, not necessarily.

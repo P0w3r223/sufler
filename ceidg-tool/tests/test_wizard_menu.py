@@ -14,7 +14,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-import yaml
 from openpyxl import load_workbook
 
 from ceidg_tool.config import Settings
@@ -240,35 +239,44 @@ def test_the_allowed_values_are_shown_before_the_questions() -> None:
     assert "Dozwolone wartości" in view.titles()
 
 
-# ----------------------------------------------------------------------------- zapis YAML
+# ------------------------------------------------------------------ powtórzenie zapytania
 
 
-def test_declining_the_yaml_offer_writes_nothing(tmp_path: Path, clock: FakeClock) -> None:
+def test_powtorzenie_pokazuje_polecenie_i_nie_pisze_zadnego_pliku(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """Kreator kończy poleceniem do skopiowania, nie plikiem (ADR-0022).
+
+    Plik zapytania YAML był tu do 2026-09-10 i kosztował operatora osobne pytanie oraz
+    format, którego musiał się nauczyć, żeby zrobić to samo, co robi jedna linia. Asercja
+    o braku plików jest w tym teście celowo: gdyby zapis został gdzieś z tyłu, katalog
+    wyników znów zbierałby pliki, o które nikt nie prosił.
+    """
     deps = deps_for(tmp_path, clock, silent_api())
     view = RecordingView()
 
-    path = wizard.offer_yaml(
-        criteria(wojewodztwo="podlaskie"), deps, ScriptedPrompter({"zapisz_yaml": False}), view
-    )
+    wizard.show_repeat_command(criteria(wojewodztwo="podlaskie", pkd="62.01.Z"), deps, view)
 
-    assert path is None
+    tekst = view.text()
+    assert "ceidg-tool pobierz --wojewodztwo podlaskie --pkd 6201Z --tak" in tekst
     assert not list(deps.settings.output_dir.glob("*.yaml"))
     deps.store.close()
 
 
-def test_the_saved_query_file_reproduces_the_criteria(tmp_path: Path, clock: FakeClock) -> None:
-    """Zapisany plik ma dać się uruchomić z harmonogramu — czyli odtworzyć te same kryteria."""
+def test_powtorzenie_w_pokazie_niesie_flage_demo(tmp_path: Path, clock: FakeClock) -> None:
+    """Polecenie z pokazu musi zostać poleceniem pokazu — inaczej wklejone sięga rejestru.
+
+    To jest znacznik ADR-0014 na czwartym kanale: pierwszy ekran, wiersz `Metadane`, prefiks
+    `DEMO_` i osobny katalog mówią „to pokaz", a polecenie bez `--demo` mówiłoby coś innego —
+    i to akurat w miejscu, które operator kopiuje do harmonogramu.
+    """
     deps = deps_for(tmp_path, clock, silent_api())
+    deps.demo = True
     view = RecordingView()
-    source = criteria(wojewodztwo="podlaskie", pkd="62.01.Z")
 
-    path = wizard.offer_yaml(source, deps, ScriptedPrompter({"zapisz_yaml": True}), view)
+    wizard.show_repeat_command(criteria(wojewodztwo="podlaskie"), deps, view)
 
-    assert path is not None and path.exists()
-    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert saved["wojewodztwo"] == ["podlaskie"]
-    assert saved["pkd"] == ["6201Z"]
-    assert "ceidg-tool pobierz" in view.text()  # kreator mówi, jak tego użyć
+    assert "ceidg-tool pobierz --demo --wojewodztwo podlaskie --tak" in view.text()
     deps.store.close()
 
 

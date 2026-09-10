@@ -610,3 +610,10 @@ rule 11 deliberately does not cover, and `HTTP_CLIENT_MODULES` names `httpx2` on
 SDK's documentation rather than an installed package — so **CI installing the `asystent` extra
 (Decision 10) is a gate item, not prose**: until the scans see the real import graph, the second
 stack's module name is an assumption.
+
+---
+
+**Note 2026-09-10:** wherever this ADR says the scheduler's path is the YAML query file
+written by `offer_yaml`, read: the ready-to-paste command the wizard prints (**ADR-0022**). The
+reasoning is unchanged — `--opis` with `--tak` is still refused, because a schedule must not act on
+an interpretation nobody read — only the carrier of the approved interpretation is different.

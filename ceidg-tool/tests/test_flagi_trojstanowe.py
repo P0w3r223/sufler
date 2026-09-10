@@ -1,4 +1,4 @@
-"""Dwie flagi, w których `x or domyślne` gubiło świadomą odpowiedź operatora (audyt A2, A6).
+"""Flagi, w których `x or domyślne` gubiło świadomą odpowiedź operatora (audyt A2, A6).
 
 Obie miały ten sam kształt: wartość podana przez operatora była **fałszywa w sensie Pythona**
 (`0`, `False`), więc `or` odrzucał ją tak samo jak brak flagi. Obie nie miały ani jednego testu —
@@ -13,8 +13,6 @@ sprawdzić, jest czystą funkcją dwóch liczb — więc `dni_retencji` istnieje
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from ceidg_tool.cli import _criteria_from_options, dni_retencji
 
@@ -40,36 +38,25 @@ def test_podana_liczba_dni_ma_pierwszenstwo_nad_konfiguracja() -> None:
     assert dni_retencji(7, DOMYSLNA_RETENCJA) == 7
 
 
-def _z_pliku(tmp_path: Path, tresc: str, *, szczegoly: bool | None):  # type: ignore[no-untyped-def]
-    plik = tmp_path / "zapytanie.yaml"
-    plik.write_text(tresc, encoding="utf-8")
-    return _criteria_from_options(plik, szczegoly=szczegoly)
+def test_lista_i_brak_flagi_znacza_dzis_to_samo() -> None:
+    """A6 zniknęło razem ze swoim przedmiotem — i to jest jedyny ślad, jaki po nim zostaje.
 
+    Trzy testy stały tu do 2026-09-10 i pilnowały, żeby `--lista` umiało powiedzieć „nie"
+    plikowi zapytania, który mówił „tak": `False` było nieodróżnialne od „nie podano", więc
+    `pobierz -z plik.yaml --lista --tak` szedł drogą **droższą**, a tabela kosztów potwierdzała
+    gałąź, której operator przed chwilą odmówił.
 
-def test_lista_wylacza_szczegoly_wlaczone_w_pliku(tmp_path: Path) -> None:
-    """Rdzeń A6. `--lista` ma umieć powiedzieć „nie" plikowi, który mówi „tak".
-
-    `pobierz -z plik.yaml --lista --tak` szedł drogą **droższą**: `False` było nieodróżnialne
-    od „nie podano", więc nadpisanie nie zachodziło. Tabela kosztów potwierdzała potem tę
-    gałąź, której operator właśnie odmówił, bo `flow` czyta wartość, która przeżyła.
+    Po wycofaniu pliku (ADR-0022) nie ma wartości spod spodu, którą flaga miałaby wyłączać —
+    kryteria powstają wyłącznie z flag, więc „operator nie powiedział nic" i „operator
+    powiedział nie" prowadzą do tego samego, poprawnego wyniku. Test zostaje jako **zapis
+    tej zmiany**: gdyby kiedyś wróciło jakiekolwiek źródło kryteriów spod spodu (plik,
+    profil, zapamiętane zapytanie), ta asercja przestanie być prawdziwa i wtedy trzeba
+    będzie przywrócić trójstanowość, a nie ją odtwarzać od zera po kolejnym audycie.
     """
-    kryteria = _z_pliku(tmp_path, "wojewodztwo: podlaskie\nszczegoly: true\n", szczegoly=False)
+    bez_flagi = _criteria_from_options({"wojewodztwo": ["podlaskie"]})
+    z_lista = _criteria_from_options({"wojewodztwo": ["podlaskie"]}, szczegoly=False)
+    ze_szczegolami = _criteria_from_options({"wojewodztwo": ["podlaskie"]}, szczegoly=True)
 
-    assert kryteria.szczegoly is False
-
-
-def test_szczegoly_wlaczaja_szczegoly_wylaczone_w_pliku(tmp_path: Path) -> None:
-    """Druga strona tej samej trójstanowości — flaga wygrywa z plikiem w obie strony."""
-    kryteria = _z_pliku(tmp_path, "wojewodztwo: podlaskie\nszczegoly: false\n", szczegoly=True)
-
-    assert kryteria.szczegoly is True
-
-
-def test_brak_flagi_zostawia_wartosc_z_pliku(tmp_path: Path) -> None:
-    """Trzeci stan, i powód, dla którego `bool` tu nie wystarcza.
-
-    Bez tego przypadku wystarczyłaby flaga dwustanowa: to on wymusza rozróżnienie
-    „operator nie powiedział nic" od „operator powiedział nie"."""
-    kryteria = _z_pliku(tmp_path, "wojewodztwo: podlaskie\nszczegoly: true\n", szczegoly=None)
-
-    assert kryteria.szczegoly is True
+    assert bez_flagi.szczegoly is False
+    assert z_lista.szczegoly is False
+    assert ze_szczegolami.szczegoly is True

@@ -342,3 +342,11 @@ The order that keeps the suite green at every step:
 
 Steps 1-3 are pure refactoring with no behaviour change and should be reviewed against
 `tests/test_cli.py` and `tests/test_pipeline_e2e.py` before anything new is added.
+
+---
+
+**Note 2026-09-10:** decision 3 (the wizard writes a YAML query file) is **withdrawn by
+ADR-0022**. The file's reason for existing — fields reachable no other way — ended when every
+filtering field got a CLI flag the same day. Decision 2 (one sentence, several entries) stands and
+is now checked as a loop: the command the wizard prints is fed back through the CLI in
+`tests/test_cli_phase3.py`.

@@ -19,7 +19,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-import yaml
 from pydantic import ValidationError
 
 from . import __version__
@@ -416,22 +415,6 @@ def _client(deps: Deps) -> CeidgClient:
     if deps.client is None:
         raise ConfigError("Ta operacja wymaga połączenia z API (deps zbudowane offline).")
     return deps.client
-
-
-# ----------------------------------------------------------------------------- kryteria z pliku
-
-
-def criteria_from_yaml(path: Path) -> Criteria:
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise ConfigError(f"Nie można wczytać zapytania {path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ConfigError(f"Plik zapytania {path} musi być mapą pole: wartość.")
-    try:
-        return Criteria.model_validate(data)
-    except ValidationError as exc:
-        raise ConfigError(f"Niepoprawne kryteria w {path}:\n{exc}") from exc
 
 
 # ----------------------------------------------------------------------------- pobieranie

@@ -520,12 +520,6 @@ ZAPISZ_EXCEL = Question(
     default="nie",
 )
 
-ZAPISZ_YAML = Question(
-    id="zapisz_yaml",
-    text="Zapisać te kryteria jako plik zapytania YAML (do powtórzeń i harmonogramu)?",
-    default="nie",
-)
-
 
 @dataclass
 class CriteriaAnswers:

@@ -151,9 +151,9 @@ The skip that matters is `tests/test_api_traits.py::test_atrapa_demo_zgadza_sie_
 the demo double serves no `/raporty`, which is the open demo edge `docs/status.md` names, and it is
 the one place that gap is visible from a gate. **The sentinel is that test's name, not a total** —
 when it stops being skipped, the report path got a double. Do not restate it as a count: the count
-is not stable enough to carry it. Locally, with `probe_out/` present, the suite is **1302 passed,
+is not stable enough to carry it. Locally, with `probe_out/` present, the suite is **1309 passed,
 1 skipped**; in CI, where `probe_out/` is git-ignored and therefore absent, five further tests skip
-honestly and the same tree reports **1297 passed, 6 skipped** — both measured on 2026-09-10, the
+honestly and the same tree reports **1304 passed, 6 skipped** — both measured on 2026-09-10, the
 second by moving `probe_out/` aside for one run rather than by subtracting five. A total quoted without naming its
 environment has been wrong three times here.
 
@@ -213,8 +213,16 @@ applying this to another store.
 
 ## Structural facts
 
-`Criteria` is the only contract between any input and any fetch. Flags, the YAML query file, the
-wizard and the phase-4 assistant all produce one; nothing downstream accepts anything else.
+`Criteria` is the only contract between any input and any fetch. Flags, the wizard and the phase-4
+assistant all produce one; nothing downstream accepts anything else. There were four inputs until
+2026-09-10, when the **YAML query file was withdrawn** (ADR-0022): every filtering field had just
+got a flag, so the file had become a second input format that could do nothing the first could not,
+while being one more place to be wrong about what would be fetched. What replaced it is
+`texts.polecenie_powtarzajace` — the wizard prints a ready-to-paste command after the decisions are
+made, and `tests/test_cli_phase3.py` feeds that command back through `CliRunner` to check the loop
+closes. Do not reintroduce a file input without reopening ADR-0022; note in particular that the
+command carries the PKD vintage as the `--pkd-2007` switch rather than as codes, which is the one
+place where it is not equivalent to what the file stored.
 
 `pipeline.py` is the only module that knows both the network and the database. `ui/` reaches the
 world through it and never imports `client` or `store`. Two consequences of that rule are worth

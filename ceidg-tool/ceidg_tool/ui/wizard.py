@@ -1,20 +1,17 @@
 """Sesja interaktywna: pierwszy ekran, menu i obsługa pięciu działań z UZUPELNIENIE_01 §A.
 
 Kreator nie podejmuje własnych decyzji o pobieraniu — cała kolejność (wznowienie, raport,
-`count`, tabela kosztów, podział na partie) siedzi w `flow`, wspólna z flagami i YAML-em.
+`count`, tabela kosztów, podział na partie) siedzi w `flow`, wspólna z flagami.
 Środowisko i zgoda na produkcję są rozstrzygnięte przed wejściem tutaj i kreator ich nie zmienia.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import datetime
 
-import yaml
 from pydantic import ValidationError
 
-from ..config import safe_filename
 from ..criteria import Criteria, bledy_po_polsku
 from ..errors import CeidgError, ConfigError
 from ..pipeline import (
@@ -22,7 +19,6 @@ from ..pipeline import (
     RunResult,
     list_resumable,
     lookup_nip,
-    output_name,
     run_fetch,
     run_update,
 )
@@ -164,22 +160,15 @@ def _retry_or_cancel(prompter: Prompter) -> None:
         raise prompts.CancelledError("Rezygnacja z kryteriów — wracam do menu.")
 
 
-def offer_yaml(criteria: Criteria, deps: Deps, prompter: Prompter, view: View) -> Path | None:
-    """Zapis kryteriów jako plik zapytania — ta sama treść uruchomi się z harmonogramu."""
-    if not prompter.confirm(prompts.ZAPISZ_YAML, default=False):
-        return None
-    data = {
-        key: list(value) if isinstance(value, tuple) else value
-        for key, value in criteria.model_dump(mode="json", exclude_defaults=True).items()
-    }
-    stem = output_name(
-        criteria, deps.settings.environment, datetime.now(tz=UTC), suffix="", demo=deps.demo
-    )
-    path = deps.settings.output_dir / safe_filename(f"zapytanie_{stem}", ".yaml")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=True), encoding="utf-8")
-    view.message(f"Zapisano kryteria w {path}. Uruchomienie: ceidg-tool pobierz -z {path} --tak")
-    return path
+def show_repeat_command(criteria: Criteria, deps: Deps, view: View) -> None:
+    """Gotowe polecenie odtwarzające te kryteria — do powtórzeń i do harmonogramu.
+
+    Zastąpiło pytanie „zapisać jako plik zapytania YAML?" (ADR-0022). Plik był jedyną drogą do
+    harmonogramu, dopóki część pól nie miała flag; od 2026-09-10 ma je każde, więc plik został
+    formatem, którego operator musiał się uczyć po to, żeby zrobić to samo. Polecenie pokazuje
+    się **bez pytania**: nie kosztuje żądania ani pliku, więc pytanie było tylko kliknięciem.
+    """
+    view.block(texts.repeat_command_block(criteria, demo=deps.demo))
 
 
 # ----------------------------------------------------------------------------- działania
@@ -192,19 +181,19 @@ def handle_fetch(deps: Deps, prompter: Prompter, view: View, *, source: str) -> 
         if decision == "popraw":
             criteria = collect_criteria(prompter, view, deps)
             continue
-        # Zapis **po** decyzjach, nie przed. Do 2026-09-07 kreator proponował plik zapytania
-        # zaraz po zebraniu kryteriów, więc zapisywał je sprzed wyboru rocznika PKD i sprzed
+        # Polecenie **po** decyzjach, nie przed. Do 2026-09-07 kreator proponował powtórzenie
+        # zaraz po zebraniu kryteriów, więc pokazywał je sprzed wyboru rocznika PKD i sprzed
         # wyboru „lista czy szczegóły" — a harmonogram uruchamiał wtedy inne zapytanie niż to,
         # które operator przed chwilą zatwierdził. `plan.criteria` niesie obie decyzje.
         if decision == "anuluj":
-            # Operator odmówił podjęcia decyzji o roczniku, więc nie ma czego zapisywać —
-            # plik niósłby wybór, którego właśnie nie dokonał. `wyjdz` to co innego: tam
+            # Operator odmówił podjęcia decyzji o roczniku, więc nie ma czego powtarzać —
+            # polecenie niosłoby wybór, którego właśnie nie dokonał. `wyjdz` to co innego: tam
             # kryteria są już rozstrzygnięte, tylko koszt okazał się za wysoki.
             return
-        # Zapis **przed** „wyjdź", a nie po nim: zebranie kryteriów, zapisanie ich i wyjście
-        # bez pobierania jest sensownym przejściem — tak buduje się plik dla harmonogramu,
-        # nie płacąc za dane.
-        offer_yaml(plan.criteria, deps, prompter, view)
+        # Polecenie **przed** „wyjdź", a nie po nim: zebranie kryteriów, zapisanie polecenia
+        # i wyjście bez pobierania jest sensownym przejściem — tak buduje się wpis do
+        # harmonogramu, nie płacąc za dane.
+        show_repeat_command(plan.criteria, deps, view)
         if decision == "wyjdz":
             return
         cel = prompter.text(prompts.CEL)  # UZUPELNIENIE_01 §B: pole „cel pobrania” w Metadanych

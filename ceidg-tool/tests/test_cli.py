@@ -258,7 +258,7 @@ def test_nowa_flaga_dociera_do_kryteriow(
     flaga: str, wartosc: str, pole: str, oczekiwane: tuple[str, ...]
 ) -> None:
     """Flaga w `--help` bez połączenia z `Criteria` byłaby filtrem, który nic nie filtruje."""
-    kryteria = cli._criteria_from_options(None, {pole: [wartosc]})
+    kryteria = cli._criteria_from_options({pole: [wartosc]})
 
     assert getattr(kryteria, pole) == oczekiwane
     assert flaga.lstrip("-").replace("-", "_") == pole

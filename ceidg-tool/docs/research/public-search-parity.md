@@ -40,7 +40,7 @@ answers in `docs/decisions.md`.
 | NIP / REGON of the civil partnership | yes (`nip_sc`, `regon_sc`) | **yes, since 2026-09-10** |
 | KRS number | no | no |
 | Company name | yes — fragment, case-insensitive (measured) | yes |
-| Given name, surname | yes | yes (query file / assistant; no CLI flag) |
+| Given name, surname | yes | yes (`--imie`, `--nazwisko`) |
 | PKD | yes | yes, plus PKD 2007 predecessors (ADR-0012) |
 | Voivodeship, county, commune, town, street | yes | yes |
 | Building number, flat number | yes (`budynek`, `lokal`) | **yes, since 2026-09-10** |

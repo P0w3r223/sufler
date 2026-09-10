@@ -16,6 +16,7 @@ import pytest
 from ceidg_tool.apiprofile import ApiProfile
 from ceidg_tool.batching import plan_batches
 from ceidg_tool.config import TOKEN_SERVICE_URL, Environment, Settings
+from ceidg_tool.criteria import Criteria
 from ceidg_tool.estimating import estimate
 from ceidg_tool.normalizer import NormalizedRecord, normalize
 from ceidg_tool.records import RawRecord, Report, RowContext
@@ -545,3 +546,124 @@ def test_block_as_text_renders_title_headers_rows_and_notes() -> None:
     block = texts.Block(title="Tytuł", headers=("a", "b"), rows=(("1", "2"),), notes=("uwaga",))
 
     assert block.as_text() == "Tytuł\na | b\n1 | 2\nuwaga"
+
+
+# ---------------------------------------------- polecenie powtarzające (ADR-0022)
+
+
+@pytest.mark.parametrize(
+    ("wartosc", "oczekiwane"),
+    [
+        ("Poznań", "--nazwisko Poznań"),  # bez znaków specjalnych: bez cudzysłowu
+        ("Stara Łomża przy Szosie", "--nazwisko 'Stara Łomża przy Szosie'"),
+        ("O'Brien", '--nazwisko "O\'Brien"'),  # apostrof w środku wymusza podwójny cytat
+        ("Kowalski & Syn", "--nazwisko 'Kowalski & Syn'"),
+        ("firma $HOME", "--nazwisko 'firma $HOME'"),  # apostrof nie rozwija zmiennej
+    ],
+)
+def test_polecenie_cytuje_wartosc_tak_by_przetrwala_powloke(wartosc: str, oczekiwane: str) -> None:
+    """Jeden zapis ma działać i w bashu, i w PowerShellu — to dwie powłoki tego projektu.
+
+    Apostrof jest domyślny, bo żadna z nich nie rozwija w nim `$` ani backticka. Wartość
+    z apostrofem w środku (`O'Brien` — nazwisko, nie przypadek egzotyczny) dostaje cudzysłów
+    podwójny, bo apostrofu w apostrofach obie powłoki składają inaczej (`'\''` kontra `''`).
+    """
+    polecenie = texts.polecenie_powtarzajace(criteria(nazwisko=wartosc))
+
+    assert polecenie is not None and oczekiwane in polecenie
+
+
+@pytest.mark.parametrize(
+    "wartosc",
+    [
+        "apostrof ' i $zmienna",  # apostrof wymusza podwójny cytat, a ten rozwinąłby `$`
+        'apostrof \' i "cytat"',  # obie klamry naraz — nie ma czym objąć
+        "z\ttabem",  # znak sterujący nie przechodzi żadnym cytowaniem
+    ],
+)
+def test_polecenie_odmawia_gdy_cytowanie_zmieniloby_znaczenie(wartosc: str) -> None:
+    """Lepiej powiedzieć „nie da się", niż wypisać linię, która po wklejeniu znaczy co innego.
+
+    To jest ta sama zasada, dla której `--zrodlo raport` odmawia zamiast po cichu pobrać przez
+    API: wynik niezgodny z tym, co operator przeczytał na ekranie, jest gorszy od odmowy.
+
+    Czego tu **nie** ma i dlaczego: sam cudzysłów w wartości (`nazwa "tak"`) odmowy nie
+    wywołuje, bo apostrof obejmuje go dosłownie w obu powłokach. Odmowa jest dla przypadków,
+    w których żadna z dwóch klamer nie wystarcza.
+    """
+    assert texts.polecenie_powtarzajace(criteria(nazwisko=wartosc)) is None
+
+    blok = texts.repeat_command_block(criteria(nazwisko=wartosc))
+    assert blok.rows == ()
+    assert texts.POLECENIE_NIE_DO_ZAPISANIA in blok.notes
+
+
+def test_polecenie_niesie_wszystkie_rodzaje_pol() -> None:
+    """Pole pominięte w budowaniu polecenia zawęża albo poszerza powtórzenie bez ostrzeżenia."""
+    pelne = criteria(
+        wojewodztwo="podlaskie",
+        miasto="Łomża",
+        ulica="Kwiatowa",
+        budynek="12A",
+        lokal="3",
+        kod="18-400",
+        nazwa="Fryzjer",
+        imie="Anna",
+        nazwisko="Kowalska",
+        nip="3563457932",
+        regon="618155359",
+        nip_sc="5252248481",
+        regon_sc="146988099",
+        pkd="9621Z",
+        status="AKTYWNY",
+        data_od="2020-01-01",
+        data_do="2020-12-31",
+        szczegoly=True,
+        max_rekordow=500,
+    )
+
+    polecenie = texts.polecenie_powtarzajace(pelne)
+
+    assert polecenie is not None
+    for oczekiwane in (
+        "--wojewodztwo podlaskie",
+        "--miasto Łomża",
+        "--ulica Kwiatowa",
+        "--budynek 12A",
+        "--lokal 3",
+        "--kod 18-400",
+        "--nazwa Fryzjer",
+        "--imie Anna",
+        "--nazwisko Kowalska",
+        "--nip 3563457932",
+        "--regon 618155359",
+        "--nip-sc 5252248481",
+        "--regon-sc 146988099",
+        "--pkd 9621Z",
+        "--status AKTYWNY",
+        "--od 2020-01-01",
+        "--do 2020-12-31",
+        "--szczegoly",
+        "--maks 500",
+        "--tak",
+    ):
+        assert oczekiwane in polecenie, f"polecenie gubi {oczekiwane}"
+
+
+def test_spis_flag_pokrywa_kazde_pole_listowe_kryteriow() -> None:
+    """`FLAGI_KRYTERIOW` ma znać każde pole listowe — pominięte znika z powtórzenia po cichu.
+
+    Wiązanie z **nazwami flag** sprawdza `tests/test_cli.py`; tutaj chodzi o drugą stronę:
+    czy mapa obejmuje wszystkie pola, które mogą nieść wartości.
+    """
+    # `pkd_2007` zostaje poza mapą świadomie: nie ma flagi listowej, tylko przełącznik
+    # `--pkd-2007` (ADR-0012 przez ADR-0022). `status` ma własny typ `Literal`, więc nie
+    # wpada w test po adnotacji — i to jest powód, dla którego dokładamy go tu jawnie,
+    # zamiast pisać warunek, który akurat go łapie.
+    listowe = {
+        nazwa
+        for nazwa, pole in Criteria.model_fields.items()
+        if pole.annotation == tuple[str, ...] and nazwa != "pkd_2007"
+    } | {"status"}
+
+    assert set(texts.FLAGI_KRYTERIOW) == listowe

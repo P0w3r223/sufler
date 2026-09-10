@@ -51,13 +51,19 @@ def test_wyczysc_wszystko_removes_database_and_open_log(runner: CliRunner, tmp_p
     assert "Usunięto" in result.output
 
 
-def test_maks_overrides_yaml_query(tmp_path: Path) -> None:
-    query = tmp_path / "q.yaml"
-    query.write_text("wojewodztwo: podlaskie\nmax_rekordow: 1000\n", encoding="utf-8")
-    criteria = _criteria_from_options(query, szczegoly=False, maks=500)
-    assert criteria.max_rekordow == 500 and criteria.wojewodztwo == ("podlaskie",)
-    unchanged = _criteria_from_options(query, szczegoly=False)
-    assert unchanged.max_rekordow == 1000
+def test_maks_dociera_do_kryteriow_a_jego_brak_nie_zmysla_limitu() -> None:
+    """`--maks` ogranicza pobranie, a jego brak znaczy „bez limitu", nie „jakiś limit".
+
+    Test porównywał do 2026-09-10 flagę z wartością z pliku zapytania (`--maks` wygrywał).
+    Plik został wycofany (ADR-0022), więc zostaje sama flaga — ale zostaje też powód, dla
+    którego ten test w ogóle powstał: `maks or coś` zamieniłoby świadome „bez limitu" w limit
+    wzięty z sufitu, a to ta sama pomyłka co `--starsze-niz 0` w audycie A2.
+    """
+    z_limitem = _criteria_from_options({"wojewodztwo": ["podlaskie"]}, maks=500)
+    bez_limitu = _criteria_from_options({"wojewodztwo": ["podlaskie"]})
+
+    assert z_limitem.max_rekordow == 500 and z_limitem.wojewodztwo == ("podlaskie",)
+    assert bez_limitu.max_rekordow is None
 
 
 def test_unknown_format_and_source_fail_fast(runner: CliRunner, tmp_path: Path) -> None:

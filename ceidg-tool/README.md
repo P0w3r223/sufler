@@ -108,7 +108,8 @@ ceidg-tool kreator                                           # to samo, jawnie
 
 Menu kreatora: wznowienie przerwanego pobrania (pokazywane pierwsze, gdy coś czeka),
 pobranie firm według kryteriów, aktualizacja bazy o zmiany, gotowy raport, sprawdzenie
-firmy po NIP. Zebrane kryteria można zapisać jako plik zapytania YAML do harmonogramu.
+firmy po NIP. Po zebraniu kryteriów kreator wypisuje gotowe polecenie — do powtórzenia
+tego samego zapytania i do harmonogramu.
 
 Kreator wymaga terminala — uruchomiony z przekierowanym wejściem pokazuje pomoc zamiast
 pytać. Na konsolach, które nie obsługują pytań ze strzałkami, schodzi do zwykłych pytań
@@ -117,7 +118,7 @@ tekstowych. Ctrl+C przerywa bieżące działanie i wraca do menu, nie kończy se
 ```
 ceidg-tool pobierz --wojewodztwo podlaskie --od 2014-01-01 --do 2014-12-31 --out test.xlsx
 ceidg-tool pobierz --miasto Łomża --pkd 9621Z --status AKTYWNY --szczegoly --maks 500
-ceidg-tool pobierz --zapytanie zapytanie.yaml --tak          # tryb nieinteraktywny
+ceidg-tool pobierz -w podlaskie --pkd 9621Z --tak            # tryb nieinteraktywny
 ceidg-tool pobierz -w mazowieckie --partie                   # zgoda na podział dużego zapytania
 ceidg-tool sprawdz-nip 1234563218                            # jedna firma, 2 zapytania
 ceidg-tool wznow                                             # wznowienie przerwanego pobrania
@@ -142,10 +143,9 @@ ceidg-tool pobierz -m Poznań --ulica Kwiatowa --budynek 12A
 ceidg-tool pobierz --nip-sc 356-345-79-32     # wspólnicy danej spółki cywilnej
 ```
 
-Te same pola nazywa plik zapytania YAML (`wojewodztwo`, `powiat`, `gmina`, `miasto`, `ulica`,
-`budynek`, `lokal`, `kod`, `pkd`, `status`, `data_od`, `data_do`, `nazwa`, `imie`, `nazwisko`,
-`nip`, `regon`, `nip_sc`, `regon_sc`, `szczegoly`, `max_rekordow`) — to zapis tego samego
-zapytania do pliku, przydatny w harmonogramie i wtedy, gdy kryteria mają być powtarzalne.
+Plik zapytania YAML (`--zapytanie`) został wycofany 2026-09-10 (ADR-0022): odkąd każde pole ma
+flagę, był drugim formatem wejścia, który nie potrafił nic ponad pierwszy. Powtarzalność i
+harmonogram obsługuje polecenie wypisywane przez kreator.
 
 Czego w tej liście nie ma — numeru KRS, PESEL-u, nazwy skróconej, obywatelstwa, dat innych niż
 data rozpoczęcia — tego nie ma również API v3, więc publiczna wyszukiwarka CEIDG odpowie na kilka
@@ -181,8 +181,8 @@ kosztuje ani jednego żądania do CEIDG.
 Czego asystent nie może z założenia: ustawić limitu rekordów, poszerzyć zgody na produkcję,
 wyłączyć progu 50 tys. ani zobaczyć pobranych rekordów — do modelu idzie wyłącznie Twoje zdanie
 i słownik PKD. `--opis` razem z `--tak` jest odrzucane: harmonogram nie może działać na
-interpretacji, której nikt nie przeczytał. Do harmonogramu służy plik zapytania YAML, który
-kreator zapisuje z zatwierdzonej interpretacji.
+interpretacji, której nikt nie przeczytał. Do harmonogramu służy polecenie, które kreator
+wypisuje z zatwierdzonej interpretacji — jedna linia z flagami, gotowa do wklejenia.
 
 Kody PKD pochodzą z klasyfikacji **PKD 2025** (`ceidg_tool/data/pkd2025.yaml`, 728 podklas,
 Dz.U. 2024 poz. 1936). Kod ze starszego rocznika — na przykład `62.01.Z` — zostaje przełożony

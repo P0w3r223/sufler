@@ -23,7 +23,6 @@ from ceidg_tool.ui.prompts import (
     UZYC_RAPORTU,
     WZNOWIC,
     ZAPISZ_EXCEL,
-    ZAPISZ_YAML,
     CancelledError,
     ConsolePrompter,
     CriteriaAnswers,
@@ -522,7 +521,6 @@ CONFIRM_QUESTIONS = [
     (UZYC_RAPORTU, True),
     (PONOW_KRYTERIA, True),
     (ZAPISZ_EXCEL, False),
-    (ZAPISZ_YAML, False),
 ]
 
 

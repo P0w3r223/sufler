@@ -1548,3 +1548,36 @@ Eight added — `--imie`, `--nazwisko`, `--ulica`, `--kod`, `--budynek`, `--loka
 Gates after this: **1302 passed, 1 skipped** locally, **1297 passed, 6 skipped** without
 `probe_out/` (measured, not subtracted), mypy and ruff clean. Walked on the demo: `--nazwisko` with
 `--imie` returns three firms, `--kod 15333` answers in Polish.
+
+### The query file is withdrawn (2026-09-10, ADR-0022)
+
+The owner's call, taken the same day the flags landed and for the same reason: with every filtering
+field reachable by a flag, `--zapytanie plik.yaml` had become a second input format that could do
+nothing the first could not — and a second way to be wrong about what would be fetched.
+
+Gone: the `--zapytanie/-z` flag, `pipeline.criteria_from_yaml`, `wizard.offer_yaml`, the
+`ZAPISZ_YAML` question. In its place the wizard prints a ready-to-paste command after the decisions
+are made, carrying `--demo` in demo mode and `--pkd-2007` when the operator chose the wide vintage.
+YAML as a format is untouched: API profiles, both PKD files and `tests/fixtures/api_traits.yaml`
+still use it, and PyYAML stays a dependency.
+
+Three consequences worth having in the log:
+
+- **The parity guarantee got stronger.** ADR-0008's "same criteria, same sentences by any route" was
+  checked flags-against-file; it is now a loop — the printed command is fed back through
+  `CliRunner` and must render the same cost table. Quoting is part of that test: a value with a
+  space gets single quotes (no interpolation in bash or PowerShell), `O'Brien` gets double, and a
+  value that neither can carry makes the tool say so instead of printing a line that would mean
+  something else after pasting.
+- **Audit item A6 disappeared with its subject.** `--lista` could not switch off `szczegoly: true`
+  from a file; without a file there is no value underneath, so `szczegoly` is a plain `bool` again.
+  The reason is recorded in `tests/test_flagi_trojstanowe.py` rather than deleted — a future source
+  of criteria under the flags brings the tri-state back deliberately.
+- **One thing the command does not reproduce, and it says so.** The file stored the 2007 codes; the
+  command carries `--pkd-2007` and the codes come from the transition table at run time. Same table,
+  same population — after the table changes, not necessarily (`texts.POLECENIE_ROCZNIK`,
+  `tests/test_wizard_vintage_command.py`).
+
+Gates: **1309 passed, 1 skipped** locally, **1304 passed, 6 skipped** without `probe_out/`, mypy and
+ruff clean. ADR-0008, 0011, 0012 and 0017 carry a note pointing at ADR-0022 rather than being
+rewritten.

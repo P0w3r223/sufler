@@ -8,11 +8,11 @@ z tymi samymi kryteriami pokazują **tę samą tabelę kosztów** (ADR-0008, dec
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import httpx
 import pytest
-import yaml
 from typer.testing import CliRunner
 
 import ceidg_tool.config as config
@@ -20,6 +20,7 @@ from ceidg_tool import cli
 from ceidg_tool.cli import app
 from ceidg_tool.client import CeidgClient
 from ceidg_tool.config import Settings
+from ceidg_tool.criteria import Criteria
 from ceidg_tool.pipeline import Deps, build_deps
 from ceidg_tool.progress import Events
 from ceidg_tool.records import Report
@@ -249,45 +250,56 @@ def cost_table_lines(output: str) -> list[str]:
     ]
 
 
-def test_flags_and_a_yaml_query_render_the_same_cost_table(
-    runner: CliRunner, env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_polecenie_z_kreatora_wraca_do_cli_i_daje_te_sama_tabele_kosztow(
+    runner: CliRunner, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ADR-0008, decyzja 2: te same kryteria muszą dać te same zdania, którąkolwiek drogą."""
-    query = tmp_path / "zapytanie.yaml"
-    query.write_text(
-        yaml.safe_dump({"miasto": ["Białystok"], "pkd": ["62.01.Z"]}, allow_unicode=True),
-        encoding="utf-8",
-    )
+    """ADR-0008 decyzja 2 po wycofaniu pliku zapytania (ADR-0022): pętla ma się domykać.
+
+    Do 2026-09-10 ten test porównywał flagi z plikiem YAML. Plik zniknął, ale gwarancja
+    została i jest **mocniejsza**: kreator wypisuje gotowe polecenie, więc to ono musi dać
+    dokładnie tę samą tabelę kosztów, co kryteria, z których powstało. Polecenie, które po
+    wklejeniu znaczy coś innego niż ekran, na którym padło, byłoby cichym rozjazdem — a to
+    jedyne miejsce, gdzie tę pętlę widać w całości.
+    """
+    criteria = Criteria(miasto=("Białystok",), pkd=("6201Z",))
+    polecenie = texts.polecenie_powtarzajace(criteria)
+    assert polecenie is not None
+    # `ceidg-tool` na początku to nazwa programu — `CliRunner` dostaje samą listę argumentów.
+    argumenty = shlex.split(polecenie)[1:]
 
     patch_transport(monkeypatch, counting_api(1_240))
-    from_flags = runner.invoke(
+    z_flag = runner.invoke(
         app, ["pobierz", "-m", "Białystok", "--pkd", "62.01.Z", "--tak"], env=env
     )
     patch_transport(monkeypatch, counting_api(1_240))
-    from_yaml = runner.invoke(app, ["pobierz", "-z", str(query), "--tak"], env=env)
+    z_polecenia = runner.invoke(app, argumenty, env=env)
 
-    assert from_flags.exit_code == 0, from_flags.output
-    assert from_yaml.exit_code == 0, from_yaml.output
-    assert cost_table_lines(from_flags.output) == cost_table_lines(from_yaml.output)
-    assert any("1 240" in line for line in cost_table_lines(from_flags.output))
+    assert z_flag.exit_code == 0, z_flag.output
+    assert z_polecenia.exit_code == 0, z_polecenia.output
+    assert cost_table_lines(z_flag.output) == cost_table_lines(z_polecenia.output)
+    assert any("1 240" in line for line in cost_table_lines(z_flag.output))
+    assert "Białystok" in z_polecenia.output
 
 
-def test_both_entry_points_describe_the_same_criteria(
-    runner: CliRunner, env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_polecenie_z_kreatora_cytuje_wartosci_ze_spacja(
+    runner: CliRunner, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Gdyby YAML i flagi zbudowały różne `Criteria`, tabela kosztów kłamałaby o zakresie."""
-    query = tmp_path / "zapytanie.yaml"
-    query.write_text(
-        yaml.safe_dump({"miasto": ["Białystok"]}, allow_unicode=True), encoding="utf-8"
-    )
+    """Miejscowość „Stara Łomża przy Szosie" ma przetrwać drogę przez powłokę w jednym kawałku.
 
-    patch_transport(monkeypatch, counting_api(5))
-    from_flags = runner.invoke(app, ["pobierz", "-m", "Białystok", "--tak"], env=env)
-    patch_transport(monkeypatch, counting_api(5))
-    from_yaml = runner.invoke(app, ["pobierz", "-z", str(query), "--tak"], env=env)
+    Bez cytowania polecenie rozpadłoby się na trzy argumenty i `--miasto` dostałoby „Stara",
+    a `pobierz` — dwa argumenty pozycyjne, których nie przyjmuje. Wartość z rejestru wraca tu
+    do wiersza poleceń, więc to jest ta sama klasa wejścia, którą neutralizują `safetext`
+    i `richtext`, tylko trzecim kanałem.
+    """
+    criteria = Criteria(miasto=("Stara Łomża przy Szosie",))
+    polecenie = texts.polecenie_powtarzajace(criteria)
+    assert polecenie is not None and "'Stara Łomża przy Szosie'" in polecenie
 
-    assert "Białystok" in from_flags.output
-    assert "Białystok" in from_yaml.output
+    patch_transport(monkeypatch, counting_api(3))
+    wynik = runner.invoke(app, shlex.split(polecenie)[1:], env=env)
+
+    assert wynik.exit_code == 0, wynik.output
+    assert "Stara Łomża przy Szosie" in wynik.output
 
 
 # ----------------------------------------------------------------------------- walidacja flag
@@ -392,19 +404,26 @@ def test_the_explicit_refusal_matches_the_scheduled_default(
     assert pkd_w_zadaniach(api) == {"9621Z"}
 
 
-def test_a_query_file_carrying_the_vintage_reruns_the_same_population(
-    runner: CliRunner, env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_polecenie_niesie_wybor_rocznika_ktory_powtarza_populacje(
+    runner: CliRunner, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Wybór zapisany w pliku zapytania ma się powtórzyć, choć `--tak` sam z siebie zawęża."""
-    query = tmp_path / "zapytanie.yaml"
-    query.write_text(
-        yaml.safe_dump({"pkd": ["9621Z"], "pkd_2007": [FRYZJER_2007]}, allow_unicode=True),
-        encoding="utf-8",
-    )
+    """Szeroki wybór ma się powtórzyć, choć `--tak` sam z siebie zawęża.
+
+    Nośnikiem jest dziś `--pkd-2007` w poleceniu wypisanym przez kreator, a nie pole
+    `pkd_2007` w pliku zapytania (ADR-0022). Różnica, którą ta zamiana wprowadza, jest
+    nazwana w `texts.POLECENIE_ROCZNIK` i sprawdzona niżej: plik niósł konkretne kody,
+    polecenie niesie decyzję, a kody dobiera tablica przejścia przy uruchomieniu. Dla
+    tej samej tablicy populacja jest ta sama — i to jest to, co ten test mierzy.
+    """
+    szerokie = Criteria(pkd=("9621Z",), pkd_2007=(FRYZJER_2007,))
+    polecenie = texts.polecenie_powtarzajace(szerokie)
+    assert polecenie is not None and "--pkd-2007" in polecenie
+    # Kody 2007 **nie** wchodzą do polecenia jako wartości — nie ma dla nich flagi listowej.
+    assert FRYZJER_2007 not in polecenie
+
     api = counting_api(1_240)
     patch_transport(monkeypatch, api)
-
-    result = runner.invoke(app, ["pobierz", "-z", str(query), "--tak"], env=env)
+    result = runner.invoke(app, shlex.split(polecenie)[1:], env=env)
 
     assert result.exit_code == 0, result.output
     assert pkd_w_zadaniach(api) == {"9621Z", FRYZJER_2007}
