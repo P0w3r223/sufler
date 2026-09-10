@@ -214,14 +214,17 @@ def test_snapshot_is_a_byte_copy_of_the_file_including_fields_outside_the_schema
     )
     # ``newline=""`` także tutaj: sonda porównuje SKRÓT bajtów pliku, więc atrapa zapisana
     # z translacją mierzyłaby na Windows własny sposób zapisu, a nie adapter migawek.
-    plik.write_text(oryginal, encoding="utf-8", newline="")
+    plik.write_text(oryginal, encoding="utf-8", newline="")  # atrapa = dokładnie te bajty
     writer = MarkdownNotesWriter(tmp_path)
     snapshots = FilesystemNoteSnapshots(tmp_path / "snapshots")
 
     tresc, skrot = writer.content_with_digest(_note().id)
     gdzie = snapshots.save(_note().id, tresc)
 
-    assert _Path(gdzie).read_text(encoding="utf-8") == oryginal  # CO DO BAJTU
+    # Przez ``read_bytes``, nie ``read_text``: tryb tekstowy zamienia CRLF z powrotem na LF
+    # przy ODCZYCIE, więc migawka zapisana z translacją przechodziła asercję nazwaną
+    # „CO DO BAJTU". Sonda pilnowała wtedy niezmiennika wyłącznie z nazwy.
+    assert _Path(gdzie).read_bytes() == oryginal.encode("utf-8")  # CO DO BAJTU
     assert skrot == hashlib.sha256(oryginal.encode("utf-8")).hexdigest()
 
 

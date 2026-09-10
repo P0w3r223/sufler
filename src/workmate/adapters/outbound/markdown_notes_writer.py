@@ -238,12 +238,14 @@ def _atomic_create(path: Path, content: str) -> None:
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
-        # ``newline=""`` WYŁĄCZA translację końców linii. Bez niego tryb tekstowy Pythona
-        # zamienia na Windows każdy LF na CRLF — także w treści, którą wołający przepisał
-        # BAJTOWO z pliku, więc obietnica „nagłówek przepisujemy bajtowo" z docstringu była
-        # prawdziwa wyłącznie na Linuksie. Produkcja stoi na Linuksie, ale bramka biega
-        # też u ludzi (#146).
-        tmp.write_text(content, encoding="utf-8", newline="")
+        # BAJTY, NIE TEKST — symetrycznie do odczytu (``_read_bytes_or_none``) i tak samo jak
+        # w bliźniaczym ``filesystem_workspace._atomic_create``. Tryb tekstowy zamieniał na
+        # Windows każdy LF na CRLF, więc treść przepisana bajtowo z pliku wracała na dysk
+        # DŁUŻSZA, niż przyszła: w nagłówku z CRLF każdy CR podwajał się przy każdej edycji,
+        # narastająco. Flaga ``newline=""`` dawała te same bajty, ale zostawiała niezmiennik
+        # jako rzecz do zapamiętania przy czwartym zapisie; ``write_bytes`` czyni go
+        # własnością konstrukcji (#146).
+        tmp.write_bytes(content.encode("utf-8"))
         os.link(tmp, path)
     except FileExistsError as exc:
         raise NoteExistsError(f"notatka już istnieje: {path.name}") from exc
@@ -266,8 +268,8 @@ def _atomic_replace(path: Path, content: str) -> None:
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
-        # ``newline=""`` z tego samego powodu co w ``_atomic_create`` — patrz komentarz tam.
-        tmp.write_text(content, encoding="utf-8", newline="")
+        # Bajty z tego samego powodu co w ``_atomic_create`` — patrz komentarz tam.
+        tmp.write_bytes(content.encode("utf-8"))
         os.replace(tmp, path)
     except OSError as exc:
         raise WriteError(f"nie udało się podmienić notatki {path.name}: {exc}") from exc

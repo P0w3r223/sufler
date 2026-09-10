@@ -311,7 +311,7 @@ def test_niejednoznaczne_konto_nie_wypuszcza_adresow_na_kanal_zewnetrzny():
 
 
 def test_pelna_tresc_niejednoznacznego_konta_zostaje_diagnostyczna():
-    """Kontrola pozytywna do xfaila wyżej: log ma widzieć wszystko, i widzi."""
+    """Kontrola pozytywna do testu redakcji wyżej: log ma widzieć wszystko, i widzi."""
     sciezka = Path("/dane/cache.bin")
     with pytest.raises(AmbiguousAccountError) as zlapany:
         _jedyne_konto(
