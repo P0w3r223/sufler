@@ -1,7 +1,7 @@
 """Asystent językowy fazy 4 — czwarty producent `Criteria` (ADR-0011).
 
 Asystent nie jest nowym potokiem. Stoi **przed** sekwencją decyzyjną z `ui/flow.py`, produkuje
-`Criteria` i kończy — obok flag CLI, pliku YAML i pytań kreatora. Z tego jednego umiejscowienia
+`Criteria` i kończy — obok flag CLI i pytań kreatora. Z tego jednego umiejscowienia
 wynika reszta: liczba żądań `count`, tabela kosztów, ścieżka zgody na produkcję i próg podziału
 na partie zostają nietknięte, bo asystent kończy pracę, zanim którykolwiek z nich się zacznie —
 runda dopytania z ADR-0017 też, bo toczy się w całości nad modelem. Zdanie mówiło tu „dokładnie

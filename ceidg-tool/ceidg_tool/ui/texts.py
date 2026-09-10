@@ -2,7 +2,7 @@
 
 Reguła granic 6 (ADR-0008): bez `rich`, `typer`, `questionary`, `httpx`, `sqlite3`
 i `openpyxl`. Dzięki temu każdy ekran da się sprawdzić testem bez terminala, a flagi CLI,
-plik YAML, tryb `--tak` i kreator pokazują dosłownie te same zdania.
+tryb `--tak`, kreator i asystent pokazują dosłownie te same zdania.
 """
 
 from __future__ import annotations
@@ -1162,8 +1162,8 @@ def firm_card(record: NormalizedRecord | None, *, nip: str) -> Block:
 # ----------------------------------------------------------------------------- komunikaty poleceń
 #
 # Reguła granic 9 (ADR-0008, domknięta w ADR-0009): `cli.py` nie układa własnych zdań.
-# Zdania stoją tu jako stałe i funkcje, więc te same słowa widzi operator flag, pliku YAML,
-# trybu `--tak` i kreatora — a nie dwie kopie, które rozjadą się przy pierwszej poprawce.
+# Zdania stoją tu jako stałe i funkcje, więc te same słowa widzi operator flag, trybu `--tak`
+# i kreatora — a nie dwie kopie, które rozjadą się przy pierwszej poprawce.
 
 NO_RESUMABLE: Final = "Brak przerwanych pobrań."
 NO_RUNS: Final = "Brak pobrań w bazie."

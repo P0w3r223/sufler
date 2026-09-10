@@ -113,8 +113,14 @@ Trzy wejścia, jeden kod:
    z podpowiedziami i możliwością pominięcia (`questionary` lub podobne).
 2. **Flagi CLI** (`typer`): `pobierz`, `aktualizuj` (tryb `/zmiana` od ostatniego
    uruchomienia), `raporty` (lista i pobranie gotowych raportów), `sprawdz-token`.
-3. **Plik zapytania YAML** o polach zgodnych z `Criteria`, do zadań powtarzalnych
-   i harmonogramu.
+3. ~~**Plik zapytania YAML** o polach zgodnych z `Criteria`, do zadań powtarzalnych
+   i harmonogramu.~~ — **wycofane 2026-09-10 decyzją właściciela (ADR-0022).** Wymaganie
+   powstało, gdy część pól `Criteria` nie miała flag; tego samego dnia flagę dostało każde
+   pole filtrujące, więc plik był drugim formatem wejścia, który nie potrafił nic ponad
+   pierwszy — a stanowił drugie miejsce, w którym można się pomylić co do zakresu pobrania.
+   Zadania powtarzalne i harmonogram obsługuje **gotowe polecenie**, które kreator wypisuje
+   po podjęciu decyzji. Oryginalne brzmienie zostaje przekreślone, a nie usunięte, bo to
+   zapis tego, co było zamówione.
 
 Wspólny krok przed każdym pobraniem: jedno zapytanie po `count`, potem deterministyczne
 podsumowanie i decyzja użytkownika, np.

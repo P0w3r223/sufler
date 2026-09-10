@@ -158,7 +158,6 @@ def test_an_error_in_one_action_returns_to_the_menu_instead_of_ending_the_sessio
         {
             "menu": ["1", "5"],
             **criteria_answers(wojewodztwo="podlaskie"),
-            "zapisz_yaml": False,
         }
     )
 
@@ -410,7 +409,6 @@ def test_the_fetch_action_stops_when_the_operator_leaves_at_the_cost_table(
     prompter = ScriptedPrompter(
         {
             **criteria_answers(miasto="Białystok"),
-            "zapisz_yaml": False,
             "co_dalej": "wyjdz",
         }
     )
@@ -440,7 +438,6 @@ def test_correcting_the_criteria_collects_them_again_and_recounts(
         {
             **{key: ["", ""] for key in BLANK_CRITERIA if key != "miasto"},
             "miasto": ["Białystok", "Łomża"],
-            "zapisz_yaml": False,
             "co_dalej": ["popraw", "wyjdz"],
         }
     )

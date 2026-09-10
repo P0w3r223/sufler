@@ -568,7 +568,8 @@ def test_the_confirmation_cannot_be_taken_by_the_unattended_mode() -> None:
     """`--tak` nie zatwierdza interpretacji za operatora — kończy się kodem 3.
 
     Harmonogram działający na zdaniu, którego nikt nie przeczytał, jest dokładnie tym, czego
-    ta flaga ma nie robić; jego drogą jest plik YAML zapisany z wyniku asystenta.
+    ta flaga ma nie robić; jego drogą jest polecenie z flagami, które kreator wypisuje
+    z zatwierdzonego wyniku asystenta (ADR-0022).
     """
     from ceidg_tool.ui.prompts import ZATWIERDZ_INTERPRETACJE, DefaultsPrompter
 

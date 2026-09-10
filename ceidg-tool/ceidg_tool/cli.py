@@ -533,7 +533,8 @@ def pobierz(
             # Ta sama implementacja, co w kreatorze — oba wejścia nie mogą się rozjechać.
             # W trybie `--tak` pytanie o zatwierdzenie ma `safe_default=False`, więc kończy się
             # kodem 3: harmonogram nie ma prawa działać na interpretacji, której nikt nie
-            # przeczytał. Jego drogą jest plik YAML, zapisywany przez kreator z wyniku asystenta.
+            # przeczytał. Jego drogą jest polecenie z flagami, które kreator wypisuje
+            # z zatwierdzonej interpretacji (ADR-0022).
             z_opisu = flow.collect_from_description(deps, prompter, view, opis=opis)
             if z_opisu is None:
                 # `None` znaczy „operator wybrał pytania po kolei", a nie „asystenta nie ma".

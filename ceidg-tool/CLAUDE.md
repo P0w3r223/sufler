@@ -165,6 +165,8 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
 ## Where the design lives
 
 - `docs/status.md` — the living plan: phases, gates, open items. Update it at every gate.
+- `docs/research/public-search-parity.md` — what the public CEIDG search form can ask that this
+  tool cannot, and why most of that gap belongs to the API rather than to the tool.
 - `INSTRUKCJA_CLAUDE_CODE.md` and `UZUPELNIENIE_01.md` — the requirements. The supplement wins
   wherever the two disagree.
 - `docs/decisions.md` — what the API probe measured (page numbering, page limit, batch size, how
@@ -174,7 +176,9 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
   PKD 2007→2025 transition, 0013 the identity of a record identifier (and the schema v3 migration
   that follows from it), 0014 the register-free mode that `--demo` runs on, 0015 open edges in
   batched queries, 0016 the identity of a report row the register gave no number to, 0017 the
-  clarification round (which reverses ADR-0011's "no clarification round trip in v1").
+  clarification round (which reverses ADR-0011's "no clarification round trip in v1"), 0022 the
+  withdrawal of the YAML query file. 0018-0021 came out of the 2026-09-09 architecture audit and
+  are **proposed**, not decided — read their status line before treating any of them as settled.
 - `docs/design/phase2_core.md` — module map and the numbered boundary rules.
 - `docs/resilience-report.md` — the ten resilience scenarios and how each is covered.
 - `docs/test-runs-phase4.md` — the five groups of runs that need a real model or a real register,

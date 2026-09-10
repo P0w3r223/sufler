@@ -225,12 +225,14 @@ def _opcje_polecenia(nazwa: str) -> set[str]:
 
 
 def test_kazde_pole_kryteriow_ma_flage_w_wierszu_polecen() -> None:
-    """Pole `Criteria` bez flagi jest dostępne tylko przez plik zapytania albo asystenta.
+    """Pole `Criteria` bez flagi jest po wycofaniu pliku zapytania (ADR-0022) nieosiągalne
+    z wiersza poleceń w ogóle — zostaje mu asystent, czyli klucz API i jedno zdanie prozy.
 
     Tak było do 2026-09-10 z `imie`, `nazwisko`, `ulica` i `kod`: filtr istniał, przechodził
     walidację, jechał do API — a operator wiersza poleceń nie miał jak go podać i nie miał skąd
     się o nim dowiedzieć, bo `--help` go nie wymieniał. Test porównuje **spisy**, więc następne
-    dopisane pole albo dostanie flagę, albo trafi na listę wyjątków wraz z powodem.
+    dopisane pole albo dostanie flagę, albo trafi na listę wyjątków wraz z powodem. Od
+    wycofania pliku zapytania ten test jest jedynym strażnikiem kompletności wejścia CLI.
     """
     brakujace = (
         set(Criteria.model_fields) - POLA_BEZ_WLASNEJ_FLAGI_LISTOWEJ - _opcje_polecenia("pobierz")

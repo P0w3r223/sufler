@@ -210,8 +210,10 @@ a rekordu ze starym kodem nie da się przypisać do jednej branży. Dzieje się 
 Pytanie pokazuje obie liczby, każdą policzoną naprawdę, i nazywa branże, które dojdą.
 
 W harmonogramie pytania nie ma: bez flagi program zachowuje się jak dotąd (tylko PKD 2025) i pisze
-jedno zdanie o tym, czego nie objął. Jawny wybór to `--pkd-2007` albo `--bez-pkd-2007`; kreator
-zapisuje go do pliku zapytania, więc powtórzenie daje ten sam wynik.
+jedno zdanie o tym, czego nie objął. Jawny wybór to `--pkd-2007` albo `--bez-pkd-2007`, a kreator
+wstawia go do wypisanego polecenia, więc powtórzenie daje ten sam wynik. Jedna różnica warta
+wiedzy: polecenie niesie **decyzję**, nie listę starych kodów — dobiera je tablica przejścia
+z chwili uruchomienia, więc po jej aktualizacji populacja może być inna.
 
 ## Ile to potrwa — zanim się zacznie
 

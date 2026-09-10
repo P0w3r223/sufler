@@ -33,6 +33,13 @@ rekordów z telefonem i e-mailem, lista arkuszy, ścieżka logu, zdanie o kolumn
 Ta sama logika i te same komunikaty obsługują flagi CLI i plik YAML; tryb
 nieinteraktywny (`--tak`) przyjmuje wszystkie decyzje domyślne i nadaje się do harmonogramu.
 
+> **Zmiana 2026-09-10 (ADR-0022):** plik YAML został wycofany decyzją właściciela — odkąd każde
+> pole filtrujące ma flagę, był drugim formatem wejścia bez własnego zastosowania. Zdanie wyżej
+> czyta się dziś jako „flagi CLI, kreator i asystent"; do harmonogramu służy polecenie, które
+> kreator wypisuje po podjęciu decyzji. Wymaganie o wspólnej logice i wspólnych komunikatach
+> **obowiązuje dalej** i jest sprawdzane mocniej niż wcześniej: wypisane polecenie wraca przez
+> `CliRunner` i musi dać tę samą tabelę kosztów.
+
 Dodatkowe polecenia: `eksportuj` (ponowny Excel z bazy bez pobierania), `wyczysc`
 (usuwa bazę, checkpointy i logi po potwierdzeniu), `sprawdz-token` (środowisko i data
 wygaśnięcia, nic więcej).

@@ -64,9 +64,10 @@ five minutes, so runs done back to back are cheaper still — and **A7 checks th
 | **A7** | repeat **A1** verbatim, within five minutes | prompt caching | Second interpretation noticeably faster. Caching failing is silent by construction, and it is the difference between ~9 gr and ~1 gr per question |
 | **A8** | `chcę wszystko` | a sentence with no usable filter | Refusal before any request, with the "bez żadnego filtra" sentence — not an empty query against the whole register |
 
-**Also worth doing once, in A1:** answer **"tak, szukaj"**, then at the YAML question say yes. That
-writes a query file from the assistant's output and costs nothing — it is the route a scheduled job
-takes, since `--tak` refuses to confirm an interpretation nobody read.
+**Also worth doing once, in A1:** answer **"tak, szukaj"** and read the command the wizard prints
+afterwards. It costs nothing and it is the route a scheduled job takes, since `--tak` refuses to
+confirm an interpretation nobody read. *(Written when this step was a YAML question — the query file
+was withdrawn on 2026-09-10, ADR-0022, and the printed command took its place.)*
 
 ### Group A — results, 2026-09-07
 
@@ -198,7 +199,8 @@ the first line of the command. The program nevertheless spent a model call and r
 interpretation before refusing. That is the same mistake as sending a request for a NIP whose
 checksum is wrong locally — a cost paid to discover something knowable for free. The guard moved to
 `cli.pobierz`, where consent-shaped decisions already live (ADR-0008), and the message now also says
-what to do instead: run without `--tak`, or let the wizard write a query file for the schedule.
+what to do instead: run without `--tak`, or take the command the wizard prints for the schedule
+(at the time of the run it wrote a query file; ADR-0022 replaced that with the command).
 
 **B6 — a message that blamed the wrong thing.** `_build_assistant` caught `CeidgError` and returned
 a bare `None`, so the specific reason died there and the caller fell back to a sentence enumerating
@@ -271,7 +273,7 @@ a screen that did not exist before:
 | It carries **two counts**, and the wider one is roughly six times the narrower | Both are measured, one request each. If a number looks invented, it is a defect |
 | Choosing *narrow* spends no further `count`; the cost table shows the number already taken | The restated invariant: at most two before consent, none after |
 | Choosing *wide* on a national query crosses the 50 000 threshold and offers the split path | Designed behaviour, not a surprise |
-| `Metadane` and the saved query file record which population was chosen | A rerun has to reproduce the same result, not today's default |
+| `Metadane` and the printed command record which population was chosen | A rerun has to reproduce the same result, not today's default. *(The run predates ADR-0022, when the carrier was the query file.)* |
 
 ---
 

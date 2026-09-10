@@ -422,7 +422,8 @@ DOPYTANIE = Question(
     # Opcje buduje `flow._pytanie_dopytania`, bo zależą od tego, ile propozycji przysłał model.
     default="1",
     # `safe_default=False`: opis, z którego nie da się zbudować filtra, nie może w trybie
-    # nieinteraktywnym zamienić się w cokolwiek. Harmonogram ma na to plik zapytania.
+    # nieinteraktywnym zamienić się w cokolwiek. Harmonogram ma na to polecenie z flagami,
+    # które kreator wypisuje po zatwierdzeniu interpretacji (ADR-0022).
     safe_default=False,
 )
 
@@ -470,8 +471,8 @@ OPIS = Question(
 )
 
 # `safe_default=False`, więc `--tak` tego nie podejmie za operatora. Harmonogram nie ma prawa
-# działać na interpretacji, której nikt nie przeczytał — jego drogą jest plik YAML, który
-# kreator zapisze z wyniku asystenta.
+# działać na interpretacji, której nikt nie przeczytał — jego drogą jest polecenie z flagami,
+# które kreator wypisuje z zatwierdzonego wyniku asystenta (ADR-0022).
 ZATWIERDZ_INTERPRETACJE = Question(
     id="zatwierdz_interpretacje",
     text="Czy tak rozumiem Twoje zapytanie?",

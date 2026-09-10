@@ -1069,16 +1069,18 @@ def test_a_predecessor_the_operator_already_asked_for_is_not_added_again(
     assert not rozsz.wymaga_pytania, "pytanie o wybór, który niczego nie zmienia"
 
 
-def test_the_wide_candidate_survives_a_round_trip_through_the_query_file(
+def test_the_wide_candidate_survives_a_round_trip_through_serialisation(
     tmp_path: Path, clock: FakeClock
 ) -> None:
-    """Odcisk kandydata szerokiego musi przeżyć zapis do pliku zapytania i odczyt z niego.
+    """Odcisk kandydata szerokiego musi przeżyć zapis i ponowny odczyt kryteriów.
 
     `model_copy(update=…)` w pydanticu v2 **nie waliduje**, więc `_dedupe` — sortujące właśnie
     po to, żeby odcisk nie zależał od kolejności — nie odpalało się. Ta sama treść wczytana
-    z YAML-a szła przez walidację i dawała inny odcisk, więc przerwany szeroki przebieg był
-    niewidoczny dla wznowienia z zapisanego pliku. To ta klasa, którą pętla trzech kandydatów
-    miała zamknąć.
+    z powrotem szła przez walidację i dawała inny odcisk, więc przerwany szeroki przebieg był
+    niewidoczny dla wznowienia. To ta klasa, którą pętla trzech kandydatów miała zamknąć.
+
+    Nośnikiem był plik zapytania; po jego wycofaniu (ADR-0022) tą samą drogą chodzi
+    `criteria_json` w bazie, którego `find_resumable` używa do odnalezienia przebiegu.
     """
     # Prawdziwa tablica, bo przypadek rozróżniający wymaga kodu o rozszerzeniu **mieszanym** —
     # czystym i niejednoznacznym naraz — a takich w trzyelementowej atrapie nie ma. `2366Z`
@@ -1101,10 +1103,14 @@ def test_the_wide_candidate_survives_a_round_trip_through_the_query_file(
     deps.store.close()
 
 
-def test_the_flag_and_the_query_file_cannot_contradict_each_other_in_silence(
+def test_the_flag_and_stored_criteria_cannot_contradict_each_other_in_silence(
     tmp_path: Path, clock: FakeClock
 ) -> None:
-    """Plik zapytania z `pkd_2007` plus `--bez-pkd-2007` to sprzeczność, nie sytuacja domyślna.
+    """Kryteria z `pkd_2007` plus `--bez-pkd-2007` to sprzeczność, nie sytuacja domyślna.
+
+    Źródłem takich kryteriów był plik zapytania; po ADR-0022 zostaje wznowienie z bazy oraz
+    każde przyszłe wejście, które zapisany wybór odtworzy. Strażnik broni kontraktu `flow`,
+    a nie konkretnego wejścia — i dlatego przeżył wycofanie pliku.
 
     Strażnik istniał od 2026-09-07 i **nie wykonał się ani razu**: żaden test nie podawał
     naraz `criteria.pkd_2007` i `rocznik_2007=False` (audyt 2026-09-07). Wcześniej wygrywał

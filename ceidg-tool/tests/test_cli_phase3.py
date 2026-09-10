@@ -2,7 +2,8 @@
 
 `tests/test_cli.py` zostaje nietknięty jako bramka regresji dla zgody na produkcję — nowe
 przypadki mieszkają tutaj. Sprawdzamy to, co widać z linii poleceń: że kreator odmawia poza
-terminalem, że `sprawdz-nip` liczy sumę kontrolną przed siecią, i że flagi oraz plik YAML
+terminalem, że `sprawdz-nip` liczy sumę kontrolną przed siecią, i że flagi oraz polecenie
+wypisane przez kreator
 z tymi samymi kryteriami pokazują **tę samą tabelę kosztów** (ADR-0008, decyzja 2).
 """
 

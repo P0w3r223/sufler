@@ -5,7 +5,6 @@ import json
 from datetime import date
 
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from ceidg_tool.apiprofile import ApiProfile
@@ -220,23 +219,25 @@ def test_the_description_says_which_codes_we_added_ourselves() -> None:
     assert "dodatkowo" not in WASKIE.describe()
 
 
-def test_a_query_file_round_trips_the_vintage_choice() -> None:
-    """Plik zapytania ma uruchomić dokładnie tę populację, którą wybrał operator.
+def test_kryteria_przezywaja_zapis_do_bazy_i_odczyt_z_niej() -> None:
+    """Zapisane kryteria mają wskazywać tę samą populację po ponownym wczytaniu.
 
-    Kształt zapisu jest ten sam, co w `wizard.offer_yaml`: `exclude_defaults`, więc wybór
-    wąski nie zostawia w pliku żadnego śladu, a szeroki zostawia jawny.
+    Test dotyczył do 2026-09-10 pliku zapytania; plik został wycofany (ADR-0022), ale ta sama
+    droga tam i z powrotem zachodzi przy **wznowieniu**: `store` trzyma `criteria_json`,
+    a `find_resumable` porównuje odciski policzone po obu stronach. Gdyby serializacja gubiła
+    kolejność albo pole, przerwany szeroki przebieg przestałby być odnajdywalny — czyli
+    dokładnie ta strata, przed którą broni `_dedupe` i walidacja w `_z_rocznikiem`.
     """
-    zapis = yaml.safe_dump(SZEROKIE.model_dump(mode="json", exclude_defaults=True))
-    wczytane = Criteria.model_validate(yaml.safe_load(zapis))
+    wczytane = Criteria.model_validate(json.loads(SZEROKIE.canonical_json()))
 
     assert wczytane == SZEROKIE
     assert wczytane.fingerprint() == SZEROKIE.fingerprint()
-    assert "pkd_2007" not in yaml.safe_dump(WASKIE.model_dump(mode="json", exclude_defaults=True))
+    assert "pkd_2007" not in WASKIE.canonical_json()
 
 
 def test_the_vintage_field_alone_is_still_a_query() -> None:
-    """`pkd_2007` liczy się jako filtr — inaczej wznowienie szerokiego przebiegu z pliku
-    zapytania zostałoby odrzucone jako „brak kryteriów"."""
+    """`pkd_2007` liczy się jako filtr — inaczej wznowienie szerokiego przebiegu zostałoby
+    odrzucone jako „brak kryteriów"."""
     assert not criteria(pkd_2007="9602Z").is_empty()
 
 

@@ -1,4 +1,4 @@
-"""Kroki decyzyjne wspólne dla flag CLI, pliku YAML, trybu `--tak` i kreatora.
+"""Kroki decyzyjne wspólne dla flag CLI, trybu `--tak`, kreatora i asystenta.
 
 Jedno miejsce, w którym zapada kolejność: wznowienie → raport → rocznik PKD → zapytanie
 o `count` → tabela kosztów → wybór → ewentualny podział na partie → pobranie → eksport →
@@ -55,10 +55,11 @@ from .prompts import Prompter
 from .texts import Block, SummaryInput
 
 # `anuluj` to **nie** to samo co `wyjdz`. `wyjdz` znaczy „obejrzałem koszt i rezygnuję",
-# więc kryteria są już rozstrzygnięte i warto zaproponować ich zapis. `anuluj` znaczy
-# „nie chcę podejmować tej decyzji" — pada na pytaniu o rocznik PKD, gdzie nic jeszcze nie
-# zapadło. Zlanie obu w jedno sprawiało, że kreator proponował zapis pliku z wyborem, którego
-# operator właśnie odmówił dokonać (audyt 2026-09-07).
+# więc kryteria są już rozstrzygnięte i warto pokazać polecenie, które je powtórzy. `anuluj`
+# znaczy „nie chcę podejmować tej decyzji" — pada na pytaniu o rocznik PKD, gdzie nic jeszcze
+# nie zapadło. Zlanie obu w jedno sprawiało, że kreator pokazywał powtórzenie z wyborem,
+# którego operator właśnie odmówił dokonać (audyt 2026-09-07; wtedy było to zapisanie pliku
+# zapytania, dziś — wypisanie polecenia, ADR-0022).
 Decision = Literal["lista", "szczegoly", "raport", "wznow", "partie", "popraw", "wyjdz", "anuluj"]
 
 
@@ -225,8 +226,9 @@ def _z_rocznikiem(criteria: Criteria, kody_2007: tuple[str, ...]) -> Criteria:
     `model_copy(update=…)` w pydanticu v2 waliduje pominąć — a to `_dedupe` sortuje krotki
     właśnie po to, żeby odcisk palca nie zależał od kolejności wejścia. Bez walidacji kandydat
     szeroki miał kody posortowane wewnątrz każdej połówki, ale nie razem, więc ta sama treść
-    wczytana z pliku zapytania dawała **inny odcisk** i przerwany przebieg stawał się
-    niewidoczny dla wznowienia (audyt 2026-09-07).
+    wczytana ponownie dawała **inny odcisk** i przerwany przebieg stawał się niewidoczny dla
+    wznowienia (audyt 2026-09-07; wtedy „ponownie" znaczyło „z pliku zapytania", dziś —
+    z powtórzonego polecenia, ADR-0022).
     """
     return Criteria.model_validate({**criteria.model_dump(), "pkd_2007": kody_2007})
 
@@ -252,7 +254,7 @@ def _kandydaci(
         # a nie sytuacją do rozstrzygnięcia domyślnie na czyjąś korzyść.
         raise ConfigError(texts.vintage_conflict(criteria.pkd_2007))
     if deps.pkd_map is None or not criteria.pkd or criteria.pkd_2007:
-        # Pole już ustawione znaczy plik zapytania albo wcześniejszy wybór: powtórzenie
+        # Pole już ustawione znaczy wcześniejszy wybór (wznowienie, `--pkd-2007`): powtórzenie
         # przebiegu ma dać ten sam wynik, więc niczego tu nie przeliczamy.
         return criteria, criteria, None
     rozsz = deps.pkd_map.rozszerz(criteria.pkd)
@@ -319,7 +321,7 @@ def prepare_fetch(
     kryteria.
 
     `rocznik_2007`: `None` znaczy „zapytaj, jeśli jest o co", `True` i `False` to jawny wybór
-    z flagi albo z pliku zapytania — wtedy nie pytamy i nie liczymy drugi raz.
+    z flagi `--pkd-2007/--bez-pkd-2007` — wtedy nie pytamy i nie liczymy drugi raz.
     """
     if criteria.is_empty():
         raise ConfigError(texts.EMPTY_CRITERIA)
