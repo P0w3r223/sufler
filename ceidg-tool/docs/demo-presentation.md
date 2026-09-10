@@ -22,13 +22,24 @@ that only production can do. The offline demo is now the **fallback** — see th
 | 1. What this is | 00:00 | 3 min | 0 | nothing |
 | 2. Two doors | 03:00 | 3 min | 0 | the government search page |
 | 3. Where the register ends | 06:00 | 4 min | 2 (+2 optional) | terminal |
-| 4. A real query | 10:00 | 6 min | ~6 | terminal, then the page side by side |
-| 5. The trap | 16:00 | 5 min | 2 | terminal |
-| 6. What lands on disk | 21:00 | 4 min | 0 | Excel |
-| 7. Scale | 25:00 | 3 min | 1 | terminal |
-| 8. Close | 28:00 | 2 min | 0 | nothing |
+| **4. The menu** | 10:00 | 4 min | 0 | **the wizard, standing still** |
+| **5. Eight questions to a file** | 14:00 | 7 min | ~8 | **the wizard, all the way through** |
+| **6. A sentence instead of a form** | 21:00 | 6 min | ~7 | **the wizard with the assistant** |
+| 7. Checked against the page | 27:00 | 4 min | 0 | browser beside the terminal |
+| 8. The trap | 31:00 | 4 min | 2 | terminal, flags |
+| 9. What lands on disk | 35:00 | 5 min | 0 | Excel |
+| 10. Scale and the schedule | 40:00 | 3 min | 1 | terminal |
+| 11. Close | 43:00 | 2 min | 0 | nothing |
 
-Thirty minutes end to end, about **11 requests**. Leave ten minutes for questions.
+**Forty-five minutes**, about **20 requests**. That is long for a board, and the shorter 30-minute
+cut still exists — drop acts 4 and 6 and the numbers above collapse back to it. But the owner's
+call on 2026-09-10 was that the wizard has to be seen working rather than described, and the reason
+is hard to argue with: **a demo of a tool built for someone who does not know what an API is,
+conducted entirely in flags, shows the wrong product.**
+
+**If the room gets restless**, cut in this order: act 8 (the trap survives as one sentence in
+act 11), then act 7 (the comparison can be described), then the second half of act 5 (stop at the
+cost table). Never cut acts 4 and 6 — those are the ones that show who this is for.
 
 ## Audience and posture
 
@@ -177,24 +188,149 @@ Read two or three fields aloud, then point at the last row and click it:
 
 If you have no such NIP at hand, skip it: act 4 shows 23 records a minute later anyway.
 
-## Act 4 — a real query, checked against the page (6 min)
+## Act 4 — the menu, standing still (4 min)
+
+**Nothing is typed in this act.** Open the wizard and talk over the menu without choosing anything.
+This is the act that answers "who is this for".
 
 ```
-ceidg-tool pobierz -s prod --produkcja --nazwisko Nowak --pkd 6210B -m Poznań --szczegoly
+ceidg-tool -s prod --produkcja
 ```
 
-*(about 6 requests: 1 for the count, 1 page of results, 4-5 for the details)*
+*(0 requests — the wizard sends none until it has criteria)*
 
-> „Pytam o firmy programistyczne w Poznaniu, prowadzone przez osoby o nazwisku Nowak."
+> „Do tej pory pisałem komendy. Tak się z tym pracuje, jak się chce — ale nie tak się to obsługuje."
+>
+> „Wpisuję samą nazwę programu, bez niczego."
 
-1. **Cost table.** Point at it before anything downloads.
-   > „Znalazł dwadzieścia trzy. Mówi, ile zapytań i ile czasu to zajmie. Nic jeszcze nie pobrał —
-   > decyzja jest moja."
-2. Choose **szczegóły**, let the progress run (~25 seconds — say what is happening).
+The first screen appears, then the menu. Read the positions out, one sentence each:
+
+| Position | What to say |
+|---|---|
+| Wznowić przerwane pobranie | „Pokazuje się tylko wtedy, gdy coś zostało przerwane. Wraca dokładnie tam, gdzie stanęło — nic nie pobiera drugi raz." |
+| Pobrać firmy | „Główna droga. Za chwilę nią pójdziemy." |
+| Zaktualizować bazę o zmiany | „Pyta rejestr, co się zmieniło od ostatniego razu. Nie pobiera wszystkiego od nowa, więc kosztuje ułamek pierwszego pobrania." |
+| Pobrać gotowy raport | „Państwo wystawia codzienny zrzut na województwo. Dwa zapytania zamiast tysięcy." |
+| Sprawdzić firmę po NIP | „To, co robiliśmy przed chwilą — tylko bez wpisywania komendy." |
+| Wyjść | — |
+
+> „Sześć pozycji. Numer, Enter. Nie ma tu nic do zapamiętania."
+
+The first position **only appears when the database holds an unfinished run**. If it is showing:
+
+> „Ta pierwsza pozycja pojawia się sama, kiedy poprzednie pobranie zostało przerwane.
+> Program pamięta, gdzie skończył."
+
+If it is not showing, say that in one sentence instead — do not stage an interruption to get it.
+
+## Act 5 — eight questions, and a file at the end (7 min)
+
+Choose **Pobrać firmy** and go all the way through. This is the longest act and the most important
+one: the room watches the entire path a non-technical operator walks.
+
+*(about 8 requests: 1-2 counts, 1 page of results, ~5 for details)*
+
+Before any question, a screen of allowed values appears — voivodeships, statuses, the PKD format:
+
+> „Zanim zapyta o cokolwiek, mówi, co wolno wpisać. Nie trzeba nic pamiętać."
+
+Then eight questions. Answer them **out loud as you type** — the pace is the point:
+
+| Question | Type | What to say |
+|---|---|---|
+| Województwo | *(Enter — empty)* | „Puste znaczy: bez tego filtra." |
+| Miejscowość | `Poznań` | |
+| Kod PKD | `6210B` | „Nasza branża." |
+| Status | `AKTYWNY` | „Tylko działające firmy." |
+| Data rozpoczęcia od | *(Enter)* | |
+| Data rozpoczęcia do | *(Enter)* | |
+| Fragment nazwy firmy | *(Enter)* | |
+| Maksymalna liczba rekordów | `25` | „Ograniczam do dwudziestu pięciu, żeby pokaz nie trwał kwadransa. Bez tego wziąłby wszystkie." |
+
+Then, in this order:
+
+1. **Kryteria** — what it understood.
+   > „Powtarza, co zrozumiał. Zanim cokolwiek zrobi."
+2. **Stare kody PKD — poszerzyć wyszukiwanie?** The vintage question fires here too, because
+   `6210B` has a predecessor. **Answer „nie" for now**, and say why:
+   > „O tym ekranie opowiem za chwilę osobno — to jest najciekawsza rzecz w całym rejestrze."
+3. **Tabela kosztów.** With the limit set, the numbers are small and the whole thing takes seconds.
+   > „Ile zapytań, ile czasu, co dostanę. Nic się jeszcze nie dzieje."
+4. Choose **szczegóły** and let the progress bar run.
+5. **Cel pobrania** — type something real, e.g. `analiza rynku IT — zarząd`.
+   > „Pyta, po co pobieram. To zdanie ląduje w pliku, w arkuszu Metadane."
+   >
+   > „Za pół roku ktoś otworzy ten plik i będzie wiedział, skąd się wziął i po co powstał."
+6. **Powtórzenie tego zapytania** — the wizard prints a ready-to-paste command.
+   > „I tu jest most między dwiema drogami: program sam wypisał linię, którą wpisałbym ręcznie.
+   > Kopiujesz ją do harmonogramu i to samo dzieje się co tydzień, bez nikogo."
+7. **Podsumowanie** — file path, counts by status, contact fill rate, sheets, log.
+
+> „Od pustego ekranu do pliku: osiem pytań i dwie decyzje."
+
+## Act 6 — a sentence instead of a form (6 min)
+
+**This is the act the product exists for.** Same wizard, same menu position — but the first question
+is different when the assistant key is present.
+
+*(1 call to the model + about 7 CEIDG requests)*
+
+```
+ceidg-tool -s prod --produkcja
+```
+
+Choose **Pobrać firmy**. The first prompt now asks for a sentence:
+
+> „Ten sam punkt menu. Ale teraz pyta inaczej: opisz jednym zdaniem, czego szukasz."
+
+Type it the way you would say it:
+
+```
+firmy programistyczne w Poznaniu prowadzone przez osoby o nazwisku Nowak
+```
+
+**The confirmation screen is the whole point.** It shows the filters the model produced, the PKD
+codes **with their names**, and anything the register cannot do:
+
+> „Zamieniło zdanie na filtry: miejscowość Poznań, nazwisko Nowak, kod branżowy — z nazwą,
+> żeby było widać, czy to ta branża."
+>
+> „I teraz najważniejsze: formularz, przez który przeszliśmy przed chwilą, nie ma pola na nazwisko.
+> Osiem pytań to osiem najczęstszych filtrów. Zdanie sięga dalej."
+>
+> „Nazwy branż nie bierze od modelu — bierze je z lokalnego słownika. Model wybiera kod,
+> nazwę dopisuje program. Dzięki temu zły kod widać jako złą branżę."
+
+Approve it, and let it run to the file: 23 records — the same query act 7 compares against the page.
+
+**Two things to say plainly, because a board will ask:**
+
+> „Do modelu idzie treść mojego pytania i lista kodów PKD. Pobrane dane — nigdy.
+> Pierwszy ekran mówi to za każdym razem."
+>
+> „Kosztuje grosze za pytanie. Bez klucza program pyta po prostu tymi ośmioma pytaniami
+> i działa tak samo."
+
+**If the model reads the sentence differently than you expected — show it.** Do not retype in
+silence:
+
+> „Zrozumiał inaczej, niż chciałem. Po to jest ten ekran — poprawiam opis i pytam jeszcze raz.
+> Program nie pobierze niczego, dopóki nie potwierdzę."
+
+That recovery, done calmly, is worth more to a board than a flawless first try.
+
+## Act 7 — a real query, checked against the page (4 min)
+
+On screen: the browser and the terminal side by side.
+
+**No new request here** — act 6 already fetched these 23 records.
+
+1. **Switch to the government tab** from act 2 — surname Nowak, PKD 6210B, Poznań — and put the two
+   counts next to each other.
+   > „Dwadzieścia trzy tam, dwadzieścia trzy tutaj. To samo źródło, dwie drogi."
+2. Point back at the cost table still on the terminal.
    > „Rejestr wpuszcza pięćdziesiąt zapytań na trzy minuty, więc narzędzie samo trzyma tempo.
    > Nie da się go przyspieszyć i nie próbuje."
-3. **Switch to the government tab** — the same three fields — and put the two counts side by side.
-   > „Dwadzieścia trzy tam, dwadzieścia trzy tutaj. To samo źródło, dwie drogi."
 
 If the counts differ by one or two, do not improvise — say this:
 
@@ -205,7 +341,14 @@ If the counts differ by one or two, do not improvise — say this:
 > „Nazwisko i imię rejestr dopasowuje dokładnie — sprawdziliśmy to pomiarem, nie założeniem.
 > Wpisanie „Nowa" zamiast „Nowak" nie zwraca nic. Narzędzie o tym wie i nie udaje, że wie więcej."
 
-## Act 5 — the trap, on our own trade (5 min)
+**The same query as one line**, for anyone who prefers typing to clicking — this is exactly what the
+wizard printed at the end of act 6:
+
+```
+ceidg-tool pobierz -s prod --produkcja --nazwisko Nowak --pkd 6210B -m Poznań --szczegoly
+```
+
+## Act 8 — the trap, on our own trade (4 min)
 
 ```
 ceidg-tool pobierz -s prod --produkcja --pkd 6210B -m Poznań
@@ -233,7 +376,7 @@ Answer **wyjdź** — the point is the screen, not another download.
 This is the strongest ninety seconds of the session. It is measured, it is theirs, and no competitor
 demo will have it.
 
-## Act 6 — what lands on the disk (4 min)
+## Act 9 — what lands on the disk (5 min)
 
 Open the workbook from act 4. Slow down here; this is the deliverable.
 
@@ -257,7 +400,7 @@ Point at the `zrodlo` row, and — if it is there — at `kolumny_ukryte`:
 
 > „Kolumny, których źródło nie umie wypełnić, są ukryte, nie usunięte. Program mówi, dlaczego."
 
-## Act 7 — scale, and doing it without a person (3 min)
+## Act 10 — scale, and doing it without a person (3 min)
 
 ```
 ceidg-tool raporty -s prod --produkcja
@@ -279,7 +422,7 @@ Then the scale sentence, without running anything:
 > „Na końcu każdego pytania program wypisuje gotową linię do skopiowania. Wklejasz ją
 > w harmonogram i masz to samo zestawienie co tydzień."
 
-## Act 8 — close (2 min)
+## Act 11 — close (2 min)
 
 > „Jedno pytanie, jeden plik, zero klikania."
 >
