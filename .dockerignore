@@ -34,8 +34,12 @@ __pycache__/
 .claude/
 
 # Samodzielne pod-projekty uv (własne obrazy/venvy) — NIE są częścią obrazu głównego WorkMate.
+# `ceidg-tool/` wchodzi tu razem z importem na `Main` (ADR 0074) i nie jest to tylko kwestia
+# rozmiaru kontekstu: wzorce `.env` i `.env.*` wyżej są ROOT-RELATIVE, więc `ceidg-tool/.env`
+# — plik z tokenem, którego payload niesie PESEL — nie łapałby się na żaden z nich.
 Powiadomienia_teams/
 claude_summary/
+ceidg-tool/
 
 # Dokumentacja, sesje i artefakty deweloperskie — niepotrzebne w obrazie.
 docs/
