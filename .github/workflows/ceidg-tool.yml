@@ -1,24 +1,32 @@
-name: ci
-# Filtr gałęzi, a nie jego brak, i to z dwóch różnych powodów.
+name: ceidg-tool (systemy i wersje Pythona)
+# Ten plik pokrywa OŚ, której matryca `ci.yml` nie ma: drugi system i drugą wersję Pythona.
+# Bramką jakości pod-projektu jest wpis `ceidg-tool` w matrycy `ci.yml` (ubuntu + uv) i to on
+# jest warunkiem scalenia; tutaj zostaje wyłącznie to, czego tamten nie zobaczy. Ta oś nie jest
+# ozdobą: #146 i #147 to były usterki widoczne WYŁĄCZNIE na Windows, obie przeżyły w repozytorium
+# tygodnie zielonego CI i obie znalazł człowiek, nie bramka.
 #
-# `push`: ta gałąź żyje w cudzym repozytorium (`PIWorkmate`, którego `Main` to nieznajomy
-# produkt), a matryca niżej jest czterodrożna — dwa systemy razy dwie wersje Pythona. Bez
-# filtra każdy push, także poprawka literówki w dokumencie, wydawał minuty Actions organizacji
-# na cztery pełne przebiegi suity.
-#
-# `pull_request`: dziś nadmiarowy, bo GitHub bierze plik workflow z gałęzi **bazowej** PR-a,
-# a ten plik istnieje tylko na `ceidg-tool` — czyli i tak odpalałby się wyłącznie dla PR-ów
-# do niej. Filtr jest tu na wypadek, gdyby ta gałąź kiedyś trafiła do `Main`: bez niego plik
-# zacząłby wtedy odpalać naszą matrycę przy każdym PR-ze cudzego zespołu, a to jest awaria,
-# której nikt by z nami nie skojarzył.
+# Filtr `paths` zastąpił filtr gałęzi (`branches: [ceidg-tool]`), którym ten plik żył, dopóki
+# pod-projekt stał poza `Main` (ADR 0074). Powód zawężenia się nie zmienił: matryca jest
+# czterodrożna, więc bez filtra literówka w cudzym katalogu wydawałaby minuty Actions na cztery
+# pełne przebiegi tej suity. Zmieniło się tylko to, po czym zawężamy — katalog zamiast gałęzi.
 on:
   push:
-    branches: [ceidg-tool]
+    branches: [Main, Dev]
+    paths:
+      - 'ceidg-tool/**'
+      - '.github/workflows/ceidg-tool.yml'
   pull_request:
-    branches: [ceidg-tool]
+    branches: [Main, Dev]
+    paths:
+      - 'ceidg-tool/**'
+      - '.github/workflows/ceidg-tool.yml'
 jobs:
   test:
+    name: ceidg-tool (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ceidg-tool
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -36,7 +44,7 @@ jobs:
       - run: python -m pip install -e .[dev,asystent]
       # Cały `scripts/` od kiedy sondy dzielą limiter z narzędziem (`scripts/probe_support.py`) —
       # wyliczanka plików gubiłaby każdy nowy. Dostarczony oryginał `ceidg_probe.py` leży
-      # w katalogu głównym i celowo zostaje poza tym.
+      # w katalogu głównym pod-projektu i celowo zostaje poza tym.
       - run: ruff check ceidg_tool tests scripts
       - run: ruff format --check ceidg_tool tests scripts
       - run: mypy ceidg_tool tests

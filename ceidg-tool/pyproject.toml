@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Pobieranie danych JDG z API v3 Hurtowni Danych CEIDG do skoroszytu Excel"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+# Bez własnego pola `license`: licencję całego drzewa niesie `LICENSE` w korzeniu
+# (Proprietary), tak samo jak w pozostałych pod-projektach. Deklaracja MIT pochodziła
+# z czasu, gdy ten projekt żył na osobnej gałęzi — decyzja o wyrównaniu: ADR 0074.
 dependencies = [
     # Górna granica, bo gwarancja wyjścia z §B opiera się na **wewnętrznym** zachowaniu httpx
     # (`allow_env_proxies = trust_env and transport is None`), a nie na jego publicznym API.
@@ -62,3 +64,7 @@ select = ["E", "F", "I", "B", "UP", "N", "W"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+# Zakres jawnie w konfiguracji, bo bramka repozytorium woła `uv run mypy` BEZ
+# argumentów (jeden krok dla wszystkich pod-projektów). Wcześniej zakres żył tylko
+# w wierszu poleceń workflow — czyli w miejscu, którego drugie wywołanie nie widzi.
+files = ["ceidg_tool", "tests"]

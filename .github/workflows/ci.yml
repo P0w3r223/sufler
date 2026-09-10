@@ -62,6 +62,19 @@ jobs:
             dir: "claude_summary"
             sync_args: ""
             lint_paths: "."
+          - name: ceidg-tool
+            dir: "ceidg-tool"
+            # `dev` niesie pytest, ruff i mypy: pod-projekt trzyma narzędzia w EXTRASACH, nie
+            # w `dependency-groups`, więc `uv sync` bez tego wpisu zainstalowałby sam produkt
+            # i każdy krok bramki padłby na braku polecenia. `asystent` jest obowiązkowy mimo
+            # że asystent językowy jest w produkcie opcjonalny — bez niego
+            # `tests/test_assistant_caller.py` nie ZBIERA się (importuje `httpx2`), a przebieg,
+            # w którym część suity się nie zebrała, jest zielony z powodu, którego nikt nie chciał.
+            sync_args: "--extra dev --extra asystent"
+            # Ten pod-projekt ma układ płaski (pakiet w korzeniu, bez `src/`), stąd nazwy
+            # katalogów zamiast `.`: `.` wciągnęłoby dostarczony oryginał `ceidg_probe.py`,
+            # świadomie trzymany poza regułami (`extend-exclude` w jego `pyproject.toml`).
+            lint_paths: "ceidg_tool tests scripts"
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
