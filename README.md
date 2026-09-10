@@ -34,10 +34,11 @@ gałęzi oraz nocą.
 
 ## Mapa repozytorium
 
-Repozytorium mieści cztery jednostki. Trzy pierwsze mają osobne środowiska `uv` i własny wpis
-w matrycy CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)); czwarta stoi na `pip`
-i `requirements.lock`, z własnym CI na własnej gałęzi. Opis każdej mieszka u niej — tutaj jest
-tylko wskazówka, dokąd iść.
+Repozytorium mieści cztery jednostki. Każda ma osobne środowisko `uv` i własny wpis w matrycy CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Czwarta dostaje dodatkowo przebieg na
+Windows i na drugiej wersji Pythona, instalowany `pipem` z `requirements.lock`
+([`.github/workflows/ceidg-tool.yml`](.github/workflows/ceidg-tool.yml)). Opis każdej mieszka
+u niej — tutaj jest tylko wskazówka, dokąd iść.
 
 **Rdzeń `workmate`** (`src/`, `tests/`, `docs/`, `deploy/`, `eval/`, `scripts/`) — to, co opisuje
 reszta tego pliku: serwer MCP, runtime agenta, drzwi i most zdarzeń.
@@ -55,15 +56,15 @@ z redakcją treści wrażliwej na granicy parsowania. Materiał wejściowy dla �
 Zamysł i status: [`PLAN.md`](claude_summary/PLAN.md). Ten katalog jest kopią referencyjną kontraktu
 i kodu, nie źródłem prawdy o wersji uruchomionej u konkretnej osoby.
 
-**[`ceidg-tool`](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/tree/ceidg-tool)** —
-**inny produkt, goszczący w tym repozytorium**. Pobiera dane o jednoosobowych działalnościach
-gospodarczych z API v3 Hurtowni Danych CEIDG i zapisuje je do skoroszytu Excel. Żyje wyłącznie na
-gałęzi `ceidg-tool`, która **nie ma wspólnego przodka z `Main`** (`git diff Main...origin/ceidg-tool`
-zwraca `no merge base`), stoi poza matrycą CI tego repozytorium — ma własny workflow uruchamiany
-tylko dla tej gałęzi — i jest na licencji MIT, podczas gdy korzeń jest własnościowy. Cała jego
-dokumentacja, z własną numeracją ADR-ów, leży na tamtej gałęzi. Gdzie ten projekt ma docelowo
-mieszkać, jest przedmiotem osobnej decyzji:
-[ADR 0074](docs/adr/0074-where-ceidg-tool-should-live.md).
+**[`ceidg-tool/`](ceidg-tool/README.md)** — **inny produkt, mieszkający w tym repozytorium**:
+pobiera dane o jednoosobowych działalnościach gospodarczych z API v3 Hurtowni Danych CEIDG
+i zapisuje je do skoroszytu Excel, z kreatorem dla osoby nietechnicznej i trybem `--demo` bez
+sieci. Do 2026-09-10 żył na osobnej gałęzi bez wspólnego przodka z `Main`; wszedł tutaj jako
+czwarty pod-projekt decyzją [ADR 0074](docs/adr/0074-where-ceidg-tool-should-live.md), z całą
+historią (36 commitów, autorstwo ujednolicone przy imporcie).
+Ma własny `pyproject.toml`, własną numerację ADR-ów w [`ceidg-tool/docs/`](ceidg-tool/docs/)
+i własny `CLAUDE.md`; asystent językowy jest u niego extrasem, nie zależnością. Pola `license`
+nie ma — obowiązuje [`LICENSE`](LICENSE) korzenia, tak jak w pozostałych pod-projektach.
 
 ## Zdolności
 

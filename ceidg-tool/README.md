@@ -15,22 +15,22 @@ i lista poprawek), `docs/demo-walkthrough.md` (jak przejść pokaz), `CLAUDE.md`
 
 ## Skąd wziąć kod
 
-Repozytorium `origin` należy do innego zespołu i jego gałąź domyślna (`Main`) zawiera
-**inny produkt**. Ten projekt żyje wyłącznie na gałęzi `ceidg-tool`:
+Ten projekt jest **czwartym pod-projektem repozytorium `PIWorkmate`** i mieszka w katalogu
+`ceidg-tool/` na gałęzi `Main` (od 2026-09-10, [ADR 0074](../docs/adr/0074-where-ceidg-tool-should-live.md)
+w korzeniu). Zwykły klon wystarczy:
 
 ```
-git clone --branch ceidg-tool <adres repozytorium>
+git clone <adres repozytorium>
+cd PIWorkmate/ceidg-tool
 ```
 
-Kto pracuje na lokalnej gałęzi o innej nazwie (np. `master`), niech ustawi to raz:
+Do 2026-09-10 kod żył na osobnej gałęzi `ceidg-tool`, bez wspólnego przodka z `Main`.
+Kto ma taki klon, niech pobierze `Main` zamiast dociągać starą gałąź — historia jest ta sama,
+ale numery commitów są nowe (autorstwo ujednolicono przy imporcie).
 
-```
-git config branch.<gałąź>.merge refs/heads/ceidg-tool
-git config push.default upstream
-```
-
-Bez tego podpowiedź gita (`git push origin HEAD`) utworzy na cudzym repozytorium nową
-gałąź. **Nigdy nie pushuj do `Main` i nigdy nie używaj `--force`.**
+W korzeniu repozytorium mieszka inny produkt (WorkMate). Zmiany w tym pod-projekcie idą
+zwykłą drogą repozytorium — gałąź robocza i PR do `Main`; obowiązuje tu zakaz `--force`
+z `CLAUDE.md` korzenia.
 
 ## Instalacja
 

@@ -8,6 +8,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Uwagi wdrożeniowe
 
+- **`ceidg-tool` wszedł na `Main` jako czwarty pod-projekt (2026-09-10, ADR 0074).** Projekt żył
+  od 2026-09-08 na osobnej gałęzi bez wspólnego przodka z `Main`; mieszka teraz w katalogu
+  `ceidg-tool/`, z zachowanymi 36 commitami. Przy imporcie przeszedł przez to samo przepisanie co
+  reszta drzewa (jeden autor), bo bramka `autorstwo` sprawdza CAŁĄ historię
+  osiągalną z `Main` — stąd nowe numery commitów.
+  Bramką jakości jest odtąd czwarty wpis w matrycy `ci.yml`; własny workflow pod-projektu został
+  zawężony `paths` i trzyma wyłącznie oś, której matryca nie ma — Windows i drugą wersję Pythona.
+  Deklaracja licencji MIT zniknęła z jego `pyproject.toml`: w tym drzewie obowiązuje `LICENSE`
+  korzenia. **Stara gałąź `ceidg-tool` zostaje jako kopia przejściowa** — commit dopisany do niej
+  nie dociera na `Main`, a jej usunięcie jest osobną decyzją właściciela.
+
 - **Historia gita przepisana 2026-09-10 — każdy SHA na `Main` i `Dev` jest nowy.** Ujednolicenie
   autorstwa: wszystkie 559 commitów mają odtąd autora `P0w3r223 <p0w3r2243@gmail.com>` (wcześniej
   osiem wariantów tożsamości). **Drzewo jest nietknięte** — hash drzewa `Main` (`8259ce5b…`) jest ten sam

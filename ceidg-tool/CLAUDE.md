@@ -15,18 +15,22 @@ owner's consent in the current session before any request goes out, and pass
 **Polish output needs `PYTHONUTF8=1`.** Without it the CLI, the probe scripts and pytest mangle
 diacritics on this Windows console. Prefix every Python invocation with it.
 
-**The project is under version control since 2026-09-08, and its remote is somebody else's repo.**
-The initial commit (`d6a46e9`, 157 files) went to the **`ceidg-tool` branch** of
-`BIAP-Inteligentne-Technologie/PIWorkmate` — a private org repository whose `Main` holds an
-unrelated product (WorkMate: `src/workmate`, Teams notifications, its own ADRs 0064+). The owner
-chose this after being shown that the two share no history. Two consequences worth holding on to:
-never push to `Main` and never force-push anything here, because that branch is another team's
-active work. CI in `.github/workflows/ci.yml` is filtered to `branches: [ceidg-tool]` on both
-`push` and `pull_request` since 2026-09-09 — until then it was unfiltered and every push, a typo
-fix included, spent the organisation's Actions minutes on a four-way matrix. Keep the filter:
-its second half guards a case that has not happened yet, because a `pull_request` trigger takes
-its workflow file from the PR's **base** branch, so an unfiltered copy landing in `Main` would
-run our matrix on another team's every pull request.
+**The project is under version control since 2026-09-08, and since 2026-09-10 it lives on `Main`.**
+The initial commit (157 files; `95a7405` today, `d6a46e9` before the import) went to the
+`ceidg-tool` **branch** of `BIAP-Inteligentne-Technologie/PIWorkmate`, a private org repository
+whose `Main` holds an unrelated product (WorkMate: `src/workmate`, Teams notifications, its own
+ADRs 0064+). The owner chose the branch after being shown that the two share no history; on
+2026-09-10 they chose the opposite, and this project entered `Main` as the fourth sub-project,
+in `ceidg-tool/`, with all 36 commits preserved (root `docs/adr/0074`). Authorship was unified in
+the same operation, so every commit number changed. Force-pushing stays
+forbidden: the branch this history now shares is another team's active work.
+
+**The quality gate is the root's, and it runs on ubuntu with `uv`** — the `ceidg-tool` entry in
+`.github/workflows/ci.yml` at the root. What stayed behind in `.github/workflows/ceidg-tool.yml`
+is the axis the root matrix does not have: Windows and a second Python version, installed with
+`pip` from `requirements.lock`, narrowed by `paths` instead of by branch. The narrowing is not
+cosmetic — the matrix is four-way, so without it a typo fix anywhere in the repository would
+spend the organisation's Actions minutes on four full runs of this suite.
 
 **The token in `.env` belongs to the owner.** It is not a borrowed credential and needs no action
 before 2026-09-30; from that date, remind them to refresh it. Its payload carries a PESEL, so it
