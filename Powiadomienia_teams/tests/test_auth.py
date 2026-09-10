@@ -312,14 +312,18 @@ def test_niejednoznaczne_konto_nie_wypuszcza_adresow_na_kanal_zewnetrzny():
 
 def test_pelna_tresc_niejednoznacznego_konta_zostaje_diagnostyczna():
     """Kontrola pozytywna do xfaila wyżej: log ma widzieć wszystko, i widzi."""
+    sciezka = Path("/dane/cache.bin")
     with pytest.raises(AmbiguousAccountError) as zlapany:
         _jedyne_konto(
             [{"username": "ala@firma.pl"}, {"username": "bot@firma.pl"}],
-            Path("/dane/cache.bin"),
+            sciezka,
         )
     tresc = str(zlapany.value)
     assert "ala@firma.pl" in tresc and "bot@firma.pl" in tresc
-    assert "/dane/cache.bin" in tresc  # operator wie, KTÓRY plik usunąć
+    # Przez ``str(sciezka)``, a nie przez literał: komunikat składa ``str(Path(...))``, więc
+    # ``Path`` renderuje się separatorem PLATFORMY. Literał POSIX mierzył system, na którym
+    # biegnie test, zamiast intencji „operator wie, KTÓRY plik usunąć" (#147).
+    assert str(sciezka) in tresc
     assert "--login" in tresc
 
 
