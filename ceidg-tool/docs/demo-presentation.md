@@ -21,7 +21,7 @@ that only production can do. The offline demo is now the **fallback** — see th
 |---|---|---|---|---|
 | 1. What this is | 00:00 | 3 min | 0 | nothing |
 | 2. Two doors | 03:00 | 3 min | 0 | the government search page |
-| 3. Our own company | 06:00 | 4 min | 2 | terminal, then the register entry |
+| 3. Where the register ends | 06:00 | 4 min | 2 (+2 optional) | terminal |
 | 4. A real query | 10:00 | 6 min | ~6 | terminal, then the page side by side |
 | 5. The trap | 16:00 | 5 min | 2 | terminal |
 | 6. What lands on disk | 21:00 | 4 min | 0 | Excel |
@@ -129,23 +129,53 @@ On screen: the government search page. Search for something small — surname **
 
 Leave that search on screen. **Act 4 comes back to it and compares the counts.**
 
-## Act 3 — one company, verified in ten seconds (4 min)
+**Worth adding, if the rehearsal confirms it:** type NIP `894-00-06-528` into the page's NIP field
+and show that the government's own search finds nothing either. Two doors, one answer — which is
+exactly the point act 3 makes thirty seconds later, and it removes any suspicion that the tool is
+the thing that failed. CEIDG holds sole traders only, so this follows from the register's scope,
+not from a measurement of the page — check it once before the show.
+
+## Act 3 — where this register ends (4 min)
+
+**Start with your own company, and it will not be there.** Measured 2026-09-10: NIP
+`894-00-06-528` returns *„brak wpisu o tym numerze NIP w rejestrze CEIDG"*. That is the correct
+answer — BIAP is a company, and CEIDG holds sole traders only; companies live in KRS. The checksum
+passes, so the tool says in the same breath that this is not a typo.
+
+Do not skip this because it is a negative result. **It is the strongest honesty moment available**,
+it costs two requests, and it puts the scope limit on the table at minute six instead of leaving it
+as a disclaimer at the end.
 
 ```
-ceidg-tool sprawdz-nip -s prod --produkcja NIP-WŁASNEJ-FIRMY
+ceidg-tool sprawdz-nip -s prod --produkcja 894-00-06-528
 ```
 
 *(2 requests)*
 
-> „Zaczynam od nas samych, żeby było widać, że to prawdziwe dane."
->
-> „Numer sprawdza się lokalnie, zanim cokolwiek poleci — literówka nie kosztuje ani jednego zapytania."
+> „Zaczynam od nas. Wpisuję NIP naszej firmy."
 
-When the card appears, read two or three fields aloud and point at the last row:
+Let the answer land, then:
+
+> „Nie ma nas tutaj — i to jest poprawna odpowiedź."
+>
+> „CEIDG to rejestr jednoosobowych działalności. My jesteśmy spółką, a spółki są w KRS.
+> To dwa różne rejestry państwowe."
+>
+> „Zwróćcie uwagę, co mówi program: numer przeszedł kontrolę sumy kontrolnej, <em>więc to nie
+> literówka</em>. Mówi, czego nie wie — i dlaczego."
+
+**Optional second half, if you have one.** A NIP of a *sole trader* you know — a contractor, a
+client, a freelancer you work with — shows what a hit looks like:
+
+```
+ceidg-tool sprawdz-nip -s prod --produkcja NIP-JEDNOOSOBOWEJ-DZIAŁALNOŚCI
+```
+
+Read two or three fields aloud, then point at the last row and click it:
 
 > „Ostatnia linia to odnośnik do wpisu na stronie państwa. Klikam — i to jest ten sam wpis."
 
-Click it. This is the cheapest trust you will buy all session.
+If you have no such NIP at hand, skip it: act 4 shows 23 records a minute later anyway.
 
 ## Act 4 — a real query, checked against the page (6 min)
 

@@ -48,3 +48,8 @@ build/
 # ide
 .idea/
 .vscode/
+
+# prompter pokazu — wydruk sceniczny `docs/demo-presentation.md`, generowany na potrzeby
+# jednego wystąpienia i trzymany lokalnie. Źródłem prawdy jest markdown w `docs/`; plik HTML
+# jest jego kopią, więc w repozytorium byłby drugą wersją tych samych zdań do utrzymania.
+prompter-pokazu-ceidg.html
