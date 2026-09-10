@@ -181,3 +181,24 @@ is a separate, human-run check — see step 7.
   yet, so the sentence-to-criteria step is not part of this walk.
 - **A `DEMO` value in `firma.zrodlo`.** ADR-0014 defers the schema-level marker to a later change;
   today the markers are the screen, the `Metadane` row, the filename and the separate directory.
+
+---
+
+## Changed since this walk was written (2026-09-10)
+
+Two things a rehearsed walk will notice, both verified by re-running the demo end to end on
+2026-09-10 (`pobierz` with flags, `sprawdz-nip`, `aktualizuj`, `runy`, `eksportuj`, and the wizard
+path):
+
+- **The workbook now has a filled `Spolki` sheet.** The corpus gained a civil partnership for every
+  eleventh entry and a flat number for 23 % of them (the measured fill rate), so the sheet that used
+  to be empty in the demo now carries rows. The rest of the corpus is byte-for-byte what it was —
+  the new fields are computed from the entry number rather than from the shared RNG, and the
+  fingerprint computed without them still equals the previous `ODCISK_KORPUSU`. Every number in this
+  document therefore still holds.
+- **The wizard ends by printing a command instead of offering a YAML file** (ADR-0022). In demo mode
+  that command carries `--demo`, which is worth showing: a line pasted without it would reach the
+  register.
+
+`docs/demo-presentation.md` is the companion to this document — this one is how to run the demo,
+that one is what to say while running it, in what order, for an audience.
