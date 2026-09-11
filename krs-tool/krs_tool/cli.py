@@ -22,7 +22,8 @@ from .odpis.zrodlo import OdpisZPliku
 from .render import render_block
 from .richtext import make_console
 from .signals.katalog import wczytaj_katalog
-from .texts import NAZWA, karta_podmiotu, katalog_sygnalow, pierwszy_ekran
+from .signals.ocena import ocen_odpis
+from .texts import NAZWA, karta_podmiotu, katalog_sygnalow, ocena_ryzyka, pierwszy_ekran
 
 app = typer.Typer(
     name=NAZWA,
@@ -58,3 +59,17 @@ def pokaz(
 def katalog() -> None:
     """Katalog reguł sygnałowych do przeglądu — kody, poziomy, podstawy prawne."""
     render_block(katalog_sygnalow(wczytaj_katalog()), make_console())
+
+
+@app.command("ocen")
+def ocen(
+    plik: Annotated[Path, typer.Option("--plik", help="Odpis zapisany wcześniej do pliku.")],
+    krs: Annotated[
+        str | None,
+        typer.Option("--krs", help="Numer KRS, gdy odpis go nie niesie."),
+    ] = None,
+) -> None:
+    """Werdykt każdej reguły katalogu wobec tego odpisu — sygnał, wykluczenie albo nieustalone."""
+    numer: NumerKRS | None = numer_krs(krs) if krs else None
+    odpis = OdpisZPliku(plik).pobierz(numer)
+    render_block(ocena_ryzyka(ocen_odpis(odpis, wczytaj_katalog())), make_console())

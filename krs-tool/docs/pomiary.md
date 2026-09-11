@@ -37,6 +37,7 @@ cited as a fact until then.
 | 7 | The financial-year end sits at `dane.dzial3.informacjaODniuKonczacymRokObrotowy` | `czytanie.wczytaj_odpis` | Every statutory term loses the date it is counted from |
 | 8 | Divisions are keyed `dzial1`..`dzial6`, and an empty division is present-but-empty rather than absent | `czytanie._dzialy` | The binary risk flag on division 4 becomes ambiguous — the model already distinguishes three states to survive this |
 | 9 | Only two period spellings occur | `czytanie.czytaj_okres` | Nothing breaks: an unknown spelling is reported as unreadable, with its raw text, never guessed |
+| 10 | `naglowekA.rejestr` carries `P` for the entrepreneurs register | `odpis/model.py`, used by `signals/ocena.py` | The "outside the entrepreneurs register" premise resolves wrongly. The direction is safe: an unrecognised value **excludes** the missing-statement rule rather than firing it, and an empty one leaves the premise unresolved |
 
 Assumption 9 is the only one **observed** rather than invented — the reconnaissance saw both
 spellings on two independent samples within one company. It is nonetheless listed here, because a

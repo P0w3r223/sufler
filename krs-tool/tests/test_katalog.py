@@ -19,6 +19,7 @@ from krs_tool.signals.katalog import (
     PRZESLANKI_BRAKU_DOKUMENTU,
     Poziom,
     Rodzaj,
+    Zakres,
     wczytaj_katalog,
 )
 
@@ -28,6 +29,20 @@ REGULA_BRAKU = "brak_wpisu_o_sprawozdaniu"
 def _wzorzec() -> dict[str, Any]:
     zrodlo = Path(__file__).resolve().parent.parent / "krs_tool" / "signals" / "reguly"
     return dict(yaml.safe_load((zrodlo / "sprawozdania.yaml").read_text(encoding="utf-8")))
+
+
+def _wzorzec_dzialu() -> dict[str, Any]:
+    zrodlo = Path(__file__).resolve().parent.parent / "krs_tool" / "signals" / "reguly"
+    return dict(yaml.safe_load((zrodlo / "dzial4.yaml").read_text(encoding="utf-8")))
+
+
+def _zasiej_dzial(tmp_path: Path, zmiana: Any) -> Path:
+    dane = _wzorzec_dzialu()
+    zmiana(dane["reguly"])
+    (tmp_path / "zasiane.yaml").write_text(
+        yaml.safe_dump(dane, allow_unicode=True), encoding="utf-8"
+    )
+    return tmp_path
 
 
 def _zasiej(tmp_path: Path, zmiana: Any) -> Path:
@@ -151,3 +166,69 @@ def test_loader_odmawia_wczytania_reguly_zablokowanej(tmp_path: Path) -> None:
 def test_zamrozona_szostka_ma_dokladnie_szesc_pozycji() -> None:
     assert len(PRZESLANKI_BRAKU_DOKUMENTU) == len(set(PRZESLANKI_BRAKU_DOKUMENTU))
     assert len(PRZESLANKI_BRAKU_DOKUMENTU) == 6
+
+
+# --------------------------------------------------------------------------------------
+# Zakres reguły — rozróżnienie dopisane w kroku 4
+# --------------------------------------------------------------------------------------
+
+
+def test_kazda_regula_obecnosci_wpisu_deklaruje_zakres() -> None:
+    """Bez zakresu nie wiadomo, czy reguła mówi o wpisie, czy o całym dziale — a to inny wynik."""
+    obecnosci = [r for r in wczytaj_katalog() if r.rodzaj is Rodzaj.OBECNOSC_WPISU]
+
+    assert obecnosci
+    assert all(r.zakres is not None for r in obecnosci)
+
+
+def test_dokladnie_jedna_regula_orzeka_o_calym_dziale() -> None:
+    """Dziś jest nią niepustość działu 4 — jedyny sygnał, który z niepustego działu wynika."""
+    calodzialowe = [r for r in wczytaj_katalog() if r.zakres is Zakres.CALY_DZIAL]
+
+    assert [r.kod for r in calodzialowe] == ["dzial4_niepusty"]
+
+
+def test_loader_odmawia_bez_zakresu(tmp_path: Path) -> None:
+    """Domyślność zamieniłaby tu sygnał rozstrzygalny w nierozstrzygalny albo odwrotnie."""
+
+    def usun_zakres(reguly: list[dict[str, Any]]) -> None:
+        del reguly[0]["zakres"]
+
+    with pytest.raises(ConfigError) as blad:
+        wczytaj_katalog(_zasiej_dzial(tmp_path, usun_zakres))
+
+    assert "zakres" in str(blad.value)
+
+
+def test_loader_odmawia_przy_nieznanym_zakresie(tmp_path: Path) -> None:
+    def podmien_zakres(reguly: list[dict[str, Any]]) -> None:
+        reguly[0]["zakres"] = "polowa_dzialu"
+
+    with pytest.raises(ConfigError):
+        wczytaj_katalog(_zasiej_dzial(tmp_path, podmien_zakres))
+
+
+def test_loader_odmawia_obecnosci_wpisu_poza_dzialem(tmp_path: Path) -> None:
+    """Obecność wpisu bada się w dziale, bo tylko dział ma stan w modelu odczytu."""
+
+    def podmien_zrodlo(reguly: list[dict[str, Any]]) -> None:
+        reguly[0]["zrodlo"] = "naglowek"
+
+    with pytest.raises(ConfigError) as blad:
+        wczytaj_katalog(_zasiej_dzial(tmp_path, podmien_zrodlo))
+
+    assert "działem nie jest" in str(blad.value)
+
+
+def test_loader_odmawia_dwoch_regul_o_calym_dziale(tmp_path: Path) -> None:
+    """Dwie takie reguły zapaliłyby dwa sygnały z jednego faktu — niepustości tego samego działu."""
+
+    def zdubluj(reguly: list[dict[str, Any]]) -> None:
+        bliznjak = copy.deepcopy(reguly[-1])
+        bliznjak["kod"] = "dzial4_niepusty_bis"
+        reguly.append(bliznjak)
+
+    with pytest.raises(ConfigError) as blad:
+        wczytaj_katalog(_zasiej_dzial(tmp_path, zdubluj))
+
+    assert "jednego faktu" in str(blad.value)

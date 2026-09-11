@@ -32,6 +32,7 @@ krs_tool/
   signals/
     katalog.py      loader-guard over the rule catalogue             [step 3]
     model.py        Sygnal | Wykluczony | Nieustalony                [step 4]
+    ocena.py        the catalogue walked over one extract            [step 4]
     terminy.py      sole producer of TerminUstawowy                  [step 4]
     reguly/*.yaml   the rules themselves, as data                    [step 3]
   raport/
@@ -64,8 +65,8 @@ violation — a rule that cannot be shown to fail is indistinguishable from an e
 | 5 | `signals/` and `texts.py` are pure — no `rich`, `typer`, `questionary`, `sqlite3` | import scan | **3** |
 | 6 | Every string from outside the program reaches an output channel through **that channel's** neutraliser | scan generalised to pairs (channel, neutraliser): `rich` to `richtext.safe`, markdown to `marktext.safe_md` | 1, extended in 5 |
 | 7 | `cli.py` authors no sentence | scan | 1 |
-| 8 | Only `identity.py` produces `NumerKRS` | mypy strict, `NewType` | 2 |
-| 9 | Only `terminy.py` produces `TerminUstawowy`, and it takes a `DzienBilansowy` produced only by `odpis/czytanie.py` | mypy strict, two `NewType` | 4 |
+| 8 | Only `identity.py` produces `NumerKRS` | mypy strict, `NewType`, **plus an AST scan for the constructor call** | 2, scan in 4 |
+| 9 | Only `terminy.py` produces `TerminUstawowy`, and it takes a `DzienBilansowy` produced only by `odpis/czytanie.py` | mypy strict, two `NewType`, plus the same scan | 4 |
 | 10 | No numeric literal other than 0 and 1 appears in `signals/` | AST scan | **3** |
 | 11 | The accusatory lexicon is closed | `Poziom` has no "late" member; scan of the **parsed values** of `reguly/*.yaml` and of the non-docstring string constants of `texts.py` | **3** |
 | 12 | `dziennik/` is append-only | scan: `open()` only in `a`, `x` or `r`; no `unlink`; no overwrite of an existing path | 6 |

@@ -25,6 +25,16 @@ from ..identity import NumerKRS
 # być kalendarzowy, a po zmianie bywa dłuższy niż dwanaście miesięcy.
 DzienBilansowy = NewType("DzienBilansowy", date)
 
+# Klucz wzmianki o rocznym sprawozdaniu finansowym — jedyny rodzaj wzmianki, na który patrzy
+# dziś warstwa sygnałów. Stoi tutaj, a nie w dwóch miejscach naraz: nazwa pochodzi od rejestru,
+# więc należy do słownika warstwy odczytu, a `texts.py` i `signals/` biorą ją stąd.
+RODZAJ_SPRAWOZDANIE_FINANSOWE = "wzmiankaOZlozeniuRocznegoSprawozdaniaFinansowego"
+
+# Wartość pola `naglowekA.rejestr` oznaczająca rejestr przedsiębiorców. **Założenie, nie
+# pomiar** — `docs/pomiary.md`, wiersz 10. Kierunek pomyłki jest bezpieczny: nieznana wartość
+# wyklucza regułę braku sprawozdania, zamiast ją zapalać.
+REJESTR_PRZEDSIEBIORCOW = "P"
+
 
 @dataclass(frozen=True)
 class Okres:

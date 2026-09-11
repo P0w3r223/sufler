@@ -161,16 +161,95 @@ Invariant with an observer: six premises cannot quietly become five; `zywotnosc`
 `podstawa_potwierdzona` have no defaults; a blocked rule refuses to load; no number other than 0 and 1
 lives in the signal layer; no accusation word reaches a user.
 
-## Step 4 — rules over the read model
+## Step 4 — rules over the read model — **done 2026-09-11**
 
-Produces: `signals/model.py`, the rule implementations, `signals/terminy.py`, boundary rules 4, 5, 8,
-9, 10 and 11 with self-tests.
+Produced: `signals/model.py` (the three-valued result, plus `Obserwacja`, `Powod`, `Werdykt` and
+`Niewiadoma`), `signals/terminy.py`, `signals/ocena.py` — the plan named no file for "the rule
+implementations" and this is it — the `zakres` field with three new loader guards, one new catalogue
+rule, `ocena_ryzyka` in `texts.py`, the `ocen` command, boundary rules 8 and 9 with their self-tests,
+and `tests/{test_terminy,test_ocena,test_ekran_oceny}.py`.
 
-How to check: `krs-tool ocen --plik odpis.json` over every sample. On the missing-statement path the
-result is `Nieustalony` with the unresolved premises listed — not an accusation.
+Gates, measured 2026-09-11: **205 passed**, ruff and format clean, mypy strict clean over 41 files.
 
-Invariant with an observer: no rule reads the clock; six months and fifteen days live only in the
-catalogue; the accusatory lexicon does not occur in the tree.
+**Acceptance was again a demonstration of red**, in real files rather than in fixtures:
+
+| Seeded violation | What fired |
+|---|---|
+| a second producer of `TerminUstawowy`, in `signals/ocena.py` | rule 9, the producer scan |
+| a second producer of `NumerKRS`, in `odpis/czytanie.py` | rule 8, the same scan |
+| `zakres: caly_dzial` deleted from the catalogue | the loader guard, plus two catalogue tests |
+
+Each was seeded, observed red, and reverted; the suite returned to 205 passed.
+
+### The measurement that changed the design
+
+The read model knows three things about a division — absent, present-and-empty, present-and-non-empty
+— and **does not know which entry sits in it**, because the key names inside a division have never
+been measured. Four rules therefore share division 4 and are mutually indistinguishable, which the
+catalogue's `moze_wystrzelic` never claimed one way or the other: that property answers "are this
+rule's premises resolvable", not "can this rule be told apart from its neighbours".
+
+Collapsing the four into "something is in division 4" would have been the wrong repair, because a
+result is per rule and a reader compares it with the catalogue. So the distinction went into the data
+instead: a rule now declares `zakres` — `pojedynczy_wpis` or `caly_dzial` — without a default, and
+
+- the four specific rules return `Nieustalony`, each naming the reason as *the reader*, not the
+  register;
+- the signal that genuinely follows from a non-empty division 4 became **its own rule**,
+  `dzial4_niepusty`, at terminal level, because every entry that division may carry is terminal;
+- division 5 needs no such rule: it holds one rule, so a non-empty division says which;
+- division 6 gets none and should not, because its rules disagree on level — liquidation is terminal
+  and a transformation is context, and one number cannot stand for both.
+
+**This is the row for the legal review**, and it is one sentence: does art. 41 enclose division 4 so
+that *every* entry it may carry is a terminal-level signal? If not, the new rule changes level or
+goes. The loader refuses more than one whole-division rule per division, so the answer cannot be
+fudged by adding a second.
+
+### Two blockers, not one
+
+Between today and a missing-statement signal stand **two** independent things, and the result now
+tells them apart instead of merging them into "unknown":
+
+- the **catalogue** declares three of the six premises undeterminable from an extract — closed by a
+  measurement or the ministerial answer, not by us;
+- the **reader** does not extract a registration date, so a fourth premise (`rozpoczecie_w_ii_polroczu`)
+  is unresolved on our side, although the catalogue says the register carries it in divisions 1 and 3.
+
+A test removes both at once — a seeded catalogue plus a substituted resolver table — and shows the
+path to a signal exists. Without it, "the rule cannot fire" would be indistinguishable from "the code
+for firing was never written".
+
+### Rule 9 shaped the term arithmetic
+
+`DzienBilansowy` is produced only by `odpis/czytanie.py`, so a *derived* balance-sheet date is not one
+— and the candidate year is the one **after** the last filed period, which by definition is not in the
+extract. Hence: the candidate is named by the period it follows, and its limiter is the previous
+limiter shifted by a financial year. The assumption that the next year is the same length then rides
+**in the result**, as an unresolved item printed with every verdict, instead of in a comment.
+
+Two smaller things worth keeping in view. The limiter clamps to the last day of the month
+(art. 112 k.c.) — 31 August plus six months is the end of February, and the "obvious fix" of
+overflowing into March would move a statutory date. And the number twelve is taken from the calendar
+module rather than written down, because rule 10 forbids it here and the exception would be the first
+crack in it.
+
+**A confession in the same spirit as steps 2 and 3.** Three of the four dates I wrote by hand into
+`test_terminy.py` were wrong and the implementation was right — six months plus fifteen days across a
+leap year is not something anyone computes correctly in their head. The golden dates now sit in a
+table with the reason for each.
+
+**For review:** `krs-tool ocen --plik <odpis>` on a wide terminal. The objects of review are the
+`dzial4_niepusty` row with its statutory basis, and the `brak_wpisu_o_sprawozdaniu` row — which must
+read as a list of unresolved premises and never as a statement about the company.
+
+Invariant with an observer: a marked type has exactly one producer; a rule sharing a division cannot
+claim the entry; an unreadable premise cannot become "does not apply"; the missing-statement rule
+produces no signal on any extract shape the builder can make; the level column says whose level it is.
+
+**Still blocked on the owner:** the same real extracts as step 2. Until they arrive, rows 4-7 of
+`niezmierzone.md` stay open and the division-attribution gap stays where it is — no amount of code
+closes it, only a file.
 
 ## Step 5 — the report the owner reads
 

@@ -34,6 +34,7 @@ The rule that follows is mechanical, not a matter of care:
 | 7 | Whether `rejestr=P` and `rejestr=S` return different key sets | Two saved files, one of each |
 | 8 | Whether a document downloaded from the financial-document repository preserves its signature | One manual download. Belongs to stage 2, recorded here because it was assumed twice already |
 | 9 | The real daily quota of the VAT taxpayer register search method (sources say 100, others 300) | Confirmation with the operator. Out of stage 1 scope; recorded so nobody hard-codes either number |
+| 10 | The key names **inside** divisions 4, 5 and 6 — under which an entry about arrears, a writ, a bankruptcy petition, a curator or a liquidation actually appears | Owner supplies a saved extract of a company that has such an entry. Until then no rule may claim which entry a non-empty division holds, and four division-4 rules stay `Nieustalony` by construction (step 4) |
 
 ## Deliberately not on this list
 

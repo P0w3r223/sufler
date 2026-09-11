@@ -27,6 +27,15 @@ not been sampled, so the rule always returns `Nieustalony`. That is the state
 visible on the printout rather than hidden. If you find yourself making this rule fire, read the
 "Gate" table before writing a line.
 
+**A non-empty division does not tell you which entry is in it, and four rules say so on purpose.**
+The read model knows a division is absent, empty or non-empty; the key names *inside* a division have
+never been measured (`docs/niezmierzone.md`, row 10). So the four division-4 rules return
+`Nieustalony`, and the signal that really follows — the division is not empty, and every entry it may
+carry is terminal — is a separate rule, `dzial4_niepusty`, marked `zakres: caly_dzial` in the
+catalogue. If you find yourself mapping a rule onto a guessed key such as `zaleglosciPodatkowe`, stop:
+that guess is indistinguishable from a measurement once it is in the code, and it produces an
+accusation about a named company.
+
 **There is no word available to accuse with.** `Poziom` has no member meaning "late", and a scan
 checks the rule catalogue and the report texts against a closed list of accusatory words. This is
 paired with the three-valued result: no value to carry the accusation, no vocabulary to phrase it.
@@ -70,7 +79,8 @@ CI: the `krs-tool` entry in the root `.github/workflows/ci.yml`.
 
 ## Where the design lives
 
-- `docs/status.md` — the living plan: steps, gates, open items. Update at every gate.
+- `docs/status.md` — the living plan: steps, gates, open items. Update at every gate. Steps 0-3 are
+  accepted, step 4 is built and awaiting acceptance — a step ends when the owner accepts it.
 - `docs/adr/0001_zakres_etapu_1_i_granica_offline.md` — scope of stage 1, the offline boundary, the
   three-valued result, and the recorded deviation from `ceidg-tool/docs/adr/0023`.
 - `docs/design/etap1_core.md` — module map and the twelve boundary rules, with the mechanism for

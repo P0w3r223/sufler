@@ -11,8 +11,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from .odpis.model import Odpis
+from .odpis.model import RODZAJ_SPRAWOZDANIE_FINANSOWE, Odpis
 from .signals.katalog import Regula
+from .signals.model import Nieustalony, Niewiadoma, Obserwacja, Ocena, Powod, Sygnal, Wykluczony
 
 NAZWA = "krs-tool"
 
@@ -21,7 +22,7 @@ ZNACZNIK_SYNTETYCZNY = "ODPIS SYNTETYCZNY — dane wymyślone na potrzeby testó
 # Nazwy wzmianek po ludzku. Klucz spoza tej mapy pokazujemy w postaci surowej, zamiast
 # pomijać — wzmianka, której nie znamy, jest informacją o rejestrze, nie śmieciem.
 NAZWY_WZMIANEK = {
-    "wzmiankaOZlozeniuRocznegoSprawozdaniaFinansowego": "sprawozdanie finansowe",
+    RODZAJ_SPRAWOZDANIE_FINANSOWE: "sprawozdanie finansowe",
     "wzmiankaOZlozeniuOpiniiBieglegoRewidentaSprawozdaniaZBadania": "sprawozdanie z badania",
     "wzmiankaOZlozeniuUchwalyPostanowieniaOZatwierdzeniuRocznegoSprawozdaniaFinansowego": (
         "uchwała o zatwierdzeniu"
@@ -179,6 +180,127 @@ def katalog_sygnalow(reguly: Sequence[Regula]) -> Block:
     return Block(
         title="katalog reguł sygnałowych",
         headers=("kod", "poziom", "podstawa prawna", "żywotność", "może wystrzelić"),
+        rows=wiersze,
+        notes=tuple(notatki),
+    )
+
+
+# Kody obserwacji i przesłanek po ludzku. Kod spoza mapy pokazujemy surowy — tak samo jak
+# wzmiankę o nieznanym rodzaju: brak tłumaczenia jest informacją, nie powodem do milczenia.
+OPISY_OBSERWACJI = {
+    Obserwacja.DZIAL_NIEPUSTY.value: "dział niepusty w odpisie",
+    Obserwacja.DZIAL_PUSTY.value: "dział obecny i pusty",
+    Obserwacja.DZIAL_NIEOBECNY_W_PLIKU.value: "działu nie ma w pliku",
+    Obserwacja.WPIS_NIEROZROZNIALNY_W_DZIALE.value: (
+        "dział niepusty, ale nie wiadomo, który wpis w nim stoi"
+    ),
+    Obserwacja.BRAK_WZMIANKI_ZA_OKRES.value: "brak wzmianki za okres kandydujący",
+    Obserwacja.BRAK_CZYTELNEGO_OKRESU.value: (
+        "w odpisie nie ma wzmianki z czytelnym okresem, więc nie ma od czego liczyć terminu"
+    ),
+    Obserwacja.OGRANICZNIK_NIE_UPLYNAL.value: (
+        "ogranicznik zastępczy nie upłynął na dzień stanu rejestru"
+    ),
+    Obserwacja.ZALOZENIE_CIAGLOSCI_ROKU_OBROTOWEGO.value: (
+        "okres kandydujący wskazano przy założeniu, że rok obrotowy jest tej samej długości"
+    ),
+}
+
+OPISY_PRZESLANEK = {
+    "zawieszenie_caloroczne": "zawieszenie działalności przez cały rok obrotowy",
+    "rozpoczecie_w_ii_polroczu": "rozpoczęcie działalności w drugiej połowie roku obrotowego",
+    "upadlosc_lub_restrukturyzacja": "postępowanie upadłościowe albo restrukturyzacyjne",
+    "dzialalnosc_w_spadku": "przedsiębiorstwo w spadku",
+    "oswiadczenie_art_70a": "oświadczenie o braku obowiązku sporządzenia sprawozdania",
+    "poza_rejestrem_przedsiebiorcow": "podmiot poza rejestrem przedsiębiorców",
+}
+
+OPISY_POWODOW = {
+    Powod.KATALOG_DEKLARUJE_NIEUSTALALNOSC.value: "z odpisu tego nie da się ustalić",
+    Powod.CZYTNIK_NIE_WYCIAGA_DANEJ.value: "narzędzie jeszcze nie czyta tej danej z odpisu",
+    Powod.ODPIS_NIE_ROZSTRZYGA.value: "ten odpis tego nie rozstrzyga",
+    Powod.OBSERWACJA.value: "stan odpisu",
+}
+
+WERDYKT_SYGNAL = "sygnał"
+WERDYKT_WYKLUCZONY = "wykluczone"
+WERDYKT_NIEUSTALONY = "nieustalone"
+
+
+def _opis_kodu(kod: str) -> str:
+    return OPISY_OBSERWACJI.get(kod) or OPISY_PRZESLANEK.get(kod, kod)
+
+
+def _opis_niewiadomej(niewiadoma: Niewiadoma) -> str:
+    powod = OPISY_POWODOW.get(niewiadoma.powod.value, niewiadoma.powod.value)
+    return f"{_opis_kodu(niewiadoma.kod)} ({powod})"
+
+
+def _opis_okresu_kandydujacego(sygnal: Sygnal | Nieustalony | Wykluczony) -> str:
+    """Okres kandydujący nazywamy przez okres, po którym następuje — bo tamten stoi w odpisie.
+
+    Dnia bilansowego okresu, którego w odpisie nie ma, nie wyprowadzamy (reguła granic 9
+    i `signals/terminy.py`). „Rok obrotowy po okresie zakończonym D" jest zdaniem prawdziwym
+    bez znajomości długości tamtego roku.
+    """
+    if sygnal.po_okresie is None or sygnal.termin is None:
+        return ""
+    return (
+        f"; rok obrotowy po okresie zakończonym {sygnal.po_okresie.isoformat()}, "
+        f"ogranicznik zastępczy {sygnal.termin.isoformat()}"
+    )
+
+
+def _wiersz_wyniku(wynik: Sygnal | Wykluczony | Nieustalony) -> tuple[str, str, str, str]:
+    if isinstance(wynik, Sygnal):
+        werdykt = WERDYKT_SYGNAL
+        szczegoly = _opis_kodu(wynik.obserwacja.value) + _opis_okresu_kandydujacego(wynik)
+    elif isinstance(wynik, Wykluczony):
+        werdykt = WERDYKT_WYKLUCZONY
+        szczegoly = _opis_kodu(wynik.powod) + _opis_okresu_kandydujacego(wynik)
+    else:
+        werdykt = WERDYKT_NIEUSTALONY
+        szczegoly = "; ".join(_opis_niewiadomej(n) for n in wynik.nierozstrzygniete)
+    return (wynik.regula.kod, werdykt, wynik.regula.poziom.name.lower(), szczegoly)
+
+
+def ocena_ryzyka(ocena: Ocena) -> Block:
+    """Wynik przejścia katalogu po odpisie — po jednym wierszu na regułę.
+
+    Ekran kroku 4, a nie raport kroku 5: pokazuje werdykt każdej reguły i to, czego nie
+    ustalono, bez sekcji o tym, czego narzędzie nie widzi wcale. Dwie rzeczy są w nim
+    ważniejsze niż wygoda czytania. **Reguła nierozstrzygnięta zajmuje tyle samo miejsca co
+    sygnał** — wynik, którego nie ma, ma być równie widoczny jak wynik, który jest. I **żaden
+    wiersz nie niesie zarzutu**: najmocniejsze zdanie, jakie może tu paść, mówi o braku wpisu
+    na dzień stanu rejestru.
+    """
+    wiersze = tuple(_wiersz_wyniku(wynik) for wynik in ocena.wyniki)
+    notatki = [
+        f"Ocena dotyczy stanu rejestru na dzień {ocena.stan_z_dnia.isoformat()} "
+        "i nie zawiera zarzutu wobec podmiotu.",
+        f"Sygnałów: {len(ocena.sygnaly())}. "
+        f"Nieustalonych: {len(ocena.nieustalone())}. "
+        f"Wykluczonych: {len(ocena.wykluczone())}.",
+    ]
+    niepotwierdzone = sorted(
+        {s.regula.kod for s in ocena.sygnaly() if not s.regula.podstawa_potwierdzona}
+    )
+    if niepotwierdzone:
+        notatki.append(
+            "Podstawa prawna wymaga potwierdzenia w tekście ustawy przy regułach: "
+            + ", ".join(niepotwierdzone)
+            + "."
+        )
+    if ocena.syntetyczny:
+        notatki.insert(0, ZNACZNIK_SYNTETYCZNY)
+    tytul = f"ocena sygnałów rejestrowych — {ocena.nazwa}"
+    return Block(
+        title=f"{ZNACZNIK_SYNTETYCZNY} — {tytul}" if ocena.syntetyczny else tytul,
+        # „poziom reguły", nie „poziom" — kolumna mówi, co byłoby na szali, gdyby reguła
+        # została rozstrzygnięta, a nie jak groźny jest wynik. Przy wierszu nieustalonym sama
+        # „terminalny" czyta się jak werdykt i to jest dokładnie to nieporozumienie, którego
+        # ten produkt ma nie produkować.
+        headers=("reguła", "werdykt", "poziom reguły", "co z odpisu wynika"),
         rows=wiersze,
         notes=tuple(notatki),
     )

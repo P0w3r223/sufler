@@ -11,6 +11,7 @@ reguly:
   - kod: dzial5_kurator
     poziom: wyprzedzajacy
     rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
     zrodlo: dzial5
     opis: >-
       W dziale 5 figuruje wzmianka o ustanowieniu kuratora. Sam fakt nie przesądza o kondycji
@@ -22,6 +23,7 @@ reguly:
   - kod: dzial6_otwarcie_likwidacji
     poziom: terminalny
     rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
     zrodlo: dzial6
     opis: >-
       W dziale 6 figuruje otwarcie likwidacji wraz z danymi likwidatora.
@@ -32,6 +34,7 @@ reguly:
   - kod: dzial6_rozwiazanie_podmiotu
     poziom: terminalny
     rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
     zrodlo: dzial6
     opis: >-
       W dziale 6 figuruje rozwiązanie albo unieważnienie spółki.
@@ -42,6 +45,7 @@ reguly:
   - kod: dzial6_polaczenie_podzial_przeksztalcenie
     poziom: kontekst
     rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
     zrodlo: dzial6
     opis: >-
       W dziale 6 figuruje połączenie, podział albo przekształcenie. To nie jest sygnał ryzyka —

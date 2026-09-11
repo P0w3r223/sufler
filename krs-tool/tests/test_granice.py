@@ -512,3 +512,61 @@ def test_skan_literalow_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
 )
 def test_skan_leksykonu_naprawde_lapie(tekst: str, oczekiwane: int) -> None:
     assert len(slowa_oskarzenia([tekst])) == oczekiwane
+
+
+# --------------------------------------------------------------------------------------
+# Reguły 8 i 9 — jedyni producenci typów oznaczonych
+#
+# Mechanizmem jest mypy strict nad `NewType`, a to poniżej jest jego obserwator: typ
+# oznaczony chroni przed pomyłką dopóty, dopóki powstaje w jednym miejscu. Drugi producent
+# nie wywraca bramki typów — on ją opróżnia, bo od tej chwili „ten typ" znaczy tyle, co
+# „ktoś to gdzieś opakował".
+# --------------------------------------------------------------------------------------
+
+PRODUCENCI_TYPOW = {
+    "NumerKRS": "identity.py",
+    "DzienBilansowy": "odpis/czytanie.py",
+    "TerminUstawowy": "signals/terminy.py",
+}
+
+
+def wywolania_konstruktora(source: str, nazwa: str) -> list[int]:
+    """Numery linii, w których opakowuje się wartość w typ oznaczony.
+
+    Deklaracja (`NumerKRS = NewType("NumerKRS", str)`) nie jest wywołaniem tej nazwy, więc
+    plik deklarujący typ nie liczy się przez sam fakt deklaracji — liczy się ten, kto typ
+    wytwarza.
+    """
+    tree = ast.parse(source)
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _nazwa_wywolania(node) == nazwa
+    ]
+
+
+@pytest.mark.parametrize(("typ", "producent"), sorted(PRODUCENCI_TYPOW.items()))
+def test_reguly_8_i_9_typ_oznaczony_ma_jednego_producenta(typ: str, producent: str) -> None:
+    """Granica zakresu i granica arytmetyki terminów stoją na tym, że tych miejsc jest po jednym."""
+    wytworcy = {
+        sciezka.relative_to(PAKIET).as_posix()
+        for sciezka in _pliki_pakietu()
+        if wywolania_konstruktora(sciezka.read_text(encoding="utf-8"), typ)
+    }
+
+    assert wytworcy == {producent}
+
+
+@pytest.mark.parametrize(
+    ("zrodlo", "nazwa", "oczekiwane"),
+    [
+        ('NumerKRS = NewType("NumerKRS", str)', "NumerKRS", 0),
+        ("numer = numer_krs(surowy)", "NumerKRS", 0),
+        ("numer = NumerKRS(cyfry)", "NumerKRS", 1),
+        ("do = DzienBilansowy(data)", "DzienBilansowy", 1),
+        ("termin = TerminUstawowy(dzien + przesuniecie)", "TerminUstawowy", 1),
+    ],
+)
+def test_skan_producentow_naprawde_lapie(zrodlo: str, nazwa: str, oczekiwane: int) -> None:
+    """Test samego skanu reguł 8 i 9, z zaszczepionym drugim producentem."""
+    assert len(wywolania_konstruktora(zrodlo, nazwa)) == oczekiwane

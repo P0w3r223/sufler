@@ -45,6 +45,21 @@ class Rodzaj(Enum):
     BRAK_DOKUMENTU = "brak_dokumentu"
 
 
+class Zakres(Enum):
+    """O czym reguła orzeka: o jednym wpisie w dziale czy o całym dziale.
+
+    Rozróżnienie doszło w kroku 4 i wzięło się z pomiaru, nie z upodobania. Model odczytu wie
+    o dziale trzy rzeczy — nieobecny, pusty, niepusty — i **nie wie, który wpis w nim stoi**,
+    bo nazwy kluczy wewnątrz działu nie zostały zmierzone (`docs/pomiary.md`). Reguła
+    `pojedynczy_wpis` dzieląca dział z inną regułą jest więc dziś nierozstrzygalna, a reguła
+    `caly_dzial` rozstrzygalna — i to jest różnica, którą trzeba widzieć w danych, zanim
+    zobaczy się ją w wyniku.
+    """
+
+    POJEDYNCZY_WPIS = "pojedynczy_wpis"
+    CALY_DZIAL = "caly_dzial"
+
+
 # Sześć zgodnych z prawem powodów, dla których sprawozdania może nie być. Krotka jest
 # ZAMROŻONA: reguła rodzaju `brak_dokumentu` musi wymienić wszystkie sześć, inaczej się nie
 # wczyta. Skreślenie jednej zapala bramkę zamiast po cichu poszerzyć zakres oskarżenia.
@@ -77,6 +92,10 @@ ZRODLA_USTALENIA = frozenset(
         "nieprobkowane",
     }
 )
+
+# Działy rejestru wyprowadzone ze zbioru źródeł, a nie wypisane po raz drugi: dwie listy
+# tych samych nazw rozjeżdżają się przy pierwszym dopisku.
+ZRODLA_DZIALOW = frozenset(z for z in ZRODLA_USTALENIA if z.startswith("dzial"))
 
 _POLA_REGULY = ("kod", "poziom", "rodzaj", "zrodlo", "opis", "podstawa_prawna", "zywotnosc")
 
@@ -117,6 +136,7 @@ class Regula:
     kod: str
     poziom: Poziom
     rodzaj: Rodzaj
+    zakres: Zakres | None
     zrodlo: str
     opis: str
     podstawa_prawna: str
@@ -124,6 +144,13 @@ class Regula:
     zywotnosc: str
     termin: Termin | None
     przeslanki_wykluczajace: tuple[Przeslanka, ...]
+
+    @property
+    def numer_dzialu(self) -> int | None:
+        """Numer działu, o którym reguła orzeka — albo `None`, gdy nie orzeka o dziale."""
+        if self.zrodlo not in ZRODLA_DZIALOW:
+            return None
+        return int(self.zrodlo.removeprefix("dzial"))
 
     @property
     def moze_wystrzelic(self) -> bool:
@@ -189,6 +216,36 @@ def _sprawdz_przeslanki(surowa: dict[str, Any], kod: str) -> tuple[Przeslanka, .
     return przeslanki
 
 
+def _zakres(surowa: dict[str, Any], kod: str) -> Zakres:
+    """Zakres reguły badającej obecność wpisu. Bez domyślności — jak wszystko tutaj.
+
+    Domyślność byłaby tu szczególnie droga: `pojedynczy_wpis` przyjęty milcząco robi z reguły
+    o całym dziale regułę o jednym wpisie, czyli zamienia sygnał rozstrzygalny w nierozstrzygalny
+    i odwrotnie, w zależności od tego, którą stronę ktoś wybierze na domyślną.
+    """
+    surowy = surowa.get("zakres")
+    if not surowy:
+        raise ConfigError(
+            f"Reguła {kod}: pole `zakres` jest obowiązkowe przy badaniu obecności wpisu "
+            f"i nie ma wartości domyślnej. Dozwolone: "
+            f"{sorted(z.value for z in Zakres)}."
+        )
+    try:
+        return Zakres(str(surowy))
+    except ValueError as blad:
+        raise ConfigError(f"Reguła {kod}: nieznany zakres {surowy!r}") from blad
+
+
+def _sprawdz_zrodlo_dzialu(surowa: dict[str, Any], kod: str) -> None:
+    """Reguła o obecności wpisu musi wskazywać dział, bo tylko dział ma stan w modelu odczytu."""
+    zrodlo = str(surowa["zrodlo"])
+    if zrodlo not in ZRODLA_DZIALOW:
+        raise ConfigError(
+            f"Reguła {kod}: obecność wpisu bada się w dziale, a {zrodlo!r} działem nie jest. "
+            f"Dozwolone: {sorted(ZRODLA_DZIALOW)}."
+        )
+
+
 def _regula(surowa: Any, zablokowane: dict[str, str]) -> Regula:
     if not isinstance(surowa, dict):
         raise ConfigError("Wpis katalogu nie jest odwzorowaniem")
@@ -205,10 +262,13 @@ def _regula(surowa: Any, zablokowane: dict[str, str]) -> Regula:
         raise ConfigError(f"Reguła {kod} jest zablokowana: {zablokowane[kod]}")
     rodzaj = Rodzaj(str(surowa["rodzaj"]))
     brak_dokumentu = rodzaj is Rodzaj.BRAK_DOKUMENTU
+    if not brak_dokumentu:
+        _sprawdz_zrodlo_dzialu(surowa, kod)
     return Regula(
         kod=kod,
         poziom=Poziom[str(surowa["poziom"]).upper()],
         rodzaj=rodzaj,
+        zakres=None if brak_dokumentu else _zakres(surowa, kod),
         zrodlo=str(surowa["zrodlo"]),
         opis=str(surowa["opis"]),
         podstawa_prawna=str(surowa["podstawa_prawna"]),
@@ -232,4 +292,21 @@ def wczytaj_katalog(katalog: Path | None = None) -> tuple[Regula, ...]:
     kody = [r.kod for r in reguly]
     if len(set(kody)) != len(kody):
         raise ConfigError("Katalog zawiera powtórzone kody reguł")
+    _sprawdz_reguly_calego_dzialu(reguly)
     return tuple(reguly)
+
+
+def _sprawdz_reguly_calego_dzialu(reguly: list[Regula]) -> None:
+    """W jednym dziale wolno mieć najwyżej jedną regułę o całym dziale.
+
+    Dwie znaczyłyby, że ten sam fakt — niepustość działu — zapala dwa sygnały, w dodatku
+    mogące różnić się poziomem. Czytelnik raportu zobaczyłby wtedy dwa zdarzenia tam, gdzie
+    rejestr niesie jedno.
+    """
+    dzialy = [r.zrodlo for r in reguly if r.zakres is Zakres.CALY_DZIAL]
+    powtorzone = sorted({d for d in dzialy if dzialy.count(d) > 1})
+    if powtorzone:
+        raise ConfigError(
+            f"Więcej niż jedna reguła o całym dziale w działach {powtorzone} — "
+            "niepustość działu zapaliłaby wtedy dwa sygnały z jednego faktu."
+        )
