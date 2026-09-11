@@ -299,7 +299,9 @@ def _zapytaj_o_rocznik(
     return szerokie if odpowiedz == "szerokie" else waskie
 
 
-def prepare_fetch(
+# Sufit funkcji (#158): złożoność 25 przy sufcie 15 — NAJWIĘKSZY dług w tym pod-projekcie, i to on
+# ma zniknąć pierwszy. 69 instrukcji przy 50.
+def prepare_fetch(  # noqa: C901, PLR0915
     criteria: Criteria,
     deps: Deps,
     prompter: Prompter,

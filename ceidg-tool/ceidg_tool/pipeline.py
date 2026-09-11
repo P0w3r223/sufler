@@ -620,7 +620,9 @@ def choose_report(criteria: Criteria, deps: Deps) -> Report | None:
     return pick_registered_report(reports, criteria.wojewodztwo[0])
 
 
-def run_report_fetch(
+# Sufit funkcji (#158): złożoność 16 przy sufcie 15, 77 instrukcji przy 50. Ścieżka raportu:
+# wznawianie, limiter, zapis i podsumowanie w jednej funkcji.
+def run_report_fetch(  # noqa: C901, PLR0915
     criteria: Criteria, deps: Deps, report: Report, *, force_lock: bool = False
 ) -> RunResult:
     """Pobiera raport (1 żądanie), filtruje lokalnie wg kryteriów i zapisuje jako run."""
@@ -909,7 +911,8 @@ def plan_update(
     return UpdatePlan(since=start, until=end, count=total, windows=len(windows))
 
 
-def run_update(
+# Sufit funkcji (#158): 53 instrukcje przy sufcie 50.
+def run_update(  # noqa: PLR0915
     deps: Deps,
     *,
     until: datetime | None = None,
@@ -1476,7 +1479,9 @@ def _batch_label(run: RunInfo) -> str:
     return f"{od}–{do}: {run.records_seen} ({run.status})"
 
 
-def run_export(
+# Sufit funkcji (#158): złożoność 18 przy sufcie 15, 54 instrukcje przy 50. Eksport rozgałęzia się
+# na formaty i tryby, a każda gałąź dokłada własną walidację.
+def run_export(  # noqa: C901, PLR0915
     run_id: str | Sequence[str],
     dest: Path,
     deps: Deps,

@@ -191,7 +191,10 @@ class CeidgClient:
 
     # ------------------------------------------------------------------ żądanie
 
-    def _request(
+    # Sufit funkcji (#158): 51 instrukcji przy sufcie 50 — jedna ponad. Pętla ponowień, budżet
+    # serwera i mapowanie błędów HTTP siedzą w jednym ciele; rozdzielenie ich to osobna zmiana, nie
+    # porządek przy okazji.
+    def _request(  # noqa: PLR0915
         self,
         url: str,
         *,
