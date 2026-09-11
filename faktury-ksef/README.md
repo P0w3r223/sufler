@@ -26,7 +26,9 @@ touch the FA(3) schema, and the register research already sits one directory awa
 
 ## What is in `docs/research/`
 
-Four documents, one per perspective of the first reconnaissance pass, all dated 2026-09-11:
+Six documents from two reconnaissance passes — eight agent runs in total — all dated 2026-09-11.
+
+First pass, one document per perspective:
 
 - `ksef-dostep-i-obowiazek.md` — machine access, authentication, permissions, environments, limits,
   the obligation timeline and penalties
@@ -35,13 +37,39 @@ Four documents, one per perspective of the first reconnaissance pass, all dated 
   what is good practice and what has become ceremony
 - `ksef-ekosystem-narzedziowy.md` — libraries, official tooling, and what practitioners say is missing
 
-## A caveat that applies to all four, without exception
+Second pass, closing named gaps:
 
-**Every agent in the first pass worked with an exhausted search budget.** The upside is that the
-material comes from the statute, the ministry's own documentation and live probes against the
-interface rather than from advisory blogs. The cost is uniform and serious: **nobody looked at
-practitioner experience from the first seven months of mandatory operation**, at tax rulings or at
-case law. A second pass is running to close exactly that gap, plus three named factual questions.
+- `ksef-metadane-faktury.md` — the metadata model field by field, and the resolved question of
+  whether the source can filter purchase invoices for us
+- `ksef-praktyka-wdrozeniowa.md` — what actually broke between February and September 2026
+
+## The caveat, and what the second pass did to it
+
+**Every agent in the first pass worked with an exhausted search budget.** The upside was that the
+material came from the statute, the ministry's own documentation and live probes rather than from
+advisory blogs. The cost was uniform: nobody saw practitioner experience, tax rulings or case law.
+
+`ksef-praktyka-wdrozeniowa.md` closes that gap. It is worth reading first if you only read one, and
+it changed three things the first pass had wrong or missing: the system is **not** a complete cost
+repository, the document carries **nothing** usable for routing, and an export once declared it had
+not truncated while dropping data.
+
+**One pass-1 claim was withdrawn outright.** The ecosystem document reported that purchase invoices
+could not be filtered at the source. They can; the evidence is in the ministry's own test code, and
+the correction is recorded in both affected documents rather than quietly edited away.
+
+## Shelf life
+
+Shorter than usual. The interface version that raises the maximum query window reaches production
+twelve days after these documents were written, and the obligation timeline has a further step on
+1 January 2027. Treat every version number and date here as a measurement with a timestamp, not as a
+standing fact.
+
+## What is still unmeasured, and can be
+
+Seven questions remain, and unlike the register project **all of them are answerable by measurement**
+— the test environment can fabricate an entity, its permissions and its invoices. The list is at the
+end of `ksef-metadane-faktury.md`. Nothing here should be treated as settled until that run happens.
 
 ## Shelf life
 

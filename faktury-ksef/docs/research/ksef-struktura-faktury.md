@@ -11,11 +11,45 @@ Related to: `ksef-dostep-i-obowiazek.md`, `ksef-kontrola-faktury-kosztowej.md`
 ## Versions
 
 FA(1) until 2023-08-31, FA(2) until 2026-01-31, **FA(3) from 2026-02-01 for every structured invoice
-issued**. Version detection should go by the root namespace rather than by the variant field.
+issued**.
+
+**Version detection has a trap, confirmed in the second pass by reading all three schemas: the schema
+version field carries the identical value in all three.** Discriminate by the root namespace, the
+system code or the variant number — never by the version field. That this is a real trap rather than
+a theoretical one is visible in the ministry's own client, where an issue records a session declaring
+one version while a document of another was sent.
 
 One consequence reaches further than it looks: **FA(3) is also used to correct invoices originally
 issued under FA(1) and FA(2)**, and to settle advances invoiced under the older schemas. One schema
 on input, but the semantics of references reach back into documents shaped differently.
+
+## What changed between versions — second pass
+
+**Between the last two versions the paths to line items, amounts and party data are identical.** That
+is the good news for a parser, and it means one code path can read both.
+
+Four changes matter:
+
+| Change | Character |
+|---|---|
+| The attachment element was added | new element |
+| Mandatory fields for local-government units and VAT groups in the buyer section | new required fields |
+| Payment link and a collective-identifier field added to the payment section | new elements |
+| **The payment-term description changed from a simple value to a complex type** | **same name, different content model** |
+| The reference to a corrected invoice went from single to repeating, up to 50 000 | cardinality |
+
+The fourth is the dangerous one, and it is the same shape as the income-statement letter collision in
+the financial-statement project: **a field keeps its name and stops meaning what it meant.** A reader
+written against the older version will not fail — it will read a structure as a value.
+
+**The step before that was a genuine rebuild, not cosmetics.** The line-item wrapper was removed, so
+the path to positions differs; the annotations branch went from flat to nested; contact data was
+restructured; payment fields were renamed with a name collision, where a term now means something
+different from what it meant before; and amount fields were split.
+
+Since the current version is also used to correct invoices originally issued under the older ones,
+**code reading only the current schema still has to understand the older correction semantics**, even
+though the syntax it sees is current.
 
 ## Three levels of optionality where the schema shows two
 

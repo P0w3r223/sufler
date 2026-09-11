@@ -69,12 +69,19 @@ collection that is the clearest available reference for the cryptography and aut
 
 ## What practitioners say is missing
 
-**Filtering purchase invoices.** An integrator's report states that the role of an entity cannot be
-used as a filter, and concludes that selecting only purchase invoices is impossible. **This is in
-tension with the documentation**, which describes a subject-type filter whose second value means
-received invoices. The report's issue appears to concern a narrower case — third parties on the
-invoice — but this is **load-bearing for the whole product** and is the first question of the second
-reconnaissance pass. It is recorded here unresolved rather than settled in the convenient direction.
+**Filtering purchase invoices — resolved in the second pass, against this report.** This document
+originally reported an integrator's claim that the role of an entity cannot be filtered and that
+selecting only purchase invoices is therefore impossible, flagging it as in tension with the
+documentation.
+
+**The claim was an over-generalisation and is withdrawn.** A subject-type filter exists, applies to
+both download paths, and is *required* for the export; the ministry's own end-to-end test
+authenticates as the buyer and asserts the invoice appears under it. The integrator's issue — still
+open — concerns filtering by the role of a **third party**, which matters for local-government units
+and VAT groups and is a genuinely missing feature. It is not the buyer/seller split.
+
+See `ksef-metadane-faktury.md` for the evidence and for where the risk moved: completeness at the
+edges rather than the split itself.
 
 **Metadata are not enough for cost analysis.** Recurring reports: no tax amount in currencies other
 than the domestic one, divergence between metadata and the amount payable, requests to extend
