@@ -5,6 +5,11 @@ knowledge of APIs. Fifth sub-project of this repository, created 2026-09-10 by
 `ceidg-tool/docs/adr/0023`. Work proceeds in steps; each one ends when the owner accepts it, not
 when the tests go green — `docs/status.md` is the living plan.
 
+Stage 1 is code-complete: `pokaz`, `katalog`, `ocen`, `raport` (with `--markdown`), `odtworz` and
+`wyczysc-ladunki`. It produces exactly **one** kind of signal — a non-empty division 4 — and that is
+what the material allows, not a shortfall; the rest of the catalogue stands and is observed, waiting
+for real extracts.
+
 ## Facts that change how you work here
 
 **This tool does not connect to anything, and that is a boundary rather than a setting.** No HTTP
@@ -18,7 +23,16 @@ endpoint", and do not resolve the boundary by adding a configuration flag — se
 decisions 2 and 3.
 
 **The input is a file the operator saved by hand.** One human action per company. Nothing here
-fetches it.
+fetches it. An extract from a register other than the entrepreneurs register is **refused**, not
+assessed: the catalogue cites provisions about that one register, and a reassuring report about an
+entity outside scope is the worst failure mode this product has.
+
+**Running `raport` leaves two things on the operator's disk.** A journal line, permanently — the
+journal only ever grows — and a payload, which is a copy of the extract and therefore carries the
+personal data of everyone on the company's boards. `wyczysc-ladunki` removes payloads and keeps the
+journal, after which replay answers that it cannot reproduce from retained data. Tests must never
+write to the real store; an autouse fixture in `tests/conftest.py` redirects it, and it exists
+because they once did.
 
 **The flagship rule cannot fire, on purpose.** Detecting a missing financial statement requires
 excluding six lawful reasons for its absence; two cannot be determined from an extract and one has
@@ -66,11 +80,14 @@ masking. If you are looking for a credential, you are in the wrong sub-project.
 
 ```
 PYTHONUTF8=1 .venv/Scripts/python -m pytest
-PYTHONUTF8=1 .venv/Scripts/python -m mypy krs_tool tests
-.venv/Scripts/ruff check krs_tool tests
-.venv/Scripts/ruff format --check krs_tool tests
-PYTHONUTF8=1 .venv/Scripts/python -m krs_tool
+PYTHONUTF8=1 .venv/Scripts/python -m mypy
+.venv/Scripts/ruff check krs_tool tests scripts
+.venv/Scripts/ruff format --check krs_tool tests scripts
+PYTHONUTF8=1 .venv/Scripts/python -m krs_tool raport --plik <odpis> --markdown raport.md
 ```
+
+Measured 2026-09-11 after step 7: 327 passed, ruff and format clean, mypy strict over 53 files.
+`mypy` runs without arguments because its scope sits in `pyproject.toml`.
 
 This sub-project carries **both** quality-gate sets: `mypy` in strict mode, which only `ceidg-tool`
 has, and the function ceiling `C901`/`PLR0915`, which only `ceidg-tool` lacks. The ratio engine and
@@ -83,12 +100,14 @@ CI: the `krs-tool` entry in the root `.github/workflows/ci.yml`.
 
 ## Where the design lives
 
-- `docs/status.md` — the living plan: steps, gates, open items. Update at every gate. Steps 0-3 are
-  accepted, step 4 is built and awaiting acceptance — a step ends when the owner accepts it.
+- `docs/status.md` — the living plan: steps, gates, open items. Update at every gate. Steps 0-7 are built,
+  step 7 records which rows of the ADR-0023 "Gate" table stage 1 closed and which it leaves open.
+  None of them is *accepted* yet — a step ends when the owner accepts it.
 - `docs/adr/0001_zakres_etapu_1_i_granica_offline.md` — scope of stage 1, the offline boundary, the
   three-valued result, and the recorded deviation from `ceidg-tool/docs/adr/0023`.
-- `docs/design/etap1_core.md` — module map and the twelve boundary rules, with the mechanism for
-  each and the step in which it gains an observer.
+- `docs/design/etap1_core.md` — module map and the **thirteen** boundary rules, with the mechanism
+  for each and the step in which it gains an observer. Each has a self-test with a seeded violation,
+  and each was watched failing before being restored.
 - `docs/niezmierzone.md` — what this project is not entitled to claim, and who can close each row.
 - `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` — the decision that created this
   sub-project, including the "Gate" table this tool obeys.

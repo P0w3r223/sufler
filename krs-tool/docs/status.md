@@ -388,11 +388,67 @@ Invariant with an observer: the journal is opened only to append or to read and 
 deletion lives in exactly one module; replay is a command that can fail, and each of its three answers
 has a test.
 
-## Step 7 — gate
+## Step 7 — gate — **done 2026-09-11, with one part of it blocked**
 
-A walk over real extracts, a code review, an update of this file naming which "Gate" rows stage 1
-closed and which it leaves open and why, and a correction of `../CLAUDE.md` against what actually
-stands in the tree.
+Gates, measured 2026-09-11: **327 passed**, ruff and format clean, mypy strict clean over 53 files.
+Two code reviews ran — one over step 4, one over steps 5-6 — and both blocked the step; every finding
+is either applied or argued in the commit that answers it.
+
+**The walk was over synthetic extracts, not real ones, and that is the blocked part.** Six samples —
+healthy, non-empty division 4, liquidation, the older word-form period spelling, a division missing
+from the file, and an extract from another register — went through `ocen`, `raport --markdown`, the
+journal and `odtworz`. All six replayed identically. What this does **not** establish is anything
+about what a register extract actually contains: rows 4-7 and 10 of `niezmierzone.md` stay open, and
+`pomiary.md` still declares `zmierzonych-wlasnosci: 0`.
+
+**The walk earned its place by finding the worst failure mode this product has.** An extract with
+`rejestr=S` went through the entire pipeline and produced a report with all ten rules excluded, under
+the line "every rule of the catalogue was resolved on this extract". That reads as a clean bill of
+health — while the division rules rest on art. 41 and 44 of the KRS act, which describe the
+*entrepreneurs* register, not the one that extract came from. The reader refuses such a file now.
+No test would have caught it: every test supplied the default register, and the failure was in the
+report's tone rather than in any assertion.
+
+### The "Gate" table of ADR-0023, row by row
+
+| Row | State after stage 1 |
+|---|---|
+| "No statement filed within the statutory period" | **Closed as a prohibition, not as a capability.** The claim cannot be made: the rule returns `Nieustalony` on every extract shape, `Poziom` has no member meaning "late", and a scan finds no accusatory word anywhere in the package. The publication lag stays unmeasured — so the row stays open *as a measurement* and shut *as a risk* |
+| Any deadline at all | **Closed.** Only the substitute backstop is computed, six months and fifteen days from the balance-sheet date; the loader refuses any other reference point, rule 10 forbids the numbers outside the catalogue, and "31 December" cannot be written. One caveat recorded rather than carried silently: the art. 115 k.c. shift off a Sunday or holiday is not applied (`pomiary.md` row 11) |
+| Any "missing statement" signal | **Open, and structurally unreachable meanwhile.** The frozen six live in the loader, which refuses a rule listing five. The suspended company and the partnership of natural persons are still unsampled. The pandemic-era extension is exhausted — the tool does not yet say so anywhere, and that is a gap this step names rather than closes |
+| Any sustainability-reporting signal | **Closed as a refusal.** The code is on `zablokowane.yaml` with its reason and a review date; the loader raises if anyone adds it to the catalogue, and a test seeds exactly that |
+| Any register API pacing | **Open by decision.** No request leaves this tree; three independent observers keep it that way |
+| Any claim about a downloaded document's packaging | **Open.** Nothing here downloads a document; stage 2 |
+| Any comparison against an industry distribution | **Out of scope for stage 1** by ADR-0001 decision 1 — no benchmark, no licence question |
+
+From the open-questions table, one row changed state through being *implemented* rather than answered:
+machine access to the debtors register stays unavailable, and the report now **says so in its own
+section**, which is what that row asked for in the meantime.
+
+### What stage 1 added to the unmeasured list
+
+Three rows that did not exist before, each with the event that closes it: the key names inside a
+division (`niezmierzone.md` row 10 — the report now quotes them, so the first real extract closes it
+by being run); the meaning of `P` in `naglowekA.rejestr` (`pomiary.md` row 10, now load-bearing at the
+boundary that refuses other registers); and the missing art. 115 shift (`pomiary.md` row 11).
+
+### Three questions for the legal review, none of them technical
+
+1. Does art. 41 enclose division 4 so that **every** entry it may carry is a terminal-level signal?
+   The one rule in this tree that can fire rests on that sentence.
+2. Should division 5 get a whole-division rule of its own? It is silent today, and unsilencing it
+   needs the scope of division 5 confirmed — the same open item as `podstawa_potwierdzona: false` on
+   the curator rule.
+3. Should the substitute limiter move to the next working day under art. 115 k.c.? It does not, the
+   error leans toward firing, and it is recorded rather than carried quietly.
+
+### What stage 1 is, stated plainly
+
+A tool that reads an extract saved by hand, says what the register carries, says what it cannot tell
+from that file and who could close each gap, refuses to say anything about a company from a register
+it does not describe, and keeps a journal whose replay can contradict it. It produces **one** kind of
+signal today — a non-empty division 4 — and that is not a shortfall against the plan; it is what the
+material allows, and the rest of the catalogue is standing and observed, waiting for extracts.
 
 ## Open items carried from ADR-0023
 
