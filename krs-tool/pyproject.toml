@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-krs-tool = "krs_tool.__main__:app"
+krs-tool = "krs_tool.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["krs_tool*"]

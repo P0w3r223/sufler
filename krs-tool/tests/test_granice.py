@@ -710,3 +710,89 @@ def test_regula_13_warstwa_sygnalow_nie_zaglada_do_wnetrza_dzialu(sciezka: Path)
 )
 def test_skan_odczytow_pola_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
     assert len(odczyty_pola(zrodlo, POLE_ZABRONIONE_W_SYGNALACH)) == oczekiwane
+
+
+# --------------------------------------------------------------------------------------
+# Reguła 12 — dziennik tylko rośnie (krok 6)
+#
+# Skasowanie linii dziennika i skasowanie ładunku wyglądają w kodzie niemal tak samo,
+# a znaczą co innego: pierwsze zaciera ślad po ocenie, drugie jest higieną retencji.
+# Dlatego kasuje **jeden** moduł i skan pilnuje, że to wciąż ten sam.
+# --------------------------------------------------------------------------------------
+
+PAKIET_DZIENNIKA = PAKIET / "dziennik"
+MODUL_KASUJACY = "ladunki.py"
+TRYBY_DOPUSZCZALNE = frozenset({"a", "r", "x"})
+WYWOLANIA_NISZCZACE = frozenset({"unlink", "rmtree", "rename", "replace", "truncate", "write_text"})
+
+
+def _pliki_dziennika() -> list[Path]:
+    return sorted(PAKIET_DZIENNIKA.rglob("*.py"))
+
+
+def wywolania_niszczace(source: str) -> list[str]:
+    """Nazwy wywołań, przez które plik przestaje mieć to, co miał."""
+    tree = ast.parse(source)
+    return [
+        _nazwa_wywolania(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _nazwa_wywolania(node) in WYWOLANIA_NISZCZACE
+    ]
+
+
+def tryby_otwarcia(source: str) -> list[str]:
+    """Tryby, w jakich ten moduł otwiera pliki — po drugim argumencie pozycyjnym."""
+    tree = ast.parse(source)
+    tryby: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _nazwa_wywolania(node) != "open":
+            continue
+        pozycyjne = [a for a in node.args if isinstance(a, ast.Constant)]
+        tryby.extend(str(a.value) for a in pozycyjne if isinstance(a.value, str))
+    return tryby
+
+
+def test_regula_12_dziennik_nie_kasuje_ani_nie_nadpisuje() -> None:
+    """Plik dziennika otwiera się do dopisania albo do czytania. Trzeciej możliwości nie ma."""
+    zrodlo = (PAKIET_DZIENNIKA / "zapis.py").read_text(encoding="utf-8")
+
+    assert wywolania_niszczace(zrodlo) == []
+    assert set(tryby_otwarcia(zrodlo)) <= TRYBY_DOPUSZCZALNE
+
+
+def test_kasuje_dokladnie_jeden_modul_dziennika() -> None:
+    """Wyjątek od reguły 12 ma być widoczny i pojedynczy — inaczej przestaje być wyjątkiem."""
+    kasujace = {
+        sciezka.name
+        for sciezka in _pliki_dziennika()
+        if wywolania_niszczace(sciezka.read_text(encoding="utf-8"))
+    }
+
+    assert kasujace == {MODUL_KASUJACY}
+
+
+@pytest.mark.parametrize(
+    ("zrodlo", "oczekiwane"),
+    [
+        ('with sciezka.open("a", encoding="utf-8") as plik: plik.write(linia)', 0),
+        ('tresc = sciezka.open("r", encoding="utf-8").read()', 0),
+        ('with sciezka.open("w", encoding="utf-8") as plik: plik.write(linia)', 1),
+        ('sciezka.open("w+")', 1),
+    ],
+)
+def test_skan_trybow_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
+    """Test samego skanu reguły 12: `w` kasuje dziennik w chwili otwarcia, bez ostrzeżenia."""
+    assert len([t for t in tryby_otwarcia(zrodlo) if t not in TRYBY_DOPUSZCZALNE]) == oczekiwane
+
+
+@pytest.mark.parametrize(
+    ("zrodlo", "oczekiwane"),
+    [
+        ("pliki = katalog.glob('*.json')", 0),
+        ("sciezka.unlink()", 1),
+        ("sciezka.write_text(tresc)", 1),
+        ("shutil.rmtree(katalog)", 1),
+    ],
+)
+def test_skan_wywolan_niszczacych_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
+    assert len(wywolania_niszczace(zrodlo)) == oczekiwane

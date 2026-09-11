@@ -341,16 +341,52 @@ Invariant with an observer: every printed signal carries four things and the gol
 one is lost; two channels have two neutralisers, one pairing scan and one hostile fixture; the signal
 layer cannot see inside a division.
 
-## Step 6 — journal and replay
+## Step 6 — journal and replay — **done 2026-09-11**
 
-Produces: `dziennik/zapis.py`, `krs-tool odtworz --ocena-id X`, `krs-tool wyczysc-ladunki`, rule 12.
+Produced: `dziennik/{zapis,ladunki,skroty,odtworzenie}.py`, `magazyn.py`, the `odtworz` and
+`wyczysc-ladunki` commands, journalling inside `raport` (with `--bez-dziennika`), a top-level error
+handler in `__main__.py`, boundary rule 12 with its self-tests, and `tests/test_dziennik.py`.
 
-How to check: open the journal in a text editor — one line per assessment. Then `odtworz` on an old
-assessment printing "identical". Then purge payloads and watch `odtworz` answer **"not reproducible
-from retained data"**.
+Gates, measured 2026-09-11: **282 passed**, ruff and format clean, mypy strict clean over 53 files.
 
-Invariant with an observer: reproducibility is a command that **can fail**; the split between journal
-and payload exists from day one, because adding it later is a migration.
+**The split between journal and payload is the whole step.** A journal line is tiny and permanent;
+the payload — the extract itself, which carries the personal data of everyone sitting on the
+company's boards — lives beside it and may be deleted. Adding that split later would have been a
+migration of live personal data, which is the operation nobody performs at a good moment.
+
+`dziennik/ladunki.py` is therefore the **only** module in the tree that deletes, and a scan pins that
+to exactly one file: deleting a journal line and deleting a payload look nearly identical in code and
+mean opposite things — the first erases the fact that an assessment happened, the second is hygiene.
+
+**Replay can say three things and two of them are refusals.** Identical; differs — naming the rules
+whose verdict changed and whether the rule catalogue is no longer the same; and *not reproducible from
+retained data*, which is what an assessment says once its payload has been purged. Because the
+assessment never reads a clock (ADR-0001 decision 6), a difference can only come from the material or
+from the catalogue — never from a day having passed. Without that property replay would have nothing
+to assert.
+
+Three decisions worth keeping in view:
+
+- **The identifier is derived from the extract's own hash**, so the same file always yields the same
+  assessment id and nobody has to remember one. Two assessments of the same material are two journal
+  lines and one id, because the journal never overwrites.
+- **The line carries the verdict per rule**, not only the result hash. The hash answers "is it the
+  same"; the verdicts answer "what changed", and that second question is the only reason anyone runs
+  replay. Ten rules keep the line readable in an editor, which is the format's entire point.
+- **`wyczysc-ladunki` without `--potwierdzam` deletes nothing** and prints what would go. A deleting
+  command that deletes immediately is a command that deletes by accident.
+
+**One thing this step revealed that belonged to step 1.** Nothing translated the error taxonomy into
+an exit code: every `KrsError` reached the operator as a traceback, including states that are entirely
+foreseen — a purged payload, a file that is not an extract. `__main__.py` now owns that translation,
+in one place, and the console script points at it.
+
+**For review:** open `dziennik.jsonl` in a text editor; run `odtworz` on a fresh assessment, then
+`wyczysc-ladunki --potwierdzam`, then `odtworz` again and read the refusal.
+
+Invariant with an observer: the journal is opened only to append or to read and never deletes;
+deletion lives in exactly one module; replay is a command that can fail, and each of its three answers
+has a test.
 
 ## Step 7 — gate
 

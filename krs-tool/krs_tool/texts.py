@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from .dziennik.odtworzenie import Odtworzenie
+from .dziennik.zapis import Wpis
+from .errors import KrsError
 from .odpis.model import RODZAJ_SPRAWOZDANIE_FINANSOWE, Odpis
 from .signals.katalog import Regula
 from .signals.model import Nieustalony, Niewiadoma, Obserwacja, Ocena, Powod, Sygnal, Wykluczony
@@ -337,3 +341,115 @@ def _opis_okresu(zapis: str, czytelny: bool) -> str:
     if not zapis:
         return "bez podanego okresu"
     return f"za okres {zapis}" if czytelny else f"nieczytelny zapis okresu: {zapis}"
+
+
+def zapisano_ocene(wpis: Wpis, sciezka_dziennika: Path, sciezka_ladunku: Path) -> Block:
+    """Potwierdzenie zapisu — z identyfikatorem, bo bez niego nie da się nic odtworzyć.
+
+    Ekran mówi też, **gdzie leży ładunek**, i to nie jest szczegół techniczny: ładunek to kopia
+    odpisu, czyli dane osób zasiadających w organach spółki. Operator ma wiedzieć, co zostało
+    na jego dysku, zanim dowie się tego skądinąd.
+    """
+    return Block(
+        title="zapisano w dzienniku",
+        headers=("pole", "wartość"),
+        rows=(
+            ("identyfikator oceny", wpis.ocena_id),
+            ("czas zapisu", wpis.czas),
+            ("dziennik", str(sciezka_dziennika)),
+            ("ładunek (kopia odpisu)", str(sciezka_ladunku)),
+        ),
+        notes=(
+            f"Odtworzenie: krs-tool odtworz --ocena-id {wpis.ocena_id}",
+            "Ładunek trzyma treść odpisu. Usuwa go polecenie `wyczysc-ladunki`; wpis "
+            "w dzienniku zostaje, a odtworzenie zacznie wtedy odmawiać.",
+        ),
+    )
+
+
+def wynik_odtworzenia(odtworzenie: Odtworzenie) -> Block:
+    """Trzy możliwe odpowiedzi, z czego dwie są odmowami — i o to chodzi.
+
+    Odtwarzalność, której nie da się obalić, jest deklaracją, a nie własnością. Ten ekran ma
+    umieć powiedzieć „różni się" i nazwać reguły, po których to widać.
+    """
+    wpis = odtworzenie.wpis
+    wiersze = [
+        ("identyfikator oceny", wpis.ocena_id),
+        ("ocena zapisana", wpis.czas),
+        ("podmiot", f"{wpis.nazwa} ({wpis.numer})"),
+        ("stan rejestru na dzień", wpis.stan_z_dnia),
+        ("wynik", "identyczny" if odtworzenie.identyczne else "różni się"),
+    ]
+    notatki = [_zdanie_o_odtworzeniu(odtworzenie)]
+    if odtworzenie.rozniace_sie_reguly:
+        notatki.append(
+            "Reguły, których werdykt się zmienił: "
+            + ", ".join(odtworzenie.rozniace_sie_reguly)
+            + "."
+        )
+    if odtworzenie.katalog_sie_zmienil:
+        notatki.append(
+            "Katalog reguł nie jest ten sam co przy zapisie oceny. To najczęstsza przyczyna "
+            "różnicy i jedyna, która nie oznacza, że zmienił się materiał."
+        )
+    if odtworzenie.material_sie_zmienil:
+        notatki.append(
+            "Treść ładunku nie zgadza się ze skrótem zapisanym w dzienniku — ktoś zmienił "
+            "plik po ocenie. Wynik poniżej opisuje plik dzisiejszy, nie ten oceniony."
+        )
+    return Block(
+        title="odtworzenie oceny",
+        headers=("pole", "wartość"),
+        rows=tuple(wiersze),
+        notes=tuple(notatki),
+    )
+
+
+def _zdanie_o_odtworzeniu(odtworzenie: Odtworzenie) -> str:
+    if odtworzenie.identyczne:
+        return "Przeliczenie z zachowanego ładunku dało dokładnie ten sam wynik co przy zapisie."
+    return (
+        "Przeliczenie z zachowanego ładunku dało inny wynik niż przy zapisie. Ocena nie czyta "
+        "zegara, więc różnica bierze się z materiału albo z katalogu reguł — nigdy stąd, że "
+        "minął czas."
+    )
+
+
+def podglad_czyszczenia(pliki: Sequence[Path]) -> Block:
+    """Co zniknie, zanim cokolwiek zniknie."""
+    return Block(
+        title="ładunki do usunięcia",
+        headers=("plik",),
+        rows=tuple((str(plik),) for plik in pliki),
+        notes=(
+            f"Ładunków: {len(pliki)}. Nic jeszcze nie zostało usunięte.",
+            "Usunięcie: powtórz polecenie z `--potwierdzam`. Wpisy w dzienniku zostaną, "
+            "a odtworzenie tych ocen przestanie być możliwe.",
+        ),
+    )
+
+
+def wyczyszczono_ladunki(liczba: int) -> Block:
+    return Block(
+        title="ładunki usunięte",
+        notes=(
+            f"Usuniętych ładunków: {liczba}. Dziennik pozostał nietknięty.",
+            "Odtworzenie tych ocen odpowie teraz, że nie da się ich odtworzyć z zachowanych "
+            "danych. To jest zamierzony skutek, nie usterka.",
+        ),
+    )
+
+
+def blad_operatora(blad: KrsError) -> Block:
+    """Błąd jako ekran, nie jako ślad stosu.
+
+    Komunikaty tej taksonomii są pisane do operatora, a nie do programisty (`errors.py`), więc
+    ślad stosu nie tylko nic mu nie mówi — **sugeruje usterkę narzędzia tam, gdzie zaszedł stan
+    przewidziany**, jak wyczyszczona retencja albo plik, który nie jest odpisem.
+    """
+    return Block(
+        title="nie udało się",
+        rows=((str(blad),),),
+        notes=(f"Kod wyjścia: {blad.exit_code}.",),
+    )

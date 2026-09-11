@@ -40,8 +40,12 @@ krs_tool/
     texts.py        pure view models, no output library              [step 5]
     render.py       Block to rich                                    [step 5]
     markdown.py     Block to markdown                                [step 5]
+  magazyn.py        where the journal lives when nobody says        [step 6]
   dziennik/
-    zapis.py        append-only journal + separate payload store     [step 6]
+    zapis.py        append-only journal                              [step 6]
+    ladunki.py      payload store — the only module that deletes     [step 6]
+    skroty.py       fingerprints of material, catalogue and verdicts [step 6]
+    odtworzenie.py  replay, and the three answers it may give        [step 6]
 ```
 
 Dependency direction: `cli -> raport -> signals -> odpis`, with `dziennik` to the side, called by
@@ -71,7 +75,7 @@ violation — a rule that cannot be shown to fail is indistinguishable from an e
 | 9 | Only `terminy.py` produces `TerminUstawowy`, and it takes a `DzienBilansowy` produced only by `odpis/czytanie.py` | mypy strict, two `NewType`, plus the same scan | 4 |
 | 10 | No numeric literal other than 0 and 1 appears in `signals/` | AST scan | **3** |
 | 11 | The accusatory lexicon is closed | `Poziom` has no "late" member; scan of the **parsed values** of `reguly/*.yaml` and of the non-docstring string constants of `texts.py` | **3** |
-| 12 | `dziennik/` is append-only | scan: `open()` only in `a`, `x` or `r`; no `unlink`; no overwrite of an existing path | 6 |
+| 12 | The journal is append-only, and deletion lives in exactly one module | scan over `dziennik/`: `open()` only in `a`, `x` or `r` in `zapis.py`, and `unlink`/`write_text`/`rmtree` only in `ladunki.py` | 6 |
 | 13 | `signals/` never reads `Dzial.klucze` — the verbatim field names inside a division | AST scan for the attribute read, with a seeded self-test | 5 |
 
 ### Note on copying the scan from `ceidg-tool`
