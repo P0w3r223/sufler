@@ -38,10 +38,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      # `asystent` obowiązkowo: bez niego `tests/test_assistant_caller.py` nie zbierze się
-      # (importuje `httpx2`), a skany granic 11 i 12 nie widzą prawdziwego grafu importów —
-      # nazwa `httpx2` w `HTTP_CLIENT_MODULES` byłaby wtedy założeniem, nie faktem.
-      - run: python -m pip install -e .[dev,asystent]
+      # Z LOCKA, nie z zakresów: §B `UZUPELNIENIE_01.md` wymaga przypiętych zależności, a ta oś
+      # jest jedyną, która biegnie na Windows i na drugiej wersji Pythona — czyli jedyną, która
+      # łapie usterki niewidoczne na ubuntu (#146, #147). Instalacja rozwiązywana od nowa przy
+      # każdym przebiegu znaczyła, że nie wiadomo, KTÓRY program ta bramka przed chwilą
+      # sprawdziła. `httpx>=0.27,<0.29` ma w `pyproject.toml` napisane, że gwarancja wyjścia
+      # z §B opiera się na WEWNĘTRZNYM zachowaniu biblioteki — przypięcie jest warunkiem, żeby
+      # to zdanie cokolwiek znaczyło (#157).
+      #
+      # `requirements.lock` powstaje z `uv.lock` (`uv export`), więc obie drogi instalacji niosą
+      # JEDNO rozwiązanie; pilnuje tego `tests/test_locki_zgodne.py`. Lock niesie też `dev`
+      # i `asystent`, więc żaden krok niżej nic nie traci. `asystent` jest tu obowiązkowy mimo
+      # że w produkcie jest opcjonalny: bez niego `tests/test_assistant_caller.py` nie zbierze
+      # się (importuje `httpx2`), a skany granic 11 i 12 nie widzą prawdziwego grafu importów.
+      - run: python -m pip install -r requirements.lock
+      # `--no-deps`, bo zależności są już zainstalowane z locka — bez tego pip rozwiązałby je
+      # drugi raz, z zakresów, i przypięcie przestałoby obowiązywać w tym samym kroku.
+      - run: python -m pip install -e . --no-deps
       # Cały `scripts/` od kiedy sondy dzielą limiter z narzędziem (`scripts/probe_support.py`) —
       # wyliczanka plików gubiłaby każdy nowy. Dostarczony oryginał `ceidg_probe.py` leży
       # w katalogu głównym pod-projektu i celowo zostaje poza tym.

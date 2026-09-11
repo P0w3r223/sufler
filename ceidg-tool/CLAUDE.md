@@ -28,19 +28,21 @@ forbidden: the branch this history now shares is another team's active work.
 **The quality gate is the root's, and it runs on ubuntu with `uv`** — the `ceidg-tool` entry in
 `.github/workflows/ci.yml` at the root. What stayed behind in `.github/workflows/ceidg-tool.yml`
 is the axis the root matrix does not have: Windows and a second Python version, installed with
-`pip` straight from `pyproject.toml` — a freshly resolved set, unlike the pinned `uv.lock` the root
-matrix uses. `requirements.lock` is read by nothing; that it was never regenerated is this
-project's own open gap, recorded in `docs/status.md`. The axis is narrowed by `paths` instead of
-by branch, and takes its Python versions from its own matrix, so the root's `.python-version`
-does not reach it.
+`pip` from `requirements.lock`. Both installs are pinned and both describe **one** resolution:
+`requirements.lock` is generated from `uv.lock` (`uv export --frozen --no-hashes --all-extras
+--no-emit-project`) and never written by hand, which `tests/test_locki_zgodne.py` enforces in both
+directions. §B asks for pinned dependencies, and before 2026-09-11 this axis did not deliver them:
+the lock was read by nothing and had drifted from `uv.lock` by two packages, carrying no
+environment markers at all. The axis is narrowed by `paths` instead of by branch, and takes its
+Python versions from its own matrix, so the root's `.python-version` does not reach it. The
+narrowing is not cosmetic — the matrix is four-way, so without it a typo fix anywhere in the
+repository would spend the organisation's Actions minutes on four full runs of this suite.
 
 **The root `.gitignore` reaches into this directory.** Its rules are unanchored, so `*.xlsx`,
 `*.db`, `*_state.json`, `RAPORT-*.md` and `*.tar` apply here too — on top of this project's own
 `.gitignore`, whose deeper rules win where they negate. Nothing tracked today is affected
 (checked file by file at the import), but a new file named like a generated report or workbook
-will vanish from `git add` without a word. Negate it here if you ever need one tracked. The narrowing is not
-cosmetic — the matrix is four-way, so without it a typo fix anywhere in the repository would
-spend the organisation's Actions minutes on four full runs of this suite.
+will vanish from `git add` without a word. Negate it here if you ever need one tracked.
 
 **The token in `.env` belongs to the owner.** It is not a borrowed credential and needs no action
 before 2026-09-30; from that date, remind them to refresh it. Its payload carries a PESEL, so it
