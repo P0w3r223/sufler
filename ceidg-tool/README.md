@@ -41,8 +41,25 @@ python -m venv .venv
 
 **Extra `asystent` jest obowiązkowa**, także gdy nie zamierzasz używać asystenta: bez niej
 `tests/test_assistant_caller.py` nie zbiera się (importuje `httpx2`), a skany granic 11 i 12
-nie widzą prawdziwego grafu importów. CI instaluje dokładnie to samo. Zależności przypięte
-w `requirements.lock`.
+nie widzą prawdziwego grafu importów.
+
+Powyższe polecenie rozwiązuje zależności z zakresów, czyli daje zestaw ŚWIEŻY, niekoniecznie
+ten, na którym przeszła bramka. Żeby dostać dokładnie tamten:
+
+```
+.venv\Scripts\pip install -r requirements.lock
+.venv\Scripts\pip install -e . --no-deps
+```
+
+Tak instaluje CI (§B wymaga przypiętych zależności). `requirements.lock` jest **generowany**,
+nie pisany ręcznie — powstaje z `uv.lock`, więc obie drogi instalacji niosą jedno rozwiązanie:
+
+```
+uv export --frozen --no-hashes --all-extras --no-emit-project -o requirements.lock
+```
+
+Zgodności obu plików pilnuje `tests/test_locki_zgodne.py`; przed jej wprowadzeniem rozjechały
+się po cichu o dwa pakiety.
 
 ## Uruchomienie bez tokenu i bez danych osobowych
 
