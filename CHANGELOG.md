@@ -28,8 +28,12 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   rdzenia rozwiązywała od korzenia repozytorium — czyli w pustkę. `Powiadomienia_teams`,
   `claude_summary` i `ceidg-tool` były z tego powodu wykluczone już wcześniej; `krs-tool` dopisano
   po tym, jak zapalił bramkę **na `Main`**, bo żaden PR tego dnia nie dostał przebiegu CI.
-  Wykluczenie nie zostawia dziury: ten sam warunek stoi teraz w `krs-tool/tests/test_odsylacze.py`,
-  z korzeniem przesuniętym o jeden katalog i z testem samej bramki na zasianym naruszeniu.
+  Wykluczenie nie zostawia dziury **w tym pod-projekcie**: ten sam warunek stoi teraz
+  w `krs-tool/tests/test_odsylacze.py`, z korzeniem przesuniętym o jeden katalog, a jego sonda
+  idzie drogą przemianowania pliku zamiast pytać o znane formy zapisu — pierwsza redakcja zasiewała
+  napis i przechodziła z zabitą połową strażnika. **Dla dwóch pozostałych wykluczonych
+  pod-projektów dziura jest otwarta**: `ceidg-tool` i `claude_summary` mają łącznie 61 dokumentów
+  bez żadnego strażnika odsyłaczy (#166); `Powiadomienia_teams` ma własnego od wcześniej.
 
 - **`ceidg-tool` wszedł na `Main` jako czwarty pod-projekt (2026-09-10, ADR 0074).** Projekt żył
   od 2026-09-08 na osobnej gałęzi bez wspólnego przodka z `Main`; mieszka teraz w katalogu
