@@ -20,6 +20,7 @@ polecenie, bo to jest inna operacja o innych skutkach.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -36,6 +37,7 @@ NAZWA_DZIENNIKA = "dziennik.jsonl"
 # odtworzenie ma czego szukać bez pamiętania czegokolwiek, a dwie oceny tego samego materiału
 # nie rozjeżdżają się na dwa numery.
 DLUGOSC_IDENTYFIKATORA = 16
+KSZTALT_IDENTYFIKATORA = re.compile(f"[0-9a-f]{{{DLUGOSC_IDENTYFIKATORA}}}")
 
 
 @dataclass(frozen=True)
@@ -130,4 +132,11 @@ def _wpis(linia: str) -> Wpis:
             f"Linia dziennika bez pól {brakujace}. Dziennik pochodzi ze starszej wersji "
             "narzędzia albo został ręcznie zmieniony — w obu przypadkach nie zgaduj."
         )
-    return Wpis(**{pole: dane[pole] for pole in Wpis.__annotations__})
+    wpis = Wpis(**{pole: dane[pole] for pole in Wpis.__annotations__})
+    if not KSZTALT_IDENTYFIKATORA.fullmatch(wpis.ocena_id):
+        raise ConfigError(
+            f"Identyfikator oceny {wpis.ocena_id!r} nie ma kształtu skrótu. Identyfikator "
+            "wskazuje plik ładunku, więc linia zmieniona ręcznie mogłaby kazać narzędziu "
+            "sięgnąć poza magazyn."
+        )
+    return wpis

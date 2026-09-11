@@ -143,6 +143,18 @@ def test_terminal_pokazuje_znacznik_rich_jako_tekst() -> None:
     assert "\x1b[31m" not in wynik.output
 
 
+def test_markdown_zdejmuje_sterowanie_kierunkiem_pisma() -> None:
+    """Nazwa wyświetlana inaczej, niż jest zapisana, w dokumencie przesyłanym dalej jako raport.
+
+    `strip_control` tego nie łapie, bo te znaki leżą powyżej U+0020. Kanał terminalowy dzieli
+    tamten neutralizator z `ceidg-tool` i naprawa tam jest decyzją właściciela (ADR-0023
+    decyzja 1) — tutaj domykamy własny moduł.
+    """
+    zgaszone = safe_md("ALFA‮BETA⁦")
+
+    assert zgaszone == "ALFABETA"
+
+
 def test_neutralizator_markdownu_nie_zjada_tresci() -> None:
     """Gaszenie składni nie może zmieniać słów — to raport o konkretnej spółce."""
     zgaszone = safe_md("ALFA | BETA")

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..errors import NieodtwarzalneZZachowanychError
+from ..errors import ConfigError, NieodtwarzalneZZachowanychError
 
 KATALOG_LADUNKOW = "ladunki"
 ROZSZERZENIE = ".json"
@@ -40,9 +40,12 @@ class Ladunki:
         Ten sam odpis oceniony drugi raz ma ten sam identyfikator i tę samą treść, więc zapis
         jest idempotentny — nadpisanie bajt w bajt tym samym nie jest utratą niczego.
         """
-        self._katalog.mkdir(parents=True, exist_ok=True)
         sciezka = self.sciezka(ocena_id)
-        sciezka.write_text(tresc, encoding="utf-8")
+        try:
+            self._katalog.mkdir(parents=True, exist_ok=True)
+            sciezka.write_text(tresc, encoding="utf-8")
+        except OSError as blad:
+            raise ConfigError(f"Nie da się zapisać ładunku w {sciezka}: {blad}") from blad
         return sciezka
 
     def wczytaj(self, ocena_id: str) -> str:

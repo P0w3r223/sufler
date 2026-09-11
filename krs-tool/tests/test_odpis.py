@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from krs_tool.errors import NieznanyKsztaltOdpisuError, OdpisNieczytelnyError
+from krs_tool.errors import (
+    BrakZrodlaPublicznegoError,
+    NieznanyKsztaltOdpisuError,
+    OdpisNieczytelnyError,
+)
 from krs_tool.identity import numer_krs
 from krs_tool.odpis.czytanie import czytaj_okres, wczytaj_odpis
 from krs_tool.odpis.zrodlo import OdpisZPliku, Zrodlo
@@ -128,3 +132,24 @@ def test_zrodlo_ma_dokladnie_jeden_czlon() -> None:
     ma przeczytać `docs/adr/0001` decyzja 2 i upewnić się, że decyzja właściciela się zmieniła.
     """
     assert [czlon.name for czlon in Zrodlo] == ["PLIK_OPERATORA"]
+
+
+def test_odpis_spoza_rejestru_przedsiebiorcow_jest_odrzucany() -> None:
+    """Uspokajający raport o podmiocie spoza zakresu to najgorszy tryb awarii tego produktu.
+
+    Zanim powstała ta bramka, odpis z `rejestr=S` przechodził cały potok i dawał raport
+    z dziesięcioma wykluczeniami — czytany jak zaświadczenie, choć reguły katalogu opisują
+    przepisy o rejestrze przedsiębiorców, czyli o innym rejestrze niż ten odpis.
+    """
+    with pytest.raises(BrakZrodlaPublicznegoError) as blad:
+        wczytaj_odpis(zbuduj_odpis(rejestr="S"))
+
+    assert "'S'" in str(blad.value)
+    assert "Szefa KAS" in str(blad.value)
+
+
+def test_pusty_rejestr_nie_zamyka_drogi() -> None:
+    """Brak wartości to niewiedza, nie przynależność — odmowa byłaby tu zgadywaniem."""
+    odpis = wczytaj_odpis(zbuduj_odpis(rejestr=""))
+
+    assert odpis.rejestr == ""

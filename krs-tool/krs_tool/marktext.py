@@ -36,10 +36,35 @@ ZNAKI_SKLADNI = ("\\", "`", "*", "_", "[", "]", "(", ")", "#", "!", "~", "|", "<
 # sklejenie dwóch słów zmienia treść, a to jest raport o konkretnej spółce.
 BIALE_ZNAKI = ("\n", "\r", "\t")
 
+# Znaki sterujące kierunkiem pisma. `strip_control` ich nie zdejmuje, bo leżą powyżej U+0020,
+# a potrafią sprawić, że nazwa spółki **wyświetla się inaczej, niż jest zapisana** — w
+# dokumencie, który ktoś przesyła dalej jako raport o tej spółce. Usuwamy, a nie gasimy
+# ukośnikiem: to nie jest składnia markdownu, tylko sterowanie wyświetlaniem.
+#
+# UWAGA: ten sam rodzaj znaku przechodzi dziś do kanału terminalowego przez wspólny
+# `safetext.strip_control`, skopiowany z `ceidg-tool`. Poprawka tam jest decyzją właściciela,
+# bo dotyka KOPII (ADR-0023 decyzja 1: naprawa w jednej kopii, a nie w obu, zamienia
+# „kopiuj" na „wydziel"). Tutaj naprawiamy własny moduł i zgłaszamy tamto.
+ZNAKI_KIERUNKU = (
+    "‪",
+    "‫",
+    "‬",
+    "‭",
+    "‮",
+    "⁦",
+    "⁧",
+    "⁨",
+    "⁩",
+    "‎",
+    "‏",
+)
+
 
 def safe_md(value: str) -> str:
     """Napis z zewnątrz jako zwykły tekst markdown: bez składni, bez łamania wiersza."""
     tekst = strip_control(mask_tokens(value))
+    for znak in ZNAKI_KIERUNKU:
+        tekst = tekst.replace(znak, "")
     for znak in BIALE_ZNAKI:
         tekst = tekst.replace(znak, " ")
     for znak in ZNAKI_SKLADNI:

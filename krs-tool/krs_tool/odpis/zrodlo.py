@@ -45,6 +45,21 @@ class OdpisZPliku:
 
     def __init__(self, sciezka: Path) -> None:
         self._sciezka = sciezka
+        self._tresc: str | None = None
+
+    @property
+    def tresc(self) -> str:
+        """Bajty, z których powstał odpis — dokładnie te, nie odczytane drugi raz.
+
+        Dziennik zapisuje ładunek i skrót materiału. Drugi odczyt tego samego pliku dawałby
+        to, co leży na dysku w chwili zapisu dziennika, a nie to, z czego powstały werdykty —
+        i gdyby plik zmienił się w międzyczasie, odtworzenie powiedziałoby „materiał się nie
+        zmienił" o materiale, którego nigdy nie oceniało. To jest jedyne twierdzenie, jakie
+        dziennik stawia o swoim ładunku, więc ma wynikać z konstrukcji.
+        """
+        if self._tresc is None:  # pragma: no cover - wołane po `pobierz`
+            raise OdpisNieczytelnyError("Odpis nie został jeszcze odczytany")
+        return self._tresc
 
     def pobierz(self, numer: NumerKRS | None = None) -> Odpis:
         return wczytaj_odpis(self._wczytaj(), numer=numer)
@@ -64,4 +79,5 @@ class OdpisZPliku:
             ) from blad
         if not isinstance(dane, Mapping):
             raise OdpisNieczytelnyError(f"Plik {self._sciezka} nie zawiera obiektu JSON")
+        self._tresc = tresc
         return dane

@@ -15,9 +15,13 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
-from ..errors import NieznanyKsztaltOdpisuError, OdpisNieczytelnyError
+from ..errors import (
+    BrakZrodlaPublicznegoError,
+    NieznanyKsztaltOdpisuError,
+    OdpisNieczytelnyError,
+)
 from ..identity import NumerKRS, numer_krs
-from .model import Dzial, DzienBilansowy, Odpis, Okres, Wzmianka
+from .model import REJESTR_PRZEDSIEBIORCOW, Dzial, DzienBilansowy, Odpis, Okres, Wzmianka
 
 # Klucz, którego rejestr nigdy nie wystawi. Stawia go wyłącznie budowniczy odpisów
 # syntetycznych, żeby karta z takiego pliku była nie do pomylenia z prawdziwą.
@@ -186,6 +190,7 @@ def wczytaj_odpis(surowe: Mapping[str, Any], *, numer: NumerKRS | None = None) -
             "Odpis nie niesie numeru KRS, a wołający go nie podał. Czy rejestr w ogóle umieszcza "
             "numer w odpisie, jest pozycją niezmierzoną (docs/pomiary.md)."
         )
+    _sprawdz_rejestr(str(_opcjonalne(naglowek, "rejestr") or ""))
     podmiot = _wymagane(dane, "dzial1.danePodmiotu")
     data_wpisu = _opcjonalne(naglowek, "dataOstatniegoWpisu")
     return Odpis(
@@ -204,6 +209,30 @@ def wczytaj_odpis(surowe: Mapping[str, Any], *, numer: NumerKRS | None = None) -
         dzialy=_dzialy(dane),
         syntetyczny=bool(surowe.get(KLUCZ_SYNTETYCZNY, False)),
     )
+
+
+def _sprawdz_rejestr(rejestr: str) -> None:
+    """Odpis spoza rejestru przedsiębiorców jest odrzucany, a nie oceniany.
+
+    Powód zobaczyłem na wydruku, nie w rozumowaniu: odpis z `rejestr=S` przechodził przez cały
+    potok i dawał raport, w którym **wszystkie dziesięć reguł jest wykluczonych**, z podpisem
+    „każda reguła katalogu została rozstrzygnięta". Czyta się to jak zaświadczenie o czystości,
+    a reguły działów 4 i 6 stoją na art. 41 i 44 ustawy o KRS, które opisują rejestr
+    przedsiębiorców — czyli nie ten, z którego ten odpis pochodzi. Uspokajający raport
+    o podmiocie spoza zakresu to najgorszy tryb awarii, jaki ten produkt ma.
+
+    Pusta wartość przepuszcza: to niewiedza, nie przynależność, i tak samo traktuje ją
+    przesłanka o rejestrze. Wartość `P` jest ZAŁOŻENIEM (`docs/pomiary.md`, wiersz 10) —
+    gdyby okazało się błędne, narzędzie odmówi wszystkim i powie, jaką wartość zobaczyło,
+    zamiast po cichu oceniać nie ten rejestr.
+    """
+    if rejestr and rejestr != REJESTR_PRZEDSIEBIORCOW:
+        raise BrakZrodlaPublicznegoError(
+            f"Odpis pochodzi z rejestru {rejestr!r}, a to narzędzie opisuje wyłącznie rejestr "
+            f"przedsiębiorców ({REJESTR_PRZEDSIEBIORCOW!r}). Reguły katalogu powołują się na "
+            "przepisy o tym rejestrze, a sprawozdania podmiotów spoza niego trafiają do Szefa "
+            "KAS i są objęte tajemnicą skarbową."
+        )
 
 
 def _wymagany_numer(numer: NumerKRS | None) -> NumerKRS:

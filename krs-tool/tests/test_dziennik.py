@@ -23,6 +23,7 @@ from krs_tool.dziennik.skroty import skrot_tekstu
 from krs_tool.dziennik.zapis import Dziennik, wpis_z_oceny
 from krs_tool.errors import ConfigError, NieodtwarzalneZZachowanychError, OdpisNieczytelnyError
 from krs_tool.odpis.czytanie import wczytaj_odpis
+from krs_tool.odpis.zrodlo import OdpisZPliku
 from krs_tool.signals.katalog import Regula, wczytaj_katalog
 from krs_tool.signals.ocena import ocen_odpis
 from tests.budowniczy import OKRES_KROPKOWY, wzmianka, zbuduj_odpis
@@ -256,3 +257,59 @@ def test_odmowa_odtworzenia_konczy_sie_komunikatem_i_kodem_wyjscia(
     wyjscie_tekst = capsys.readouterr().out
     assert "nie udało się" in wyjscie_tekst
     assert "Traceback" not in wyjscie_tekst
+
+
+def test_odtworzenie_dziala_dla_odpisu_bez_numeru_w_naglowku(tmp_path: Path) -> None:
+    """Odpis bez `numerKRS` to cały powód, dla którego polecenia mają `--krs`.
+
+    Zanim odtworzenie zaczęło brać numer z wpisu, raport wypisywał polecenie, które nie miało
+    prawa zadziałać, a odmowa mówiła operatorowi, że nie podał numeru — podczas gdy numer stał
+    w tej samej linii dziennika, którą odtworzenie właśnie przeczytało.
+    """
+    tresc = json.dumps(zbuduj_odpis(sprawozdania=SPRAWOZDANIE, bez_numeru=True), ensure_ascii=False)
+    plik = tmp_path / "bez_numeru.json"
+    plik.write_text(tresc, encoding="utf-8")
+    magazyn = tmp_path / "magazyn"
+    zapis = CliRunner().invoke(
+        app,
+        ["raport", "--plik", str(plik), "--krs", "0000123456", "--magazyn", str(magazyn)],
+    )
+    assert zapis.exit_code == 0
+
+    (wpis,) = Dziennik(magazyn).wpisy()
+    wynik = odtworz(magazyn, wpis.ocena_id, wczytaj_katalog())
+
+    assert wynik.identyczne is True
+
+
+def test_ladunek_to_te_same_bajty_ktore_ocenialismy(tmp_path: Path) -> None:
+    """Skrót materiału ma opisywać plik, z którego powstały werdykty, a nie ten z chwili zapisu.
+
+    Gdyby dziennik czytał plik drugi raz, podmiana pliku między oceną a zapisem dałaby przy
+    odtwarzaniu „materiał się nie zmienił" o materiale, którego nikt nigdy nie oceniał — czyli
+    jedyne twierdzenie, jakie dziennik stawia o swoim ładunku, byłoby fałszywe.
+    """
+    plik = tmp_path / "odpis.json"
+    oryginal = _tresc()
+    plik.write_text(oryginal, encoding="utf-8")
+    zrodlo = OdpisZPliku(plik)
+    zrodlo.pobierz()
+
+    plik.write_text(_tresc(nazwa="PODMIENIONA"), encoding="utf-8")
+
+    assert zrodlo.tresc == oryginal
+
+
+def test_identyfikator_z_recznie_zmienionej_linii_nie_wskaze_poza_magazyn(tmp_path: Path) -> None:
+    """Identyfikator wskazuje plik ładunku, więc jego kształt sprawdzamy przy wczytaniu linii."""
+    _zapisz(tmp_path, _tresc())
+    linia = json.loads((tmp_path / "dziennik.jsonl").read_text(encoding="utf-8"))
+    linia["ocena_id"] = "../../../etc/x"
+    (tmp_path / "dziennik.jsonl").write_text(
+        json.dumps(linia, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigError) as blad:
+        Dziennik(tmp_path).wpisy()
+
+    assert "kształtu skrótu" in str(blad.value)

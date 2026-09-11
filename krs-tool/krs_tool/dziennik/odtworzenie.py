@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import OdpisNieczytelnyError
+from ..identity import numer_krs
 from ..odpis.czytanie import wczytaj_odpis
 from ..signals.katalog import Regula
 from ..signals.ocena import ocen_odpis
@@ -48,7 +49,12 @@ def odtworz(katalog_magazynu: Path, ocena_id: str, reguly: Sequence[Regula]) -> 
     """Przelicza ocenę o danym identyfikatorze z zachowanego ładunku."""
     wpis = _wpis(katalog_magazynu, ocena_id)
     tresc = Ladunki(katalog_magazynu).wczytaj(wpis.ocena_id)
-    ocena = ocen_odpis(wczytaj_odpis(_struktura(tresc)), reguly)
+    # Numer podajemy z wpisu, a nie liczymy na to, że plik go niesie. Odpis bez `numerKRS`
+    # w nagłówku jest powodem, dla którego polecenia mają `--krs`; bez tej jednej wartości
+    # odtworzenie takiej oceny kończyło się czwartą odpowiedzią, której ten moduł nie zna
+    # i której nie ma prawa dawać: „nie podałeś numeru", podczas gdy numer stoi w dzienniku.
+    odpis = wczytaj_odpis(_struktura(tresc), numer=numer_krs(wpis.numer))
+    ocena = ocen_odpis(odpis, reguly)
     teraz = skrot_wyniku(ocena)
     werdykty = {wynik.regula.kod: type(wynik).__name__.lower() for wynik in ocena.wyniki}
     return Odtworzenie(

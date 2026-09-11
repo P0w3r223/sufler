@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..odpis.model import RODZAJ_SPRAWOZDANIE_FINANSOWE, Dzial, Odpis
+from ..odpis.model import Dzial, Odpis
 from ..signals.model import Nieustalony, Niewiadoma, Obserwacja, Ocena, Powod, Sygnal
 from ..texts import ZNACZNIK_SYNTETYCZNY, Block, opis_kodu, opis_niewiadomej
 
@@ -174,7 +174,7 @@ def _cytat(sygnal: Sygnal, odpis: Odpis) -> str:
         dzial = odpis.dzial(numer) if numer is not None else None
         return _cytat_dzialu(dzial)
     if sygnal.obserwacja is Obserwacja.BRAK_WZMIANKI_ZA_OKRES:
-        return _cytat_ostatniej_wzmianki(odpis)
+        return _cytat_wzmianki(sygnal, odpis)
     return opis_kodu(sygnal.obserwacja.value)
 
 
@@ -184,17 +184,33 @@ def _cytat_dzialu(dzial: Dzial | None) -> str:
     return f"dział {dzial.numer}, pola w pliku: " + ", ".join(dzial.klucze)
 
 
-def _cytat_ostatniej_wzmianki(odpis: Odpis) -> str:
-    wzmianki = [
+def _cytat_wzmianki(sygnal: Sygnal, odpis: Odpis) -> str:
+    """Wzmianka za **ten** okres, po którym sygnał wskazuje lukę — a nie wzmianka najnowsza.
+
+    Dwa sposoby na zacytowanie nie tego, co trzeba, i oba tu wcześniej były. Rodzaj wzmianki
+    wzięty na sztywno oceniałby sprawozdanie finansowe także przy regule mówiącej o innym
+    dokumencie — dokładnie to, przed czym broni się `signals/ocena.py`, biorąc rodzaj
+    z katalogu. A wybór po **dacie złożenia** rozjeżdża się z wyborem po **dniu bilansowym**
+    u spółki nadrabiającej zaległy rok: sygnał stałby wtedy na jednym okresie, a cytat
+    pokazywałby inny.
+
+    Gałąź jest dziś nieosiągalna, bo reguła braku wzmianki nie może wystrzelić. Poprawiona
+    zostaje teraz, bo w dniu, w którym bramka się otworzy, nikt nie wyprowadzi tego
+    rozumowania po raz drugi.
+    """
+    pasujace = [
         w
         for w in odpis.wzmianki
-        if w.rodzaj == RODZAJ_SPRAWOZDANIE_FINANSOWE and w.okres is not None
+        if w.rodzaj == sygnal.regula.wzmianka
+        and w.okres is not None
+        and w.okres.do == sygnal.po_okresie
     ]
-    if not wzmianki:
+    if not pasujace:
         return BRAK_CYTATU
-    ostatnia = max(wzmianki, key=lambda w: w.data_zlozenia)
+    ostatnia = max(pasujace, key=lambda w: w.data_zlozenia)
     return (
-        f"ostatnia wzmianka: {ostatnia.zapis_okresu}, złożono {ostatnia.data_zlozenia.isoformat()}"
+        f"ostatnia wzmianka za ten okres: {ostatnia.zapis_okresu}, "
+        f"złożono {ostatnia.data_zlozenia.isoformat()}"
     )
 
 

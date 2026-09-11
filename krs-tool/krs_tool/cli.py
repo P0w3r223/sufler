@@ -22,6 +22,7 @@ from .dziennik.ladunki import Ladunki
 from .dziennik.odtworzenie import odtworz as odtworz_ocene
 from .dziennik.skroty import skrot_tekstu
 from .dziennik.zapis import Dziennik, wpis_z_oceny
+from .errors import ConfigError
 from .identity import NumerKRS, numer_krs
 from .magazyn import domyslny_magazyn
 from .odpis.zrodlo import OdpisZPliku
@@ -121,25 +122,41 @@ def raport(
     odpis = zrodlo.pobierz(numer)
     reguly = wczytaj_katalog()
     ocena = ocen_odpis(odpis, reguly)
+    dokument = zbuduj_raport(ocena, odpis)
     konsola = make_console()
-    render_raport(zbuduj_raport(ocena, odpis), konsola)
+    render_raport(dokument, konsola)
     if markdown is not None:
-        markdown.write_text(raport_markdown(zbuduj_raport(ocena, odpis)), encoding="utf-8")
+        _zapisz_markdown(markdown, raport_markdown(dokument))
     if not bez_dziennika:
-        render_block(_zapisz_w_dzienniku(plik, ocena, reguly, magazyn), konsola)
+        render_block(_zapisz_w_dzienniku(zrodlo.tresc, ocena, reguly, magazyn), konsola)
+
+
+def _zapisz_markdown(sciezka: Path, dokument: str) -> None:
+    """Zapis pliku wskazanego przez operatora — z błędem z taksonomii, nie ze śladem stosu.
+
+    Literówka w ścieżce jest stanem przewidzianym: `--markdown raporty/x.md` przy nieistniejącym
+    katalogu to najzwyklejsza pomyłka, a nie usterka narzędzia.
+    """
+    try:
+        sciezka.write_text(dokument, encoding="utf-8")
+    except OSError as blad:
+        raise ConfigError(f"Nie da się zapisać raportu w {sciezka}: {blad}") from blad
 
 
 def _zapisz_w_dzienniku(
-    plik: Path, ocena: Ocena, reguly: tuple[Regula, ...], magazyn: Path | None
+    tresc: str, ocena: Ocena, reguly: tuple[Regula, ...], magazyn: Path | None
 ) -> Block:
     """Linia w dzienniku i kopia odpisu obok niej — w tej kolejności.
 
     Ładunek zapisujemy PRZED linią dziennika: wpis wskazujący na ładunek, którego nie ma, jest
     gorszy niż ładunek, o którym nie wie dziennik. Pierwszy kłamie przy odtwarzaniu, drugi jest
     tylko śmieciem do sprzątnięcia.
+
+    Treść przychodzi z **tego samego odczytu**, z którego powstała ocena, a nie z drugiego
+    otwarcia pliku — inaczej skrót materiału opisywałby plik z chwili zapisu dziennika,
+    a werdykty plik sprzed chwili.
     """
     katalog = magazyn if magazyn is not None else domyslny_magazyn()
-    tresc = plik.read_text(encoding="utf-8")
     skrot = skrot_tekstu(tresc)
     wpis = wpis_z_oceny(ocena, utc_iso(SystemClock().wall()), skrot, reguly)
     sciezka_ladunku = Ladunki(katalog).zapisz(wpis.ocena_id, tresc)

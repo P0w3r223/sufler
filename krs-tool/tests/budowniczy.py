@@ -39,6 +39,7 @@ def zbuduj_odpis(
     dzial5: Any = None,
     dzial6: Any = None,
     bez_dzialu: int | None = None,
+    bez_numeru: bool = False,
 ) -> dict[str, Any]:
     """Odpis syntetyczny w kształcie, jaki zakłada `odpis/czytanie.py`."""
     identyfikatory: dict[str, str] = {}
@@ -80,16 +81,13 @@ def zbuduj_odpis(
     if bez_dzialu is not None:
         dane.pop(f"dzial{bez_dzialu}", None)
 
-    return {
-        "_syntetyczny": True,
-        "odpis": {
-            "naglowekA": {
-                "numerKRS": numer,
-                "rejestr": rejestr,
-                "stanZDnia": stan_z_dnia,
-                "dataOstatniegoWpisu": "27.08.2026",
-                "numerOstatniegoWpisu": 42,
-            },
-            "dane": dane,
-        },
+    naglowek: dict[str, Any] = {
+        "rejestr": rejestr,
+        "stanZDnia": stan_z_dnia,
+        "dataOstatniegoWpisu": "27.08.2026",
+        "numerOstatniegoWpisu": 42,
     }
+    if not bez_numeru:
+        naglowek["numerKRS"] = numer
+
+    return {"_syntetyczny": True, "odpis": {"naglowekA": naglowek, "dane": dane}}

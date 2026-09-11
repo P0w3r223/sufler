@@ -8,6 +8,7 @@ z odpisu nie wynika, który wpis w nim stoi, a wybór po nazwie byłby zgadywani
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -225,13 +226,18 @@ def test_nieuplyniety_ogranicznik_wyklucza_regule() -> None:
 
 
 def test_podmiot_spoza_rejestru_przedsiebiorcow_wyklucza_regule() -> None:
-    """Sprawozdania spoza rejestru przedsiębiorców idą do Szefa KAS i są objęte tajemnicą.
+    """Przesłanka o rejestrze działa, choć czytnik takiego odpisu dziś w ogóle nie wpuszcza.
 
-    Jedyne prawdziwe zdanie o takim podmiocie brzmi „brak źródła publicznego" — pomylenie go
-    z „brak sprawozdania" było jednym z pierwszych ustaleń rozpoznania.
+    Odrzucenie stoi na granicy (`odpis/czytanie.py`), bo cały katalog opisuje rejestr
+    przedsiębiorców. Ta przesłanka zostaje jako druga warstwa: wartość `P` jest założeniem,
+    a nie pomiarem, więc gdyby granicę kiedyś rozszerzyć, reguła braku sprawozdania nadal nie
+    ma prawa mówić o dokumencie, który trafia do Szefa KAS i jest objęty tajemnicą skarbową.
     """
-    wynik = ocen(sprawozdania=SPRAWOZDANIE_ZA_2023, rejestr="S")[REGULA_BRAKU]
+    odpis = replace(wczytaj_odpis(zbuduj_odpis(sprawozdania=SPRAWOZDANIE_ZA_2023)), rejestr="S")
 
+    wyniki = {w.regula.kod: w for w in ocen_odpis(odpis, wczytaj_katalog()).wyniki}
+
+    wynik = wyniki[REGULA_BRAKU]
     assert isinstance(wynik, Wykluczony)
     assert wynik.powod == "poza_rejestrem_przedsiebiorcow"
 

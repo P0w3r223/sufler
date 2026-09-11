@@ -64,6 +64,11 @@ def _pliki_pakietu() -> list[Path]:
     return sorted(PAKIET.rglob("*.py"))
 
 
+def _id_wzgledny(sciezka: Path) -> str:
+    """Nazwa pliku wobec pakietu: `texts.py` jest w tym drzewie dwa razy i to nie pomyłka."""
+    return sciezka.relative_to(PAKIET).as_posix()
+
+
 def _wszystkie_pliki() -> list[Path]:
     return sorted(
         [
@@ -459,7 +464,7 @@ def test_regula_4_warstwa_sygnalow_nie_czyta_zegara(sciezka: Path) -> None:
 @pytest.mark.parametrize(
     "sciezka",
     [*_pliki_sygnalow(), PAKIET / "texts.py", PAKIET / "raport" / "texts.py"],
-    ids=lambda p: p.as_posix().split("krs_tool/")[-1],
+    ids=_id_wzgledny,
 )
 def test_regula_5_moduly_czyste_nie_znaja_wyjscia(sciezka: Path) -> None:
     """Bez tego ekrany i reguły przestałyby dać się sprawdzić bez terminala."""
@@ -485,8 +490,17 @@ def test_regula_11_katalog_nie_zawiera_slowa_oskarzenia() -> None:
     assert slowa_oskarzenia(teksty) == []
 
 
-def test_regula_11_teksty_nie_zawieraja_slowa_oskarzenia() -> None:
-    napisy = _napisy_nie_bedace_docstringiem((PAKIET / "texts.py").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("sciezka", _pliki_pakietu(), ids=_id_wzgledny)
+def test_regula_11_zaden_napis_pakietu_nie_zawiera_slowa_oskarzenia(sciezka: Path) -> None:
+    """Skan idzie po CAŁYM pakiecie, a nie po liście modułów piszących zdania.
+
+    Lista była krótsza od prawdy dokładnie jeden krok: raport dostał własny moduł tekstów
+    i wypadł spod tej reguły, choć to on pisze zdania, które czyta człowiek. Komunikaty
+    wyjątków i zdania dziennika też są treścią dla operatora. Zbiór „moduły z prozą" rośnie,
+    więc skanujemy dopełnienie: **nigdzie w pakiecie** nie ma słowa oskarżenia, a wolno je
+    nazwać w komentarzu i w docstringu, bo tych skan nie czyta.
+    """
+    napisy = _napisy_nie_bedace_docstringiem(sciezka.read_text(encoding="utf-8"))
 
     assert slowa_oskarzenia(napisy) == []
 
@@ -586,29 +600,94 @@ def test_skan_producentow_naprawde_lapie(zrodlo: str, nazwa: str, oczekiwane: in
 # --------------------------------------------------------------------------------------
 
 NEUTRALIZATORY_MD = frozenset({"safe_md", "safe_md_or_empty"})
+# Własne budowniczy modułu markdown. Każdy jest skanowany osobno, więc jego wynik wolno
+# traktować jak tekst już zneutralizowany — ale lista ma własny test, bo inaczej dopisanie
+# funkcji rozbroiłoby skan bez jednego słowa.
+BUDOWNICZY_MD = frozenset({"_sekcja", "_wiersz"})
 MODUL_MARKDOWN = "raport/markdown.py"
 
 
-def wstawki_bez_neutralizatora(source: str, neutralizatory: frozenset[str]) -> list[int]:
-    """Numery linii z wstawką w f-stringu, która nie przeszła przez neutralizator kanału.
+def _bezpieczne_md(node: ast.expr, nazwy: set[str], dozwolone: frozenset[str]) -> bool:
+    """Czy to wyrażenie na pewno niesie tekst przepuszczony przez neutralizator kanału."""
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in nazwy
+    if isinstance(node, ast.Starred):
+        return _bezpieczne_md(node.value, nazwy, dozwolone)
+    if isinstance(node, ast.GeneratorExp | ast.ListComp):
+        return _bezpieczne_md(node.elt, nazwy, dozwolone)
+    if isinstance(node, ast.List | ast.Tuple):
+        return all(_bezpieczne_md(e, nazwy, dozwolone) for e in node.elts)
+    if isinstance(node, ast.BinOp):
+        return _bezpieczne_md(node.left, nazwy, dozwolone) and _bezpieczne_md(
+            node.right, nazwy, dozwolone
+        )
+    if isinstance(node, ast.JoinedStr):
+        return all(
+            _bezpieczne_md(c.value, nazwy, dozwolone)
+            for c in node.values
+            if isinstance(c, ast.FormattedValue)
+        )
+    if isinstance(node, ast.Call):
+        if _nazwa_wywolania(node) == "join":
+            return all(_bezpieczne_md(a, nazwy, dozwolone) for a in node.args)
+        return _nazwa_wywolania(node) in dozwolone
+    return False
 
-    W tym module napis staje się markdownem wyłącznie przez wstawkę w f-stringu albo przez
-    złączenie komórek, a oba kształty muszą wołać neutralizator wprost. Stała jest dozwolona,
-    bo stała pochodzi z programu.
+
+def _nazwy_bezpieczne_md(tree: ast.AST, dozwolone: frozenset[str]) -> set[str]:
+    """Zmienne, do których trafia wyłącznie tekst już zneutralizowany.
+
+    Liczone do punktu stałego, bo lista linii bywa najpierw przypisana, a potem uzupełniana
+    przez `append` i `extend` — a pominięcie którejkolwiek z tych dróg dałoby skan, który
+    raportuje się jako domknięty, będąc ślepym na najczęstszy kształt w tym module.
+    """
+    wiazania: dict[str, list[ast.expr]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for cel in node.targets:
+                if isinstance(cel, ast.Name):
+                    wiazania.setdefault(cel.id, []).append(node.value)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in {"append", "extend"} and isinstance(node.func.value, ast.Name):
+                wiazania.setdefault(node.func.value.id, []).extend(node.args)
+    nazwy = set(wiazania)
+    zmiana = True
+    while zmiana:
+        zmiana = False
+        for nazwa in sorted(nazwy):
+            if not all(_bezpieczne_md(w, nazwy, dozwolone) for w in wiazania[nazwa]):
+                nazwy.discard(nazwa)
+                zmiana = True
+    return nazwy
+
+
+def wstawki_bez_neutralizatora(
+    source: str, neutralizatory: frozenset[str], producenci: frozenset[str] = frozenset()
+) -> list[int]:
+    """Numery linii, w których napis staje się markdownem z pominięciem neutralizatora kanału.
+
+    Skan widzi **oba** kształty, którymi tekst wchodzi do dokumentu: wstawkę w f-stringu
+    i złączenie komórek. Pierwsza wersja czytała tylko f-stringi, więc `" | ".join(komorki)`
+    przechodziło — a to jest dokładnie ta linia, którą pisze się w tym module najczęściej.
+    `producenci` to własne budowniczy modułu: każdy z nich jest skanowany osobno, więc ich
+    wynik wolno traktować jako już zneutralizowany.
     """
     tree = ast.parse(source)
+    dozwolone = neutralizatory | producenci
+    nazwy = _nazwy_bezpieczne_md(tree, dozwolone)
     naruszenia: list[int] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.JoinedStr):
-            continue
-        for czesc in node.values:
-            if not isinstance(czesc, ast.FormattedValue):
-                continue
-            wartosc = czesc.value
-            bezpieczna = isinstance(wartosc, ast.Constant) or (
-                isinstance(wartosc, ast.Call) and _nazwa_wywolania(wartosc) in neutralizatory
+        if isinstance(node, ast.JoinedStr):
+            naruszenia.extend(
+                node.lineno
+                for c in node.values
+                if isinstance(c, ast.FormattedValue)
+                and not _bezpieczne_md(c.value, nazwy, dozwolone)
             )
-            if not bezpieczna:
+        elif isinstance(node, ast.Call) and _nazwa_wywolania(node) == "join":
+            if any(not _bezpieczne_md(a, nazwy, dozwolone) for a in node.args):
                 naruszenia.append(node.lineno)
     return naruszenia
 
@@ -616,7 +695,19 @@ def wstawki_bez_neutralizatora(source: str, neutralizatory: frozenset[str]) -> l
 def test_regula_6_wstawki_w_markdownie_ida_przez_wlasny_neutralizator() -> None:
     zrodlo = (PAKIET / MODUL_MARKDOWN).read_text(encoding="utf-8")
 
-    assert wstawki_bez_neutralizatora(zrodlo, NEUTRALIZATORY_MD) == []
+    assert wstawki_bez_neutralizatora(zrodlo, NEUTRALIZATORY_MD, BUDOWNICZY_MD) == []
+
+
+def test_lista_budowniczych_markdownu_jest_zamknieta() -> None:
+    """Budowniczy są traktowani jak zneutralizowani, więc ich lista nie może rosnąć w ciszy."""
+    drzewo = ast.parse((PAKIET / MODUL_MARKDOWN).read_text(encoding="utf-8"))
+    prywatne = {
+        node.name
+        for node in ast.walk(drzewo)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("_")
+    }
+
+    assert prywatne == set(BUDOWNICZY_MD)
 
 
 def importowane_w_pakiecie(source: str) -> set[str]:
@@ -666,6 +757,10 @@ def test_kanaly_nie_mieszaja_neutralizatorow() -> None:
         # kształty, które robią z fragmentu raportu odnośnik albo rozbijają tabelę
         ('tytul = f"# {raport.tytul}"', 1),
         ('komorka = f"| {safe(nazwa)} |"', 1),
+        ('wiersz = " | ".join(safe_md(k) for k in komorki)', 0),
+        # kształt, który pisze się w tym module najczęściej i który pierwsza wersja skanu
+        # przepuszczała, bo czytała wyłącznie f-stringi
+        ('wiersz = " | ".join(komorki)', 1),
     ],
 )
 def test_skan_wstawek_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
@@ -723,7 +818,19 @@ def test_skan_odczytow_pola_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None
 PAKIET_DZIENNIKA = PAKIET / "dziennik"
 MODUL_KASUJACY = "ladunki.py"
 TRYBY_DOPUSZCZALNE = frozenset({"a", "r", "x"})
-WYWOLANIA_NISZCZACE = frozenset({"unlink", "rmtree", "rename", "replace", "truncate", "write_text"})
+WYWOLANIA_NISZCZACE = frozenset(
+    {
+        "unlink",
+        "rmtree",
+        "rename",
+        "replace",
+        "truncate",
+        "write_text",
+        "write_bytes",
+        "remove",
+        "move",
+    }
+)
 
 
 def _pliki_dziennika() -> list[Path]:
@@ -747,8 +854,13 @@ def tryby_otwarcia(source: str) -> list[str]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or _nazwa_wywolania(node) != "open":
             continue
-        pozycyjne = [a for a in node.args if isinstance(a, ast.Constant)]
-        tryby.extend(str(a.value) for a in pozycyjne if isinstance(a.value, str))
+        podane = [a for a in node.args if isinstance(a, ast.Constant)]
+        # Tryb bywa podany po nazwie i to jest ten sam tryb. Skan czytający wyłącznie
+        # argumenty pozycyjne przepuszczałby `open(mode="w")`, raportując się jako domknięty.
+        podane += [
+            k.value for k in node.keywords if k.arg == "mode" and isinstance(k.value, ast.Constant)
+        ]
+        tryby.extend(str(a.value) for a in podane if isinstance(a.value, str))
     return tryby
 
 
@@ -778,6 +890,7 @@ def test_kasuje_dokladnie_jeden_modul_dziennika() -> None:
         ('tresc = sciezka.open("r", encoding="utf-8").read()', 0),
         ('with sciezka.open("w", encoding="utf-8") as plik: plik.write(linia)', 1),
         ('sciezka.open("w+")', 1),
+        ('sciezka.open(mode="w")', 1),
     ],
 )
 def test_skan_trybow_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
@@ -792,6 +905,8 @@ def test_skan_trybow_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
         ("sciezka.unlink()", 1),
         ("sciezka.write_text(tresc)", 1),
         ("shutil.rmtree(katalog)", 1),
+        ("os.remove(sciezka)", 1),
+        ("sciezka.write_bytes(dane)", 1),
     ],
 )
 def test_skan_wywolan_niszczacych_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
