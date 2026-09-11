@@ -620,6 +620,131 @@ def choose_report(criteria: Criteria, deps: Deps) -> Report | None:
     return pick_registered_report(reports, criteria.wojewodztwo[0])
 
 
+@dataclass(frozen=True)
+class _WynikSkanu:
+    """Co przyniosło jedno przejście po wierszach archiwum.
+
+    Dwa liczniki duplikatów, bo to dwie różne wiadomości. Powtórzony NIP to rejestr
+    wymieniający jeden wpis dwa razy — zwyczajne. Powtórzony skrót treści to **nasz wniosek**,
+    że dwa wiersze opisują tę samą firmę, i może być błędny (ADR-0016). Jeden licznik na oba
+    kazałby operatorowi zgadywać, co się stało.
+    """
+
+    dopasowane: int
+    duplikaty_id: int
+    duplikaty_tresci: int
+
+
+def _pobierz_archiwum(
+    client: CeidgClient,
+    report: Report,
+    dest: Path,
+    deps: Deps,
+    progress: Callable[[int, int | None], None],
+) -> None:
+    """Ściąga archiwum raportu, chyba że leży już w pamięci podręcznej i daje się otworzyć."""
+    if not dest.exists():
+        deps.events.on_message(
+            f"Pobieram raport {report.nazwa} — jeden plik ZIP, kilkadziesiąt MB."
+        )
+        client.download_report(report, dest, progress=progress)
+    elif not _readable_archive(dest):
+        # Plik z cache bywa uszkodzony (przerwane pobieranie, pełny dysk). Warunek
+        # `not dest.exists()` widział go jako gotowy, więc każda kolejna próba kończyła
+        # się tym samym błędem — bez wyjścia, bo nikt nie mówił, że trzeba go skasować.
+        deps.events.on_message(
+            f"Raport w pamięci podręcznej był uszkodzony ({dest.name}) — usuwam go "
+            "i pobieram jeszcze raz."
+        )
+        dest.unlink(missing_ok=True)
+        client.download_report(report, dest, progress=progress)
+    deps.events.on_message(f"Raport pobrany: {report.nazwa} ({report.utworzono}).")
+
+
+def _skanuj_archiwum(
+    dest: Path,
+    criteria: Criteria,
+    store: Store,
+    events: Events,
+    serce: LockHeartbeat,
+    *,
+    run_id: str,
+    wojewodztwo: str | None,
+) -> _WynikSkanu:
+    """Jedno przejście po wierszach archiwum: filtr, odsianie duplikatów, zapis stronami.
+
+    Rytm paska i bicia serca wyznaczają wiersze **przeczytane**, nie **dopasowane**: pracą tej
+    pętli jest zmapowanie każdego wiersza, a filtr odrzuca go dopiero po `row_to_record`. Przy
+    wąskich kryteriach (miasto w raporcie wojewódzkim) licznik dopasowań nie dobijał do progu
+    ani razu, więc pasek stał, a blokada nie dostawała bicia serca przez całe 287 tys. wierszy.
+    """
+    matched = 0
+    seen_ids: set[str] = set()
+    duplicates = 0
+    duplikaty_tresci = 0
+    page_index = 0
+    scanned = 0
+    reported = 0  # dopasowania, które już trafiły na pasek
+    buffer: list[dict[str, Any]] = []
+    for row in iter_report_rows(dest):
+        scanned += 1
+        record = row_to_record(row, wojewodztwo=wojewodztwo)
+        if matches_criteria(record, criteria):
+            rid = str(record["id"])
+            if rid in seen_ids:
+                # wygrywa późniejszy wiersz
+                if rid.startswith(PREFIKS_TRESCI):
+                    duplikaty_tresci += 1
+                else:
+                    duplicates += 1
+            else:
+                seen_ids.add(rid)
+                matched += 1
+            buffer.append(record)
+        if scanned % REPORT_PAGE_SIZE == 0:
+            serce.bij()
+            events.on_page(page_index, matched - reported, None)
+            reported = matched
+        if criteria.max_rekordow is not None and matched >= criteria.max_rekordow:
+            break
+        if len(buffer) >= REPORT_PAGE_SIZE:
+            store.save_page(
+                run_id,
+                page_index=page_index,
+                records=buffer,
+                next_cursor=str(page_index + 1),
+                zrodlo="CEIDG_RAPORT",
+            )
+            page_index += 1
+            buffer = []
+    store.save_page(
+        run_id, page_index=page_index, records=buffer, next_cursor=None, zrodlo="CEIDG_RAPORT"
+    )
+    events.on_page(page_index, matched - reported, matched)
+    return _WynikSkanu(
+        dopasowane=matched, duplikaty_id=duplicates, duplikaty_tresci=duplikaty_tresci
+    )
+
+
+def _powiedz_o_duplikatach(wynik: _WynikSkanu, events: Events) -> None:
+    """Dwa zdania, bo dwie różne sytuacje i dwa różne stopnie pewności."""
+    if wynik.duplikaty_id:
+        events.on_message(
+            f"Raport zawierał {wynik.duplikaty_id} wierszy o powtórzonym identyfikatorze "
+            "(NIP/REGON); zachowano po jednym rekordzie."
+        )
+    if wynik.duplikaty_tresci:
+        # Wierszy bez NIP i bez REGON było w zmierzonym archiwum 315 i **żadne dwa** nie miały
+        # tych samych czterech pól tożsamości. Zero zmierzone raz nie jest zerem na zawsze, więc
+        # zlanie się dwóch firm w jedną musi mieć obserwatora — i musi powiedzieć, że jest
+        # wnioskiem, a nie odczytem z rejestru.
+        events.on_message(
+            f"{wynik.duplikaty_tresci} wierszy bez NIP i bez REGON miało tę samą nazwę, "
+            "nazwisko, imię i datę rozpoczęcia, więc potraktowano je jako jeden wpis. "
+            "To wniosek narzędzia, nie dana z rejestru — warto te wpisy sprawdzić."
+        )
+
+
 def run_report_fetch(
     criteria: Criteria, deps: Deps, report: Report, *, force_lock: bool = False
 ) -> RunResult:
@@ -673,95 +798,18 @@ def run_report_fetch(
             deps.events.on_download(done_bytes, total_bytes)
 
         try:
-            if not dest.exists():
-                deps.events.on_message(
-                    f"Pobieram raport {report.nazwa} — jeden plik ZIP, kilkadziesiąt MB."
-                )
-                client.download_report(report, dest, progress=download_progress)
-            elif not _readable_archive(dest):
-                # Plik z cache bywa uszkodzony (przerwane pobieranie, pełny dysk). Warunek
-                # `not dest.exists()` widział go jako gotowy, więc każda kolejna próba kończyła
-                # się tym samym błędem — bez wyjścia, bo nikt nie mówił, że trzeba go skasować.
-                deps.events.on_message(
-                    f"Raport w pamięci podręcznej był uszkodzony ({dest.name}) — usuwam go "
-                    "i pobieram jeszcze raz."
-                )
-                dest.unlink(missing_ok=True)
-                client.download_report(report, dest, progress=download_progress)
-            deps.events.on_message(f"Raport pobrany: {report.nazwa} ({report.utworzono}).")
-            matched = 0
-            seen_ids: set[str] = set()
-            # Dwa liczniki, bo to dwie różne wiadomości. Powtórzony NIP to rejestr
-            # wymieniający jeden wpis dwa razy — zwyczajne. Powtórzony skrót treści to
-            # **nasz wniosek**, że dwa wiersze opisują tę samą firmę, i może być błędny
-            # (ADR-0016). Jeden licznik na oba kazałby operatorowi zgadywać, co się stało.
-            duplicates = 0
-            duplikaty_tresci = 0
-            page_index = 0
-            scanned = 0
-            reported = 0  # dopasowania, które już trafiły na pasek
-            buffer: list[dict[str, Any]] = []
-            for row in iter_report_rows(dest):
-                scanned += 1
-                record = row_to_record(row, wojewodztwo=wojewodztwo)
-                if matches_criteria(record, criteria):
-                    rid = str(record["id"])
-                    if rid in seen_ids:
-                        # wygrywa późniejszy wiersz
-                        if rid.startswith(PREFIKS_TRESCI):
-                            duplikaty_tresci += 1
-                        else:
-                            duplicates += 1
-                    else:
-                        seen_ids.add(rid)
-                        matched += 1
-                    buffer.append(record)
-                if scanned % REPORT_PAGE_SIZE == 0:
-                    # Rytm wyznaczają wiersze **przeczytane**, nie **dopasowane**: pracą tej
-                    # pętli jest zmapowanie każdego wiersza, a filtr odrzuca go dopiero po
-                    # `row_to_record`. Przy wąskich kryteriach (miasto w raporcie wojewódzkim)
-                    # licznik dopasowań nie dobijał do progu ani razu, więc pasek stał, a
-                    # blokada nie dostawała bicia serca przez całe 287 tys. wierszy.
-                    serce.bij()
-                    deps.events.on_page(page_index, matched - reported, None)
-                    reported = matched
-                if criteria.max_rekordow is not None and matched >= criteria.max_rekordow:
-                    break
-                if len(buffer) >= REPORT_PAGE_SIZE:
-                    store.save_page(
-                        run_id,
-                        page_index=page_index,
-                        records=buffer,
-                        next_cursor=str(page_index + 1),
-                        zrodlo="CEIDG_RAPORT",
-                    )
-                    page_index += 1
-                    buffer = []
-            store.save_page(
-                run_id,
-                page_index=page_index,
-                records=buffer,
-                next_cursor=None,
-                zrodlo="CEIDG_RAPORT",
+            _pobierz_archiwum(client, report, dest, deps, download_progress)
+            wynik = _skanuj_archiwum(
+                dest,
+                criteria,
+                store,
+                deps.events,
+                serce,
+                run_id=run_id,
+                wojewodztwo=wojewodztwo,
             )
-            deps.events.on_page(page_index, matched - reported, matched)
-            store.set_run_count(run_id, matched)
-            if duplicates:
-                deps.events.on_message(
-                    f"Raport zawierał {duplicates} wierszy o powtórzonym identyfikatorze "
-                    "(NIP/REGON); zachowano po jednym rekordzie."
-                )
-            if duplikaty_tresci:
-                # Osobne zdanie, bo osobna sytuacja i osobna pewność. Wierszy bez NIP i bez
-                # REGON było w zmierzonym archiwum 315 i **żadne dwa** nie miały tych samych
-                # czterech pól tożsamości. Zero zmierzone raz nie jest zerem na zawsze, więc
-                # zlanie się dwóch firm w jedną musi mieć obserwatora — i musi powiedzieć, że
-                # jest wnioskiem, a nie odczytem z rejestru.
-                deps.events.on_message(
-                    f"{duplikaty_tresci} wierszy bez NIP i bez REGON miało tę samą nazwę, "
-                    "nazwisko, imię i datę rozpoczęcia, więc potraktowano je jako jeden wpis. "
-                    "To wniosek narzędzia, nie dana z rejestru — warto te wpisy sprawdzić."
-                )
+            store.set_run_count(run_id, wynik.dopasowane)
+            _powiedz_o_duplikatach(wynik, deps.events)
             store.set_stage(run_id, "gotowe")
             store.update_run_status(run_id, "zakonczony")
         except (ResumableError, KeyboardInterrupt) as exc:
@@ -909,6 +957,58 @@ def plan_update(
     return UpdatePlan(since=start, until=end, count=total, windows=len(windows))
 
 
+def _dociagnij_szczegoly(
+    client: CeidgClient,
+    store: Store,
+    deps: Deps,
+    serce: LockHeartbeat,
+    stale: Sequence[KanonicznyId],
+    *,
+    seen: int,
+    goal: int,
+) -> None:
+    """Kupuje szczegóły porcjami, a po KAŻDEJ porcji zapisuje, bije serce i rusza pasek.
+
+    Trzy rzeczy po porcji, nie po stronie, każda z własnym powodem. Zapis: przerwanie w środku
+    (Ctrl+C, `LockLostError`) wyrzucało do kosza nawet 500 identyfikatorów — do stu żądań,
+    ~6 min pracy — i nie odkładało ich w cache, więc powtórka kupowała je jeszcze raz. Bicie
+    serca: blokada wygasa po 10 minutach, a strona 500 identyfikatorów to około 6,25 min —
+    jedno 429 (185 s) albo drabinka ponowień wypycha ją ponad próg i blokada gaśnie pod
+    pracującym procesem, wpuszczając drugi na ten sam token. Pasek: strona to do stu żądań po
+    3,75 s, czyli ponad sześć minut ciszy, w których program wygląda na zawieszony i bywa
+    zabijany, choć pracuje.
+    """
+    batch = deps.profile.ids_batch_size
+    for i in range(0, len(stale), batch):
+        f, m = client.fetch_details(stale[i : i + batch])
+        store.save_details(details=f, missing_ids=m)
+        serce.bij()
+        deps.events.on_details(seen + min(i + batch, len(stale)), goal)
+
+
+def _zglos_przestarzale(
+    store: Store, events: Events, ids: Sequence[KanonicznyId], window_end: datetime
+) -> list[KanonicznyId]:
+    """Wpisy, które zostały z opisem sprzed zgłoszonej zmiany — policzone i **powiedziane**.
+
+    Liczone przy oknie, które zna swój koniec i swoje identyfikatory, a nie raz na cały run:
+    pytanie raz na run musiałoby wziąć jeden próg dla wszystkich okien, więc wpis zgłoszony
+    w drugim oknie ze szczegółem z pierwszego mieściłby się powyżej progu i nie byłby widziany,
+    choć jest dokładnie tym przypadkiem, o który chodzi.
+
+    Zdanie idzie do logu, nie tylko na ekran. Po czterdziestu minutach bez widza podsumowanie
+    żyje wyłącznie w przewijaniu terminala — a to jest ten sam kształt, przez który dziesięć
+    godzin czekania nie zostawiło śladu, bo `on_wait` docierał wyłącznie na ekran.
+    """
+    zostale = store.outdated_details(ids, older_than=window_end)
+    if zostale:
+        events.on_message(
+            f"Uwaga: {len(zostale)} wpisów z okna kończącego się "
+            f"{utc_iso(window_end.timestamp())} zostało z opisem sprzed zgłoszonej zmiany."
+        )
+    return zostale
+
+
 def run_update(
     deps: Deps,
     *,
@@ -976,43 +1076,11 @@ def run_update(
                     # inaczej żaden szczegół nie byłby nigdy dość świeży i każdy przebieg
                     # kupowałby wszystko od nowa.
                     stale = store.stale_detail_ids(ids, cutoff=window_end)
-                    batch = deps.profile.ids_batch_size
                     # Znak życia zanim ruszy setka żądań o szczegóły — pasek ma się pojawić
                     # od razu, a nie po pierwszej porcji.
                     deps.events.on_details(seen, goal)
-                    for i in range(0, len(stale), batch):
-                        f, m = client.fetch_details(stale[i : i + batch])
-                        # Zapis po KAŻDEJ porcji, tak jak w `_fetch_details`. Zapis raz na
-                        # stronę oznaczał, że przerwanie w środku (Ctrl+C, `LockLostError`)
-                        # wyrzuca do kosza nawet 500 identyfikatorów — do stu żądań, ~6 min
-                        # pracy — i nie odkłada ich w cache, więc powtórka kupuje je jeszcze raz.
-                        store.save_details(details=f, missing_ids=m)
-                        # Bicie serca blokady też po porcji, nie po stronie. Blokada wygasa po
-                        # 10 minutach, a strona 500 identyfikatorów to około 6,25 min — jedno
-                        # 429 (185 s) albo drabinka ponowień wypycha ją ponad próg i blokada
-                        # gaśnie pod pracującym procesem, wpuszczając drugi na ten sam token.
-                        serce.bij()
-                        # Postęp po KAŻDEJ porcji, nie po stronie. Strona to 500 identyfikatorów,
-                        # czyli do stu żądań po 3,75 s — ponad sześć minut ciszy, w których
-                        # program wygląda na zawieszony i bywa zabijany, choć pracuje.
-                        deps.events.on_details(seen + min(i + batch, len(stale)), goal)
-                    # Obserwator liczony **tu**, przy oknie, które zna swój koniec i swoje
-                    # identyfikatory — a nie raz na cały run. Pytanie raz na run musiałoby
-                    # wziąć jeden próg dla wszystkich okien, więc wpis zgłoszony w drugim
-                    # oknie ze szczegółem z pierwszego mieściłby się powyżej progu i nie
-                    # byłby widziany, choć jest dokładnie tym przypadkiem, o który chodzi.
-                    zostale = store.outdated_details(ids, older_than=window_end)
-                    if zostale:
-                        # Do logu, nie tylko na ekran. Po czterdziestu minutach bez widza
-                        # podsumowanie żyje wyłącznie w przewijaniu terminala — a to jest ten
-                        # sam kształt, przez który dziesięć godzin czekania nie zostawiło
-                        # śladu, bo `on_wait` docierał wyłącznie na ekran.
-                        deps.events.on_message(
-                            f"Uwaga: {len(zostale)} wpisów z okna kończącego się "
-                            f"{utc_iso(window_end.timestamp())} zostało z opisem sprzed "
-                            "zgłoszonej zmiany."
-                        )
-                    przestarzale.update(zostale)
+                    _dociagnij_szczegoly(client, store, deps, serce, stale, seen=seen, goal=goal)
+                    przestarzale.update(_zglos_przestarzale(store, deps.events, ids, window_end))
                     page_index += 1
                     seen += len(ids)
                     serce.bij()
@@ -1476,6 +1544,115 @@ def _batch_label(run: RunInfo) -> str:
     return f"{od}–{do}: {run.records_seen} ({run.status})"
 
 
+@dataclass
+class _StatystykiEksportu:
+    """Zliczanie przy JEDNYM przejściu po rekordach — stąd biorą się pola `ExportSummary`.
+
+    Klasa, a nie domknięcie nad trzema zmiennymi: przejście po rekordach robi `write_workbook`
+    (albo pętla zastępcza, gdy nie ma formatu `xlsx`), więc licznik musi przeżyć wyjście
+    z funkcji zapisującej i dać się odczytać po niej.
+    """
+
+    by_status: dict[str, int] = field(default_factory=dict)
+    kontakty: dict[str, int] = field(default_factory=lambda: {"telefon": 0, "email": 0})
+    arkusze: set[str] = field(default_factory=lambda: {"Firmy", "Slownik", "Metadane"})
+
+    def obserwuj(self, rec: NormalizedRecord) -> None:
+        status = str(rec.firmy.get("status") or "brak")
+        self.by_status[status] = self.by_status.get(status, 0) + 1
+        for key in self.kontakty:
+            if rec.firmy.get(key):
+                self.kontakty[key] += 1
+        if rec.pkd:
+            self.arkusze.add("PKD")
+        if rec.spolki:
+            self.arkusze.add("Spolki")
+        if rec.adresy:
+            self.arkusze.add("Adresy")
+
+
+def _ukryte_kolumny(
+    store: Store, run_ids: Sequence[str]
+) -> tuple[UkryteKolumny | None, bool, bool]:
+    """Które kolumny skoroszyt ma ukryć i dlaczego. Zwraca `(ukryte, z_raportu, bez_kontaktow)`.
+
+    Wszystko liczone Z DANYCH, nie z etykiety runu: `zrodlo` stoi przy każdym rekordzie i ma
+    `CHECK` w schemacie, a `run.kind` bywa błędny (starszy zapis oznaczył pobranie z raportu
+    jako `firmy`). Zestaw mieszany nie ukrywa niczego — te same kolumny bywają wypełnione
+    przez ścieżkę API.
+
+    Dwa niepełne źródła, dwa zbiory kolumn — i do 2026-09-09 tylko jedno z nich było obsłużone.
+    Skoroszyt z trybu `lista` pokazywał kilkanaście kolumn pustych w każdym wierszu i niczego
+    nie chował, choć ścieżka raportu robiła to od początku.
+
+    Predykat `bez_kontaktow` pyta o **oba** źródła kontaktów, nie o jedno: `/firma` wypełnia je
+    przez `detail_json`, a dzienny raport wprost w wierszu CSV, nie mając żadnych szczegółów.
+    Pierwsza wersja sprawdzała samo `szczegolow == 0` i przy zestawie mieszanym (część
+    z raportu, część z API bez szczegółów) ukryłaby kolumny, które raport wypełnia — czyli
+    dokładnie ten kierunek, który `KOLUMNY_TYLKO_ZE_SZCZEGOLOW` nazywa defektem, i wprost wbrew
+    komentarzowi „zestaw mieszany nie ukrywa niczego" wyżej. Dziś nie ma jak takiego zestawu
+    zbudować z CLI; warunek jest po to, żeby jutro też nie było.
+
+    Powód jedzie razem ze zbiorem, bo `Metadane` mają powiedzieć, **które** źródło tych kolumn
+    nie zna — dwa niepełne źródła miały do 2026-09-10 jedno zdanie na spółkę.
+    """
+    zrodla = store.record_sources(run_ids)
+    from_report = zrodla == {ZRODLO_RAPORT}
+    bez_kontaktow = store.count_details_for_runs(run_ids) == 0 and ZRODLO_RAPORT not in zrodla
+    if from_report:
+        return UkryteKolumny("raport", UNFILLED_COLUMNS), from_report, bez_kontaktow
+    if bez_kontaktow:
+        return UkryteKolumny("lista", KOLUMNY_TYLKO_ZE_SZCZEGOLOW), from_report, bez_kontaktow
+    return None, from_report, bez_kontaktow
+
+
+def _zapisz_pliki(
+    dest: Path,
+    source: Callable[[], Iterator[NormalizedRecord]],
+    deps: Deps,
+    *,
+    metadata: Sequence[tuple[str, Any]],
+    hidden: frozenset[str],
+    formats: Sequence[str],
+    records: int,
+    obserwuj: Callable[[NormalizedRecord], None],
+) -> list[Path]:
+    """Zapisuje wybrane formaty i GASI PASEK, także gdy zapis padnie.
+
+    Do audytu 2026-09-07 `close()` stało tylko na ścieżce szczęśliwej, a eksport potrafi paść
+    na brak miejsca, błąd zapisu i rekord z nadmiarem wierszy. Kreator te błędy łapie i wraca
+    do menu, więc wracał z żywym `Live` — czyli w stan, w którym pytania menu może nie być
+    widać. To ta sama lekcja, którą `run_fetch` odrobił po bramce 3 w 2026-09-06.
+    """
+    paths: list[Path] = []
+    try:
+        if "xlsx" in formats:
+            paths.extend(
+                write_workbook(
+                    dest,
+                    source,
+                    metadata=metadata,
+                    observer=obserwuj,
+                    hidden_columns=hidden,
+                    events=deps.events,
+                )
+            )
+        else:
+            for rec in source():
+                obserwuj(rec)
+        if "csv" in formats or "jsonl" in formats:
+            # §C mówi „przed eksportem", bez zawężenia do Excela. Sprawdzenie siedziało wyłącznie
+            # w `write_workbook`, więc `--formaty csv` i `jsonl` pisały bez żadnego progu.
+            check_free_space(dest.parent, records, min_free_bytes=MIN_FREE_BYTES)
+        if "csv" in formats:
+            paths.extend(write_csv(dest.with_name(dest.stem + "_csv"), source, events=deps.events))
+        if "jsonl" in formats:
+            paths.append(write_jsonl(dest.with_suffix(".jsonl"), source))
+    finally:
+        deps.events.close()  # pasek gaśnie razem z operacją, nie dopiero na jej sukcesie
+    return paths
+
+
 def run_export(
     run_id: str | Sequence[str],
     dest: Path,
@@ -1500,98 +1677,34 @@ def run_export(
     ctx = RowContext(srodowisko=run.environment, pobrano_utc=max(r.updated_utc for r in runs))
     source = _record_source(deps, run_ids, ctx)
     records = store.count_records_for_runs(run_ids)
-    # Jeden predykat na pytanie „czy to eksport z raportu", i liczony z danych, nie z etykiety
-    # runu: `zrodlo` stoi przy każdym rekordzie i ma `CHECK` w schemacie, a `run.kind` bywa
-    # błędny (starszy zapis oznaczył pobranie z raportu jako `firmy`). Zestaw mieszany nie
-    # ukrywa niczego — te same kolumny bywają wypełnione przez ścieżkę API.
-    zrodla = store.record_sources(run_ids)
-    from_report = zrodla == {ZRODLO_RAPORT}
-    # Dwa niepełne źródła, dwa zbiory kolumn — i do 2026-09-09 tylko jedno z nich było
-    # obsłużone. Skoroszyt z trybu `lista` pokazywał kilkanaście kolumn pustych w każdym
-    # wierszu i niczego nie chował, choć ścieżka raportu robiła to od początku.
-    #
-    # Predykat pyta o **oba** źródła kontaktów, nie o jedno: `/firma` wypełnia je przez
-    # `detail_json`, a dzienny raport wprost w wierszu CSV, nie mając żadnych szczegółów.
-    # Pierwsza wersja sprawdzała samo `szczegolow == 0` i przy zestawie mieszanym
-    # (część z raportu, część z API bez szczegółów) ukryłaby kolumny, które raport
-    # wypełnia — czyli dokładnie ten kierunek, który `KOLUMNY_TYLKO_ZE_SZCZEGOLOW` nazywa
-    # defektem, i wprost wbrew komentarzowi „zestaw mieszany nie ukrywa niczego" wyżej.
-    # Dziś nie ma jak takiego zestawu zbudować z CLI; warunek jest po to, żeby jutro też nie
-    # było. Liczone z danych, nie z `run.mode` — etykieta opisuje zamiar, plik zawartość.
-    szczegolow = store.count_details_for_runs(run_ids)
-    bez_kontaktow = szczegolow == 0 and ZRODLO_RAPORT not in zrodla
-    # Powód jedzie razem ze zbiorem: `Metadane` mają powiedzieć, **które** źródło tych kolumn
-    # nie zna, a dwa niepełne źródła miały do 2026-09-10 jedno zdanie na spółkę.
-    ukryte: UkryteKolumny | None = None
-    if from_report:
-        ukryte = UkryteKolumny("raport", UNFILLED_COLUMNS)
-    elif bez_kontaktow:
-        ukryte = UkryteKolumny("lista", KOLUMNY_TYLKO_ZE_SZCZEGOLOW)
+    ukryte, from_report, bez_kontaktow = _ukryte_kolumny(store, run_ids)
     hidden = ukryte.kolumny if ukryte is not None else frozenset[str]()
     metadata = build_metadata(
         run, deps, cel_pobrania=cel_pobrania, records=records, parts=runs, ukryte=ukryte
     )
-
-    by_status: dict[str, int] = {}
-    contacts = {"telefon": 0, "email": 0}
-    sheets = {"Firmy", "Slownik", "Metadane"}
-
-    def observe(rec: NormalizedRecord) -> None:
-        status = str(rec.firmy.get("status") or "brak")
-        by_status[status] = by_status.get(status, 0) + 1
-        for key in contacts:
-            if rec.firmy.get(key):
-                contacts[key] += 1
-        if rec.pkd:
-            sheets.add("PKD")
-        if rec.spolki:
-            sheets.add("Spolki")
-        if rec.adresy:
-            sheets.add("Adresy")
 
     if records:
         # Zapis bywa najdłuższym etapem bez ani jednego żądania: zmierzone 453 firmy/s,
         # czyli ponad dziesięć minut dla pełnego województwa z raportu. Zdanie pada nawet
         # tam, gdzie paska nie widać (log, tryb cichy).
         deps.events.on_message(f"Zapisuję skoroszyt: {records} firm do {dest.name}.")
-    paths: list[Path] = []
-    # Od tego miejsca każde wyjście gasi pasek — także przez wyjątek. Do audytu 2026-09-07
-    # `close()` stało tylko na ścieżce szczęśliwej, a eksport potrafi paść na brak miejsca,
-    # błąd zapisu i rekord z nadmiarem wierszy. Kreator te błędy łapie i wraca do menu, więc
-    # wracał z żywym `Live` — czyli w stan, w którym pytania menu może nie być widać. To ta
-    # sama lekcja, którą `run_fetch` odrobił po bramce 3 w 2026-09-06.
-    try:
-        if "xlsx" in formats:
-            paths.extend(
-                write_workbook(
-                    dest,
-                    source,
-                    metadata=metadata,
-                    observer=observe,
-                    hidden_columns=hidden,
-                    events=deps.events,
-                )
-            )
-        else:
-            for rec in source():
-                observe(rec)
-        if "csv" in formats or "jsonl" in formats:
-            # §C mówi „przed eksportem", bez zawężenia do Excela. Sprawdzenie siedziało wyłącznie
-            # w `write_workbook`, więc `--formaty csv` i `jsonl` pisały bez żadnego progu.
-            check_free_space(dest.parent, records, min_free_bytes=MIN_FREE_BYTES)
-        if "csv" in formats:
-            paths.extend(write_csv(dest.with_name(dest.stem + "_csv"), source, events=deps.events))
-        if "jsonl" in formats:
-            paths.append(write_jsonl(dest.with_suffix(".jsonl"), source))
-
-    finally:
-        deps.events.close()  # pasek gaśnie razem z operacją, nie dopiero na jej sukcesie
+    stat = _StatystykiEksportu()
+    paths = _zapisz_pliki(
+        dest,
+        source,
+        deps,
+        metadata=metadata,
+        hidden=hidden,
+        formats=formats,
+        records=records,
+        obserwuj=stat.obserwuj,
+    )
     return ExportSummary(
         paths=tuple(paths),
         records=records,
-        by_status=dict(sorted(by_status.items())),
-        with_phone=contacts["telefon"],
-        with_email=contacts["email"],
+        by_status=dict(sorted(stat.by_status.items())),
+        with_phone=stat.kontakty["telefon"],
+        with_email=stat.kontakty["email"],
         bez_kontaktow=bez_kontaktow,
         # Zamiar, nie zawartość — i tu właśnie o zamiar chodzi. Przerwane pobranie ze
         # szczegółami ma zero szczegółów w pliku, ale rada „powtórz z opcją ze szczegółami"
@@ -1600,7 +1713,9 @@ def run_export(
         # odsyłać w dwie strony.
         tryb_szczegoly=any(r.mode == "szczegoly" for r in runs),
         sheets=tuple(
-            s for s in ("Firmy", "PKD", "Spolki", "Adresy", "Slownik", "Metadane") if s in sheets
+            s
+            for s in ("Firmy", "PKD", "Spolki", "Adresy", "Slownik", "Metadane")
+            if s in stat.arkusze
         ),
         # Ten sam predykat, co decyduje o ukryciu kolumn — inaczej podsumowanie mogłoby
         # zapowiadać pusty `link_ceidg` przy skoroszycie, w którym nic nie ukryto.

@@ -88,7 +88,12 @@ def note(line: str = "") -> None:
     print("   " + line if line else "")
 
 
-def main() -> None:
+# Sufit funkcji (#158): 76 instrukcji przy sufcie 50. Sonda jednorazowa, czytana liniowo od góry do
+# dołu — podział na funkcje utrudniłby tu czytanie, a nie ułatwił.
+# Złożoność stoi dokładnie na sufcie (15 przy 15): jedno `if` więcej i trzeba będzie
+# dopisać tu `C901` — świadomie, a nie na zapas, bo wyjątek, który niczego nie tłumi,
+# zgnije jak każdy inny.
+def main() -> None:  # noqa: PLR0915
     OUT.mkdir(exist_ok=True)
     findings.append(f"# Mini-sonda CEIDG v3 — `{ARGS.env}` — {time.strftime('%Y-%m-%d')}\n")
 
