@@ -60,9 +60,10 @@ extend-exclude = ["ceidg_probe.py", "scripts/ceidg_probe.py"]
 [tool.ruff.lint]
 # `C901`/`PLR0915` jak w korzeniu repo i w dwóch pozostałych pod-projektach — sufit funkcji
 # egzekwowany maszynowo, nie pamiętany. Do 2026-09-11 ten pod-projekt jako jedyny go nie
-# miał, co było zaszłością po osobnej gałęzi, a nie decyzją (#158). Siedem funkcji ponad
-# sufitem ma punktowe `noqa` z POMIAREM w powodzie: liczba pokazuje, jak daleko im do progu,
-# więc widać, czy dług maleje. Nowa funkcja ponad sufitem nie przejdzie już w ciszy.
+# miał, co było zaszłością po osobnej gałęzi, a nie decyzją (#158). Kod produktu
+# (`ceidg_tool/`) mieści się w sufcie BEZ ANI JEDNEGO wyjątku: pięć funkcji, które go
+# przekraczały, zostało rozłożonych na nazwane kroki. Dwa `noqa` zostają w `scripts/`
+# i mają własny powód — sonda czytana liniowo od góry do dołu traci na podziale.
 select = ["E", "F", "I", "B", "UP", "N", "W", "C901", "PLR0915"]
 
 [tool.ruff.lint.mccabe]

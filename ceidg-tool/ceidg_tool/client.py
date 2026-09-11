@@ -31,6 +31,7 @@ from .criteria import Criteria
 from .errors import (
     AuthError,
     BadRequestError,
+    CeidgError,
     NotFoundError,
     PagingRunawayError,
     ProfileMismatchError,
@@ -191,10 +192,7 @@ class CeidgClient:
 
     # ------------------------------------------------------------------ żądanie
 
-    # Sufit funkcji (#158): 51 instrukcji przy sufcie 50 — jedna ponad. Pętla ponowień, budżet
-    # serwera i mapowanie błędów HTTP siedzą w jednym ciele; rozdzielenie ich to osobna zmiana, nie
-    # porządek przy okazji.
-    def _request(  # noqa: PLR0915
+    def _request(
         self,
         url: str,
         *,
@@ -231,22 +229,7 @@ class CeidgClient:
                 extra_delay = delay
                 continue
 
-            elapsed = time.monotonic() - started
-            self.requests_made += 1
-            self._limiter.note_response(response.status, self._retry_after(response.headers))
-            self._read_rate_headers(response.headers)
-            # Budżet zgłaszany przez serwer jest jedynym sygnałem o zużyciu tokenu poza tym
-            # procesem (sonda, druga maszyna). Limiter sam z siebie widzi tylko `request_log`.
-            self._limiter.note_budget(self.rate_remaining, self.rate_reset_epoch)
-            self._events.on_request(endpoint, response.status, elapsed)
-            log.info(
-                "GET %s -> %s w %.2fs (transakcja %s, pozostało %s)",
-                endpoint,
-                response.status,
-                elapsed,
-                self.last_transaction_id,
-                self.rate_remaining,
-            )
+            self._zanotuj_odpowiedz(endpoint, response, time.monotonic() - started)
 
             status = response.status
             if status == 200 or status in self._profile.empty_result_statuses:
@@ -259,17 +242,6 @@ class CeidgClient:
                         "Wznów pobieranie później poleceniem `ceidg-tool wznow`."
                     )
                 continue
-            if status in (401, 403):
-                raise AuthError(
-                    f"Token odrzucony ({status}). Sprawdź, czy token dotyczy środowiska "
-                    f"{self._base_host} i czy nie wygasł."
-                )
-            if status == 400:
-                raise BadRequestError(
-                    f"API odrzuciło zapytanie: {self._error_text(response.body, status)}"
-                )
-            if status == 404:
-                raise NotFoundError(f"Zasób nie istnieje: {endpoint}")
             if 500 <= status < 600:
                 server_failures += 1
                 if server_failures > self._profile.rate.max_retries_5xx:
@@ -280,9 +252,55 @@ class CeidgClient:
                 extra_delay = self._profile.rate.backoff_base_s * (2 ** (server_failures - 1))
                 log.warning("%s: %s, ponowienie za %.0f s", endpoint, status, extra_delay)
                 continue
-            raise ServerError(
-                f"Nieoczekiwana odpowiedź API: {self._error_text(response.body, status)}"
+            raise self._blad_nie_do_ponowienia(status, response, endpoint)
+
+    def _zanotuj_odpowiedz(self, endpoint: str, response: ApiResponse, elapsed: float) -> None:
+        """Księgowanie po KAŻDEJ odpowiedzi, także tej, po której zaraz ponowimy żądanie.
+
+        Licznik żądań, limiter, budżet serwera, zdarzenie na ekran i wpis do logu chodzą
+        razem, bo pominięcie któregokolwiek przy ponowieniu daje ten sam defekt: licznik,
+        który nie zgadza się z rachunkiem po stronie API.
+        """
+        self.requests_made += 1
+        self._limiter.note_response(response.status, self._retry_after(response.headers))
+        self._read_rate_headers(response.headers)
+        # Budżet zgłaszany przez serwer jest jedynym sygnałem o zużyciu tokenu poza tym
+        # procesem (sonda, druga maszyna). Limiter sam z siebie widzi tylko `request_log`.
+        self._limiter.note_budget(self.rate_remaining, self.rate_reset_epoch)
+        self._events.on_request(endpoint, response.status, elapsed)
+        log.info(
+            "GET %s -> %s w %.2fs (transakcja %s, pozostało %s)",
+            endpoint,
+            response.status,
+            elapsed,
+            self.last_transaction_id,
+            self.rate_remaining,
+        )
+
+    def _blad_nie_do_ponowienia(
+        self, status: int, response: ApiResponse, endpoint: str
+    ) -> CeidgError:
+        """Wyjątek dla statusu, którego ponawianie niczego nie zmieni.
+
+        ZWRACA wyjątek, zamiast go rzucać: dzięki temu w `_request` zostaje jedno `raise`
+        i widać, że każda gałąź pętli kończy się albo zwrotem, albo ponowieniem, albo tym
+        rzutem. Ostatni `else` jest tu świadomie szeroki — nieznany status ma być głośny,
+        a nie ponowiony w nieskończoność.
+        """
+        if status in (401, 403):
+            return AuthError(
+                f"Token odrzucony ({status}). Sprawdź, czy token dotyczy środowiska "
+                f"{self._base_host} i czy nie wygasł."
             )
+        if status == 400:
+            return BadRequestError(
+                f"API odrzuciło zapytanie: {self._error_text(response.body, status)}"
+            )
+        if status == 404:
+            return NotFoundError(f"Zasób nie istnieje: {endpoint}")
+        return ServerError(
+            f"Nieoczekiwana odpowiedź API: {self._error_text(response.body, status)}"
+        )
 
     def _perform(
         self, url: str, download_to: Path | None, progress: DownloadProgress | None = None
