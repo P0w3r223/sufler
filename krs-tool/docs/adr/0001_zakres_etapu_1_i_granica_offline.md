@@ -133,7 +133,16 @@ demo markers, and for the same reason.
 ## What would reverse this
 
 - A ministerial position on art. 60a flips decision 2 from a boundary to a configuration value, and
-  decision 3 stops being a deviation.
+  decision 3 stops being a deviation. The same follows from a favourable answer to the application
+  for re-use of public sector information — see `../wniosek-ponowne-wykorzystywanie.md`, which is the
+  route with statutory deadlines and an appeal, and therefore the one to use first.
+
+**Correction of 2026-09-11.** An earlier phrasing here and in `ceidg-tool/docs/adr/0023` spoke of a
+commercial intermediary "who carries the risk". That is imprecise: Polish law has no licensing
+regime for resellers of register data, so commercial providers are ordinary re-users of the same
+public sources. They carry **operational and contractual** risk — availability, aggregation, an SLA
+— and cannot confer a legal title stronger than the statutory one. Buying data from one does not
+answer the art. 60a question; it only moves the querying to somebody else's infrastructure.
 - A measured registry publication lag, plus extracts of the two unsampled company types, would let
   decision 4 produce an actual signal — at which point decision 5 needs revisiting, because a
   vocabulary that cannot express a true finding is then in the way.

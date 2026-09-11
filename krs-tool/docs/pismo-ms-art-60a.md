@@ -1,9 +1,20 @@
 # Draft letter to the Ministry of Justice on the scope of art. 60a
 
 Date: 2026-09-11
-Status: draft — the procedural framing of the request itself is pending the outcome of the access-route research; the substance below is ready to read
+Status: draft — **secondary to `wniosek-ponowne-wykorzystywanie.md`**; send that first
 Author: P0w3r223
-Related to: `adr/0001_zakres_etapu_1_i_granica_offline.md` decision 2, `../../ceidg-tool/docs/research/krs-data-access-and-legal.md`
+Related to: `wniosek-ponowne-wykorzystywanie.md`, `adr/0001_zakres_etapu_1_i_granica_offline.md` decision 2, `../../ceidg-tool/docs/research/krs-data-access-and-legal.md`
+
+> **Read this first.** The access-route research finished after this draft was written and changed
+> the order of operations. A request for a position has no statutory deadline and no remedy; the
+> application for re-use of public sector information has both — 14 days, two months at the outside,
+> an appeal to the minister responsible for digital affairs and then an administrative court. That
+> application is now the primary document, and this letter is the clarification that follows it.
+>
+> Question two below — what a private entity is supposed to do under the unfavourable reading — has
+> in the meantime been answered by the research rather than by the Ministry: through art. 4b of the
+> KRS act and the re-use procedure. Consider rephrasing it as a request to confirm that reading,
+> rather than as an open question.
 
 ---
 
