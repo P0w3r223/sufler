@@ -36,6 +36,17 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **`mypy --strict` i `W` obowiązują odtąd we wszystkich pod-projektach (#158).** Oba wyrównania
+  kosztowały **zero** naruszeń: `mypy --strict` przechodził już w `Powiadomienia_teams` (51 plików)
+  i `claude_summary` (17) bez jednego błędu, a `W` w żadnym z trzech nie zapalał niczego. Zamiast
+  trzech flag (`disallow_untyped_defs`, `warn_unused_ignores`, `no_implicit_optional`) stoi jedna,
+  która je zawiera — dwa zapisy tej samej reguły rozjeżdżają się przy pierwszej zmianie jednego
+  z nich. **`N` świadomie NIE wchodzi** i przestaje być rozjazdem, a staje się zapisaną decyzją:
+  56 z 64 jego trafień to nazwy testów, w których wielka litera niesie słowo nośne
+  (`test_obcy_nadawca_NIE_pozwala_wygasic_wpisu`), a osiem kolejnych kazałoby zmienić nazwy
+  wyjątków w `Powiadomienia_teams/src/`, czyli w źródłach odzyskanych z obrazu 0.2.19, których
+  wierność jest twardą regułą. Otwarte zostaje `SIM` w `ceidg-tool` (33 trafienia, 17 auto-fixable).
+
 - **Sufit funkcji przestał omijać `ceidg-tool`, a dług pod nim został spłacony (#158).** Dwa
   pozostałe pod-projekty miały `C901`/`PLR0915` z komentarzem „jak w korzeniu repo"; czwarty nie
   miał ich wcale — zaszłość po osobnej gałęzi, nie decyzja. Reguły wchodzą z progiem repo
