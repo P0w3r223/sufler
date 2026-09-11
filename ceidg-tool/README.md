@@ -24,8 +24,8 @@ git clone <adres repozytorium>
 cd PIWorkmate/ceidg-tool
 ```
 
-Do 2026-09-10 kod żył na osobnej gałęzi `ceidg-tool`, bez wspólnego przodka z `Main`.
-Kto ma taki klon, niech pobierze `Main` zamiast dociągać starą gałąź — historia jest ta sama,
+Do 2026-09-10 kod żył na osobnej gałęzi `ceidg-tool`, bez wspólnego przodka z `Main`; gałąź
+została usunięta 2026-09-11. Kto ma stamtąd klon, niech sklonuje repozytorium na nowo — historia jest ta sama,
 ale numery commitów są nowe (autorstwo ujednolicono przy imporcie).
 
 W korzeniu repozytorium mieszka inny produkt (WorkMate). Zmiany w tym pod-projekcie idą

@@ -64,8 +64,8 @@ needs, not the recommendation that lost.
   `Proprietary`: neither sibling sub-project declares a licence, and the root `LICENSE` governs the
   tree. One statement, one place.
 
-The branch `ceidg-tool` is left in place, unrewritten, as the transition copy; deleting it is a
-separate, irreversible step for the owner to take once they are satisfied with `Main`.
+The branch `ceidg-tool` was left in place, unrewritten, as the transition copy, and **deleted on
+2026-09-11** once `Main` had been through a full gate cycle.
 
 ### A. Merge into `Main` as a fourth sub-project
 
@@ -121,13 +121,13 @@ old number resolvable in the meantime.
 
 ## Risks
 
-- **The old branch outlives the decision.** It is deliberately left in place and deliberately not
-  rewritten, so that anyone mid-work on it loses nothing. It is also the one thing here that can go
-  stale silently: a commit pushed to it after 2026-09-10 does not reach `Main`. Deleting it, with
-  a named owner, is the follow-up this ADR asks for.
-- **A pull request against the old branch is now a trap.** Its base is a history `Main` does not
-  share, so nothing merged there can reach `Main` by any ordinary route. CI still runs on that
-  branch — the branch was deliberately left untouched, workflow included — which makes the trap
-  quieter, not smaller: green checks on a pull request that leads nowhere.
+- **The old branch outlived the decision by one day — on purpose.** It was left in place and not
+  rewritten, so that anyone mid-work on it lost nothing, and deleted on 2026-09-11. While it stood
+  it was the one thing here that could go stale silently: a commit pushed to it did not reach
+  `Main`, and CI still ran on it, so a pull request leading nowhere collected green checks. That
+  risk closed with the branch; what remains of it is the bundle on `v1.15.0` and the SHA map.
+- **A clone still pointing at the deleted branch fails late, not loudly.** `git fetch` drops the
+  tracking ref and a push is refused, but the local history stays, so the clone looks healthy until
+  someone tries to publish from it. Work on this project happens in `ceidg-tool/` on `Main`.
 - **Delay was not neutral, and was not free.** The branch grew from 33 to 36 commits between the
   draft and the decision — three commits' worth of extra surface for the import to move.
