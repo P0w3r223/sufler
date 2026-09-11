@@ -3,12 +3,11 @@
 Cała treść tego modułu sprowadza się do jednego zdania: **czego z odpisu nie wynika, tego
 wynik nie twierdzi**. Stąd trzy rzeczy, które przy pierwszym czytaniu wyglądają na braki:
 
-**Reguła o pojedynczym wpisie, dzieląca dział z inną taką regułą, jest nierozstrzygalna.**
-Model odczytu wie o dziale tyle, czy jest pusty; nazw kluczy wewnątrz działu nikt nie zmierzył
-(`docs/pomiary.md`). Cztery reguły działu 4 są więc dziś nie do odróżnienia od siebie —
-i zamiast wybierać między nimi po nazwie, którą ktoś kiedyś zgadł, wszystkie cztery kończą
-jako `Nieustalony`. Sygnał, który z tego działu naprawdę wynika, niesie osobna reguła
-o całym dziale.
+**Reguła o pojedynczym wpisie nie orzeka z niepustości działu — nigdy, także gdy jest w dziale
+jedyna.** Model odczytu wie o dziale tyle, czy jest pusty; nazw kluczy wewnątrz działu nikt nie
+zmierzył (`docs/niezmierzone.md`, wiersz 10). Prawo do orzekania z samej niepustości ma
+wyłącznie reguła, która **zadeklarowała** `zakres: caly_dzial` i przeszła przez przegląd
+prawny z pytaniem, czy każdy wpis tego działu znaczy to samo.
 
 **Przesłanka, której nie umie ustalić katalog ALBO nie umie wyciągnąć czytnik, kończy tak
 samo — nieustaleniem — ale wynik rozróżnia który to przypadek.** Pierwsze zamyka stanowisko
@@ -24,12 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from ..errors import ConfigError
-from ..odpis.model import (
-    REJESTR_PRZEDSIEBIORCOW,
-    RODZAJ_SPRAWOZDANIE_FINANSOWE,
-    DzienBilansowy,
-    Odpis,
-)
+from ..odpis.model import REJESTR_PRZEDSIEBIORCOW, DzienBilansowy, Odpis
 from .katalog import ZRODLA_DZIALOW, Przeslanka, Regula, Rodzaj, Termin, Zakres
 from .model import (
     Nieustalony,
@@ -47,26 +41,19 @@ from .terminy import termin_nastepnego_okresu, termin_zastepczy
 
 def ocen_odpis(odpis: Odpis, reguly: Sequence[Regula]) -> Ocena:
     """Wynik dla każdej reguły katalogu — po jednym, w kolejności katalogu."""
-    wspoldzielone = _dzialy_z_wieloma_wpisami(reguly)
     return Ocena(
         numer=odpis.numer,
         nazwa=odpis.nazwa,
         stan_z_dnia=odpis.stan_z_dnia,
         syntetyczny=odpis.syntetyczny,
-        wyniki=tuple(_ocen_regule(regula, odpis, wspoldzielone) for regula in reguly),
+        wyniki=tuple(_ocen_regule(regula, odpis) for regula in reguly),
     )
 
 
-def _dzialy_z_wieloma_wpisami(reguly: Sequence[Regula]) -> frozenset[str]:
-    """Działy, w których o pojedynczy wpis dobija się więcej niż jedna reguła."""
-    pojedyncze = [r.zrodlo for r in reguly if r.zakres is Zakres.POJEDYNCZY_WPIS]
-    return frozenset(zrodlo for zrodlo in pojedyncze if pojedyncze.count(zrodlo) > 1)
-
-
-def _ocen_regule(regula: Regula, odpis: Odpis, wspoldzielone: frozenset[str]) -> Wynik:
+def _ocen_regule(regula: Regula, odpis: Odpis) -> Wynik:
     if regula.rodzaj is Rodzaj.BRAK_DOKUMENTU:
         return _ocen_brak_dokumentu(regula, odpis)
-    return _ocen_obecnosc_wpisu(regula, odpis, regula.zrodlo in wspoldzielone)
+    return _ocen_obecnosc_wpisu(regula, odpis)
 
 
 # --------------------------------------------------------------------------------------
@@ -74,11 +61,19 @@ def _ocen_regule(regula: Regula, odpis: Odpis, wspoldzielone: frozenset[str]) ->
 # --------------------------------------------------------------------------------------
 
 
-def _ocen_obecnosc_wpisu(regula: Regula, odpis: Odpis, wspoldzielony: bool) -> Wynik:
+def _ocen_obecnosc_wpisu(regula: Regula, odpis: Odpis) -> Wynik:
     """Trzy stany działu dają trzy różne wyniki, i to jest cała ta reguła.
 
     Dział pusty **wyklucza** wpis — to jest rozstrzygnięcie, nie niewiedza, i dlatego u spółki
     bez kłopotów ocena mówi coś mocnego, a nie milczy.
+
+    Z niepustego działu orzeka **wyłącznie reguła, która to zadeklarowała** (`caly_dzial`).
+    Pierwsza wersja tego kodu wyprowadzała prawo do orzekania z liczby reguł stojących na tym
+    samym dziale — jedyna reguła działu zapalała sygnał, bo nie miała z kim się mylić. Przegląd
+    pokazał, do czego to prowadzi: skasowanie trzech reguł działu 4 (zwykła edycja katalogu)
+    robiło z czwartej regułę orzekającą o *zaległościach podatkowych* konkretnej spółki, a nowa
+    reguła na dziale 2 zapalałaby się u każdego, bo dział 2 nigdy nie jest pusty. Prawo do
+    orzekania musi być **zadeklarowane i przejrzane**, nie wyprowadzone z sąsiedztwa.
     """
     dzial = odpis.dzial(_numer_dzialu(regula))
     if dzial is None or not dzial.obecny:
@@ -88,7 +83,7 @@ def _ocen_obecnosc_wpisu(regula: Regula, odpis: Odpis, wspoldzielony: bool) -> W
         )
     if dzial.pusty:
         return Wykluczony(regula, Obserwacja.DZIAL_PUSTY.value)
-    if regula.zakres is Zakres.CALY_DZIAL or not wspoldzielony:
+    if regula.zakres is Zakres.CALY_DZIAL:
         return Sygnal(regula, Obserwacja.DZIAL_NIEPUSTY)
     return Nieustalony(
         regula,
@@ -121,29 +116,65 @@ def _ocen_brak_dokumentu(regula: Regula, odpis: Odpis) -> Wynik:
     mnożenia założenia o ciągłości roku obrotowego; jeden kandydat wystarcza, żeby wynik był
     rozstrzygnięty albo uczciwie nierozstrzygnięty, i nie kosztuje ani jednego założenia
     więcej.
+
+    **Wzmianka, której okresu nie umiemy odczytać, blokuje rozstrzygnięcie.** Nie bierze udziału
+    w wyborze ostatniego okresu (bo jej okresu nie znamy), ale nie wolno jej pominąć: mogła
+    dotyczyć właśnie roku kandydującego, a wtedy „brak wzmianki za okres" byłby twierdzeniem
+    o nieobecności dokumentu, który w odpisie stoi — tyle że nieczytelny. To była druga poważna
+    uwaga przeglądu i jedyna droga, na której ograniczenie odczytu zamieniało się w ustalenie
+    o konkretnej spółce.
     """
     termin_katalogu = _termin_reguly(regula)
-    ostatni = _ostatni_dzien_bilansowy(odpis)
-    niewiadome = _niewiadome_przeslanki(regula, odpis)
+    ostatni = _ostatni_dzien_bilansowy(odpis, regula.wzmianka)
+    niewiadome = _niewiadome_przeslanki(regula, odpis) + _niewiadome_z_odczytu(odpis, regula)
     if ostatni is None:
         return Nieustalony(
             regula,
             (Niewiadoma(Obserwacja.BRAK_CZYTELNEGO_OKRESU.value, Powod.OBSERWACJA), *niewiadome),
         )
     termin = termin_nastepnego_okresu(termin_zastepczy(ostatni, termin_katalogu))
+    # Każdy werdykt poniżej stoi na przesuniętym terminie, więc każdy niesie to samo założenie.
+    # Wcześniej dopisywało się ono wyłącznie do wyniku nieustalonego, czyli znikało dokładnie
+    # tam, gdzie werdykt jest najmocniejszy.
+    zalozenia = (
+        Niewiadoma(Obserwacja.ZALOZENIE_CIAGLOSCI_ROKU_OBROTOWEGO.value, Powod.OBSERWACJA),
+    )
     if odpis.stan_z_dnia <= termin:
         return Wykluczony(
-            regula, Obserwacja.OGRANICZNIK_NIE_UPLYNAL.value, po_okresie=ostatni, termin=termin
+            regula,
+            Obserwacja.OGRANICZNIK_NIE_UPLYNAL.value,
+            po_okresie=ostatni,
+            termin=termin,
+            zalozenia=zalozenia,
         )
     zachodzaca = _pierwsza_zachodzaca(regula, odpis)
     if zachodzaca is not None:
-        return Wykluczony(regula, zachodzaca, po_okresie=ostatni, termin=termin)
-    if niewiadome:
-        zalozenie = Niewiadoma(
-            Obserwacja.ZALOZENIE_CIAGLOSCI_ROKU_OBROTOWEGO.value, Powod.OBSERWACJA
+        return Wykluczony(
+            regula, zachodzaca, po_okresie=ostatni, termin=termin, zalozenia=zalozenia
         )
-        return Nieustalony(regula, (*niewiadome, zalozenie), po_okresie=ostatni, termin=termin)
-    return Sygnal(regula, Obserwacja.BRAK_WZMIANKI_ZA_OKRES, po_okresie=ostatni, termin=termin)
+    if niewiadome:
+        return Nieustalony(
+            regula, niewiadome, po_okresie=ostatni, termin=termin, zalozenia=zalozenia
+        )
+    return Sygnal(
+        regula,
+        Obserwacja.BRAK_WZMIANKI_ZA_OKRES,
+        po_okresie=ostatni,
+        termin=termin,
+        zalozenia=zalozenia,
+    )
+
+
+def _niewiadome_z_odczytu(odpis: Odpis, regula: Regula) -> tuple[Niewiadoma, ...]:
+    """Wzmianki właściwego rodzaju, których okresu czytnik nie rozpoznał."""
+    nieczytelne = [w for w in odpis.wzmianki if w.rodzaj == regula.wzmianka and w.okres is None]
+    if not nieczytelne:
+        return ()
+    return (
+        Niewiadoma(
+            Obserwacja.WZMIANKA_O_NIECZYTELNYM_OKRESIE.value, Powod.CZYTNIK_NIE_WYCIAGA_DANEJ
+        ),
+    )
 
 
 def _termin_reguly(regula: Regula) -> Termin:
@@ -153,17 +184,19 @@ def _termin_reguly(regula: Regula) -> Termin:
     return termin
 
 
-def _ostatni_dzien_bilansowy(odpis: Odpis) -> DzienBilansowy | None:
-    """Najpóźniejszy dzień bilansowy, za jaki w odpisie stoi wzmianka o sprawozdaniu.
+def _ostatni_dzien_bilansowy(odpis: Odpis, rodzaj: str | None) -> DzienBilansowy | None:
+    """Najpóźniejszy dzień bilansowy, za jaki w odpisie stoi wzmianka **wskazanego rodzaju**.
+
+    Rodzaj wzmianki przychodzi z katalogu, tak samo jak dział, termin i przesłanki. Wpisany
+    tutaj na sztywno sprawiłby, że druga reguła rodzaju „brak dokumentu" — na przykład o
+    sprawozdaniu z działalności — byłaby po cichu oceniana wobec sprawozdań finansowych
+    i wydawała werdykt o niewłaściwym dokumencie.
 
     Wzmianka z nieczytelnym zapisem okresu nie bierze udziału — jej okresu nie znamy, a
-    zgadywanie go byłoby wymyślaniem roku obrotowego (`odpis/czytanie.py`).
+    zgadywanie go byłoby wymyślaniem roku obrotowego (`odpis/czytanie.py`). Zgłasza ją
+    `_niewiadome_z_odczytu`, żeby nie zniknęła bez śladu.
     """
-    dni = [
-        w.okres.do
-        for w in odpis.wzmianki
-        if w.rodzaj == RODZAJ_SPRAWOZDANIE_FINANSOWE and w.okres is not None
-    ]
+    dni = [w.okres.do for w in odpis.wzmianki if w.rodzaj == rodzaj and w.okres is not None]
     return max(dni) if dni else None
 
 

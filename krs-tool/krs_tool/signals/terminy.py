@@ -55,6 +55,13 @@ def termin_zastepczy(dzien_bilansowy: DzienBilansowy, termin: Termin) -> TerminU
     z danych publicznych jest nieudowadnialny (`docs/niezmierzone.md`, wiersz 3). Liczba
     miesięcy i dni pochodzi z katalogu, nie stąd: gdyby ustawodawca ruszył którąkolwiek,
     zmiana jest w YAML-u, w miejscu, które czyta prawnik.
+
+    **Czego tu nie ma:** przesunięcia z art. 115 k.c., gdy termin wypada w niedzielę albo
+    święto. Kierunek błędu jest ku zapłonowi — ogranicznik czyta się jako upłynięty do trzech
+    dni za wcześnie — więc to nie jest przeoczenie, tylko pozycja w `docs/pomiary.md`
+    (wiersz 11) i pytanie do przeglądu prawnego: tablica świąt ruchomych w `signals/` zderza
+    się z regułą granic 10, a niezmierzone opóźnienie publikacji wzmianki jest o rząd
+    wielkości większe.
     """
     po_miesiacach = _plus_miesiace(dzien_bilansowy, termin.miesiecy)
     return TerminUstawowy(po_miesiacach + timedelta(days=termin.dni))

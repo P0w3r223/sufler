@@ -232,3 +232,27 @@ def test_loader_odmawia_dwoch_regul_o_calym_dziale(tmp_path: Path) -> None:
         wczytaj_katalog(_zasiej_dzial(tmp_path, zdubluj))
 
     assert "jednego faktu" in str(blad.value)
+
+
+def test_loader_odmawia_reguly_braku_dokumentu_bez_wskazania_wzmianki(tmp_path: Path) -> None:
+    """Bez tego pola druga taka reguła byłaby po cichu oceniana wobec sprawozdań finansowych."""
+
+    def usun_wzmianke(regula: dict[str, Any]) -> None:
+        del regula["wzmianka"]
+
+    with pytest.raises(ConfigError) as blad:
+        wczytaj_katalog(_zasiej(tmp_path, usun_wzmianke))
+
+    assert "wzmianka" in str(blad.value)
+
+
+def test_loader_odmawia_zakresu_przy_regule_braku_dokumentu(tmp_path: Path) -> None:
+    """Pole bez znaczenia dla tego rodzaju reguły ma dostać odpowiedź, a nie ciszę."""
+
+    def dopisz_zakres(regula: dict[str, Any]) -> None:
+        regula["zakres"] = "caly_dzial"
+
+    with pytest.raises(ConfigError) as blad:
+        wczytaj_katalog(_zasiej(tmp_path, dopisz_zakres))
+
+    assert "zakres" in str(blad.value)

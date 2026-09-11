@@ -198,6 +198,10 @@ OPISY_OBSERWACJI = {
     Obserwacja.BRAK_CZYTELNEGO_OKRESU.value: (
         "w odpisie nie ma wzmianki z czytelnym okresem, więc nie ma od czego liczyć terminu"
     ),
+    Obserwacja.WZMIANKA_O_NIECZYTELNYM_OKRESIE.value: (
+        "w odpisie stoi wzmianka, której zapisu okresu nie umiemy odczytać — mogła dotyczyć "
+        "okresu kandydującego"
+    ),
     Obserwacja.OGRANICZNIK_NIE_UPLYNAL.value: (
         "ogranicznik zastępczy nie upłynął na dzień stanu rejestru"
     ),
@@ -251,6 +255,17 @@ def _opis_okresu_kandydujacego(sygnal: Sygnal | Nieustalony | Wykluczony) -> str
     )
 
 
+def _opis_zalozen(wynik: Sygnal | Wykluczony | Nieustalony) -> str:
+    """Założenia dopisują się do KAŻDEGO werdyktu, nie tylko do nieustalonego.
+
+    Przy werdykcie mocnym znikają najgroźniej: czytelnik bierze wtedy wynik za rozstrzygnięcie
+    bezwarunkowe. To jest poprawka po przeglądzie kroku 4.
+    """
+    if not wynik.zalozenia:
+        return ""
+    return "; przy założeniu: " + "; ".join(_opis_niewiadomej(z) for z in wynik.zalozenia)
+
+
 def _wiersz_wyniku(wynik: Sygnal | Wykluczony | Nieustalony) -> tuple[str, str, str, str]:
     if isinstance(wynik, Sygnal):
         werdykt = WERDYKT_SYGNAL
@@ -261,7 +276,12 @@ def _wiersz_wyniku(wynik: Sygnal | Wykluczony | Nieustalony) -> tuple[str, str, 
     else:
         werdykt = WERDYKT_NIEUSTALONY
         szczegoly = "; ".join(_opis_niewiadomej(n) for n in wynik.nierozstrzygniete)
-    return (wynik.regula.kod, werdykt, wynik.regula.poziom.name.lower(), szczegoly)
+    return (
+        wynik.regula.kod,
+        werdykt,
+        wynik.regula.poziom.name.lower(),
+        szczegoly + _opis_zalozen(wynik),
+    )
 
 
 def ocena_ryzyka(ocena: Ocena) -> Block:

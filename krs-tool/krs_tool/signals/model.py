@@ -1,6 +1,10 @@
 """Trójwartościowy wynik reguły sygnałowej. Moduł czysty — bez wejścia/wyjścia i bez zegara.
 
 `Sygnal | Wykluczony | Nieustalony` to ADR-0001 decyzja 4, przeniesiona z dokumentu do typów.
+
+**Każdy z trzech werdyktów niesie `zalozenia`, nie tylko nieustalony.** Założenie, przy którym
+policzono termin, znika najgroźniej właśnie tam, gdzie werdykt jest najmocniejszy — więc slot na
+nie mają wszystkie trzy, a przegląd kodu pokazał, że przy dwóch go brakowało.
 Sedno jest w tym, czego tu **nie ma**: nie ma wartości „prawdopodobnie", nie ma wyniku
 domyślnego i nie ma drogi od nierozstrzygniętej przesłanki do sygnału. Przesłanka, której nie
 umiemy rozstrzygnąć, kończy się `Nieustalony` z jej kodem na liście — i to jest jedyne
@@ -37,6 +41,7 @@ class Obserwacja(Enum):
     WPIS_NIEROZROZNIALNY_W_DZIALE = "wpis_nierozroznialny_w_dziale"
     BRAK_WZMIANKI_ZA_OKRES = "brak_wzmianki_za_okres"
     BRAK_CZYTELNEGO_OKRESU = "brak_czytelnego_okresu"
+    WZMIANKA_O_NIECZYTELNYM_OKRESIE = "wzmianka_o_nieczytelnym_okresie"
     OGRANICZNIK_NIE_UPLYNAL = "ogranicznik_nie_uplynal"
     ZALOZENIE_CIAGLOSCI_ROKU_OBROTOWEGO = "zalozenie_ciaglosci_roku_obrotowego"
 
@@ -70,7 +75,12 @@ class Werdykt(Enum):
 
 @dataclass(frozen=True)
 class Niewiadoma:
-    """Jedna pozycja, której nie ustalono: kod przesłanki albo obserwacji, plus powód."""
+    """Jedna pozycja, której nie ustalono: kod przesłanki albo obserwacji, plus powód.
+
+    Tej samej postaci używają `zalozenia` każdego werdyktu — z rozmysłem. Założenie nie jest
+    słabszą odmianą niewiedzy, ale ma tę samą własność: **musi dojechać na wydruk**, a wydruk
+    ma je czytać tym samym mechanizmem, żeby nie dało się go zgubić przy jednej gałęzi.
+    """
 
     kod: str
     powod: Powod
@@ -84,6 +94,7 @@ class Sygnal:
     obserwacja: Obserwacja
     po_okresie: DzienBilansowy | None = None
     termin: TerminUstawowy | None = None
+    zalozenia: tuple[Niewiadoma, ...] = ()
 
     @property
     def poziom(self) -> Poziom:
@@ -103,6 +114,7 @@ class Wykluczony:
     powod: str
     po_okresie: DzienBilansowy | None = None
     termin: TerminUstawowy | None = None
+    zalozenia: tuple[Niewiadoma, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -116,6 +128,7 @@ class Nieustalony:
     nierozstrzygniete: tuple[Niewiadoma, ...]
     po_okresie: DzienBilansowy | None = None
     termin: TerminUstawowy | None = None
+    zalozenia: tuple[Niewiadoma, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.nierozstrzygniete:

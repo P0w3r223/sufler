@@ -15,9 +15,16 @@ from typer.testing import CliRunner
 
 from krs_tool.cli import app
 from krs_tool.odpis.czytanie import wczytaj_odpis
-from krs_tool.signals.katalog import wczytaj_katalog
+from krs_tool.signals.katalog import PRZESLANKI_BRAKU_DOKUMENTU, wczytaj_katalog
+from krs_tool.signals.model import Obserwacja, Powod
 from krs_tool.signals.ocena import ocen_odpis
-from krs_tool.texts import ZNACZNIK_SYNTETYCZNY, ocena_ryzyka
+from krs_tool.texts import (
+    OPISY_OBSERWACJI,
+    OPISY_POWODOW,
+    OPISY_PRZESLANEK,
+    ZNACZNIK_SYNTETYCZNY,
+    ocena_ryzyka,
+)
 from tests.budowniczy import OKRES_KROPKOWY, wzmianka, zbuduj_odpis
 
 SPRAWOZDANIE = (wzmianka("10.05.2024", OKRES_KROPKOWY),)
@@ -97,3 +104,23 @@ def test_polecenie_ocen_dziala_na_pliku(tmp_path: Path) -> None:
     # nim sprawdzałby szerokość konsoli zamiast tego, czy polecenie policzyło werdykty.
     assert "Sygnałów: 0." in wynik.output
     assert "Wykluczonych: 9." in wynik.output
+
+
+def test_kazdy_kod_ma_swoje_zdanie() -> None:
+    """Dwie listy tych samych nazw rozjeżdżają się przy pierwszym dopisku.
+
+    Kod bez tłumaczenia nie wywraca programu — degraduje się do surowego identyfikatora na
+    ekranie operatora, czyli psuje się po cichu i akurat u tego, kto najmniej może z tym
+    zrobić.
+    """
+    assert set(OPISY_PRZESLANEK) == set(PRZESLANKI_BRAKU_DOKUMENTU)
+    assert set(OPISY_OBSERWACJI) == {o.value for o in Obserwacja}
+    assert set(OPISY_POWODOW) == {p.value for p in Powod}
+
+
+def test_zalozenie_jest_widoczne_przy_werdykcie_mocnym() -> None:
+    """Wykluczenie liczone z przesuniętego terminu niesie na wydruku swoje założenie."""
+    tresc = _ekran(stan_z_dnia="01.03.2025")
+
+    assert "przy założeniu:" in tresc
+    assert "rok obrotowy jest tej samej długości" in tresc

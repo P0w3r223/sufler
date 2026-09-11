@@ -169,7 +169,8 @@ implementations" and this is it — the `zakres` field with three new loader gua
 rule, `ocena_ryzyka` in `texts.py`, the `ocen` command, boundary rules 8 and 9 with their self-tests,
 and `tests/{test_terminy,test_ocena,test_ekran_oceny}.py`.
 
-Gates, measured 2026-09-11: **205 passed**, ruff and format clean, mypy strict clean over 41 files.
+Gates, measured 2026-09-11 after the code review: **212 passed**, ruff and format clean, mypy strict
+clean over 41 files.
 
 **Acceptance was again a demonstration of red**, in real files rather than in fixtures:
 
@@ -193,18 +194,54 @@ Collapsing the four into "something is in division 4" would have been the wrong 
 result is per rule and a reader compares it with the catalogue. So the distinction went into the data
 instead: a rule now declares `zakres` — `pojedynczy_wpis` or `caly_dzial` — without a default, and
 
-- the four specific rules return `Nieustalony`, each naming the reason as *the reader*, not the
-  register;
+- a `pojedynczy_wpis` rule never concludes anything from a non-empty division — it returns
+  `Nieustalony` naming *the reader*, not the register, as the reason;
 - the signal that genuinely follows from a non-empty division 4 became **its own rule**,
   `dzial4_niepusty`, at terminal level, because every entry that division may carry is terminal;
-- division 5 needs no such rule: it holds one rule, so a non-empty division says which;
 - division 6 gets none and should not, because its rules disagree on level — liquidation is terminal
-  and a transformation is context, and one number cannot stand for both.
+  and a transformation is context, and one number cannot stand for both;
+- division 5 is **silent**, and that is the review's doing — see below.
 
 **This is the row for the legal review**, and it is one sentence: does art. 41 enclose division 4 so
 that *every* entry it may carry is a terminal-level signal? If not, the new rule changes level or
 goes. The loader refuses more than one whole-division rule per division, so the answer cannot be
 fudged by adding a second.
+
+### What the code review changed, and it was the centre of the step
+
+The first version derived "is this rule resolvable" from **how many sibling rules happened to share a
+division**: a rule alone in its division fired on mere non-emptiness, because it had nobody to be
+confused with. The review took that apart with three consequences, each reproduced against the real
+catalogue:
+
+- `dzial5_kurator` printed `sygnał` for a non-empty division 5 — a claim that division 5 encloses
+  only curator entries, which **nobody declared and nobody reviewed**, on the one rule in the tree
+  whose `podstawa_potwierdzona` is `false`;
+- deleting three of the four division-4 rules — an ordinary catalogue edit — would have promoted the
+  survivor to a rule naming *tax arrears* at a named company, reaching the guess by subtraction
+  instead of by writing a key name;
+- a single-entry rule on a division that is never empty (1 or 2) would have fired for every company,
+  and the loader would not have objected.
+
+The fix is one line of policy: **the right to conclude from non-emptiness is declared and reviewed,
+never inherited from the neighbourhood.** Only `zakres: caly_dzial` fires; `_dzialy_z_wieloma_wpisami`
+and the sibling-count parameter are gone. Division 5 therefore says nothing until a whole-division
+rule is written for it — which needs the same legal question answered first, and that question is the
+open `podstawa_potwierdzona: false` on the curator rule. Losing the product's second signal is the
+correct outcome: it was never earned.
+
+The review's second finding was the only remaining path from a reading limitation to a statement about
+a company. A mention whose period we cannot parse was dropped from the candidate-period computation
+(correctly) and then **not mentioned again**, so with the premise gate open the verdict read "no entry
+for the candidate period" about an extract that carries a mention we simply could not read. Such a
+mention now produces its own `Niewiadoma` and the verdict degrades to `Nieustalony`.
+
+Three smaller repairs from the same review: the mention kind a `brak_dokumentu` rule examines moved
+from code into the catalogue (a second such rule would otherwise have been judged against financial
+statements and delivered a verdict about the wrong document); the loader now refuses `zakres` on a
+rule where it means nothing, instead of ignoring it; and the assumption of financial-year continuity
+rides with **every** verdict computed from the shifted limiter, not only with the undetermined one —
+it used to disappear exactly where the verdict is strongest.
 
 ### Two blockers, not one
 
@@ -226,7 +263,8 @@ for firing was never written".
 — and the candidate year is the one **after** the last filed period, which by definition is not in the
 extract. Hence: the candidate is named by the period it follows, and its limiter is the previous
 limiter shifted by a financial year. The assumption that the next year is the same length then rides
-**in the result**, as an unresolved item printed with every verdict, instead of in a comment.
+**in the result** — every verdict, `Sygnal` included, carries `zalozenia`, and the screen prints
+them — instead of sitting in a comment.
 
 Two smaller things worth keeping in view. The limiter clamps to the last day of the month
 (art. 112 k.c.) — 31 August plus six months is the end of February, and the "obvious fix" of
@@ -239,13 +277,19 @@ crack in it.
 leap year is not something anyone computes correctly in their head. The golden dates now sit in a
 table with the reason for each.
 
-**For review:** `krs-tool ocen --plik <odpis>` on a wide terminal. The objects of review are the
-`dzial4_niepusty` row with its statutory basis, and the `brak_wpisu_o_sprawozdaniu` row — which must
-read as a list of unresolved premises and never as a statement about the company.
+**For review:** `krs-tool ocen --plik <odpis>` on a wide terminal. Three objects, all legal rather
+than technical: the `dzial4_niepusty` row with its statutory basis; whether division 5 should get a
+whole-division rule of its own (which needs the scope of division 5 confirmed first); and whether the
+substitute limiter should move to the next working day under art. 115 k.c. — it does not today, the
+error leans toward firing, and it is recorded as row 11 of `pomiary.md` rather than carried silently.
+The `brak_wpisu_o_sprawozdaniu` row must read as a list of unresolved premises and never as a
+statement about the company.
 
-Invariant with an observer: a marked type has exactly one producer; a rule sharing a division cannot
-claim the entry; an unreadable premise cannot become "does not apply"; the missing-statement rule
-produces no signal on any extract shape the builder can make; the level column says whose level it is.
+Invariant with an observer: a marked type has exactly one producer; **only a rule that declared
+`caly_dzial` may conclude anything from a non-empty division**; an unreadable mention cannot vanish
+from the computation; an unreadable premise cannot become "does not apply"; an assumption reaches the
+printout from every branch; the missing-statement rule produces no signal on any extract shape the
+builder can make; the level column says whose level it is.
 
 **Still blocked on the owner:** the same real extracts as step 2. Until they arrive, rows 4-7 of
 `niezmierzone.md` stay open and the division-attribution gap stays where it is — no amount of code

@@ -12,8 +12,9 @@ zmierzonych-wlasnosci: 0
 ## What this file is for
 
 `niezmierzone.md` lists what this project cannot claim about the **wire**. This file is about
-something narrower and more dangerous: the assumptions about **the shape of an extract** that are
-already encoded in `krs_tool/odpis/czytanie.py` and are therefore load-bearing.
+something narrower and more dangerous: the assumptions already encoded in the code and therefore
+load-bearing — the shape of an extract in `krs_tool/odpis/czytanie.py`, and, since step 4, two
+assumptions the signal layer makes about register vocabulary and statutory terms.
 
 Step 2 was built on synthetic extracts, at the owner's instruction, with real ones to follow. That
 is a legitimate way to build a reader and an illegitimate way to learn what a register returns. The
@@ -38,6 +39,7 @@ cited as a fact until then.
 | 8 | Divisions are keyed `dzial1`..`dzial6`, and an empty division is present-but-empty rather than absent | `czytanie._dzialy` | The binary risk flag on division 4 becomes ambiguous — the model already distinguishes three states to survive this |
 | 9 | Only two period spellings occur | `czytanie.czytaj_okres` | Nothing breaks: an unknown spelling is reported as unreadable, with its raw text, never guessed |
 | 10 | `naglowekA.rejestr` carries `P` for the entrepreneurs register | `odpis/model.py`, used by `signals/ocena.py` | The "outside the entrepreneurs register" premise resolves wrongly. The direction is safe: an unrecognised value **excludes** the missing-statement rule rather than firing it, and an empty one leaves the premise unresolved |
+| 11 | The substitute limiter is **not** moved to the next working day when it falls on a Sunday or a statutory holiday (art. 115 k.c.) | `signals/terminy.py` | The limiter reads as expired up to three days early. Deliberate for now: a holiday table (movable Easter) inside `signals/` would collide with rule 10, and the error is dwarfed by the unmeasured publication lag of `niezmierzone.md` row 3. It is a question for the legal review, recorded rather than silently carried |
 
 Assumption 9 is the only one **observed** rather than invented — the reconnaissance saw both
 spellings on two independent samples within one company. It is nonetheless listed here, because a

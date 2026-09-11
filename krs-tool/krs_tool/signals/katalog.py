@@ -50,10 +50,10 @@ class Zakres(Enum):
 
     Rozróżnienie doszło w kroku 4 i wzięło się z pomiaru, nie z upodobania. Model odczytu wie
     o dziale trzy rzeczy — nieobecny, pusty, niepusty — i **nie wie, który wpis w nim stoi**,
-    bo nazwy kluczy wewnątrz działu nie zostały zmierzone (`docs/pomiary.md`). Reguła
-    `pojedynczy_wpis` dzieląca dział z inną regułą jest więc dziś nierozstrzygalna, a reguła
-    `caly_dzial` rozstrzygalna — i to jest różnica, którą trzeba widzieć w danych, zanim
-    zobaczy się ją w wyniku.
+    bo nazw kluczy wewnątrz działu nikt nie zmierzył (`docs/niezmierzone.md`, wiersz 10).
+    Reguła `pojedynczy_wpis` jest więc dziś nierozstrzygalna — także wtedy, gdy stoi w dziale sama —
+    a `caly_dzial` rozstrzygalna, bo orzeka o niepustości, czyli o tym, co model odczytu wie.
+    Prawo do orzekania jest **zadeklarowane i przejrzane**, nigdy wyprowadzone z sąsiedztwa.
     """
 
     POJEDYNCZY_WPIS = "pojedynczy_wpis"
@@ -137,6 +137,7 @@ class Regula:
     poziom: Poziom
     rodzaj: Rodzaj
     zakres: Zakres | None
+    wzmianka: str | None
     zrodlo: str
     opis: str
     podstawa_prawna: str
@@ -216,6 +217,22 @@ def _sprawdz_przeslanki(surowa: dict[str, Any], kod: str) -> tuple[Przeslanka, .
     return przeslanki
 
 
+def _wzmianka(surowa: dict[str, Any], kod: str) -> str:
+    """Klucz wzmianki, której brak bada reguła — z katalogu, nie z kodu.
+
+    Bez tego pola druga reguła rodzaju „brak dokumentu" byłaby oceniana wobec sprawozdań
+    finansowych niezależnie od tego, o jakim dokumencie mówi — i wydawałaby werdykt
+    o niewłaściwym dokumencie, nie mówiąc o tym ani słowa.
+    """
+    klucz = surowa.get("wzmianka")
+    if not klucz:
+        raise ConfigError(
+            f"Reguła {kod}: reguła badająca brak dokumentu musi wskazać pole `wzmianka` — "
+            "klucz, pod którym rejestr wystawia wzmiankę o tym dokumencie."
+        )
+    return str(klucz)
+
+
 def _zakres(surowa: dict[str, Any], kod: str) -> Zakres:
     """Zakres reguły badającej obecność wpisu. Bez domyślności — jak wszystko tutaj.
 
@@ -264,11 +281,19 @@ def _regula(surowa: Any, zablokowane: dict[str, str]) -> Regula:
     brak_dokumentu = rodzaj is Rodzaj.BRAK_DOKUMENTU
     if not brak_dokumentu:
         _sprawdz_zrodlo_dzialu(surowa, kod)
+    elif surowa.get("zakres"):
+        # Pole bez znaczenia dla tego rodzaju reguły. Milczące pominięcie byłoby odwrotnością
+        # doktryny tego loadera: prawnik, który napisze `zakres`, ma dostać odpowiedź.
+        raise ConfigError(
+            f"Reguła {kod}: `zakres` opisuje regułę badającą obecność wpisu i nie ma "
+            "zastosowania do reguły badającej brak dokumentu."
+        )
     return Regula(
         kod=kod,
         poziom=Poziom[str(surowa["poziom"]).upper()],
         rodzaj=rodzaj,
         zakres=None if brak_dokumentu else _zakres(surowa, kod),
+        wzmianka=_wzmianka(surowa, kod) if brak_dokumentu else None,
         zrodlo=str(surowa["zrodlo"]),
         opis=str(surowa["opis"]),
         podstawa_prawna=str(surowa["podstawa_prawna"]),

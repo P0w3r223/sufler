@@ -17,7 +17,12 @@ import yaml
 from krs_tool.odpis.czytanie import wczytaj_odpis
 from krs_tool.odpis.model import Odpis
 from krs_tool.signals import ocena as modul_oceny
-from krs_tool.signals.katalog import PRZESLANKI_BRAKU_DOKUMENTU, Poziom, wczytaj_katalog
+from krs_tool.signals.katalog import (
+    PRZESLANKI_BRAKU_DOKUMENTU,
+    Poziom,
+    Zakres,
+    wczytaj_katalog,
+)
 from krs_tool.signals.model import (
     Nieustalony,
     Obserwacja,
@@ -83,7 +88,8 @@ def test_niepusty_dzial_4_zapala_regule_o_calym_dziale() -> None:
 def test_niepusty_dzial_4_nie_wskazuje_ktory_to_wpis() -> None:
     """Cztery reguły na jednym dziale są dziś nierozróżnialne i tak mają się przedstawiać.
 
-    Nazwy kluczy wewnątrz działu nie zostały zmierzone (`docs/pomiary.md`), więc wybór jednej
+    Nazwy kluczy wewnątrz działu nie zostały zmierzone (`docs/niezmierzone.md`, wiersz 10),
+    więc wybór jednej
     z czterech byłby zgadywaniem — a zgadywanie w tę stronę produkuje zarzut.
     """
     wyniki = ocen(sprawozdania=SPRAWOZDANIE_ZA_2023, dzial4=WPIS)
@@ -98,12 +104,34 @@ def test_niepusty_dzial_4_nie_wskazuje_ktory_to_wpis() -> None:
         assert wynik.nierozstrzygniete[0].powod is Powod.CZYTNIK_NIE_WYCIAGA_DANEJ
 
 
-def test_jedyna_regula_dzialu_jest_rozstrzygalna() -> None:
-    """Dział 5 niesie jedną regułę, więc niepustość mówi wprost, o co chodzi."""
+def test_jedyna_regula_dzialu_tez_nie_orzeka_z_niepustosci() -> None:
+    """Bycie jedyną regułą działu nie jest uprawnieniem — jest brakiem konkurencji.
+
+    Pierwsza wersja kroku 4 wyprowadzała prawo do orzekania z liczby sąsiadów, więc reguła
+    o kuratorze zapalała się na samej niepustości działu 5. To twierdzenie, którego nikt nie
+    zadeklarował ani nie przejrzał, przy regule mającej `podstawa_potwierdzona: false`.
+    Dopóki nie powstanie dla działu 5 reguła `caly_dzial` z własnym pytaniem do przeglądu,
+    dział 5 milczy.
+    """
     wynik = ocen(sprawozdania=SPRAWOZDANIE_ZA_2023, dzial5=WPIS)[REGULA_KURATORA]
 
-    assert isinstance(wynik, Sygnal)
-    assert wynik.poziom is Poziom.WYPRZEDZAJACY
+    assert isinstance(wynik, Nieustalony)
+    assert wynik.nierozstrzygniete[0].kod == Obserwacja.WPIS_NIEROZROZNIALNY_W_DZIALE.value
+
+
+def test_orzeka_wylacznie_regula_ktora_to_zadeklarowala() -> None:
+    """Jedyny sygnał w drzewie pochodzi z reguły `caly_dzial` — i tak ma zostać.
+
+    Test jest napisany na WSZYSTKICH regułach, a nie na jednej: gdyby ktoś dopisał regułę
+    pojedynczego wpisu na dziale, który nigdy nie jest pusty (na przykład 1 albo 2), zapalałaby
+    się u każdej spółki.
+    """
+    wyniki = ocen(sprawozdania=SPRAWOZDANIE_ZA_2023, dzial4=WPIS, dzial5=WPIS, dzial6=WPIS)
+
+    sygnaly = [w for w in wyniki.values() if isinstance(w, Sygnal)]
+    assert [w.regula.kod for w in sygnaly] == [REGULA_CALEGO_DZIALU]
+    assert all(w.regula.zakres is Zakres.CALY_DZIAL for w in sygnaly)
+    assert sygnaly[0].poziom is Poziom.TERMINALNY
 
 
 def test_niepusty_dzial_6_nie_zapala_niczego() -> None:
@@ -265,18 +293,57 @@ def test_droga_od_szesciu_wykluczonych_przeslanek_do_sygnalu_istnieje(
     z sześciu przesłanek (podstawiona mapa). Dopiero wtedy zapada sygnał — czyli między dniem
     dzisiejszym a zapłonem stoją dokładnie te dwie rzeczy i nic poza nimi.
     """
+    wynik = _ocen_bez_blokad(tmp_path, monkeypatch, SPRAWOZDANIE_ZA_2023)
+
+    assert isinstance(wynik, Sygnal)
+    assert wynik.obserwacja is Obserwacja.BRAK_WZMIANKI_ZA_OKRES
+
+
+def test_nieczytelna_wzmianka_blokuje_twierdzenie_o_braku(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Jedyna droga, na której ograniczenie odczytu zamieniało się w ustalenie o spółce.
+
+    Wzmianka, której okresu nie umiemy odczytać, mogła dotyczyć właśnie roku kandydującego.
+    Przed poprawką po przeglądzie wypadała z obliczeń bez śladu i wynik brzmiał „brak wzmianki
+    za okres kandydujący" — twierdzenie o nieobecności dokumentu, który w odpisie stoi.
+    Sprawdzamy przy ZDJĘTYCH blokadach przesłanek, bo tylko wtedy ta gałąź w ogóle biegnie.
+    """
+    wzmianki = (*SPRAWOZDANIE_ZA_2023, wzmianka("30.06.2025", OKRES_NIEZNANY))
+
+    wynik = _ocen_bez_blokad(tmp_path, monkeypatch, wzmianki)
+
+    assert isinstance(wynik, Nieustalony)
+    kody = {n.kod for n in wynik.nierozstrzygniete}
+    assert Obserwacja.WZMIANKA_O_NIECZYTELNYM_OKRESIE.value in kody
+
+
+def test_zalozenie_ciaglosci_jedzie_z_kazdym_werdyktem_liczonym_z_terminu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Przy werdykcie mocnym założenie znika najgroźniej — więc niesie je też sygnał."""
+    sygnal = _ocen_bez_blokad(tmp_path, monkeypatch, SPRAWOZDANIE_ZA_2023)
+    wykluczony = ocen(sprawozdania=SPRAWOZDANIE_ZA_2023, stan_z_dnia="01.03.2025")[REGULA_BRAKU]
+    nieustalony = ocen(sprawozdania=SPRAWOZDANIE_ZA_2023)[REGULA_BRAKU]
+
+    for wynik in (sygnal, wykluczony, nieustalony):
+        kody = {z.kod for z in wynik.zalozenia}
+        assert Obserwacja.ZALOZENIE_CIAGLOSCI_ROKU_OBROTOWEGO.value in kody
+
+
+def _ocen_bez_blokad(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sprawozdania: tuple[dict[str, str], ...]
+) -> Wynik:
+    """Ocena reguły braku sprawozdania przy zdjętych obu blokadach — katalogu i czytnika."""
     monkeypatch.setattr(
         modul_oceny,
         "_ROZSTRZYGACZE",
         {kod: lambda _p, _o: Werdykt.NIE_ZACHODZI for kod in PRZESLANKI_BRAKU_DOKUMENTU},
     )
-    odpis = wczytaj_odpis(zbuduj_odpis(sprawozdania=SPRAWOZDANIE_ZA_2023))
-
-    wyniki = ocen_odpis(odpis, wczytaj_katalog(_katalog_bez_deklaracji_nieustalalnosci(tmp_path)))
-
-    (wynik,) = [w for w in wyniki.wyniki if w.regula.kod == REGULA_BRAKU]
-    assert isinstance(wynik, Sygnal)
-    assert wynik.obserwacja is Obserwacja.BRAK_WZMIANKI_ZA_OKRES
+    odpis = wczytaj_odpis(zbuduj_odpis(sprawozdania=sprawozdania))
+    ocena = ocen_odpis(odpis, wczytaj_katalog(_katalog_bez_deklaracji_nieustalalnosci(tmp_path)))
+    (wynik,) = [w for w in ocena.wyniki if w.regula.kod == REGULA_BRAKU]
+    return wynik
 
 
 def _katalog_bez_deklaracji_nieustalalnosci(tmp_path: Path) -> Path:

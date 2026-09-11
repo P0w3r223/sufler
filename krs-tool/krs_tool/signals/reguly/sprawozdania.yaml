@@ -21,6 +21,7 @@ reguly:
   - kod: brak_wpisu_o_sprawozdaniu
     poziom: wyprzedzajacy
     rodzaj: brak_dokumentu
+    wzmianka: wzmiankaOZlozeniuRocznegoSprawozdaniaFinansowego
     zrodlo: dzial3
     opis: >-
       Za dany rok obrotowy nie ma wzmianki o złożeniu rocznego sprawozdania finansowego,

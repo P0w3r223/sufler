@@ -27,14 +27,18 @@ not been sampled, so the rule always returns `Nieustalony`. That is the state
 visible on the printout rather than hidden. If you find yourself making this rule fire, read the
 "Gate" table before writing a line.
 
-**A non-empty division does not tell you which entry is in it, and four rules say so on purpose.**
+**A non-empty division does not tell you which entry is in it, and most rules say so on purpose.**
 The read model knows a division is absent, empty or non-empty; the key names *inside* a division have
-never been measured (`docs/niezmierzone.md`, row 10). So the four division-4 rules return
-`Nieustalony`, and the signal that really follows — the division is not empty, and every entry it may
-carry is terminal — is a separate rule, `dzial4_niepusty`, marked `zakres: caly_dzial` in the
-catalogue. If you find yourself mapping a rule onto a guessed key such as `zaleglosciPodatkowe`, stop:
-that guess is indistinguishable from a measurement once it is in the code, and it produces an
-accusation about a named company.
+never been measured (`docs/niezmierzone.md`, row 10). **Only a rule that declares `zakres: caly_dzial`
+may conclude anything from non-emptiness**, and today exactly one does — `dzial4_niepusty`, because
+every entry division 4 may carry is terminal-level. Every `pojedynczy_wpis` rule returns
+`Nieustalony`, *including when it is the only rule on its division*: being alone is not an
+entitlement, it is an absence of competition. Division 5 is silent for exactly that reason, and the
+step-4 review is where it stopped speaking.
+
+Two ways this gets quietly broken, both tried and both now guarded: mapping a rule onto a guessed key
+such as `zaleglosciPodatkowe` (indistinguishable from a measurement once in the code), and deleting a
+rule's siblings so it becomes "the only candidate" (the same accusation reached by subtraction).
 
 **There is no word available to accuse with.** `Poziom` has no member meaning "late", and a scan
 checks the rule catalogue and the report texts against a closed list of accusatory words. This is
