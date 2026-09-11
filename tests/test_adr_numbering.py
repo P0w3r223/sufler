@@ -72,6 +72,12 @@ _POZA_BRAMKA = frozenset(
         "Powiadomienia_teams",
         "claude_summary",
         "ceidg-tool",
+        # `krs-tool` dołączył 2026-09-11 (piąty pod-projekt, `ceidg-tool/docs/adr/0023`) i wpadł
+        # w tę samą pułapkę, tylko ostrzej: jego `docs/adr/0001` rozwiązywane od korzenia trafia
+        # w PUSTKĘ, bo rdzeń numeracji ADR zaczyna się wyżej. Bramka zapaliła się na `Main`
+        # dopiero po scaleniu — PR-y tego dnia nie dostały ani jednego przebiegu CI (blokada
+        # rozliczeń organizacji), a bramka jakości pod-projektu nie uruchamia testów rdzenia.
+        "krs-tool",
         # Dzienniki sesji są zapisem TEGO, CO NAPISANO danego dnia — poprawianie w nich odsyłacza
         # jest przepisywaniem dziennika, a nie naprawą dokumentu. (Jeden martwy odsyłacz siedzi
         # dziś właśnie tam: `2026-07-16.md` cytuje ADR podprojektu ścieżką główną.)

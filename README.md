@@ -67,6 +67,16 @@ Ma własny `pyproject.toml`, własną numerację ADR-ów w [`ceidg-tool/docs/`](
 i własny `CLAUDE.md`; asystent językowy jest u niego extrasem, nie zależnością. Pola `license`
 nie ma — obowiązuje [`LICENSE`](LICENSE) korzenia, tak jak w pozostałych pod-projektach.
 
+**[`krs-tool/`](krs-tool/README.md)** — **trzeci produkt w tym drzewie**: czyta odpis z Krajowego
+Rejestru Sądowego, **zapisany ręcznie przez operatora**, i wystawia raport o sygnałach
+rejestrowych spółki. Piąty pod-projekt od 2026-09-11, powołany przez
+[`ceidg-tool/docs/adr/0023`](ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md), z własną
+numeracją ADR-ów w [`krs-tool/docs/`](krs-tool/docs/) i własnym `CLAUDE.md`. Jedna rzecz odróżnia
+go od wszystkiego innego w tym repozytorium i trzeba ją znać, zanim się tknie kod: **nie ma tu
+klienta HTTP ani żadnej zależności sieciowej** — nie przez flagę, tylko przez nieobecność
+w grafie importów i w manifeście, pilnowaną przez trzech niezależnych obserwatorów. Powód jest
+prawny (art. 60a ustawy o KRS) i obejmuje także rozwój i testy.
+
 ## Zdolności
 
 | Obszar | Co potrafi |
