@@ -86,15 +86,26 @@ PYTHONUTF8=1 .venv/Scripts/python -m mypy
 PYTHONUTF8=1 .venv/Scripts/python -m krs_tool raport --plik <odpis> --markdown raport.md
 ```
 
-Measured 2026-09-11 after step 7: 327 passed, ruff and format clean, mypy strict over 53 files.
+Measured 2026-09-11 after the documentation gate landed: 331 passed, ruff and format clean, mypy strict over 54 files.
 `mypy` runs without arguments because its scope sits in `pyproject.toml`.
 
-This sub-project carries **both** quality-gate sets: `mypy` in strict mode, which only `ceidg-tool`
-has, and the function ceiling `C901`/`PLR0915`, which only `ceidg-tool` lacks. The ratio engine and
+This sub-project carries **both** quality-gate sets: `mypy` in strict mode and the function ceiling
+`C901`/`PLR0915`. So does `ceidg-tool` since 2026-09-11 (#158, #160, #162) — the sentence here used
+to say that each set was the one thing only `ceidg-tool` had or lacked, and both halves stopped
+being true on the day it gained the ceiling. What still separates the two is `SIM`, which neither
+carries and every other sub-project does (#164). The ratio engine and
 the parser of later stages are the two places in this tree most likely to grow a three-hundred-line
 method, and a ceiling is free on a green field. `scripts` joins the mypy and lint scope in step 2,
 together with the first script — unlike in `ceidg-tool`, because the anonymiser is where evidence is
 produced and it has to obey the same rules as the package.
+
+Beside the thirteen boundary rules there is a **fourteenth observer, and it guards documents rather
+than code**: `tests/test_odsylacze.py` resolves every reference in this sub-project's markdown —
+links against the document, prose paths against the sub-project root. It exists because the root's
+own dead-link gate excludes sub-projects with their own ADR numbering, and an exclusion without a
+replacement is how an observer quietly disappears. Its self-test walks a **rename** rather than
+asserting known spellings; the first version seeded a string instead, and killing half the guard
+left it green.
 
 CI: the `krs-tool` entry in the root `.github/workflows/ci.yml`.
 
