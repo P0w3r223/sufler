@@ -148,8 +148,27 @@ def _dzialy(dane: Mapping[str, Any]) -> tuple[Dzial, ...]:
         klucz = f"dzial{numer}"
         obecny = klucz in dane
         zawartosc = dane.get(klucz)
-        zebrane.append(Dzial(numer=numer, obecny=obecny, pusty=not zawartosc))
+        zebrane.append(
+            Dzial(
+                numer=numer,
+                obecny=obecny,
+                pusty=not zawartosc,
+                klucze=_klucze_dzialu(zawartosc),
+            )
+        )
     return tuple(zebrane)
+
+
+def _klucze_dzialu(zawartosc: Any) -> tuple[str, ...]:
+    """Nazwy pól w dziale, przepisane dosłownie i w kolejności z pliku.
+
+    Dział, który nie jest odwzorowaniem, oddaje pustą krotkę zamiast wyjątku — to nie jest
+    założenie o rejestrze, tylko odmowa jego robienia. Raport mówi wtedy, że nie ma czego
+    zacytować, i jest to zdanie prawdziwe.
+    """
+    if not isinstance(zawartosc, Mapping):
+        return ()
+    return tuple(str(k) for k in zawartosc)
 
 
 def wczytaj_odpis(surowe: Mapping[str, Any], *, numer: NumerKRS | None = None) -> Odpis:

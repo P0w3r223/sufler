@@ -295,20 +295,51 @@ builder can make; the level column says whose level it is.
 `niezmierzone.md` stay open and the division-attribution gap stays where it is — no amount of code
 closes it, only a file.
 
-## Step 5 — the report the owner reads
+## Step 5 — the report the owner reads — **done 2026-09-11**
 
-Produces: `raport/texts.py`, `raport/render.py`, `raport/markdown.py`, `marktext.py`, golden reports.
+Produced: `raport/texts.py`, `raport/markdown.py`, `marktext.py`, the `raport` command with an
+optional `--markdown`, four golden reports in `tests/golden/`, `tests/test_raport.py`, boundary rule 6
+extended to pairs and **boundary rule 13**, new.
 
-Sections that are the object of acceptance: signals with level, statutory basis, observation date
-from `stanZDnia` and a quote from the extract; **"unresolved"**; and **"what this tool does not
-claim"** — including, explicitly, that it does not see the debtors register, the strongest single
-signal, rather than omitting that source in silence.
+Gates, measured 2026-09-11: **247 passed**, ruff and format clean, mypy strict clean over 46 files.
 
-How to check: reports for every sample side by side, plus a fixture with a hostile name rendered to
-both channels.
+**Two deviations from the plan, both deliberate.**
 
-Invariant with an observer: every printed signal carries four things, and the golden test fails when
-any is lost; two output channels have two neutralisers and one scan.
+`raport/render.py` does not exist; `render_raport` sits in the existing `render.py`. The modules that
+know `rich` are named one by one in the rule-6 test, because each is a separate place where a string
+can reach the terminal without a neutraliser. A fourth would have cost exactly what it saved. The
+markdown channel did get its own file, because it has its own neutraliser — that is the difference
+that earns a module here.
+
+The read model gained `Dzial.klucze`: **the verbatim field names the file carries inside a division**,
+transcribed and not interpreted. A signal has to carry a quote from the extract, and for a division
+signal there was nothing to quote — the reader keeps three states and nothing else. The names assert
+nothing; and the same field is what closes row 10 of `niezmierzone.md` the day a real extract arrives,
+because the report prints exactly what the register put there. `signals/` may not read it — that is
+rule 13, with a scan and a seeded self-test, because a rule pinned to a guessed key name is
+indistinguishable from one pinned to a measured name.
+
+**The channels are a pair, and the scan says so.** `richtext.safe` strips `rich` markup and passes
+`](http://…)` through untouched — which in markdown is a link to a foreign address, inside a document
+somebody forwards as a report about a company. So `raport/markdown.py` must call `safe_md` and may not
+import `richtext`; `render.py` the reverse; and every interpolation in the markdown module must be a
+neutraliser call, even one holding program text, because an exception for "our own constants" admits
+every name. The hostile-name fixture goes through both channels and the golden file shows the result.
+
+**What the report says that a shorter one would not.** "No signal" is opened with the sentence that it
+does not mean the company is sound. The unresolved section names **who closes each item** — a
+measurement, one change in this tool, or a different extract. And "what this tool does not claim"
+states that it does not see the debtors register: the strongest single signal in this field, which
+this tool does not reach. Omitting a source one does not consult is worse in a risk report than
+publishing no report, because the reader reads silence as absence of an entry.
+
+**For review:** `krs-tool raport --plik <odpis> --markdown raport.md`, then read the markdown in a
+viewer rather than in a terminal — the escaping is visible in the source and invisible once rendered,
+and that is the intended state.
+
+Invariant with an observer: every printed signal carries four things and the golden test fails when
+one is lost; two channels have two neutralisers, one pairing scan and one hostile fixture; the signal
+layer cannot see inside a division.
 
 ## Step 6 — journal and replay
 

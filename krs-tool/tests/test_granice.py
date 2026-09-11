@@ -456,7 +456,11 @@ def test_regula_4_warstwa_sygnalow_nie_czyta_zegara(sciezka: Path) -> None:
     assert not winowajcy, f"{sciezka.name} sięga po zegar: {winowajcy}"
 
 
-@pytest.mark.parametrize("sciezka", [*_pliki_sygnalow(), PAKIET / "texts.py"], ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "sciezka",
+    [*_pliki_sygnalow(), PAKIET / "texts.py", PAKIET / "raport" / "texts.py"],
+    ids=lambda p: p.as_posix().split("krs_tool/")[-1],
+)
 def test_regula_5_moduly_czyste_nie_znaja_wyjscia(sciezka: Path) -> None:
     """Bez tego ekrany i reguły przestałyby dać się sprawdzić bez terminala."""
     korzenie = {m.split(".")[0] for m in importowane_moduly(sciezka.read_text(encoding="utf-8"))}
@@ -570,3 +574,139 @@ def test_reguly_8_i_9_typ_oznaczony_ma_jednego_producenta(typ: str, producent: s
 def test_skan_producentow_naprawde_lapie(zrodlo: str, nazwa: str, oczekiwane: int) -> None:
     """Test samego skanu reguł 8 i 9, z zaszczepionym drugim producentem."""
     assert len(wywolania_konstruktora(zrodlo, nazwa)) == oczekiwane
+
+
+# --------------------------------------------------------------------------------------
+# Reguła 6, druga połowa — kanał markdown i jego własny neutralizator (krok 5)
+#
+# Skan sprawdza PARY kanał-neutralizator, nie samą obecność któregoś. Przepuszczenie napisu
+# przez `richtext.safe` po drodze do markdownu zdejmie znaczniki `rich` i zostawi
+# `](http://…)` — czyli odnośnik na obcy adres w dokumencie, który ktoś prześle dalej jako
+# raport o spółce.
+# --------------------------------------------------------------------------------------
+
+NEUTRALIZATORY_MD = frozenset({"safe_md", "safe_md_or_empty"})
+MODUL_MARKDOWN = "raport/markdown.py"
+
+
+def wstawki_bez_neutralizatora(source: str, neutralizatory: frozenset[str]) -> list[int]:
+    """Numery linii z wstawką w f-stringu, która nie przeszła przez neutralizator kanału.
+
+    W tym module napis staje się markdownem wyłącznie przez wstawkę w f-stringu albo przez
+    złączenie komórek, a oba kształty muszą wołać neutralizator wprost. Stała jest dozwolona,
+    bo stała pochodzi z programu.
+    """
+    tree = ast.parse(source)
+    naruszenia: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        for czesc in node.values:
+            if not isinstance(czesc, ast.FormattedValue):
+                continue
+            wartosc = czesc.value
+            bezpieczna = isinstance(wartosc, ast.Constant) or (
+                isinstance(wartosc, ast.Call) and _nazwa_wywolania(wartosc) in neutralizatory
+            )
+            if not bezpieczna:
+                naruszenia.append(node.lineno)
+    return naruszenia
+
+
+def test_regula_6_wstawki_w_markdownie_ida_przez_wlasny_neutralizator() -> None:
+    zrodlo = (PAKIET / MODUL_MARKDOWN).read_text(encoding="utf-8")
+
+    assert wstawki_bez_neutralizatora(zrodlo, NEUTRALIZATORY_MD) == []
+
+
+def importowane_w_pakiecie(source: str) -> set[str]:
+    """Nazwy modułów importowanych **względnie**, po ostatnim członie.
+
+    `importowane_moduly` celowo widzi tylko importy bezwzględne, bo reguła 1 pyta o biblioteki.
+    Pary kanał-neutralizator są importami wewnątrz pakietu, czyli względnymi, i potrzebują
+    własnego skanu — czytanie ich przez `in source` łapałoby prozę docstringów, a docstring
+    kanału markdown ma prawo nazwać neutralizator, którego mu nie wolno użyć.
+    """
+    tree = ast.parse(source)
+    return {
+        node.module.split(".")[-1]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level > 0 and node.module
+    }
+
+
+def test_moduly_znajace_markdown_sa_tam_gdzie_myslimy() -> None:
+    """Druga połowa pary: neutralizator markdownu ma dokładnie jednego użytkownika."""
+    znajace = {
+        sciezka.relative_to(PAKIET).as_posix()
+        for sciezka in _pliki_pakietu()
+        if "marktext" in importowane_w_pakiecie(sciezka.read_text(encoding="utf-8"))
+    }
+
+    assert znajace == {MODUL_MARKDOWN}
+
+
+def test_kanaly_nie_mieszaja_neutralizatorow() -> None:
+    """Napis przepuszczony przez neutralizator cudzego kanału to naruszenie, nie drobiazg."""
+    markdown = importowane_w_pakiecie((PAKIET / MODUL_MARKDOWN).read_text(encoding="utf-8"))
+    terminal = importowane_w_pakiecie((PAKIET / "render.py").read_text(encoding="utf-8"))
+
+    assert "marktext" in markdown and "richtext" not in markdown
+    assert "richtext" in terminal and "marktext" not in terminal
+
+
+@pytest.mark.parametrize(
+    ("zrodlo", "oczekiwane"),
+    [
+        ('tytul = f"# {safe_md(raport.tytul)}"', 0),
+        ('naglowek = f"## {safe_md(blok.title)}"', 0),
+        # Nawet stała programu idzie przez neutralizator, gdy wchodzi wstawką: skan nie
+        # rozpoznaje „to nasza zmienna", a wyjątek dla nazw wpuściłby każdą nazwę.
+        ('stala = f"| {ROZDZIELACZ} |"', 1),
+        # kształty, które robią z fragmentu raportu odnośnik albo rozbijają tabelę
+        ('tytul = f"# {raport.tytul}"', 1),
+        ('komorka = f"| {safe(nazwa)} |"', 1),
+    ],
+)
+def test_skan_wstawek_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
+    """Test samego skanu drugiej połowy reguły 6."""
+    assert len(wstawki_bez_neutralizatora(zrodlo, NEUTRALIZATORY_MD)) == oczekiwane
+
+
+# --------------------------------------------------------------------------------------
+# Reguła 13 — warstwa sygnałów nie widzi wnętrza działu (krok 5)
+#
+# `Dzial.klucze` niesie dosłowne nazwy pól z pliku, żeby raport miał co zacytować. Reguła
+# przypięta do takiej nazwy byłaby nie do odróżnienia od reguły przypiętej do nazwy
+# ZMIERZONEJ — a niezmierzona jest (`docs/niezmierzone.md`, wiersz 10).
+# --------------------------------------------------------------------------------------
+
+POLE_ZABRONIONE_W_SYGNALACH = "klucze"
+
+
+def odczyty_pola(source: str, nazwa: str) -> list[int]:
+    """Numery linii, w których czyta się pole o danej nazwie."""
+    tree = ast.parse(source)
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == nazwa
+    ]
+
+
+@pytest.mark.parametrize("sciezka", _pliki_sygnalow(), ids=lambda p: p.name)
+def test_regula_13_warstwa_sygnalow_nie_zaglada_do_wnetrza_dzialu(sciezka: Path) -> None:
+    linie = odczyty_pola(sciezka.read_text(encoding="utf-8"), POLE_ZABRONIONE_W_SYGNALACH)
+
+    assert linie == [], f"{sciezka.name}: sięga po nazwy pól działu w liniach {linie}"
+
+
+@pytest.mark.parametrize(
+    ("zrodlo", "oczekiwane"),
+    [
+        ("if dzial.pusty: pass", 0),
+        ("if 'zaleglosciPodatkowe' in dzial.klucze: pass", 1),
+    ],
+)
+def test_skan_odczytow_pola_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
+    assert len(odczyty_pola(zrodlo, POLE_ZABRONIONE_W_SYGNALACH)) == oczekiwane

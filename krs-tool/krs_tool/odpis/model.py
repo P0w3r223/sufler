@@ -62,11 +62,22 @@ class Wzmianka:
 
 @dataclass(frozen=True)
 class Dzial:
-    """Zawartość działu sprowadzona do tego, co dziś potrafimy o niej powiedzieć."""
+    """Zawartość działu sprowadzona do tego, co dziś potrafimy o niej powiedzieć.
+
+    `klucze` to **dosłowne nazwy pól, jakie plik niesie w tym dziale** — przepisane, nie
+    zinterpretowane. Nie ma tu żadnego twierdzenia o tym, co która nazwa znaczy; po to właśnie
+    są dosłowne. Raport je cytuje, bo sygnał bez cytatu z odpisu jest twierdzeniem bez źródła,
+    a przy okazji to jest dokładnie materiał, którym operator zamknie wiersz 10
+    `docs/niezmierzone.md`, gdy dostarczy pierwszy prawdziwy odpis.
+
+    **Warstwie sygnałów tych nazw czytać nie wolno** (reguła granic 13). Reguła przypięta do
+    zgadniętej nazwy klucza jest nie do odróżnienia od reguły przypiętej do zmierzonej.
+    """
 
     numer: int
     obecny: bool
     pusty: bool
+    klucze: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -19,7 +19,9 @@ import typer
 
 from .identity import NumerKRS, numer_krs
 from .odpis.zrodlo import OdpisZPliku
-from .render import render_block
+from .raport.markdown import raport_markdown
+from .raport.texts import zbuduj_raport
+from .render import render_block, render_raport
 from .richtext import make_console
 from .signals.katalog import wczytaj_katalog
 from .signals.ocena import ocen_odpis
@@ -73,3 +75,24 @@ def ocen(
     numer: NumerKRS | None = numer_krs(krs) if krs else None
     odpis = OdpisZPliku(plik).pobierz(numer)
     render_block(ocena_ryzyka(ocen_odpis(odpis, wczytaj_katalog())), make_console())
+
+
+@app.command("raport")
+def raport(
+    plik: Annotated[Path, typer.Option("--plik", help="Odpis zapisany wcześniej do pliku.")],
+    krs: Annotated[
+        str | None,
+        typer.Option("--krs", help="Numer KRS, gdy odpis go nie niesie."),
+    ] = None,
+    markdown: Annotated[
+        Path | None,
+        typer.Option("--markdown", help="Zapisz raport także jako dokument markdown."),
+    ] = None,
+) -> None:
+    """Pełny raport: sygnały z podstawą i cytatem, nierozstrzygnięte, czego narzędzie nie mówi."""
+    numer: NumerKRS | None = numer_krs(krs) if krs else None
+    odpis = OdpisZPliku(plik).pobierz(numer)
+    dokument = zbuduj_raport(ocen_odpis(odpis, wczytaj_katalog()), odpis)
+    render_raport(dokument, make_console())
+    if markdown is not None:
+        markdown.write_text(raport_markdown(dokument), encoding="utf-8")

@@ -231,13 +231,13 @@ WERDYKT_WYKLUCZONY = "wykluczone"
 WERDYKT_NIEUSTALONY = "nieustalone"
 
 
-def _opis_kodu(kod: str) -> str:
+def opis_kodu(kod: str) -> str:
     return OPISY_OBSERWACJI.get(kod) or OPISY_PRZESLANEK.get(kod, kod)
 
 
-def _opis_niewiadomej(niewiadoma: Niewiadoma) -> str:
+def opis_niewiadomej(niewiadoma: Niewiadoma) -> str:
     powod = OPISY_POWODOW.get(niewiadoma.powod.value, niewiadoma.powod.value)
-    return f"{_opis_kodu(niewiadoma.kod)} ({powod})"
+    return f"{opis_kodu(niewiadoma.kod)} ({powod})"
 
 
 def _opis_okresu_kandydujacego(sygnal: Sygnal | Nieustalony | Wykluczony) -> str:
@@ -263,19 +263,19 @@ def _opis_zalozen(wynik: Sygnal | Wykluczony | Nieustalony) -> str:
     """
     if not wynik.zalozenia:
         return ""
-    return "; przy założeniu: " + "; ".join(_opis_niewiadomej(z) for z in wynik.zalozenia)
+    return "; przy założeniu: " + "; ".join(opis_niewiadomej(z) for z in wynik.zalozenia)
 
 
 def _wiersz_wyniku(wynik: Sygnal | Wykluczony | Nieustalony) -> tuple[str, str, str, str]:
     if isinstance(wynik, Sygnal):
         werdykt = WERDYKT_SYGNAL
-        szczegoly = _opis_kodu(wynik.obserwacja.value) + _opis_okresu_kandydujacego(wynik)
+        szczegoly = opis_kodu(wynik.obserwacja.value) + _opis_okresu_kandydujacego(wynik)
     elif isinstance(wynik, Wykluczony):
         werdykt = WERDYKT_WYKLUCZONY
-        szczegoly = _opis_kodu(wynik.powod) + _opis_okresu_kandydujacego(wynik)
+        szczegoly = opis_kodu(wynik.powod) + _opis_okresu_kandydujacego(wynik)
     else:
         werdykt = WERDYKT_NIEUSTALONY
-        szczegoly = "; ".join(_opis_niewiadomej(n) for n in wynik.nierozstrzygniete)
+        szczegoly = "; ".join(opis_niewiadomej(n) for n in wynik.nierozstrzygniete)
     return (
         wynik.regula.kod,
         werdykt,

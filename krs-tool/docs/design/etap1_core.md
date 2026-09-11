@@ -24,6 +24,7 @@ krs_tool/
   safetext.py       neutraliser: spreadsheet half
   richtext.py       neutraliser: terminal half, sole seam with rich
   marktext.py       neutraliser: markdown half                      [step 5]
+  render.py         Block and Raport to rich (no raport/render.py)  [step 5]
   identity.py       sole producer of NumerKRS                        [step 2]
   odpis/
     zrodlo.py       port RejestrKRS + adapter OdpisZPliku            [step 2]
@@ -53,7 +54,8 @@ that is the only thing the signal layer learns about financial statements.
 
 ## Boundary rules
 
-Twelve rules. Each is enforced by a mechanism, and each mechanism has a test of itself with a seeded
+Thirteen rules — twelve planned, and rule 13 added in step 5 together with the field it protects.
+Each is enforced by a mechanism, and each mechanism has a test of itself with a seeded
 violation — a rule that cannot be shown to fail is indistinguishable from an empty set.
 
 | # | Rule | Mechanism | Step |
@@ -70,6 +72,7 @@ violation — a rule that cannot be shown to fail is indistinguishable from an e
 | 10 | No numeric literal other than 0 and 1 appears in `signals/` | AST scan | **3** |
 | 11 | The accusatory lexicon is closed | `Poziom` has no "late" member; scan of the **parsed values** of `reguly/*.yaml` and of the non-docstring string constants of `texts.py` | **3** |
 | 12 | `dziennik/` is append-only | scan: `open()` only in `a`, `x` or `r`; no `unlink`; no overwrite of an existing path | 6 |
+| 13 | `signals/` never reads `Dzial.klucze` — the verbatim field names inside a division | AST scan for the attribute read, with a seeded self-test | 5 |
 
 ### Note on copying the scan from `ceidg-tool`
 
