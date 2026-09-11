@@ -40,4 +40,4 @@ def test_wpis_wymienia_katalogi_z_nazwy() -> None:
     """Układ płaski: `.` wciągnęłoby do lintera wszystko, co leży w korzeniu pod-projektu."""
     sciezki = _wpis_krs_tool()["lint_paths"].split()
 
-    assert sciezki == ["krs_tool", "tests"]
+    assert sciezki == ["krs_tool", "tests", "scripts"]

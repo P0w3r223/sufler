@@ -12,11 +12,16 @@ jest `typer.echo`, a nie `console.print`.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Annotated
+
 import typer
 
+from .identity import NumerKRS, numer_krs
+from .odpis.zrodlo import OdpisZPliku
 from .render import render_block
 from .richtext import make_console
-from .texts import NAZWA, pierwszy_ekran
+from .texts import NAZWA, karta_podmiotu, pierwszy_ekran
 
 app = typer.Typer(
     name=NAZWA,
@@ -32,3 +37,17 @@ def main(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     render_block(pierwszy_ekran(), make_console())
+
+
+@app.command("pokaz")
+def pokaz(
+    plik: Annotated[Path, typer.Option("--plik", help="Odpis zapisany wcześniej do pliku.")],
+    krs: Annotated[
+        str | None,
+        typer.Option("--krs", help="Numer KRS, gdy odpis go nie niesie."),
+    ] = None,
+) -> None:
+    """Karta podmiotu odczytana z odpisu — bez oceny i bez zarzutu."""
+    numer: NumerKRS | None = numer_krs(krs) if krs else None
+    odpis = OdpisZPliku(plik).pobierz(numer)
+    render_block(karta_podmiotu(odpis), make_console())

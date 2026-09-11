@@ -84,8 +84,9 @@ jobs:
             # `tests/test_granice.py` czytający manifest (krs-tool/docs/adr/0001, decyzja 2).
             sync_args: "--extra dev"
             # Układ płaski jak w `ceidg-tool`, stąd nazwy katalogów zamiast `.`.
-            # `scripts` dołączy w kroku 2, razem z pierwszym skryptem.
-            lint_paths: "krs_tool tests"
+            # `scripts` jest w zakresie od kroku 2 — tam stoi nakładka anonimizatora, czyli
+            # ścieżka, którą powstaje materiał dowodowy dla `tests/fixtures/odpis_traits.yaml`.
+            lint_paths: "krs_tool tests scripts"
     defaults:
       run:
         working-directory: ${{ matrix.dir }}

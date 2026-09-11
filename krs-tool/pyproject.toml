@@ -76,4 +76,4 @@ ignore_missing_imports = true
 # `scripts` dołącza w kroku 2, razem z pierwszym skryptem — tam powstaje anonimizator, czyli
 # miejsce, w którym wytwarza się materiał dowodowy (`docs/niezmierzone.md`), więc ma podlegać
 # tym samym regułom co pakiet. Katalog wpisany tu przed swoim powstaniem wywraca bramkę.
-files = ["krs_tool", "tests"]
+files = ["krs_tool", "tests", "scripts"]

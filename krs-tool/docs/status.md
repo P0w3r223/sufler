@@ -56,22 +56,55 @@ anonymiser, and a path declared before it exists breaks the gate.
 Invariant with an observer: absence of network, in the import graph, in the manifest and at the
 socket, each with a self-test.
 
-## Step 2 — the extract becomes a read model, the operator file becomes evidence
+## Step 2 — the extract becomes a read model — **done on synthetic material 2026-09-11**
 
-Produces: `identity.py`, `odpis/`, `scripts/anonimizuj_odpisy.py`, `probki/` (ignored), anonymised
-`tests/fixtures/`, `tests/fixtures/odpis_traits.yaml`, `test_odpis_traits.py`,
-`test_anonimizator.py`, `docs/pomiary.md`.
+Produced: `identity.py`, `odpis/{model,czytanie,zrodlo}.py`, `anonimizacja.py`,
+`scripts/anonimizuj_odpisy.py`, `tests/budowniczy.py`, `tests/fixtures/odpis_traits.yaml`,
+`docs/pomiary.md`, the `pokaz --plik` command and the subject card, plus
+`test_odpis.py`, `test_identity.py`, `test_karta.py`, `test_anonimizator.py`,
+`test_odpis_traits.py`.
 
-**Blocked on the owner:** manually saved extracts — at minimum a healthy company, one in
-liquidation, one **suspended**, a **partnership of natural persons**, and one with a non-calendar
-financial year. Without the middle two, rows 4 and 5 of `niezmierzone.md` stay open and stage 1 ends
-with them open, deliberately.
+Gates, measured 2026-09-11: **103 passed**, ruff and format clean, mypy strict clean over 32 files.
+`scripts/` is now inside both scopes.
 
-How to check: `krs-tool pokaz --plik odpis.json` prints a card, reporting unreadable entries as
-unreadable rather than guessing.
+**The owner chose to build on synthetic extracts, with real ones to follow.** That is a legitimate
+way to build a reader and an illegitimate way to learn what a register returns, so the separation is
+mechanical rather than a matter of care:
 
-Invariant with an observer: a claim about the register cites a file with a hash; the anonymiser
-cannot delete a property the traits file names.
+- `tests/fixtures/odpis_traits.yaml` holds claims about **files an operator supplied**, each citing
+  file, SHA-256, date and supplier. It is **empty**, and that is the true state.
+- `docs/pomiary.md` declares `zmierzonych-wlasnosci: 0` and lists the **nine assumptions** the reader
+  now encodes, with what breaks if each is wrong. A test keeps that number equal to the number of
+  entries in the traits file, so the document cannot drift by being forgotten.
+- A synthetic extract may never be cited as evidence — a test rejects any traits entry naming one.
+- Every synthetic extract carries a key the register will never emit, and a card built from one wears
+  a marker in its title and its first note. Verified by eye and by test.
+
+Three design decisions worth keeping in view:
+
+- **A division has three states, not two.** Absent from the file, present-and-empty,
+  present-and-non-empty. Collapsing the first two would make the division-4 flag — the cheapest
+  level-1 risk signal there is — rest on an ambiguity.
+- **An unreadable period is reported, never guessed.** The model keeps the raw text alongside
+  `okres=None`, the card prints it as unreadable, and the count of unreadable entries appears in the
+  notes.
+- **The anonymiser lives in the package, not in the script.** It produces evidence, so it obeys the
+  package's rules. Its list of preserved properties is a tuple of codes checked against the test
+  module in both directions: a property added without a test fails the gate, and so does the reverse.
+
+Two defects the gates caught while writing this step, both worth recording because they are the kind
+that pass a code review: the NIP checksum zipped nine weights against ten digits (`strict=True`
+caught it), and the word-form period branch reused the names bound in the numeric branch, which mypy
+rejected as a type change rather than the copy-paste it was.
+
+**Still blocked on the owner:** manually saved extracts — a healthy company, one in liquidation, one
+**suspended**, a **partnership of natural persons**, and one with a non-calendar financial year.
+Until they arrive, rows 4-7 of `niezmierzone.md` stay open, the nine assumptions stay assumptions,
+and the missing-statement rule of step 4 will be structurally unable to fire.
+
+Invariant with an observer: a claim about the register cites a file with a hash; a synthetic extract
+cannot become evidence; the measurement count in the document equals the number of claims; the
+anonymiser cannot delete a property it declares it preserves.
 
 ## Step 3 — the signal catalogue as data, before any rule runs
 
