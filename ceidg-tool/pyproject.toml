@@ -67,8 +67,10 @@ extend-exclude = ["ceidg_probe.py", "scripts/ceidg_probe.py"]
 select = ["E", "F", "I", "B", "UP", "N", "W", "C901", "PLR0915"]
 
 [tool.ruff.lint.mccabe]
-# 15, nie domyślne 10: tyle stoi w korzeniu i w pozostałych pod-projektach. Przy domyślnym
-# progu naruszeń byłyby 22 zamiast 10 — liczba, której to repozytorium nigdzie nie egzekwuje.
+# 15, nie domyślne 10: tyle stoi w korzeniu i w pozostałych pod-projektach. Różnica nie jest
+# akademicka — w chwili wprowadzania tego progu naruszeń było 22 przy domyślnym i 10 przy tym;
+# po rozbiciu pięciu funkcji jest 13 i 2, a te dwa to sondy z własnym `noqa`. Liczba z progu,
+# którego to repozytorium nigdzie nie egzekwuje, nie opisuje niczego.
 max-complexity = 15
 
 [tool.mypy]

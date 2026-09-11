@@ -957,7 +957,6 @@ def plan_update(
     return UpdatePlan(since=start, until=end, count=total, windows=len(windows))
 
 
-# Sufit funkcji (#158): 53 instrukcje przy sufcie 50.
 def _dociagnij_szczegoly(
     client: CeidgClient,
     store: Store,
@@ -1081,11 +1080,6 @@ def run_update(
                     # od razu, a nie po pierwszej porcji.
                     deps.events.on_details(seen, goal)
                     _dociagnij_szczegoly(client, store, deps, serce, stale, seen=seen, goal=goal)
-                    # Obserwator liczony **tu**, przy oknie, które zna swój koniec i swoje
-                    # identyfikatory — a nie raz na cały run. Pytanie raz na run musiałoby
-                    # wziąć jeden próg dla wszystkich okien, więc wpis zgłoszony w drugim
-                    # oknie ze szczegółem z pierwszego mieściłby się powyżej progu i nie
-                    # byłby widziany, choć jest dokładnie tym przypadkiem, o który chodzi.
                     przestarzale.update(_zglos_przestarzale(store, deps.events, ids, window_end))
                     page_index += 1
                     seen += len(ids)

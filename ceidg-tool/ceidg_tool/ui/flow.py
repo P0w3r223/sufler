@@ -382,7 +382,6 @@ def _oferta_wznowienia(
 
 
 def _sciezka_raportu(
-    criteria: Criteria,
     kand: _Kandydaci,
     deps: Deps,
     prompter: Prompter,
@@ -391,7 +390,13 @@ def _sciezka_raportu(
     source: str,
     threshold: int,
 ) -> tuple[Decision, FetchPlan] | None:
-    """Rozstrzyga, czy pobrać z gotowego raportu. `None` znaczy „idziemy ścieżką API"."""
+    """Rozstrzyga, czy pobrać z gotowego raportu. `None` znaczy „idziemy ścieżką API".
+
+    Kryteria bierzemy z `kand.waskie`, a nie osobnym argumentem: para (kryteria, kandydaci)
+    podana z zewnątrz dopuszczałaby wywołanie niespójne, a `_Kandydaci` powstało właśnie po to,
+    żeby to, co policzone raz, nie było przepisywane drugi raz.
+    """
+    criteria = kand.waskie
     report: Report | None = None
     if source in ("auto", "raport") and report_covers(criteria):
         report = choose_report(criteria, deps)
@@ -423,11 +428,14 @@ def _sciezka_raportu(
 
 
 def _policz_populacje(
-    criteria: Criteria, kand: _Kandydaci, deps: Deps, prompter: Prompter, view: View
+    kand: _Kandydaci, deps: Deps, prompter: Prompter, view: View
 ) -> tuple[Criteria, int] | None:
-    """Zapytania o `count` — wszystkie tutaj, wszystkie przed zgodą. `None` znaczy „anuluj"."""
+    """Zapytania o `count` — wszystkie tutaj, wszystkie przed zgodą. `None` znaczy „anuluj".
+
+    Kryteria z `kand.waskie`, z tego samego powodu co w `_sciezka_raportu`.
+    """
     if not (kand.pytac_o_rocznik and kand.rozsz is not None):
-        return criteria, count_hits(criteria, deps)
+        return kand.waskie, count_hits(kand.waskie, deps)
     # Dwa `count` — po jednym na populację — i oba **przed** zgodą. To jest cała cena
     # przeformułowania niezmiennika: operator dostaje rozmiar tego, co ominie albo czego
     # nabierze, zamiast zdania „wynik może być niepełny", na które nie da się odpowiedzieć.
@@ -494,13 +502,11 @@ def prepare_fetch(
     if wznowienie is not None:
         return "wznow", wznowienie
 
-    z_raportu = _sciezka_raportu(
-        criteria, kand, deps, prompter, view, source=source, threshold=threshold
-    )
+    z_raportu = _sciezka_raportu(kand, deps, prompter, view, source=source, threshold=threshold)
     if z_raportu is not None:
         return z_raportu
 
-    policzone = _policz_populacje(criteria, kand, deps, prompter, view)
+    policzone = _policz_populacje(kand, deps, prompter, view)
     if policzone is None:
         return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
     criteria, count = policzone
