@@ -16,8 +16,10 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
   Bramką jakości jest odtąd czwarty wpis w matrycy `ci.yml`; własny workflow pod-projektu został
   zawężony `paths` i trzyma wyłącznie oś, której matryca nie ma — Windows i drugą wersję Pythona.
   Deklaracja licencji MIT zniknęła z jego `pyproject.toml`: w tym drzewie obowiązuje `LICENSE`
-  korzenia. **Stara gałąź `ceidg-tool` zostaje jako kopia przejściowa** — commit dopisany do niej
-  nie dociera na `Main`, a jej usunięcie jest osobną decyzją właściciela.
+  korzenia. **Stara gałąź `ceidg-tool` została usunięta 2026-09-11**, po pełnym cyklu bramek na
+  `Main`. Klon wskazujący na tę gałąź traci przy `git fetch` ref
+  śledzący i nie ma dokąd pushować — praca nad tym projektem idzie odtąd przez `ceidg-tool/`
+  na `Main`.
 
 - **Historia gita przepisana 2026-09-10 — każdy SHA na `Main` i `Dev` jest nowy.** Ujednolicenie
   autorstwa: wszystkie 559 commitów mają odtąd autora `P0w3r223 <p0w3r2243@gmail.com>` (wcześniej
