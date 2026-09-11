@@ -1,0 +1,81 @@
+# Dział 4 rejestru przedsiębiorców — w praktyce rejestr niewypłacalności operacyjnej.
+#
+# U spółki zdrowej ten dział wraca pusty, więc niepustość jest flagą binarną kosztującą jedno
+# odpytanie. To jest najtańszy sygnał poziomu pierwszego, jaki ten produkt ma.
+#
+# UWAGA DO PRZEGLĄDU PRAWNEGO: podstawa wskazuje artykuł, nie punkt. Rozpoznanie potwierdziło
+# zakres art. 41 ustawy o KRS w tekście ustawy; numeracji punktów nie potwierdzało, więc jej tu
+# nie ma. Uzupełnienie numeru punktu jest zadaniem przeglądu, nie zgadywania.
+#
+# DRUGA UWAGA DO PRZEGLĄDU, DOPISANA W KROKU 4. Reguła `dzial4_niepusty` jest nowa i orzeka
+# o całym dziale, a nie o wpisie. Powstała, bo pomiar pokazał, że model odczytu wie o dziale
+# tylko tyle, czy jest pusty — nazw kluczy wewnątrz działu nikt nie zmierzył, więc cztery
+# reguły powyżej są dziś nierozstrzygalne, a niepustość rozstrzygalna. Przedmiotem przeglądu
+# jest jedno zdanie: czy art. 41 zakreśla dział 4 tak, że KAŻDY wpis, jaki może się w nim
+# znaleźć, jest sygnałem poziomu terminalnego. Jeżeli nie — ta reguła ma zniknąć albo zmienić
+# poziom, bo wtedy niepustość nie wystarcza do oceny.
+
+wersja: 1
+reguly:
+  - kod: dzial4_zaleglosci_podatkowe_i_celne
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figurują zaległości podatkowe lub celne objęte egzekucją, z datą i kwotą.
+      Wpis oznacza, że organ sięgnął po przymus, a nie że zaległość powstała.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_zaleglosci_wobec_zus
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figurują zaległości wobec zakładu ubezpieczeń społecznych.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_wierzyciele_z_tytulami_wykonawczymi
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figurują wierzyciele posiadający tytuły wykonawcze, których wierzytelności nie
+      zostały zaspokojone w egzekucji. Literatura zagraniczna wskazuje działania wierzycieli
+      zmierzające do odzyskania należności jako informację o wartości predykcyjnej wyższej niż
+      same wskaźniki ze sprawozdania.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_postepowanie_upadlosciowe
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zakres: pojedynczy_wpis
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figuruje wniosek o ogłoszenie upadłości albo informacja o przebiegu
+      postępowania upadłościowego, wraz z danymi syndyka.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_niepusty
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zakres: caly_dzial
+    zrodlo: dzial4
+    opis: >-
+      Dział 4 jest niepusty, czyli rejestr niesie w nim co najmniej jeden wpis. Który to wpis,
+      z odpisu dziś nie wynika — ale każdy wpis, jaki ten dział może nieść, jest sygnałem
+      poziomu terminalnego, więc sama niepustość wystarcza do oceny poziomu. U spółki bez
+      kłopotów ten dział wraca pusty.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze

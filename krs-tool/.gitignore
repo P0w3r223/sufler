@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Odpisy dostarczone ręcznie przez operatora — dane prawdziwych spółek, w tym dane osób
+# w organach. Do repozytorium trafiają wyłącznie kopie przepuszczone przez
+# `scripts/anonimizuj_odpisy.py` (krok 2), nigdy oryginały.
+probki/
+
+# Wyjście narzędzia. Nazwa `ocena-*` jest celowa: korzeniowy `.gitignore` ma niezakotwiczoną
+# regułę `RAPORT-*.md`, która sięga do pod-katalogów, więc raport nazwany `RAPORT-…` znikałby
+# z `git add` bez słowa.
+wyniki/
+
+# Wyjątki zawężone do rozszerzeń, które fixtures naprawdę mają. Szeroki `!tests/fixtures/**`
+# licencjonowałby dokładnie ten defekt, przed którym stoi reguła korzenia.
+!tests/fixtures/*.json
+!tests/fixtures/*.yaml
+!tests/fixtures/*.md

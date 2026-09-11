@@ -1,0 +1,55 @@
+# Sprawozdawczość: jedyna reguła etapu 1 badająca BRAK dokumentu, a nie obecność wpisu.
+#
+# Ta reguła jest dziś strukturalnie niezdolna do wyprodukowania sygnału i to jest stan
+# wymagany, nie usterka. Powody są dwa i oba widać w danych poniżej:
+#
+# 1. Dwie z sześciu przesłanek wykluczających mają `ustalane_z: [nieustalalne_z_odpisu]`,
+#    a jedna `[nieprobkowane]`. Sygnał powstaje wyłącznie wtedy, gdy WSZYSTKIE sześć dało
+#    odpowiedź „nie zachodzi", więc wynikiem jest zawsze „nieustalone" z wypisaną listą.
+# 2. Opóźnienie publikacji wzmianki względem złożenia nie zostało zmierzone
+#    (docs/niezmierzone.md, wiersz 3), więc nawet po domknięciu przesłanek reguła najpierw
+#    czeka na pomiar.
+#
+# Termin. Ustawa NIE zna jednej daty granicznej złożenia: właściwy termin to piętnaście dni od
+# dnia ZATWIERDZENIA, a rejestr publikuje wyłącznie datę ZŁOŻENIA. Jedyne, co da się policzyć
+# z danych publicznych, to ogranicznik zastępczy — sześć miesięcy plus piętnaście dni od dnia
+# bilansowego. Dlatego `rodzaj: zastepczy_ustawowy`, i dlatego narzędzie nigdy nie powie
+# „złożono za późno", tylko najwyżej „brak wpisu na dzień D".
+
+wersja: 1
+reguly:
+  - kod: brak_wpisu_o_sprawozdaniu
+    poziom: wyprzedzajacy
+    rodzaj: brak_dokumentu
+    wzmianka: wzmiankaOZlozeniuRocznegoSprawozdaniaFinansowego
+    zrodlo: dzial3
+    opis: >-
+      Za dany rok obrotowy nie ma wzmianki o złożeniu rocznego sprawozdania finansowego,
+      a ogranicznik zastępczy już upłynął. Wynikiem jest obserwacja, nie zarzut.
+    podstawa_prawna: "art. 69 ust. 2 ustawy o rachunkowości"
+    podstawa_potwierdzona: true
+    zywotnosc: nieokreslona_w_zrodle
+    termin:
+      rodzaj: zastepczy_ustawowy
+      od: dzien_bilansowy
+      miesiecy: 6
+      dni: 15
+    przeslanki_wykluczajace:
+      - kod: zawieszenie_caloroczne
+        podstawa: "art. 12 ust. 3b ustawy o rachunkowości"
+        ustalane_z: [nieustalalne_z_odpisu]
+      - kod: rozpoczecie_w_ii_polroczu
+        podstawa: "art. 3 ust. 1 pkt 9 ustawy o rachunkowości"
+        ustalane_z: [dzial1, dzial3]
+      - kod: upadlosc_lub_restrukturyzacja
+        podstawa: "art. 53 ust. 2a ustawy o rachunkowości"
+        ustalane_z: [dzial4, dzial6]
+      - kod: dzialalnosc_w_spadku
+        podstawa: "art. 53 ust. 2aa ustawy o rachunkowości"
+        ustalane_z: [nieustalalne_z_odpisu]
+      - kod: oswiadczenie_art_70a
+        podstawa: "art. 70a ustawy o rachunkowości"
+        ustalane_z: [nieprobkowane]
+      - kod: poza_rejestrem_przedsiebiorcow
+        podstawa: "przepisy odrębne — sprawozdanie trafia do Szefa KAS"
+        ustalane_z: [naglowek]

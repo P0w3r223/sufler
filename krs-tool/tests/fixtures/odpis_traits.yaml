@@ -1,0 +1,13 @@
+# Zmierzone własności odpisu — twierdzenia o PLIKU, nigdy o API.
+#
+# Wpis wolno tu dopisać wyłącznie wtedy, gdy odnosi się do odpisu dostarczonego przez
+# operatora, i musi cytować: nazwę pliku, jego SHA-256, datę i tego, kto go dostarczył.
+# Odpis syntetyczny nie jest dowodem i nie może tu wystąpić — pilnuje tego
+# `tests/test_odpis_traits.py`.
+#
+# Na 2026-09-11 lista jest PUSTA i to jest stan prawdziwy: model odczytu powstał na odpisach
+# syntetycznych, czyli na naszych własnych założeniach. Co dokładnie zakłada i czego jeszcze
+# nie wie, wymienia `docs/pomiary.md`.
+
+warstwa: plik_odpisu
+wlasnosci: []

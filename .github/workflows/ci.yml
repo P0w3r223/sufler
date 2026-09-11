@@ -75,6 +75,18 @@ jobs:
             # katalogów zamiast `.`: `.` wciągnęłoby dostarczony oryginał `ceidg_probe.py`,
             # świadomie trzymany poza regułami (`extend-exclude` w jego `pyproject.toml`).
             lint_paths: "ceidg_tool tests scripts"
+          - name: krs-tool
+            dir: "krs-tool"
+            # Piąty najemca (ceidg-tool/docs/adr/0023). Bez `--extra dev` `uv sync` postawiłby
+            # sam produkt i każdy krok bramki padłby na braku polecenia — tak samo jak wyżej.
+            # Żadnej ekstry poza `dev` tu nie ma i nie ma jej z powodu: ten pod-projekt nie
+            # deklaruje ani jednej zależności sieciowej, a pilnuje tego jego własny test
+            # `tests/test_granice.py` czytający manifest (krs-tool/docs/adr/0001, decyzja 2).
+            sync_args: "--extra dev"
+            # Układ płaski jak w `ceidg-tool`, stąd nazwy katalogów zamiast `.`.
+            # `scripts` jest w zakresie od kroku 2 — tam stoi nakładka anonimizatora, czyli
+            # ścieżka, którą powstaje materiał dowodowy dla `tests/fixtures/odpis_traits.yaml`.
+            lint_paths: "krs_tool tests scripts"
     defaults:
       run:
         working-directory: ${{ matrix.dir }}

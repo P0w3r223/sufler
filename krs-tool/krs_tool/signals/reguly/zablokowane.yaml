@@ -1,0 +1,23 @@
+# Reguły, których wczytania loader ODMAWIA, wraz z powodem i datą przeglądu.
+#
+# To nie jest kosz na pomysły. To lista sygnałów, które wyglądają na oczywiste, a których
+# wyprodukowanie byłoby dziś błędem — z powodu zapisanego obok. Loader podnosi wyjątek, jeśli
+# ktoś mimo to dopisze regułę o takim kodzie do katalogu.
+
+wersja: 1
+zablokowane:
+  - kod: brak_sprawozdawczosci_zrownowazonego_rozwoju
+    powod: >-
+      Przepis epizodyczny pozwala jednostkom nie wykonywać tych obowiązków za lata obrotowe
+      rozpoczynające się od 1 stycznia 2025 do 31 grudnia 2026, jeżeli nie przekroczyły progu
+      tysiąca osób ani miliarda dziewięciuset milionów złotych przychodu. Dla zdecydowanej
+      większości podmiotów BRAK takiej sprawozdawczości jest więc stanem zgodnym z prawem,
+      a narzędzie, które by to oflagowało, myliłoby się na masową skalę.
+    do_przegladu_po: "2026-12-31"
+
+  - kod: brak_sprawozdania_o_podatku_dochodowym
+    powod: >-
+      To osobny typ dokumentu z własnym, dwunastomiesięcznym terminem od dnia bilansowego,
+      łatwy do pomylenia ze sprawozdaniem finansowym. Zanim powstanie reguła, trzeba ustalić,
+      pod jakim kluczem wzmianka o nim pojawia się w odpisie — czego nie zmierzono.
+    do_przegladu_po: "2026-12-31"
