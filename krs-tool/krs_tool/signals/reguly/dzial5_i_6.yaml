@@ -1,0 +1,52 @@
+# Dział 5 (kurator) i dział 6 (likwidacja, rozwiązanie, przekształcenia).
+#
+# UWAGA DO PRZEGLĄDU PRAWNEGO: przy kuratorze `podstawa_potwierdzona` stoi na `false`. Wiemy
+# z odpisu, że dział 5 dotyczy kuratora; rozpoznanie NIE potwierdziło, który przepis ustawy
+# o KRS to reguluje. Wpisanie numeru artykułu bez sprawdzenia byłoby dokładnie tym błędem,
+# który ten projekt tropi w cudzej literaturze — więc go tu nie ma, a wydruk katalogu pokazuje
+# tę regułę jako wymagającą potwierdzenia.
+
+wersja: 1
+reguly:
+  - kod: dzial5_kurator
+    poziom: wyprzedzajacy
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial5
+    opis: >-
+      W dziale 5 figuruje wzmianka o ustanowieniu kuratora. Sam fakt nie przesądza o kondycji
+      finansowej, ale oznacza, że podmiot nie działa normalnym trybem organów.
+    podstawa_prawna: "dział 5 rejestru przedsiębiorców — ustawa o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: false
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial6_otwarcie_likwidacji
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial6
+    opis: >-
+      W dziale 6 figuruje otwarcie likwidacji wraz z danymi likwidatora.
+    podstawa_prawna: "art. 44 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial6_rozwiazanie_podmiotu
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial6
+    opis: >-
+      W dziale 6 figuruje rozwiązanie albo unieważnienie spółki.
+    podstawa_prawna: "art. 44 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial6_polaczenie_podzial_przeksztalcenie
+    poziom: kontekst
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial6
+    opis: >-
+      W dziale 6 figuruje połączenie, podział albo przekształcenie. To nie jest sygnał ryzyka —
+      to okoliczność, która tłumaczy nieciągłość danych między latami i bez której czytelnik
+      raportu wyciągnie z tej nieciągłości zły wniosek.
+    podstawa_prawna: "art. 44 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze

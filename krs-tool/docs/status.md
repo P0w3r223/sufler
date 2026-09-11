@@ -106,16 +106,60 @@ Invariant with an observer: a claim about the register cites a file with a hash;
 cannot become evidence; the measurement count in the document equals the number of claims; the
 anonymiser cannot delete a property it declares it preserves.
 
-## Step 3 — the signal catalogue as data, before any rule runs
+## Step 3 — the signal catalogue as data — **done 2026-09-11**
 
-Produces: `signals/reguly/*.yaml`, `signals/katalog.py` (loader-guard), `signals/reguly/zablokowane.yaml`,
-`scripts/pokaz_katalog.py`.
+Produced: `signals/katalog.py` (the loader-guard), four rule files plus `zablokowane.yaml`,
+`katalog_sygnalow` in `texts.py`, the `katalog` command, `tests/test_katalog.py`, and boundary rules
+4, 5, 10 and 11 with their self-tests.
 
-How to check: a one-page printout of the catalogue — code, level, statutory basis, lifetime,
-excluding premises. This is the artefact a lawyer reads, and it is the object of acceptance.
+Gates, measured 2026-09-11: **136 passed**, ruff and format clean, mypy strict clean over 35 files.
 
-Invariant with an observer: six premises cannot quietly become five; `zywotnosc` has no default;
-a rule on the blocked list refuses to load.
+Nine rules: four on division 4 (tax and social-insurance arrears under enforcement, creditors with
+writs, bankruptcy petitions), one on division 5 (curator), three on division 6 (liquidation,
+dissolution, and — as context rather than risk — mergers and transformations), and one on missing
+financial statements.
+
+**A command, not a script.** The plan called for `scripts/pokaz_katalog.py`; `krs-tool katalog` is
+strictly better — the person reviewing the catalogue is not the person who runs scripts, and the
+command obeys the output rules the script would have sat outside of.
+
+**Boundary rules 4, 5, 10 and 11 arrived here rather than in step 4**, because they govern the code
+and data written in this step, and an observer that arrives early is never worse. Two of them are
+worth restating:
+
+- **Rule 10 forced a design choice.** `Poziom` takes its values from `auto()` rather than from
+  literals, because the pakiet forbids any number other than 0 and 1. Six months and fifteen days
+  have nowhere to live except the catalogue, and "31 December" cannot be written at all.
+- **Rule 11 scans values, not files.** The lexicon check parses the YAML and reads the string
+  constants of `texts.py`, deliberately skipping comments and docstrings — the file explaining why
+  we never accuse anyone has to be able to name the accusation it forbids.
+
+**Two things the catalogue says out loud, and both are the point of it being data:**
+
+- `dzial5_kurator` carries `podstawa_potwierdzona: false` and prints as `[DO POTWIERDZENIA]`. We know
+  from the extract that division 5 concerns a curator; the reconnaissance never confirmed which
+  article governs it. Writing a plausible article number would have passed every automated check
+  while being quietly untrue — which is the exact failure this project tracks in other people's
+  literature.
+- `brak_wpisu_o_sprawozdaniu` prints `może wystrzelić: nie` and names the three premises that cannot
+  be resolved today. That is the required state, visible on the artefact rather than buried in a
+  comment.
+
+The loader refuses, rather than defaulting: five premises instead of six, a term counted from
+anything but the balance-sheet date, a missing `zywotnosc`, a missing `podstawa_potwierdzona`, an
+unknown source of determination, or a code on the blocked list. Each refusal has a test with a seeded
+defect.
+
+**A defect the test suite caught in its own test:** the first version of the level-name check asserted
+that no member contains "termin", which failed on `TERMINALNY` — a legitimate name meaning
+"near-terminal", not "late". The check now looks for accusation stems.
+
+**For review:** run `krs-tool katalog` in a wide terminal — the code column truncates in a narrow
+one. The object of the review is the statutory-basis column and the `[DO POTWIERDZENIA]` marks.
+
+Invariant with an observer: six premises cannot quietly become five; `zywotnosc` and
+`podstawa_potwierdzona` have no defaults; a blocked rule refuses to load; no number other than 0 and 1
+lives in the signal layer; no accusation word reaches a user.
 
 ## Step 4 — rules over the read model
 

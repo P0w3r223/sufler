@@ -1,0 +1,55 @@
+# Dział 4 rejestru przedsiębiorców — w praktyce rejestr niewypłacalności operacyjnej.
+#
+# U spółki zdrowej ten dział wraca pusty, więc niepustość jest flagą binarną kosztującą jedno
+# odpytanie. To jest najtańszy sygnał poziomu pierwszego, jaki ten produkt ma.
+#
+# UWAGA DO PRZEGLĄDU PRAWNEGO: podstawa wskazuje artykuł, nie punkt. Rozpoznanie potwierdziło
+# zakres art. 41 ustawy o KRS w tekście ustawy; numeracji punktów nie potwierdzało, więc jej tu
+# nie ma. Uzupełnienie numeru punktu jest zadaniem przeglądu, nie zgadywania.
+
+wersja: 1
+reguly:
+  - kod: dzial4_zaleglosci_podatkowe_i_celne
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figurują zaległości podatkowe lub celne objęte egzekucją, z datą i kwotą.
+      Wpis oznacza, że organ sięgnął po przymus, a nie że zaległość powstała.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_zaleglosci_wobec_zus
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figurują zaległości wobec zakładu ubezpieczeń społecznych.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_wierzyciele_z_tytulami_wykonawczymi
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figurują wierzyciele posiadający tytuły wykonawcze, których wierzytelności nie
+      zostały zaspokojone w egzekucji. Literatura zagraniczna wskazuje działania wierzycieli
+      zmierzające do odzyskania należności jako informację o wartości predykcyjnej wyższej niż
+      same wskaźniki ze sprawozdania.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze
+
+  - kod: dzial4_postepowanie_upadlosciowe
+    poziom: terminalny
+    rodzaj: obecnosc_wpisu
+    zrodlo: dzial4
+    opis: >-
+      W dziale 4 figuruje wniosek o ogłoszenie upadłości albo informacja o przebiegu
+      postępowania upadłościowego, wraz z danymi syndyka.
+    podstawa_prawna: "art. 41 ustawy o Krajowym Rejestrze Sądowym"
+    podstawa_potwierdzona: true
+    zywotnosc: dopoki_wpis_widnieje_w_rejestrze

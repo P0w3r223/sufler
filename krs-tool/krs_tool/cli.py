@@ -21,7 +21,8 @@ from .identity import NumerKRS, numer_krs
 from .odpis.zrodlo import OdpisZPliku
 from .render import render_block
 from .richtext import make_console
-from .texts import NAZWA, karta_podmiotu, pierwszy_ekran
+from .signals.katalog import wczytaj_katalog
+from .texts import NAZWA, karta_podmiotu, katalog_sygnalow, pierwszy_ekran
 
 app = typer.Typer(
     name=NAZWA,
@@ -51,3 +52,9 @@ def pokaz(
     numer: NumerKRS | None = numer_krs(krs) if krs else None
     odpis = OdpisZPliku(plik).pobierz(numer)
     render_block(karta_podmiotu(odpis), make_console())
+
+
+@app.command("katalog")
+def katalog() -> None:
+    """Katalog reguł sygnałowych do przeglądu — kody, poziomy, podstawy prawne."""
+    render_block(katalog_sygnalow(wczytaj_katalog()), make_console())

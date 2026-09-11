@@ -8,9 +8,11 @@ reguła 6 dała się w ogóle sprawdzić skanem.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .odpis.model import Odpis
+from .signals.katalog import Regula
 
 NAZWA = "krs-tool"
 
@@ -134,6 +136,50 @@ def karta_podmiotu(odpis: Odpis) -> Block:
         title=f"{ZNACZNIK_SYNTETYCZNY} — karta podmiotu" if odpis.syntetyczny else "karta podmiotu",
         headers=("pole", "wartość"),
         rows=tuple(wiersze),
+        notes=tuple(notatki),
+    )
+
+
+def katalog_sygnalow(reguly: Sequence[Regula]) -> Block:
+    """Katalog reguł na jedną stronę — artefakt do przeglądu przez człowieka znającego prawo.
+
+    Przedmiotem przeglądu nie jest kod, tylko dwie kolumny: **podstawa prawna** i to, czy
+    została potwierdzona w tekście ustawy. Reguła z niepotwierdzoną podstawą jest tu wypisana
+    jako taka, a nie ukryta — zmyślony numer przepisu przeszedłby każdą kontrolę automatyczną,
+    będąc po cichu nieprawdą.
+    """
+    wiersze = tuple(
+        (
+            regula.kod,
+            regula.poziom.name.lower(),
+            regula.podstawa_prawna
+            + ("" if regula.podstawa_potwierdzona else "  [DO POTWIERDZENIA]"),
+            regula.zywotnosc,
+            "tak" if regula.moze_wystrzelic else "nie — patrz przypisy",
+        )
+        for regula in reguly
+    )
+    niepotwierdzone = [r.kod for r in reguly if not r.podstawa_potwierdzona]
+    uspione = [r for r in reguly if not r.moze_wystrzelic]
+    notatki = [
+        f"Reguł w katalogu: {len(reguly)}.",
+    ]
+    if niepotwierdzone:
+        notatki.append(
+            "Podstawa prawna wymaga potwierdzenia w tekście ustawy przy regułach: "
+            + ", ".join(niepotwierdzone)
+            + "."
+        )
+    for regula in uspione:
+        nierozstrzygalne = [p.kod for p in regula.przeslanki_wykluczajace if not p.ustalalna]
+        notatki.append(
+            f"Reguła {regula.kod} nie może dziś wyprodukować sygnału, bo nie da się rozstrzygnąć "
+            f"przesłanek: {', '.join(nierozstrzygalne)}. To stan wymagany, nie usterka."
+        )
+    return Block(
+        title="katalog reguł sygnałowych",
+        headers=("kod", "poziom", "podstawa prawna", "żywotność", "może wystrzelić"),
+        rows=wiersze,
         notes=tuple(notatki),
     )
 

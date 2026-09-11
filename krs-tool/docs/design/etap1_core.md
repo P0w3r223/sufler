@@ -60,14 +60,14 @@ violation — a rule that cannot be shown to fail is indistinguishable from an e
 | 1 | No module in `krs_tool/`, `tests/` or `scripts/` imports a networking library or `socket` | AST scan against a data-set of forbidden roots, matched on **dotted prefixes** | 1 |
 | 2 | `pyproject.toml` declares no networking dependency | test reading `[project].dependencies` and every `optional-dependencies` group against an allow-list | 1 |
 | 3 | The whole suite runs with sockets forbidden | autouse fixture replacing `socket.socket`, `create_connection` and `getaddrinfo`, plus a test that the ban actually bites | 1 |
-| 4 | `signals/` does not read the clock | scan: no `datetime.now`, `date.today`, `time.time`, `time.monotonic`, no import of `clock` | 4 |
-| 5 | `signals/` and `raport/texts.py` are pure — no `rich`, `typer`, `questionary`, `sqlite3` | import scan | 4 |
+| 4 | `signals/` does not read the clock | scan: no `datetime.now`, `date.today`, `time.time`, `time.monotonic`, no import of `clock` | **3** |
+| 5 | `signals/` and `texts.py` are pure — no `rich`, `typer`, `questionary`, `sqlite3` | import scan | **3** |
 | 6 | Every string from outside the program reaches an output channel through **that channel's** neutraliser | scan generalised to pairs (channel, neutraliser): `rich` to `richtext.safe`, markdown to `marktext.safe_md` | 1, extended in 5 |
 | 7 | `cli.py` authors no sentence | scan | 1 |
 | 8 | Only `identity.py` produces `NumerKRS` | mypy strict, `NewType` | 2 |
 | 9 | Only `terminy.py` produces `TerminUstawowy`, and it takes a `DzienBilansowy` produced only by `odpis/czytanie.py` | mypy strict, two `NewType` | 4 |
-| 10 | No numeric literal other than 0 and 1 appears in `signals/` | AST scan | 4 |
-| 11 | The accusatory lexicon is closed | `Poziom` has no "late" member; scan of `reguly/*.yaml` and `raport/texts.py` against a word list | 4 |
+| 10 | No numeric literal other than 0 and 1 appears in `signals/` | AST scan | **3** |
+| 11 | The accusatory lexicon is closed | `Poziom` has no "late" member; scan of the **parsed values** of `reguly/*.yaml` and of the non-docstring string constants of `texts.py` | **3** |
 | 12 | `dziennik/` is append-only | scan: `open()` only in `a`, `x` or `r`; no `unlink`; no overwrite of an existing path | 6 |
 
 ### Note on copying the scan from `ceidg-tool`

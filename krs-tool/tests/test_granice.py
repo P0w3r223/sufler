@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.support import ZakazSieciError
 
@@ -357,3 +358,157 @@ def test_regula_7_cli_nie_drukuje_niczym() -> None:
 def test_skan_wyjscia_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
     """Test samego skanu reguły 7."""
     assert len(wywolania_wyjscia(zrodlo)) == oczekiwane
+
+
+# --------------------------------------------------------------------------------------
+# Reguły 4, 5, 10, 11 — warstwa sygnałów
+#
+# Doszły w kroku 3, a nie w 4 jak zapowiadał plan: dotyczą kodu i danych pisanych właśnie
+# teraz, a obserwator, który przychodzi wcześniej, nigdy nie jest gorszy.
+# --------------------------------------------------------------------------------------
+
+PAKIET_SYGNALOW = PAKIET / "signals"
+ZEGAROWE = ("datetime.now", "date.today", "time.time", "time.monotonic", "utcnow")
+FORBIDDEN_W_CZYSTYCH = frozenset({"rich", "typer", "questionary", "sqlite3", "openpyxl"})
+
+# Reguła 11. Zamknięty leksykon oskarżenia. Sprawdzamy WARTOŚCI — treść, która trafia do
+# człowieka — a nie komentarze: plik tłumaczący, czego nie mówimy, musi móc to nazwać.
+LEKSYKON_OSKARZENIA = (
+    "po terminie",
+    "z opóźnieniem",
+    "spóźni",
+    "opóźni",
+    "nieterminowo",
+    "narusza obowiązek",
+    "uchyla się",
+    "za późno",
+)
+
+
+def _pliki_sygnalow() -> list[Path]:
+    return sorted(PAKIET_SYGNALOW.rglob("*.py"))
+
+
+def odwolania_do_zegara(source: str) -> list[str]:
+    """Wywołania i importy, przez które do modułu weszłoby „dziś"."""
+    znalezione = [wzorzec for wzorzec in ZEGAROWE if wzorzec in source]
+    if "clock" in importowane_moduly(source) or any(
+        m.endswith(".clock") for m in importowane_moduly(source)
+    ):
+        znalezione.append("clock")
+    return znalezione
+
+
+def literaly_liczbowe(source: str) -> list[int]:
+    """Numery linii z literałem liczbowym innym niż 0 i 1."""
+    tree = ast.parse(source)
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, int | float)
+        and not isinstance(node.value, bool)
+        and node.value not in (0, 1)
+    ]
+
+
+def _napisy_nie_bedace_docstringiem(source: str) -> list[str]:
+    tree = ast.parse(source)
+    docstringi = {
+        id(wezel.body[0].value)
+        for wezel in ast.walk(tree)
+        if isinstance(wezel, ast.Module | ast.FunctionDef | ast.ClassDef)
+        and wezel.body
+        and isinstance(wezel.body[0], ast.Expr)
+        and isinstance(wezel.body[0].value, ast.Constant)
+        and isinstance(wezel.body[0].value.value, str)
+    }
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstringi
+    ]
+
+
+def slowa_oskarzenia(teksty: list[str]) -> list[str]:
+    """Które zakazane zwroty padają w podanych napisach."""
+    polaczone = " ".join(teksty).lower()
+    return [zwrot for zwrot in LEKSYKON_OSKARZENIA if zwrot in polaczone]
+
+
+def _wartosci_yaml(wezel: object) -> list[str]:
+    if isinstance(wezel, str):
+        return [wezel]
+    if isinstance(wezel, dict):
+        return [t for v in wezel.values() for t in _wartosci_yaml(v)]
+    if isinstance(wezel, list):
+        return [t for element in wezel for t in _wartosci_yaml(element)]
+    return []
+
+
+@pytest.mark.parametrize("sciezka", _pliki_sygnalow(), ids=lambda p: p.name)
+def test_regula_4_warstwa_sygnalow_nie_czyta_zegara(sciezka: Path) -> None:
+    """Każda data w sygnale pochodzi z odpisu, nigdy z „dziś"."""
+    winowajcy = odwolania_do_zegara(sciezka.read_text(encoding="utf-8"))
+
+    assert not winowajcy, f"{sciezka.name} sięga po zegar: {winowajcy}"
+
+
+@pytest.mark.parametrize("sciezka", [*_pliki_sygnalow(), PAKIET / "texts.py"], ids=lambda p: p.name)
+def test_regula_5_moduly_czyste_nie_znaja_wyjscia(sciezka: Path) -> None:
+    """Bez tego ekrany i reguły przestałyby dać się sprawdzić bez terminala."""
+    korzenie = {m.split(".")[0] for m in importowane_moduly(sciezka.read_text(encoding="utf-8"))}
+
+    assert not korzenie & FORBIDDEN_W_CZYSTYCH
+
+
+@pytest.mark.parametrize("sciezka", _pliki_sygnalow(), ids=lambda p: p.name)
+def test_regula_10_brak_literalow_liczbowych(sciezka: Path) -> None:
+    """Sześć miesięcy i piętnaście dni nie mają gdzie zamieszkać poza katalogiem."""
+    linie = literaly_liczbowe(sciezka.read_text(encoding="utf-8"))
+
+    assert linie == [], f"{sciezka.name}: literał liczbowy w liniach {linie}"
+
+
+def test_regula_11_katalog_nie_zawiera_slowa_oskarzenia() -> None:
+    """Skan po WARTOŚCIACH reguł — komentarz tłumaczący zakaz musi móc go nazwać."""
+    teksty: list[str] = []
+    for plik in sorted((PAKIET_SYGNALOW / "reguly").glob("*.yaml")):
+        teksty.extend(_wartosci_yaml(yaml.safe_load(plik.read_text(encoding="utf-8"))))
+
+    assert slowa_oskarzenia(teksty) == []
+
+
+def test_regula_11_teksty_nie_zawieraja_slowa_oskarzenia() -> None:
+    napisy = _napisy_nie_bedace_docstringiem((PAKIET / "texts.py").read_text(encoding="utf-8"))
+
+    assert slowa_oskarzenia(napisy) == []
+
+
+@pytest.mark.parametrize(
+    ("zrodlo", "oczekiwane"),
+    [
+        ("MIESIECY = 0", 0),
+        ("FLAGA = 1", 0),
+        ("MIESIECY = 6", 1),
+        ("termin = dzien + 15", 1),
+    ],
+)
+def test_skan_literalow_naprawde_lapie(zrodlo: str, oczekiwane: int) -> None:
+    assert len(literaly_liczbowe(zrodlo)) == oczekiwane
+
+
+@pytest.mark.parametrize(
+    ("tekst", "oczekiwane"),
+    [
+        ("brak wpisu na dzień D", 0),
+        ("Wynikiem jest obserwacja, nie zarzut.", 0),
+        ("sprawozdanie złożono po terminie", 1),
+        ("spółka spóźniła się ze złożeniem", 1),
+        ("złożono za późno", 1),
+    ],
+)
+def test_skan_leksykonu_naprawde_lapie(tekst: str, oczekiwane: int) -> None:
+    assert len(slowa_oskarzenia([tekst])) == oczekiwane
