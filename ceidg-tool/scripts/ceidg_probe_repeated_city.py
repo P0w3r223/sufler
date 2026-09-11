@@ -60,7 +60,8 @@ BASE = {
 MIASTA = ("Wrocław", "Gdańsk")
 
 
-def main() -> int:
+# Sufit funkcji (#158): 52 instrukcje przy sufcie 50. Jak wyżej: sonda, nie moduł produktu.
+def main() -> int:  # noqa: PLR0915
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", choices=("test", "prod"), default="test")
     parser.add_argument("--token", default=None)

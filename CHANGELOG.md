@@ -36,6 +36,29 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Naprawione
 
+- **`mypy --strict` i `W` obowiązują odtąd we wszystkich pod-projektach (#158).** Oba wyrównania
+  kosztowały **zero** naruszeń: `mypy --strict` przechodził już w `Powiadomienia_teams` (51 plików)
+  i `claude_summary` (17) bez jednego błędu, a `W` w żadnym z trzech nie zapalał niczego. Zamiast
+  trzech flag (`disallow_untyped_defs`, `warn_unused_ignores`, `no_implicit_optional`) stoi jedna,
+  która je zawiera — dwa zapisy tej samej reguły rozjeżdżają się przy pierwszej zmianie jednego
+  z nich. **`N` świadomie NIE wchodzi** i przestaje być rozjazdem, a staje się zapisaną decyzją:
+  56 z 64 jego trafień to nazwy testów, w których wielka litera niesie słowo nośne
+  (`test_obcy_nadawca_NIE_pozwala_wygasic_wpisu`), a osiem kolejnych kazałoby zmienić nazwy
+  wyjątków w `Powiadomienia_teams/src/`, czyli w źródłach odzyskanych z obrazu 0.2.19, których
+  wierność jest twardą regułą. Otwarte zostaje `SIM` w `ceidg-tool` (33 trafienia, 17 auto-fixable).
+
+- **Sufit funkcji przestał omijać `ceidg-tool`, a dług pod nim został spłacony (#158).** Dwa
+  pozostałe pod-projekty miały `C901`/`PLR0915` z komentarzem „jak w korzeniu repo"; czwarty nie
+  miał ich wcale — zaszłość po osobnej gałęzi, nie decyzja. Reguły wchodzą z progiem repo
+  (`max-complexity = 15`, nie domyślnym 10: przy domyślnym naruszeń było 22 zamiast 10, a to
+  liczba, której to repozytorium nigdzie nie egzekwuje). Pięć funkcji ponad sufitem rozłożono
+  na nazwane kroki — `prepare_fetch` (złożoność 25), `run_report_fetch`, `run_export`,
+  `run_update` i `client._request` — więc **kod produktu nie ma odtąd ani jednego wyjątku**;
+  dwa `noqa` zostały w `scripts/` i mają powód inny niż dług: sonda czytana liniowo traci na
+  podziale. Zachowanie nietknięte, mierzone po każdym kroku z osobna (1306 passed, 6 skipped).
+  Nadal NIE wyrównane i nadal do decyzji: `SIM` w `ceidg-tool` oraz `N`/`W` i `mypy --strict`
+  w dwóch pozostałych pod-projektach.
+
 - **Trzy żywe cytowania SHA przestały się rozwiązywać po przepisaniu historii.** `CLAUDE.md`
   i `Powiadomienia_teams/README.md` kotwiczyły wierność wobec obrazu 0.2.19 w commicie importu,
   a `CHANGELOG.md` cytował commit zdejmujący martwą obietnicę z opisu `File`. Wszystkie trzy

@@ -41,16 +41,25 @@ target-version = "py310"
 [tool.ruff.lint]
 # C901/PLR0915 jak w korzeniu repo — sufit funkcji egzekwowany maszynowo, nie pamiętany.
 # Wyjątki są punktowe (`noqa` przy funkcji) i mają zniknąć razem z długiem, który opisują.
-select = ["E", "F", "I", "UP", "B", "SIM", "C901", "PLR0915"]
+# `W` doszło 2026-09-11 przy wyrównywaniu zestawów między pod-projektami (#158): zero
+# naruszeń we wszystkich trzech, więc kosztowało tyle, co wpisanie litery. `N` świadomie
+# NIE wchodzi — 56 z 64 jego trafień to nazwy testów, w których WIELKA LITERA niesie słowo
+# nośne (`test_obcy_nadawca_NIE_pozwala_wygasic_wpisu`), a osiem kolejnych kazałoby zmienić
+# nazwy wyjątków w źródłach odzyskanych z obrazu 0.2.19. Reguła trafiałaby w konwencję,
+# nie w dług — pomiar w #158.
+select = ["E", "F", "I", "UP", "B", "SIM", "W", "C901", "PLR0915"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15
 
 [tool.mypy]
 python_version = "3.10"
-disallow_untyped_defs = true
-warn_unused_ignores = true
-no_implicit_optional = true
+# `strict` zamiast trzech flag z osobna. Zmierzone 2026-09-11 przed włączeniem: `mypy --strict`
+# przechodzi tu BEZ ANI JEDNEGO błędu — czyli ten stan już obowiązywał, tylko nic go nie trzymało.
+# `ceidg-tool` miał `strict` od początku i to była jedyna różnica w typowaniu między
+# pod-projektami (#158). Trzy flagi niżej zawierają się w `strict`, więc znikają: dwa zapisy
+# tej samej reguły rozjeżdżają się przy pierwszej zmianie jednego z nich.
+strict = true
 # `scripts` OBOWIĄZKOWO, nie tylko `src`. Skrypty diagnostyczne wchodzą do obrazu i sięgają po
 # ten sam model domeny co usługa, a przy zasięgu ograniczonym do `src` literówka w nazwie pola
 # (`shift.member_id` zamiast `user_id`) przechodziła przez WSZYSTKIE cztery bramki i wywracała się

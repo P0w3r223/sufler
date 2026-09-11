@@ -299,6 +299,171 @@ def _zapytaj_o_rocznik(
     return szerokie if odpowiedz == "szerokie" else waskie
 
 
+@dataclass(frozen=True)
+class _Kandydaci:
+    """Trzy postacie kryteriów, którymi operuje `prepare_fetch`, plus to, co o nich wiadomo.
+
+    Trzy, a nie dwie, bo pod każdą z nich mógł zapisać się przerwany przebieg — patrz
+    `_oferta_wznowienia`. `pytac_o_rocznik` jest tu, a nie liczone u wołającego, bo warunek
+    zależy od wszystkich trzech pól naraz i przepisany drugi raz rozjechałby się po cichu.
+    """
+
+    wejsciowe: Criteria
+    waskie: Criteria
+    szerokie: Criteria
+    rozsz: Rozszerzenie | None
+    pytac_o_rocznik: bool
+
+
+def _przygotuj_kandydatow(
+    criteria: Criteria, deps: Deps, view: View, rocznik_2007: bool | None
+) -> _Kandydaci:
+    """Rozstrzyga okres przejściowy PKD i **pokazuje** operatorowi, co dołożył. Zero żądań."""
+    waskie, szerokie, rozsz = _kandydaci(criteria, deps, rocznik_2007)
+    if rozsz is not None and rocznik_2007 is False:
+        view.warning(texts.vintage_skipped(rozsz.kody_2007))
+    elif rozsz is not None:
+        # Zastosowane bez pytania, ale **pokazane**: ciche poszerzenie zapytania to ten sam
+        # defekt co cicha podmiana kodu przez model — wynik, którego operator nie wytłumaczy.
+        # Przy `--pkd-2007` pokazujemy **wszystkie** dołożone kody, także niejednoznaczne:
+        # flaga jest zgodą na dołożenie kodów, nie na nieoglądanie tego, co dokładają.
+        pokazane = rozsz.czyste if rocznik_2007 is None else (*rozsz.czyste, *rozsz.niejednoznaczne)
+        if pokazane:
+            view.block(
+                texts.vintage_applied([(p.kod, p.nazwa, p.rowniez, p.dzis) for p in pokazane])
+            )
+    return _Kandydaci(
+        wejsciowe=criteria,
+        waskie=waskie,
+        szerokie=szerokie,
+        rozsz=rozsz,
+        pytac_o_rocznik=rozsz is not None and rozsz.wymaga_pytania and rocznik_2007 is None,
+    )
+
+
+def _oferta_wznowienia(
+    kand: _Kandydaci, deps: Deps, prompter: Prompter, view: View, threshold: int
+) -> FetchPlan | None:
+    """Szuka przerwanego przebiegu i pyta, czy go dokończyć. `None` znaczy „idziemy dalej".
+
+    Sprawdzamy **wszystkie trzy** postacie kryteriów, bo każda ma własny odcisk palca,
+    a przerwany przebieg zapisał się pod tą, która obowiązywała wtedy:
+      * `waskie`  — dzisiejsze wejście, z rozszerzeniem czystym, jeśli jakieś jest,
+      * `szerokie` — przebieg, w którym ktoś wybrał „szerzej",
+      * `wejsciowe` — bez żadnego rozszerzenia: tak zapisuje się `--tak`, `--bez-pkd-2007`
+        i każdy przebieg sprzed ADR-0012.
+    Trzeciej postaci brakowało do przeglądu 2026-09-07 i nie wymagało to różnicy wersji:
+    harmonogram z `--tak` przerwany w połowie był niewidoczny dla ręcznego wejścia z tym samym
+    `--pkd`, więc operator zaczynał od zera, mając robotę w bazie. Baza, nie sieć — zero żądań.
+    """
+    widziane_odciski: set[str] = set()
+    for kandydat in (kand.waskie, kand.szerokie, kand.wejsciowe):
+        odcisk = kandydat.fingerprint()
+        if odcisk in widziane_odciski:
+            continue  # ta sama postać kryteriów; drugie zapytanie do bazy niczego nie doda
+        widziane_odciski.add(odcisk)
+        resumable = find_resumable(kandydat, deps)
+        if resumable is None:
+            continue
+        # Znaleziony kandydat zostaje w ZMIENNEJ LOKALNEJ, a kryteria wołającego są nietknięte
+        # aż do przyjęcia oferty. Przypisanie go wcześniej zostawiało po odmowie kryteria przy
+        # znalezionej populacji — a reszta przepływu leciała nią, choć ekran zapowiedział co
+        # innego. Przy jawnej fladze `--pkd-2007` odmowa wręcz kasowała jej działanie
+        # (audyt 2026-09-07).
+        view.message(
+            texts.resume_offer(
+                resumable.run_id, resumable.status, resumable.records_seen, kandydat.describe()
+            )
+        )
+        if prompter.confirm(prompts.WZNOWIC, default=True):
+            return FetchPlan(criteria=kandydat, count=0, threshold=threshold, resumable=resumable)
+        return None
+    return None
+
+
+def _sciezka_raportu(
+    kand: _Kandydaci,
+    deps: Deps,
+    prompter: Prompter,
+    view: View,
+    *,
+    source: str,
+    threshold: int,
+) -> tuple[Decision, FetchPlan] | None:
+    """Rozstrzyga, czy pobrać z gotowego raportu. `None` znaczy „idziemy ścieżką API".
+
+    Kryteria bierzemy z `kand.waskie`, a nie osobnym argumentem: para (kryteria, kandydaci)
+    podana z zewnątrz dopuszczałaby wywołanie niespójne, a `_Kandydaci` powstało właśnie po to,
+    żeby to, co policzone raz, nie było przepisywane drugi raz.
+    """
+    criteria = kand.waskie
+    report: Report | None = None
+    if source in ("auto", "raport") and report_covers(criteria):
+        report = choose_report(criteria, deps)
+        if report is not None:
+            view.block(texts.report_offer(report))
+            if source == "raport" or prompter.confirm(prompts.UZYC_RAPORTU, default=True):
+                if kand.pytac_o_rocznik and kand.rozsz is not None:
+                    # Bez liczb, bo tu ich jeszcze nie ma — raport filtrujemy lokalnie, więc
+                    # policzenie obu populacji wymagałoby najpierw ściągnięcia archiwum.
+                    # Wybór zostaje przy operatorze; nieznana liczba jest lepsza od zmyślonej.
+                    wybrane = _zapytaj_o_rocznik(
+                        kand.rozsz, kand.waskie, kand.szerokie, prompter, view
+                    )
+                    if wybrane is None:
+                        return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
+                    criteria = wybrane
+                return "raport", FetchPlan(
+                    criteria=criteria, count=0, threshold=threshold, report=report
+                )
+    if source == "raport" and report is None:
+        # Nie wyjątek i nie nazwa flagi: powód plus jedno pytanie. Kreator nie ma `--zrodlo`,
+        # a operator, który stracił tu kryteria, przepisywał opis od zera — przy czym nie
+        # dowiadywał się nawet, **co** poprawić, bo powód nigdy nie padał.
+        statusy = statusy_poza_raportem(criteria)
+        view.block(texts.report_unavailable(_powod_braku_raportu(criteria, statusy), statusy))
+        if not prompter.confirm(prompts.RAPORT_NA_API, default=True):
+            return "wyjdz", FetchPlan(criteria=criteria, count=0, threshold=threshold)
+    return None
+
+
+def _policz_populacje(
+    kand: _Kandydaci, deps: Deps, prompter: Prompter, view: View
+) -> tuple[Criteria, int] | None:
+    """Zapytania o `count` — wszystkie tutaj, wszystkie przed zgodą. `None` znaczy „anuluj".
+
+    Kryteria z `kand.waskie`, z tego samego powodu co w `_sciezka_raportu`.
+    """
+    if not (kand.pytac_o_rocznik and kand.rozsz is not None):
+        return kand.waskie, count_hits(kand.waskie, deps)
+    # Dwa `count` — po jednym na populację — i oba **przed** zgodą. To jest cała cena
+    # przeformułowania niezmiennika: operator dostaje rozmiar tego, co ominie albo czego
+    # nabierze, zamiast zdania „wynik może być niepełny", na które nie da się odpowiedzieć.
+    licznik_waski = count_hits(kand.waskie, deps)
+    licznik_szeroki = count_hits(kand.szerokie, deps)
+    if licznik_waski == 0 and licznik_szeroki == 0:
+        # Wybór między zerem a zerem nie jest wyborem. Do 2026-09-09 ekran pokazywał
+        # „Tylko PKD 2025: 0 firm. Ze starymi kodami: 0 firm" i mimo to pytał, którą
+        # z tych dwóch pustych populacji operator woli. Oba liczniki są już wydane —
+        # nie da się ich cofnąć — ale pytanie tak, i to ono kosztuje uwagę. Dalej
+        # obowiązuje ścieżka zera trafień, która proponuje poszerzenie.
+        return kand.waskie, 0
+    wybrane = _zapytaj_o_rocznik(
+        kand.rozsz,
+        kand.waskie,
+        kand.szerokie,
+        prompter,
+        view,
+        licznik_waski=licznik_waski,
+        licznik_szeroki=licznik_szeroki,
+    )
+    if wybrane is None:
+        return None
+    # `wybrane` jest jednym z dwóch obiektów, które właśnie podaliśmy — porównanie
+    # tożsamości mówi wprost, którą populację policzono, bez rekonstruowania jej z pola.
+    return wybrane, (licznik_szeroki if wybrane is kand.szerokie else licznik_waski)
+
+
 def prepare_fetch(
     criteria: Criteria,
     deps: Deps,
@@ -322,123 +487,30 @@ def prepare_fetch(
 
     `rocznik_2007`: `None` znaczy „zapytaj, jeśli jest o co", `True` i `False` to jawny wybór
     z flagi `--pkd-2007/--bez-pkd-2007` — wtedy nie pytamy i nie liczymy drugi raz.
+
+    Kolejność kroków jest niezmiennikiem (ADR-0008) i dlatego została tu, w jednym czytelnym
+    ciągu; każdy krok z osobna mieszka w `_`-funkcji wyżej, razem z powodem, dla którego
+    wygląda tak, a nie inaczej.
     """
     if criteria.is_empty():
         raise ConfigError(texts.EMPTY_CRITERIA)
 
-    wejsciowe = criteria
-    waskie, szerokie, rozsz = _kandydaci(criteria, deps, rocznik_2007)
-    criteria = waskie
-    if rozsz is not None and rocznik_2007 is False:
-        view.warning(texts.vintage_skipped(rozsz.kody_2007))
-    elif rozsz is not None:
-        # Zastosowane bez pytania, ale **pokazane**: ciche poszerzenie zapytania to ten sam
-        # defekt co cicha podmiana kodu przez model — wynik, którego operator nie wytłumaczy.
-        # Przy `--pkd-2007` pokazujemy **wszystkie** dołożone kody, także niejednoznaczne:
-        # flaga jest zgodą na dołożenie kodów, nie na nieoglądanie tego, co dokładają.
-        pokazane = rozsz.czyste if rocznik_2007 is None else (*rozsz.czyste, *rozsz.niejednoznaczne)
-        if pokazane:
-            view.block(
-                texts.vintage_applied([(p.kod, p.nazwa, p.rowniez, p.dzis) for p in pokazane])
-            )
-    pytac_o_rocznik = rozsz is not None and rozsz.wymaga_pytania and rocznik_2007 is None
+    kand = _przygotuj_kandydatow(criteria, deps, view, rocznik_2007)
+    criteria = kand.waskie
 
-    # Wznowienie sprawdzamy dla **wszystkich trzech** postaci kryteriów, bo każda ma własny
-    # odcisk palca, a przerwany przebieg zapisał się pod tą, która obowiązywała wtedy:
-    #   * `waskie`  — dzisiejsze wejście, z rozszerzeniem czystym, jeśli jakieś jest,
-    #   * `szerokie` — przebieg, w którym ktoś wybrał „szerzej",
-    #   * `wejsciowe` — bez żadnego rozszerzenia: tak zapisuje się `--tak`, `--bez-pkd-2007`
-    #     i każdy przebieg sprzed ADR-0012.
-    # Trzeciej postaci brakowało do przeglądu 2026-09-07 i nie wymagało to różnicy wersji:
-    # harmonogram z `--tak` przerwany w połowie był niewidoczny dla ręcznego wejścia z tym samym
-    # `--pkd`, więc operator zaczynał od zera, mając robotę w bazie. Baza, nie sieć — zero żądań.
-    resumable = None
-    do_wznowienia = criteria
-    widziane_odciski: set[str] = set()
-    for kandydat in (waskie, szerokie, wejsciowe):
-        odcisk = kandydat.fingerprint()
-        if odcisk in widziane_odciski:
-            continue  # ta sama postać kryteriów; drugie zapytanie do bazy niczego nie doda
-        widziane_odciski.add(odcisk)
-        resumable = find_resumable(kandydat, deps)
-        if resumable is not None:
-            # Kandydat wędruje do **osobnej** zmiennej. Przypisanie go do `criteria` zapadało
-            # przed pytaniem, więc odmowa zostawiała kryteria przy znalezionej populacji —
-            # a reszta przepływu leciała nią, choć ekran zapowiedział co innego. Przy jawnej
-            # fladze `--pkd-2007` odmowa wręcz kasowała jej działanie (audyt 2026-09-07).
-            do_wznowienia = kandydat
-            break
-    if resumable is not None:
-        view.message(
-            texts.resume_offer(
-                resumable.run_id,
-                resumable.status,
-                resumable.records_seen,
-                do_wznowienia.describe(),
-            )
-        )
-        if prompter.confirm(prompts.WZNOWIC, default=True):
-            return "wznow", FetchPlan(
-                criteria=do_wznowienia, count=0, threshold=threshold, resumable=resumable
-            )
+    wznowienie = _oferta_wznowienia(kand, deps, prompter, view, threshold)
+    if wznowienie is not None:
+        return "wznow", wznowienie
 
-    report: Report | None = None
-    if source in ("auto", "raport") and report_covers(criteria):
-        report = choose_report(criteria, deps)
-        if report is not None:
-            view.block(texts.report_offer(report))
-            if source == "raport" or prompter.confirm(prompts.UZYC_RAPORTU, default=True):
-                if pytac_o_rocznik and rozsz is not None:
-                    # Bez liczb, bo tu ich jeszcze nie ma — raport filtrujemy lokalnie, więc
-                    # policzenie obu populacji wymagałoby najpierw ściągnięcia archiwum.
-                    # Wybór zostaje przy operatorze; nieznana liczba jest lepsza od zmyślonej.
-                    wybrane = _zapytaj_o_rocznik(rozsz, waskie, szerokie, prompter, view)
-                    if wybrane is None:
-                        return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
-                    criteria = wybrane
-                return "raport", FetchPlan(
-                    criteria=criteria, count=0, threshold=threshold, report=report
-                )
-    if source == "raport" and report is None:
-        # Nie wyjątek i nie nazwa flagi: powód plus jedno pytanie. Kreator nie ma `--zrodlo`,
-        # a operator, który stracił tu kryteria, przepisywał opis od zera — przy czym nie
-        # dowiadywał się nawet, **co** poprawić, bo powód nigdy nie padał.
-        statusy = statusy_poza_raportem(criteria)
-        view.block(texts.report_unavailable(_powod_braku_raportu(criteria, statusy), statusy))
-        if not prompter.confirm(prompts.RAPORT_NA_API, default=True):
-            return "wyjdz", FetchPlan(criteria=criteria, count=0, threshold=threshold)
+    z_raportu = _sciezka_raportu(kand, deps, prompter, view, source=source, threshold=threshold)
+    if z_raportu is not None:
+        return z_raportu
 
-    if pytac_o_rocznik and rozsz is not None:
-        # Dwa `count` — po jednym na populację — i oba **przed** zgodą. To jest cała cena
-        # przeformułowania niezmiennika: operator dostaje rozmiar tego, co ominie albo czego
-        # nabierze, zamiast zdania „wynik może być niepełny", na które nie da się odpowiedzieć.
-        licznik_waski = count_hits(waskie, deps)
-        licznik_szeroki = count_hits(szerokie, deps)
-        if licznik_waski == 0 and licznik_szeroki == 0:
-            # Wybór między zerem a zerem nie jest wyborem. Do 2026-09-09 ekran pokazywał
-            # „Tylko PKD 2025: 0 firm. Ze starymi kodami: 0 firm" i mimo to pytał, którą
-            # z tych dwóch pustych populacji operator woli. Oba liczniki są już wydane —
-            # nie da się ich cofnąć — ale pytanie tak, i to ono kosztuje uwagę. Dalej
-            # obowiązuje ścieżka zera trafień, która proponuje poszerzenie.
-            criteria, count = waskie, 0
-        else:
-            wybrane = _zapytaj_o_rocznik(
-                rozsz,
-                waskie,
-                szerokie,
-                prompter,
-                view,
-                licznik_waski=licznik_waski,
-                licznik_szeroki=licznik_szeroki,
-            )
-            if wybrane is None:
-                return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
-            criteria = wybrane
-            # `wybrane` jest jednym z dwóch obiektów, które właśnie podaliśmy — porównanie
-            # tożsamości mówi wprost, którą populację policzono, bez rekonstruowania jej z pola.
-            count = licznik_szeroki if wybrane is szerokie else licznik_waski
-    else:
-        count = count_hits(criteria, deps)
+    policzone = _policz_populacje(kand, deps, prompter, view)
+    if policzone is None:
+        return "anuluj", FetchPlan(criteria=criteria, count=0, threshold=threshold)
+    criteria, count = policzone
+
     # Pętla, nie ciąg prosty: zero trafień wraca tutaj z jednym filtrem mniej, zamiast kończyć
     # rozmowę. Każdy obrót to jedno zapytanie `count` i jedna decyzja operatora, a lista
     # kandydatów kurczy się o zdjęty filtr, więc pętla ma z definicji skończoną długość.
