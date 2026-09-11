@@ -8,6 +8,29 @@ Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
 
 ### Uwagi wdrożeniowe
 
+- **`krs-tool` wszedł na `Main` jako piąty pod-projekt (2026-09-11, `ceidg-tool/docs/adr/0023`).**
+  Czyta odpis z KRS **zapisany ręcznie przez operatora** i wystawia raport o sygnałach
+  rejestrowych spółki; mieszka w `krs-tool/`, ma własny `pyproject.toml`, własną numerację ADR-ów
+  i własny `CLAUDE.md`. Bramką jakości jest piąty wpis w matrycy `ci.yml`.
+  **Ten pod-projekt nie ma klienta HTTP ani żadnej zależności sieciowej** — nie przez flagę, tylko
+  przez nieobecność w grafie importów i w manifeście, pilnowaną przez trzech niezależnych
+  obserwatorów (skan importów, kontrola manifestu, zakaz gniazd w całej suicie). Powód jest prawny
+  (art. 60a ustawy o KRS) i obejmuje także rozwój oraz testy, więc **odpis do pliku zapisuje
+  człowiek**, jedna czynność na spółkę. Sztandarowa reguła — brak wpisu o sprawozdaniu — **z
+  założenia nie może wystrzelić** i mówi o tym na wydruku: sześciu zgodnych z prawem powodów
+  nieobecności sprawozdania nie da się dziś wykluczyć z samego odpisu.
+  Etap 1 domknięty kodowo; czytnik powstał na odpisach syntetycznych, więc `krs-tool/docs/pomiary.md`
+  stoi na `zmierzonych-wlasnosci: 0` i wylicza jedenaście założeń czekających na pierwszy prawdziwy
+  odpis. Etap 2 (parser sprawozdań, wskaźniki, adapter sieciowy) czeka na odpowiedź ministerstwa.
+
+- **Bramka martwych odsyłaczy przestała widzieć `krs-tool`, i to jest naprawa, nie regres
+  (2026-09-11).** Pod-projekt z WŁASNĄ numeracją ADR pisze prozą `docs/adr/0001_…`, co bramka
+  rdzenia rozwiązywała od korzenia repozytorium — czyli w pustkę. `Powiadomienia_teams`,
+  `claude_summary` i `ceidg-tool` były z tego powodu wykluczone już wcześniej; `krs-tool` dopisano
+  po tym, jak zapalił bramkę **na `Main`**, bo żaden PR tego dnia nie dostał przebiegu CI.
+  Wykluczenie nie zostawia dziury: ten sam warunek stoi teraz w `krs-tool/tests/test_odsylacze.py`,
+  z korzeniem przesuniętym o jeden katalog i z testem samej bramki na zasianym naruszeniu.
+
 - **`ceidg-tool` wszedł na `Main` jako czwarty pod-projekt (2026-09-10, ADR 0074).** Projekt żył
   od 2026-09-08 na osobnej gałęzi bez wspólnego przodka z `Main`; mieszka teraz w katalogu
   `ceidg-tool/`, z zachowanymi 36 commitami. Przy imporcie przeszedł przez to samo przepisanie co
