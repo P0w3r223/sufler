@@ -7,7 +7,7 @@ Related to: INSTRUKCJA_CLAUDE_CODE.md, docs/api_notes.md, docs/adr/0001..0007
 
 ---
 
-## Superseded by ADR-0007 (docs/reference/uzupelnienie-01.md)
+## Superseded by ADR-0007 (uzupelnienie-01.md)
 
 - "Refuse above the Excel row limit" → the exporter splits into parts instead.
 - "Token only from `.env`/env" → keyring → `CEIDG_TOKEN` → `.env`, JWT expiry read locally.

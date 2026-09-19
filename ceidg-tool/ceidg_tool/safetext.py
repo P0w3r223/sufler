@@ -1,6 +1,6 @@
 """Neutralizacja wrogich napisów z rejestru — moduł czysty, wspólny dla eksportu i ekranu.
 
-uzupelnienie-01.md §B: dane z rejestru traktujemy jako wrogie. Arkusz i CSV chroni prefiks
+§B uzupelnienie-01.md: dane z rejestru traktujemy jako wrogie. Arkusz i CSV chroni prefiks
 apostrofu przed wykonaniem formuły, a terminal — usunięcie znaków sterujących (sekwencje
 ANSI potrafią wyczyścić ekran albo podmienić to, co widzi operator).
 """

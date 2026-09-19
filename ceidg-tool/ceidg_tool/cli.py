@@ -257,7 +257,7 @@ def _prompter(tak: bool, overrides: dict[str, str] | None = None) -> Prompter:
 
 
 def _sanitised(out: Path | None, deps: Deps) -> Path | None:
-    """uzupelnienie-01.md §B: pliki wynikowe tylko w katalogu wyniki/, nazwa oczyszczona.
+    """§B uzupelnienie-01.md: pliki wynikowe tylko w katalogu wyniki/, nazwa oczyszczona.
 
     Prefiks `DEMO_` doklejamy także tutaj. Nazwa podana przez operatora omijała znacznik
     numer trzy z ADR-0014, a to jest **ten** plik, który po pokazie najłatwiej wysłać dalej:

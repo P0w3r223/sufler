@@ -9,7 +9,7 @@ Related to: docs/reference/uzupelnienie-01.md, ADR-0003, ADR-0004, ADR-0005, doc
 
 ## Context
 
-`docs/reference/uzupelnienie-01.md` arrived while phase 2 was in progress and takes precedence over
+`UZUPELNIENIE_01.md` (now at `docs/reference/uzupelnienie-01.md`) arrived while phase 2 was in progress and takes precedence over
 the main instruction. It adds security requirements (§B), reliability requirements (§C),
 resilience scenarios (§D) and acceptance criteria (§E). The owner accepted the full
 list of changes to already finished elements on 2026-09-05.
