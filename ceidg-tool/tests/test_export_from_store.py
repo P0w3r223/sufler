@@ -3,7 +3,7 @@
 Istniejące testy eksportera karmią zapisywacz listą w pamięci. Tutaj źródłem jest
 kursor SQLite, więc sprawdzamy to, co widać dopiero na produkcji: fabryka iteratorów
 musi odtworzyć zapytanie dla planu i dla każdej części, bez gubienia i dublowania firm
-(UZUPELNIENIE_01 §C i §E — „`ceidg eksportuj` odtwarza identyczny skoroszyt z bazy”).
+(uzupelnienie-01.md §C i §E — „`ceidg eksportuj` odtwarza identyczny skoroszyt z bazy”).
 """
 
 from __future__ import annotations

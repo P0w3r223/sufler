@@ -1,4 +1,4 @@
-"""Scenariusz 8 (UZUPELNIENIE_01 §D): dysk zapełnia się w trakcie eksportu.
+"""Scenariusz 8 (uzupelnienie-01.md §D): dysk zapełnia się w trakcie eksportu.
 
 Zaliczenie wg §D: brak pliku częściowego, baza nietknięta, czytelny komunikat.
 

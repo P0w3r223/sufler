@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from .apiprofile import ApiProfile
 
-# UZUPELNIENIE_01 §C: powyżej progu program proponuje zawężenie albo podział na partie.
+# uzupelnienie-01.md §C: powyżej progu program proponuje zawężenie albo podział na partie.
 LARGE_COUNT_THRESHOLD = 50_000
 
 

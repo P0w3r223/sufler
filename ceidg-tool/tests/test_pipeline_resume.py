@@ -2,7 +2,7 @@
 
 Uzupełnia `test_pipeline_e2e.py` o sytuacje, które ujawniają się dopiero na produkcji:
 przerwanie w środku porcji szczegółów, wznowienie po zamkniętym etapie listy
-(UZUPELNIENIE_01 §D scenariusz 1) oraz 429 w trakcie stronicowania (§C).
+(uzupelnienie-01.md §D scenariusz 1) oraz 429 w trakcie stronicowania (§C).
 """
 
 from __future__ import annotations

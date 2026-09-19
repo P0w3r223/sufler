@@ -3,7 +3,7 @@
 Date: 2026-09-07 (phases 0-2 built 2026-09-05; gates 1 and 2 accepted, gate 3 open)
 Status: living document (update at every gate)
 Author: P0w3r223
-Related to: INSTRUKCJA_CLAUDE_CODE.md, UZUPELNIENIE_01.md, docs/decisions.md, docs/adr/, CLAUDE.md
+Related to: INSTRUKCJA_CLAUDE_CODE.md, docs/reference/uzupelnienie-01.md, docs/decisions.md, docs/adr/, CLAUDE.md
 
 ---
 

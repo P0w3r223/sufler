@@ -1,4 +1,4 @@
-"""Konfiguracja: token, środowisko, katalogi danych, retencja (UZUPELNIENIE_01 §B).
+"""Konfiguracja: token, środowisko, katalogi danych, retencja (uzupelnienie-01.md §B).
 
 Token pochodzi kolejno z: argumentu, systemowego magazynu haseł (`keyring`), zmiennej
 środowiskowej `CEIDG_TOKEN`, pliku `.env`. Nigdzie nie jest wypisywany — w logach i bazie
@@ -67,7 +67,7 @@ KEYRING_ASSISTANT_USERNAME = "ANTHROPIC_API_KEY"
 
 TOKEN_SERVICE_URL = "https://www.biznes.gov.pl/pl/e-uslugi/00_9999_00"
 
-# Jedyne hosty, do których narzędzie wysyła token (UZUPELNIENIE_01 §B).
+# Jedyne hosty, do których narzędzie wysyła token (uzupelnienie-01.md §B).
 ALLOWED_HOSTS: frozenset[str] = frozenset({"dane.biznes.gov.pl", "test-dane.biznes.gov.pl"})
 
 # Druga lista, **nigdy nie sumowana z pierwszą** (ADR-0011, decyzja 1). Klient CEIDG ma nie móc

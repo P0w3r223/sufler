@@ -5,7 +5,7 @@ Arkusze `Firmy`, `PKD`, `Spolki`, `Adresy` (dwa ostatnie tylko gdy mają wiersze
 Excela z autofiltrem i zamrożonym nagłówkiem; kolumny `text` są zapisywane jako tekst,
 więc Excel nie kasuje wiodących zer w NIP, REGON, kodzie pocztowym, TERC i SIMC.
 
-Zasady z UZUPELNIENIE_01 §B/§C:
+Zasady z uzupelnienie-01.md §B/§C:
 - dane z rejestru są wrogie: komórka tekstowa zaczynająca się od `=`, `+`, `-`, `@`,
   tabulatora lub CR dostaje prefiks apostrofu, znaki sterujące poza tabulatorem i nową
   linią są usuwane (Excel i CSV; JSONL nie jest arkuszem i zachowuje dane surowe,

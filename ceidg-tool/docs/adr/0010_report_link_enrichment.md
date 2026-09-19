@@ -4,7 +4,7 @@ Date: 2026-09-07
 Status: proposed, except decision 8(a) — the egress policy — which the project owner
 accepted on 2026-09-07 and which is shipped (see docs/status.md, phase 3f)
 Author: P0w3r223
-Related to: ADR-0008 (decision 5), ADR-0009, docs/design/phase2_core.md, docs/decisions.md, docs/status.md, UZUPELNIENIE_01.md §A/§B/§C/§E
+Related to: ADR-0008 (decision 5), ADR-0009, docs/design/phase2_core.md, docs/decisions.md, docs/status.md, docs/reference/uzupelnienie-01.md §A/§B/§C/§E
 
 ---
 

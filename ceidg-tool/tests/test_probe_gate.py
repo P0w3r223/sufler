@@ -124,7 +124,7 @@ class _NoSleepClock:
 
 # Sondy niosą ten sam token co narzędzie, a `urllib.request.urlopen` domyślnie wstawia
 # `ProxyHandler()` czytający `HTTPS_PROXY` — dokładnie ta sama dziura, którą 2026-09-07
-# zamknięto po stronie httpx (`ceidg_tool/httpclient.py`, UZUPELNIENIE_01 §B).
+# zamknięto po stronie httpx (`ceidg_tool/httpclient.py`, uzupelnienie-01.md §B).
 
 
 def test_the_probe_opener_ignores_a_proxy_from_the_environment(

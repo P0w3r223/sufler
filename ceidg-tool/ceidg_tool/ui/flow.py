@@ -596,7 +596,7 @@ def _over_threshold(
     threshold: int,
     today: date | None,
 ) -> tuple[Decision, FetchPlan]:
-    """Powyżej progu program nigdy nie startuje sam (UZUPELNIENIE_01 §C, scenariusz 9)."""
+    """Powyżej progu program nigdy nie startuje sam (uzupelnienie-01.md §C, scenariusz 9)."""
     plan = plan_batches(
         criteria, count, today=today or datetime.now(tz=UTC).date(), threshold=threshold
     )

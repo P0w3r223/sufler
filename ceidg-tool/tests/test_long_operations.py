@@ -4,7 +4,7 @@ Ten plik jest przedłużeniem `tests/test_update_progress.py` na dwie pozostałe
 które w produkcji trwają minutami: pobranie raportu (ZIP 21 MB, CSV 68 MB, 287 tys. wierszy
 — `docs/decisions.md`) i eksport skoroszytu. Obie działały funkcjonalnie poprawnie i obie
 milczały, a milczenie kilkuminutowe jest defektem samo w sobie: operator zabija proces,
-który pracuje. §A UZUPELNIENIE_01 wymaga paska postępu „w trakcie pobierania" bez wyjątków
+który pracuje. §A uzupelnienie-01.md wymaga paska postępu „w trakcie pobierania" bez wyjątków
 dla źródła danych.
 
 Pomiar sprzed poprawek (2026-09-06, sonda offline na tej maszynie) — to on wyznaczył skalę:

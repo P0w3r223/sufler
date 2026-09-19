@@ -242,7 +242,7 @@ def _settings(environment: str | None, prod: bool, yes: bool) -> Settings:
 
 
 def _banner(settings: Settings, *, demo: bool = False) -> None:
-    """Pierwszy ekran — ta sama treść co w kreatorze (UZUPELNIENIE_01 §A)."""
+    """Pierwszy ekran — ta sama treść co w kreatorze (uzupelnienie-01.md §A)."""
     view.block(
         texts.first_screen(settings, now=datetime.now(tz=UTC), version=__version__, demo=demo)
     )
@@ -257,7 +257,7 @@ def _prompter(tak: bool, overrides: dict[str, str] | None = None) -> Prompter:
 
 
 def _sanitised(out: Path | None, deps: Deps) -> Path | None:
-    """UZUPELNIENIE_01 §B: pliki wynikowe tylko w katalogu wyniki/, nazwa oczyszczona.
+    """uzupelnienie-01.md §B: pliki wynikowe tylko w katalogu wyniki/, nazwa oczyszczona.
 
     Prefiks `DEMO_` doklejamy także tutaj. Nazwa podana przez operatora omijała znacznik
     numer trzy z ADR-0014, a to jest **ten** plik, który po pokazie najłatwiej wysłać dalej:

@@ -1,7 +1,7 @@
 """Warstwa CLI — zgoda na produkcję i szczelność tokenu. Offline: żaden test nie tworzy klienta.
 
 Produkcja to jedyne miejsce, gdzie narzędzie dotyka prawdziwych danych osobowych
-(UZUPELNIENIE_01 §B). Zgoda jest argumentem, nie flagą globalną, więc każda droga do
+(uzupelnienie-01.md §B). Zgoda jest argumentem, nie flagą globalną, więc każda droga do
 `--srodowisko prod` musi kończyć się odmową, zanim powstanie klient HTTP i baza.
 """
 

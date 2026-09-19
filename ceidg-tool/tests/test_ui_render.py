@@ -1,4 +1,4 @@
-"""Ścieżka ekranowa wobec wrogich danych z rejestru (UZUPELNIENIE_01 §B).
+"""Ścieżka ekranowa wobec wrogich danych z rejestru (uzupelnienie-01.md §B).
 
 `rich` traktuje nawiasy kwadratowe jak znaczniki, więc nazwa firmy wpisana do rejestru
 jest wejściem sterującym: `[/b]` wywraca program wyjątkiem spoza taksonomii `CeidgError`

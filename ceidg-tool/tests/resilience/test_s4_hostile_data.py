@@ -1,4 +1,4 @@
-"""Scenariusz 4 (UZUPELNIENIE_01 §D): fixtures z nazwami `=CMD()`, `+1`, `@SUM`, `-2+3`,
+"""Scenariusz 4 (uzupelnienie-01.md §D): fixtures z nazwami `=CMD()`, `+1`, `@SUM`, `-2+3`,
 znakami sterującymi i 5 000 znaków — skoroszyt otwiera się, komórki są tekstem,
 formuły się nie wykonują. Uruchamiany w CI przy każdym przebiegu."""
 

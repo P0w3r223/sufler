@@ -183,7 +183,7 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
 - `docs/status.md` — the living plan: phases, gates, open items. Update it at every gate.
 - `docs/research/public-search-parity.md` — what the public CEIDG search form can ask that this
   tool cannot, and why most of that gap belongs to the API rather than to the tool.
-- `INSTRUKCJA_CLAUDE_CODE.md` and `UZUPELNIENIE_01.md` — the requirements. The supplement wins
+- `INSTRUKCJA_CLAUDE_CODE.md` and `docs/reference/uzupelnienie-01.md` — the requirements. The supplement wins
   wherever the two disagree.
 - `docs/decisions.md` — what the API probe measured (page numbering, page limit, batch size, how
   empty results are signalled, report contents). These are observations, not guesses; check here

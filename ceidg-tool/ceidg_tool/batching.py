@@ -1,6 +1,6 @@
 """Podział dużego zapytania na partie po dacie rozpoczęcia działalności — moduł czysty.
 
-UZUPELNIENIE_01 §C: powyżej progu program nie startuje sam, tylko proponuje zawężenie
+uzupelnienie-01.md §C: powyżej progu program nie startuje sam, tylko proponuje zawężenie
 kryteriów albo podział na partie z szacunkiem czasu dla każdej.
 
 Dlaczego akurat data rozpoczęcia (ADR-0008, decyzja 3): to jedyne kryterium API, które

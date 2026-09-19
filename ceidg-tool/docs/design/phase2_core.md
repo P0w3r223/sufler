@@ -7,7 +7,7 @@ Related to: INSTRUKCJA_CLAUDE_CODE.md, docs/api_notes.md, docs/adr/0001..0007
 
 ---
 
-## Superseded by ADR-0007 (UZUPELNIENIE_01)
+## Superseded by ADR-0007 (docs/reference/uzupelnienie-01.md)
 
 - "Refuse above the Excel row limit" → the exporter splits into parts instead.
 - "Token only from `.env`/env" → keyring → `CEIDG_TOKEN` → `.env`, JWT expiry read locally.
@@ -120,7 +120,7 @@ under rule 9; the remedy is to move the sentence, never to relax the scan.
 it owns `make_console()` and `safe()`, which `ui/render.py` and `console.py` import instead of
 each holding its own copy of the neutralisation.
 
-Extended on 2026-09-07 for the egress policy (UZUPELNIENIE_01 §B/§E):
+Extended on 2026-09-07 for the egress policy (docs/reference/uzupelnienie-01.md §B/§E):
 
 11. Only `httpclient.py` **builds** an HTTP client; every other module receives one. The rule
     is about the client, not about one library: the scan covers `httpx`, `httpx2` (which

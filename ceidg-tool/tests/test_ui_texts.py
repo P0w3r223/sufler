@@ -1,4 +1,4 @@
-"""Modele widoku z `ui/texts` — treść ekranów wymagana przez UZUPELNIENIE_01 §A.
+"""Modele widoku z `ui/texts` — treść ekranów wymagana przez uzupelnienie-01.md §A.
 
 `texts` jest czysty, więc każdy ekran da się sprawdzić bez terminala, bez bazy i bez sieci.
 Testy pilnują tego, co obiecano użytkownikowi: pierwszy ekran mówi dokąd lecą dane i jakim

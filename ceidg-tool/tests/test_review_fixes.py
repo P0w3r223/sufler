@@ -1,4 +1,4 @@
-"""Testy dla poprawek z przeglądu kodu (2026-09-05) i scenariuszy z UZUPELNIENIE_01 §D."""
+"""Testy dla poprawek z przeglądu kodu (2026-09-05) i scenariuszy z uzupelnienie-01.md §D."""
 
 from __future__ import annotations
 

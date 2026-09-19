@@ -4,7 +4,7 @@ Narzędzie pobierające dane o jednoosobowych działalnościach gospodarczych z 
 Hurtowni Danych CEIDG (`https://dane.biznes.gov.pl/api/ceidg/v3`) i zapisujące je do
 skoroszytu Excel czytelnego dla człowieka i dla automatów.
 
-Dokumenty: `INSTRUKCJA_CLAUDE_CODE.md` i `UZUPELNIENIE_01.md` (wymagania, w razie
+Dokumenty: `INSTRUKCJA_CLAUDE_CODE.md` i `docs/reference/uzupelnienie-01.md` (wymagania, w razie
 sprzeczności obowiązuje uzupełnienie), `docs/status.md` (plan i stan bramek),
 `docs/decisions.md` (ustalenia z sondy API), `docs/adr/` (decyzje architektoniczne,
 0008 to warstwa użytkownika, 0011 to asystent), `docs/design/phase2_core.md` (projekt rdzenia),

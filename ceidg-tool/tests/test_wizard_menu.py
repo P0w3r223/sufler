@@ -489,7 +489,7 @@ def resumable_api() -> FakeApi:
 def test_the_resume_action_asks_for_the_purpose_before_it_starts_fetching(
     tmp_path: Path, clock: FakeClock
 ) -> None:
-    """UZUPELNIENIE_01 §B wymaga pola „cel pobrania” w Metadanych, a wznowienie potrafi
+    """uzupelnienie-01.md §B wymaga pola „cel pobrania” w Metadanych, a wznowienie potrafi
     trwać godziny — pytanie po pobraniu zostawiłoby gotowy run bez skoroszytu, gdyby
     operator je przerwał, bo skończony run wypada z listy do wznowienia."""
     deps = deps_for(tmp_path, clock, resumable_api())

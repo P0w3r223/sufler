@@ -3,13 +3,13 @@
 Date: 2026-09-05
 Status: accepted
 Author: P0w3r223
-Related to: UZUPELNIENIE_01.md, ADR-0003, ADR-0004, ADR-0005, docs/decisions.md
+Related to: docs/reference/uzupelnienie-01.md, ADR-0003, ADR-0004, ADR-0005, docs/decisions.md
 
 ---
 
 ## Context
 
-`UZUPELNIENIE_01.md` arrived while phase 2 was in progress and takes precedence over
+`docs/reference/uzupelnienie-01.md` arrived while phase 2 was in progress and takes precedence over
 the main instruction. It adds security requirements (§B), reliability requirements (§C),
 resilience scenarios (§D) and acceptance criteria (§E). The owner accepted the full
 list of changes to already finished elements on 2026-09-05.

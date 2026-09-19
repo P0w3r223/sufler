@@ -26,7 +26,7 @@ def clean_secret_registry() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def no_name_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cała suita jest offline — żaden test nie rozwiązuje nazw (UZUPELNIENIE_01 §D).
+    """Cała suita jest offline — żaden test nie rozwiązuje nazw (uzupelnienie-01.md §D).
 
     To jest siatka bezpieczeństwa, nie asercja o kodzie: gdyby jakikolwiek test zaczął naprawdę
     wychodzić do sieci, dowiemy się o tym tutaj — deterministycznie i lokalnie — zamiast

@@ -1,4 +1,4 @@
-"""Scenariusz 6 (UZUPELNIENIE_01 §D): token wygasły, pusty, z błędnym środowiskiem.
+"""Scenariusz 6 (uzupelnienie-01.md §D): token wygasły, pusty, z błędnym środowiskiem.
 
 Zaliczenie: zatrzymanie przed pierwszym żądaniem o dane i komunikat co zrobić.
 Kluczowa jest tu nie sama treść wyjątku (to sprawdza `test_config.py`), tylko licznik

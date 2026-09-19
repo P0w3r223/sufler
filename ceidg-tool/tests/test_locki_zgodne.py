@@ -2,7 +2,7 @@
 
 Ten pod-projekt jest instalowany dwiema drogami: matryca korzenia bierze `uv.lock` (`uv sync`),
 oś systemów bierze `requirements.lock` (`pip install -r`). Dopóki oś instalowała nieprzypięte
-z zakresów w `pyproject.toml`, rozjazd nie miał gdzie się objawić; §B `UZUPELNIENIE_01.md`
+z zakresów w `pyproject.toml`, rozjazd nie miał gdzie się objawić; §B `uzupelnienie-01.md`
 wymaga jednak przypięcia („Zależności przypięte w pliku lock"), a przypięcie do DRUGIEGO
 rozwiązania znaczy, że bramka na Windows sprawdza inny program niż bramka na ubuntu.
 
