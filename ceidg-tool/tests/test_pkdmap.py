@@ -21,7 +21,12 @@ import pytest
 import yaml
 
 from ceidg_tool.errors import ConfigError
-from ceidg_tool.pkdmap import KONIEC_PRZEJSCIA, TablicaPkd, load_pkd_map
+from ceidg_tool.pkdmap import (
+    KONIEC_PRZEJSCIA,
+    USUNIECIE_NIE_WCZESNIEJ_NIZ,
+    TablicaPkd,
+    load_pkd_map,
+)
 from tests.support import pkd_map
 
 DOBRA_TABLICA: dict[str, object] = {
@@ -241,8 +246,16 @@ def test_an_empty_file_is_refused_rather_than_silently_disabling_the_expansion(
 
 
 def test_the_transition_deadline_lives_in_the_module_not_only_in_the_file_header() -> None:
-    """Cały mechanizm ma jedno oczywiste miejsce startu do usunięcia po okresie przejściowym."""
+    """Cały mechanizm ma jedno oczywiste miejsce startu do usunięcia po okresie przejściowym.
+
+    Dwie stałe, bo to dwie różne rzeczy, a ich zlanie było defektem (ADR-0020): koniec okresu
+    przejściowego jest faktem prawnym o klasyfikacji, a moment usunięcia tablicy zależy od
+    pomiaru. Test pilnuje, że pierwsza nie wskazuje momentu usunięcia, a druga leży po niej —
+    ustawa z 21.11.2025 przewiduje przeklasyfikowanie dopiero do 31.01.2027.
+    """
     assert KONIEC_PRZEJSCIA == "2026-12-31"
+    assert USUNIECIE_NIE_WCZESNIEJ_NIZ == "2027-02-01"
+    assert USUNIECIE_NIE_WCZESNIEJ_NIZ > KONIEC_PRZEJSCIA
 
 
 def test_the_table_needs_no_io_after_construction() -> None:

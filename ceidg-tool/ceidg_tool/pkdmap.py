@@ -35,10 +35,22 @@ from .errors import ConfigError
 PKD_MAP_RESOURCE = resources.files("ceidg_tool").joinpath("data", "pkd2007_2025.yaml")
 DEFAULT_PKD_MAP_PATH = Path(str(PKD_MAP_RESOURCE))
 
-# Data, po której tablica przestaje być potrzebna — koniec okresu przejściowego z rozporządzenia
-# (Dz.U. 2024 poz. 1936). Trzymana tu, a nie tylko w nagłówku pliku, żeby dało się o nią oprzeć
-# test i żeby usunięcie całego mechanizmu miało jedno oczywiste miejsce startu.
+# Koniec okresu przejściowego z rozporządzenia (Dz.U. 2024 poz. 1936). To fakt prawny
+# o klasyfikacji, a **nie** data usunięcia tej tablicy — te dwie rzeczy rozjechały się
+# i mylenie ich było defektem samym w sobie (ADR-0020).
 KONIEC_PRZEJSCIA = "2026-12-31"
+
+# Kiedy wolno usunąć tablicę. Warunkiem jest **pomiar**, a data jest tylko jego dolną granicą.
+# Ustawa z 21.11.2025 (Dz.U. 2025 poz. 1792, art. 12 ust. 1) każe rejestrowi przeklasyfikować
+# wpisy automatycznie „w terminie do dnia 31 stycznia 2027 r., jeżeli jest to możliwe" — to okno,
+# nie moment, a wpisy, których „nie da się" przeliczyć, mogą nieść kod 2007 dalej (ust. 2 mówi
+# o wykreśleniu z urzędu dopiero po tej dacie). Stała 2026-12-31 stała tu do 2026-09-13 i wskazywała
+# dzień, po którym stary rocznik jest jeszcze w danych co najmniej przez miesiąc.
+#
+# Pomiar, który rozstrzyga: udział wpisów nieosiągalnych **żadnym** kodem z `pkd2025.yaml`
+# w świeżym raporcie dziennym — offline, zero żądań. 2026-09-07 na 285 026 rekordach: 24 494
+# = 8,6 %. Dopóki ten udział nie jest znikomy, tablica zostaje, choćby kalendarz mówił inaczej.
+USUNIECIE_NIE_WCZESNIEJ_NIZ = "2027-02-01"
 
 
 @dataclass(frozen=True)
