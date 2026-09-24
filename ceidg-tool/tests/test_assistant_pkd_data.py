@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
-from ceidg_tool.assistant.pkd import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.criteria import normalize_pkd
+from ceidg_tool.pkddict import DEFAULT_PKD_PATH, load_pkd
 
 pytestmark = pytest.mark.skipif(
     not DEFAULT_PKD_PATH.is_file(),

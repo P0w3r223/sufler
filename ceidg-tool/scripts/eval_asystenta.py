@@ -41,9 +41,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ceidg_tool.assistant import AssistantResult  # noqa: E402
 from ceidg_tool.assistant.caller import AnthropicCaller  # noqa: E402
-from ceidg_tool.assistant.pkd import load_pkd  # noqa: E402
 from ceidg_tool.config import load_settings  # noqa: E402
 from ceidg_tool.errors import CeidgError  # noqa: E402
+from ceidg_tool.pkddict import load_pkd  # noqa: E402
 
 ZESTAW = Path(__file__).resolve().parent.parent / "tests" / "eval" / "zapytania.yaml"
 DZISIAJ = date(2026, 9, 9)

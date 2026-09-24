@@ -20,6 +20,14 @@ on:
     paths:
       - 'ceidg-tool/**'
       - '.github/workflows/ceidg-tool.yml'
+
+# Jak w `ci.yml`: kolejny push na PR unieważnia poprzedni przebieg. Tutaj waży to najwięcej
+# w całym repozytorium — oś windowsowa rozliczana jest ×2, więc porzucony przebieg kosztuje
+# dwa razy tyle, co porzucony przebieg ubuntu.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: ceidg-tool (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -31,13 +39,36 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ['3.11', '3.12']
+        # `ubuntu` + `3.11` to DOKŁADNIE to, co robi wpis `ceidg-tool` w matrycy `ci.yml`:
+        # ten sam system i ta sama wersja Pythona (`setup-uv` czyta `.python-version` = 3.11),
+        # ten sam ruff, mypy i pytest. Nagłówek tego pliku mówi, że zostaje tu „wyłącznie to,
+        # czego tamten nie zobaczy" — a ten wpis nie dokładał ŻADNEJ osi. Zmierzone
+        # 2026-09-24: 107 s przebiegu za powtórzenie cudzego wyniku.
+        #
+        # Obie osie, po które ten plik istnieje, zostają w komplecie: drugi system
+        # (windows ×2, to on złapał #146 i #147) oraz druga wersja Pythona (ubuntu 3.12).
+        exclude:
+          - os: ubuntu-latest
+            python: '3.11'
     env:
       PYTHONUTF8: '1'
     steps:
+      # Pełna historia, nie sam wierzchołek. `ceidg-tool/tests/test_brak_poswiadczen.py`
+      # skanuje bloby osiągalne z HEAD, bo publikuje się historię, a nie drzewo robocze:
+      # token wpisany i skasowany następnym commitem zostaje w historii. Przy domyślnym
+      # `fetch-depth: 1` ten skan widziałby jeden commit i **milczał** — więc test wywraca
+      # się na płytkim klonie zamiast przechodzić, a ta linijka jest tym, co go zaspokaja.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+          # Cache pipa kluczowany ZAWARTOŚCIĄ locka — czyli pliku, który jest tu przedmiotem
+          # przypięcia (#157). Zmiana locka unieważnia cache sama, więc przyspieszenie nie
+          # kupuje się ryzykiem, że bramka sprawdzi inny program, niż deklaruje.
+          cache: 'pip'
+          cache-dependency-path: ceidg-tool/requirements.lock
       # Z LOCKA, nie z zakresów: §B `ceidg-tool/docs/reference/uzupelnienie-01.md` wymaga przypiętych zależności, a ta oś
       # jest jedyną, która biegnie na Windows i na drugiej wersji Pythona — czyli jedyną, która
       # łapie usterki niewidoczne na ubuntu (#146, #147). Instalacja rozwiązywana od nowa przy

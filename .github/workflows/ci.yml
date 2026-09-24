@@ -25,10 +25,90 @@ on:
   # i bez pustego commita.
   workflow_dispatch:
 
+# Kolejny push na tę samą gałąź unieważnia poprzedni przebieg — ale TYLKO na PR-ze. Na `Main`,
+# w biegu nocnym i przy `workflow_dispatch` anulowanie byłoby stratą dowodu: to są jedyne
+# przebiegi, na które powołuje się historia (badge, bomba kalendarzowa, bramka autorstwa
+# łapiąca autora nadanego przez przycisk scalenia — ten commit istnieje wyłącznie na `Main`).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Zakres zmian liczony RAZ, żeby kosztowne zadania nie biegały na zmianach, których nie
+  # dotyczą. Świadomie bez akcji zewnętrznej (`paths-filter`): ten workflow używa dziś trzech
+  # akcji i każda kolejna to kolejny dostawca w łańcuchu bramki, która ma być dowodem.
+  #
+  # Zawężamy WYŁĄCZNIE na `pull_request`. Na `Main`, nocą i ręcznie biegnie komplet — bo to są
+  # przebiegi, które mają odpowiadać na pytanie „czy drzewo jest zdrowe", a nie „czy ta zmiana
+  # jest bezpieczna". Bieg nocny bez budowy obrazów przestałby rozbrajać bombę kalendarzową,
+  # czyli dokładnie to, po co powstał.
+  zmiany:
+    name: Zakres zmian
+    runs-on: ubuntu-latest
+    outputs:
+      podprojekty: ${{ steps.filtr.outputs.podprojekty }}
+      obraz_floty: ${{ steps.filtr.outputs.obraz_floty }}
+      obraz_powiadomien: ${{ steps.filtr.outputs.obraz_powiadomien }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Potrzebny merge-base, a domyślny checkout jest płytki — bez tego `git diff` nie ma
+          # z czym porównać i zawężenie wypisałoby pustkę, czyli ciszę zamiast bramki.
+          fetch-depth: 0
+
+      - name: Policz, czego dotyczy zmiana
+        id: filtr
+        env:
+          BAZA: ${{ github.event.pull_request.base.sha }}
+          GLOWA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Poza `pull_request` nie zawężamy niczego. `ALL` jest sentynelem, nie pustym napisem:
+          # pusty napis znaczyłby „żaden pod-projekt nie tknięty", a to zupełnie inna sytuacja.
+          if [ -z "${BAZA:-}" ]; then
+            printf 'podprojekty=ALL\nobraz_floty=true\nobraz_powiadomien=true\n' >> "$GITHUB_OUTPUT"
+            echo "Poza PR-em — komplet bramek."
+            exit 0
+          fi
+          pliki=$(git diff --name-only "$BAZA...$GLOWA")
+          echo "Zmienione pliki:"; echo "$pliki" | sed 's/^/  /'
+
+          # Pliki WSPÓLNE cofają zawężenie do zera. To nie ostrożność, tylko zmierzona zależność:
+          # `Powiadomienia_teams/tests/test_srodowiska_bramki.py` i `krs-tool/tests/test_bramka_ci.py`
+          # CZYTAJĄ ten plik workflow, a `tests/deploy/test_ci_workflow.py` czyta go razem
+          # z `CONTRIBUTING.md`. Zmiana w nich zmienia wynik testów pod-projektów, więc
+          # pominięcie ich wpisów dałoby zieleń bez pokrycia.
+          if echo "$pliki" | grep -qE '^(\.github/workflows/ci\.yml|CONTRIBUTING\.md|pyproject\.toml|uv\.lock|\.python-version)$'; then
+            printf 'podprojekty=ALL\nobraz_floty=true\nobraz_powiadomien=true\n' >> "$GITHUB_OUTPUT"
+            echo "Zmiana dotyka pliku wspólnego — komplet bramek."
+            exit 0
+          fi
+
+          lista=""
+          echo "$pliki" | grep -q '^Powiadomienia_teams/' && lista="$lista powiadomienia-teams"
+          echo "$pliki" | grep -q '^claude_summary/'      && lista="$lista claude-summary"
+          echo "$pliki" | grep -q '^ceidg-tool/'          && lista="$lista ceidg-tool"
+          echo "$pliki" | grep -q '^krs-tool/'            && lista="$lista krs-tool"
+          echo "podprojekty=${lista# }" >> "$GITHUB_OUTPUT"
+
+          # Obraz floty budujemy, gdy zmienia się cokolwiek, co do niego wchodzi. Lista idzie za
+          # `COPY` w `deploy/docker/Dockerfile` (src, tests, eval, data, deploy/http) plus sam
+          # Dockerfile i manifesty zależności.
+          if echo "$pliki" | grep -qE '^(src/|tests/|eval/|data/|deploy/|pyproject\.toml|uv\.lock)'; then
+            echo "obraz_floty=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "obraz_floty=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$pliki" | grep -q '^Powiadomienia_teams/'; then
+            echo "obraz_powiadomien=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "obraz_powiadomien=false" >> "$GITHUB_OUTPUT"
+          fi
+
   quality-gate:
     name: Bramka jakości (${{ matrix.name }})
     runs-on: ubuntu-latest
+    needs: zmiany
     strategy:
       fail-fast: false
       matrix:
@@ -92,14 +172,44 @@ jobs:
         working-directory: ${{ matrix.dir }}
     steps:
       - name: Checkout
+        # Pełna historia, nie sam wierzchołek. `ceidg-tool/tests/test_brak_poswiadczen.py`
+        # skanuje bloby osiągalne z HEAD, bo publikuje się historię, a nie drzewo robocze:
+        # token wpisany i skasowany następnym commitem zostaje w historii. Przy domyślnym
+        # `fetch-depth: 1` ten skan widziałby jeden commit i **milczał** — więc test wywraca
+        # się na płytkim klonie zamiast przechodzić, a ta linijka jest tym, co go zaspokaja.
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Zainstaluj uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
+      # Czy TEN wpis macierzy ma co sprawdzać. Wpis `workmate` biegnie ZAWSZE i to jest
+      # decyzja, nie niedopatrzenie: to on niesie bramki dokumentacji (martwe odsyłacze,
+      # numeracja ADR, spójność wersji), które chodzą po CAŁYM drzewie. Zawężenie go po
+      # katalogach wyłączyłoby strażnika dokładnie przy zmianie, której ten strażnik dotyczy —
+      # a tę klasę repozytorium już raz zapłaciło (#166: bramka zapaliła się dopiero po scaleniu).
+      - name: Zakres wpisu
+        id: zakres
+        if: ${{ !cancelled() }}
+        env:
+          WPIS: ${{ matrix.name }}
+          ZMIENIONE: ${{ needs.zmiany.outputs.podprojekty }}
+        run: |
+          set -euo pipefail
+          if [ "$WPIS" = "workmate" ] || [ "$ZMIENIONE" = "ALL" ] \
+             || printf '%s' "$ZMIENIONE" | tr ' ' '\n' | grep -qx "$WPIS"; then
+            echo "biegnie=true" >> "$GITHUB_OUTPUT"
+            echo "Wpis $WPIS: biegnie."
+          else
+            echo "biegnie=false" >> "$GITHUB_OUTPUT"
+            echo "Wpis $WPIS: zmiana go nie dotyczy, pomijam kroki bramki."
+          fi
+
       - name: Synchronizacja zależności
+        if: ${{ !cancelled() && steps.zakres.outputs.biegnie == 'true' }}
         run: uv sync ${{ matrix.sync_args }}
 
       # Bramki statyczne PRZED testami, a każda dodatkowo z `!cancelled()` — kolejność sama
@@ -110,15 +220,15 @@ jobs:
       # anulowaniu przebiegu; przy padniętym `uv sync` wszystkie bramki zapalą się czerwono —
       # to świadomy koszt czytelności, bo pierwszą przyczynę widać w kroku synchronizacji.
       - name: Lint (ruff)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.zakres.outputs.biegnie == 'true' }}
         run: uv run ruff check ${{ matrix.lint_paths }}
 
       - name: Format (ruff)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.zakres.outputs.biegnie == 'true' }}
         run: uv run ruff format --check ${{ matrix.lint_paths }}
 
       - name: Typy (mypy)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.zakres.outputs.biegnie == 'true' }}
         run: uv run mypy
 
       # import-linter (pyproject.toml [tool.importlinter]) egzekwuje granice tylko rdzenia
@@ -128,7 +238,7 @@ jobs:
         run: uv run lint-imports
 
       - name: Testy
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.zakres.outputs.biegnie == 'true' }}
         run: uv run pytest
 
   # Obraz pod-projektu budowany W BRAMCE, nie tylko na serwerze. Bez tego jobu `Dockerfile`
@@ -136,9 +246,19 @@ jobs:
   # napisano na nowo po odzyskaniu źródeł 0.2.19, `docker build` kończył się `FileNotFoundError`,
   # a dokumentacja twierdziła, że „bramka jakości biegnie w trakcie budowania obrazu". Ścieżka
   # wdrożenia stała na zdaniu, którego nikt nie sprawdzał (naprawa: PR #109).
+  #
+  # Oba zadania budowy biegną na PR-ze TYLKO wtedy, gdy zmiana dotyka tego, co do obrazu
+  # wchodzi. Powód jest zmierzony: etap `test` w obu Dockerfile'ach uruchamia TEN SAM pakiet
+  # testów, który przed chwilą przeszedł we wpisie macierzy — 84 s i 83 s drugiego przebiegu
+  # tej samej suity, czyli 38 % czasu zadań całego przebiegu. README mówi zresztą wprost, że
+  # etap `test` „nie jest gwarancją", bo jego marker to pusty plik podmieniany z cache'u.
+  # Na `Main`, nocą i ręcznie budują się ZAWSZE — tam pytanie brzmi „czy obraz w ogóle
+  # powstaje", a bez tego bieg nocny przestałby rozbrajać bombę kalendarzową (#88).
   docker-build-powiadomienia:
     name: Budowa obrazu powiadomień
     runs-on: ubuntu-latest
+    needs: zmiany
+    if: ${{ needs.zmiany.outputs.obraz_powiadomien == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -149,6 +269,8 @@ jobs:
   docker-build:
     name: Budowa obrazu floty
     runs-on: ubuntu-latest
+    needs: zmiany
+    if: ${{ needs.zmiany.outputs.obraz_floty == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

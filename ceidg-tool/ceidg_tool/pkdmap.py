@@ -129,6 +129,16 @@ class TablicaPkd:
     def nazwa_2025(self, kod: str) -> str | None:
         return self._nazwy_2025.get(kod)
 
+    def nastepcy(self, kod_2007: str) -> tuple[str, ...]:
+        """Kody 2025, do których prowadzi dany kod 2007 — odwrotność `poprzednicy`.
+
+        Publiczne od 2026-09-23 dla `szukaj-pkd` (ADR-0026, decyzja 2): operator pytający
+        o `9602Z` ma zobaczyć, że ten kod pokrywa i fryzjerstwo, i kosmetykę — czyli dokładnie
+        wybór, przed którym `ui/flow` stawia go przy `--pkd-2007`, tyle że **zanim** go tam
+        postawi. Rozgałęzienie było liczone od początku; brakowało wyłącznie drogi na zewnątrz.
+        """
+        return self._rozgalezienie.get(kod_2007, ())
+
     def rozszerz(self, kody_2025: Iterable[str]) -> Rozszerzenie:
         """Poprzednicy z 2007 dla podanych kodów 2025, z podziałem na czyste i niejednoznaczne.
 

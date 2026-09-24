@@ -1581,3 +1581,327 @@ Three consequences worth having in the log:
 Gates: **1309 passed, 1 skipped** locally, **1304 passed, 6 skipped** without `probe_out/`, mypy and
 ruff clean. ADR-0008, 0011, 0012 and 0017 carry a note pointing at ADR-0022 rather than being
 rewritten.
+
+## Phase 7 — the tool acquires a second caller (2026-09-23, ADR-0024/0024/0025)
+
+The tool was written for a person at a terminal and is acquiring an agent driving it with flags.
+Four defects were measured, and they are one defect at four layers: **every fact the tool produces
+is encoded for a screen, and a screen is allowed to change its wording.** The summary folded the
+output path across two table rows; errors went to stdout; zero hits exited 0, indistinguishable
+from a successful fetch; and nothing reported *what happened* at all.
+
+A fifth was found while designing the fix and it decided the liveness question: `rich` renders
+intermediate `Live` frames only when `console.is_terminal`, so a caller that pipes this tool saw
+**no per-request rhythm at all** — one frame at the end of a half-hour run. "Silence is a defect,
+measured in requests" was satisfied for a terminal and for nothing else.
+
+### Part A — the assistant gets a switch, and a measurement is retracted
+
+`--bez-asystenta` (ADR-0025) plus `build_deps(asystent=, wylaczony=)`, and `assistant/__init__.py`
+grew `BrakAsystenta` with a closed `PowodBrakuAsystenta`. It lives there rather than in `ui/texts.py`
+because the producer is `pipeline`, a layer **below** `ui/` — the enum in `texts` would have
+inverted rule 8.
+
+**The 0.2 s figure this work started from was meaningless and the ADR says so.** It was measured on
+`runy`, which passes `online=False` and has never built an assistant, one sample per side inside
+startup noise. Measured properly: `import ceidg_tool.cli` 479 ms baseline, `_build_assistant()`
+**955 ms**, of which `import anthropic` is 806 ms (85 %); `load_pkd()` 58 ms, `build_system()`
+0.2 ms, `build_model_http_client()` 0.6 ms. An `lru_cache` on the dictionary was declined on that
+measurement — it would have bought 58 ms of the 955.
+
+The review found one real defect: `pobierz --opis X --tak` built the assistant — SDK import,
+credentialed client, `os.environ` mutation — and *then* refused to use it. It hit the worst class of
+invocation, an unattended schedule with a key in `.env`. Both unsatisfiable flag pairs now refuse
+above `_settings()`.
+
+Four of the tests written in part A were false-green, all mine, and the pattern is worth keeping:
+three passed because the thing they meant to exercise never ran (a command with no `--demo` flag, a
+wizard driven without a TTY, a state whose only producer was never invoked), and the fourth passed
+with the fix reverted because the command exited earlier on a missing token. Mutation testing found
+all four; reading them did not.
+
+### Part B — a second output channel, with one owning module
+
+- **`szukaj-pkd`** (ADR-0026): the PKD dictionary moved out of `assistant/` to `pkddict.py` because
+  it had acquired a third consumer (`demo/korpus.py` was the one nobody had counted). The search
+  answers the question the operator actually has — *"if I pass `--pkd X`, what will I get, and what
+  does `--pkd-2007` add?"* — for zero requests and no token. `9602Z` covers hairdressing **and**
+  cosmetics; `6201Z`, absent from PKD 2025 yet matching 234 605 records, leads to `6210A` and
+  `6210B`. Polish `ł`/`Ł` have **no canonical decomposition**, so `NFKD("Łódź")` is `"Łodz"` and a
+  fold built on NFKD alone would miss "Łódź" for the query "lodz", silently; the pair is written out
+  by hand and the test is named after that one letter.
+- **An unknown `--pkd` stopped being a silent 204** (ADR-0011 finding F8): a warning, not a
+  rejection, and a missing transition table disables the check rather than the tool.
+- **Every screen, warning and error moved to stderr** (ADR-0024 decision 2) — one console, asked for
+  once, so the progress bar inherits the stream by construction. The claim that this costs zero test
+  rewrites is now evidence: the whole suite stayed green unchanged, because `Result.output` is the
+  mixed stream and `result.stdout` merely became available as the sharper assertion.
+- **`LineEvents` beside `ConsoleEvents`**, selected on `console.is_terminal` and deliberately **not**
+  on `--wynik json`: tying it to the flag would have left the measured silence open for everyone who
+  is not an agent. One line per eight requests (~30 s at the profile's 3.75 s spacing), one per stage
+  transition, and a stage's own threshold where no request drives it — export at 453 rows/s, a 21 MB
+  archive, a model answer are the three longest silent stretches and the request counter cannot see
+  any of them.
+- **The envelope**: `ui/wynik.py` (pure) holds `Wynik`, `Status`, `kod_wyjscia`; `jsonout.py` owns
+  stdout under new boundary rule 15. `cli.WynikPolecenia` is the single place classifying how a
+  command ended, and every terminal path of all seven supported commands writes exactly one envelope.
+
+Three ADR corrections came from measurement rather than review, and all three are recorded in the
+ADR next to what they replaced:
+
+1. **`zapytania`, not `zadania`.** `zadania` is not an ASCII fold of `żądania`; it is an ordinary
+   Polish word meaning *tasks*, sitting on the one key an agent reads to learn what the call cost.
+   The cost table has said `zapytań` since phase 3.
+2. **`ensure_ascii` stays on.** Without `PYTHONUTF8=1` this machine's `sys.stdout.encoding` is
+   cp1250, so `ensure_ascii=False` emitted `ł` as byte `0xb3` — valid cp1250, not valid UTF-8, a
+   document `jq` refuses since RFC 8259 requires UTF-8 for interchange. Measured on the command's
+   real output. Readability of raw stdout was the only argument for `False`, and it stopped applying
+   when decision 2 moved the human narrative to stderr.
+3. **`kod_wyjscia` is a `match` with `assert_never`, not a `dict[Status, int]`.** mypy does not check
+   a dict literal against the members of a `Literal`, so a sixth status would have joined the set
+   silently and surfaced as a `KeyError` — a guarantee with no observer, which is the thing this
+   project stopped accepting on 2026-09-08.
+
+The path-coverage test found a defect rather than confirming one: `_tryb_json` is evaluated in the
+`with` header, i.e. **before** `__enter__`, so its `ConfigError` had no handler and `--wynik jsonl`
+exited 1 with a traceback instead of 3 with a sentence. That branch reads as handled.
+
+`demo` is the **sixth** demo marker (ADR-0014 required five jointly; ADR-0022 already had to add the
+printed command as a sixth on its own channel). It is present in every envelope, including commands
+that have no demo mode — unlike `srodowisko`, which is omitted where it would be a lie — because a
+missing marker reads as its own negation, and nothing behind an agent re-reads the first screen.
+
+Gates: **1464 passed, 1 skipped** locally with `probe_out/` present, mypy clean over `ceidg_tool`
+and `tests`, ruff check and format clean. Every supported command was run on the demo register under
+`--wynik json` with its stdout piped through a JSON parser; `raporty` is the one that could not be,
+because it has no demo path — the same open edge `docs/status.md` already names as the reason for the
+suite's single skip.
+
+### The test review, and eight guarantees that had no observer (2026-09-24)
+
+`@tester` ran a mutation sweep over part B and found eight survivors my own sweeps had missed.
+They are not eight unrelated gaps — they are three shapes, and all three are ones this project has
+a name for.
+
+**A test green for a reason other than the one its name gives.** `zapytania` had no observer at
+all: the one test naming the field set it by hand on the `Wynik` and never installed a counter, so
+the `replace(wynik, zapytania=…)` line it appeared to exercise never ran — it passed because a
+dataclass copy preserves a field. Removing `koperta.licz_zadania(events)` from all five call sites
+left the suite green and every envelope reporting `"zapytania": 0`. `LicznikZadan` exists solely to
+make "the number in the envelope is the number that drove the signs of life" true, and nothing
+checked it. Same shape in the demo-marker test, which looped over three command names while
+building `Wynik(polecenie=…)` directly — the name was decorative and the loop asserted one fact
+three times.
+
+**A declaration standing in for an execution.** Four of the seven envelope-writing commands were
+covered only by `--help` text and a table-versus-table comparison; neither runs the command.
+Collapsing every `nic_do_zrobienia`/`przerwano` classification to `"ok"` stayed green, and so did
+setting `demo=False` in three commands. Both behave correctly today — this was missing observation,
+not a live defect, but "exit 4 has no command-level observer" is exactly the sentence that precedes
+a regression.
+
+**A rule reported as enforced.** Boundary rule 15 recognised `sys.stdout.write` and
+`json.dump(…, sys.stdout)` and did not recognise `print`. Measured: one `print` in
+`pipeline.run_update` made `json.loads(stdout)` fail on a real `aktualizuj --wynik json` run while
+all 122 boundary tests stayed green. The rule-9 scan does know `print`, but it is applied to
+`cli.py` alone. `print` now counts package-wide, as a bare call only — `console.print` carries the
+same name, writes to stderr, and belongs to rule 10, which does not rule on streams.
+
+Two real defects fell out. `WynikPolecenia._blad` hand-copied nine fields and only three were
+asserted, so a run that wrote the workbook and then failed during export reported no `pliki` — the
+one field the envelope was built for. It is now `replace(poprzedni, status="blad", blad=…)`, which
+cannot drift because a new field is carried by construction. And `tests/support.zarejestrowane_polecenia`,
+which both completeness proofs cite as their measurement, computed command names from the function
+name and ignored `CommandInfo.name`; it survived only because today's three explicit names happen to
+coincide. `@app.command("pobierz-wszystko")` over `def pobierz_all` would have checked both tables
+against a name the app rejects while the real command inherited a default silently — the fourth
+instance of the shape CLAUDE.md names, sitting in the generator both tables trust.
+
+**One finding needed a decision rather than a fix.** `przerwano` is unreachable on every path that
+writes an envelope, because `--wynik json` requires `--tak` and `--tak` answers every question with
+its default: "what next" never defaults to `wyjdz`, and every give-up above the threshold raises
+`ConfigError`. The status stays in the closed set — it describes a real human outcome, and the human
+path computes no envelope — but ADR-0024 now says so instead of justifying the distinction with a
+scenario that cannot occur. The sentence that matters is underneath: **three other paths return
+`FetchPlan(count=0)` as a placeholder**, so if the `--tak` coupling is ever relaxed,
+`plan.count == 0` stops meaning "the query ran and matched nothing". A test pins the mechanism.
+
+### The code review, and the gate that was satisfied without checking anything (2026-09-24)
+
+`@code-reviewer` blocked on one CRITICAL that every gate was blind to, and it is the best example
+this project has of the shape CLAUDE.md keeps naming.
+
+**`sprawdz-nip --wynik json` crashed on every hit.** The `Firmy` row carries `datetime.date` —
+`normalizer._to_date` coerces five fields, `data_rozpoczecia` among them, and that one is present on
+essentially every record. `jsonout.zamaskuj` deliberately leaves unknown types alone so they fail
+loudly before the first write, so `json.dumps` raised `TypeError`: **empty stdout, exit 1**, the
+outcome ADR-0024 names as the worst possible, on the one command whose entire product is a record.
+
+The gate this ADR set — *"one demo run of every supported command under `--wynik json` with its
+stdout piped through a JSON parser"* — was **satisfied**. It passed because the NIP used was not in
+the demo corpus, so the envelope carried `"firma": null` and no record ever reached serialisation.
+That is the fourth instance in this project of evidence sanitised of exactly the property it was
+meant to establish, after the hand-written `rokPkd` line, the anonymiser that uppercased every
+identifier, and `tests/support.zarejestrowane_polecenia` two days ago. The repair is a pure
+`normalizer.wiersz_do_json` (the conversion lives where "only `Kind == date` produces a non-JSON
+value" is local knowledge, **not** as `default=` on `json.dumps`, which would bypass the masking walk
+and defeat the loud-failure property), plus a test that asserts a date **value** round-trips rather
+than that the envelope parses.
+
+Four more, each closed with an observer:
+
+- **The sixth demo marker said `false` on every error path.** When a command fails before its first
+  `ustaw`, the envelope was built from what the manager knew, and `demo` took its dataclass default.
+  An agent attributing a failed demo run to production is the failure ADR-0014's five markers exist
+  jointly to prevent, so the manager now takes `demo` in its constructor.
+- **`make_console`'s default still produced a stdout console** with zero callers using it — and
+  `console.print` on such a console is exactly what rule 15 does not count, correctly, because that
+  is rule 10's territory. The argument is now required.
+- **`LineEvents.close()` kept its stage state**, so a second action in one process continued the
+  first one's row counter and printed no stage-transition line.
+- **Decision 4's justifying example had outlived Decision 2.** "A person running `pobierz > log.txt`"
+  stopped being a `LineEvents` case the moment the console moved to stderr; the real population is
+  "stderr is not a terminal" — a scheduler, a CI container, an agent's subprocess. The mechanism was
+  right, the sentence naming it was not, and it is the sentence the next change would have trusted.
+
+Two things the review confirmed rather than found: production consent is untouched
+(`pobierz -s prod --tak --wynik json` still refuses without `--produkcja`, reports the refusal *in*
+the envelope, and spends zero requests), and the envelope cannot hold the database lock open,
+because it is written in `__exit__` — after each command's `finally` has closed events and store.
+
+One consequence is now stated plainly where it was understated: the stderr move is broader than
+"a caller this ADR creates". `eksportuj`, `sprawdz-token`, `wyczysc` and `token *` moved too and get
+no envelope in exchange, so `sprawdz-token > out.txt` writes an empty file. No known caller breaks —
+but "stdout is now empty unless you ask for JSON" is the honest sentence, not "errors moved".
+
+Gates after the review: **1490 passed, 1 skipped** locally, **1485 passed, 6 skipped** without
+`probe_out/`, mypy clean over 120 files, ruff clean. The ADR gate was re-run over all six
+demo-capable commands, this time asserting that each envelope is pure ASCII and that its
+`kod_wyjscia` equals the process's real exit code.
+
+### Phase 7 closed: where the work went, and what the documents now say (2026-09-24)
+
+Sixty-four commits on local `master`, pushed to `origin/standalone/ceidg-tool-powierzchnia-agenta`.
+The branch name is a statement: it carries the **standalone layout** (package at the repository
+root) and unrelated history, so it is not a merge candidate for `Main`, where this project now lives
+as a `ceidg-tool/` subdirectory.
+
+**The remote arrangement had changed under this checkout and no document said so.** Measured with
+`git ls-remote`: the `ceidg-tool` branch does not exist, our initial commit `d6a46e9` is on no
+remote branch, and `Main` carries `ceidg-tool/` with a root workflow filtered on
+`paths: ceidg-tool/**` (their ADR 0074). Two consequences were paid immediately: our ADRs 0023-0025
+became **0024-0026**, because `0023` is theirs and `tests/test_adr_numbering.py` enforces
+uniqueness; and the integration into `ceidg-tool/` was **not** attempted, because their tree carries
+a complexity refactor (230/327 lines in `pipeline.py`, 120/162 in `ui/flow.py`) plus `uv.lock`,
+`tests/test_locki_zgodne.py`, their ADR and five research documents. Applying our work onto theirs
+conflicts in six files — all six ones they rewrote. That is a piece of work for the owner to
+schedule, not a push to improvise.
+
+`CLAUDE.md` and `README.md` were rewritten rather than patched: 382 → 282 and 366 → 241 lines. What
+came out was repetition and the running tally of how often a sentence had been wrong; what stayed is
+every measured number, every rule with an observer, and the *why* under each. What was corrected is
+the remote section in both, the pass counts (**1491 / 1** locally, **1486 / 6** without `probe_out/`,
+both measured today), and the ADR list. What was added to the README is the machine surface, which
+it had never mentioned: `--wynik json`, the exit-code table, and the consequence stated plainly —
+stdout is empty unless you ask for JSON, so `sprawdz-token > out.txt` now writes an empty file.
+
+One item carried from the part-A review closed here: `WYLACZONY_FLAGA` was assigned inside
+`build_deps`'s `if online:` branch, so `asystent="wylaczony"` with `online=False` dropped the marker
+and the first screen fell back to describing the keyring. No command combines those two arguments,
+so this closes a representable state rather than repairing a defect — the same reason the tri-state
+`Asystent` replaced two booleans.
+
+## Credentials audit and the package's stated limitation — 2026-09-24
+
+The owner asked for two things before this work goes anywhere near the shared repository: that the
+published version state its missing-credential limitation *very* plainly, and that no branch be
+found carrying the key.
+
+**The audit.** Every blob in the object database was read — 4681 of them, which is all of them, not
+the ones reachable from `master` — and searched twice: for the **values** of the two secrets this
+machine actually holds (read from the git-ignored `.env`, never printed), and for the two **shapes**
+in `config.SECRET_PATTERNS`. **Zero hits by value.** Twenty-three by shape, and all twenty-three
+resolve to labelled fixtures in five files, including the copies under `ceidg-tool/` on `Main` and
+two in the unrelated `claude_summary/`. `git log --all -- .env` is empty; `.env` has never been
+tracked. Both halves matter: a shape search alone would have called a rotated real token a fixture,
+and a value search alone would have missed a *different* person's key.
+
+The by-value half cannot be repeated by a test — the value is not in the repository, which is the
+whole point. So `tests/test_brak_poswiadczen.py` guards what makes the measurement durable instead.
+
+**Its first version was wrong in the way this project keeps warning about, and the test review said
+so.** It read the *working tree*; what gets published is *history*. A token committed and then
+deleted in the next commit left the suite green with the blob still reachable — and deleting the
+file is the reflex a red test produces. For the Anthropic key that is recoverable by rotation; the
+CEIDG token carries a PESEL in its payload, so a new token does not take the old one back out of a
+published blob. The review also showed the file missing its own scenario: `git ls-files` does not
+list a pasted-in file until it is staged, and the gate is run before `git add`.
+
+The rewrite scans four sets — blobs reachable from `HEAD` (595 of them, 0.4 s), blobs in the index,
+tracked files on disk, and untracked-but-unignored files, which is exactly what `git add -A` would
+take. NUL bytes are stripped before matching, because Windows PowerShell 5.1 writes `>` and
+`Out-File` in UTF-16LE and a pasted token would otherwise be invisible. `ls-files` is read `-z`,
+because `core.quotePath` renders a Polish filename with octal escapes and the file then dropped out
+of the scan in silence. The fixture allowlist moved from five *paths* to three *values*, held as
+SHA-256 of the match: a real key pasted into `tests/test_jsonout.py` no longer passes, and the file
+needs no exception for itself. `.gitignore` grew `.env.*` with `!.env.example`.
+
+**The code review then took two more pieces out.** The first: the history half is silent at
+`fetch-depth: 1`, and the `fetch-depth: 0` added to `ci.yml` runs nowhere — that workflow triggers
+on branch `ceidg-tool`, which no longer exists, and after the move the suite runs under *their*
+workflows. A guard resting on someone else's configuration is not a guard, so the fixture now fails
+on a shallow clone itself; measured on a `--depth 1` clone, where the scan had returned an empty
+set. The second: `git rev-list --objects HEAD` ignores the working directory, so the move into
+`ceidg-tool/` would have done two opposite things at once — narrowing `ls-files` to the subtree
+while widening the history walk to the whole monorepo, reddening their merge gate on fixtures in
+`claude_summary/` (two fingerprints each on `origin/Main` and `origin/Dev`). The walk is now scoped
+by `git rev-parse --show-prefix`: empty here, `ceidg-tool/` after the move, one line holding both
+halves in the same scope. Smaller ones from the same pass: `--full-history`, so a version brought in
+by a side branch and merged away is not simplified out; `check-ignore --no-index`, without which the
+`!.env.example` assertion could not fail at all, since `check-ignore` returns 1 for any tracked file;
+a hard failure when `cat-file` returns fewer objects than asked, instead of parsing up to the first
+gitlink and stopping; and `check=True` on the git calls that build the corpus, because a git failure
+turning into an empty set is the same defect this file exists to prevent.
+
+Each of those is measured by mutation rather than argued: an unstaged new file, the same file in
+UTF-16LE, a key pasted into a formerly allowlisted file, and a token committed-then-deleted in a
+throwaway clone all turn it red. One does **not**: removing a fixture from the working tree. That is
+not a gap to close but a property of the corpus — a value once committed stays in history forever,
+so its entry stays needed. The observer that test does have is a waiver minted *ahead* of time, for
+a value the repository has never held, which would admit exactly one nominated secret; that mutation
+is red, and the docstring now claims that and nothing more.
+
+Writing the guard immediately caught its author — the paragraph added to `CLAUDE.md` quoted the
+fixture key *literally*, so the scan flagged `CLAUDE.md`. The fix was to describe the fixture rather
+than cite it, not to grow the exception list; prose that quotes a secret shape makes every document
+a file the scan needs a waiver for.
+
+One thing is left open on purpose and belongs to the integration, not here: after the move into
+`ceidg-tool/`, `git ls-files` run from the package root enumerates only that subtree and
+`check-ignore .env` asks about `ceidg-tool/.env` — while `config.DEFAULT_ENV_FILE` is relative to
+the *working* directory, so an operator running the tool from the monorepo root reads a root `.env`
+this guard never looks at. The module docstring says so; it has to be settled in the same step as
+the move.
+
+**The limitation.** `README.md` carries a `[!IMPORTANT]` block directly under its opening paragraph,
+saying that no token and no assistant key ship here, what works without one, what fails, and the
+three steps to supply your own.
+
+The rule it states was wrong in its first draft, in all four documents at once, and the review
+caught it: a token is required **everywhere except `szukaj-pkd`, `token zapisz|usun` and `--demo`**
+— including `eksportuj`, `runy`, `wyczysc`, `kreator` and `sprawdz-token`, which reach no network
+but resolve settings first. `sprawdz-token` had even been filed under "reaches the register", which
+it does not. SKILL.md additionally promised an envelope for those failures; for `sprawdz-token`,
+`eksportuj`, `kreator`, `wyczysc` and `token *` that is false — `KOPERTA_OBSLUGIWANA` is `False`,
+`--wynik json` is refused first and stdout stays empty, so an agent following that sentence would
+have called `json.loads` on nothing. All four documents now state the measured rule, and a
+parametrized test over `zarejestrowane_polecenia()` holds them to it, in both directions: a new
+command fails the completeness check before it can reach a published sentence. `.env.example` was rewritten to say the same and now names
+`ANTHROPIC_API_KEY`, which it had never mentioned. `SKILL.md` gained the same facts in the form an
+agent needs: branch on the envelope's `"status": "blad"`, and obtaining a token is a human errand
+behind Profil Zaufany — not a step to improvise from the environment or another repository.
+`config.py`'s missing-token error gained one clause, because it is the sentence the reader actually
+hits: it now says what works without a token instead of only where to get one.
+
+Gates, both measured after the rewrite: **1510 passed, 1 skipped** locally; **1505 passed, 6
+skipped** with `probe_out/` moved aside. mypy clean over 121 files, ruff check and format clean.

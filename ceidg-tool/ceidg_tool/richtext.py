@@ -15,14 +15,28 @@ from .config import mask_tokens
 from .safetext import strip_control
 
 
-def make_console() -> Console:
-    """Konsola programu — bez `file=`.
+def make_console(*, stderr: bool) -> Console:
+    """Konsola programu — bez `file=`, z wyborem strumienia przez `stderr=`.
 
-    `rich` sięga po `sys.stdout` przy każdym zapisie, więc konsola zbudowana bez `file=`
-    trafia tam, gdzie akurat wskazuje strumień. Podanie `file=sys.stdout` zamroziłoby
-    strumień z chwili importu i przechwytywanie wyjścia w testach CLI przestałoby działać.
+    `rich` sięga po strumień przy **każdym zapisie** (`console.py:757`: `self._file or
+    (sys.stderr if self.stderr else sys.stdout)`), więc konsola zbudowana bez `file=` trafia
+    tam, gdzie akurat wskazuje strumień. Podanie `file=sys.stderr` zamroziłoby strumień
+    z chwili importu i przechwytywanie wyjścia w testach CLI przestałoby działać — dlatego
+    wybór idzie flagą `stderr=`, którą `rich` czyta późno, a nie gotowym obiektem pliku.
+
+    Cały program prosi o `stderr=True` (ADR-0024, decyzja 2): stdout zostaje pusty albo niesie
+    kopertę JSON i nic poza nią. To **jedna** konsola, nie dwie — szew z `rich` ma zostać
+    pojedynczy (reguła granic 10), a `is_terminal`, na którym wybiera się rodzaj paska postępu,
+    ma opisywać ten sam strumień, na który pasek naprawdę idzie.
+
+    **Argument jest wymagany, bez domyślnej.** Domyślne `False` dawało konsolę na stdout, której
+    `console.print` reguła 15 z rozmysłem nie liczy (to sprawa reguły 10, a ta o strumieniach nie
+    orzeka) — więc pierwszy znak w cudzym dokumencie JSON wylądowałby tam przy wszystkich
+    bramkach zielonych. Żadne wywołanie z domyślnej nie korzystało; wymaganie, żeby każde
+    nazwało swój strumień, czyni „jedna konsola, na stderr" własnością struktury, a nie zwyczaju
+    (przegląd kodu 2026-09-24).
     """
-    return Console()
+    return Console(stderr=stderr)
 
 
 def safe(value: str) -> Text:

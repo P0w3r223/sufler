@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from datetime import date
 
 from ..criteria import STATUSY, WOJEWODZTWA
-from .pkd import PKD_VINTAGE
+from ..pkddict import PKD_VINTAGE
 from .schema import OGRANICZENIA_DLA_MODELU
 
 INSTRUKCJA = """\

@@ -236,6 +236,42 @@ def test_wykluczenia_bramki_maja_powod_a_nie_tylko_wpis() -> None:
     assert blok.count("#") >= 3, "wykluczenia straciły uzasadnienia w komentarzach"
 
 
+def test_kazdy_wykluczony_podprojekt_ma_wlasnego_straznika_odsylaczy() -> None:
+    """Wykluczenie z tej bramki wolno mieć tylko temu, kto ma zastępstwo u siebie.
+
+    Metareguła wyżej pilnuje, że każde wykluczenie ma POWÓD w komentarzu. Nie pilnowała
+    natomiast, że obiecane zastępstwo ISTNIEJE — a to dwie różne rzeczy. Do 2026-09-24 dwa
+    z czterech pod-projektów (`ceidg-tool`, `claude_summary`) były spod bramki wyjęte i nie
+    miały w zamian niczego: razem 59 dokumentów, w tym `ceidg-tool/docs/adr/` cytujące się
+    nawzajem gęściej niż kod. Jedynym śladem po obserwatorze była proza (#166).
+
+    To ta sama klasa, która w tym repozytorium powołała `Powiadomienia_teams/tests/
+    test_szew_wysylki.py`: docstring powoływał się na strażnika, którego nie było.
+
+    Kolejność jest tu odwrotna niż zwykle i to jest świadome: reguła powstaje PO strażnikach,
+    bo napisana przed nimi byłaby czerwona od pierwszego dnia i nauczyłaby tylko tego, że
+    czerwień tej bramki wolno przeczekać.
+
+    Obecność katalogu `tests/` odróżnia pod-projekt od pozostałych wykluczeń (`.git`, `.venv`,
+    `node_modules`, `sessions`) — te nie są drzewami z własną dokumentacją i strażnika nie
+    potrzebują. Nowy pod-projekt dopisany do `_POZA_BRAMKA` zapali tę regułę, dopóki nie
+    dostanie własnego `tests/test_odsylacze.py`.
+    """
+    korzen = _korzen_repo()
+    bez_straznika = [
+        katalog
+        for katalog in sorted(_POZA_BRAMKA)
+        if (korzen / katalog / "tests").is_dir()
+        and not (korzen / katalog / "tests" / "test_odsylacze.py").is_file()
+    ]
+
+    assert bez_straznika == [], (
+        "pod-projekt wyjęty spod bramki odsyłaczy rdzenia, a bez własnego strażnika: "
+        f"{bez_straznika}. Wykluczenie bez zastępstwa zamienia obserwatora na dobre chęci — "
+        "skopiuj wzorzec z krs-tool/tests/test_odsylacze.py"
+    )
+
+
 def test_numer_w_naglowku_zgadza_sie_z_nazwa_pliku() -> None:
     rozjazdy: list[str] = []
     for plik in _pliki_adr():

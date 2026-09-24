@@ -30,8 +30,18 @@ PROD_BASE = "https://dane.biznes.gov.pl/api/ceidg/v3"
 VERSION = "0.1.0"
 
 
-def settings_for(environment: Environment = "test", *, data_dir: Path = Path("/dane")) -> Settings:
-    return Settings(token="token-testowy", environment=environment, data_dir=data_dir)
+def settings_for(
+    environment: Environment = "test",
+    *,
+    data_dir: Path = Path("/dane"),
+    anthropic_key: str | None = None,
+) -> Settings:
+    return Settings(
+        token="token-testowy",
+        environment=environment,
+        data_dir=data_dir,
+        anthropic_key=anthropic_key,
+    )
 
 
 def fields_of(block: texts.Block) -> dict[str, str]:
@@ -667,3 +677,23 @@ def test_spis_flag_pokrywa_kazde_pole_listowe_kryteriow() -> None:
     } | {"status"}
 
     assert set(texts.FLAGI_KRYTERIOW) == listowe
+
+
+def test_first_screen_shows_the_switch_rather_than_the_keyring_state() -> None:
+    """Czwarty stan wiersza §A (ADR-0025, decyzja 1): operator widzi **swoją decyzję**.
+
+    Warunek stoi przed sprawdzeniem klucza celowo. Klucz przy `--bez-asystenta` zwykle jest —
+    leży w `.env` — więc kolejność odwrotna pokazywałaby „wysyłam do api.anthropic.com" komuś,
+    kto właśnie tę drogę zamknął. To ta sama pomyłka co zdanie o keyringu w trybie pokazu,
+    poprawione 2026-09-09: wiersz §A opisywał stan magazynu zamiast tego, co się wydarzy.
+    """
+    z_kluczem = settings_for(anthropic_key="sk-ant-" + "x" * 24)
+
+    wylaczony = fields_of(
+        texts.first_screen(z_kluczem, now=NOW, version=VERSION, bez_asystenta=True)
+    )
+    wlaczony = fields_of(texts.first_screen(z_kluczem, now=NOW, version=VERSION))
+
+    assert "--bez-asystenta" in wylaczony["dokąd wysyła asystent"]
+    assert "api.anthropic.com" not in wylaczony["dokąd wysyła asystent"]
+    assert "api.anthropic.com" in wlaczony["dokąd wysyła asystent"]

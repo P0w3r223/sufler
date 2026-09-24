@@ -415,7 +415,8 @@ def load_settings(
         raise ConfigError(
             f"Brak tokenu: zapisz go poleceniem `ceidg-tool token zapisz`, ustaw {ENV_TOKEN} "
             f"w zmiennych środowiskowych albo w pliku .env. Token uzyskasz usługą "
-            f"{TOKEN_SERVICE_URL} (logowanie Profilem Zaufanym)."
+            f"{TOKEN_SERVICE_URL} (logowanie Profilem Zaufanym). Ta paczka tokenu nie "
+            f"zawiera — bez własnego działa `szukaj-pkd` i polecenia przyjmujące `--demo`."
         )
 
     info = inspect_token(resolved_token)

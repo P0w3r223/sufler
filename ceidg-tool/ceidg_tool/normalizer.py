@@ -588,3 +588,27 @@ def normalize(raw: RawRecord, ctx: RowContext) -> NormalizedRecord:
         for i, item in enumerate(_adresy_items(merged), start=1)
     ]
     return NormalizedRecord(firmy=firmy_row, pkd=pkd_rows, spolki=spolki_rows, adresy=adresy_rows)
+
+
+def wiersz_do_json(firmy: Mapping[str, Any]) -> dict[str, Any]:
+    """Wiersz `Firmy` w postaci, którą JSON zna — data jako `YYYY-MM-DD`.
+
+    `Kind` ma cztery wartości i tylko `date` produkuje obiekt, którego `json.dumps` nie umie
+    zapisać; `text`, `int` i `bool` wychodzą gotowe. Konwersja mieszka więc **tutaj**, gdzie ta
+    wiedza jest lokalna i zostanie prawdziwa przy zmianie `Kind`.
+
+    Nie przez `default=` w `json.dumps`: to odebrałoby `jsonout.zamaskuj` własność „nieznany typ
+    wywraca się głośno, zanim cokolwiek trafi na stdout", a wartości zamienione przez `default=`
+    omijałyby maskę. Konwersja przed spacerem sprawia, że maska nadal widzi napisy.
+
+    Dlaczego to w ogóle powstało: `sprawdz-nip --wynik json` wywracało się `TypeError` na
+    **każdym trafieniu** (`data_rozpoczecia` jest praktycznie w każdym rekordzie), dając pusty
+    stdout i kod 1 — zakończenie, które ADR-0024 nazywa najgorszym możliwym. Bramka „każde
+    polecenie pod flagą przepuszczone przez parser" tego nie zobaczyła, bo użyty NIP był spoza
+    korpusu pokazu, więc `firma` było `null`. Dowód sanityzowany z tego, co miał wykazać —
+    ten sam kształt co anonimizator zamieniający identyfikatory na wielkie litery.
+    """
+    return {
+        klucz: wartosc.isoformat() if isinstance(wartosc, date) else wartosc
+        for klucz, wartosc in firmy.items()
+    }

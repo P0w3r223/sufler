@@ -65,7 +65,7 @@ Helper files without architectural weight: `errors.py` (exception taxonomy),
 ## Module map and dependency direction
 
 ```
-inputs: cli.py (typer flags, YAML), ui/wizard.py, phase 4 assistant.py
+inputs: cli.py (typer flags), ui/wizard.py, phase 4 assistant.py
         |  all go through ui/flow.py -> one decision sequence (ADR-0008)
         v
    criteria.py   PURE: pydantic, no I/O; the only input contract
@@ -81,13 +81,37 @@ ratelimit  apiprofile <---+     normalizer.py  PURE: FieldSpec
    clock       ^
                |
            config.py   token, environment, paths, production consent
+
+outputs: one owning module per channel (ADR-0009, ADR-0024)
+   richtext.py  -> rich, on **stderr**: every screen, warning, error and progress line
+   jsonout.py   -> sys.stdout: the result envelope, and nothing else (rule 15)
+        ^
+        |
+   ui/wynik.py  PURE: Wynik, Status, kod_wyjscia — the envelope as a value
+
+classification data, PURE, no owner above them (ADR-0026):
+   pkddict.py   the PKD 2025 dictionary (was assistant/pkd.py until 2026-09-23)
+   pkdmap.py    the 2007 -> 2025 transition table
+   pkdszukaj.py the search `szukaj-pkd` runs, over both
 ```
 
-Boundary rules — all fourteen enforced mechanically, none resting on review. Rules 1-13 are an
-AST scan in `tests/test_boundaries.py` (rules 1-5 joined it in ADR-0009, rule 11 on 2026-09-07,
-rules 12-13 with the phase-4 assistant); **rule 14 is carried by mypy strict instead**, and says
-so in its own entry — a rule enforced by a different mechanism is still enforced, but pretending
-it is the same one would make the scan's coverage look wider than it is:
+**The YAML query file is gone (ADR-0022, 2026-09-10).** Flags, the wizard and the assistant are
+the three inputs; `texts.polecenie_powtarzajace` replaced the file by printing a ready-to-paste
+command after the decisions are made.
+
+**Four modules joined the map on 2026-09-23**, three of them because the tool acquired a second
+caller (ADR-0024: `ui/wynik.py`, `jsonout.py`) and one because the PKD dictionary acquired a
+second consumer (ADR-0026: `pkddict.py`, with `pkdszukaj.py` built on it). `console.py` gained
+`LineEvents` beside `ConsoleEvents` in the same breath: `rich` renders intermediate `Live` frames
+only on a terminal, so everything that is not one used to get a single frame at the end of a
+half-hour run.
+
+Boundary rules — all fifteen enforced mechanically, none resting on review. Rules 1-13 and 15
+are an AST scan in `tests/test_boundaries.py` (rules 1-5 joined it in ADR-0009, rule 11 on
+2026-09-07, rules 12-13 with the phase-4 assistant, rule 15 on 2026-09-23); **rule 14 is carried
+by mypy strict instead**, and says so in its own entry — a rule enforced by a different mechanism
+is still enforced, but pretending it is the same one would make the scan's coverage look wider
+than it is:
 
 1. `criteria.py` and `normalizer.py` do not import `httpx`, `sqlite3`, `openpyxl`, `rich`, `os`.
 2. `client.py` does not import `store` or `sqlite3`; it receives `RequestHistory` as a protocol.
@@ -97,12 +121,22 @@ it is the same one would make the scan's coverage look wider than it is:
 
 Extended in ADR-0008 for the phase-3 user layer:
 
-6. `ui/texts.py`, `batching.py`, `estimating.py`, `safetext.py`, `criteria.py`, `pkdmap.py`
-   and the pure assistant modules (`assistant/{schema,pkd,prompt,translate}.py`) do not import
+6. `ui/texts.py`, `ui/wynik.py`, `batching.py`, `estimating.py`, `safetext.py`, `criteria.py`,
+   `pkdmap.py`, `pkddict.py`, `pkdszukaj.py` and the pure assistant modules
+   (`assistant/{__init__,schema,pkd,prompt,translate}.py`) do not import
    `rich`, `questionary`, `typer`, `httpx`, `httpx2`, `anthropic`, `sqlite3` or `openpyxl`.
    `pkdmap.py` joined the list in ADR-0012: it decides which PKD 2007 codes get added to a
    query, so it has to be answerable without a network or a database, exactly like the
-   `criteria.py` it extends.
+   `criteria.py` it extends. `pkddict.py` and `pkdszukaj.py` joined in ADR-0026 for the same
+   reason one layer down — `szukaj-pkd` needs no token, no database and no terminal, and that
+   is a property of the command, not a convenience of its test.
+
+   **`ui/wynik.py` (ADR-0024) carries a trap this scan cannot see.** The scan reads imported
+   *roots* — `httpx`, `sqlite3`, `rich`, `openpyxl` — so `from ..pipeline import ExportSummary`
+   would pass it without a murmur while removing the reason rule 6 exists: the envelope would
+   then only be constructible where `pipeline` is, i.e. where there is a network and a database.
+   A separate AST test in `tests/test_ui_wynik.py` pins that module's relative imports to exactly
+   `{criteria}`. This is the difference between a rule enforced and a rule reported as enforced.
 7. Only `ui/prompts.py` imports `questionary`; only `richtext.py`, `ui/render.py` and
    `console.py` import `rich` (`cli.py` left that list in ADR-0009).
 8. `ui/*` does not import `client` or `store` — it goes through `pipeline`.
@@ -119,6 +153,13 @@ under rule 9; the remedy is to move the sentence, never to relax the scan.
 `richtext.py` (new in ADR-0009) is the only module that may hand `rich` an outside string:
 it owns `make_console()` and `safe()`, which `ui/render.py` and `console.py` import instead of
 each holding its own copy of the neutralisation.
+
+**Since 2026-09-23 that console writes to stderr** (ADR-0024, decision 2): `make_console(stderr=True)`
+is asked for once, in `cli.py`, and `ConsoleEvents`/`LineEvents` inherit the stream rather than
+being told about it in seven places. One console, not two, so the seam rule 10 guards stays single.
+The flag rather than `file=sys.stderr` because `rich` resolves the stream at every write
+(`console.py:757`) — freezing it at import time would break output capture in the CLI tests, the
+same reason the console never had a `file=` at all.
 
 Extended on 2026-09-07 for the egress policy (docs/reference/uzupelnienie-01.md §B/§E):
 
@@ -163,6 +204,50 @@ Extended on 2026-09-08 for the identity of a record identifier (ADR-0013):
     "only `recordid.py` produces a `KanonicznyId`" is now doing more work than it looks: two
     functions, one module, and the reason the second one takes **values** rather than a CSV row
     is precisely so that a future migration cannot become a third producer with a third digest.
+
+Extended on 2026-09-23 for the machine output channel (ADR-0024):
+
+15. Only `jsonout.py` calls `json.dump` or writes to `sys.stdout`, and everything it emits passes
+    `config.mask_tokens` through one recursive walk. This is rule 10's shape applied to the second
+    channel: one owning module, one named neutraliser, so "can a secret leave this way" is answered
+    by reading one file.
+
+    **The rule names `json.dump`, not `json.dumps`, and that distinction is the whole design.**
+    Measured 2026-09-23: `json.dumps` already lives in **six** modules at eight sites —
+    `apiprofile.py:108,118` and `criteria.py:460` (fingerprint hashing), `recordid.py:100` (the
+    ADR-0016 report-row digest), `store.py:712,904` and `pipeline.py:931` (values bound into SQL),
+    `exporter.py:500` (`write_jsonl`, to a file under `wyniki/`). A rule naming `dumps` would have
+    been red on its first run, and a scan red on arrival is a scan nobody trusts; the obvious
+    repair — a module set with a named exception per entry — would have carried six entries to
+    re-read at every future change. It is not needed, because `json.dumps` **returns a string and
+    writes nothing**, and a string is harmless until it is printed: printing is already governed by
+    rule 9 (no output call in `cli.py`) and rule 10 (only `richtext` hands a foreign string to
+    `rich`). The dangerous form takes a stream, and it occurs **zero times** in the project, so the
+    sharp rule has no exception list and was true the moment it was written. Those six sites are
+    listed here rather than in the scan so the next reader does not have to rediscover that the
+    rule skips them deliberately.
+
+    **Masking and escaping are different neutralisers, and they are mirror images.**
+    `json.dumps` escapes control characters (U+0000-U+001F, ESC included) and masks nothing — so
+    JSON encoding covers the terminal half of §B and none of the credential half, exactly opposite
+    to `strip_control`, which ADR-0009 refused as a rule-10 neutraliser *because* it does not mask
+    and the token's payload carries a PESEL. The vector is concrete: an error message is the one
+    envelope field that can carry a URL.
+
+    Rule 9's scan grew the same shape — `json.dump(…, sys.stdout)` joined the calls it counts as
+    output — because in a program that just acquired a JSON channel, that is the next `typer.echo`.
+    A bare `print` counts too, package-wide rather than in `cli.py` alone: measured 2026-09-24, one
+    `print` in `pipeline.run_update` made `json.loads(stdout)` fail on a real `aktualizuj` run with
+    all 122 boundary tests green. `console.print` carries the same name and is deliberately **not**
+    counted — it writes wherever its console points, which is stderr, and that is rule 10's
+    territory; a scan modelling it would be a scan about somebody else's library.
+
+    **One stdout write outside `jsonout.py` is known and left alone: `ctx.get_help()`**
+    (`cli.py`, the no-subcommand callback). Under `rich_markup_mode="rich"` typer renders the help
+    to stdout as a side effect and returns `""`, so neither scan sees it — the comment beside the
+    call has known this since ADR-0009. It cannot corrupt an envelope: the callback declares no
+    `--wynik`, and `kreator` is refused with exit 3 before anything is written. Recorded here so the
+    next reader finds it in the rule rather than by measuring (code review, 2026-09-24).
 
 **The log file is a second terminal-bound channel, and only one seam neutralises it.**
 Rule 10 governs `rich` and nothing else, so `log.*` calls pass every gate — the boundary scan
@@ -313,6 +398,18 @@ CeidgError
 - No `except Exception`. Resumable errors set `run.status = 'przerwany'`, commit the
   checkpoint and print "resume with: `ceidg-tool wznow --run-id ...`". Exit code 2
   tells a scheduler that a retry makes sense.
+- **Exit code 4 exists only under `--wynik json`** (ADR-0024, decision 3): `brak_trafien` ("the
+  query ran and matched nothing") and `nic_do_zrobienia` ("no resumable run, no changes, no
+  finished run") are both 4, and both are 0 without the flag. The flag is the caller's own
+  declaration — nobody asks for JSON at a terminal for fun — so one flag cannot disagree with
+  itself, whereas a separate switch could. A scheduler that reads non-zero as "investigate" would
+  otherwise start alerting on a legitimately empty day, and no existing job asked for that.
+  The envelope's `status` is the observer of the exit code, and `ui/wynik.kod_wyjscia` derives one
+  from the other in a `match` with `assert_never` — not a `dict[Status, int]`, because mypy does
+  not check a dict literal against the members of a `Literal`, so a sixth status would have joined
+  the set silently and surfaced as a `KeyError`. `KeyboardInterrupt` stays 130 and writes **no**
+  envelope: 130 is not a code `kod_wyjscia` can produce, and inventing a status for it would create
+  exactly the drift that function exists to prevent.
 - Production consent is a mechanism, not a convention:
   `config.resolve_environment(requested, consent: bool)` raises
   `ProdWithoutConsentError`; `consent` is a constructor argument passed from the CLI
