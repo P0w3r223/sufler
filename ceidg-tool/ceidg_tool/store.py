@@ -673,7 +673,11 @@ class Store:
             created_utc=str(row["created_utc"]),
             updated_utc=str(row["updated_utc"]),
             error=row["error"],
-            kind=str(row["kind"]) if "kind" in row.keys() else "firmy",
+            # `.keys()` NIE jest tu zbędne, więc SIM118 jest wyciszone z powodem: `row` to
+            # `sqlite3.Row`, a jego iteracja daje WARTOŚCI, nie nazwy kolumn. `"kind" in row`
+            # pytałoby więc, czy któraś wartość wiersza równa się napisowi „kind" — warunek
+            # prawie zawsze fałszywy, a przy jednej firmie o takiej nazwie prawdziwy błędnie.
+            kind=str(row["kind"]) if "kind" in row.keys() else "firmy",  # noqa: SIM118
         )
 
     # ------------------------------------------------------------------ strony listy

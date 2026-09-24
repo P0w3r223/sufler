@@ -79,7 +79,7 @@ def komunikat_o_czekaniu(seconds: float, reason: str, resume_at_epoch: float) ->
             f"budżet godzinny tokenu na wyczerpaniu (zużyty także poza tym pobraniem), "
             f"wznawiam o {when}"
         )
-    if reason == REASON_COOLDOWN or reason == REASON_WINDOW:
+    if reason in (REASON_COOLDOWN, REASON_WINDOW):
         return f"limit API, wznawiam o {when}"
     if reason == REASON_NO_CONNECTION:
         return f"brak połączenia, czekam do {when}, postęp zapisany"
@@ -300,9 +300,7 @@ class LineEvents:
             return
         nowy = nazwa != self._etap
         self._etap, self._zrobione, self._suma = nazwa, zrobione, suma
-        if nowy:
-            self._linia()
-        elif co is not None and zrobione - self._zrobione_na_linii >= co:
+        if nowy or (co is not None and zrobione - self._zrobione_na_linii >= co):
             self._linia()
 
     # ------------------------------------------------------------------ protokół

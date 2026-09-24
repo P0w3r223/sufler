@@ -741,11 +741,9 @@ def _skanuj_archiwum(
     duplicates = 0
     duplikaty_tresci = 0
     page_index = 0
-    scanned = 0
     reported = 0  # dopasowania, które już trafiły na pasek
     buffer: list[dict[str, Any]] = []
-    for row in iter_report_rows(dest):
-        scanned += 1
+    for scanned, row in enumerate(iter_report_rows(dest), 1):
         record = row_to_record(row, wojewodztwo=wojewodztwo)
         if matches_criteria(record, criteria):
             rid = str(record["id"])

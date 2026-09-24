@@ -311,11 +311,13 @@ def test_a_rejected_key_says_what_to_do(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_the_model_client_refuses_the_ceidg_host() -> None:
     """Dwie listy hostów, nigdy sumowane: klient modelu nie sięgnie do rejestru."""
-    with build_model_http_client(
-        transport=httpx2.MockTransport(lambda r: httpx2.Response(200))
-    ) as c:
-        with pytest.raises(UntrustedLinkError):
-            c.get("https://dane.biznes.gov.pl/api/ceidg/v3/firmy")
+    with (
+        build_model_http_client(
+            transport=httpx2.MockTransport(lambda r: httpx2.Response(200))
+        ) as c,
+        pytest.raises(UntrustedLinkError),
+    ):
+        c.get("https://dane.biznes.gov.pl/api/ceidg/v3/firmy")
 
 
 # --- budżet, myślenie i taksonomia błędów (uwagi z przeglądu 2026-09-07) ------------------

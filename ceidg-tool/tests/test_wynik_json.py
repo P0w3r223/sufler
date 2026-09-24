@@ -172,9 +172,11 @@ def test_a_typer_exit_is_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     i nie miałby żadnego obserwatora poza tym: koperta byłaby poprawnym JSON-em mówiącym
     nieprawdę o zakończeniu, które się powiodło.
     """
-    with przechwycony_stdout(monkeypatch) as stdout:
-        with cli.WynikPolecenia("pobierz", json=True):
-            raise typer.Exit(code=0)
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        cli.WynikPolecenia("pobierz", json=True),
+    ):
+        raise typer.Exit(code=0)
 
     assert json.loads(stdout.getvalue())["status"] == "ok"
 
@@ -186,10 +188,13 @@ def test_a_typer_exit_takes_the_envelopes_code_not_its_own(monkeypatch: pytest.M
     orzeka o zakończeniu. Dwa niezależne źródła kodu wyjścia to dwa źródła, które rozjadą się
     przy pierwszej poprawce jednego z nich.
     """
-    with przechwycony_stdout(monkeypatch) as stdout, pytest.raises(typer.Exit) as podniesione:
-        with cli.WynikPolecenia("pobierz", json=True) as koperta:
-            koperta.ustaw(Wynik(polecenie="pobierz", status="brak_trafien"))
-            raise typer.Exit(code=0)
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        pytest.raises(typer.Exit) as podniesione,
+        cli.WynikPolecenia("pobierz", json=True) as koperta,
+    ):
+        koperta.ustaw(Wynik(polecenie="pobierz", status="brak_trafien"))
+        raise typer.Exit(code=0)
 
     assert podniesione.value.exit_code == EXIT_PUSTO
     assert json.loads(stdout.getvalue())["kod_wyjscia"] == EXIT_PUSTO
@@ -197,9 +202,12 @@ def test_a_typer_exit_takes_the_envelopes_code_not_its_own(monkeypatch: pytest.M
 
 def test_a_ceidg_error_keeps_its_own_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     """Taksonomia `errors.py` zostaje nietknięta — koperta ją cytuje, nie przepisuje."""
-    with przechwycony_stdout(monkeypatch) as stdout, pytest.raises(typer.Exit) as podniesione:
-        with cli.WynikPolecenia("pobierz", json=True):
-            raise AuthError("token odrzucony")
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        pytest.raises(typer.Exit) as podniesione,
+        cli.WynikPolecenia("pobierz", json=True),
+    ):
+        raise AuthError("token odrzucony")
 
     assert podniesione.value.exit_code == EXIT_CONFIG
     koperta = json.loads(stdout.getvalue())
@@ -213,12 +221,15 @@ def test_an_error_keeps_what_the_command_already_paid_for(monkeypatch: pytest.Mo
     której opiera decyzję o ponowieniu — a koperta błędu jest jedynym miejscem, gdzie ona
     jeszcze jest.
     """
-    with przechwycony_stdout(monkeypatch) as stdout, pytest.raises(typer.Exit):
-        with cli.WynikPolecenia("pobierz", json=True) as koperta:
-            koperta.ustaw(
-                Wynik(polecenie="pobierz", status="ok", zapytania=30, srodowisko="test", demo=True)
-            )
-            raise ConfigError("coś się zepsuło")
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        pytest.raises(typer.Exit),
+        cli.WynikPolecenia("pobierz", json=True) as koperta,
+    ):
+        koperta.ustaw(
+            Wynik(polecenie="pobierz", status="ok", zapytania=30, srodowisko="test", demo=True)
+        )
+        raise ConfigError("coś się zepsuło")
 
     zapisana = json.loads(stdout.getvalue())
     assert zapisana["zapytania"] == 30
@@ -233,9 +244,12 @@ def test_ctrl_c_is_left_to_run_and_writes_no_envelope(monkeypatch: pytest.Monkey
     `kod_wyjscia` nie potrafi wyprodukować — czyli ten sam rozjazd, któremu ma zapobiegać.
     Ctrl+C jest decyzją spoza programu, więc program go nie opisuje, tylko przepuszcza.
     """
-    with przechwycony_stdout(monkeypatch) as stdout, pytest.raises(KeyboardInterrupt):
-        with cli.WynikPolecenia("pobierz", json=True):
-            raise KeyboardInterrupt
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        pytest.raises(KeyboardInterrupt),
+        cli.WynikPolecenia("pobierz", json=True),
+    ):
+        raise KeyboardInterrupt
 
     assert stdout.getvalue() == ""
 
@@ -246,9 +260,12 @@ def test_without_the_flag_nothing_is_written_on_any_path(monkeypatch: pytest.Mon
     Dzięki temu droga ludzka nie ma osobnej gałęzi obsługi wyjątków — a dwie gałęzie to ten
     sam kształt, za który ten projekt zapłacił już przy `richtext.safe` (ADR-0009).
     """
-    with przechwycony_stdout(monkeypatch) as stdout, pytest.raises(typer.Exit) as podniesione:
-        with cli.WynikPolecenia("pobierz", json=False):
-            raise AuthError("token odrzucony")
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        pytest.raises(typer.Exit) as podniesione,
+        cli.WynikPolecenia("pobierz", json=False),
+    ):
+        raise AuthError("token odrzucony")
 
     assert podniesione.value.exit_code == EXIT_CONFIG
     assert stdout.getvalue() == ""
@@ -426,12 +443,14 @@ def test_the_envelope_reads_the_counter_that_drove_the_signs_of_life(
     """
     licznik = LineEvents(Console(file=io.StringIO(), width=120, force_terminal=False))
 
-    with przechwycony_stdout(monkeypatch) as stdout:
-        with cli.WynikPolecenia("pobierz", json=True) as koperta:
-            koperta.licz_zadania(licznik)
-            for _ in range(3):
-                licznik.on_request("firmy", 200, 0.1)
-            koperta.ustaw(Wynik(polecenie="pobierz", status="ok"))
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        cli.WynikPolecenia("pobierz", json=True) as koperta,
+    ):
+        koperta.licz_zadania(licznik)
+        for _ in range(3):
+            licznik.on_request("firmy", 200, 0.1)
+        koperta.ustaw(Wynik(polecenie="pobierz", status="ok"))
 
     assert json.loads(stdout.getvalue())["zapytania"] == 3
 
@@ -445,12 +464,15 @@ def test_an_interrupted_run_still_reports_what_it_spent(monkeypatch: pytest.Monk
     """
     licznik = LineEvents(Console(file=io.StringIO(), width=120, force_terminal=False))
 
-    with przechwycony_stdout(monkeypatch) as stdout, pytest.raises(typer.Exit):
-        with cli.WynikPolecenia("pobierz", json=True) as koperta:
-            koperta.licz_zadania(licznik)
-            for _ in range(3):
-                licznik.on_request("firmy", 200, 0.1)
-            raise AuthError("token odrzucony w połowie")
+    with (
+        przechwycony_stdout(monkeypatch) as stdout,
+        pytest.raises(typer.Exit),
+        cli.WynikPolecenia("pobierz", json=True) as koperta,
+    ):
+        koperta.licz_zadania(licznik)
+        for _ in range(3):
+            licznik.on_request("firmy", 200, 0.1)
+        raise AuthError("token odrzucony w połowie")
 
     zapisana = json.loads(stdout.getvalue())
     assert zapisana["status"] == "blad"
@@ -607,7 +629,7 @@ def test_the_wire_shape_is_pinned_where_a_change_has_to_be_noticed() -> None:
         "blad",
     }
 
-    assert KLUCZE_WSPOLNE == na_drucie
+    assert na_drucie == KLUCZE_WSPOLNE
     assert WERSJA_KOPERTY == 1
 
 

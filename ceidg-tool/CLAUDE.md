@@ -62,7 +62,7 @@ of the package, never as a defect of the checkout.
 ## Where this code lives now
 
 This project is the **fourth sub-project of `PIWorkmate`** and lives in `ceidg-tool/` on `Main`,
-since 2026-09-10 (root `docs/adr/0074-where-ceidg-tool-should-live.md`). It arrived with all 36
+since 2026-09-10 (`../docs/adr/0074-where-ceidg-tool-should-live.md`, at the repository root). It arrived with all 36
 commits of its former standalone branch, whose authorship was unified in the same operation — so
 every commit number changed. The standalone `ceidg-tool` branch was deleted on 2026-09-11.
 

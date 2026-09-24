@@ -247,7 +247,7 @@ def test_kazde_pole_kryteriow_ma_flage_w_wierszu_polecen() -> None:
 
     assert brakujace == set()
     # Kontrola odwrotna: wyjątek wpisany „na zapas" dla pola, którego nie ma, ukrywałby braki.
-    assert POLA_BEZ_WLASNEJ_FLAGI_LISTOWEJ <= set(Criteria.model_fields)
+    assert set(Criteria.model_fields) >= POLA_BEZ_WLASNEJ_FLAGI_LISTOWEJ
 
 
 @pytest.mark.parametrize(

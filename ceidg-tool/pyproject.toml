@@ -64,7 +64,13 @@ extend-exclude = ["ceidg_probe.py", "scripts/ceidg_probe.py"]
 # (`ceidg_tool/`) mieści się w sufcie BEZ ANI JEDNEGO wyjątku: pięć funkcji, które go
 # przekraczały, zostało rozłożonych na nazwane kroki. Dwa `noqa` zostają w `scripts/`
 # i mają własny powód — sonda czytana liniowo od góry do dołu traci na podziale.
-select = ["E", "F", "I", "B", "UP", "N", "W", "C901", "PLR0915"]
+#
+# `SIM` dołączył 2026-09-24 (#164) jako OSTATNIA pozycja rozjazdu zestawów reguł z #158.
+# Wszedł osobno, bo jako jedyny z tamtej listy wymagał ZMIANY KODU, a nie tylko zapisania
+# reguły: `mypy --strict` i `W` kosztowały zero naruszeń — były bramką nad stanem, który już
+# obowiązywał. Pomiar przy włączeniu: 33 naruszenia, 11 w produkcie (`ceidg_tool/`)
+# i 22 w testach. Naprawione wszystkie, więc ta reguła też wchodzi nad stanem już zastanym.
+select = ["E", "F", "I", "B", "UP", "N", "SIM", "W", "C901", "PLR0915"]
 
 [tool.ruff.lint.mccabe]
 # 15, nie domyślne 10: tyle stoi w korzeniu i w pozostałych pod-projektach. Różnica nie jest

@@ -731,11 +731,16 @@ def builds_http_client(path: Path) -> bool:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Attribute):
-            if func.attr in HTTP_CLIENT_FACTORIES and isinstance(func.value, ast.Name):
-                if func.value.id in module_names:
-                    return True
-        elif isinstance(func, ast.Name) and func.id in imported_here:
+        # Węzeł jest ALBO atrybutem (`httpx.Client(...)`), ALBO nazwą (`Client(...)`), nigdy
+        # obojgiem — więc spłaszczenie `elif` do drugiego `if` niczego nie zmienia w przebiegu.
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in HTTP_CLIENT_FACTORIES
+            and isinstance(func.value, ast.Name)
+            and func.value.id in module_names
+        ):
+            return True
+        if isinstance(func, ast.Name) and func.id in imported_here:
             return True
     return False
 
@@ -1043,21 +1048,27 @@ def stdout_writes(tree: ast.Module) -> list[int]:
     obowiązuje sam `cli.py`, a ta reguła cały pakiet, bo pod `--wynik json` **każdy** znak
     spoza koperty jest znakiem w środku dokumentu, który wołający oddaje parserowi.
     """
-    lines: list[int] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        name = called_name(node)
-        if name == "write":
-            if isinstance(node.func, ast.Attribute) and _stdout(node.func.value):
-                lines.append(node.lineno)
-        elif name == "dump" and any(_stdout(arg) for arg in node.args):
-            lines.append(node.lineno)
-        elif name in NIENAZWANY_STDOUT:
-            lines.append(node.lineno)
-        elif name == "print" and isinstance(node.func, ast.Name):
-            lines.append(node.lineno)
-    return lines
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _pisze_na_stdout(node, called_name(node))
+    ]
+
+
+def _pisze_na_stdout(node: ast.Call, name: str) -> bool:
+    """Cztery kształty zapisu na stdout, każdy sprawdzany osobno i osobno nazwany.
+
+    Rozdzielone celowo, mimo że `SIM114` chciałby z tego jednego `or`: każda gałąź to **inny**
+    sposób, w jaki znak trafia obok koperty, i każda ma inny powód, żeby być na liście. Zlane
+    w jedno wyrażenie przestają się dać czytać po kolei i przestają się dać dopisywać.
+    """
+    if name == "write":
+        return isinstance(node.func, ast.Attribute) and _stdout(node.func.value)
+    if name == "dump":
+        return any(_stdout(arg) for arg in node.args)
+    if name in NIENAZWANY_STDOUT:
+        return True
+    return name == "print" and isinstance(node.func, ast.Name)
 
 
 def _stdout(node: ast.expr) -> bool:

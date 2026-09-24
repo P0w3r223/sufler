@@ -118,8 +118,10 @@ def regon_checksum_ok(digits: str) -> bool:
         return False
     if _regon_control(digits[:8], _REGON9_WEIGHTS) != int(digits[8]):
         return False
-    if len(digits) == 14 and _regon_control(digits[:13], _REGON14_WEIGHTS) != int(digits[13]):
-        return False
+    # Dziewięciocyfrowy REGON kończy się na sumie wyżej; czternastocyfrowy niesie DRUGĄ,
+    # liczoną z trzynastu cyfr — stąd osobny `return`, a nie warunek sklejony z poprzednim.
+    if len(digits) == 14:
+        return _regon_control(digits[:13], _REGON14_WEIGHTS) == int(digits[13])
     return True
 
 

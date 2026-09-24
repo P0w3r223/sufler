@@ -281,9 +281,8 @@ def test_zaslepka_dns_widzi_ruch_wychodzacy_z_tego_samego_klienta(
     Ten sam `build_http_client`, tylko bez podstawionego transportu — czyli dokładnie ta
     ścieżka, którą pokaz **nie** idzie.
     """
-    with build_http_client() as klient:
-        with pytest.raises(httpx.TransportError):
-            klient.get(PROD_URL)
+    with build_http_client() as klient, pytest.raises(httpx.TransportError):
+        klient.get(PROD_URL)
 
     assert pytania_dns == ["dane.biznes.gov.pl"]
 
@@ -387,7 +386,7 @@ def test_tryb_demo_nie_dokladal_hosta_do_polityki_wyjscia() -> None:
     Trzecie środowisko albo lokalny serwer atrapy oznaczałyby trwałe rozluźnienie reguły 11
     w zamian za etykietę. Dopisanie tu hosta zapala ten test i wraca do tamtej rozmowy.
     """
-    assert ALLOWED_HOSTS == frozenset({"dane.biznes.gov.pl", "test-dane.biznes.gov.pl"})
+    assert frozenset({"dane.biznes.gov.pl", "test-dane.biznes.gov.pl"}) == ALLOWED_HOSTS
     assert set(HOST_ENVIRONMENT) == ALLOWED_HOSTS
     assert "demo" not in set(HOST_ENVIRONMENT.values())
     assert httpclient.build_http_client.__defaults__ is None  # `allowed` idzie przez keyword

@@ -359,9 +359,7 @@ def matches_criteria(record: Mapping[str, Any], criteria: Criteria) -> bool:
     started = _parse_date(record.get("dataRozpoczecia"))
     if criteria.data_od and (started is None or started < criteria.data_od):
         return False
-    if criteria.data_do and (started is None or started > criteria.data_do):
-        return False
-    return True
+    return not (criteria.data_do and (started is None or started > criteria.data_do))
 
 
 def statusy_poza_raportem(criteria: Criteria) -> tuple[str, ...]:

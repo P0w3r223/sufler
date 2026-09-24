@@ -613,9 +613,8 @@ def _migruj_rownolegle(sciezka: Path, clock: FakeClock) -> list[tuple[int, int]]
     def otworz() -> None:
         try:
             brama.wait(timeout=10)
-            with Store(sciezka, environment="test", clock=clock) as store:
-                with zamek:
-                    wyniki.append((store.merged_duplicates, store.renamed_identifiers))
+            with Store(sciezka, environment="test", clock=clock) as store, zamek:
+                wyniki.append((store.merged_duplicates, store.renamed_identifiers))
         except BaseException as exc:  # noqa: BLE001 — wyjątek z wątku ma dojechać do asercji
             with zamek:
                 bledy.append(exc)
