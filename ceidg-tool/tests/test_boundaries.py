@@ -696,11 +696,16 @@ def builds_http_client(path: Path) -> bool:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if isinstance(func, ast.Attribute):
-            if func.attr in HTTP_CLIENT_FACTORIES and isinstance(func.value, ast.Name):
-                if func.value.id in module_names:
-                    return True
-        elif isinstance(func, ast.Name) and func.id in imported_here:
+        # Węzeł jest ALBO atrybutem (`httpx.Client(...)`), ALBO nazwą (`Client(...)`), nigdy
+        # obojgiem — więc spłaszczenie `elif` do drugiego `if` niczego nie zmienia w przebiegu.
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in HTTP_CLIENT_FACTORIES
+            and isinstance(func.value, ast.Name)
+            and func.value.id in module_names
+        ):
+            return True
+        if isinstance(func, ast.Name) and func.id in imported_here:
             return True
     return False
 

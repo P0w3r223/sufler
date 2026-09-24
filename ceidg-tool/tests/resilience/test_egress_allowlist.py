@@ -66,9 +66,8 @@ def test_an_allowed_host_is_the_only_name_resolved(resolved: list[str]) -> None:
     Gdyby zaślepka nie widziała niczego, wszystkie pozostałe testy w tym pliku przechodziłyby
     z powodu pustej listy, a nie z powodu poprawnego kodu.
     """
-    with build_http_client() as client:
-        with pytest.raises(httpx.TransportError):
-            client.get(ALLOWED_URL)
+    with build_http_client() as client, pytest.raises(httpx.TransportError):
+        client.get(ALLOWED_URL)
 
     assert resolved == ["dane.biznes.gov.pl"]
 
@@ -84,9 +83,8 @@ def test_a_proxy_in_the_environment_cannot_divert_the_request(
     for variable in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
         monkeypatch.setenv(variable, PROXY)
 
-    with build_http_client() as client:
-        with pytest.raises(httpx.TransportError):
-            client.get(ALLOWED_URL)
+    with build_http_client() as client, pytest.raises(httpx.TransportError):
+        client.get(ALLOWED_URL)
 
     assert resolved == ["dane.biznes.gov.pl"]
     assert "proxy.zly.example.test" not in resolved
@@ -94,18 +92,19 @@ def test_a_proxy_in_the_environment_cannot_divert_the_request(
 
 def test_a_foreign_host_is_refused_before_any_name_is_resolved(resolved: list[str]) -> None:
     """Bramka siedzi w transporcie, więc odmowa zapada przed pytaniem DNS, nie po nim."""
-    with build_http_client() as client:
-        with pytest.raises(UntrustedLinkError, match="dane.biznes.gov.pl"):
-            client.get(FOREIGN_URL)
+    with (
+        build_http_client() as client,
+        pytest.raises(UntrustedLinkError, match="dane.biznes.gov.pl"),
+    ):
+        client.get(FOREIGN_URL)
 
     assert resolved == []
 
 
 def test_plain_http_to_an_allowed_host_is_refused(resolved: list[str]) -> None:
     """§B chce TLS z weryfikacją certyfikatu; `http://` na dozwolonym hoście to nadal brak TLS."""
-    with build_http_client() as client:
-        with pytest.raises(UntrustedLinkError):
-            client.get("http://dane.biznes.gov.pl/api/ceidg/v3/firmy")
+    with build_http_client() as client, pytest.raises(UntrustedLinkError):
+        client.get("http://dane.biznes.gov.pl/api/ceidg/v3/firmy")
 
     assert resolved == []
 
@@ -167,9 +166,11 @@ def test_the_test_environment_cannot_reach_production(resolved: list[str]) -> No
     """
     only_test = frozenset({"test-dane.biznes.gov.pl"})
 
-    with build_http_client(allowed=only_test) as client:
-        with pytest.raises(UntrustedLinkError, match="test-dane.biznes.gov.pl"):
-            client.get(ALLOWED_URL)
+    with (
+        build_http_client(allowed=only_test) as client,
+        pytest.raises(UntrustedLinkError, match="test-dane.biznes.gov.pl"),
+    ):
+        client.get(ALLOWED_URL)
 
     assert resolved == []
 
@@ -212,9 +213,8 @@ def test_the_model_client_resolves_only_its_own_host(resolved: list[str]) -> Non
     """
     import httpx2
 
-    with build_model_http_client() as client:
-        with pytest.raises(httpx2.TransportError):
-            client.get(MODEL_URL)
+    with build_model_http_client() as client, pytest.raises(httpx2.TransportError):
+        client.get(MODEL_URL)
 
     assert resolved == ["api.anthropic.com"]
 
@@ -228,9 +228,8 @@ def test_a_proxy_cannot_divert_the_model_client(
     for variable in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
         monkeypatch.setenv(variable, PROXY)
 
-    with build_model_http_client() as client:
-        with pytest.raises(httpx2.TransportError):
-            client.get(MODEL_URL)
+    with build_model_http_client() as client, pytest.raises(httpx2.TransportError):
+        client.get(MODEL_URL)
 
     assert resolved == ["api.anthropic.com"]
 
@@ -252,9 +251,11 @@ def test_ssl_cert_file_does_not_replace_the_ca_bundle_for_the_model_client(
 
 
 def test_a_foreign_host_is_refused_by_the_model_client_before_dns(resolved: list[str]) -> None:
-    with build_model_http_client() as client:
-        with pytest.raises(UntrustedLinkError, match="api.anthropic.com"):
-            client.get("https://zly.example.test/v1/messages")
+    with (
+        build_model_http_client() as client,
+        pytest.raises(UntrustedLinkError, match="api.anthropic.com"),
+    ):
+        client.get("https://zly.example.test/v1/messages")
 
     assert resolved == []
 
@@ -265,13 +266,11 @@ def test_neither_client_can_reach_the_other_side(resolved: list[str]) -> None:
     Wcześniej sprawdzany był wyłącznie kierunek model → CEIDG; brakującą połową był klient
     CEIDG sięgający do modelu, czyli ta, przez którą wyszłyby **pobrane rekordy**.
     """
-    with build_http_client() as ceidg:
-        with pytest.raises(UntrustedLinkError):
-            ceidg.get(MODEL_URL)
+    with build_http_client() as ceidg, pytest.raises(UntrustedLinkError):
+        ceidg.get(MODEL_URL)
 
-    with build_model_http_client() as model:
-        with pytest.raises(UntrustedLinkError):
-            model.get(ALLOWED_URL)
+    with build_model_http_client() as model, pytest.raises(UntrustedLinkError):
+        model.get(ALLOWED_URL)
 
     assert resolved == []
 

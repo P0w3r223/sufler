@@ -536,7 +536,7 @@ def test_the_detail_only_columns_are_never_filled_by_the_list_endpoint() -> None
             wypelnione |= {k for k, v in znormalizowany.firmy.items() if v}
 
     assert rekordow >= 30, "pomiar bez danych nie jest pomiarem"
-    assert KOLUMNY_TYLKO_ZE_SZCZEGOLOW <= set(columns(SHEET_FIRMY))
+    assert set(columns(SHEET_FIRMY)) >= KOLUMNY_TYLKO_ZE_SZCZEGOLOW
     assert not (KOLUMNY_TYLKO_ZE_SZCZEGOLOW & wypelnione)
 
 

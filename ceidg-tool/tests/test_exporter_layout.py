@@ -141,7 +141,7 @@ def test_report_unfilled_columns_all_exist_in_the_schema() -> None:
 
     Nazwa musi występować w którymkolwiek arkuszu — `pkd_nazwa` żyje w `PKD`, nie w `Firmy`."""
     known = {name for sheet in SHEETS for name in columns(sheet)}
-    assert UNFILLED_COLUMNS <= known
+    assert known >= UNFILLED_COLUMNS
 
 
 def test_unfilled_set_matches_what_row_to_record_actually_maps() -> None:

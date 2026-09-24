@@ -103,9 +103,9 @@ def test_stale_atrapy_zgadzaja_sie_z_dostarczonym_profilem() -> None:
     """
     wzorzec = profil()
 
-    assert modul_rejestru.LIMIT_FIRMY == wzorzec.max_limit_firmy
-    assert modul_rejestru.LIMIT_ZMIANA == wzorzec.max_limit_zmiana
-    assert modul_rejestru.BATCH_IDS == wzorzec.ids_batch_size
+    assert wzorzec.max_limit_firmy == modul_rejestru.LIMIT_FIRMY
+    assert wzorzec.max_limit_zmiana == modul_rejestru.LIMIT_ZMIANA
+    assert wzorzec.ids_batch_size == modul_rejestru.BATCH_IDS
     assert 204 in wzorzec.empty_result_statuses
 
 

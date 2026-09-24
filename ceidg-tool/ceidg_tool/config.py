@@ -450,9 +450,12 @@ def load_settings(
         # Ta sama kontrola uprawnień co przy tokenie. Bez niej układ „token w keyringu, klucz
         # w .env" zostawiał plik ze środkiem płatniczym bez sprawdzenia, bo warunek niżej
         # patrzy wyłącznie na to, skąd przyszedł **token**.
-        if env_file is not None and (hint := ensure_private_env_file(env_file)):
-            if hint not in warnings:
-                warnings.append(hint)
+        if (
+            env_file is not None
+            and (hint := ensure_private_env_file(env_file))
+            and hint not in warnings
+        ):
+            warnings.append(hint)
     register_secret(assistant_key)
 
     # Rejestracja przed zwróceniem ustawień: od tej chwili maskowanie zna wartość tokenu,

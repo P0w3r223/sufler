@@ -13,6 +13,7 @@ Pominięcie jest tu uczciwsze niż zieleń: nie udaje, że coś sprawdziliśmy.
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -56,10 +57,8 @@ def kody_z_rejestru() -> dict[str, str]:
         if isinstance(node, dict):
             kod, nazwa = node.get("kod"), node.get("nazwa")
             if isinstance(kod, str) and isinstance(nazwa, str) and len(kod) in (5, 6):
-                try:
+                with suppress(ValueError):
                     pary[normalize_pkd(kod)] = nazwa
-                except ValueError:
-                    pass
             for value in node.values():
                 walk(value)
         elif isinstance(node, list):

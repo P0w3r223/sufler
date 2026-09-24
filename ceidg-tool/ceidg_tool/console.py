@@ -105,7 +105,7 @@ class ConsoleEvents:
                 f"budżet godzinny tokenu na wyczerpaniu (zużyty także poza tym pobraniem), "
                 f"wznawiam o {when}"
             )
-        elif reason == REASON_COOLDOWN or reason == REASON_WINDOW:
+        elif reason in (REASON_COOLDOWN, REASON_WINDOW):
             self.on_message(f"limit API, wznawiam o {when}")
         elif reason == REASON_NO_CONNECTION:
             self.on_message(f"brak połączenia, czekam do {when}, postęp zapisany")

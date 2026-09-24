@@ -115,9 +115,7 @@ def _pasuje(wpis: WpisDemo, params: list[tuple[str, str]]) -> bool:
     do = _wartosci(params, "datado")
     if od and (granica := _data(od[0])) and wpis.data_rozpoczecia < granica.date():
         return False
-    if do and (granica := _data(do[0])) and wpis.data_rozpoczecia > granica.date():
-        return False
-    return True
+    return not (do and (granica := _data(do[0])) and wpis.data_rozpoczecia > granica.date())
 
 
 def _z_page(url: str, numer: int) -> str:

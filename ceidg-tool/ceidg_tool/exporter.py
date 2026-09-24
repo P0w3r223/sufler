@@ -25,7 +25,7 @@ import os
 import shutil
 import warnings
 from collections.abc import Callable, Collection, Iterator, Sequence
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from datetime import date
 from itertools import islice
@@ -130,12 +130,10 @@ def plan_export(
     current = {name: 0 for name in DATA_SHEETS}
     totals = {name: 0 for name in DATA_SHEETS}
     in_part = 0
-    counted = 0
     reporter = events or NullEvents()
-    for rec in source():
+    for counted, rec in enumerate(source(), 1):
         if observer is not None:
             observer(rec)
-        counted += 1
         if counted % EXPORT_REPORT_EVERY == 0:
             # Pierwsze przejście liczy wiersze, więc sumy jeszcze nie znamy — `0` znaczy
             # „nieokreślona", a pasek pokazuje sam licznik. Bez tego eksport 287 tys. firm
@@ -330,10 +328,8 @@ def _atomic_save(dest: Path, save: Callable[[Path], None]) -> None:
         raise ExportError(f"Nie można zapisać {dest}: {exc}") from exc
     finally:
         if tmp.exists():
-            try:
+            with suppress(OSError):
                 tmp.unlink()
-            except OSError:
-                pass
 
 
 def _write_part(
@@ -457,14 +453,12 @@ def write_csv(dest_dir: Path, source: RecordSource, *, events: Events | None = N
                 writer = csv.writer(handle, delimiter=CSV_DELIMITER)
                 writer.writerow([spec.name for spec in SHEETS[name]])
                 writers[name] = writer
-            records = 0
-            for rec in source():
+            for records, rec in enumerate(source(), 1):
                 for name, rows in _rows_of(rec).items():
                     specs = SHEETS[name]
                     for row in rows:
                         writers[name].writerow([_csv_value(row.get(s.name)) for s in specs])
                         counts[name] += 1
-                records += 1
                 if records % EXPORT_REPORT_EVERY == 0:
                     reporter.on_export(records, 0)
         for name in DATA_SHEETS:
@@ -478,10 +472,8 @@ def write_csv(dest_dir: Path, source: RecordSource, *, events: Events | None = N
     finally:
         for tmp in temps.values():
             if tmp.exists():
-                try:
+                with suppress(OSError):
                     tmp.unlink()
-                except OSError:
-                    pass
     return written
 
 
