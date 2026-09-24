@@ -65,7 +65,9 @@ WYMAGANE_KOLUMNY = (KOL_POZIOM, KOL_KOD_2007, KOL_NAZWA_2007, KOL_KOD_2025, KOL_
 NAGLOWEK_SZUKAJ_W = 10
 
 PODSTAWA_PRAWNA = "Dz.U. 2024 poz. 1936 (rozporządzenie RM z 18.12.2024)"
-WYGASA = "2026-12-31"
+# Warunek usunięcia tablicy, nie data. Patrz `pkdmap.USUNIECIE_NIE_WCZESNIEJ_NIZ` — tam
+# stoi uzasadnienie; tutaj wartość jest po to, żeby nagłówek pliku mówił to samo.
+USUNIECIE_NIE_WCZESNIEJ_NIZ = "2027-02-01"
 
 
 def wiersze(path: Path) -> Iterator[dict[str, str]]:
@@ -255,9 +257,14 @@ def zapisz(
         f"# Plik źródłowy: {zrodlo.name}",
         f"# SHA-256 źródła: {suma}",
         "#",
-        f"# Wygasa: {WYGASA} — koniec okresu przejściowego. Po tej dacie zmierz udział",
-        "# rocznika 2007 w świeżym raporcie dziennym (offline, zero żądań) i jeśli jest",
-        "# znikomy, usuń ten plik razem z ceidg_tool/pkdmap.py i krokiem w ui/flow.py.",
+        f"# Usunięcie: nie wcześniej niż {USUNIECIE_NIE_WCZESNIEJ_NIZ} i dopiero po pomiarze.",
+        "# Okres przejściowy z rozporządzenia kończy się 2026-12-31, ale ustawa z 21.11.2025",
+        "# (Dz.U. 2025 poz. 1792, art. 12) każe rejestrowi przeklasyfikować wpisy automatycznie",
+        "# „w terminie do dnia 31 stycznia 2027 r., jeżeli jest to możliwe” — więc kalendarz",
+        "# niczego nie rozstrzyga, a wpisy, których nie da się przeliczyć, mogą nieść kod 2007",
+        "# dalej. Pomiar: udział wpisów nieosiągalnych żadnym kodem z PKD 2025 w świeżym",
+        "# raporcie dziennym (offline, zero żądań; 2026-09-07 było 24 494 = 8,6 % z 285 026).",
+        "# Gdy jest znikomy, usuń ten plik razem z ceidg_tool/pkdmap.py i krokiem w ui/flow.py.",
         "#",
         "# Plik jest generowany. Nie edytuj go ręcznie — popraw źródło i zbuduj ponownie,",
         "# inaczej prowenienacja w tym nagłówku przestaje opisywać zawartość.",

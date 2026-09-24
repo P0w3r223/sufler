@@ -26,7 +26,12 @@ import yaml
 
 from ceidg_tool.assistant.pkd import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.criteria import normalize_pkd
-from ceidg_tool.pkdmap import DEFAULT_PKD_MAP_PATH, KONIEC_PRZEJSCIA, TablicaPkd, load_pkd_map
+from ceidg_tool.pkdmap import (
+    DEFAULT_PKD_MAP_PATH,
+    USUNIECIE_NIE_WCZESNIEJ_NIZ,
+    TablicaPkd,
+    load_pkd_map,
+)
 from tests.support import NAZWY_2007_TESTOWE, NAZWY_2025_TESTOWE, POPRZEDNICY_TESTOWI
 
 pytestmark = pytest.mark.skipif(
@@ -259,9 +264,17 @@ def test_the_header_records_where_the_table_came_from() -> None:
     assert "Dz.U. 2024 poz. 1936" in tekst
 
 
-def test_the_header_carries_the_same_expiry_date_as_the_module() -> None:
-    """Tablica jest wygasająca; rozjazd daty w pliku i w kodzie zgubiłby moment usunięcia."""
-    assert f"Wygasa: {KONIEC_PRZEJSCIA}" in naglowek()
+def test_the_header_carries_the_same_removal_condition_as_the_module() -> None:
+    """Tablica jest wygasająca; rozjazd warunku w pliku i w kodzie zgubiłby moment usunięcia.
+
+    Warunkiem jest pomiar, a data tylko jego dolną granicą — nagłówek ma mówić jedno i drugie,
+    bo to on trafia pod oczy tego, kto otworzy plik po okresie przejściowym.
+    """
+    tekst = naglowek()
+
+    assert f"Usunięcie: nie wcześniej niż {USUNIECIE_NIE_WCZESNIEJ_NIZ}" in tekst
+    assert "po pomiarze" in tekst
+    assert "Dz.U. 2025 poz. 1792" in tekst
 
 
 def test_the_dictionary_the_table_is_checked_against_is_the_generated_one() -> None:

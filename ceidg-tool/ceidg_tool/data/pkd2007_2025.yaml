@@ -8,13 +8,18 @@
 # Podstawa prawna: Dz.U. 2024 poz. 1936 (rozporządzenie RM z 18.12.2024)
 # Wyszukiwarka GUS: https://klasyfikacje.stat.gov.pl/Pkd2025
 #
-# Zbudowane: 2026-09-07 przez scripts/build_pkd_transition.py
+# Zbudowane: 2026-09-13 przez scripts/build_pkd_transition.py
 # Plik źródłowy: KluczePKD_2007_2025.xlsx
 # SHA-256 źródła: f9a3c1b68fa91443c8d38c2c8ae664352ea9d49851f8adbde250f5316714d58c
 #
-# Wygasa: 2026-12-31 — koniec okresu przejściowego. Po tej dacie zmierz udział
-# rocznika 2007 w świeżym raporcie dziennym (offline, zero żądań) i jeśli jest
-# znikomy, usuń ten plik razem z ceidg_tool/pkdmap.py i krokiem w ui/flow.py.
+# Usunięcie: nie wcześniej niż 2027-02-01 i dopiero po pomiarze.
+# Okres przejściowy z rozporządzenia kończy się 2026-12-31, ale ustawa z 21.11.2025
+# (Dz.U. 2025 poz. 1792, art. 12) każe rejestrowi przeklasyfikować wpisy automatycznie
+# „w terminie do dnia 31 stycznia 2027 r., jeżeli jest to możliwe” — więc kalendarz
+# niczego nie rozstrzyga, a wpisy, których nie da się przeliczyć, mogą nieść kod 2007
+# dalej. Pomiar: udział wpisów nieosiągalnych żadnym kodem z PKD 2025 w świeżym
+# raporcie dziennym (offline, zero żądań; 2026-09-07 było 24 494 = 8,6 % z 285 026).
+# Gdy jest znikomy, usuń ten plik razem z ceidg_tool/pkdmap.py i krokiem w ui/flow.py.
 #
 # Plik jest generowany. Nie edytuj go ręcznie — popraw źródło i zbuduj ponownie,
 # inaczej prowenienacja w tym nagłówku przestaje opisywać zawartość.
