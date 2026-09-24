@@ -30,16 +30,23 @@ Karty czasu (WorklogPRO) zostały wycofane z projektu w całości, nie wstrzyman
 ([ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)).
 
 Stan bramek jakości pokazuje badge CI na górze — biegają na `Main`, `Dev`, PR-ach do tych dwóch
-gałęzi oraz nocą.
+gałęzi oraz nocą. Na **PR-ze** zakres jest zawężony do tego, czego zmiana dotyczy: wpis `workmate`
+biegnie zawsze, bo to on niesie bramki chodzące po całym drzewie (martwe odsyłacze, numeracja ADR,
+spójność wersji), a pozostałe wpisy macierzy i obie budowy obrazów — tylko gdy zmiana sięga ich
+katalogów. Na `Main`, nocą i przy `workflow_dispatch` biegnie **komplet**, bo tam pytanie brzmi
+„czy drzewo jest zdrowe", a nie „czy ta zmiana jest bezpieczna".
 
 ## Mapa repozytorium
 
 Repozytorium mieści cztery jednostki. Każda ma osobne środowisko `uv` i własny wpis w matrycy CI
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Czwarta dostaje dodatkowo przebieg na
-Windows i na drugiej wersji Pythona, instalowany `pipem` wprost z `pyproject.toml`
-([`.github/workflows/ceidg-tool.yml`](.github/workflows/ceidg-tool.yml)) — czyli na świeżo
-rozwiązanym zestawie zależności, w odróżnieniu od przypiętego `uv.lock` w matrycy. Opis każdej mieszka
-u niej — tutaj jest tylko wskazówka, dokąd iść.
+Windows i na drugiej wersji Pythona
+([`.github/workflows/ceidg-tool.yml`](.github/workflows/ceidg-tool.yml)), instalowany `pipem`
+z `requirements.lock` — czyli z TEGO SAMEGO rozwiązania zależności co `uv.lock` w matrycy, czego
+pilnuje `ceidg-tool/tests/test_locki_zgodne.py` (do #157 instalacja szła z zakresów i bramka nie
+wiedziała, który program sprawdza). Tamta matryca niesie wyłącznie osie, których `ci.yml` nie ma:
+drugi system i drugą wersję Pythona. Opis każdej jednostki mieszka u niej — tutaj jest tylko
+wskazówka, dokąd iść.
 
 **Rdzeń `workmate`** (`src/`, `tests/`, `docs/`, `deploy/`, `eval/`, `scripts/`) — to, co opisuje
 reszta tego pliku: serwer MCP, runtime agenta, drzwi i most zdarzeń.
@@ -317,6 +324,12 @@ CI buduje też oba obrazy — floty (`deploy/docker/Dockerfile`) i pod-projektu 
 `Dockerfile` floty nie jest jednak gwarancją**, że obraz nie powstanie z czerwonego drzewa: jego
 marker to pusty plik, więc bez `--no-cache-filter test` BuildKit podstawia warstwę z cache'u. W CI
 etap biegnie tylko dlatego, że runner startuje z pustym cache'em.
+
+Z tego samego powodu obie budowy są na **PR-ze warunkowe**: skoro etap `test` powtarza pakiet
+testów, który przed chwilą przeszedł we wpisie macierzy, to na zmianie, która do obrazu nie
+wchodzi, jest wyłącznie drugim przebiegiem tej samej suity (zmierzone 2026-09-24: 84 s i 83 s,
+czyli 38 % czasu zadań całego przebiegu). Na `Main`, nocą i ręcznie budują się **zawsze** — bez
+tego bieg nocny przestałby odpowiadać na pytanie, po które powstał: czy obraz w ogóle dziś wstaje.
 
 ## Wdrożenie
 
