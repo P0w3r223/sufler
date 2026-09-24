@@ -68,7 +68,7 @@ def deps_z_asystentem(assistant: Assistant) -> Deps:
 
     return cast(
         "Deps",
-        SimpleNamespace(assistant=assistant, assistant_reason=None, events=NullEvents()),
+        SimpleNamespace(assistant=assistant, assistant_brak=None, events=NullEvents()),
     )
 
 

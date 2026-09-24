@@ -9,10 +9,11 @@ i przy okazji tego, że krótkie odstępy limitera nie zasypują użytkownika ko
 from __future__ import annotations
 
 import io
+import re
 
 from rich.console import Console
 
-from ceidg_tool.console import LONG_WAIT_S, MIB, ConsoleEvents
+from ceidg_tool.console import LONG_WAIT_S, MIB, ConsoleEvents, LineEvents
 from ceidg_tool.ratelimit import REASON_COOLDOWN, REASON_RESUME, REASON_WINDOW
 
 RESUME_AT = 1_700_000_000.0
@@ -154,9 +155,14 @@ def test_quiet_mode_renders_no_progress_at_all() -> None:
 
     events.on_page(0, 5, 10)
     events.on_details(1, 5)
+    events.on_request("firma", 200, 0.1)
 
     assert buffer.getvalue() == ""
     assert events._progress is None
+    # Cisza dotyczy paska, nie licznika. To jest liczba, którą przeczyta koperta (ADR-0024),
+    # a `wznow`, `raporty` i `sprawdz-nip` wołają ten odbiornik właśnie z `quiet=True` — czyli
+    # gałąź, w której najłatwiej zgubić `zapytania` i nigdy tego nie zauważyć.
+    assert events.requests == 1
 
 
 # ----------------------------------------------------------------------------- licznik i czekanie
@@ -301,3 +307,235 @@ def test_the_assistant_bar_shows_elapsed_time_not_only_a_token_count() -> None:
     assert "512/?" in tekst
     # Kolumna czasu renderuje `H:MM:SS`; jej brak znaczy, że pasek znowu nie ma nic ruchomego.
     assert "0:00:" in tekst, f"brak kolumny upływu czasu: {tekst!r}"
+
+
+# ------------------------------------------ wiersze zamiast paska (ADR-0024, decyzja 4)
+
+
+class _StalyZegar:
+    """Zegar, który stoi.
+
+    Celowo: rytm wierszy ma zależeć od tego, ile program zrobił, a nie od tego, ile minęło.
+    Zatrzymany zegar sprawia, że test mierzący kadencję nie może przypadkiem zmierzyć czasu —
+    a przy okazji znacznik czasu jest powtarzalny.
+    """
+
+    def monotonic(self) -> float:
+        return 0.0
+
+    def wall(self) -> float:
+        return RESUME_AT
+
+    def sleep(self, seconds: float) -> None:
+        return None
+
+
+def linie_for(*, quiet: bool = False) -> tuple[LineEvents, io.StringIO]:
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=120, force_terminal=False)
+    return LineEvents(console, quiet=quiet, clock=_StalyZegar()), buffer
+
+
+def _wiersze(buffer: io.StringIO) -> list[str]:
+    return [linia for linia in buffer.getvalue().splitlines() if linia.strip()]
+
+
+def test_the_bar_says_nothing_off_a_terminal_and_that_is_why_this_class_exists() -> None:
+    """Pomiar, na którym stoi cała decyzja 4 — i strażnik na wypadek, gdyby `rich` to zmienił.
+
+    `rich/live.py:269` renderuje klatki pośrednie wyłącznie przy `console.is_terminal`. Sześć
+    stron to sześć żądań i ponad dwadzieścia sekund pracy, a do bufora nie trafia ani jeden
+    znak aż do `close()`. Gdyby ten test zrobił się czerwony, znaczyłoby to, że `LineEvents`
+    przestał być potrzebny — i lepiej dowiedzieć się tego z testu niż nie dowiedzieć wcale.
+    """
+    pasek, bufor = events_for()
+
+    for numer in range(6):
+        pasek.on_page(numer, 25, 150)
+
+    assert bufor.getvalue() == ""
+    pasek.close()
+    assert "Lista firm" in bufor.getvalue()
+
+
+def test_twenty_four_requests_are_exactly_three_lines() -> None:
+    """Kadencja: jeden wiersz na osiem żądań, czyli na około 30 s przy odstępie 3,75 s.
+
+    24 = 3 × 8. Sąsiednia liczba jest tu po to, żeby próg był progiem, a nie przybliżeniem:
+    licznik, który gubi jedno żądanie na cykl, przechodzi pierwszą asercję i oblewa drugą.
+    """
+    zdarzenia, bufor = linie_for()
+    for _ in range(24):
+        zdarzenia.on_request("firmy", 200, 0.1)
+    assert len(_wiersze(bufor)) == 3
+
+    chudsze, bufor_chudszy = linie_for()
+    for _ in range(23):
+        chudsze.on_request("firmy", 200, 0.1)
+    assert len(_wiersze(bufor_chudszy)) == 2
+
+
+def test_a_stage_transition_is_always_a_line() -> None:
+    """Przejście między etapami nie czeka na próg — między etapami bywa dłużej niż próg."""
+    zdarzenia, bufor = linie_for()
+
+    zdarzenia.on_page(0, 25, 150)
+    zdarzenia.on_details(0, 150)
+
+    wiersze = _wiersze(bufor)
+    assert len(wiersze) == 2
+    assert "Lista firm" in wiersze[0]
+    assert "Szczegóły" in wiersze[1]
+
+
+def test_the_list_line_counts_rows_not_pages() -> None:
+    """Liczone w wierszach, nigdy w stronach — pomyłka o jedną warstwę z 2026-09-06.
+
+    Strona `/zmiana` to 500 identyfikatorów, czyli do stu żądań. Licznik stron pokazałby po
+    dwóch stronach „2" i wyglądałby na zdrowy przez pół godziny.
+    """
+    zdarzenia, bufor = linie_for()
+
+    zdarzenia.on_page(0, 500, 1000)
+    zdarzenia.on_page(1, 500, 1000)
+    for _ in range(8):
+        zdarzenia.on_request("zmiana", 200, 0.1)
+
+    wiersze = _wiersze(bufor)
+    assert "Lista firm 500/1000" in wiersze[0]
+    assert "Lista firm 1000/1000" in wiersze[1]
+
+
+def test_the_export_stage_speaks_although_it_sends_no_request() -> None:
+    """Etap bez żądań ma własny próg, bo licznik żądań go nie napędza.
+
+    Zapis skoroszytu zmierzono na 453 firmy/s — pełne województwo to ponad dziesięć minut
+    przy zerowym liczniku żądań. Sam próg żądań zostawiłby tu ciszę dokładnie tam, gdzie
+    `on_export` powstało, żeby ciszy nie było.
+    """
+    zdarzenia, bufor = linie_for()
+
+    for zrobione in range(0, 40_001, 5_000):
+        zdarzenia.on_export(zrobione, 40_000)
+
+    # Przejście etapu plus cztery progi po 10 000 wierszy.
+    assert len(_wiersze(bufor)) == 5
+
+
+def test_quiet_counts_requests_without_saying_anything() -> None:
+    """`quiet` znaczy to samo co przy pasku: licznik rośnie, postęp się nie pokazuje.
+
+    Licznik musi rosnąć, bo to jest liczba, którą przeczyta koperta — a koperta ma podać tę
+    samą liczbę, która napędzała oznaki życia, nie drugą, liczoną gdzie indziej.
+    """
+    zdarzenia, bufor = linie_for(quiet=True)
+
+    for _ in range(24):
+        zdarzenia.on_request("firmy", 200, 0.1)
+    zdarzenia.on_page(0, 25, 150)
+
+    assert _wiersze(bufor) == []
+    assert zdarzenia.requests == 24
+
+
+def test_close_writes_nothing_because_there_is_nothing_to_stop() -> None:
+    """Brak `Live` to brak sprzątania — i brak ostatniej klatki dopisanej po podsumowaniu."""
+    zdarzenia, bufor = linie_for()
+    zdarzenia.on_page(0, 25, 150)
+    przed = bufor.getvalue()
+
+    zdarzenia.close()
+    zdarzenia.close()
+
+    assert bufor.getvalue() == przed
+
+
+def test_both_receivers_word_a_wait_identically() -> None:
+    """Jedno zdarzenie, dwa wyjścia, jedno zdanie — po to `komunikat_o_czekaniu` jest osobno.
+
+    Dwa egzemplarze tej treści rozjechałyby się przy pierwszej poprawce jednego z nich; ta
+    sama pomyłka co `richtext.safe` w dwóch miejscach (ADR-0009).
+    """
+    pasek, bufor_paska = events_for()
+    zdarzenia, bufor_linii = linie_for()
+
+    pasek.on_wait(600.0, REASON_COOLDOWN, RESUME_AT)
+    zdarzenia.on_wait(600.0, REASON_COOLDOWN, RESUME_AT)
+
+    zdanie = bufor_paska.getvalue().strip()
+    assert zdanie.startswith("limit API")
+    assert zdanie in bufor_linii.getvalue()
+
+
+def test_a_jwt_in_a_line_is_masked_before_reaching_the_console() -> None:
+    """Drugie wyjście to druga droga tokenu na ekran — i przechodzi tym samym `safe`."""
+    zdarzenia, bufor = linie_for()
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1g"
+
+    zdarzenia.on_message(f"odrzucone żądanie z tokenem {jwt}")
+
+    wynik = bufor.getvalue()
+    assert jwt not in wynik
+    assert "<token>" in wynik
+
+
+def test_every_line_is_stamped_to_the_second() -> None:
+    """Znacznik czasu i jego **rozdzielczość** — obie rzeczy były do 2026-09-24 bez obserwatora.
+
+    Zmierzone: zamiana `local_hhmmss` na `local_hhmm` przechodziła całą suitę. Przy rytmie około
+    30 s dwie kolejne oznaki życia bywają wtedy tym samym napisem, czyli przerwa, którą ten
+    wiersz ma pokazywać, robi się niewidoczna — a to jest jedyny powód, dla którego `clock.py`
+    ma dwie funkcje zamiast jednej.
+
+    Asercja idzie po **kształcie**, nie po wartości: godzina zależy od strefy maszyny, a pytanie
+    brzmi „czy są sekundy", nie „która jest godzina".
+    """
+    zdarzenia, bufor = linie_for()
+
+    zdarzenia.on_page(0, 25, 150)
+
+    assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] \S", _wiersze(bufor)[0])
+
+
+def test_a_message_is_stamped_too_and_that_is_the_one_that_matters() -> None:
+    """Zapowiedź postoju bez godziny nie odróżnia blokady limitera od uśpionego laptopa.
+
+    To jest ta sama obserwacja, przez którą `_LogEvents` zapisuje godzinę wznowienia, a nie
+    tylko liczbę sekund (2026-09-08). `test_both_receivers_word_a_wait_identically` porównuje
+    przez `in`, więc brak przedrostka przechodził tam niezauważony.
+    """
+    zdarzenia, bufor = linie_for()
+
+    zdarzenia.on_wait(600.0, REASON_COOLDOWN, RESUME_AT)
+
+    assert re.match(r"^\[\d{2}:\d{2}:\d{2}\] limit API", _wiersze(bufor)[0])
+
+
+def test_a_second_action_in_one_process_starts_a_fresh_stage() -> None:
+    """`close()` zapomina etap — z tego samego powodu, dla którego pasek zapomina `TaskID`.
+
+    Kreator wykonuje kilka akcji w jednym procesie. Bez tego druga kontynuowała licznik wierszy
+    pierwszej i **nie wypisywała wiersza przejścia**, bo etap „już był" — czyli gubiła
+    dokładnie tę informację, na którą wołający czeka najbardziej (przegląd kodu 2026-09-24).
+    """
+    zdarzenia, bufor = linie_for()
+    zdarzenia.on_page(0, 25, 150)
+    zdarzenia.close()
+
+    zdarzenia.on_page(0, 25, 150)
+
+    wiersze = _wiersze(bufor)
+    assert len(wiersze) == 2
+    assert all("Lista firm 25/150" in wiersz for wiersz in wiersze)
+
+
+def test_the_fallback_console_of_both_receivers_is_on_stderr() -> None:
+    """Gałąź zapasowa nie ma prawa łamać niezmiennika, którego broni gałąź główna.
+
+    `cli` zawsze podaje konsolę, więc te dwa `or make_console(...)` są dziś nieużywane —
+    i właśnie dlatego są warte testu: pierwsze wywołanie bez argumentu to jedyna okazja, żeby
+    znak trafił na stdout w środku cudzego dokumentu JSON, a `console.print` reguła 15 z
+    rozmysłu pomija (to sprawa reguły 10, a ta o strumieniach nie orzeka).
+    """
+    assert ConsoleEvents().console.stderr is True
+    assert LineEvents().console.stderr is True

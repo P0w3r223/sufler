@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 from . import __version__
 from .apiprofile import ApiProfile, load_profile
-from .assistant import Assistant
+from .assistant import Assistant, Asystent, BrakAsystenta
 from .batching import Batch, BatchPlan, refine
 from .client import CeidgClient, Cursor
 from .clock import Clock, SystemClock, local_hhmm, utc_iso
@@ -95,8 +95,16 @@ class Deps:
     # Powód nieobecności asystenta, gdy go nie ma. Bez tego `None` gubi informację, a komunikat
     # dla operatora musiał **zgadywać** przyczynę — przebieg B6 pokazał, że przy braku słownika
     # PKD mówił „brak klucza API albo pakietu anthropic", czyli wskazywał dwie rzeczy, które
-    # akurat były na miejscu.
-    assistant_reason: str | None = None
+    # akurat były na miejscu. Kod zamiast napisu od 2026-09-23 (ADR-0025): zdanie należy do
+    # `texts`, a tutaj ma stać fakt.
+    #
+    # Trzy stany, nie dwa, i trzeci jest tu od `asystent=False`: asystent obecny (`brak is
+    # None`), asystent proszony i nieudany (`brak` mówi dlaczego), asystent **nieproszony**
+    # (oba `None`). Ostatni nie jest awarią — to polecenie, które nie ma jak go użyć, więc
+    # pytanie „dlaczego go nie ma" nie padło. Odróżnia je wywołujący, bo tylko on wie, czy
+    # prosił; `collect_from_description` traktuje go jak błąd programu, i słusznie, bo
+    # `pobierz --opis` prosi zawsze.
+    assistant_brak: BrakAsystenta | None = None
     # Tablica przejścia PKD 2007 → 2025 (ADR-0012). Opcjonalna z tego samego powodu co asystent:
     # brak pliku ma wyłączyć rozszerzanie, a nie całe narzędzie. Nieobecność znaczy „pytaj i
     # pobieraj jak dotąd", czyli dzisiejsze zachowanie.
@@ -299,8 +307,29 @@ def build_deps(
     clock: Clock | None = None,
     http: httpx.Client | None = None,
     online: bool = True,
+    asystent: Asystent = "nieproszony",
 ) -> Deps:
-    """Składa zależności; `online=False` nie tworzy klienta (eksport, listowanie runów)."""
+    """Składa zależności; `online=False` nie tworzy klienta (eksport, listowanie runów).
+
+    `asystent="nieproszony"` domyślnie, bo asystenta buduje się **tylko tam, gdzie da się go
+    użyć** (ADR-0025, decyzja 2). Decyduje wywołujący, bo tylko on wie, czy jego ścieżka
+    dochodzi do `flow.collect_from_description`: dziś są to dwa polecenia z sześciu, które
+    budowały go do 2026-09-23. Cztery pozostałe płaciły za import SDK, wczytanie 728-pozycyjnego
+    słownika, wyrenderowanie promptu i zbudowanie klienta HTTP z własnym kontekstem SSL —
+    **955 ms zmierzone** wobec 479 ms samego startu, z czego 806 ms to `import anthropic`. Ale
+    ważniejsze jest to, czego liczba nie pokazuje: uwierzytelniona droga do drugiego hosta
+    i `_wycisz_sdk()` grzebiące w `os.environ` polecenia, które modelu nie zapyta.
+
+    Domyślna istnieje, a parametr nie jest wymagany, bo `build_deps` ma 82 wywołania: pominięcie
+    ma kosztować zero, a nie po cichu otwierać tamtą drogę. Test tabelaryczny pilnuje, które
+    polecenia proszą — razem ze sprawdzeniem kompletności, bo tabela bez niego nie widzi
+    polecenia, które regułę ominęło.
+
+    **Jeden `Asystent`, a nie dwa booleany** (przegląd części A, 2026-09-23). Para
+    `asystent=` + `wylaczony=` opisywała trzy stany czterema kombinacjami, a czwarta — „buduj
+    i jednocześnie wyłączony" — nie znaczyła nic i nikt jej nie bronił. Trzy stany są trzy,
+    bo `nieproszony` i `wylaczony` różnią się **ekranem**: pierwszy milczy, drugi pokazuje
+    decyzję operatora."""
     clock = clock or SystemClock()
     events = events or NullEvents()
     profile = load_profile(settings.environment, settings.profile_path)
@@ -381,34 +410,63 @@ def build_deps(
         )
         deps.limiter = limiter
         deps.client = client
-        deps.assistant, deps.assistant_reason = _build_assistant(settings, events)
+        if asystent == "buduj":
+            deps.assistant, deps.assistant_brak = _build_assistant(settings, events)
+    if asystent == "wylaczony":
+        # **Poza** gałęzią `online`, w odróżnieniu od budowy. „Operator wyłączył asystenta"
+        # jest faktem o jego decyzji, a nie o tym, czy powstał klient HTTP — a pierwszy ekran
+        # ma pokazać decyzję. Przy `online=False` ten znacznik przepadał bez śladu i §A wracało
+        # do opisywania magazynu haseł; dziś żadne polecenie nie łączy tych dwóch argumentów,
+        # więc jest to domknięcie stanu, a nie naprawa usterki (plan części B, przeniesione
+        # z przeglądu części A).
+        deps.assistant_brak = BrakAsystenta("WYLACZONY_FLAGA")
     return deps
 
 
-def _build_assistant(settings: Settings, events: Events) -> tuple[Assistant | None, str | None]:
+def _build_assistant(
+    settings: Settings, events: Events
+) -> tuple[Assistant | None, BrakAsystenta | None]:
     """Asystent, gdy da się go zbudować — i **powód**, gdy się nie da.
 
     Instrukcja wymaga, żeby kreator i CLI działały bez asystenta, więc żaden z powodów nie jest
     błędem: wszystkie kończą się `None` i pytaniami po kolei. Ale powód wraca razem z `None`,
     bo bez niego komunikat dla operatora musiał zgadywać — a zgadywał źle (przebieg B6).
 
+    Brak pakietu rozstrzyga `except AssistantUnavailableError`, i **to jest gałąź żywa** — do
+    2026-09-23 ten docstring twierdził odwrotnie, aż przegląd kodu to zmierzył. `caller.py` nie
+    importuje `anthropic` na poziomie modułu (import siedzi pod `TYPE_CHECKING`), więc
+    `from .assistant.caller import …` udaje się **także bez pakietu**; `ImportError` pada dopiero
+    w `AnthropicCaller.__init__` i wychodzi stamtąd jako `AssistantUnavailableError`. Zmierzone
+    przy zablokowanym `import anthropic`: powód `BRAK_PAKIETU`, szczegół ze zdaniem o extrze
+    `asystent` — czyli z `__init__`, nie z importu.
+
+    Gałąź `except ImportError` jest więc tą **nieosiągalną**: żeby padła, musiałby zniknąć sam
+    `ceidg_tool.assistant.caller`. Zostaje jako zabezpieczenie na wypadek, gdyby `caller` kiedyś
+    zaczął importować SDK na poziomie modułu — wtedy odzyskuje sens bez dalszych zmian.
+
+    Kolejność `except` jest znacząca — podtyp przed nadtypem. Bez gałęzi na
+    `AssistantUnavailableError` brak pakietu dostałby zdanie o **brakującym słowniku**, bo ten
+    wyjątek dziedziczy po `ConfigError`; to jest defekt B6 pod nową postacią i ma własny test.
+
     Import konkretnego wywołującego siedzi tutaj, żeby `pipeline` dał się zaimportować na
     maszynie bez `anthropic`."""
     if not settings.anthropic_key:
-        return None, None  # brak klucza to stan normalny; zdanie o nim ma `texts`
+        return None, BrakAsystenta("BRAK_KLUCZA")
     try:
-        from .assistant.caller import AnthropicCaller
-        from .assistant.pkd import load_pkd
-    except ImportError:
-        return None, None
+        from .assistant.caller import AnthropicCaller, AssistantUnavailableError
+        from .pkddict import load_pkd
+    except ImportError as exc:  # pragma: no cover — gałąź nieosiągalna, patrz docstring
+        return None, BrakAsystenta("BRAK_PAKIETU", str(exc))
     try:
         return AnthropicCaller(
             api_key=settings.anthropic_key, slownik=load_pkd(), events=events
         ), None
+    except AssistantUnavailableError as exc:
+        return None, BrakAsystenta("BRAK_PAKIETU", str(exc))
     except CeidgError as exc:
         # Najczęściej brak słownika PKD, i wtedy `load_pkd` mówi wprost, jak go zbudować.
         # Ta treść jest cenniejsza niż nasza domyślna, więc idzie dalej zamiast zniknąć.
-        return None, str(exc)
+        return None, BrakAsystenta("BRAK_SLOWNIKA", str(exc))
 
 
 def _client(deps: Deps) -> CeidgClient:

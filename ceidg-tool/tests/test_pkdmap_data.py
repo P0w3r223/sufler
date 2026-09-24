@@ -24,8 +24,8 @@ from typing import Any
 import pytest
 import yaml
 
-from ceidg_tool.assistant.pkd import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.criteria import normalize_pkd
+from ceidg_tool.pkddict import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.pkdmap import (
     DEFAULT_PKD_MAP_PATH,
     USUNIECIE_NIE_WCZESNIEJ_NIZ,

@@ -18,7 +18,11 @@ class ConsoleView:
     """Widok konsolowy: bloki z `texts` na ekran, komunikaty przez filtr maskujący token."""
 
     def __init__(self, console: Console | None = None) -> None:
-        self.console = console or make_console()
+        # `stderr=True` także w zapasowej: niezmiennikiem programu jest „wszystko, co
+        # czyta człowiek, idzie na stderr" (ADR-0024, decyzja 2), więc gałąź awaryjna nie może
+        # go łamać. Dziś `cli` zawsze podaje konsolę, ale domyślna, która trafia gdzie indziej
+        # niż reszta, jest defektem czekającym na pierwsze wywołanie bez argumentu.
+        self.console = console or make_console(stderr=True)
 
     def block(self, block: Block) -> None:
         title = safe_or_none(block.title)

@@ -1,7 +1,8 @@
 # ADR-0020: The PKD 2007 layer expires on a measured condition, not on a date in a comment
 
 Date: 2026-09-09
-Status: **proposed** (diagnosis only; no code changed)
+Status: **accepted 2026-09-23** — **step A only is built** (2026-09-13); options B and C stay open.
+        See "What was actually built" below before treating any part of this as done.
 Author: P0w3r223
 Related to: ADR-0012 (PKD vintage coverage — this ADR corrects its expiry date and its stated
 removal cost), docs/audit-architecture-2026-09-09.md (F-A6, F-O4, §5.1), CLAUDE.md
@@ -129,6 +130,29 @@ and the measured gap is still 8.6 %. And guessing what art. 12 ust. 2's "wykreś
 the whole entrepreneur entry, or only the activity subject. The statute says "wpis" while the
 parallel KRS provision deliberately says "przedmiot działalności", which argues for the broader
 reading; the consequence is severe enough that it should be asked of the operator, not inferred.
+
+## What was actually built (2026-09-13, committed 2026-09-23)
+
+**Step A, and nothing else.** `pkdmap.KONIEC_PRZEJSCIA` stays as the legal fact about the
+classification and is joined — not replaced — by `pkdmap.USUNIECIE_NIE_WCZESNIEJ_NIZ`, the floor
+under the removal. `scripts/build_pkd_transition.py` writes the condition into the generated file's
+header, and `ceidg_tool/data/pkd2007_2025.yaml` was **rebuilt from the GUS source** rather than
+edited, so its 728 entries are byte-identical and the SHA-256 in the header still describes them.
+Two tests carry the new shape: `USUNIECIE_NIE_WCZESNIEJ_NIZ > KONIEC_PRZEJSCIA` in
+`test_pkdmap.py`, and the header's condition plus `Dz.U. 2025 poz. 1792` in `test_pkdmap_data.py`.
+
+**One refinement against this ADR's own wording, and it is deliberate.** The Decision section says
+"correct the date to 2027-01-31". The constant is `2027-02-01`, because art. 12 ust. 1 gives the
+register until *"dnia 31 stycznia 2027 r."* to reclassify — so 31 January is the last day on which
+the old vintage may still legitimately be arriving, and the earliest honest floor for deleting the
+table is the day after. A reader finding the two dates apart should read this paragraph, not assume
+the ADR was ignored.
+
+**Still open, and this is what "accepted" does not cover.** Option B's observer over the vintage
+share does not exist — the 8.6 % of 2026-09-07 remains a measurement in a document, not something
+the program watches. Option C's removal-as-migration, including the `canonical_json` carve-out, is
+untouched. So is the re-measurement named in Consequences below, which needs the owner's consent and
+two production requests.
 
 ## Consequences
 

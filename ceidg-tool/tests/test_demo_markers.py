@@ -1,15 +1,20 @@
-"""Pięć znaczników trybu pokazu (ADR-0014) — bo bez nich ta decyzja jest najgorszą z czterech.
+"""Znaczniki trybu pokazu (ADR-0014) — bo bez nich ta decyzja jest najgorszą z czterech.
 
 Demo jest własnością **produktu**, a nie osobnym programem: `ceidg-tool pobierz --demo` idzie
 tą samą ścieżką co praca. Cena jest jedna i ADR nazywa ją wprost — istnieje tryb, w który
 operator może wejść nie zauważywszy, a skoroszyt z pokazu jest wtedy nie do odróżnienia od
-produkcyjnego. Odpowiedzią jest pięć znaczników, obowiązkowych łącznie:
+produkcyjnego. Odpowiedzią są znaczniki, obowiązkowe łącznie:
 
 1. pierwszy ekran,
 2. wiersz w arkuszu `Metadane`,
 3. prefiks `DEMO_` w nazwie pliku,
 4. osobny katalog danych,
-5. odmowa połączenia `--demo` z produkcją.
+5. odmowa połączenia `--demo` z produkcją,
+6. pole `demo` w kopercie wyniku (ADR-0024; szósty, bo kanałów przybyło).
+
+Pięć pierwszych opisuje ekran, plik i katalog — czyli kanały, które ogląda **człowiek**.
+ADR-0022 musiał dołożyć szósty raz już wcześniej (drukowane polecenie), a koperta jest tym
+samym brakiem na kanale, gdzie boli najbardziej: nic za agentem nie czyta pierwszego ekranu.
 
 Znacznik numer dwa dostaje tu najostrzejszy test i sprawdzany jest na **prawdziwym pliku**,
 bo jako jedyny podróżuje razem ze skoroszytem: ekran widzi ten, kto siedział przy pokazie,
@@ -40,6 +45,7 @@ from ceidg_tool.demo import TOKEN_DEMO
 from ceidg_tool.demo.korpus import zbuduj_korpus
 from ceidg_tool.pipeline import Deps, build_deps, output_name
 from ceidg_tool.ui import texts
+from ceidg_tool.ui.wynik import Wynik
 from tests.conftest import FakeClock
 from tests.support import FakeApi, criteria, load_fixture
 
@@ -623,3 +629,44 @@ def test_lista_polecen_z_demo_zgadza_sie_z_tym_co_cli_naprawde_przyjmuje() -> No
     }
 
     assert z_flaga == set(POLECENIA_Z_DEMO)
+
+
+# --------------------------------------------------- znacznik 6: pole w kopercie (ADR-0024)
+
+
+def test_koperta_zawsze_niesie_pole_demo() -> None:
+    """Zawsze, nie „gdy dotyczy" — i to jest różnica między znacznikiem a udogodnieniem.
+
+    `srodowisko` wypada z koperty polecenia, które go nie ma (`szukaj-pkd`), i tak ma być:
+    wymyślone „test" byłoby zdaniem nieprawdziwym. `demo` takiego prawa nie dostaje, bo brak
+    znacznika czyta się jak jego zaprzeczenie — agent, który sprawdza `koperta["demo"]`,
+    na kopercie bez tego klucza wywróciłby się albo, gorzej, przyjąłby domyślne `False`.
+
+    Test **o wartości**, nie o poleceniach: pętla po ich nazwach stała tu do 2026-09-24 i była
+    ozdobą, bo `Wynik(polecenie=…)` buduje się wprost, więc nazwa niczego nie wybierała —
+    trzykrotnie sprawdzała ten sam fakt o dataklasie. Tego, że polecenia naprawdę wystawiają
+    znacznik, pilnuje `test_the_demo_marker_is_on_every_envelope_a_demo_run_writes`
+    w `tests/test_wynik_json.py`, uruchamiając pięć z nich.
+
+    ADR-0014 mówi, że znaczniki są obowiązkowe **łącznie**; ten test pilnuje tego dla kanału,
+    który jako jedyny nie ma człowieka po drugiej stronie.
+    """
+    assert "demo" in Wynik(polecenie="pobierz", status="ok").koperta()
+
+
+def test_koperta_pokazu_mowi_true_a_nie_napis() -> None:
+    """Wartość logiczna, nie „true"/„tak" — rozgałęzienie ma działać bez parsowania napisu."""
+    koperta = Wynik(polecenie="pobierz", status="ok", demo=True).koperta()
+
+    assert koperta["demo"] is True
+
+
+def test_koperta_pracy_mowi_false_a_nie_milczy() -> None:
+    """Brak pola i `false` znaczyłyby dla wołającego to samo tylko przypadkiem.
+
+    Ten test i poprzedni razem są tym, co czyni znacznik odróżnialnym: pokaz mówi `true`,
+    praca mówi `false`, i żadne z nich nie jest milczeniem.
+    """
+    koperta = Wynik(polecenie="pobierz", status="ok", srodowisko="prod").koperta()
+
+    assert koperta["demo"] is False

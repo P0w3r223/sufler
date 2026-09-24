@@ -13,14 +13,20 @@ from typing import cast
 import pytest
 import yaml
 
-from ceidg_tool.assistant import Assistant, AssistantResult, OgraniczenieKod
-from ceidg_tool.assistant.pkd import PKD_VINTAGE, load_pkd, lookup, validate_codes
+from ceidg_tool.assistant import (
+    Assistant,
+    AssistantResult,
+    BrakAsystenta,
+    OgraniczenieKod,
+)
+from ceidg_tool.assistant.pkd import lookup, validate_codes
 from ceidg_tool.assistant.prompt import build_question, build_system
 from ceidg_tool.assistant.schema import AssistantAnswer, json_schema
 from ceidg_tool.assistant.translate import to_criteria, to_result
 from ceidg_tool.criteria import Criteria
 from ceidg_tool.errors import ConfigError
 from ceidg_tool.pipeline import Deps
+from ceidg_tool.pkddict import PKD_VINTAGE, load_pkd
 
 # Słownik zastępczy: pięć kodów wystarczy do każdej własności, której pilnują te testy, a pełny
 # plik ma własny zestaw sprawdzeń (`test_assistant_pkd_data.py`), bo tam pytanie brzmi inaczej —
@@ -471,8 +477,15 @@ def wynik_dla(**pola: object) -> AssistantResult:
     return to_result(answer, SLOWNIK)
 
 
-def flow_deps(assistant: Assistant | None) -> Deps:
+def flow_deps(assistant: Assistant | None, brak: BrakAsystenta | None = None) -> Deps:
     """Minimalne `Deps` — przepływ opisu nie dotyka ani sieci, ani bazy.
+
+    Atrapa **trzyma niezmiennik `Deps`** z konstrukcji: `assistant is None` znaczy
+    `assistant_brak is not None` i odwrotnie. Nie jest to uprzejmość wobec typów, tylko ta sama
+    lekcja co `tests.support.registry_id` — atrapa, którą da się ustawić w stan nieosiągalny dla
+    prawdziwego obiektu, testuje program, którego nie ma. Bez tego `flow_deps(None)` opisywałby
+    `Deps` zbudowane z pominięciem `build_deps`, więc sprawdzałby ścieżkę awaryjną zamiast
+    zapowiedzianej w nazwie odmowy z powodem.
 
     `cast`, bo budowanie prawdziwego `Deps` wymagałoby pliku bazy i profilu. Ograniczenie tego,
     czego atrapa dotyka, jest tu asercją samą w sobie: gdyby przepływ zaczął czytać coś jeszcze,
@@ -484,9 +497,15 @@ def flow_deps(assistant: Assistant | None) -> Deps:
 
     from ceidg_tool.progress import NullEvents
 
+    if assistant is None and brak is None:
+        brak = BrakAsystenta("BRAK_KLUCZA")
     return cast(
         "Deps",
-        SimpleNamespace(assistant=assistant, assistant_reason=None, events=NullEvents()),
+        SimpleNamespace(
+            assistant=assistant,
+            assistant_brak=None if assistant is not None else brak,
+            events=NullEvents(),
+        ),
     )
 
 
@@ -631,14 +650,12 @@ def test_an_unavailable_assistant_reports_the_real_reason() -> None:
     czego brakuje i jakim poleceniem to zbudować; to zdanie jest cenniejsze niż nasze domyślne
     i nie ma powodu, żeby ginęło w `_build_assistant`.
     """
-    from types import SimpleNamespace
-
     from ceidg_tool.ui.flow import collect_from_description
     from ceidg_tool.ui.prompts import ScriptedPrompter
     from tests.support import RecordingView
 
     powod = "Brak słownika PKD 2025 (…). Zbuduj go: python scripts/build_pkd.py <plik>"
-    deps = cast("Deps", SimpleNamespace(assistant=None, assistant_reason=powod))
+    deps = flow_deps(None, BrakAsystenta("BRAK_SLOWNIKA", powod))
 
     with pytest.raises(ConfigError, match="build_pkd"):
         collect_from_description(deps, ScriptedPrompter({}), RecordingView(), opis="cokolwiek")
@@ -679,7 +696,7 @@ def test_the_progress_bar_is_closed_before_the_interpretation_is_printed() -> No
     asystent = ScriptedAssistant([wynik_dla(miasto=["Białystok"], pkd=["4100A"])])
     deps = cast(
         "Deps",
-        SimpleNamespace(assistant=asystent, assistant_reason=None, events=SledzoneZdarzenia()),
+        SimpleNamespace(assistant=asystent, assistant_brak=None, events=SledzoneZdarzenia()),
     )
 
     collect_from_description(
@@ -718,3 +735,151 @@ def test_kazde_pole_schematu_dociera_do_kryteriow() -> None:
     assert kryteria.nip_sc == ("3563457932",) and kryteria.regon_sc == ("618155359",)
     # Spółka nie może wyciec do filtru po samym przedsiębiorcy — to byłoby inne pytanie.
     assert kryteria.nip == () and kryteria.regon == ()
+
+
+def test_every_reason_for_a_missing_assistant_has_a_sentence() -> None:
+    """Zamknięty zbiór kodów i zamknięty zbiór zdań muszą się pokrywać.
+
+    Mypy pilnuje jednej strony — kod zwrócony z `_build_assistant`, którego nie ma w słowniku,
+    wywraca się na typie. Ten test pilnuje drugiej: zdania osieroconego, po kodzie, którego już
+    nikt nie produkuje. Razem zamykają parę, tak samo jak przy `RAPORT_NIEDOSTEPNY`.
+    """
+    from typing import get_args
+
+    from ceidg_tool.assistant import PowodBrakuAsystenta
+    from ceidg_tool.ui import texts
+
+    assert set(texts.ASYSTENT_NIEOBECNY) == set(get_args(PowodBrakuAsystenta))
+
+
+def test_a_missing_package_is_not_described_as_a_missing_dictionary() -> None:
+    """Dwa powody, dwa zdania — bo `AssistantUnavailableError` dziedziczy po `ConfigError`.
+
+    Pojedyncza gałąź `except CeidgError` w `_build_assistant` złapałaby brak pakietu razem
+    z brakiem słownika i opisała pierwszy zdaniem o drugim. To jest defekt B6 pod nową
+    postacią: operator szuka nie tam, gdzie trzeba, bo program nazwał rzecz, która działa.
+    """
+    from ceidg_tool.ui import texts
+
+    pakiet = texts.assistant_unavailable(BrakAsystenta("BRAK_PAKIETU"))
+    slownik = texts.assistant_unavailable(BrakAsystenta("BRAK_SLOWNIKA"))
+
+    assert "anthropic" in pakiet and "słownika PKD" not in pakiet
+    assert "słownika PKD" in slownik and "anthropic" not in slownik
+
+
+def test_the_detail_is_appended_to_our_sentence_not_swapped_for_it() -> None:
+    """Szczegół od `load_pkd` **i** zdanie o tym, że kreator działa bez asystenta.
+
+    Wybieranie jednego albo drugiego gubiło za każdym razem coś innego: samo nasze zdanie gubi
+    polecenie budujące słownik (B6), a sam szczegół nie mówi operatorowi, że ma czym zastąpić
+    asystenta. Oba są potrzebne, więc oba mają tu być.
+    """
+    from ceidg_tool.ui import texts
+
+    zdanie = texts.assistant_unavailable(
+        BrakAsystenta("BRAK_SLOWNIKA", "Zbuduj go: python scripts/build_pkd.py <plik>")
+    )
+
+    assert "build_pkd.py" in zdanie
+    assert "pytaniami po kolei" in zdanie
+
+
+def test_the_real_builder_keeps_the_dictionary_own_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Koniec do końca przez prawdziwe `_build_assistant`, nie przez atrapę `Deps`.
+
+    Szczegół można zgubić w **dwóch** miejscach — u producenta i u budowniczego zdania — więc
+    jedno sprawdzenie nie wystarcza. Ten test bierze drugie: prawdziwy `_build_assistant` przy
+    odłożonym słowniku PKD. Bez niego spłaszczenie w `pipeline` przeszłoby przy zielonych
+    testach na `texts`.
+    """
+    from types import SimpleNamespace
+
+    import ceidg_tool.pkddict as modul_pkd
+    from ceidg_tool.config import Settings
+    from ceidg_tool.pipeline import _build_assistant
+    from ceidg_tool.progress import NullEvents
+
+    pytest.importorskip("anthropic")
+    monkeypatch.setattr(modul_pkd, "DEFAULT_PKD_PATH", tmp_path / "nie-ma-mnie.yaml")
+
+    asystent, brak = _build_assistant(
+        cast(Settings, SimpleNamespace(anthropic_key="sk-ant-" + "x" * 20)), NullEvents()
+    )
+
+    assert asystent is None
+    assert brak is not None and brak.powod == "BRAK_SLOWNIKA"
+    assert brak.szczegol is not None and "build_pkd" in brak.szczegol
+
+
+def test_the_real_builder_tells_a_missing_package_from_a_missing_dictionary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Producent, nie tylko zdania — bo docstring obok obiecywał producenta, a go nie dotykał.
+
+    `test_a_missing_package_is_not_described_as_a_missing_dictionary` sprawdza, że dwa zdania
+    w `texts` są różne, i to jest prawda o `texts`. Przegląd 2026-09-23 zmierzył, że nie jest
+    to prawda o `_build_assistant`: zamiana `except ImportError` na zwrot `BRAK_SLOWNIKA`
+    zostawiała całą suitę zieloną, czyli B6 wracał dokładnie tą drogą, którą ADR-0025 nazwał.
+
+    `sys.modules[...] = None` jest udokumentowanym sposobem na wymuszenie `ImportError` przy
+    imporcie — to ta sama sytuacja, co maszyna bez extry `asystent`.
+    """
+    import sys
+    from types import SimpleNamespace
+
+    from ceidg_tool.config import Settings
+    from ceidg_tool.pipeline import _build_assistant
+    from ceidg_tool.progress import NullEvents
+
+    monkeypatch.setitem(sys.modules, "ceidg_tool.assistant.caller", None)
+    ustawienia = cast(Settings, SimpleNamespace(anthropic_key="sk-ant-" + "x" * 20))
+
+    asystent, brak = _build_assistant(ustawienia, NullEvents())
+
+    assert asystent is None
+    assert brak is not None and brak.powod == "BRAK_PAKIETU"
+
+
+def test_the_real_builder_reports_a_missing_key_rather_than_nothing() -> None:
+    """Najczęstszy powód ma producenta pod testem — bo atrapa `flow_deps` go zasłaniała.
+
+    `flow_deps` sama ustawia `BRAK_KLUCZA`, żeby trzymać niezmiennik `Deps`; słusznie, ale
+    przez to powrót `_build_assistant` do `return None, None` przy braku klucza nie zapalał
+    niczego, choć łamie ten niezmiennik i zamienia zdanie o kluczu na komunikat o błędzie
+    programu (przegląd 2026-09-23, mutacja M15).
+    """
+    from types import SimpleNamespace
+
+    from ceidg_tool.config import Settings
+    from ceidg_tool.pipeline import _build_assistant
+    from ceidg_tool.progress import NullEvents
+
+    asystent, brak = _build_assistant(
+        cast(Settings, SimpleNamespace(anthropic_key=None)), NullEvents()
+    )
+
+    assert asystent is None
+    assert brak is not None and brak.powod == "BRAK_KLUCZA"
+
+
+def test_no_user_facing_sentence_points_at_the_withdrawn_query_file() -> None:
+    """Klasa usterki, nie jeden jej egzemplarz (ADR-0022).
+
+    Plik zapytania zniknął 2026-09-10, a zdanie odsyłające do niego przeżyło w
+    `ASSISTANT_NEEDS_A_HUMAN` do 2026-09-23 — bo odsyłacz do nieistniejącej funkcji jest dla
+    każdej bramki tak samo zielony jak każdy inny napis. Skan po stałych `texts` kosztuje jeden
+    test i pokrywa też nawroty, których jeszcze nie było.
+    """
+    from ceidg_tool.ui import texts
+
+    zdania = {
+        nazwa: wartosc
+        for nazwa, wartosc in vars(texts).items()
+        if isinstance(wartosc, str) and not nazwa.startswith("__")
+    }
+    winne = {n: w for n, w in zdania.items() if "pliku zapytania" in w or "plik zapytania" in w}
+
+    assert winne == {}, f"zdania odsyłają do wycofanego pliku zapytania: {sorted(winne)}"

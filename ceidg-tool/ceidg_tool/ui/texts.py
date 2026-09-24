@@ -14,11 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal
 
+from ..assistant import BrakAsystenta, PowodBrakuAsystenta
 from ..batching import GRANULARITY_LABEL, Batch, BatchPlan
 from ..config import DEMO_OSTRZEZENIE, TOKEN_SERVICE_URL, Settings
 from ..criteria import STATUSY, WOJEWODZTWA, Criteria
 from ..estimating import Estimate
 from ..normalizer import NormalizedRecord
+from ..pkdmap import Poprzednik
+from ..pkdszukaj import WynikSzukania
 from ..records import Report
 
 PROGRAM_PURPOSE = "pobiera dane o jednoosobowych działalnościach z API CEIDG do Excela"
@@ -102,7 +105,14 @@ def format_size(path: Path) -> str:
 # ----------------------------------------------------------------------------- ekran startowy
 
 
-def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool = False) -> Block:
+def first_screen(
+    settings: Settings,
+    *,
+    now: datetime,
+    version: str,
+    demo: bool = False,
+    bez_asystenta: bool = False,
+) -> Block:
     """Pierwszy ekran wg uzupelnienie-01.md §A: co robi, dokąd wysyła, gdzie pracuje, jaki token.
 
     W trybie demo ekran mówi o tym **pierwszym** wierszem i w tytule. To znacznik numer jeden
@@ -120,7 +130,10 @@ def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool 
     rows: tuple[tuple[str, str], ...] = (
         ("co robi", PROGRAM_PURPOSE),
         ("dokąd wysyłam rekordy", zrodlo),
-        ("dokąd wysyła asystent", _assistant_destination(settings, demo=demo)),
+        (
+            "dokąd wysyła asystent",
+            _assistant_destination(settings, demo=demo, wylaczony=bez_asystenta),
+        ),
         ("środowisko", "POKAZ (bez rejestru)" if demo else environment),
         ("token", f"{settings.token_info.validity_text(now)} (źródło: {settings.token_source})"),
         ("dane i wyniki", str(settings.data_dir)),
@@ -134,7 +147,9 @@ def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool 
     return Block(title=tytul, rows=rows, notes=tuple(notes))
 
 
-def _assistant_destination(settings: Settings, *, demo: bool = False) -> str:
+def _assistant_destination(
+    settings: Settings, *, demo: bool = False, wylaczony: bool = False
+) -> str:
     """Wiersz §A o asystencie — rozdzielony od wiersza o rekordach, bo cele są różne.
 
     Do 2026-09-07 pierwszy ekran mówił „wyłącznie do API CEIDG". To jest kryterium odbioru §A
@@ -150,6 +165,11 @@ def _assistant_destination(settings: Settings, *, demo: bool = False) -> str:
     zobaczyć asystenta w pokazie — czyli w jedynym miejscu, gdzie wolno go poznawać bez
     prawdziwych danych osobowych.
     """
+    if wylaczony:
+        # Czwarty stan, od 2026-09-23 (ADR-0025). Stoi **przed** sprawdzeniem klucza, bo flaga
+        # rozstrzyga niezależnie od tego, czy klucz jest: operator, który ją podał, ma zobaczyć
+        # swoją decyzję, a nie stan magazynu haseł.
+        return "nic — asystent wyłączony flagą --bez-asystenta"
     if settings.anthropic_key is not None:
         return "treść Twojego pytania i słownik PKD do api.anthropic.com; pobrane rekordy — nigdy"
     if demo:
@@ -902,6 +922,88 @@ def report_offer(report: Report) -> Block:
     )
 
 
+# ----------------------------------------------------------------------- szukanie kodów PKD
+
+SZUKAJ_PKD_PO_NAZWACH: Final = (
+    "Szukano w nazwach, nie w znaczeniach — „salon” nie znajdzie fryzjerstwa, jeśli nie ma go "
+    "w nazwie urzędowej. Pusty wynik nie dowodzi, że branża nie ma kodu."
+)
+SZUKAJ_PKD_ROCZNIK: Final = (
+    "Kod bywa ważny, a zapytanie i tak niepełne: każdy wpis w rejestrze niesie jeden rocznik, "
+    "a okres przejściowy trwa do 31.12.2026. Dołóż stare kody przełącznikiem --pkd-2007."
+)
+
+
+def nieznane_kody_pkd(kody: tuple[str, ...]) -> str:
+    """Zdanie o kodach spoza obu roczników — z odesłaniem do polecenia, które je znajdzie.
+
+    Nie odmowa: nasza tablica 2007 jest kluczem przejścia, nie pełną listą, więc „nie ma
+    u nas" to słabsze twierdzenie niż „nie istnieje" (ADR-0026, decyzja 4). Zdanie mówi
+    dokładnie tyle, ile wiemy, i nazywa drogę do sprawdzenia reszty.
+    """
+    lista = ", ".join(kody)
+    ile = "Kodu" if len(kody) == 1 else "Kodów"
+    return (
+        f"{ile} {lista} nie ma ani w PKD 2025, ani w tablicy przejścia z 2007. Pobieranie "
+        "ruszy mimo to, bo rejestr zna kody, których my nie mamy — ale jeśli wynik będzie "
+        "pusty, najpewniej to jest przyczyna. Sprawdź: `ceidg-tool szukaj-pkd <fraza>`."
+    )
+
+
+SZUKAJ_PKD_PUSTO_FRAZA: Final = "Nic nie pasuje. Spróbuj krótszego albo innego słowa."
+SZUKAJ_PKD_PUSTO_KOD: Final = (
+    "Tego kodu nie ma ani w PKD 2025, ani w tablicy przejścia z 2007. Sprawdź zapis albo "
+    "poszukaj po nazwie branży."
+)
+
+
+def _wiersze_poprzednika(p: Poprzednik) -> list[tuple[str, str]]:
+    """Jeden poprzednik z 2007 i to, co dołoży — bo to jest powód istnienia tego polecenia.
+
+    Niejednoznaczność ma dwie postacie i obie muszą być czytelne osobno: `rowniez` to inne
+    branże, do których ten sam stary kod prowadzi, a `dzis` to jego własne dzisiejsze znaczenie,
+    gdy nadal istnieje w PKD 2025. Zlanie ich w jedną listę pokazywało ten sam kod dwa razy.
+    """
+    wiersze = [(f"PKD 2007: {p.kod}", p.nazwa)]
+    for kod, nazwa in p.rowniez:
+        wiersze.append(
+            ("", f"└ prowadzi także do {kod} — {nazwa}, więc --pkd-2007 dołoży i tę branżę")
+        )
+    if p.dzis:
+        wiersze.append(("", f"└ ten kod istnieje też w PKD 2025 i znaczy dziś: {p.dzis}"))
+    return wiersze
+
+
+def pkd_search(wynik: WynikSzukania) -> Block:
+    """Wynik `szukaj-pkd` — sekcja na trafienie, nie wiersz w tabeli.
+
+    Płaska tabela musiałaby zmieścić „co ten poprzednik dociąga" w komórce, a to jest zdanie,
+    dla którego to polecenie powstało: operator ma przed `--pkd-2007` wiedzieć, że `9602Z`
+    pokrywa i fryzjerstwo, i kosmetykę.
+    """
+    rows: list[tuple[str, str]] = []
+    for t in wynik.trafienia:
+        rows.append((f"{t.kod} (PKD {t.rocznik})", t.nazwa))
+        for p in t.poprzednicy:
+            rows.extend(_wiersze_poprzednika(p))
+        for kod, nazwa in t.nastepcy:
+            rows.append(("", f"└ dziś prowadzi do {kod} — {nazwa}"))
+    po_kodzie = wynik.odczytano_jako == "kod"
+    tytul = f"PKD dla „{wynik.zapytanie}” (odczytane jako {wynik.odczytano_jako})"
+    # Zastrzeżenie o szukaniu po nazwach dotyczy wyłącznie frazy; przy kodzie odpowiadałoby na
+    # pytanie, którego nikt nie zadał, a zastrzeżenie nie na temat uczy pomijać zastrzeżenia.
+    notes = [SZUKAJ_PKD_ROCZNIK] if po_kodzie else [SZUKAJ_PKD_PO_NAZWACH, SZUKAJ_PKD_ROCZNIK]
+    if not wynik.trafienia:
+        notes.insert(0, SZUKAJ_PKD_PUSTO_KOD if po_kodzie else SZUKAJ_PKD_PUSTO_FRAZA)
+    if wynik.obciete:
+        notes.insert(
+            0,
+            f"Pokazano {len(wynik.trafienia)} z {format_number(wynik.wszystkich)} trafień — "
+            "resztę pokaże --wszystkie.",
+        )
+    return Block(title=tytul, rows=tuple(rows), notes=tuple(notes))
+
+
 PowodBrakuRaportu = Literal[
     "WIELE_WOJEWODZTW",
     "BRAK_WOJEWODZTWA",
@@ -1196,13 +1298,111 @@ INTERRUPTED: Final = "\nPrzerwano. Postęp jest zapisany — wznów poleceniem `
 # protokół nie umie. Tu leży samo brzmienie — mechanizm zostaje tam, gdzie był.
 CONFIRM_PROD: Final = "Chcesz użyć PRODUKCJI (prawdziwe dane osobowe, limity API)? Potwierdź"
 TOKEN_PROMPT: Final = "Wklej token JWT"
-# Zdanie domyślne — używane tylko wtedy, gdy powodu **nie znamy** (brak klucza albo brak extry
-# `asystent`). Gdy powód jest znany, `flow` pokazuje jego własną treść: wymienianie przyczyn na
-# ślepo wskazywało przy braku słownika PKD na klucz i pakiet, które akurat były na miejscu.
-ASSISTANT_UNAVAILABLE: Final = (
-    "Asystent jest niedostępny — brakuje klucza API albo pakietu `anthropic`. Kryteria podasz "
-    "pytaniami po kolei albo flagami; stan klucza pokaże `ceidg-tool sprawdz-token`."
+ASYSTENT_NIEOBECNY: Final[dict[PowodBrakuAsystenta, str]] = {
+    "BRAK_KLUCZA": (
+        "Asystent jest niedostępny — nie ma klucza API. Kryteria podasz pytaniami po kolei "
+        "albo flagami; klucz zapiszesz poleceniem `ceidg-tool token zapisz --asystent`."
+    ),
+    "BRAK_PAKIETU": (
+        "Asystent jest niedostępny — nie ma pakietu `anthropic`. Kryteria podasz pytaniami "
+        "po kolei albo flagami; pakiet doinstalujesz przez `pip install -e .[asystent]`."
+    ),
+    "BRAK_SLOWNIKA": (
+        "Asystent jest niedostępny — nie da się wczytać słownika PKD, bez którego nie wolno mu "
+        "dobierać kodów. Kryteria podasz pytaniami po kolei albo flagami."
+    ),
+    "WYLACZONY_FLAGA": (
+        "Asystent jest wyłączony flagą `--bez-asystenta`. Kryteria podasz pytaniami po kolei "
+        "albo flagami; bez tej flagi opis zdaniem znowu zadziała."
+    ),
+}
+"""Dlaczego asystenta nie ma — kody z `assistant`, zdania tutaj (ten sam podział co przy raporcie).
+
+Każdy powód dostaje **własne zdanie i własne wyjście**, bo do 2026-09-09 wszystkie dostawały jedno,
+wymieniające klucz i pakiet na ślepo. Przy braku słownika PKD wskazywało to palcem na dwie rzeczy,
+które akurat były na miejscu (przebieg B6); operator szukał wtedy nie tam, gdzie trzeba."""
+
+
+def assistant_unavailable(brak: BrakAsystenta) -> str:
+    """Zdanie o nieobecnym asystencie, ze szczegółem od tego, kto ją wykrył, gdy jest.
+
+    Szczegół **dopisujemy**, zamiast nim zastępować: `load_pkd` mówi, którego pliku brakuje i jak
+    go zbudować, a to jest cenniejsze niż nasze zdanie ogólne i zarazem samo w sobie nie mówi
+    operatorowi, że kreator zadziała bez asystenta. Do 2026-09-23 wybierało się jedno albo drugie
+    i przy braku słownika ginęło to drugie."""
+    zdanie = ASYSTENT_NIEOBECNY[brak.powod]
+    return f"{zdanie}\n{brak.szczegol}" if brak.szczegol else zdanie
+
+
+ASYSTENT_BEZ_POWODU: Final = (
+    "Asystenta nie ma i nie wiadomo dlaczego: ta ścieżka o niego nie poprosiła "
+    '(`build_deps(asystent="nieproszony")`) albo `Deps` powstało poza `build_deps`. '
+    "Kryteria podasz pytaniami po kolei albo flagami."
 )
+"""Asystent nieobecny i bez powodu — czyli stan „nieproszony", a nie awaria.
+
+Zdanie wymienia **obie** przyczyny, bo pierwsza wersja nazywała tylko drugą („zbudowano
+z pominięciem `build_deps`") — a `build_deps(asystent="nieproszony")` produkuje ten stan legalnie
+i jest domyślnym wywołaniem w 82 miejscach. Bardziej prawdopodobnym wywołaniem tej gałęzi jest
+nowa ścieżka, która zapomniała poprosić; wskazywanie wtedy palcem na `build_deps`, które akurat
+zadziałało, byłoby defektem B6 w zdaniu napisanym po to, żeby B6 nie wrócił (przegląd kodu
+2026-09-23)."""
+
+OPIS_BEZ_ASYSTENTA: Final = (
+    "`--opis` i `--bez-asystenta` wykluczają się: opis zdaniem czyta asystent, a ta flaga go "
+    "wyłącza. Zostaw jedną z nich — kryteria podasz też flagami, na przykład "
+    "`-w wielkopolskie --miasto Poznań`."
+)
+"""Odmowa przy parze flag, której nie da się spełnić — i to **przed** zbudowaniem czegokolwiek.
+
+Ciche zignorowanie jednej z nich jest tą samą pomyłką, co wydanie żądania do modelu na
+interpretację, której nikt nie potwierdzi (przebieg B5): stratą poniesioną po to, żeby dowiedzieć
+się rzeczy wiadomej przy czytaniu wiersza poleceń. Które z dwóch zignorować, też nie jest
+oczywiste, a zgadywanie za operatora przy fladze podanej świadomie jest gorsze niż odmowa."""
+
+
+def wynik_nieznany(wartosc: str, dozwolone: Sequence[str]) -> str:
+    """Odmowa przy nieznanej wartości `--wynik` (ADR-0024, decyzja 6).
+
+    Zignorowanie nieznanej wartości i ciche zostanie przy ekranie jest dokładnie tym, przez co
+    wołający kończy na parsowaniu ludzkiego ekranu: prosił o dokument, dostał ramkę `rich`
+    i ani jednego znaku, który by mu o tym powiedział. Odmowa kosztuje jedno zdanie.
+    """
+    return (
+        f"Nieznana wartość --wynik: {wartosc!r}. Dozwolone: {', '.join(dozwolone)}. "
+        "Tryb json wypisuje na stdout jeden dokument JSON opisujący, co się stało — "
+        "ekrany, ostrzeżenia i błędy idą wtedy na stderr."
+    )
+
+
+WYNIK_JSON_WYMAGA_TAK: Final = (
+    "`--wynik json` wymaga `--tak`. Koperta jest dla wołającego, którego nie ma przy ekranie, "
+    "a to polecenie potrafi zadać pytanie — dorozumienie zgody byłoby odpowiadaniem za Ciebie "
+    "na pytania, o których się nie dowiesz. Dopisz `--tak`, jeśli o to właśnie chodzi. "
+    "`--tak` nie jest zgodą na produkcję: ta zostaje przy `--produkcja`."
+)
+"""Druga z dwóch odmów decyzji 6 — i ta, która broni czegoś więcej niż czytelności.
+
+Pytania z `safe_default=False` (zgoda na produkcję, start powyżej progu, poszerzenie przy zerze)
+istnieją po to, żeby harmonogram **nie** podjął ich za operatora (ADR-0017). Flaga wyjścia nie
+ma prawa ich rozstrzygać bokiem: to nie jest ta sama decyzja, choć pada w tym samym wierszu
+poleceń."""
+
+
+def wynik_bez_koperty(polecenie: str, obslugiwane: Sequence[str]) -> str:
+    """Odmowa dla polecenia, które koperty nie umie (ADR-0024, decyzja 6).
+
+    Flaga jest zadeklarowana przy **każdym** poleceniu właśnie po to, żeby odpowiedziało to
+    zdanie i kod 3, a nie angielskie „No such option" i kod 2 od typera. Ciche zignorowanie
+    flagi byłoby najgorsze z trzech: wołający prosił o dokument, dostaje ludzki ekran i ani
+    jednego znaku, który by mu powiedział, że go parsuje.
+    """
+    return (
+        f"Polecenie `{polecenie}` nie wypisuje koperty JSON. Umieją to: "
+        f"{', '.join(sorted(obslugiwane))}."
+    )
+
+
 ASSISTANT_CANCELLED: Final = "Rezygnacja z opisu — wracam do menu."
 OPIS_PORZUCONY: Final = (
     "Rezygnacja z opisu zdaniem. `pobierz` nie ma pytań po kolei — ma je kreator "
@@ -1218,9 +1418,13 @@ palcem na rzecz, która akurat działała. Ta sama klasa pomyłki co komunikat o
 pokazu (przebieg B6)."""
 ASSISTANT_NEEDS_A_HUMAN: Final = (
     "Opis zdaniem wymaga potwierdzenia interpretacji, a tryb --tak nie podejmuje tej decyzji "
-    "za Ciebie. Uruchom bez --tak albo podaj kryteria flagami; kreator zapisze je do pliku "
-    "zapytania, który nadaje się do harmonogramu."
+    "za Ciebie. Uruchom bez --tak albo podaj kryteria flagami; kreator wypisze gotowe polecenie "
+    "`pobierz …`, które nadaje się do harmonogramu."
 )
+"""Zdanie kończyło się „kreator zapisze je do pliku zapytania" do 2026-09-23 — a pliku zapytania
+nie ma od 2026-09-10 (ADR-0022). Odsyłanie operatora do wycofanej drogi jest gorsze niż brak
+odsyłacza: kosztuje szukanie funkcji, której nie znajdzie. Zastąpiło ją `polecenie_powtarzajace`,
+czyli gotowe polecenie na ekranie, i to jest to, co ma tu być wymienione."""
 ASSISTANT_KEY_PROMPT: Final = "Wklej klucz API asystenta (sk-ant-…)"
 ASSISTANT_KEY_EMPTY: Final = "Pusty klucz — nic nie zapisano."
 ASSISTANT_KEY_REMOVED: Final = "Usunięto klucz asystenta z magazynu haseł."

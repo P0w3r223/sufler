@@ -34,6 +34,22 @@ class Events(Protocol):
         ...
 
 
+class LicznikZadan(Protocol):
+    """Odbiorca zdarzeń, który potrafi powiedzieć, ile żądań poszło (ADR-0024).
+
+    Osobny, węższy protokół obok `Events`, a nie nowa metoda w `Events`: koperta potrzebuje
+    **jednej** liczby, a `Events` implementują też atrapy w dziewięciu plikach testów, którym
+    ta liczba do niczego nie służy. Poszerzenie `Events` kupiłoby więc dziewięć zmian, żeby
+    wyrazić wymaganie dotyczące jednego miejsca.
+
+    Nośne jest to, że liczba pochodzi **stąd**, a nie z drugiego licznika: „liczba w kopercie
+    jest tą liczbą, która napędzała oznaki życia" jest twierdzeniem tylko wtedy, gdy licznik
+    jest jeden.
+    """
+
+    requests: int
+
+
 class NullEvents:
     """Odbiorca, który nic nie robi — domyślny w testach i w bibliotece."""
 
