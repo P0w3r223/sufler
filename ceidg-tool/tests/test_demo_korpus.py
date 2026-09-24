@@ -25,7 +25,6 @@ from typing import Any
 import pytest
 
 import ceidg_tool.demo.korpus as korpus_mod
-from ceidg_tool.assistant.pkd import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.criteria import nip_checksum_ok, regon_checksum_ok
 from ceidg_tool.demo.korpus import (
     PARY_PKD,
@@ -36,6 +35,7 @@ from ceidg_tool.demo.korpus import (
     zmienione_w_oknie,
 )
 from ceidg_tool.errors import ConfigError
+from ceidg_tool.pkddict import DEFAULT_PKD_PATH, load_pkd
 from ceidg_tool.pkdmap import DEFAULT_PKD_MAP_PATH, load_pkd_map
 from ceidg_tool.recordid import GUID_WPISU, kanoniczny_id
 from ceidg_tool.richtext import safe

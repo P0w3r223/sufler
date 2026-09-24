@@ -34,7 +34,14 @@ jobs:
     env:
       PYTHONUTF8: '1'
     steps:
+      # Pełna historia, nie sam wierzchołek. `ceidg-tool/tests/test_brak_poswiadczen.py`
+      # skanuje bloby osiągalne z HEAD, bo publikuje się historię, a nie drzewo robocze:
+      # token wpisany i skasowany następnym commitem zostaje w historii. Przy domyślnym
+      # `fetch-depth: 1` ten skan widziałby jeden commit i **milczał** — więc test wywraca
+      # się na płytkim klonie zamiast przechodzić, a ta linijka jest tym, co go zaspokaja.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}

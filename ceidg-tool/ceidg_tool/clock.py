@@ -45,3 +45,14 @@ def utc_iso(epoch: float) -> str:
 def local_hhmm(epoch: float) -> str:
     """Godzina lokalna `HH:MM` do komunikatów typu „wznawiam o …”."""
     return datetime.fromtimestamp(epoch).strftime("%H:%M")
+
+
+def local_hhmmss(epoch: float) -> str:
+    """Godzina lokalna `HH:MM:SS` do oznak życia (`LineEvents`).
+
+    Z sekundami, w odróżnieniu od `local_hhmm`: rytm wiersza postępu to około 30 s, więc przy
+    rozdzielczości minutowej dwie kolejne oznaki życia bywają tym samym napisem i przerwa,
+    którą ten wiersz ma pokazywać, jest niewidoczna. „Wznawiam o …” opisuje odległy moment
+    w przyszłości i minuta mu wystarcza — to są dwa różne zastosowania jednego zegara.
+    """
+    return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")

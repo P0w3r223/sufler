@@ -1,5 +1,10 @@
 # sekrety i dane
 .env
+# Warianty nazwy, których `.env` nie łapie, a `git add -A` dobiera: `.env.local`, `.env.prod`,
+# `.env.bak` po kopii zapasowej. Wzorzec z jawnym wyjątkiem na sam wzorzec — `.env.example` ma
+# zostać śledzony, bo to on niesie instrukcję, jak wstawić własne poświadczenie.
+.env.*
+!.env.example
 probe_out/
 # Pliki źródłowe klasyfikacji pobrane z GUS. Do repozytorium trafia wyłącznie **wynik**
 # (`ceidg_tool/data/pkd2025.yaml`), a jego nagłówek niesie SHA-256 tego źródła — więc budowa

@@ -17,6 +17,7 @@ from typing import Any, cast
 from urllib.parse import parse_qsl, urlsplit
 
 import httpx
+from typer import Typer
 
 from ceidg_tool.criteria import Criteria
 from ceidg_tool.httpclient import build_http_client
@@ -268,3 +269,36 @@ class RecordingView:
             if fragment in block.title:
                 return block
         raise AssertionError(f"brak bloku z {fragment!r} w tytule; są: {self.titles()}")
+
+
+def zarejestrowane_polecenia(aplikacja: Typer | None = None) -> set[str]:
+    """Nazwy poleceń, które `app` naprawdę przyjmuje — plus nazwy grup podpoleceń.
+
+    Jedna definicja dla wszystkich tabel kompletności (`BUDUJE_ASYSTENTA` z ADR-0025,
+    `KOPERTA_OBSLUGIWANA` z ADR-0024). Druga kopia tej funkcji znaczyłaby, że jedna z tabel
+    może przestać obejmować nowe polecenie, a jej test dalej będzie zielony — czyli dokładnie
+    ta połowa kompletności, po którą obie sięgają.
+
+    **`polecenie.name` przed nazwą funkcji**, bo to ona rozstrzyga o tym, co wpisuje operator.
+    Wersja czytająca samą nazwę funkcji przeżywała 2026-09-24 tylko dlatego, że dla trzech
+    poleceń z jawnym `name` (`szukaj-pkd`, `sprawdz-nip`, `sprawdz-token`) obie formy dziś się
+    pokrywają. `@app.command("pobierz-wszystko")` nad `def pobierz_all` wstawiłoby do zbioru
+    `"pobierz-all"` — nazwę, której `app` nie przyjmuje — i **obie** tabele kompletności
+    (`KOPERTA_OBSLUGIWANA`, `BUDUJE_ASYSTENTA`) sprawdzałyby się wtedy względem czegoś, czego
+    nie ma, a prawdziwe polecenie odziedziczyłoby domyślną po cichu. To jest trzeci egzemplarz
+    kształtu, który CLAUDE.md nazywa po imieniu: dowód sanityzowany z tego, co miał wykazać.
+
+    Argument `aplikacja` jest **wyłącznie** po to, żeby dało się to sprawdzić na aplikacji,
+    w której obie formy nazwy się różnią. Na prawdziwym `app` różnicy dziś nie ma, więc test
+    czytający samą nazwę funkcji byłby zielony przy jednej i drugiej wersji tej linijki —
+    czyli nie sprawdzałby nic (zmierzone mutacją 2026-09-24).
+    """
+    from ceidg_tool.cli import app
+
+    aplikacja = aplikacja if aplikacja is not None else app
+    nazwy = {
+        polecenie.name or polecenie.callback.__name__.replace("_", "-")
+        for polecenie in aplikacja.registered_commands
+        if polecenie.callback is not None
+    }
+    return nazwy | {grupa.name for grupa in aplikacja.registered_groups if grupa.name}

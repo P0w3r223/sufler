@@ -25,7 +25,7 @@ from typing import Literal, Protocol, cast
 from ..assistant import AssistantResult
 from ..batching import BatchPlan, plan_batches
 from ..criteria import Criteria
-from ..errors import ConfigError
+from ..errors import CeidgError, ConfigError
 from ..estimating import LARGE_COUNT_THRESHOLD, Estimate, estimate
 from ..logsetup import LOG_FILE_NAME
 from ..pipeline import (
@@ -47,7 +47,8 @@ from ..pipeline import (
     run_fetch,
     run_report_fetch,
 )
-from ..pkdmap import Rozszerzenie
+from ..pkddict import load_pkd
+from ..pkdmap import Rozszerzenie, TablicaPkd, load_pkd_map
 from ..records import Report
 from ..reports import filtry_poza_raportem, report_covers, statusy_poza_raportem
 from . import prompts, texts
@@ -112,7 +113,16 @@ def collect_from_description(
         # Powód, gdy go znamy, zamiast domysłu. `load_pkd` potrafi powiedzieć „brak słownika
         # i oto polecenie, które go zbuduje" — zastępowanie tego zdaniem o kluczu było
         # wskazywaniem palcem na rzecz, która akurat działała (przebieg B6).
-        raise ConfigError(deps.assistant_reason or texts.ASSISTANT_UNAVAILABLE)
+        #
+        # Bez odwrotu do zdania domyślnego: przy zamkniętym zbiorze powodów nie ma już czego
+        # się cofać. Para `assistant is None` ⇒ `brak is not None` obowiązuje **po
+        # `build_deps(asystent=True)`**, a nie zawsze: wywołanie domyślne zostawia oba `None`
+        # legalnie i to jest stan „nieproszony". Tutaj jest on jednak błędem programu, bo
+        # `pobierz --opis` i kreator zawsze proszą — więc zdanie niżej wymienia obie przyczyny
+        # zamiast wskazywać palcem na jedną z nich.
+        if deps.assistant_brak is None:
+            raise ConfigError(texts.ASYSTENT_BEZ_POWODU)
+        raise ConfigError(texts.assistant_unavailable(deps.assistant_brak))
     dzisiaj = today or datetime.now(tz=UTC).date()
     while True:
         # Zapowiedź **przed** paskiem, bo po jego uruchomieniu nic się już nie wypisze.
@@ -213,11 +223,83 @@ def _dopytaj(
 
 
 def show_first_screen(view: View, deps: Deps, *, version: str) -> None:
+    # Wyłączenie flagą czytamy z `Deps`, a nie z kolejnego parametru przeprowadzanego przez
+    # `wizard`: powód i tak już tam jest, a parametr obok niego znaczyłby, że dwie rzeczy mówią
+    # o jednym stanie i mogą się rozejść.
+    brak = deps.assistant_brak
     view.block(
-        texts.first_screen(deps.settings, now=datetime.now(tz=UTC), version=version, demo=deps.demo)
+        texts.first_screen(
+            deps.settings,
+            now=datetime.now(tz=UTC),
+            version=version,
+            demo=deps.demo,
+            bez_asystenta=brak is not None and brak.powod == "WYLACZONY_FLAGA",
+        )
     )
-    for warning in (*deps.settings.warnings, *deps.warnings):
+    for warning in (*deps.settings.warnings, *deps.warnings, *_sprostowanie_o_asystencie(deps)):
         view.warning(warning)
+
+
+def _sprostowanie_o_asystencie(deps: Deps) -> tuple[str, ...]:
+    """Sprostowanie wiersza §A, gdy klucz jest, a asystent się nie zbudował (ADR-0025, decyzja 3).
+
+    `texts._assistant_destination` rozstrzyga po `settings.anthropic_key`, a dostępność zapada
+    dopiero przy budowie — więc przy kluczu obecnym i brakującym słowniku PKD ekran obiecuje
+    „wysyłam do api.anthropic.com" o asystencie, którego nie ma. Menu tuż pod spodem mówi już
+    prawdę (`pobierz_menu_item(deps.assistant is not None)`), czyli **jeden ekran przeczy
+    drugiemu** i tylko jeden z nich się myli.
+
+    Sprostowanie stoi tutaj, a nie w `build_deps`: to jest warstwa, która wypisała obietnicę,
+    a `pipeline` nie importuje `ui` i nie ma zacząć — kod powodu jest faktem i należy do
+    `pipeline`, zdanie jest tekstem i należy do `texts` (ta sama granica co przy raporcie).
+
+    Cisza przy braku klucza jest zamierzona: to stan normalny (ADR-0011, decyzja 9), ma własny
+    wiersz na ekranie i ostrzeganie o nim byłoby szumem przy każdym uruchomieniu narzędzia,
+    którego większość używa bez asystenta. Tak samo przy wyłączeniu flagą — nikt nie potrzebuje
+    ostrzeżenia o tym, o co sam poprosił."""
+    brak = deps.assistant_brak
+    if brak is None or brak.powod in ("BRAK_KLUCZA", "WYLACZONY_FLAGA"):
+        return ()
+    return (texts.assistant_unavailable(brak),)
+
+
+def _ostrzez_o_nieznanych_pkd(criteria: Criteria, view: View) -> None:
+    """Kod spoza obu roczników przestaje być cichym 204 (ADR-0011, znalezisko F8).
+
+    `Criteria` sprawdza sam **kształt**, więc `--pkd 9999Z` przechodzi, API odpowiada 204,
+    a operator czyta „Brak firm spełniających kryteria" — nie do odróżnienia od pustego
+    rejestru przez kogoś, kto z założenia nie zna API. Dokładnie ta dziura, którą słownik
+    zamknął dla modelu i która została otwarta dla flagi; F8 stoi otwarte od 2026-09-07.
+
+    **Ostrzeżenie, nie odmowa** (ADR-0026, decyzja 4). Nasza strona 2007 to klucz przejścia,
+    a nie pełna lista PKD 2007, więc „nie ma w obu plikach" nie znaczy „nie istnieje" —
+    a fałszywa odmowa zablokowałaby zapytanie, na które rejestr by odpowiedział. Narzędzie nie
+    przelicytowuje rejestru na dowodach, których nie ma.
+
+    Jedno zdanie na wywołanie, nie jedno na kod: trzy ostrzeżenia pod rząd uczą je pomijać.
+
+    Słownik wczytywany **tutaj i leniwie**, a nie w `build_deps`: większość wywołań nie ma
+    `--pkd` wcale, a ADR-0025 jest właśnie o niepłaceniu za to, czego dana ścieżka nie użyje.
+    Brak pliku wyłącza **sprawdzenie**, nie narzędzie — ta sama zasada, którą `pkd_map` trzyma
+    w `pipeline`.
+    """
+    if not criteria.pkd:
+        return
+    try:
+        slownik = load_pkd()
+    except CeidgError:
+        return
+    try:
+        tablica: TablicaPkd | None = load_pkd_map()
+    except CeidgError:
+        tablica = None
+    obce = [
+        kod
+        for kod in criteria.pkd
+        if kod not in slownik and (tablica is None or tablica.nazwa_2007(kod) is None)
+    ]
+    if obce:
+        view.warning(texts.nieznane_kody_pkd(tuple(obce)))
 
 
 def _z_rocznikiem(criteria: Criteria, kody_2007: tuple[str, ...]) -> Criteria:
@@ -494,6 +576,7 @@ def prepare_fetch(
     """
     if criteria.is_empty():
         raise ConfigError(texts.EMPTY_CRITERIA)
+    _ostrzez_o_nieznanych_pkd(criteria, view)
 
     kand = _przygotuj_kandydatow(criteria, deps, view, rocznik_2007)
     criteria = kand.waskie

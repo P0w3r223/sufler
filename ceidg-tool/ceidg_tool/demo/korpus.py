@@ -35,8 +35,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from ..assistant.pkd import load_pkd
 from ..errors import ConfigError
+from ..pkddict import load_pkd
 from ..pkdmap import load_pkd_map
 
 # Prefiks zarezerwowany dla demo. Szesnastkowy, bo `recordid.GUID_WPISU` wymaga hex —
@@ -95,7 +95,7 @@ ULICE = ("Kwiatowa", "Polna", "Lipowa", "Krótka", "Ogrodowa", "Słoneczna")
 def _nazwy() -> tuple[dict[str, str], dict[str, str]]:
     """Nazwy obu roczników **ze słownika**, nie z pamięci. Brak kodu = głośny błąd.
 
-    Ładowane raz, przy budowie korpusu. `assistant.pkd.load_pkd` importuje się bez opcjonalnej
+    Ładowane raz, przy budowie korpusu. `pkddict.load_pkd` importuje się bez opcjonalnej
     extry `asystent` (sprawdzone), więc tryb demo nie zyskuje przez to zależności od SDK.
     """
     slownik_2025 = load_pkd()

@@ -92,3 +92,13 @@ def test_progress_messages_take_the_same_hostile_input() -> None:
 
     printed = buffer.getvalue()
     assert "[/b]" in printed and "\x1b[2J" not in printed
+
+
+def test_the_fallback_console_is_on_stderr() -> None:
+    """Ta sama gałąź zapasowa co w `console.py`, ten sam powód (ADR-0024, decyzja 2).
+
+    `ConsoleView()` bez argumentu jest dziś nieużywane; to jest jedyna droga, którą ekran
+    mógłby wrócić na stdout, a `make_console` nie ma już domyślnego strumienia właśnie po to,
+    żeby żadna nowa gałąź nie mogła tego zrobić po cichu.
+    """
+    assert ConsoleView().console.stderr is True

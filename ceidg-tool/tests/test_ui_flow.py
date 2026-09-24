@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from ceidg_tool.assistant import BrakAsystenta, PowodBrakuAsystenta
 from ceidg_tool.config import Settings
 from ceidg_tool.criteria import Criteria
 from ceidg_tool.errors import ConfigError
@@ -1169,3 +1170,153 @@ def test_a_run_stored_before_any_expansion_is_still_found(tmp_path: Path, clock:
     assert plan.criteria.pkd_2007 == ()
     assert api.requests == [], "wznowienie szuka w bazie, nie w sieci"
     deps.store.close()
+
+
+# ------------------------------------------- pierwszy ekran i sprostowanie (ADR-0025, dec. 3)
+
+
+def _ekran(
+    tmp_path: Path, clock: FakeClock, api: FakeApi, brak: BrakAsystenta | None
+) -> RecordingView:
+    deps = deps_for(tmp_path, clock, api)
+    deps.assistant_brak = brak
+    view = RecordingView()
+    try:
+        flow.show_first_screen(view, deps, version="0.1.0")
+    finally:
+        deps.store.close()
+    return view
+
+
+def test_first_screen_corrects_the_section_a_row_when_the_build_failed(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """ADR-0025 decyzja 3: fałszywa obietnica §A dostaje obserwatora na ekranie, który ją złożył.
+
+    `texts._assistant_destination` rozstrzyga po `settings.anthropic_key`, a dostępność zapada
+    przy budowie — więc przy kluczu obecnym i brakującym słowniku PKD wiersz obiecuje asystenta,
+    którego nie ma, a menu tuż pod spodem mówi już prawdę. Jeden ekran przeczy drugiemu.
+
+    Test powstał po przeglądzie 2026-09-23: cała decyzja 3 nie miała **żadnej** referencji
+    testowej, więc sprostowanie dało się wyciąć (`if True: return ()`) przy zielonej suicie.
+    """
+    view = _ekran(
+        tmp_path, clock, counting_api(1), BrakAsystenta("BRAK_SLOWNIKA", "Zbuduj go: build_pkd.py")
+    )
+
+    assert any("słownika PKD" in w for w in view.warnings)
+    assert any("build_pkd.py" in w for w in view.warnings)
+
+
+@pytest.mark.parametrize("powod", ["BRAK_KLUCZA", "WYLACZONY_FLAGA"])
+def test_first_screen_stays_silent_about_an_assistant_nobody_expected(
+    tmp_path: Path, clock: FakeClock, powod: PowodBrakuAsystenta
+) -> None:
+    """Druga strona decyzji 3, i ADR zakazuje jej wprost.
+
+    Brak klucza to stan normalny (ADR-0011, decyzja 9) z własnym wierszem na ekranie, a
+    wyłączenie flagą to prośba operatora. Ostrzeganie o którymkolwiek byłoby szumem przy każdym
+    uruchomieniu narzędzia, którego większość używa bez asystenta — a szum uczy pomijać
+    ostrzeżenia, czyli psuje ten kanał dla przypadku wyżej.
+    """
+    view = _ekran(tmp_path, clock, counting_api(1), BrakAsystenta(powod))
+
+    assert not [w for w in view.warnings if "Asystent" in w]
+
+
+def test_first_screen_reports_the_switch_from_deps_not_from_a_parameter(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """Ogniwo `Deps` → ekran, którego nie widział żaden test (mutacja M07).
+
+    `show_first_screen` odczytuje `WYLACZONY_FLAGA` z `Deps`, zamiast brać kolejny parametr
+    przeprowadzany przez `wizard` — więc to odczytanie jest kodem i potrzebuje strażnika.
+    Bez niego dało się zwrócić `bez_asystenta=False` na stałe i nic nie krzyczało.
+    """
+    wylaczony = _ekran(tmp_path, clock, counting_api(1), BrakAsystenta("WYLACZONY_FLAGA"))
+    zwykly = _ekran(tmp_path, clock, counting_api(1), None)
+
+    wiersz = {r[0]: r[1] for r in wylaczony.blocks[0].rows}["dokąd wysyła asystent"]
+    assert "--bez-asystenta" in wiersz
+    assert (
+        "--bez-asystenta"
+        not in {r[0]: r[1] for r in zwykly.blocks[0].rows}["dokąd wysyła asystent"]
+    )
+
+
+# ---------------------------------------- nieznany kod PKD (ADR-0011 F8, ADR-0026 decyzja 4)
+
+
+def _ostrzezenia_dla_pkd(tmp_path: Path, clock: FakeClock, kody: tuple[str, ...]) -> RecordingView:
+    api = counting_api(7)
+    deps = deps_for(tmp_path, clock, api)
+    view = RecordingView()
+    try:
+        flow.prepare_fetch(
+            Criteria(pkd=kody),
+            deps,
+            ScriptedPrompter({"co_dalej": "lista"}),
+            view,
+            threshold=THRESHOLD,
+            rocznik_2007=False,
+        )
+    finally:
+        deps.store.close()
+    return view
+
+
+def test_an_unknown_pkd_code_warns_and_the_fetch_still_happens(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """F8, otwarte od 2026-09-07: `--pkd 9999Z` przechodzi kształt, API odpowiada 204.
+
+    Operator czyta wtedy „Brak firm spełniających kryteria" — nie do odróżnienia od pustego
+    rejestru przez kogoś, kto z założenia nie zna API. Słownik zamknął tę dziurę dla modelu
+    i zostawił dla flagi.
+
+    **Ostrzeżenie, nie odmowa**: nasza strona 2007 to klucz przejścia, nie pełna lista PKD 2007,
+    więc „nie ma w obu plikach" jest słabszym twierdzeniem niż „nie istnieje". Odmowa
+    zablokowałaby zapytanie, na które rejestr by odpowiedział — narzędzie nie przelicytowuje
+    rejestru na dowodach, których nie ma. Dlatego druga asercja jest tu tak samo nośna jak
+    pierwsza.
+    """
+    view = _ostrzezenia_dla_pkd(tmp_path, clock, ("9999Z",))
+
+    ostrzezenia = [w for w in view.warnings if "9999Z" in w]
+    assert len(ostrzezenia) == 1
+    assert "szukaj-pkd" in ostrzezenia[0]
+    # Pobranie doszło do tabeli kosztów, czyli ostrzeżenie niczego nie zatrzymało.
+    assert view.blocks
+
+
+def test_a_known_pkd_code_is_not_warned_about(tmp_path: Path, clock: FakeClock) -> None:
+    view = _ostrzezenia_dla_pkd(tmp_path, clock, ("6210B",))
+
+    assert not [w for w in view.warnings if "6210B" in w]
+
+
+def test_three_unknown_codes_produce_one_warning(tmp_path: Path, clock: FakeClock) -> None:
+    """Trzy zdania pod rząd uczą pomijać ostrzeżenia, a to jedno ma być przeczytane."""
+    view = _ostrzezenia_dla_pkd(tmp_path, clock, ("9999Z", "9998Z", "9997Z"))
+
+    ostrzezenia = [w for w in view.warnings if "9999Z" in w]
+    assert len(ostrzezenia) == 1
+    assert "9998Z" in ostrzezenia[0] and "9997Z" in ostrzezenia[0]
+
+
+def test_a_missing_dictionary_disables_the_check_not_the_tool(
+    tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Brak pliku wyłącza **sprawdzenie**, nie narzędzie — ta sama zasada co przy `pkd_map`.
+
+    Bez tego rozróżnienia instalacja bez wygenerowanego słownika przestawałaby pobierać
+    cokolwiek z filtrem PKD, czyli brak danych pomocniczych wywracałby funkcję główną.
+    """
+    import ceidg_tool.pkddict as modul_pkd
+
+    monkeypatch.setattr(modul_pkd, "DEFAULT_PKD_PATH", tmp_path / "nie-ma.yaml")
+
+    view = _ostrzezenia_dla_pkd(tmp_path, clock, ("9999Z",))
+
+    assert not [w for w in view.warnings if "9999Z" in w]
+    assert view.blocks

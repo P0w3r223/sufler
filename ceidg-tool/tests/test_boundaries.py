@@ -22,6 +22,12 @@ PACKAGE = Path(__file__).resolve().parent.parent / "ceidg_tool"
 # Reguła 6: moduły czyste nie znają żadnej biblioteki wejścia/wyjścia.
 PURE_MODULES = (
     "ui/texts.py",
+    # Koperta wyniku (ADR-0024). Czysta z tego samego powodu co `ui/texts.py`: to jest drugie
+    # renderowanie tych samych wartości, więc musi dać się zbudować i sprawdzić tam, gdzie
+    # `pipeline` się nie buduje. Uwaga na pułapkę, której **ten skan nie widzi**: import
+    # `ExportSummary` albo `RunResult` z `pipeline` przeszedłby tędy bez szmeru, bo korzeniem
+    # importu byłby `ceidg_tool`, a nie `httpx`. Pilnuje tego osobny test w `test_ui_wynik.py`.
+    "ui/wynik.py",
     "batching.py",
     "estimating.py",
     "criteria.py",
@@ -29,9 +35,20 @@ PURE_MODULES = (
     # Tablica przejścia PKD (ADR-0012): decyduje, które kody dołożyć do zapytania, więc musi
     # dać się sprawdzić bez sieci i bez bazy — tak samo jak `criteria.py`, którego rozszerza.
     "pkdmap.py",
+    # Słownik PKD 2025 (ADR-0026, decyzja 3): wyprowadzony z `assistant/` 2026-09-23, bo ma
+    # drugiego konsumenta. Czysty z tego samego powodu co `pkdmap.py`, obok którego stoi.
+    "pkddict.py",
+    # Wyszukiwanie po słowniku (ADR-0026): normalizacja, składanie i scalanie roczników — cała
+    # treść `szukaj-pkd` poza rysowaniem. Czyste, więc polecenie nie potrzebuje ani tokenu,
+    # ani bazy, i daje się sprawdzić bez terminala.
+    "pkdszukaj.py",
     # Warstwa czysta asystenta (ADR-0011): schemat, słownik, prompt i tłumaczenie na `Criteria`
     # muszą dać się sprawdzić bez sieci, bez klucza i bez zainstalowanego SDK. Cała faza 4
     # opiera się na tym, że jedyny moduł znający `anthropic` to `assistant/caller.py`.
+    # `assistant/__init__.py` doszedł 2026-09-23: mieszka w nim `PowodBrakuAsystenta`, który
+    # produkuje `pipeline`, a opisuje `ui/texts`. Skoro warstwa niżej na nim stoi, musi dać się
+    # wczytać bez sieci, bez bazy i bez SDK — tak samo jak reszta czystej warstwy asystenta.
+    "assistant/__init__.py",
     "assistant/schema.py",
     "assistant/pkd.py",
     "assistant/prompt.py",
@@ -301,9 +318,23 @@ def output_calls(tree: ast.Module) -> list[int]:
         if name == "write":
             if isinstance(node.func, ast.Attribute) and receiver_root(node.func) in STREAM_ROOTS:
                 lines.append(node.lineno)
+        elif name == "dump" and any(strumien(arg) for arg in node.args):
+            # `json.dump(koperta, sys.stdout)` — w programie, któremu właśnie przybył kanał
+            # JSON, to jest następny `typer.echo` (ADR-0024, decyzja 5). Nazwa wywołania to
+            # `dump`, nie `write`, więc gałąź wyżej by go nie zobaczyła.
+            lines.append(node.lineno)
         elif name in OUTPUT_CALLS:
             lines.append(node.lineno)
     return lines
+
+
+def strumien(node: ast.expr) -> bool:
+    """Czy wyrażenie jest standardowym strumieniem — `sys.stdout`, `sys.stderr` albo `stdout`."""
+    if isinstance(node, ast.Name):
+        return node.id in STREAM_ROOTS - {"sys"}
+    if isinstance(node, ast.Attribute):
+        return node.attr in STREAM_ROOTS - {"sys"} and receiver_root(node) == "sys"
+    return False
 
 
 def test_only_neutralised_text_reaches_rich() -> None:
@@ -418,6 +449,10 @@ def test_the_rule_10_scan_would_notice_a_violation(source: str, expected_offende
         ("stdout.write(name)", 1),  # po `from sys import stdout` łańcuch nie zaczyna się od `sys`
         ("console.log(record)", 1),  # odruch przy szukaniu błędu, też wyjście na ekran
         ("console.print(safe(name))", 1),
+        # Kanał, który dopiero co powstał (ADR-0024). Bez tej gałęzi skan reguły 9 zatrzymywał
+        # się dokładnie przed nowym wyjściem, czyli tam, gdzie jest najbardziej potrzebny.
+        ("json.dump(koperta, sys.stdout)", 1),
+        ("json.dumps(koperta)", 0),  # zwraca napis, nie pisze — cała różnica reguły 15
     ],
 )
 def test_the_cli_output_scan_covers_every_channel(source: str, expected_offenders: int) -> None:
@@ -950,3 +985,155 @@ def test_the_rule_12_scan_sees_what_each_call_actually_passes(
     module.write_text(source, encoding="utf-8")
 
     assert sdk_client_calls(module) == oczekiwane
+
+
+def test_the_pkd_dictionary_does_not_depend_on_the_assistant() -> None:
+    """ADR-0026 decyzja 3: słownik PKD jest faktem o rejestrze, nie aktywem asystenta.
+
+    Twierdzenie o własności, więc ma strażnika. Dane mają trzech konsumentów — asystenta,
+    `szukaj-pkd` i korpus trybu pokazowego — a mieszkały w `assistant/pkd.py`, czyli pod nazwą,
+    która mówiła, że należą do jednego z nich. Przy wyłączalnym asystencie (ADR-0025) ta
+    nieprawda robi się kosztowna: ktoś usunąłby `assistant/` razem z danymi, których używa
+    reszta programu, a reguła 6 by tego nie zobaczyła — moduł czysty wolno importować skądkolwiek
+    w warstwie czystej.
+    """
+    assert "assistant" not in package_targets(PACKAGE / "pkddict.py")
+
+
+# ------------------------------------------------- reguła 15: jedno wyjście na stdout (ADR-0024)
+
+# `jsonout.py` jest dla stdout tym, czym `richtext.py` dla `rich`: jeden piszący, jeden
+# neutralizator. Reguła brzmi na `json.dump`, **nie** na `json.dumps`, i ta różnica jest całym
+# projektem. Zmierzone 2026-09-23: `json.dumps` mieszka już w sześciu modułach (odciski
+# `apiprofile` i `criteria`, skrót wiersza raportu w `recordid`, wartości do SQL w `store`
+# i `pipeline`, `write_jsonl` w `exporter`), więc reguła na `dumps` byłaby czerwona przy
+# pierwszym uruchomieniu — a skan czerwony na starcie to skan, któremu nikt nie ufa. Nie jest
+# potrzebna, bo `dumps` **zwraca napis i nic nie pisze**, a napis jest nieszkodliwy do chwili
+# wydrukowania; drukowanie rządzą już reguły 9 i 10. Groźna jest forma biorąca strumień.
+JSON_MODULE = "jsonout.py"
+
+# Nazwa spaceru maskującego. Skan sprawdza **kształt wywołania**, a nie to, co spacer robi —
+# o tym mówią testy zachowania w `tests/test_jsonout.py`.
+MASKING_WALK = "zamaskuj"
+
+SERIALISING_CALLS = frozenset({"dump", "dumps"})
+
+
+# Wywołania, które piszą na stdout **nie nazywając go**. `print` jest tu najważniejszy i to on
+# był luką: skan znający wyłącznie `sys.stdout.write` przepuszczał `print` w dowolnym module
+# poza `cli.py`, a zmierzone 2026-09-24 jedno `print` w `pipeline.run_update` psuło dokument
+# JSON tak, że `json.loads(stdout)` się wywracał — przy 122 zielonych testach granic. `echo`
+# i `secho` z tego samego powodu: w programie na typerze to jest odruch pierwszy.
+#
+# `print` liczy się **wyłącznie** jako gołe wywołanie (`ast.Name`). `console.print(...)` nosi tę
+# samą nazwę, a pisze tam, gdzie wskazuje konsola — czyli na stderr (decyzja 2) — i należy do
+# reguły 10, która o strumieniu nie orzeka. Skan modelujący to za `rich` byłby skanem o cudzej
+# bibliotece. `echo`/`secho` liczą się w obu postaciach, bo typer pisze nimi zawsze na stdout.
+#
+# Zero fałszywych trafień: reguła 9 zabrania całej trójki w `cli.py`, a żaden inny moduł nie ma
+# dla niej zastosowania — teksty idą przez `View`, diagnostyka przez `logging`.
+NIENAZWANY_STDOUT = frozenset({"echo", "secho"})
+
+
+def stdout_writes(tree: ast.Module) -> list[int]:
+    """Linie piszące **na stdout**: `print`, `echo`, `sys.stdout.write(...)`, `dump(…, sys.stdout)`.
+
+    Węziej niż `output_calls` co do strumienia: stderr jest tu legalny i ma być legalny, bo od
+    2026-09-23 idą tam wszystkie ekrany (decyzja 2). Szerzej co do kształtu: `output_calls`
+    obowiązuje sam `cli.py`, a ta reguła cały pakiet, bo pod `--wynik json` **każdy** znak
+    spoza koperty jest znakiem w środku dokumentu, który wołający oddaje parserowi.
+    """
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = called_name(node)
+        if name == "write":
+            if isinstance(node.func, ast.Attribute) and _stdout(node.func.value):
+                lines.append(node.lineno)
+        elif name == "dump" and any(_stdout(arg) for arg in node.args):
+            lines.append(node.lineno)
+        elif name in NIENAZWANY_STDOUT:
+            lines.append(node.lineno)
+        elif name == "print" and isinstance(node.func, ast.Name):
+            lines.append(node.lineno)
+    return lines
+
+
+def _stdout(node: ast.expr) -> bool:
+    """`sys.stdout` albo samo `stdout` po `from sys import stdout`. `sys.stderr` — nie."""
+    if isinstance(node, ast.Name):
+        return node.id == "stdout"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "stdout" and receiver_root(node) == "sys"
+    return False
+
+
+def test_only_jsonout_writes_to_stdout() -> None:
+    """Reguła 15, połowa pierwsza: na pytanie „czym sekret może wyjść tym kanałem" odpowiada
+    przeczytanie jednego pliku.
+
+    Ta sama konstrukcja co reguła 11 dla połączeń: nie „każdy uważa", tylko „jest jedno
+    miejsce". Pod `--wynik json` stdout niesie koperty i nic poza nią, więc każdy inny zapis
+    tam jest znakiem wewnątrz dokumentu, który wołający oddaje parserowi.
+    """
+    offenders = {
+        path.relative_to(PACKAGE).as_posix()
+        for path in PACKAGE.rglob("*.py")
+        if stdout_writes(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+    }
+
+    assert offenders == {JSON_MODULE}, f"na stdout pisze też: {sorted(offenders - {JSON_MODULE})}"
+
+
+def test_everything_jsonout_serialises_passes_through_the_masking_walk() -> None:
+    """Reguła 15, połowa druga — i to jest ta połowa, która niesie ładunek tokenu.
+
+    `json.dumps` ucieka znaki sterujące (U+0000-U+001F, ESC włącznie) i **nie maskuje niczego**:
+    jest neutralizatorem terminalowej połowy §B i żadnej z połowy poświadczeniowej. Odbicie
+    lustrzane `strip_control`, którego ADR-0009 świadomie nie przyjął z tego samego powodu.
+    Wektor jest konkretny: komunikat błędu to jedyne pole koperty, które potrafi nieść URL.
+
+    Skan patrzy na kształt — pierwszy argument serializacji **jest** wywołaniem spaceru — więc
+    nie musi niczego dowodzić o liściach struktury. Dlatego spacer ma być jeden.
+    """
+    tree = ast.parse((PACKAGE / JSON_MODULE).read_text(encoding="utf-8"), filename=JSON_MODULE)
+    offenders = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and called_name(node) in SERIALISING_CALLS
+        and (not node.args or called_name(node.args[0]) != MASKING_WALK)
+    ]
+
+    assert not offenders, f"{JSON_MODULE}: serializacja z pominięciem {MASKING_WALK} w {offenders}"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_offenders"),
+    [
+        ("sys.stdout.write(tekst)", 1),
+        ("stdout.write(tekst)", 1),  # po `from sys import stdout` łańcuch nie zaczyna się od `sys`
+        ("json.dump(koperta, sys.stdout)", 1),
+        # `print` nie nazywa strumienia i właśnie dlatego był luką (przegląd testów 2026-09-24):
+        # jedno takie w `pipeline` wywracało `json.loads(stdout)` przy zielonym skanie granic.
+        ("print(f'okno {a} -> {b}')", 1),
+        ("typer.echo(tekst)", 1),
+        # `console.print` nosi tę samą nazwę co wbudowany `print`, a pisze na stderr — jest
+        # sprawą reguły 10, nie tej. Bez tego rozróżnienia skan zapalał się na `ui/render.py`
+        # i `console.py`, czyli na dwóch modułach, które robią dokładnie to, co mają robić.
+        ("console.print(safe(name))", 0),
+        # Trzy poniższe **mają** przechodzić i każde z innego powodu.
+        ("sys.stderr.write(tekst)", 0),  # tam idą ekrany od 2026-09-23 (decyzja 2)
+        ("json.dumps(koperta)", 0),  # zwraca napis, nie pisze — cała treść reguły 15
+        ("plik.write(tekst)", 0),  # eksport do `wyniki/` to nie jest kanał maszynowy
+    ],
+)
+def test_the_stdout_scan_rejects_what_it_should(source: str, expected_offenders: int) -> None:
+    """Skan nieodróżnialny od takiego, który zawsze przepuszcza, nie jest regułą.
+
+    Osiem przypadków zamiast pięciu z planu. `json.dumps` koduje różnicę, na której cała reguła
+    stoi — forma zwracająca napis wolno wszystkim, forma biorąca strumień nikomu poza `jsonout`.
+    `print` i `echo` doszły po tym, jak zmierzona mutacja przeszła przez pierwszą wersję skanu.
+    """
+    assert len(stdout_writes(ast.parse(source))) == expected_offenders

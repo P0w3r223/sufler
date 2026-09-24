@@ -1,150 +1,232 @@
 # ceidg-tool
 
 Python CLI that pulls sole-trader records from the CEIDG API v3 data warehouse into an Excel
-workbook for an operator with no API knowledge. Work proceeds in phases; each one ends when the
-owner accepts it, not when the tests go green.
+workbook — for an operator with no API knowledge, and since 2026-09-23 for an agent driving it with
+flags. Work proceeds in phases; each ends when the owner accepts it, not when the tests go green.
 
-## Facts that change how you work here
+## The three rules that cannot be worked around
 
-**The test API host is unreachable from this network.** `test-dane.biznes.gov.pl` times out at TCP
-level while `dane.biznes.gov.pl` answers instantly. So `--srodowisko test` reaches nothing: every
-live check has to run against production, and production carries real personal data. Ask for the
-owner's consent in the current session before any request goes out, and pass
-`--srodowisko prod --produkcja` explicitly. Everything else is covered by the offline suite.
+**No request reaches production without the owner's consent, given in the current session**, and
+`--srodowisko prod --produkcja` is passed explicitly. The token's payload carries a PESEL and the
+register holds real people; this is the only action here that cannot be taken back.
 
-**Polish output needs `PYTHONUTF8=1`.** Without it the CLI, the probe scripts and pytest mangle
-diacritics on this Windows console. Prefix every Python invocation with it.
+**The test API host is dead.** `test-dane.biznes.gov.pl` times out at TCP level, so
+`--srodowisko test` reaches nothing and every live check needs production. Everything else is
+covered by the offline suite, and `--demo` runs the whole tool against a synthetic register with no
+socket and no token.
 
-**The project is under version control since 2026-09-08, and since 2026-09-10 it lives on `Main`.**
-The initial commit (157 files; `95a7405` today, `d6a46e9` before the import) went to the
-`ceidg-tool` **branch** of `BIAP-Inteligentne-Technologie/PIWorkmate`, a private org repository
-whose `Main` holds an unrelated product (WorkMate: `src/workmate`, Teams notifications, its own
-ADRs 0064+). The owner chose the branch after being shown that the two share no history; on
-2026-09-10 they chose the opposite, and this project entered `Main` as the fourth sub-project,
-in `ceidg-tool/`, with all 36 commits preserved (root `docs/adr/0074`). Authorship was unified in
-the same operation, so every commit number changed. Force-pushing stays
-forbidden: the branch this history now shares is another team's active work.
+**`PYTHONUTF8=1` on every Python invocation.** Without it the CLI, the probes and pytest mangle
+Polish diacritics on this Windows console. (The JSON envelope is pure ASCII and survives either
+way — that is deliberate, see below.)
 
-**The quality gate is the root's, and it runs on ubuntu with `uv`** — the `ceidg-tool` entry in
-`.github/workflows/ci.yml` at the root. What stayed behind in `.github/workflows/ceidg-tool.yml`
-is the axis the root matrix does not have: Windows and a second Python version, installed with
-`pip` from `requirements.lock`. Both installs are pinned and both describe **one** resolution:
+## The repository carries no credential, and that was measured
+
+Neither the CEIDG token nor the assistant key is in this repository — not in the working tree, not
+in any commit, not on any branch. Measured 2026-09-24 over all 4681 blobs of a clone fetched that
+day (so: its branches and tags, not `refs/pull/*` and not branches created later),
+searching both for the **values** this machine actually holds and for the two **shapes**
+`SECRET_PATTERNS` knows. Zero hits by value. Twenty-three by shape, every one of them a labelled
+fixture (a key whose own text says it is invalid and for testing, the jwt.io sample) — the check is worth
+repeating exactly this way, because a shape match is also what a rotated *real* token looks like.
+`.env` is git-ignored, and that it was never tracked is a separate measurement:
+`git log --all -- .env` is empty.
+
+`tests/test_brak_poswiadczen.py` keeps it that way, and **it scans history, not the working tree**
+— blobs reachable from `HEAD`, blobs in the index, tracked files on disk, and untracked-unignored
+ones. The first version read the tree only, so a token committed and deleted in the next commit
+left the suite green; deleting the file is exactly the reflex a red test produces, and for the CEIDG
+token rotation does not undo publication because the payload carries a PESEL. Two details that look
+like fussiness and are not: NUL bytes are stripped before matching (PowerShell 5.1 writes UTF-16LE,
+so a pasted token would be invisible), and the fixture allowlist is by **value hash**, not by path,
+so a real key pasted into a file that already holds a fixture still fails.
+
+**The observer for the history half sits in the test, not in a workflow file**, and that is not
+belt-and-braces. `actions/checkout` defaults to `fetch-depth: 1`, under which the history scan sees
+one commit and says nothing — green, which is the worst failure mode a guard has. This repository's
+own `ci.yml` triggers on branch `ceidg-tool`, which no longer exists, so the `fetch-depth: 0` in it
+runs nowhere; after the move, *their* workflows run the suite. A guarantee resting on someone
+else's configuration is not a guarantee, so the fixture fails on a shallow clone itself. For the
+same reason the history walk is scoped by `git rev-parse --show-prefix`: empty here, `ceidg-tool/`
+after the move. Without it the move would widen the scan to the whole monorepo — `rev-list` ignores
+the working directory — and redden their merge gate on `claude_summary/`'s fixtures.
+
+Consequences for anyone who clones this: the README's opening block and `.env.example` say in so
+many words that a credential has to be supplied, and a token is a human errand behind Profil
+Zaufany. The rule the code applies is narrower than "commands that reach the register" — **a token
+is required everywhere except `szukaj-pkd`, `token zapisz|usun` and `--demo`**, including
+`eksportuj`, `runy`, `wyczysc`, `kreator` and `sprawdz-token`, which touch no network but resolve
+settings first. Four documents said otherwise until a parametrized test over
+`zarejestrowane_polecenia()` started measuring it. State that as a limitation
+of the package, never as a defect of the checkout.
+
+## Where this code lives now
+
+This project is the **fourth sub-project of `PIWorkmate`** and lives in `ceidg-tool/` on `Main`,
+since 2026-09-10 (root `docs/adr/0074-where-ceidg-tool-should-live.md`). It arrived with all 36
+commits of its former standalone branch, whose authorship was unified in the same operation — so
+every commit number changed. The standalone `ceidg-tool` branch was deleted on 2026-09-11.
+
+The root of the repository holds an unrelated product. Changes here go the repository's ordinary
+way — a topic branch and a PR to `Main` — and **force-pushing stays forbidden**, because the
+history this project now shares is another team's active work.
+
+**The quality gate is the root's, and it runs on ubuntu with `uv`** — the `ceidg-tool` entry in the
+root `.github/workflows/ci.yml`. What stayed in the root's `.github/workflows/ceidg-tool.yml` is the
+axis the matrix does not have: Windows and a second Python version, installed with `pip` from
+`requirements.lock`. Both installs are pinned and both describe **one** resolution:
 `requirements.lock` is generated from `uv.lock` (`uv export --frozen --no-hashes --all-extras
 --no-emit-project`) and never written by hand, which `tests/test_locki_zgodne.py` enforces in both
-directions. §B asks for pinned dependencies, and before 2026-09-11 this axis did not deliver them:
-the lock was read by nothing and had drifted from `uv.lock` by two packages, carrying no
-environment markers at all. The axis is narrowed by `paths` instead of by branch, and takes its
-Python versions from its own matrix, so the root's `.python-version` does not reach it. The
-narrowing is not cosmetic — the matrix is four-way, so without it a typo fix anywhere in the
-repository would spend the organisation's Actions minutes on four full runs of this suite.
+directions. Before 2026-09-11 that axis delivered no pinning at all: the lock was read by nothing
+and had drifted from `uv.lock` by two packages. The axis is narrowed by `paths`, not by branch,
+because the matrix is four-way and a typo fix anywhere would otherwise spend the organisation's
+Actions minutes on four full runs of this suite.
+
+Both checkouts take **`fetch-depth: 0`**. `tests/test_brak_poswiadczen.py` scans blobs reachable
+from `HEAD`, and at the default depth of one it would see a single commit and say nothing — so the
+fixture fails on a shallow clone rather than passing in silence.
 
 **The root `.gitignore` reaches into this directory.** Its rules are unanchored, so `*.xlsx`,
-`*.db`, `*_state.json`, `RAPORT-*.md` and `*.tar` apply here too — on top of this project's own
-`.gitignore`, whose deeper rules win where they negate. Nothing tracked today is affected
-(checked file by file at the import), but a new file named like a generated report or workbook
-will vanish from `git add` without a word. Negate it here if you ever need one tracked.
+`*.db`, `*_state.json`, `RAPORT-*.md` and `*.tar` apply here too, on top of this project's own
+`.gitignore`, whose deeper rules win where they negate. Nothing tracked today is affected (checked
+file by file at the import), but a new file named like a generated report or workbook will vanish
+from `git add` without a word. Negate it here if you ever need one tracked.
 
-**The token in `.env` belongs to the owner.** It is not a borrowed credential and needs no action
-before 2026-09-30; from that date, remind them to refresh it. Its payload carries a PESEL, so it
-stays out of logs, messages, the database and output files — `config.mask_tokens` and
-`richtext.safe` are what keep it there.
+**ADR numbering is shared with the root and with `krs-tool`.** This project's ADRs were shifted to
+**0024-0026** on 2026-09-24 because `0023` is taken (`0023_krs_company_risk_assessment.md`) and
+`tests/test_adr_numbering.py` enforces uniqueness; each carries a line naming its previous number.
 
-**Silence is a defect, and it is measured in requests.** An operation here can run for half an hour
-against a 3.75 s request spacing, so a stretch without output does not read as "working" — it reads
-as hung, and a hung-looking program gets killed. The rhythm of `Events` and of `store.touch_lock()`
-is therefore counted in **requests sent or rows read**, never in pages or matched records: a
-`/zmiana` page is 500 identifiers (up to a hundred requests), and a report page is however many rows
-happen to match. That off-by-a-layer error produced four separate defects on 2026-09-06, one of
-which let the database lock expire under a working process. `Events.close()` belongs to the
-operation that opened the bar — a live `rich` display overwrites everything printed after it.
-
-The same doctrine applies to **waiting**, and it took until 2026-09-08 to finish. A single wait can
-outlast the lock: the budget brake clamps to the longest window (3600 s) while the lease expires
-after 600 s, so `RateLimiter` sleeps in `WAIT_SLICE_S` slices with a heartbeat before each one, and
-`WAIT_SLICE_S < DEFAULT_LOCK_STALE_S` is an invariant a test guards (the two constants cannot see
-each other — `ratelimit` may not import the database). Waiting also has to reach the **log file**,
-not only the screen: `_LogEvents` records every wait with its *predicted resume time*, because a
-duration alone cannot tell a limiter hold from a suspended laptop after the fact.
-
-**The tool refuses to go through a proxy, on purpose.** `httpclient.build_http_client` is the only
-place an `httpx.Client` is made (boundary rule 11). It always injects a transport, which is what
-actually stops httpx reading `HTTPS_PROXY` from the environment, and it passes `trust_env=False` to
-`httpx.HTTPTransport`, which is what stops `SSL_CERT_FILE` replacing the CA bundle — two different
-mechanisms for two halves of §B, easy to confuse and worth keeping straight. `AllowedHostsTransport`
-then refuses any host outside the *selected environment*, at the layer where the socket opens.
-Consequence on a corporate network: the tool fails to connect rather than handing a PESEL-bearing
-token to an interceptor. `docs/resilience-report.md` carries the §E evidence.
+## Measured facts that change how you work
 
 **The PKD dictionary is generated, never written by hand or by a model.**
 `ceidg_tool/data/pkd2025.yaml` (728 subclasses) comes from `scripts/build_pkd.py` over an official
-GUS export; the header carries the legal basis and the source's SHA-256. **The vintage is 2025, not
-2007** — every `rokPkd` the register returns says so, and `6201Z`, the classic software code, does
-not exist in 2025 at all. Two rules follow. First, never regenerate it from memory or from a
-summarised web page: such a list passes every automated check here — canonical keys, entry count,
-agreement with the codes the register returned — while being quietly wrong in names nobody
-cross-reads, and that inverts the one control the operator has (the confirmation screen shows the
-PKD *name*, so a wrong code should read as a wrong industry; a fabricated name makes the screen
-agree with the model). Second, never trust a fixture about the API: the whole 2007 detour rested on
-one hand-written line in `tests/conftest.py` that an ADR cited as a measurement.
+GUS export; the header carries the legal basis and the source's SHA-256. Regenerating it from
+memory or from a summarised web page passes every automated check here — canonical keys, entry
+count, agreement with codes the register returned — while being quietly wrong in names nobody
+cross-reads. That inverts the operator's one control: the confirmation screen shows the PKD *name*,
+so a wrong code should read as a wrong industry; a fabricated name makes the screen agree with the
+model.
 
-**The dictionary is right and it is not enough — the register is mid-transition.** Measured
-2026-09-07: the `pkd` filter matches the code **as stored on the record**, and PKD 2007 stays legal
-until 31.12.2026, so each record carries one vintage. Over 285 026 real records in
-`probe_out/raport_sample.zip` (which has `RokPKD` per row, and is why this cost no requests): 58.6 %
-still carry 2007 codes, and **8.6 % of the sample is unreachable by any code in `pkd2025.yaml`** —
-`9602Z` hairdressing, `4520Z` vehicle repair, `4120Z` building, `6201Z` programming. So a PKD-filtered
-fetch silently returns a subset, on every input path, the `--pkd` flag included; this is a property
-of the register, not of the assistant. Do not treat "the code is valid" as "the query is complete".
-
-**Corrected 2026-09-08 — this paragraph said 25.2 %, which answers a different question.** `pkd=`
-matches **any** of a record's codes, not just `pkdGlowny`, settled at zero requests from the
-operator's own store: `pkd=6201Z` returned 13 records of which **9 carried the code only in the
-secondary list** (as deep as position 30), and `9621Z`+`9602Z` returned 357 of which **62** did
-(position 50). So the operative figure is "no code the record carries is in the dictionary" =
-**24 494 = 8.6 %**; the old 25.2 % (71 817) counts records whose *main* code is absent, which is not
-what the sentence claimed. Two smaller corrections in the same breath: the archive is
-**wielkopolskie**, not "the register", and its 285 026 counts rows *with a main code* — the file
-holds 287 256, the other 2 230 having an empty `GlownyKodPkd` and all carrying `RokPKD=2007`. The
-trap is real and roughly three times smaller than this file used to claim.
-
-Two traps follow. The classification and the filter are different things: "6201Z does not exist in
-PKD 2025" is true, while "the API would reject it" never was — it returns 234 605 records. And the
-cost table does not cover this: it prices what will be fetched, with nothing to compare against, and
-the interpretation is confirmed before `count` runs, so it is a spend control, never a scope one.
+**The dictionary is right and it is not enough.** The `pkd` filter matches the code **as stored on
+the record**, PKD 2007 stays legal until 31.12.2026, and each record carries one vintage. Measured
+2026-09-07 over the 285 026 rows of `probe_out/raport_sample.zip` (a **wielkopolskie** archive, not
+"the register"): 58.6 % still carry 2007 codes and **8.6 % (24 494) carry no code present in
+`pkd2025.yaml`**. So a PKD-filtered fetch silently returns a subset on every input path, `--pkd`
+included. `pkd=` matches **any** of a record's codes, not just `pkdGlowny` — the older 25.2 % figure
+counted records whose *main* code was absent, which answers a different question. Two traps follow:
+the classification and the filter are different things (`6201Z` does not exist in PKD 2025 and the
+API returns 234 605 records for it), and the cost table prices what *will* be fetched with nothing
+to compare against, so it is a spend control and never a scope one.
 
 **One entry, two spellings — `id` is a value, not a string.** `/firmy` and `/firma` return the
-record identifier in UPPER case, `/zmiana` returns the same identifiers in lower, and `ids=`
-matches either way. `firma.id` was a case-sensitive primary key, so `aktualizuj` wrote every
-changed entry twice — a husk linked to the run and a full record linked to nothing — and the
-detail cache could never hit. The night of 2026-09-08 that cost 2 681 requests and delivered zero
-usable records. Canonicalisation lives in `recordid.py` (boundary rule 14, carried by mypy through
-`KanonicznyId`, not by the AST scan) and applies **only to hex GUIDs**: `/raporty` identifiers
-share the 8-4-4-4-12 shape, are not hex and are case-significant because they go into the download
-URL, and report rows are keyed `NIP:`/`REGON:`/`HASH:`. Do not relax that pattern to `[0-9A-Za-z]`.
+identifier UPPER, `/zmiana` returns it lower, and `ids=` matches either. Because `firma.id` is a
+case-sensitive primary key, `aktualizuj` wrote every changed entry twice and the detail cache could
+never hit: 2 681 requests and zero usable records on the night of 2026-09-08. Canonicalisation lives
+in `recordid.py` (boundary rule 14, carried by mypy through `KanonicznyId`) and applies **only to
+hex GUIDs** — `/raporty` identifiers share the 8-4-4-4-12 shape, are not hex, and are
+case-significant because they go into a URL. Do not relax that pattern to `[0-9A-Za-z]`.
 
 **The evidence gets sanitised of exactly what matters — check the generator, not just the fixture.**
-`scripts/anonymize_samples.py` uppercased every identifier while building fixtures, so the offline
-suite asserted the absence of the property that broke production; the `/firma` doubles echoed back
-the identifier they were asked for, which is the one thing the register does not do. This is the
-third instance of the shape, after the hand-written `rokPkd` line and `tests/support.py` building
-its own `httpx.Client`. `tests/fixtures/api_traits.yaml` now states the measured per-endpoint
-properties in words, `tests/test_api_traits.py` holds the fixtures to them and audits against
-`probe_out/` when it is present, and `tests/support.registry_id` is the one line that makes a
-double behave like the register.
+Four instances so far: a hand-written `rokPkd` line an ADR cited as a measurement;
+`scripts/anonymize_samples.py` uppercasing every identifier, so the suite asserted the absence of
+the property that broke production; `tests/support.py` building its own `httpx.Client`; and on
+2026-09-24 the `--wynik json` gate, which ran `sprawdz-nip` with a NIP outside the demo corpus, so
+`"firma": null` and no record was ever serialised — while the command crashed on every real hit.
+`tests/fixtures/api_traits.yaml` states the measured per-endpoint properties in words and
+`tests/test_api_traits.py` holds the fixtures to them.
 
-**A guarantee whose violation has no observer is not a guarantee.** Three closed on 2026-09-08 and
-they rhyme: the identifier invariant broke behind a lenient `.upper()`; the database lock lease was
-lost behind a discarded `rowcount` (a 9 h 50 min machine suspend expires a 600 s lease under a
-working process, and only the process *taking* a lock was ever warned); ten hours of waiting left
-no trace because `on_wait` reached the screen only. When adding a guard, ask what would print if it
-were violated — and if the honest answer is "nothing", that is the defect, not the guard.
+**A guarantee whose violation has no observer is not a guarantee.** When adding a guard, ask what
+would print if it were violated; if the honest answer is "nothing", that is the defect, not the
+guard. This is the review standard here, and the method is mutation: change the claim, run the
+gates, and see whether anything goes red.
 
-**Registry values are hostile input.** Names come from a public register that anyone can write into.
-They reach both a spreadsheet, where a leading `=` is a formula, and a terminal, where `rich` reads
-square brackets as markup and escape sequences steer the screen. `safetext.py` neutralises the spreadsheet half and `richtext.safe` the terminal half;
-anything new that prints or exports registry text goes through one of them. `richtext.py` is
-the only module allowed to hand `rich` a string from outside — that is boundary rule 10, and
-`tests/test_boundaries.py` enforces it by scanning the syntax of every print call.
+**Silence is a defect, and it is measured in requests.** An operation can run half an hour at 3.75 s
+spacing, and a hung-looking program gets killed. The rhythm of `Events` and `store.touch_lock()` is
+counted in **requests sent or rows read**, never in pages or matched records — a `/zmiana` page is
+500 identifiers, up to a hundred requests, and that off-by-a-layer error produced four defects on
+2026-09-06, one of which let the lock expire under a working process. `Events.close()` belongs to
+the operation that opened the bar; a live `rich` display overwrites everything printed after it.
+
+The same applies to **waiting**: a single wait can outlast the lock (the budget brake clamps to
+3600 s while the lease expires after 600 s), so `RateLimiter` sleeps in `WAIT_SLICE_S` slices with a
+heartbeat before each, and `WAIT_SLICE_S < DEFAULT_LOCK_STALE_S` is a tested invariant the two
+constants cannot check themselves (`ratelimit` may not import the database). Waits reach the **log
+file** with their *predicted resume time*, because a duration alone cannot tell a limiter hold from
+a suspended laptop.
+
+**The tool refuses to go through a proxy, on purpose.** `httpclient.build_http_client` is the only
+place an `httpx.Client` is made (rule 11). It always injects a transport — that is what stops httpx
+reading `HTTPS_PROXY` — and passes `trust_env=False` to `httpx.HTTPTransport`, which is what stops
+`SSL_CERT_FILE` replacing the CA bundle. Two mechanisms for two halves of §B, easy to confuse.
+`AllowedHostsTransport` then refuses any host outside the selected environment. On a corporate
+network the tool fails to connect rather than hand a PESEL-bearing token to an interceptor.
+
+**Registry values are hostile input.** Names come from a register anyone can write into, and they
+reach a spreadsheet (where a leading `=` is a formula) and a terminal (where `rich` reads brackets
+as markup and ESC steers the screen). `safetext.py` neutralises the spreadsheet half, `richtext.safe`
+the terminal half, and `richtext.py` is the only module allowed to hand `rich` an outside string —
+boundary rule 10, enforced by an AST scan over every print call.
+
+**A batched query must send the same filter as the un-batched one (ADR-0015).** `plan_batches` fills
+a missing date edge with `DATE_FLOOR = 1990-01-01` or `today` so the plan is reproducible, but those
+are **planning** values and must not reach `Criteria`: until 2026-09-09 they did, and splitting a
+query silently changed its result set — 482 of 16 310 records (2.96 %), 76 registered before 1990
+and 406 starting in the future, which CEIDG accepts. Do **not** add a legacy-fingerprint fallback
+for old batches: an old closed `[1990-01-01, …]` batch is a different population.
+
+**A report row's identity is a declared subset, never "everything" (ADR-0016).** Rows with neither
+NIP nor REGON are keyed by *name + surname + given name + start date*, built in `recordid.py` from
+**values** rather than a CSV row, so a future migration cannot compute a third digest. The tempting
+wrong answer is "all columns except `Lp.`" — a status change would then mint a new identity.
+Measured on 287 256 archive rows: 315 such rows, zero collisions, and the address adds no
+discrimination.
+
+**`/zmiana` is the staleness signal, and it beats the cache.** The freshness threshold for details
+of changed entries is **the end of the change window**, not a cache TTL, which is why
+`store.stale_detail_ids` takes it from its caller. Until 2026-09-08 it computed a seven-day TTL
+itself, so an entry changed yesterday but fetched three days ago kept its pre-change `detail_json`
+and counted as refreshed — 742 of 2 891 identifiers (25.7 %) on the operator's own database.
+`count_run_unresolved` cannot see this (such a record is `pobrany`, i.e. resolved and untrue), so
+`store.outdated_details` exists as its observer and reaches the log. A change range ending in the
+future is refused rather than trimmed.
+
+**The tool runs without the register, and that is a product feature (ADR-0014).** `--demo` answers
+from a synthetic register generated in-process — generated, not recorded, because the anonymiser
+has already erased a property a test was meant to check. The substitution belongs in `cli`, never
+inside `build_deps` (a standing test asserts production builds its client with `transport=None`).
+**Six markers, mandatory jointly**: first screen, `Metadane` row, `DEMO_` filename prefix (including
+under `--out`), separate data directory, refusal to combine with production, and `"demo": true` in
+the result envelope — the last because nothing behind an agent re-reads the first screen.
+
+**The demo corpus writes no reference data from memory**, and that rule was learned twice in one
+day. `demo/korpus.py` declares PKD *code pairs* and reads every name from the generated
+dictionaries, refusing to build if a code is missing or if the pair is not a real 2007→2025
+succession — the first draft invented names and two codes that do not exist. It also gave four of
+five cities the wrong `powiat`. Both passed every automated check, because nothing checked them.
+
+## Two output channels, one owning module each (ADR-0024)
+
+Everything a person reads — screens, warnings, errors, progress — goes to **stderr**, through the
+one console `richtext.make_console(stderr=True)` builds. **stdout carries the result envelope and
+nothing else**, written only by `jsonout.py`, and only under `--wynik json`. State the change as
+"stdout is now empty unless you ask for JSON", not "errors moved": `eksportuj`, `sprawdz-token`,
+`wyczysc` and `token *` moved too with no envelope in exchange, so `sprawdz-token > out.txt` writes
+an empty file. `--help` is the exception and stays on stdout, because click writes it.
+
+That is **boundary rule 15**, stated on `json.dump` rather than `json.dumps` on purpose: `dumps`
+returns a string, writes nothing, and already lives in six modules, so a rule naming it would be red
+on its first run. It counts a bare `print` package-wide — measured 2026-09-24, one `print` in
+`pipeline.run_update` made `json.loads(stdout)` fail with all 122 boundary tests green.
+`console.print` is deliberately **not** counted: it writes wherever its console points, which is
+rule 10's territory.
+
+The envelope is a pure value in `ui/wynik.py`, built from what `flow` already returns, so the screen
+and the envelope cannot disagree. `ui/wynik.py` may not import `pipeline` — a trap rule 6's scan
+cannot see, because it reads imported *roots*; a separate test pins its relative imports to
+`{criteria}`. Two consequences: **exit code 4 exists only under the flag** (`brak_trafien` and
+`nic_do_zrobienia` are 4 with it and 0 without, so no existing schedule starts alerting on a
+legitimately empty day), and `LineEvents` is chosen on `console.is_terminal` — not on the flag,
+because `rich` renders intermediate `Live` frames only on a terminal, and tying the fix to the flag
+would leave that silence open for everyone who is not an agent.
 
 ## Commands
 
@@ -152,207 +234,104 @@ the only module allowed to hand `rich` a string from outside — that is boundar
 PYTHONUTF8=1 .venv/Scripts/python -m pytest         # no network; no `-q` — see below
 PYTHONUTF8=1 .venv/Scripts/python -m mypy ceidg_tool tests
 .venv/Scripts/ruff check ceidg_tool tests scripts
-.venv/Scripts/ruff format --check ceidg_tool tests scripts   # --check, because bare `format` rewrites and cannot fail
+.venv/Scripts/ruff format --check ceidg_tool tests scripts   # --check: bare `format` rewrites and cannot fail
 PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool     # the wizard
 PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool pobierz --demo -w wielkopolskie --szczegoly
+PYTHONUTF8=1 .venv/Scripts/python -m ceidg_tool szukaj-pkd fryzjer   # zero requests, no token
 ```
 
-**Do not add `-q` to that command.** `addopts = "-q"` is already in `pyproject.toml:51`, so an
-explicit one makes it `-qq` — and at that verbosity pytest prints no summary line at all, only the
-progress dots. Three of this file's revisions quoted a pass count that the documented gate is
-incapable of printing; that is the mechanical reason the number kept drifting. `ci.yml` had the
-same duplicate and lost it on 2026-09-10.
+**Do not add `-q`.** `addopts = "-q"` is already in `pyproject.toml`, so an explicit one makes it
+`-qq` — and at that verbosity pytest prints no summary line at all. Three revisions of this file
+quoted a pass count the documented gate cannot print; that is the mechanical reason the number kept
+drifting.
 
-The skip that matters is `tests/test_api_traits.py::test_atrapa_demo_zgadza_sie_ze_zmierzona_pisownia[raporty]`:
-the demo double serves no `/raporty`, which is the open demo edge `docs/status.md` names, and it is
-the one place that gap is visible from a gate. **The sentinel is that test's name, not a total** —
-when it stops being skipped, the report path got a double. Do not restate it as a count: the count
-is not stable enough to carry it. Locally, with `probe_out/` present, the suite is **1309 passed,
-1 skipped**; in CI, where `probe_out/` is git-ignored and therefore absent, five further tests skip
-honestly and the same tree reports **1304 passed, 6 skipped** — both measured on 2026-09-10, the
-second by moving `probe_out/` aside for one run rather than by subtracting five. A total quoted without naming its
-environment has been wrong three times here.
+Counts, both measured 2026-09-24: **1510 passed, 1 skipped** locally with `probe_out/` present;
+**1505 passed, 6 skipped** without it (measured by moving the directory aside, not by subtracting
+five). A total quoted without naming its environment has been wrong three times here.
 
-The last one needs no token and reaches no register — use it to see the tool work before
-touching anything real.
+The skip that matters is
+`tests/test_api_traits.py::test_atrapa_demo_zgadza_sie_ze_zmierzona_pisownia[raporty]`: the demo
+double serves no `/raporty`, the open demo edge `docs/status.md` names. **The sentinel is that
+test's name, not a total** — when it stops being skipped, the report path got a double.
 
-CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 3.11 and 3.12.
+The last two commands need no token and reach no register. `szukaj-pkd` needs no database either:
+two packaged YAML files and a pure function, which is why it is also the first command anyone runs
+while setting the tool up.
+
+## Structural facts
+
+`Criteria` is the only contract between any input and any fetch. Flags, the wizard and the assistant
+all produce one; nothing downstream accepts anything else. The **YAML query file was withdrawn**
+(ADR-0022) once every field had a flag: it was a second input format that could do nothing the first
+could not, while being one more place to be wrong about what would be fetched. Its replacement is
+`texts.polecenie_powtarzajace` — the wizard prints a ready-to-paste command, and a test feeds that
+command back through `CliRunner`. Note it carries the PKD vintage as `--pkd-2007` rather than as
+codes, the one place it is not equivalent to what the file stored.
+
+`pipeline.py` is the only module that knows both the network and the database; `ui/` reaches the
+world through it and never imports `client` or `store`. Two consequences: the report download takes
+its lock heartbeat through a callback (`DownloadProgress`), and so does the limiter
+(`RateLimiter(heartbeat=…)`), because neither `client` nor `ratelimit` may see the database.
+`pipeline.LockHeartbeat` is the single object touching the lock — one per `Deps` — because a
+detector that subtracts consecutive beats is wrong the moment some beats bypass it.
+
+`ui/texts.py` produces view models with no output library, so every screen is asserted without a
+terminal. `cli.py` authors no user-facing sentence of its own (rule 9), which is what makes rule 10
+checkable by a syntactic scan at all.
+
+One decision sequence lives in `ui/flow.py`: resume → report → `count` → cost table → choice →
+optional split → fetch → export → summary. The `count` step is **one request, two when the PKD
+vintage question is asked, and one more per widening the operator accepts at a zero result** — all
+before consent, none after. Both vintage populations are counted before the operator answers, so the
+question can state what will be missed or gained; when both come back zero the question is not asked
+at all. **This sentence has been wrong twice**, and it is the sentence the next change will trust —
+correct it in the same commit that moves the code.
+
+**No operator input ends in a dead end (ADR-0017).** A description with no extractable filter opens
+a clarification round — entered on `kryteria.is_empty()`, never on whether the model happened to
+ask, because a guarantee that depends on the model is not a guarantee. Zero hits open a menu of
+widenings from `Criteria.poszerzenia()`. A report that does not cover the criteria states which of
+four reasons applies. All three keep their non-interactive behaviour, and the `safe_default` of each
+question is where that is written down: widening must never happen for a schedule.
+
+Boundary rules 1-15 live in `docs/design/phase2_core.md`. Rules 1-13 and 15 are an AST scan in
+`tests/test_boundaries.py`; rule 14 is carried by mypy strict instead, and the design document says
+so rather than counting it into the scan. Rule 12 has two halves and the second matters more: one
+owner for the model SDK client **and** an explicit `api_key=` and `http_client=` in every
+`Anthropic(...)` call, without which the SDK reaches for an ambient credential chain and builds its
+own transport outside the egress gate.
 
 ## Where the design lives
 
 - `docs/status.md` — the living plan: phases, gates, open items. Update it at every gate.
-- `docs/research/public-search-parity.md` — what the public CEIDG search form can ask that this
-  tool cannot, and why most of that gap belongs to the API rather than to the tool.
-- `INSTRUKCJA_CLAUDE_CODE.md` and `docs/reference/uzupelnienie-01.md` — the requirements.
-  The supplement wins wherever the two disagree. It is cited in two shapes, on purpose:
-  prose gives the path (`docs/reference/uzupelnienie-01.md`), code cites the bare name
-  (`uzupelnienie-01.md §B`), because the full path pushes docstrings past the 100-character
-  limit that ruff enforces.
-- `docs/decisions.md` — what the API probe measured (page numbering, page limit, batch size, how
-  empty results are signalled, report contents). These are observations, not guesses; check here
-  before assuming how the API behaves.
-- `docs/adr/` — architecture decisions: 0008 the phase-3 user layer, 0011 the assistant, 0012 the
-  PKD 2007→2025 transition, 0013 the identity of a record identifier (and the schema v3 migration
-  that follows from it), 0014 the register-free mode that `--demo` runs on, 0015 open edges in
-  batched queries, 0016 the identity of a report row the register gave no number to, 0017 the
-  clarification round (which reverses ADR-0011's "no clarification round trip in v1"), 0022 the
-  withdrawal of the YAML query file. 0018-0021 came out of the 2026-09-09 architecture audit and
-  are **proposed**, not decided — read their status line before treating any of them as settled.
 - `docs/design/phase2_core.md` — module map and the numbered boundary rules.
-- `docs/resilience-report.md` — the ten resilience scenarios and how each is covered.
-- `docs/test-runs-phase4.md` — the five groups of runs that need a real model or a real register,
-  with the results of A and B. Anything about how the model *actually* behaves is measured there,
-  not argued: what a mock returns is what we wrote into it.
-- `docs/audit-2026-09-09.md` — the 2026-09-08 audit: six read-only passes, an eleven-mutation
-  sweep, the synthesis, and the ranked remediation list with what has been fixed since. Read the
-  Tier A table before assuming a defect is still open, and the "controls" pass before deciding a
-  rule is ceremony.
-- `docs/demo-walkthrough.md` — how to walk the demo, and what the recorded run actually proved
-  (and did not).
-
-**A batched query must send the same filter as the un-batched one (ADR-0015).** `plan_batches`
-fills a missing date edge with `DATE_FLOOR = 1990-01-01` or `today` so the plan is reproducible and
-an interrupted run stays resumable. Those two substitutes are **planning** values and must not reach
-`Criteria`: until 2026-09-09 they did, so splitting a query silently changed its result set —
-measured at **482 of 16 310 records (2.96 %)** on the operator's own store, 76 registered before
-1990 and 406 with a start date in the future, which CEIDG accepts. The first batch therefore sends
-no `data_od` and the last no `data_do` when the operator gave none, `refine()` carries the open edge
-down, and the split table says `1990-1999 i wcześniej`. Do **not** add a legacy-fingerprint fallback
-for old batches: an old closed `[1990-01-01, …]` batch is a different population, so recognising it
-as fetched would preserve the exact defect. The shortfall sentence used to blame "entries without a
-start date" — there are **zero** such entries in that store; it now names both candidate causes and
-claims neither.
-
-**A report row's identity is a declared subset, never "everything" (ADR-0016).** Rows with neither
-NIP nor REGON are keyed by a hash that included `Lp.`, the ordinal within a download — so the same
-sole trader got a new identity in every archive, which is ADR-0013's defect on the other source.
-The key is now *name + surname + given name + start date*, built in `recordid.py`, taking **values**
-rather than a CSV row so that a future migration reading `firma.list_json` cannot compute a third
-digest. "All columns except `Lp.`" is the tempting wrong answer: a status change or a new phone
-number would mint a new identity. Measured on 287 256 archive rows: 315 such rows, zero collisions
-under that key, and the address adds no discrimination while being 23-69 % filled. The operator's
-store holds **zero** `HASH:` rows, which is why no migration ships with it — re-check that before
-applying this to another store.
-
-## Structural facts
-
-`Criteria` is the only contract between any input and any fetch. Flags, the wizard and the phase-4
-assistant all produce one; nothing downstream accepts anything else. There were four inputs until
-2026-09-10, when the **YAML query file was withdrawn** (ADR-0022): every filtering field had just
-got a flag, so the file had become a second input format that could do nothing the first could not,
-while being one more place to be wrong about what would be fetched. What replaced it is
-`texts.polecenie_powtarzajace` — the wizard prints a ready-to-paste command after the decisions are
-made, and `tests/test_cli_phase3.py` feeds that command back through `CliRunner` to check the loop
-closes. Do not reintroduce a file input without reopening ADR-0022; note in particular that the
-command carries the PKD vintage as the `--pkd-2007` switch rather than as codes, which is the one
-place where it is not equivalent to what the file stored.
-
-`pipeline.py` is the only module that knows both the network and the database. `ui/` reaches the
-world through it and never imports `client` or `store`. Two consequences of that rule are worth
-knowing before touching either side: the report download takes its lock heartbeat through a
-callback (`DownloadProgress`), and so does the limiter (`RateLimiter(heartbeat=…)`), because
-neither `client` nor `ratelimit` may see the database.
-
-`recordid.py` owns the canonical form of an entry identifier, and `pipeline.LockHeartbeat` is the
-single object that touches the database lock — one per `Deps`, injected into the limiter. Both are
-"exactly one place" rules with a measured reason behind them, not tidiness: the first because the
-register spells one identifier two ways, the second because a detector that subtracts consecutive
-beats is wrong the moment some beats bypass it.
-
-`ui/texts.py` produces view models with no output library, so every screen is asserted in tests
-without a terminal. `cli.py` authors no user-facing sentence of its own; `ui/render.py` turns
-blocks into `rich`.
-
-One decision sequence lives in `ui/flow.py`: resume → report → `count` → cost table → choice →
-optional split → fetch → export → summary. The `count` step is **one request, two when the PKD
-vintage question is asked, and one more per widening the operator accepts at a zero result** —
-all of them before consent, none after it. `flow.py` counts both vintage populations deliberately
-and before the operator answers, so the question can state the size of what will be missed or
-gained instead of "the result may be incomplete"; when both come back **zero** the question is
-not asked at all, because a choice between nothing and nothing settles nothing. The widening
-requests are bounded by the number of filters (each turn drops one), priced on screen before the
-operator picks, and never spent under `--tak`. **This sentence has now been wrong twice** — it
-said "exactly one" until 2026-09-08 and "at most two" until 2026-09-09 — and it is the sentence
-the next change will trust, so correct it in the same commit that moves the code.
-
-**No operator input ends in a dead end (ADR-0017).** Three paths used to hand the operator a
-message, discard what they had written and drop them back in the menu, and a UX pass on
-2026-09-09 measured all three on the demo register with the live assistant. A description with no
-extractable filter now opens a **clarification round** — entered on `kryteria.is_empty()`, never
-on whether the model happened to ask, because a guarantee that depends on the model is not a
-guarantee. Zero hits open a menu of **widenings computed by `Criteria.poszerzenia()`**, each
-dropping one filter, ranked by how often that filter is the culprit and each carrying the reason.
-A report that does not cover the criteria states which of four reasons applies and offers the API
-path. Every one of the three keeps its non-interactive behaviour unchanged, and the `safe_default`
-of each new question is where that is written down: widening must never happen for a schedule,
-because it changes the population somebody asked for. `aktualizuj` follows the same shape through `prepare_update` — one cheap
-`count_changes` request, a cost table, a question — because `/zmiana` returns the count for the
-whole range, not just the page. Entry points differ only in which `Prompter` is installed, which
-is what keeps their messages identical.
-
-**`/zmiana` is the staleness signal, and it beats the cache.** `aktualizuj` takes identifiers from
-`/zmiana` — the register saying "these changed" — so the freshness threshold for their details is
-**the end of the change window**, not a cache TTL. `store.stale_detail_ids` takes that threshold
-from its caller for exactly this reason. Until 2026-09-08 it computed a seven-day TTL itself, so an
-entry changed yesterday but fetched three days ago was skipped, kept its pre-change `detail_json`,
-and was counted as refreshed; on the operator's own database 742 of 2 891 identifiers (25.7 %)
-recurred between two runs 23 hours apart. `count_run_unresolved` cannot see this and never could —
-such a record is `pobrany`, i.e. resolved and untrue — so `store.outdated_details` exists as its
-observer and reaches the log, not only the screen. The defect was invisible until the ADR-0013
-repair restored the cache: **fixing one silent loss activated another.** A change range ending in
-the future is refused rather than trimmed, because a watermark in the future makes the *next* run
-skip everything in between.
-
-**The tool runs without the register, and that is a product feature (ADR-0014).** `--demo` answers
-from a synthetic register generated in-process: no socket opens, no CEIDG token is read, and the
-corpus is generated rather than recorded, because the anonymiser leaves NIPs in query strings and
-has already erased the one property a test was meant to check. This exists less for the demo than
-for survival: the `test` environment is dead (2 802 production requests ever, **zero** test ones)
-and a token needs a Profil Zaufany, so before this there was no way to run the tool at all without
-real personal data. Two rules follow. The substitution belongs in `cli`, never inside `build_deps`
-— a standing test asserts production builds its client with `transport=None`, and rule 11 stays
-intact because the demo's `MockTransport` goes through the same `build_http_client`. And the five
-markers in ADR-0014 are mandatory **jointly**: first screen, `Metadane` row, `DEMO_` filename
-prefix (including under `--out`), separate data directory, refusal to combine with production. Drop
-one and a demo workbook becomes indistinguishable from a production one.
-
-**The demo corpus writes no reference data from memory, and that rule was learned twice in one
-day.** `ceidg_tool/demo/korpus.py` declares PKD *code pairs* and reads every name from the
-generated dictionaries, refusing to build if a code is missing or if the pair is not a real
-2007→2025 succession — the first draft had invented names and two codes (`5610A`, `8690E`) that do
-not exist in PKD 2025 at all. The same draft gave four of five cities the wrong `powiat`: a city
-with county rights files under its own name (`Kalisz` → `Kalisz`), and `kaliski` belongs to a
-village. Both passed every automated check, because nothing checked them.
-
-The boundary rules in `docs/design/phase2_core.md` say which module may import what. Rules 1-13
-are enforced by `tests/test_boundaries.py` as an AST scan rather than by discipline; rule 14 (one
-producer of `KanonicznyId`) is carried by mypy strict instead, and the design document says so
-rather than counting it into the scan. Rule 12 has two
-halves and the second matters more: one owner for the model SDK client, **and** an explicit
-`api_key=` and `http_client=` in every `Anthropic(...)` call — without them the SDK reaches for an
-ambient credential chain and builds its own transport outside the egress gate. Rule 9 (`cli.py`
-authors no sentence) is what makes rule 10 checkable at all — see ADR-0009 before loosening
-either, and note the two subset assertions there: a `rich` object trusted to carry text must
-itself be scanned, and every channel rule 10 knows about is forbidden in `cli.py`. Rule 11 stands
-in the same relation to the egress policy: only `httpclient.py` builds an `httpx.Client`, so "no
-connection leaves for a host outside `ALLOWED_HOSTS`" is answerable by reading one module.
+- `docs/adr/` — 0008 the user layer, 0011 the assistant, 0012 the PKD transition, 0013 record
+  identity, 0014 the demo mode, 0015 batched-query edges, 0016 report-row identity, 0017 the
+  clarification round, 0022 the query file withdrawn, **0024 the machine output channel, 0025 the
+  assistant switch and its measured cost, 0026 `szukaj-pkd`**. 0018-0021 came out of the 2026-09-09
+  audit and are **proposed** — read their status line before treating any as settled.
+- `.claude/skills/ceidg-tool/SKILL.md` — how to **drive** the tool from flags rather than build it.
+  In the repository because every fact in it is a fact about this code.
+- `docs/decisions.md` — what the API probe measured. Observations, not guesses; check here before
+  assuming how the API behaves.
+- `INSTRUKCJA_CLAUDE_CODE.md` and `docs/reference/uzupelnienie-01.md` — the requirements; the
+  supplement wins where they disagree. It is cited in two shapes on purpose: prose gives the
+  path, code cites the bare name (`uzupelnienie-01.md §B`), because the full path pushes
+  docstrings past the 100-character limit ruff enforces.
+- `docs/audit-2026-09-09.md` — the audit, its mutation sweep and the ranked remediation list. Read
+  the Tier A table before assuming a defect is still open.
+- `docs/resilience-report.md`, `docs/test-runs-phase4.md`, `docs/demo-walkthrough.md`,
+  `docs/research/public-search-parity.md`.
 
 ## Conventions
 
-Code comments, docstrings and user-facing text are Polish; documents under `docs/` are English.
-Line length 100, mypy strict over both `ceidg_tool` and `tests`. Comments carry the *why* — most of
-the ones here record a defect that was found and closed, so a comment that explains a guard is
-usually load-bearing history rather than noise.
+Code comments, docstrings and user-facing text are Polish; documents under `docs/` are English. Line
+length 100, mypy strict over both `ceidg_tool` and `tests`. Comments carry the *why* — most of the
+ones here record a defect that was found and closed, so a comment explaining a guard is usually
+load-bearing history rather than noise.
 
-Fetched production data stays out of the repository. `tests/fixtures/` holds anonymised copies made
-by `scripts/anonymize_samples.py`; raw samples live in the git-ignored `probe_out/`.
+Fetched production data stays out of the repository: `tests/fixtures/` holds anonymised copies, raw
+samples live in the git-ignored `probe_out/`.
 
 A phase that touches behaviour ends with a code review, and a review finding is applied or argued
-against explicitly, not silently dropped.
-
-And the one rule from the top of this file that a long session must still have in view: **no
-request reaches production without the owner's consent, given in the current session**, and
-`--srodowisko prod --produkcja` is passed explicitly. The token's payload carries a PESEL and the
-register holds real people, so this is the only action here that cannot be taken back. It is
-restated at the end deliberately: opening context loses weight as a session fills, and this is
-the sentence that must not be the one that fades.
+against explicitly, never silently dropped.
