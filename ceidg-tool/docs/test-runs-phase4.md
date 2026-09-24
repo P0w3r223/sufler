@@ -3,7 +3,7 @@
 Date: 2026-09-07
 Status: groups A, B and C run 2026-09-07 (results below); **group C blocks group D** — see its results; D, E and B4 outstanding
 Author: P0w3r223
-Related to: docs/adr/0011_phase4_language_assistant.md, docs/resilience-report.md, UZUPELNIENIE_01.md §D/§E, docs/status.md
+Related to: docs/adr/0011_phase4_language_assistant.md, docs/resilience-report.md, docs/reference/uzupelnienie-01.md §D/§E, docs/status.md
 
 ---
 

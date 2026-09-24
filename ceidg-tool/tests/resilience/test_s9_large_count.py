@@ -1,4 +1,4 @@
-"""Scenariusz 9 (UZUPELNIENIE_01 §D): zapytanie o ~400 000 firm.
+"""Scenariusz 9 (uzupelnienie-01.md §D): zapytanie o ~400 000 firm.
 
 Zaliczenie: program **proponuje zawężenie kryteriów albo podział na partie z szacunkiem
 czasu** i **nie zaczyna pobierania sam**. Scenariusz był dotąd sprawdzany ręcznie; tutaj

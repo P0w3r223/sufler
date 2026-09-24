@@ -1,4 +1,4 @@
-"""Scenariusz 1 (UZUPELNIENIE_01 §D): `kill -9` w połowie strony, potem `wznow`.
+"""Scenariusz 1 (uzupelnienie-01.md §D): `kill -9` w połowie strony, potem `wznow`.
 
 Zaliczenie wg §D: po wznowieniu liczba rekordów równa się `count`, bez duplikatów po `id`.
 

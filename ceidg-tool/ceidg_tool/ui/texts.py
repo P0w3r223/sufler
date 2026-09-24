@@ -103,7 +103,7 @@ def format_size(path: Path) -> str:
 
 
 def first_screen(settings: Settings, *, now: datetime, version: str, demo: bool = False) -> Block:
-    """Pierwszy ekran wg UZUPELNIENIE_01 §A: co robi, dokąd wysyła, gdzie pracuje, jaki token.
+    """Pierwszy ekran wg uzupelnienie-01.md §A: co robi, dokąd wysyła, gdzie pracuje, jaki token.
 
     W trybie demo ekran mówi o tym **pierwszym** wierszem i w tytule. To znacznik numer jeden
     z ADR-0014: skoro tryb bez rejestru jest własnością produktu, a nie osobnym programem, to
@@ -525,7 +525,7 @@ def zero_hits_menu(propozycje: Sequence[tuple[str, Criteria]]) -> tuple[tuple[st
 
 
 def cost_table(est: Estimate, *, threshold: int, capped: bool = False) -> Block:
-    """Tabela kosztów wg UZUPELNIENIE_01 §A: zakres, liczba zapytań, czas, zawartość.
+    """Tabela kosztów wg uzupelnienie-01.md §A: zakres, liczba zapytań, czas, zawartość.
 
     Ścieżka raportu ma własny blok (`report_offer`), bo pada przed zapytaniem o `count`."""
     rows: list[tuple[str, ...]] = []

@@ -2,7 +2,7 @@
 
 Każde żądanie przechodzi przez `RateLimiter.acquire()` — także ponowienia. Błędy
 transportu (DNS, timeout, reset) są odróżniane od błędów API i ponawiane z odstępami
-10 → 30 → 60 → 300 s do 30 minut (UZUPELNIENIE_01 §C). Odpowiedź 5xx jest ponawiana
+10 → 30 → 60 → 300 s do 30 minut (uzupelnienie-01.md §C). Odpowiedź 5xx jest ponawiana
 z rosnącym odstępem, 429 czeka pełną blokadę limitera, 400/401/403/404 nie są ponawiane.
 Klient łączy się wyłącznie z hostami z `config.ALLOWED_HOSTS`; `links.next` z obcym
 hostem kończy się `UntrustedLinkError`.

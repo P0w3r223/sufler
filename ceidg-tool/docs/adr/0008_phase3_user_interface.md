@@ -3,7 +3,7 @@
 Date: 2026-09-05
 Status: accepted 2026-09-06 by the project owner
 Author: P0w3r223
-Related to: UZUPELNIENIE_01.md §A/§C/§D/§E, INSTRUKCJA_CLAUDE_CODE.md "Faza 3", docs/design/phase2_core.md, ADR-0004, ADR-0005, ADR-0007, docs/status.md
+Related to: docs/reference/uzupelnienie-01.md §A/§C/§D/§E, INSTRUKCJA_CLAUDE_CODE.md "Faza 3", docs/design/phase2_core.md, ADR-0004, ADR-0005, ADR-0007, docs/status.md
 
 ---
 
@@ -27,7 +27,7 @@ Before this ADR the decision sequence lived inline in `cli.pobierz` and the pres
 private helpers (`_banner`, `_print_summary`). A wizard added next to them would produce a second copy
 of both, which is precisely what the requirement forbids.
 
-Gaps found against UZUPELNIENIE_01 §A, grounded in the code as it stood:
+Gaps found against docs/reference/uzupelnienie-01.md §A, grounded in the code as it stood:
 
 1. No entry point without flags — the callback printed help.
 2. The post-count choice offered `lista / szczegoly / wyjdz`; "popraw kryteria" was missing and there

@@ -1,4 +1,4 @@
-"""Sesja interaktywna: pierwszy ekran, menu i obsługa pięciu działań z UZUPELNIENIE_01 §A.
+"""Sesja interaktywna: pierwszy ekran, menu i obsługa pięciu działań z uzupelnienie-01.md §A.
 
 Kreator nie podejmuje własnych decyzji o pobieraniu — cała kolejność (wznowienie, raport,
 `count`, tabela kosztów, podział na partie) siedzi w `flow`, wspólna z flagami.
@@ -196,7 +196,7 @@ def handle_fetch(deps: Deps, prompter: Prompter, view: View, *, source: str) -> 
         show_repeat_command(plan.criteria, deps, view)
         if decision == "wyjdz":
             return
-        cel = prompter.text(prompts.CEL)  # UZUPELNIENIE_01 §B: pole „cel pobrania” w Metadanych
+        cel = prompter.text(prompts.CEL)  # uzupelnienie-01.md §B: pole „cel pobrania” w Metadanych
         result = flow.execute(decision, plan, deps, view)
         flow.export_and_report(
             result.run_ids,

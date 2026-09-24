@@ -21,7 +21,7 @@ z 2026-09-07 wykazał, że pierwsza wersja tego modułu przypisywała wszystko j
 3. **Obcy host** odbija się od `AllowedHostsTransport`, czyli od warstwy, w której otwiera się
    połączenie, a nie od tej, w której składa się adres.
 
-UZUPELNIENIE_01 §B mówi „połączenia tylko do hostów `dane.biznes.gov.pl`
+§B uzupelnienie-01.md mówi „połączenia tylko do hostów `dane.biznes.gov.pl`
 i `test-dane.biznes.gov.pl`", a §E chce na to testu z zaślepką DNS
 (`tests/resilience/test_egress_allowlist.py`).
 

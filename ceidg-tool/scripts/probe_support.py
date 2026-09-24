@@ -48,7 +48,7 @@ def no_proxy_opener() -> urllib.request.OpenerDirector:
     `urllib.request.urlopen` domyślnie wstawia `ProxyHandler()` czytający `HTTPS_PROXY`,
     dokładnie tak samo, jak robił to `httpx` w narzędziu do 2026-09-07. Sondy niosą ten sam
     token co narzędzie, a token niesie PESEL, więc obowiązuje je ten sam zakaz wychodzenia
-    przez pośrednika (UZUPELNIENIE_01 §B). Pusty słownik wyłącza wykrywanie proxy zamiast
+    przez pośrednika (uzupelnienie-01.md §B). Pusty słownik wyłącza wykrywanie proxy zamiast
     tylko podmieniać jego adres.
     """
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))

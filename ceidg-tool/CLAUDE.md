@@ -183,8 +183,11 @@ CI (`.github/workflows/ci.yml`) runs the same four on Linux and Windows, Python 
 - `docs/status.md` — the living plan: phases, gates, open items. Update it at every gate.
 - `docs/research/public-search-parity.md` — what the public CEIDG search form can ask that this
   tool cannot, and why most of that gap belongs to the API rather than to the tool.
-- `INSTRUKCJA_CLAUDE_CODE.md` and `UZUPELNIENIE_01.md` — the requirements. The supplement wins
-  wherever the two disagree.
+- `INSTRUKCJA_CLAUDE_CODE.md` and `docs/reference/uzupelnienie-01.md` — the requirements.
+  The supplement wins wherever the two disagree. It is cited in two shapes, on purpose:
+  prose gives the path (`docs/reference/uzupelnienie-01.md`), code cites the bare name
+  (`uzupelnienie-01.md §B`), because the full path pushes docstrings past the 100-character
+  limit that ruff enforces.
 - `docs/decisions.md` — what the API probe measured (page numbering, page limit, batch size, how
   empty results are signalled, report contents). These are observations, not guesses; check here
   before assuming how the API behaves.

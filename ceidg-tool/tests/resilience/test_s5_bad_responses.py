@@ -1,4 +1,4 @@
-"""Scenariusz 5 (UZUPELNIENIE_01 §D): ucięty JSON, HTML zamiast JSON, 204 bez treści, 500.
+"""Scenariusz 5 (uzupelnienie-01.md §D): ucięty JSON, HTML zamiast JSON, 204 bez treści, 500.
 
 Zaliczenie: czytelny komunikat, checkpoint nietknięty, brak wyjątku nieobsłużonego.
 Testy `test_client.py` sprawdzają samą reakcję klienta; tutaj liczy się to, co zostaje

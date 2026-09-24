@@ -1,6 +1,6 @@
 """Rysowanie modeli widoku przez `rich`. Jedyna wiedza o wyglądzie, zero decyzji.
 
-UZUPELNIENIE_01 §B dotyczy także ekranu: nazwa firmy z rejestru trafia tu jako `rich.Text`,
+§B uzupelnienie-01.md dotyczy także ekranu: nazwa firmy z rejestru trafia tu jako `rich.Text`,
 nigdy jako znaczniki. Neutralizacja siedzi w `richtext.safe` (reguła granic 10) — tutaj
 zostaje samo rysowanie.
 """

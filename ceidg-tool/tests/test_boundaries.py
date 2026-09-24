@@ -792,7 +792,7 @@ def test_the_rule_11_scan_tells_building_a_client_from_naming_one(
 
 # ---------------------------------------------- reguła 13: asystent nie widzi danych z rejestru
 
-# Reguła 13 z ADR-0011 (decyzja 2). UZUPELNIENIE_01 §B mówi o fazie 4: „do modelu językowego
+# Reguła 13 z ADR-0011 (decyzja 2). §B uzupelnienie-01.md mówi o fazie 4: „do modelu językowego
 # trafia treść pytania użytkownika i słownik PKD; pobrane rekordy nigdy". To zdanie da się
 # sprawdzić na dwa sposoby: przeglądem tego, co składa prompt, albo brakiem krawędzi w grafie
 # importów. Drugi sposób nie wymaga niczyjej uwagi — rekordy nie mają którędy przejść.

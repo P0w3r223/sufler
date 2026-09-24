@@ -3,7 +3,7 @@
 Date: 2026-09-06
 Status: accepted 2026-09-06 by the project owner
 Author: P0w3r223
-Related to: ADR-0008, docs/design/phase2_core.md, UZUPELNIENIE_01.md §B/§C/§D/§E, docs/resilience-report.md, docs/status.md
+Related to: ADR-0008, docs/design/phase2_core.md, docs/reference/uzupelnienie-01.md §B/§C/§D/§E, docs/resilience-report.md, docs/status.md
 
 ---
 

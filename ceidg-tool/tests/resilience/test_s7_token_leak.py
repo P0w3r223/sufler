@@ -1,4 +1,4 @@
-"""Scenariusz 7 (UZUPELNIENIE_01 §D): po pełnej sesji offline `grep` tokenu w logach,
+"""Scenariusz 7 (uzupelnienie-01.md §D): po pełnej sesji offline `grep` tokenu w logach,
 bazie, plikach wynikowych i komunikatach daje zero trafień. Uruchamiany w CI."""
 
 from __future__ import annotations

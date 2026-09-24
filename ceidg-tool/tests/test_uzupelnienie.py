@@ -1,4 +1,4 @@
-"""Zachowania dodane wg UZUPELNIENIE_01: kwarantanna bazy, link_ceidg, odstęp po wznowieniu."""
+"""Zachowania dodane wg uzupelnienie-01.md: kwarantanna bazy, link_ceidg, odstęp po wznowieniu."""
 
 from __future__ import annotations
 

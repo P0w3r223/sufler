@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      # Z LOCKA, nie z zakresów: §B `UZUPELNIENIE_01.md` wymaga przypiętych zależności, a ta oś
+      # Z LOCKA, nie z zakresów: §B `ceidg-tool/docs/reference/uzupelnienie-01.md` wymaga przypiętych zależności, a ta oś
       # jest jedyną, która biegnie na Windows i na drugiej wersji Pythona — czyli jedyną, która
       # łapie usterki niewidoczne na ubuntu (#146, #147). Instalacja rozwiązywana od nowa przy
       # każdym przebiegu znaczyła, że nie wiadomo, KTÓRY program ta bramka przed chwilą
@@ -61,7 +61,7 @@ jobs:
       - run: ruff check ceidg_tool tests scripts
       - run: ruff format --check ceidg_tool tests scripts
       - run: mypy ceidg_tool tests
-      # UZUPELNIENIE_01 §E: scenariusze 4 i 7 przy każdym uruchomieniu (tests/resilience/)
+      # §E `ceidg-tool/docs/reference/uzupelnienie-01.md`: scenariusze 4 i 7 przy każdym uruchomieniu (tests/resilience/)
       # Bez `-q`: `addopts = "-q"` jest w pyproject.toml, więc jawne dawało `-qq` — a przy tej
       # gadatliwości pytest nie drukuje linii podsumowania i log przebiegu nie mówił, ile testów
       # przeszło. Trzy wersje CLAUDE.md cytowały liczbę, której żadna bramka nie umiała wypisać.

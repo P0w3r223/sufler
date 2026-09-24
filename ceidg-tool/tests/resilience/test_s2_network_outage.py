@@ -1,4 +1,4 @@
-"""Scenariusz 2 (UZUPELNIENIE_01 §D): sieć znika na 2 minuty w trakcie pobierania.
+"""Scenariusz 2 (uzupelnienie-01.md §D): sieć znika na 2 minuty w trakcie pobierania.
 
 Zaliczenie wg §D: kontynuacja bez interwencji i bez utraty danych. „Bez utraty" znaczy tu:
 zbiór rekordów jest pełny względem tego, co API podało, i bez duplikatów po `id`. Fixtures

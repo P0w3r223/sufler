@@ -1,4 +1,4 @@
-"""UZUPELNIENIE_01 §E: „brak połączeń do hostów spoza listy dozwolonych (test z zaślepką DNS)".
+"""§E uzupelnienie-01.md: „brak połączeń do hostów spoza listy dozwolonych (test z zaślepką DNS)".
 
 To kryterium odbioru nie miało testu do 2026-09-07. Kontrola hostów istniała, ale w dwóch
 miejscach czytających **adres** (`apiprofile`, `client._checked_host`), a adres nie mówi, dokąd

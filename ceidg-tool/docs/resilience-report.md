@@ -3,7 +3,7 @@
 Date: 2026-09-07 (first written 2026-09-05)
 Status: draft — every scenario has an automated equivalent; §E still wants 1, 2 and 8 run by hand
 Author: P0w3r223
-Related to: UZUPELNIENIE_01.md §D and §E, docs/adr/0009_boundary_rules_and_resilience.md,
+Related to: docs/reference/uzupelnienie-01.md §D and §E, docs/adr/0009_boundary_rules_and_resilience.md,
 docs/adr/0010_report_link_enrichment.md (decision 8a)
 
 **Two columns, two different claims.** "offline" means an automated suite proves the criterion
