@@ -66,6 +66,13 @@ historią (36 commitów, autorstwo ujednolicone przy imporcie).
 Ma własny `pyproject.toml`, własną numerację ADR-ów w [`ceidg-tool/docs/`](ceidg-tool/docs/)
 i własny `CLAUDE.md`; asystent językowy jest u niego extrasem, nie zależnością. Pola `license`
 nie ma — obowiązuje [`LICENSE`](LICENSE) korzenia, tak jak w pozostałych pod-projektach.
+**Żadne poświadczenie nie jest tu dołączone** — ani token CEIDG, ani klucz API asystenta; `.env`
+jest ignorowany i nigdy nie był śledzony (skan całej bazy obiektów po wartości i po kształcie
+sekretu, 2026-09-24). Kto klonuje, wstawia **własny** token, a uzyskuje go usługą
+[biznes.gov.pl](https://www.biznes.gov.pl/pl/e-uslugi/00_9999_00) przez Profil Zaufany — czyli nie
+od ręki. Bez tokenu każde polecenie rozstrzygające ustawienia kończy się kodem wyjścia 3 i zdaniem
+zaczynającym się od „Brak tokenu:"; działają za to `token zapisz|usun` oraz tryb `--demo`, który
+odpowiada z rejestru syntetycznego generowanego w pamięci procesu, bez sieci i bez tokenu.
 
 **[`krs-tool/`](krs-tool/README.md)** — **trzeci produkt w tym drzewie**: czyta odpis z Krajowego
 Rejestru Sądowego, **zapisany ręcznie przez operatora**, i wystawia raport o sygnałach
