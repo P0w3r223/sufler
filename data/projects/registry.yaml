@@ -17,8 +17,8 @@ projects:
 
   - key: workmate
     company: biap
-    name: WorkMate
-    description: "Wewnętrzny asystent bazy wiedzy WorkMate w architekturze jeden rdzeń, wiele drzwi."
+    name: Sufler
+    description: "Wewnętrzny asystent bazy wiedzy Sufler w architekturze jeden rdzeń, wiele drzwi."
     status: active
     health: green
     phase: "Faza 1 — serwer MCP tylko do odczytu dla Claude Code"
