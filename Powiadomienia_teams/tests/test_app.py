@@ -940,7 +940,7 @@ def test_dzien_juz_wolny_w_grafiku_nie_jest_obiecywany_ani_falszywie_domykany(tm
     # w tym, co ostatecznie trafia do grafiku: podwójnego urlopu nie powstaje w żadnym wariancie.
     assert "Zapiszę" in tresc
     assert "Urlop" in tresc
-    assert "Tydzień, którego dotyczyło przypomnienie" not in tresc  # tydzień DOPIERO nadchodzi
+    assert "już się zaczął" not in tresc  # tydzień DOPIERO nadchodzi (tytuł i tekst STALE)
     assert client.time_off == []  # nic nie dopisujemy — stan świata już jest właściwy
     assert load_state(state_path)["u1"].status == AWAITING_CONFIRM  # domknięcie POMYŚLNE
 
@@ -1454,7 +1454,8 @@ def test_late_reply_within_window_is_processed_not_expired(tmp_path: Path):
     poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
     after = load_state(state_path)["u1"]
     assert after.status == AWAITING_CONFIRM  # odczytana, NIE wygaszona
-    assert all("nic nie zapisuję" not in html for _c, html in client.sent)  # brak EXPIRED_TEXT
+    # Tytuł domknięć jest wspólny dla tekstu i HTML-a (`messages.Tresc`) — to po nim szukamy.
+    assert all("Nie dostałem odpowiedzi" not in html for _c, html in client.sent)
 
 
 def _po_przestoju(state_path: Path) -> None:
@@ -1512,7 +1513,7 @@ def test_reply_read_after_window_is_honoured_not_expired(tmp_path: Path):
 
     assert load_state(state_path)["u1"].status == AWAITING_CONFIRM  # obsłużona, nie wygaszona
     assert len(client.sent) == 1  # WYŁĄCZNIE prośba o potwierdzenie
-    assert all("nic nie zapisuję" not in html for _c, html in client.sent)
+    assert all("Nie dostałem odpowiedzi" not in html for _c, html in client.sent)
 
 
 def test_failed_chat_read_does_not_expire(tmp_path: Path):
@@ -2235,12 +2236,13 @@ def test_podsumowanie_liczy_statusy_i_idzie_do_administratora(tmp_path: Path):
     assert len(client.sent) == 1
     chat_id, html = client.sent[0]
     assert chat_id == "chat-admin-1"
-    assert "oczekuje na odpowiedź: 1" in html
-    assert "zapisane grafiki: 1" in html
+    # Od 0.2.26 podsumowanie jest TABELĄ (pozycja → liczba na tydzień), nie listą punktów.
+    assert "<td>Oczekuje na odpowiedź</td><td>1</td>" in html
+    assert "<td>Zapisane grafiki</td><td>1</td>" in html
     # Etykieta celowo NIE mówi „wygasłe bez odpowiedzi": ten sam licznik obejmuje też brak
     # potwierdzenia i domknięcie „tydzień już trwa" (ADR 0003), a administrator działa na jego
     # podstawie ręcznie.
-    assert "zamknięte bez zapisu: 1" in html
+    assert "<td>Zamknięte bez zapisu</td><td>1</td>" in html
 
 
 def test_podsumowanie_pomijane_bez_administratora(tmp_path: Path):
@@ -4184,7 +4186,7 @@ def test_milczacy_dostaje_JEDNO_przypomnienie(tmp_path: Path):
 
     poll_replies(settings, client, _FakeLlm("{}"), now=_SB_10)  # type: ignore[arg-type]
     assert len(client.sent) == 1, "milczący nie dostał przypomnienia"
-    assert "nie mam jeszcze Twojej odpowiedzi" in client.sent[0][1]
+    assert "Przypominam o grafiku" in client.sent[0][1]
 
     # Kolejne obiegi tego samego weekendu NIE dokładają drugiego — to ma być przysługa,
     # nie nagabywanie.
@@ -4624,3 +4626,216 @@ def test_ZAPISANY_grafik_nie_dostaje_podziekowania_za_samouzupelnienie(tmp_path:
 
     assert client.sent == [], "bot napisał do tematu zamkniętego własnym zapisem"
     assert load_state(state_path)["u1"].status == APPLIED
+
+
+# --- 0.2.26: wiadomości do DOMKNIĘTEGO tematu, które go nie wznawiają -------------------------
+# Scenariusze z symulacji tygodnia na kodzie 0.2.25 (2026-09-25). Tydzień docelowy 2026-07-20
+# kończy się w poniedziałek 2026-07-27 o północy czasu warszawskiego.
+
+
+def _domkniety(state_path: Path, status: str, **pola: Any) -> None:
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=status,
+                watermark="2026-07-18T09:00:00Z",
+                nudged_at="2026-07-17T14:00:00Z",
+                proposal=[{"weekday": d, "start": "08:00", "end": "16:00"} for d in range(5)],
+                **pola,
+            )
+        },
+    )
+
+
+_WT_21 = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)  # wtorek tygodnia docelowego, 12:00
+_WT_28 = datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)  # wtorek PO tygodniu docelowym
+
+
+@pytest.mark.parametrize(
+    "tresc",
+    ["dzięki", "Dzięki 🙂", "ok", "ok, dzięki!", "👍", "tak", "Dzięki za info", "dobra, cześć", ""],
+)
+def test_grzecznosc_po_ODMOWIE_nie_wznawia_tematu(tmp_path: Path, tresc: str):
+    """Żywy model: „dzięki" po odmowie → confirm → „Zapiszę grafik…" do kogoś, kto odmówił."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, DECLINED)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T09:00:00Z", tresc)]})
+    llm = _RaisingLlm()
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_WT_21)  # type: ignore[arg-type]
+
+    po = load_state(state_path)["u1"]
+    assert po.status == DECLINED
+    assert client.sent == []
+    assert llm.calls == 0
+    assert po.watermark == "2026-07-21T09:00:00Z"  # przeczytana i odłożona — nie wraca co obieg
+
+
+def test_ok_po_WYGASNIECIU_nadal_wznawia_bo_przypomnienie_tak_uczy(tmp_path: Path):
+    """Przypomnienie uczy „odpisz »ok«" — po wygaśnięciu „ok" to zgoda, nie grzeczność."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, EXPIRED)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T09:00:00Z", "ok")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":4,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_WT_21)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+    assert len(client.sent) == 1
+
+
+def test_dziekuje_po_WYGASNIECIU_nie_wznawia(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, EXPIRED)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T09:00:00Z", "dziękuję, miłego dnia")]})
+
+    poll_replies(_settings_calodobowe(state_path), client, _RaisingLlm(), now=_WT_21)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == EXPIRED
+    assert client.sent == []
+
+
+def test_wiadomosc_PO_KONCU_tygodnia_dostaje_JEDNA_odpowiedz_zamiast_ciszy(tmp_path: Path):
+    """Do 0.2.25: zero reakcji — wpis nie był nawet czytany (`mozna_wznowic` → False)."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, EXPIRED)
+    client = _FakeClient(
+        {"chat1": [_msg("u1", "2026-07-28T08:00:00Z", "przepraszam, byłam pon-pt 8-16")]}
+    )
+    llm = _RaisingLlm()
+    settings = _settings_calodobowe(state_path)
+
+    poll_replies(settings, client, llm, now=_WT_28)  # type: ignore[arg-type]
+
+    assert len(client.sent) == 1
+    html = client.sent[0][1]
+    assert "Nie mam teraz otwartej sprawy" in html
+    assert "20.07–26.07" in html
+    assert "<table>" in html
+    po = load_state(state_path)["u1"]
+    assert po.status == EXPIRED  # nic się nie wznawia — tygodnia nie da się już zapisać
+    assert po.po_tygodniu_odpisano_at == "2026-07-28T08:00:00Z"
+    assert llm.calls == 0
+
+    # Druga wiadomość o tym samym — bez kolejnej odpowiedzi (jedna na wpis).
+    client.messages["chat1"].append(_msg("u1", "2026-07-28T09:00:00Z", "a czy jednak?"))
+    poll_replies(settings, client, llm, now=_WT_28 + timedelta(hours=2))  # type: ignore[arg-type]
+    assert len(client.sent) == 1
+
+
+def test_grzecznosc_PO_KONCU_tygodnia_zostaje_bez_odpowiedzi(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, DECLINED)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-28T08:00:00Z", "ok dzięki")]})
+
+    poll_replies(_settings_calodobowe(state_path), client, _RaisingLlm(), now=_WT_28)  # type: ignore[arg-type]
+
+    assert client.sent == []
+    assert load_state(state_path)["u1"].po_tygodniu_odpisano_at == ""
+
+
+def test_potwierdzone_WOLNE_ktore_juz_jest_w_grafiku_nie_mowi_ze_tydzien_sie_zaczal(
+    tmp_path: Path,
+):
+    """Audyt 2026-09-08, pkt 3: nieprawdziwe „Tydzień już się zaczął" + EXPIRED."""
+    state_path = tmp_path / "state.json"
+    save_state(
+        state_path,
+        {
+            "u1": PendingReminder(
+                member_id="u1",
+                member_name="Ala",
+                chat_id="chat1",
+                week_start="2026-07-20",
+                status=AWAITING_CONFIRM,
+                awaiting_yes=True,
+                watermark="2026-07-18T09:00:00Z",
+                nudged_at="2026-07-17T14:00:00Z",
+                resolved=[],
+                resolved_time_off=[
+                    {"weekday": 4, "reason_id": "TOR_URLOP", "reason_name": "Urlop"}
+                ],
+                known_time_off_weekdays=[4],
+            )
+        },
+    )
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-19T10:00:00Z", "tak")]})
+
+    poll_replies(_settings_calodobowe(state_path), client, _RaisingLlm(), now=_NIEDZIELA_19)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == SELF_FILLED
+    assert len(client.sent) == 1
+    assert "już się zaczął" not in client.sent[0][1]
+    assert "już w grafiku" in client.sent[0][1]
+    assert client.time_off == []  # żadnego drugiego wpisu wolnego
+
+
+def test_piatkowy_przebieg_NIE_kasuje_wpisu_tygodnia_ktory_jeszcze_trwa(tmp_path: Path):
+    """Symulacja 0.2.25: wznowienie obiecane „do końca tygodnia" kończyło się w piątek o 16:00.
+
+    Osoba bez prośby o kolejny tydzień (ma już grafik) traciła wpis przy piątkowym sprzątaniu,
+    więc jej wiadomość z weekendu nie była nawet czytana.
+    """
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, EXPIRED)
+    nastepny_tydzien = tuple(
+        Shift(
+            "u1",
+            datetime(2026, 7, 27 + d, 6, tzinfo=timezone.utc),
+            datetime(2026, 7, 27 + d, 14, tzinfo=timezone.utc),
+        )
+        for d in range(5)
+    )
+    client = _FakeClient({}, members=(Member("u1", "Ala"),), shifts=nastepny_tydzien)
+    piatek = datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)  # 16:00 w Warszawie
+
+    run_once(_settings_calodobowe(state_path), client, now=piatek, teraz=piatek)  # type: ignore[arg-type]
+    assert client.sent == []  # grafik na kolejny tydzień jest — nowej prośby nie ma
+    assert load_state(state_path)["u1"].status == EXPIRED  # wpis przeżył sprzątanie
+
+    # Sobota: pracownik pisze o tygodniu, który jeszcze trwa → temat wraca do obiegu.
+    client.messages["chat1"] = [_msg("u1", "2026-07-25T08:00:00Z", "w niedzielę 8-16")]
+    llm = _FakeLlm('{"action":"modify","shifts":[{"weekday":6,"start":"08:00","end":"16:00"}]}')
+    sobota = datetime(2026, 7, 25, 9, 0, tzinfo=timezone.utc)
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=sobota)  # type: ignore[arg-type]
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+
+
+def test_kciuk_po_WYGASNIECIU_wznawia_temat(tmp_path: Path):
+    """Przegląd 0.2.26: „👍" po wygaśnięciu bywa zgodą na propozycję — nie wolno go przemilczeć."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, EXPIRED)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T09:00:00Z", "👍")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":4,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_WT_21)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+
+
+@pytest.mark.parametrize("status", [EXPIRED, DECLINED])
+def test_uzupelniony_PO_KONCU_tygodnia_nie_dostaje_spoznionego_podziekowania(
+    tmp_path: Path, status: str
+):
+    """Przegląd 0.2.26: wpis z minionego tygodnia wpadał do kroku 1.5 i dostawał „dziękuję"."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, status)
+    zmiany = tuple(
+        Shift(
+            "u1",
+            datetime(2026, 7, 20 + d, 6, tzinfo=timezone.utc),
+            datetime(2026, 7, 20 + d, 14, tzinfo=timezone.utc),
+        )
+        for d in range(5)
+    )
+    client = _FakeClient({"chat1": []}, shifts=zmiany)
+
+    poll_replies(_settings_calodobowe(state_path), client, _RaisingLlm(), now=_WT_28)  # type: ignore[arg-type]
+
+    assert client.sent == []
+    assert load_state(state_path)["u1"].status == status

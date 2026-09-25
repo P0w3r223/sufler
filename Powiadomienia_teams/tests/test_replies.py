@@ -258,3 +258,43 @@ def test_incoming_after_rozpoznaje_wlasna_wiadomosc_niezaleznie_od_wielkosci_lit
     assert incoming_after(messages, guid, nadawca="u1") == []
     # To NASZA wiadomość, nie cudza — nie wolno jej zgłaszać jako obcego nadawcy.
     assert obcy_nadawcy(messages, guid, nadawca="u1") == []
+
+
+def test_jest_uprzejmoscia_szeroko_po_odmowie_i_po_koncu_tygodnia():
+    """Po odmowie wznawia WYŁĄCZNIE treść grafiku — słownika grzeczności nie da się domknąć."""
+    from powiadomienia_teams.reminders.replies import jest_uprzejmoscia
+
+    for tekst in (
+        "dzięki",
+        "Dzięki za info",
+        "dobra, dzięki",
+        "Dzięki, cześć!",
+        "ok dzięki hej",
+        "dzięki xD",
+        "ok",
+        "tak",
+        "👍",
+        "",
+        "rozumiem, do usłyszenia",
+    ):
+        assert jest_uprzejmoscia(tekst, szeroko=True), tekst
+    for tekst in (
+        "jednak pon-pt 8-16",
+        "dzięki, w piątek 10-18",
+        "ok zapisz",
+        "8-16",
+        "jednak chcę uzupełnić",
+        "we wtorek zdalnie",
+        "będę na urlopie w czwartek",
+    ):
+        assert not jest_uprzejmoscia(tekst, szeroko=True), tekst
+
+
+def test_jest_uprzejmoscia_waska_po_wygasnieciu():
+    """Po wygaśnięciu „ok", „👍" i pusta wiadomość mogą być ZGODĄ — przypomnienie tego uczy."""
+    from powiadomienia_teams.reminders.replies import jest_uprzejmoscia
+
+    for tekst in ("dzięki", "Dziękuję bardzo!", "dzięki za info, cześć", "miłego weekendu"):
+        assert jest_uprzejmoscia(tekst, szeroko=False), tekst
+    for tekst in ("ok", "👍", "", "tak", "ok dzięki", "pon-pt 8-16"):
+        assert not jest_uprzejmoscia(tekst, szeroko=False), tekst

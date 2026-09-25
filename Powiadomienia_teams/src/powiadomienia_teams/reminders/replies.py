@@ -185,6 +185,93 @@ def is_pure_affirmation(text: str) -> bool:
     return all(t in allowed for t in tokens)
 
 
+# Słowa, które po DOMKNIĘCIU tematu są grzecznością, a nie nową sprawą. Szerzej niż ``_FILLER``,
+# bo tu błąd w drugą stronę jest tani: wiadomość uznana za uprzejmość zostaje po prostu
+# przeczytana i odłożona — nic nie jest zapisywane ani wysyłane.
+_UPRZEJMOSCI = _FILLER | {
+    "dzięks",
+    "dzieks",
+    "thx",
+    "thanks",
+    "bardzo",
+    "serdecznie",
+    "pozdrawiam",
+    "pozdro",
+    "pozdr",
+    "miłego",
+    "milego",
+    "dnia",
+    "weekendu",
+    "wieczoru",
+    "również",
+    "rowniez",
+    "nawzajem",
+    "wzajemnie",
+}
+_UPRZEJMOSCI |= {
+    "cześć",
+    "czesc",
+    "hej",
+    "hejka",
+    "siema",
+    "pa",
+    "papa",
+    "do",
+    "usłyszenia",
+    "uslyszenia",
+    "widzenia",
+    "za",
+    "info",
+    "informację",
+    "informacje",
+    "wiadomość",
+    "wiadomosc",
+    "xd",
+}
+
+# Czy wiadomość NIESIE treść grafiku: godzinę, dzień, zmianę zdania, nieobecność, tryb pracy.
+# Rdzenie, nie pełne słowa — polska odmiana („zapisz", „zapiszesz", „zapisać"). Lista celowo
+# szeroka: fałszywe trafienie kosztuje jedną prośbę o doprecyzowanie, a przeoczenie — ciszę
+# wobec kogoś, kto chciał coś zmienić.
+_TRESC_GRAFIKU = re.compile(
+    r"\d"
+    r"|\b(?:pon|wt|wtor|śr|sr|środ|srod|czw|pt|piąt|piat|sob|nd|niedz|weekend|jutr|dziś|dzis)"
+    r"|\b(?:jednak|zapis|zmie[nń]|zmian|urlop|woln|chor|l4|zwolnien|zdaln|stacjonar|biur|prac"
+    r"|będ|bed|godz|rano|popołud|popolud|nock|grafik|dyżur|dyzur|delegac|szkoleni|nieobec)",
+    re.IGNORECASE,
+)
+
+
+def niesie_tresc_grafiku(text: str) -> bool:
+    """Czy w wiadomości jest cokolwiek, co mogłoby zmienić grafik (patrz ``_TRESC_GRAFIKU``)."""
+    return bool(_TRESC_GRAFIKU.search(text))
+
+
+def jest_uprzejmoscia(text: str, *, szeroko: bool) -> bool:
+    """Czy wiadomość do DOMKNIĘTEGO tematu jest grzecznością, która nie powinna go wznawiać.
+
+    Zmierzone na żywym modelu (2026-09-25, 3/3): odmowa, a po niej „dzięki" → wznowienie →
+    model czyta „dzięki" jako ``confirm`` → bot wysyła „Zapiszę grafik… Potwierdź »tak«" komuś,
+    kto właśnie odmówił. Nic się nie zapisuje (bramka „tak"), ale rozmowa wygląda, jakby bot nie
+    słuchał.
+
+    Dwa tryby, bo po różnych domknięciach ta sama wiadomość znaczy co innego:
+
+    - ``szeroko=True`` — po ODMOWIE i po końcu tygodnia. Grzecznością jest wszystko, co NIE niesie
+      treści grafiku (``niesie_tresc_grafiku``): „dzięki za info", „dobra, cześć", „ok", „👍",
+      sam załącznik. Słownika grzeczności nie da się tu domknąć — odwrócona reguła pyta o to,
+      co naprawdę ma znaczenie.
+    - ``szeroko=False`` — po WYGAŚNIĘCIU w trakcie tygodnia. Przypomnienie uczy „wystarczy
+      odpisać »ok«", więc „ok", „👍" albo pusta wiadomość mogą być ZGODĄ na propozycję i temat
+      się wznawia (dalej rozstrzyga model, a zapis i tak wymaga „tak"). Grzecznością są tylko
+      słowa z ``_UPRZEJMOSCI`` — podziękowania i pozdrowienia.
+    """
+    if szeroko:
+        return not niesie_tresc_grafiku(text)
+    tokens = [t.strip(_STRIP) for t in text.lower().split()]
+    return bool(tokens) and all(t in _UPRZEJMOSCI for t in tokens)
+
+
 def _window_reset(started_at: str, current_at: str, window: timedelta) -> bool:
     """Czy STAŁE okno pamięci minęło: bieżąca wiadomość jest >= ``window`` po kotwicy.
 

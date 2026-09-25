@@ -15,6 +15,7 @@ Wysyłka jest ZAWSZE best-effort: alert, który wywraca usługę, jest gorszy ni
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -75,6 +76,89 @@ def send_alert(
     return False
 
 
+class _UkryjAdresWebhooka(logging.Filter):
+    """Filtr logu: pełny adres webhooka alertów → sam host z ``/<ukryte>`` w miejscu ścieżki."""
+
+    def __init__(self, host: str) -> None:
+        super().__init__()
+        self._wzorzec = re.compile(rf"(https?://{re.escape(host)})[^\s\"']*", re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        tresc = record.getMessage()
+        ukryta = self._wzorzec.sub(r"\1/<ukryte>", tresc)
+        if ukryta != tresc:
+            record.msg, record.args = ukryta, None
+        return True
+
+
+def ukryj_adres_w_logach(webhook_url: str) -> None:
+    """Nie pozwól, żeby adres webhooka alertów (token w ścieżce) trafił do logu kontenera.
+
+    httpx loguje KAŻDE żądanie na poziomie INFO razem z pełnym URL-em — a adres webhooka Discorda
+    czy Power Automate niesie token w ścieżce. Do 0.2.25 był to wyciek pewny i udokumentowany
+    („znane usterki" 0.2.19): token leżał w `docker logs` i w każdej ich kopii. Wyciszenie
+    loggera httpx w całości zabrałoby też logi żądań do Graph, które są jedyną diagnostyką
+    dławienia — dlatego maskujemy wyłącznie adresy na hoście webhooka, ścieżkę w całości
+    (także po przekierowaniu w obrębie hosta, gdzie ścieżka jest inna niż w konfiguracji).
+    Wywołanie wielokrotne nie dubluje filtra.
+    """
+    if not webhook_url:
+        return
+    host = httpx.URL(webhook_url).host
+    if not host:
+        return
+    httpx_logger = logging.getLogger("httpx")
+    if any(isinstance(f, _UkryjAdresWebhooka) for f in httpx_logger.filters):
+        return
+    httpx_logger.addFilter(_UkryjAdresWebhooka(host))
+
+
+_KODY_PRZEKIEROWANIA = frozenset({301, 302, 303, 307, 308})
+_MAX_PRZEKIEROWAN = 3
+
+
+def _post_z_przekierowaniem(
+    webhook_url: str, ladunek: dict[str, Any], client: httpx.Client | None
+) -> httpx.Response:
+    """POST z przekierowaniami obsłużonymi RĘCZNIE — tylko w obrębie TEGO SAMEGO hosta, po HTTPS.
+
+    Do 0.2.25 stało tu ``follow_redirects=True`` (audyt 2026-09-08, pkt 4). httpx przy 307/308
+    powtarza wtedy POST z PEŁNĄ treścią alertu pod adres z nagłówka ``Location`` — dowolny, także
+    obcy i nieszyfrowany — omijając kontrolę schematu, którą ``Settings.validate`` robi wyłącznie
+    dla adresu z konfiguracji. Przekierowanie na inny host jest tu więc odmową z czytelnym
+    ostrzeżeniem: właściwą reakcją jest poprawienie ``ALERT_WEBHOOK_URL``, nie ślepe podążanie.
+
+    Przekierowań w obrębie hosta nadal potrzebujemy (zmiana ścieżki Power Automate, reverse
+    proxy) — dlatego nie zwykłe ``follow_redirects=False``. Każdy kod 3xx powtarza POST: odbiorca
+    webhooka i tak nie przyjmie GET-a, a zamiana metody (tak robią przeglądarki przy 301–303)
+    zamieniłaby przekierowanie w cichą utratę alertu.
+    """
+    url = httpx.URL(webhook_url)
+    for _ in range(_MAX_PRZEKIEROWAN + 1):
+        if client is not None:
+            odpowiedz = client.post(str(url), json=ladunek, follow_redirects=False)
+        else:
+            odpowiedz = httpx.post(
+                str(url), json=ladunek, timeout=_TIMEOUT_S, follow_redirects=False
+            )
+        lokalizacja = odpowiedz.headers.get("location")
+        if odpowiedz.status_code not in _KODY_PRZEKIEROWANIA or not lokalizacja:
+            return odpowiedz
+        cel = url.join(lokalizacja)
+        if cel.scheme != "https" or cel.host.lower() != url.host.lower():
+            # Host celu nie jest sekretem (sekret siedzi w ścieżce) i jest dokładnie tym, czego
+            # operator potrzebuje, żeby zdecydować, czy nowy adres jest prawowity.
+            logger.warning(
+                "Webhook alertu przekierowuje na inny adres (%s://%s) — NIE wysyłam tam treści "
+                "alertu. Jeśli adres jest prawidłowy, wpisz go do ALERT_WEBHOOK_URL.",
+                cel.scheme,
+                cel.host,
+            )
+            return odpowiedz
+        url = cel
+    return odpowiedz
+
+
 def _jedna_proba(
     webhook_url: str, tytul: str, tresc: str, waga: str, client: httpx.Client | None
 ) -> bool:
@@ -86,18 +170,10 @@ def _jedna_proba(
         "zrodlo": "powiadomienia-teams",
     }
     try:
-        # `follow_redirects` JAWNIE: httpx domyślnie NIE podąża za przekierowaniem, a webhooki
-        # potrafią je zwracać (podniesienie http→https, zmiana adresu Power Automate, reverse
-        # proxy). Bez tego 301/302 kończyło się „sukcesem", którego nikt nigdy nie dostał.
-        if client is not None:
-            odpowiedz = client.post(webhook_url, json=ladunek, follow_redirects=True)
-        else:
-            odpowiedz = httpx.post(
-                webhook_url, json=ladunek, timeout=_TIMEOUT_S, follow_redirects=True
-            )
-        # Próg 300, nie 400: po podążeniu za przekierowaniami kod 3xx oznacza, że łańcuch się nie
-        # domknął — czyli alert NIE dotarł. Cichy zanik jedynego kanału niezależnego od AAD jest
-        # najgorszą możliwą awarią tego modułu, więc traktujemy to jako niepowodzenie.
+        odpowiedz = _post_z_przekierowaniem(webhook_url, ladunek, client)
+        # Próg 300, nie 400: kod 3xx po wyczerpaniu dozwolonych przekierowań oznacza, że łańcuch
+        # się nie domknął — czyli alert NIE dotarł. Cichy zanik jedynego kanału niezależnego od
+        # AAD jest najgorszą możliwą awarią tego modułu, więc traktujemy to jako niepowodzenie.
         if odpowiedz.status_code >= 300:
             # Sam URL bywa sekretem (bywa w nim token) — logujemy kod, nigdy adresu.
             logger.warning("Webhook alertu nie przyjął wiadomości: %s", odpowiedz.status_code)

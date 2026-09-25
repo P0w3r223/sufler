@@ -44,15 +44,16 @@ from powiadomienia_teams.domain.tozsamosc import znormalizuj
 from powiadomienia_teams.graph.auth import AuthExpiredError
 from powiadomienia_teams.graph.client import GraphClient, GraphTruncatedReadError
 from powiadomienia_teams.messages import (
-    DECLINED_TEXT,
-    EXPIRED_TEXT,
-    NO_CONFIRM_TEXT,
-    STALE_WEEK_TEXT,
-    UNCLEAR_TEXT,
     build_applied_text,
     build_confirm_text,
+    build_declined_text,
+    build_expired_text,
     build_nic_do_zapisania_text,
+    build_no_confirm_text,
+    build_stale_week_text,
+    build_tydzien_zamkniety_text,
     build_unclear_text,
+    etykieta_tygodnia_iso,
     to_html,
 )
 from powiadomienia_teams.reminders.detect import (
@@ -65,11 +66,13 @@ from powiadomienia_teams.reminders.lifecycle import (
     WZNAWIALNE,
     ReadOutcome,
     czas_na_przypomnienie,
+    czeka_na_odpowiedz_po_tygodniu,
     mozna_wznowic,
     przekroczyl_sufit,
     ready_for_self_fill_check,
     should_expire,
     still_writable,
+    tydzien_minal,
 )
 from powiadomienia_teams.reminders.propose import baza_interpretacji
 from powiadomienia_teams.reminders.replies import (
@@ -77,6 +80,7 @@ from powiadomienia_teams.reminders.replies import (
     history_for_llm,
     incoming_after,
     is_pure_affirmation,
+    jest_uprzejmoscia,
     message_text,
     obcy_nadawcy,
 )
@@ -448,12 +452,20 @@ def poll_replies(  # noqa: C901, PLR0915
     # Koszt: jeden odczyt czatu na wznawialny wpis na obieg. Wpisy terminalne nie liczą się do
     # `PollOutcome.open_count` (patrz koniec funkcji), więc przy samych wznawialnych odstęp stoi
     # na suficie — realnie ~1 odczyt na osobę na godzinę, przez okno retencji.
+    #
+    # Od 0.2.26 do tej samej listy wchodzą wpisy, których tydzień już MINĄŁ, dopóki nie dostały
+    # odpowiedzi „ten tydzień jest już zamknięty" (`czeka_na_odpowiedz_po_tygodniu`) — wcześniej
+    # wiadomość po końcu tygodnia nie była nawet czytana i pracownik dostawał ciszę.
     wznawialne = [
         p
         for p in state.values()
         # `chat_id` pusty znaczy wpis, do którego i tak nie ma jak zajrzeć — nie ma po co płacić
         # za żądanie do Graph, żeby się o tym przekonać.
-        if p.chat_id and mozna_wznowic(p, now, settings.okno_odpowiedzi)
+        if p.chat_id
+        and (
+            mozna_wznowic(p, now, settings.okno_odpowiedzi)
+            or czeka_na_odpowiedz_po_tygodniu(p, now, settings.okno_odpowiedzi)
+        )
     ]
     if not open_items and not wznawialne:
         return PollOutcome(0, None)
@@ -548,6 +560,11 @@ def poll_replies(  # noqa: C901, PLR0915
         p
         for p in [*open_items, *wznawialne]
         if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM, *WZNAWIALNE)
+        # Wpis z tygodnia, który już MINĄŁ, jest na liście `wznawialne` wyłącznie po to, żeby
+        # odpowiedzieć na wiadomość (0.2.26). Podziękowanie „grafik jest już uzupełniony" za
+        # zamknięty tydzień byłoby spóźnione o dni, a każdy taki tydzień kosztowałby osobne
+        # pełne pobranie grafiku.
+        and not (p.status in WZNAWIALNE and tydzien_minal(p, now, tz))
         and outcomes.get(p.member_id) is ReadOutcome.NOTHING_NEW
         and ready_for_self_fill_check(p, now, settings.self_fill_check_min_idle_s)
     ]
@@ -651,7 +668,7 @@ def poll_replies(  # noqa: C901, PLR0915
             client,
             state,
             bez_odpowiedzi,
-            EXPIRED_TEXT,
+            build_expired_text,
             now,
             "brak odpowiedzi",
             okno_domkniec=okno_pierwotne,
@@ -662,7 +679,7 @@ def poll_replies(  # noqa: C901, PLR0915
             client,
             state,
             bez_potwierdzenia,
-            NO_CONFIRM_TEXT,
+            build_no_confirm_text,
             now,
             "brak potwierdzenia",
             okno_domkniec=okno_pierwotne,
@@ -927,6 +944,67 @@ def _zglos_obcych_raz(settings: Settings, pending: st.PendingReminder, obcy: lis
     )
 
 
+def _po_domknieciu_bez_wznowienia(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    pending: st.PendingReminder,
+    nowe: list[dict[str, Any]],
+    now: datetime,
+) -> bool:
+    """Obsłuż wiadomość do DOMKNIĘTEGO tematu, która go nie wznawia. ``True`` = obsłużona tutaj.
+
+    Dwa przypadki, oba znalezione symulacją tygodnia na kodzie 0.2.25:
+
+    1. **Sama grzeczność** („dzięki", „👍", a po odmowie także „ok") — watermark idzie dalej,
+       status zostaje, nikt nic nie dostaje. Bez tego „dzięki" po odmowie otwierało temat,
+       a model brał je za zgodę na propozycję (``replies.jest_uprzejmoscia``).
+    2. **Tydzień już minął** — nie ma czego zapisać, ale milczenie jest najgorszą odpowiedzią.
+       Jedno zdanie „ten tydzień jest już zamknięty — napisz do przełożonego", raz na wpis
+       (``po_tygodniu_odpisano_at``), po czym czat tego wpisu przestajemy czytać.
+
+    Kolejność jak wszędzie: commit (watermark + pole) PRZED wysyłką, czyli „co najwyżej raz".
+    """
+    wiadomosci = [(str(m.get("createdDateTime", "")), message_text(m)) for m in nowe]
+    minal = tydzien_minal(pending, now, settings.tz)
+    uprzejmosc = jest_uprzejmoscia(
+        " ".join(tresc for _iso, tresc in wiadomosci),
+        szeroko=pending.status == st.DECLINED or minal,
+    )
+    if uprzejmosc:
+        _commit(settings, state, pending, wiadomosci)
+        logger.info(
+            "Grzeczność od %s po domknięciu tematu (status %s) — nie wznawiam",
+            etykiety.osoba(pending, settings),
+            pending.status,
+        )
+        return True
+    if not minal:
+        return False
+    pending.po_tygodniu_odpisano_at = wiadomosci[-1][0] or to_graph_iso(now)
+    _commit(settings, state, pending, wiadomosci)
+    try:
+        do_pracownika(
+            settings,
+            client,
+            pending.chat_id,
+            to_html(build_tydzien_zamkniety_text(etykieta_tygodnia_iso(pending.week_start))),
+            teraz=now,
+        )
+        logger.info(
+            "Wiadomość od %s po końcu tygodnia %s — odpisano, że tydzień jest zamknięty",
+            etykiety.osoba(pending, settings),
+            pending.week_start,
+        )
+    except NIE_POLYKAJ:
+        raise
+    except Exception:
+        logger.exception(
+            "Nie udało się odpisać %s, że tydzień jest zamknięty", etykiety.osoba(pending, settings)
+        )
+    return True
+
+
 def _process_pending(
     settings: Settings,
     client: GraphClient,
@@ -1008,6 +1086,10 @@ def _process_pending(
     # `awaiting_yes=False` jawnie, choć każda ścieżka domykająca już ją skasowała (N38): to jedyne
     # miejsce, które otwiera temat z powrotem, więc jeśli tamten niezmiennik kiedyś się złamie,
     # ma się to skończyć prośbą o potwierdzenie, a nie zapisem po samym »tak«.
+    if pending.status in WZNAWIALNE and _po_domknieciu_bez_wznowienia(
+        settings, client, state, pending, nowe, now
+    ):
+        return ReadOutcome.HANDLED
     if pending.status in WZNAWIALNE:
         logger.info(
             "Wznawiam domknięty temat %s (status %s) — pracownik napisał po domknięciu",
@@ -1327,7 +1409,9 @@ def _record_failure(
             settings,
             state,
             pending,
-            do_pracownika(settings, client, pending.chat_id, to_html(UNCLEAR_TEXT), teraz=now),
+            do_pracownika(
+                settings, client, pending.chat_id, to_html(build_unclear_text()), teraz=now
+            ),
         )
     # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
     except NIE_POLYKAJ:
@@ -1336,6 +1420,51 @@ def _record_failure(
         logger.exception(
             "Nie udało się poprosić %s o doprecyzowanie", etykiety.osoba(pending, settings)
         )
+
+
+def _domknij_juz_wolne(
+    settings: Settings,
+    client: GraphClient,
+    state: dict[str, st.PendingReminder],
+    pending: st.PendingReminder,
+    schedule: WeekSchedule,
+    time_offs: tuple[TimeOff, ...],
+    wiadomosci: Sequence[tuple[str, str]],
+    now: datetime,
+) -> bool:
+    """Potwierdzone WYŁĄCZNIE wolne, które już jest w grafiku → domknij sukcesem. ``True`` = tak.
+
+    Pusty wynik ``_build_writable`` BEZ ANI JEDNEGO minionego wpisu znaczy co innego niż „tydzień
+    się zaczął": pracownik potwierdził wolne, które JUŻ JEST w grafiku (``_build_writable`` odsiewa
+    takie dni, żeby nie zdublować timeOff). Do 0.2.25 ta sytuacja dostawała nieprawdziwe „Tydzień
+    już się zaczął" + ``EXPIRED`` (audyt 2026-09-08, pkt 3). Właściwa odpowiedź istniała obok — to
+    ta sama sytuacja co „wszystko już w grafiku", więc ten sam status i ten sam komunikat.
+    """
+    juz_wolne = sorted(
+        {int(w.get("weekday", -1)) for w in pending.resolved_time_off}
+        & set(pending.known_time_off_weekdays)
+    )
+    if schedule.shifts or time_offs or not juz_wolne:
+        return False
+    _commit(settings, state, pending, wiadomosci, status=st.SELF_FILLED, awaiting_yes=False)
+    try:
+        do_pracownika(
+            settings,
+            client,
+            pending.chat_id,
+            to_html(
+                build_nic_do_zapisania_text(juz_wolne, etykieta_tygodnia_iso(pending.week_start))
+            ),
+            teraz=now,
+        )
+    except NIE_POLYKAJ:
+        raise
+    except Exception:
+        logger.exception(
+            "Wolne %s było już w grafiku, ale nie udało się o tym napisać",
+            etykiety.osoba(pending, settings),
+        )
+    return True
 
 
 def _apply_confirmed_yes(
@@ -1358,6 +1487,10 @@ def _apply_confirmed_yes(
     # Co zostało do zapisania, liczymy PRZED commitem: to czysta operacja, a jej pusty wynik
     # znaczy zupełnie co innego niż udany zapis i musi dać inny status oraz inny komunikat.
     schedule, time_offs, minione = _build_writable(pending, tz, ctx.scheduling_group_id, now)
+    if not minione and _domknij_juz_wolne(
+        settings, client, state, pending, schedule, time_offs, wiadomosci, now
+    ):
+        return
     if not schedule.shifts and not time_offs:
         # `awaiting_yes=False` mimo statusu terminalnego: N38 mówi „każda ścieżka domykająca temat",
         # bez wyjątku dla tej jednej. Dziś flaga zostawiona tutaj niczego nie otwiera (wpisy
@@ -1369,7 +1502,13 @@ def _apply_confirmed_yes(
         # wysyłki nie może lecieć wyżej jako „nie udało się obsłużyć odpowiedzi": stan jest już
         # utrwalony i terminalny, więc ponowienia i tak nie będzie.
         try:
-            do_pracownika(settings, client, pending.chat_id, to_html(STALE_WEEK_TEXT), teraz=now)
+            do_pracownika(
+                settings,
+                client,
+                pending.chat_id,
+                to_html(build_stale_week_text(etykieta_tygodnia_iso(pending.week_start))),
+                teraz=now,
+            )
         # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
         except NIE_POLYKAJ:
             raise
@@ -1407,7 +1546,11 @@ def _apply_confirmed_yes(
                 settings,
                 client,
                 pending.chat_id,
-                to_html(build_nic_do_zapisania_text(juz_w_grafiku)),
+                to_html(
+                    build_nic_do_zapisania_text(
+                        juz_w_grafiku, etykieta_tygodnia_iso(pending.week_start)
+                    )
+                ),
                 teraz=now,
             )
         # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
@@ -1486,7 +1629,18 @@ def _apply_confirmed_yes(
     # zapisu, więc nie wysyłaj mylnego „uzupełnij ręcznie" (zmiany są już w Shifts).
     # Zapis CZĘŚCIOWY dostaje własny tekst: „zapisałem Twoje zmiany" byłoby nieprawdą wobec dni,
     # które odpadły, a pracownik nie miałby jak się o tej dziurze dowiedzieć.
-    tresc = build_applied_text(minione=minione, juz_w_grafiku=juz_w_grafiku)
+    dni_wolne = {t.start.astimezone(tz).weekday() for t in time_offs}
+    tresc = build_applied_text(
+        minione=minione,
+        juz_w_grafiku=juz_w_grafiku,
+        zapisane=schedule,
+        wolne=[
+            (int(w["weekday"]), str(w.get("reason_name") or "Nieobecność"))
+            for w in pending.resolved_time_off
+            if int(w.get("weekday", -1)) in dni_wolne
+        ],
+        tz=tz,
+    )
     try:
         do_pracownika(settings, client, pending.chat_id, to_html(tresc), teraz=now)
         logger.info(
@@ -1632,7 +1786,7 @@ def _interpret_and_confirm(  # noqa: PLR0915
             interpretacja=True,
         )
         confirm = build_confirm_text(
-            decision.schedule, resolved_time_off, tz, pominiete=decision.pominiete
+            decision.schedule, resolved_time_off, tz, pominiete=decision.pominiete, teraz=now
         )
         # Okno na potwierdzenie MUSI biec od chwili, w której o nie poproszono — inaczej pending
         # obsłużony po przestoju wygasa w kolejnym cyklu (patrz `lifecycle._anchor`).
@@ -1698,7 +1852,13 @@ def _interpret_and_confirm(  # noqa: PLR0915
             interpretacja=True,
         )
         try:
-            do_pracownika(settings, client, pending.chat_id, to_html(DECLINED_TEXT), teraz=now)
+            do_pracownika(
+                settings,
+                client,
+                pending.chat_id,
+                to_html(build_declined_text(etykieta_tygodnia_iso(pending.week_start))),
+                teraz=now,
+            )
         # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
         except NIE_POLYKAJ:
             raise

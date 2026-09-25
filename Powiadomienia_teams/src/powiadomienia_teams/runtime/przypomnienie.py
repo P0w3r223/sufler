@@ -18,14 +18,14 @@ wymuszonym przez ``lifecycle.czas_na_przypomnienie``, nie skutkiem szczęśliwej
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from powiadomienia_teams import state as st
 from powiadomienia_teams.config import OknoCiszy, Settings
 from powiadomienia_teams.domain.czas import to_graph_iso
 from powiadomienia_teams.graph.client import GraphClient
-from powiadomienia_teams.messages import build_przypomnienie_text, to_html
+from powiadomienia_teams.messages import build_przypomnienie_text, etykieta_tygodnia_iso, to_html
 from powiadomienia_teams.reminders.lifecycle import termin_odpowiedzi
 from powiadomienia_teams.runtime import etykiety
 from powiadomienia_teams.runtime.domkniecia import do_domkniecia
@@ -98,13 +98,11 @@ def przypomnij_milczacym(
 
 
 def _etykieta_tygodnia(week_start: str) -> str:
-    """„08.09–12.09" z ISO-daty poniedziałku; przy nieczytelnej dacie sama data.
+    """„07.09–13.09" z ISO-daty poniedziałku; przy nieczytelnej dacie sama data.
 
-    Ten sam kształt co etykieta z ``runtime.nudge`` (pon–pt, bo o weekend nie pytamy), ale liczony
-    tutaj: przypomnienie ma tylko ``week_start`` z pliku stanu, a nie okno przebiegu.
+    TEN SAM kształt co w prośbie (``runtime.nudge``: poniedziałek–niedziela). Do 0.2.25 stało tu
+    „pon–pt" z komentarzem, że to kształt prośby — nieprawda: prośba mówiła „05.10–11.10",
+    a przypomnienie o tym samym tygodniu „05.10–09.10", więc w jednej rozmowie ten sam tydzień
+    miał dwie różne etykiety.
     """
-    try:
-        poniedzialek = date.fromisoformat(week_start)
-    except (ValueError, TypeError):
-        return week_start
-    return f"{poniedzialek:%d.%m}–{poniedzialek + timedelta(days=4):%d.%m}"
+    return etykieta_tygodnia_iso(week_start) or week_start
