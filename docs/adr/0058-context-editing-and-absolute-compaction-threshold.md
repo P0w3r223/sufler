@@ -66,15 +66,15 @@ and lossy, so the cheap instrument runs first.
 
 ## Consequences
 
-- **Two environment variables stop being read.** `WORKMATE_CONTEXT_WINDOW_TOKENS` and
-  `WORKMATE_COMPACTION_THRESHOLD_FRACTION` are gone, replaced by
-  `WORKMATE_COMPACTION_THRESHOLD_TOKENS`. Both were commented out in the shipped `.env`, so a
+- **Two environment variables stop being read.** `SUFLER_CONTEXT_WINDOW_TOKENS` and
+  `SUFLER_COMPACTION_THRESHOLD_FRACTION` are gone, replaced by
+  `SUFLER_COMPACTION_THRESHOLD_TOKENS`. Both were commented out in the shipped `.env`, so a
   deployment that never uncommented them is unaffected — but a deployment that *did* set them will
   find its override silently ignored, since an unknown variable is not an error. Check the server's
   `.env` before rolling out.
 - **The agent request now runs on a beta surface.** Clearing lives behind
   `context-management-2025-06-27`. The failure mode is narrow: setting
-  `WORKMATE_CONTEXT_EDITING_ENABLED=false` returns the request to exactly its previous shape, header
+  `SUFLER_CONTEXT_EDITING_ENABLED=false` returns the request to exactly its previous shape, header
   and all, because the beta path is selected by a parameter rather than by a separate code branch.
 - **The replay invariant is untouched.** Clearing happens API-side, on the request. Our store keeps
   every turn verbatim, so ADR 0011's guarantee — memory holds only complete, replayable exchanges —

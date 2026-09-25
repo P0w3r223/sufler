@@ -15,7 +15,7 @@ Related to: [[0036-shift-worklog-integration-identity-and-week-contract]], 0035 
 
 The `shifts` hours source (ADR 0036) fills each WorklogPRO sheet's Comment column from per-person
 `claude_summary` output — JSON produced on each employee's own machine (they run `claude_summary`
-with consent; its top-level `person` field is that machine's `git config user.email`). WorkMate reads
+with consent; its top-level `person` field is that machine's `git config user.email`). Sufler reads
 those files from a configured `summary_dir` and indexes them by the `person` field
 (`ClaudeSummaryStore`). ADR 0036 deliberately deferred the **collection** mechanism (how files travel
 from user machines into `summary_dir`), and the S4/S5 security review flagged the load-bearing risk:
@@ -62,7 +62,7 @@ origin, so the `person`-field indexing is acceptable — `summary_dir` is truste
 input, exactly the model the S5 security review validated. This is what ships today; no code changes.
 
 **Multi-person rollout is already config-ready** (no build): `identities.yaml` scales to the whole
-team (each with `git_email`), `WORKMATE_WORKLOGI_ONLY_SOURCE_IDS` gates the pilot to a subset,
+team (each with `git_email`), `SUFLER_WORKLOGI_ONLY_SOURCE_IDS` gates the pilot to a subset,
 catch-up (`max_catchup_days`) covers missed Fridays, and `RunReport` (sent/skipped/failed) is already
 structured for monitoring.
 
@@ -89,7 +89,7 @@ structured for monitoring.
 - **Filename-binding only** (store keys by an operator/collector-chosen filename, `person` field just
   verifies): cheap and channel-independent, but only moves trust to whoever names the file — no
   authentication. Fine as an incremental hardening, insufficient as the answer to the security note.
-- **HTTP upload endpoint with per-user tokens**: new user-facing auth infrastructure WorkMate does not
+- **HTTP upload endpoint with per-user tokens**: new user-facing auth infrastructure Sufler does not
   have; Teams already provides authenticated per-user identity for free.
 - **Git-based submission** (users commit their JSON, commit author = identity): puts per-person
   (even redacted) prompt/task text into a git repo — unacceptable data exposure; rejected.

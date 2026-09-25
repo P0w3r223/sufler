@@ -12,7 +12,7 @@ W0 (corpus cold-start seed importer)
 
 ## Context
 
-The W0 seed importer (`workmate-seed-corpus`, ADR 0006-compliant: it reuses `save_note`, adds no
+The W0 seed importer (`sufler-seed-corpus`, ADR 0006-compliant: it reuses `save_note`, adds no
 mutating tool) originally imported only markdown/text files. The real cold-start corpus, however,
 lives in a SharePoint document library as Word/Excel/PowerPoint/PDF. Two forks were decided with
 the operator:

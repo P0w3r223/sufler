@@ -46,7 +46,7 @@ no randomness) and depend only on ports.
 
 3. **Context limit + rollover in the service.** Each conversation's context is bounded
    by `max_context_tokens` (default 6000, modest, configurable via
-   `WORKMATE_CONV_MAX_TOKENS`). Tokens are **approximated deterministically**
+   `SUFLER_CONV_MAX_TOKENS`). Tokens are **approximated deterministically**
    (`len(text) // 4`, no API call) — enough to bound context length and keeps tests
    reproducible. When appending the next turn would exceed the limit, the active
    conversation is **closed** and a **new one is opened** (rollover). Two benefits:
@@ -67,7 +67,7 @@ no randomness) and depend only on ports.
 
 6. **Security / data placement.** The conversations DB lives **outside `data/`**
    (the tool-indexed knowledge base) and outside the repo — default
-   `~/.workmate/conversations.db` (writable without admin for local doors). Notes tools
+   `~/.sufler/conversations.db` (writable without admin for local doors). Notes tools
    cannot reach it (they scan `notes_dir` only, with path-traversal already blocked).
    No secrets are stored in conversations.
 
@@ -95,4 +95,4 @@ no randomness) and depend only on ports.
   the agent is a small follow-up). Rollover boundary uses an approximation, so it is
   intentionally soft (a turn may slightly exceed the limit before rolling over).
 - **Operational note:** the doors now write to a SQLite file at startup; a non-writable
-  `WORKMATE_CONVERSATIONS_DB` path fails fast at construction. Default is user-home.
+  `SUFLER_CONVERSATIONS_DB` path fails fast at construction. Default is user-home.

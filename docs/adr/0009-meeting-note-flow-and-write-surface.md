@@ -9,7 +9,7 @@ Related to: [ADR 0006](0006-write-capability-gate-2.md), [ADR 0008](0008-agent-r
 
 ## Context
 
-Phase 2 milestone M3 is the roadmap's "original dream": `@WorkMate new note` →
+Phase 2 milestone M3 is the roadmap's "original dream": `@Sufler new note` →
 fetch the meeting transcript → summarize into the frozen note schema → save it to
 the right project folder. M4 adds the hard asynchronous topics: background jobs with
 callbacks, identity mapping (Entra/AD → the core permission model), and the gated

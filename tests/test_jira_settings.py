@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.config import JiraSettings
+from sufler.config import JiraSettings
 
 
 def test_validate_ok_does_not_raise():
@@ -22,9 +22,9 @@ def test_validate_requires_url_and_token():
 
 
 def test_from_env_reads_and_normalizes(monkeypatch):
-    monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example/")
-    monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "secret")
-    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", " mikolaj@example.org ")
+    monkeypatch.setenv("SUFLER_JIRA_BASE_URL", "https://jira.example/")
+    monkeypatch.setenv("SUFLER_JIRA_TOKEN", "secret")
+    monkeypatch.setenv("SUFLER_JIRA_MY_ACCOUNT", " mikolaj@example.org ")
 
     settings = JiraSettings.from_env()
     assert settings.base_url == "https://jira.example"  # trailing slash ucięty
@@ -37,7 +37,7 @@ def test_validate_default_deployment_is_server_no_email_required():
 
 
 def test_validate_cloud_requires_email():
-    with pytest.raises(ValueError, match="WORKMATE_JIRA_EMAIL"):
+    with pytest.raises(ValueError, match="SUFLER_JIRA_EMAIL"):
         JiraSettings(
             base_url="https://acme.atlassian.net", token="secret", deployment="cloud"
         ).validate()
@@ -54,13 +54,13 @@ def test_validate_cloud_ok_with_email():
 
 def test_validate_rejects_unknown_deployment():
     settings = JiraSettings(base_url="https://jira.example", token="secret", deployment="onprem")
-    with pytest.raises(ValueError, match="WORKMATE_JIRA_DEPLOYMENT"):
+    with pytest.raises(ValueError, match="SUFLER_JIRA_DEPLOYMENT"):
         settings.validate()
 
 
 def test_from_env_reads_and_normalizes_deployment_and_email(monkeypatch):
-    monkeypatch.setenv("WORKMATE_JIRA_DEPLOYMENT", "CLOUD")
-    monkeypatch.setenv("WORKMATE_JIRA_EMAIL", "  me@example.com  ")
+    monkeypatch.setenv("SUFLER_JIRA_DEPLOYMENT", "CLOUD")
+    monkeypatch.setenv("SUFLER_JIRA_EMAIL", "  me@example.com  ")
 
     settings = JiraSettings.from_env()
     assert settings.deployment == "cloud"  # lowercased
@@ -68,10 +68,10 @@ def test_from_env_reads_and_normalizes_deployment_and_email(monkeypatch):
 
 
 def test_from_env_default_deployment_when_unset(monkeypatch):
-    monkeypatch.delenv("WORKMATE_JIRA_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("SUFLER_JIRA_DEPLOYMENT", raising=False)
     assert JiraSettings.from_env().deployment == "server"
 
 
 def test_from_env_default_my_account_is_empty(monkeypatch):
-    monkeypatch.delenv("WORKMATE_JIRA_MY_ACCOUNT", raising=False)
+    monkeypatch.delenv("SUFLER_JIRA_MY_ACCOUNT", raising=False)
     assert JiraSettings.from_env().my_account == ""

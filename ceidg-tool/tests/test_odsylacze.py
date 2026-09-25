@@ -3,7 +3,7 @@
 Bramka rdzenia (`tests/test_adr_numbering.py`) tego drzewa NIE sprawdza, i to jest decyzja,
 nie przeoczenie: `ceidg-tool` cytuje własne `docs/adr/0003_rate_limiter.md`, a tamta bramka
 rozwiązywałaby tę ścieżkę od korzenia repozytorium — czyli w miejsce, gdzie leży ADR 0003
-WorkMate'a o zupełnie czym innym. Odsyłacz trafiający w NIEWŁAŚCIWY dokument jest gorszy niż
+Sufler'a o zupełnie czym innym. Odsyłacz trafiający w NIEWŁAŚCIWY dokument jest gorszy niż
 martwy, bo nie widać, że jest zły.
 
 Wykluczenie bez zastępstwa zamienia jednak obserwatora na dobre chęci — i dokładnie tak ten

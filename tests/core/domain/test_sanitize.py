@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.domain.sanitize import reject_dangerous_content, strip_control_chars
-from workmate.core.errors import WriteError
+from sufler.core.domain.sanitize import reject_dangerous_content, strip_control_chars
+from sufler.core.errors import WriteError
 
 # Białe znaki sterujące, które MAJĄ legalne zastosowanie w treści notatki.
 _ALLOWED = ("\n", "\t", "\r")

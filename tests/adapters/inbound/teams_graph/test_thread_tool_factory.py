@@ -11,7 +11,7 @@ na cel z ``ThreadLinkStore``, degradacja przy braku powiązania i przy źle ufor
 
 from __future__ import annotations
 
-from workmate.adapters.inbound.teams_graph.app import (
+from sufler.adapters.inbound.teams_graph.app import (
     _build_bridge_catalog,
     _build_file_reply_factory,
     _build_user_doc_push_factory,
@@ -19,8 +19,8 @@ from workmate.adapters.inbound.teams_graph.app import (
     _compose_user_push_factories,
     _make_thread_link_lookup,
 )
-from workmate.config import EventsSettings, GithubSettings, TeamsGraphSettings
-from workmate.core.application.github import GithubWriteService
+from sufler.config import EventsSettings, GithubSettings, TeamsGraphSettings
+from sufler.core.application.github import GithubWriteService
 
 
 class _RecordingWriter:

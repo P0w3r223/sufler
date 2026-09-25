@@ -38,7 +38,7 @@ stay untouched (golden test `test_mcp_tool_surface`).
 
 ### Decision 2 — write identity (PAT)
 
-- **B1 (chosen) — one PAT for read + write** (reuse `WORKMATE_JIRA_TOKEN`). The write's identity is
+- **B1 (chosen) — one PAT for read + write** (reuse `SUFLER_JIRA_TOKEN`). The write's identity is
   the same account the read poller self-skips, so the poller's existing self-skip already covers the
   agent's own writes. No new secret.
 - **B2 — separate bot PAT.** Cleaner Jira attribution, but the read poller must then also know the
@@ -53,12 +53,12 @@ Jira-specific guards):
   `core/ports/jira.py`; `HttpxJiraClient` implements both (like `HttpxGithubClient`). Read stays
   visibly read-only. New `JiraWriteService` in `core/application/jira.py` depends only on ports
   (core ↛ adapters).
-- **Per-door gate, default off.** `enable_jira_write` (`WORKMATE_JIRA_ENABLE_WRITE`, default false)
+- **Per-door gate, default off.** `enable_jira_write` (`SUFLER_JIRA_ENABLE_WRITE`, default false)
   on `JiraSettings`, consumed by the agent-hosting door (`teams_graph`). When off, the write catalog
   is never built, so the model never sees a mutating Jira tool — a structural guarantee, exactly like
   `save_note` and GitHub write. Independent of `enable_github_write` (separate gates).
 - **Config-scoped create.** The target project for `create_jira_issue` is
-  `WORKMATE_JIRA_WRITE_PROJECT`; the issue type defaults to `WORKMATE_JIRA_DEFAULT_ISSUE_TYPE`
+  `SUFLER_JIRA_WRITE_PROJECT`; the issue type defaults to `SUFLER_JIRA_DEFAULT_ISSUE_TYPE`
   ("Task"). Both from config, not request text. The tool takes only `summary`/`description`
   (+ optional labels), so untrusted content cannot redirect the write to another project.
 - **Config-scoped comment (Jira-specific guard).** Because a Jira key (`WM-5`) embeds its project,
@@ -75,7 +75,7 @@ Jira-specific guards):
   create-issue response carries no timestamp, the adapter's `create_issue` does one follow-up
   `GET .../{key}?fields=created` to stamp the echo (comment responses already carry `created`).
 - **Same-PAT / self-account invariant (fail-fast).** When `enable_jira_write` is true,
-  `JiraSettings.validate` requires `WORKMATE_JIRA_WRITE_PROJECT` and `WORKMATE_JIRA_SELF_ACCOUNT`
+  `JiraSettings.validate` requires `SUFLER_JIRA_WRITE_PROJECT` and `SUFLER_JIRA_SELF_ACCOUNT`
   (the PAT's account) — otherwise self-skip can silently be off and the agent's own writes would
   surface as redundant Jira notifications (same class of silent, functionally-broken config as
   ADR 0024's CI-auto-comment checks).
@@ -95,7 +95,7 @@ Jira-specific guards):
   distinct, larger concern, explicitly deferred. This keeps the per-tracker door architecture
   (ADR 0030 rejected a generic `TrackerPort` for the same reason).
 - **Cross-process invariant** (like ADR 0024): the loop guard holds only when the `jira` poller and
-  the `teams_graph` writer use the SAME `WORKMATE_JIRA_TOKEN` and the poller's `self_account` equals
+  the `teams_graph` writer use the SAME `SUFLER_JIRA_TOKEN` and the poller's `self_account` equals
   that PAT. Different PATs → agent-created issues re-notify (redundant, not looping — EventStore dedup
   is idempotent per `(source, external_id, kind)` and the `source="teams"` echo is inert to every
   notifier; there is no autonomous Jira write path to re-trigger).

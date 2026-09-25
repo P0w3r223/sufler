@@ -12,15 +12,15 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from workmate.core.application.conversations import ConversationService
-from workmate.core.domain.conversation import (
+from sufler.core.application.conversations import ConversationService
+from sufler.core.domain.conversation import (
     Conversation,
     ConversationMessage,
     ConversationSearchHit,
     ConversationSummary,
 )
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import (
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.ports.llm import (
     AssistantTurn,
     Attachment,
     RawTurn,

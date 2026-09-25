@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from workmate.adapters.inbound.heartbeat import (
+from sufler.adapters.inbound.heartbeat import (
     heartbeat_path,
     is_fresh,
     main,
@@ -15,8 +15,8 @@ from workmate.adapters.inbound.heartbeat import (
 
 def test_heartbeat_path_is_state_sibling():
     """Puls to siostra pliku stanu (ten sam wolumen) z rozszerzeniem .heartbeat."""
-    assert heartbeat_path(Path("/var/lib/workmate/github_state.json")) == Path(
-        "/var/lib/workmate/github_state.heartbeat"
+    assert heartbeat_path(Path("/var/lib/sufler/github_state.json")) == Path(
+        "/var/lib/sufler/github_state.heartbeat"
     )
 
 
@@ -73,8 +73,8 @@ def test_main_returns_1_for_missing(tmp_path: Path):
 
 def test_notifier_heartbeat_path_is_distinct_notify_sibling():
     """Puls notifiera to odrębny plik obok pulsu pollera (ADR 0067 §2)."""
-    state = Path("/var/lib/workmate/github_state.json")
-    assert notifier_heartbeat_path(state) == Path("/var/lib/workmate/github_state.notify.heartbeat")
+    state = Path("/var/lib/sufler/github_state.json")
+    assert notifier_heartbeat_path(state) == Path("/var/lib/sufler/github_state.notify.heartbeat")
     assert notifier_heartbeat_path(state) != heartbeat_path(state)
 
 

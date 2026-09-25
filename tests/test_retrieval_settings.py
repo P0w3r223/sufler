@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import inspect
 
-from workmate.adapters.inbound.retrieval_wiring import build_semantic_ranker
-from workmate.config import RetrievalSettings
-from workmate.core.application.services import NotesService
+from sufler.adapters.inbound.retrieval_wiring import build_semantic_ranker
+from sufler.config import RetrievalSettings
+from sufler.core.application.services import NotesService
 
 
 def test_dense_jest_wylaczony_z_fabryki():
@@ -46,11 +46,11 @@ def test_strojenie_fuzji_zgadza_sie_z_domyslnymi_notesservice():
 
 
 def test_dense_env_parsing(monkeypatch):
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_ENABLE_DENSE", "true")
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_DENSE_MODEL", "some/model")
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_RRF_K", "40")
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_DENSE_TOP_N", "5")
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_DENSE_MIN_SIM", "0.25")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_ENABLE_DENSE", "true")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_DENSE_MODEL", "some/model")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_RRF_K", "40")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_DENSE_TOP_N", "5")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_DENSE_MIN_SIM", "0.25")
     s = RetrievalSettings.from_env()
     assert s.enable_dense is True
     assert s.dense_model == "some/model"

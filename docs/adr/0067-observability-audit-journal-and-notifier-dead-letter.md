@@ -14,7 +14,7 @@ Related to: [ADR 0049](0049-usage-metrics-pseudonymized-counter.md) (pseudonymiz
 
 ## Context
 
-Faza 0 of the WorkMate 2.0 plan is **observability before capability**: four new capabilities (File,
+Faza 0 of the Sufler 2.0 plan is **observability before capability**: four new capabilities (File,
 websearch, note mutation, judge) are being added across ADR 0064–0066, and today we cannot answer
 "how many times was tool X called last week, and how many times did it fail," nor reconstruct a turn
 after an incident. This ADR builds that floor. Two **independent** gaps, both measured in code:
@@ -32,7 +32,7 @@ only after a successful send** (at-least-once, ADR 0022). On a send failure the 
 out of `pump_once`, is caught and logged in `pump` (`:125-128`), and the cursor is **not** advanced —
 so a permanently-undeliverable event re-delivers forever and every later event waits behind it. The
 only event already handled locally is `ThreadRootGone` (`:172-180`, caught precisely so it "does not
-block the whole stream"). Meanwhile the healthcheck is blind to this: `workmate-heartbeat-check`
+block the whole stream"). Meanwhile the healthcheck is blind to this: `sufler-heartbeat-check`
 (`heartbeat.py:main`) checks the age of a `.heartbeat` file written by the **poller** after a good
 round (`poller.py:103-105`, R5) — the poller keeps beating while the notifier's cursor is stuck.
 
@@ -49,10 +49,10 @@ together only because both are Faza 0.
 ### §1 — Per-tool audit journal (app, buildable now, OFF by default)
 
 1. **Copy the ADR 0049 store pattern exactly.** New `AuditStore` port (`core/ports/audit.py`),
-   `SqliteAuditStore` adapter (own file at `WORKMATE_AUDIT_DB`, `WAL` + `busy_timeout` + a `Lock`,
+   `SqliteAuditStore` adapter (own file at `SUFLER_AUDIT_DB`, `WAL` + `busy_timeout` + a `Lock`,
    DDL in the constructor, atomic per ADR 0045), and an `AuditService` in the core that pseudonymizes
    before writing (**reuse `core/domain/metrics.pseudonymize`**, `sha256[:16]`). **OFF by default:**
-   no `WORKMATE_AUDIT_DB` → no store built (wired in `agent_wiring.py` beside metrics, `:644-648`),
+   no `SUFLER_AUDIT_DB` → no store built (wired in `agent_wiring.py` beside metrics, `:644-648`),
    and every write is **best-effort, never fatal** (a failed audit write logs a warning and the turn
    proceeds — the ADR 0049 §4 rule).
 
@@ -105,7 +105,7 @@ together only because both are Faza 0.
    realized statelessly (no inter-check bookkeeping, no `MAX(id)` query).
 
 3. **Infra follow-up (its own small change/ADR):** the compose healthcheck checks **both** heartbeat
-   files; `preflight.sh` gains the missing `WORKMATE_METRICS_DB` gate and a new `WORKMATE_AUDIT_DB`
+   files; `preflight.sh` gains the missing `SUFLER_METRICS_DB` gate and a new `SUFLER_AUDIT_DB`
    gate, symmetric to the existing `EVENTS_DB`/`CONVERSATIONS_DB` gates. (The disk-space gate the plan
    groups here is Faza 1.)
 
@@ -141,15 +141,15 @@ together only because both are Faza 0.
 
 ## Consequences
 
-- **Buildable now, safe by default.** Audit is OFF without `WORKMATE_AUDIT_DB` and best-effort when
+- **Buildable now, safe by default.** Audit is OFF without `SUFLER_AUDIT_DB` and best-effort when
   on; with it off the transcript and behavior are byte-for-byte as today. Dead-letter is intrinsic to
   the notifier but only fires after N failures — a strict improvement over today's infinite block. The
   golden MCP surface is untouched (audit wraps the agent-runtime catalog, a Teams-door concern).
 - **Foundation for Faza 4–6.** The audit row is where the ADR 0065 judge verdict and the ADR 0066
   trust class are recorded; per-tool call counts feed the File/websearch "measure first" gates.
 - **Two invariants explicitly preserved:** at-least-once (ADR 0022) and the pure runtime (ADR 0008).
-- **Infra follow-up tracked:** compose two-heartbeat check + `preflight` `WORKMATE_METRICS_DB` /
-  `WORKMATE_AUDIT_DB` gates.
+- **Infra follow-up tracked:** compose two-heartbeat check + `preflight` `SUFLER_METRICS_DB` /
+  `SUFLER_AUDIT_DB` gates.
 
 ## Open questions (to close before code, as in ADR 0064–0066)
 
@@ -214,11 +214,11 @@ not survive contact with the code and were changed in place (house rule: measure
    in-memory attempt counter does not know the first-failure moment.
 
 **Gates green (local, POSIX — the production platform):** `ruff check src/ tests/` clean;
-`mypy src/workmate` 173 files clean; full `pytest -n auto` green (1 skip); §1 targeted 100 passed,
+`mypy src/sufler` 173 files clean; full `pytest -n auto` green (1 skip); §1 targeted 100 passed,
 §2 targeted 46 passed. New probes verify each claim against pre-fix code (no raw content in audit
 rows; cursor held below threshold and no beat; dead-letter after N then cursor advances and beats;
 two-heartbeat health unhealthy when the notifier heartbeat is stale). **Infra follow-up still owed:**
-compose two-heartbeat healthcheck + `preflight` `WORKMATE_METRICS_DB`/`WORKMATE_AUDIT_DB` gates.
+compose two-heartbeat healthcheck + `preflight` `SUFLER_METRICS_DB`/`SUFLER_AUDIT_DB` gates.
 
 ## Review corrections (2026-08-13) — code-review of the Faza 0 branch, fixes applied
 

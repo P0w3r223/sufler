@@ -11,7 +11,7 @@ Related to: ADR-0008 (one decision sequence, injected `Prompter`), ADR-0009 (bou
             envelope), docs/design/phase2_core.md (rules 6-15), CLAUDE.md ("silence is a defect,
             measured in requests")
 
-**Renumbered from ADR-0023 on 2026-09-24.** This project's remote home moved into the WorkMate monorepo, where `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` already holds that number and `tests/test_adr_numbering.py` enforces uniqueness. The commit messages of the work this document describes still say ADR-0023; they were written before the collision was visible and are left as they were, because a commit message is a record of what was known at the time.
+**Renumbered from ADR-0023 on 2026-09-24.** This project's remote home moved into the Sufler monorepo, where `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` already holds that number and `tests/test_adr_numbering.py` enforces uniqueness. The commit messages of the work this document describes still say ADR-0023; they were written before the collision was visible and are left as they were, because a commit message is a record of what was known at the time.
 
 ---
 

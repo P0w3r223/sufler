@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from workmate.core.domain.ranking import bm25_rank, reciprocal_rank_fusion
+from sufler.core.domain.ranking import bm25_rank, reciprocal_rank_fusion
 
 
 def test_bm25_empty_query_or_docs_returns_empty():

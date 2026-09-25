@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import asyncio
 
-from workmate.adapters.inbound.github.poller import GithubPoller
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.core.application.events import EventService
-from workmate.core.application.github import GithubWriteService
-from workmate.core.application.notifier import EventNotifier, NotifyTargets
-from workmate.core.application.tools import build_activity_catalog
+from sufler.adapters.inbound.github.poller import GithubPoller
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.core.application.events import EventService
+from sufler.core.application.github import GithubWriteService
+from sufler.core.application.notifier import EventNotifier, NotifyTargets
+from sufler.core.application.tools import build_activity_catalog
 
-_SELF = "workmate-bot"
+_SELF = "sufler-bot"
 
 
 # --- Atrapy DWÓCH granic sieciowych (jedyne, czego tu nie dosięgamy) -----------------

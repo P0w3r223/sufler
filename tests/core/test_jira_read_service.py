@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from workmate.core.application.jira_read import JiraReadService
-from workmate.core.errors import JiraReadError
+from sufler.core.application.jira_read import JiraReadService
+from sufler.core.errors import JiraReadError
 
 
 class _FakeJiraRead:
@@ -106,7 +106,7 @@ def test_search_tasks_uses_search_jql_and_maps_results() -> None:
 
 
 def test_search_tasks_caps_limit_at_max() -> None:
-    from workmate.core.application.jira_read import _MAX_SEARCH_RESULTS
+    from sufler.core.application.jira_read import _MAX_SEARCH_RESULTS
 
     client = _FakeJiraRead(issues=[])
     service = JiraReadService(client)
@@ -130,7 +130,7 @@ def test_member_open_tasks_caps_the_result_and_reports_truncation() -> None:
     Bez przycięcia po zmapowaniu `member_tasks` mogło zwrócić do kontekstu modelu wielokrotność
     sufitu, w dodatku milcząco — bez flagi, którą model miałby przekazać człowiekowi.
     """
-    from workmate.core.application.my_jira_tasks import _MAX_RESULTS
+    from sufler.core.application.my_jira_tasks import _MAX_RESULTS
 
     ile = _MAX_RESULTS * 4
     issues = [{"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(ile)]
@@ -150,7 +150,7 @@ def test_member_open_tasks_shares_the_cap_with_MY_open_tasks() -> None:
     samym pliku. Skutek: osoba z 30 zadaniami widziała u siebie 30, a u kolegi 20 i
     ``truncated=true``, choć narzędzie obiecuje tę samą listę dla obu.
     """
-    from workmate.core.application.my_jira_tasks import _MAX_RESULTS, MyJiraTasksService
+    from sufler.core.application.my_jira_tasks import _MAX_RESULTS, MyJiraTasksService
 
     ile = _MAX_RESULTS - 20  # mieści się u „mnie", nie mieściło się u „członka"
     issues = [{"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(ile)]
@@ -166,7 +166,7 @@ def test_member_open_tasks_shares_the_cap_with_MY_open_tasks() -> None:
 
 
 def test_member_history_scopes_jql_and_reports_truncation() -> None:
-    from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
+    from sufler.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
 
     issues = [
         {"key": f"WT-{i}", "fields": {"summary": "x"}} for i in range(_MAX_HISTORY_RESULTS + 3)

@@ -3070,7 +3070,7 @@ wheels = [
 ]
 
 [[package]]
-name = "workmate"
+name = "sufler"
 version = "1.15.0"
 source = { editable = "." }
 dependencies = [

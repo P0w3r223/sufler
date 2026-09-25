@@ -10,7 +10,7 @@ Related to: ADR-0011 decision 4 (the dictionary is load-bearing because an unkno
             has no demo mode), CLAUDE.md (the PKD dictionary is generated, never written from
             memory)
 
-**Renumbered from ADR-0025 on 2026-09-24.** This project's remote home moved into the WorkMate monorepo, where `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` already holds that number and `tests/test_adr_numbering.py` enforces uniqueness. The commit messages of the work this document describes still say ADR-0025; they were written before the collision was visible and are left as they were, because a commit message is a record of what was known at the time.
+**Renumbered from ADR-0025 on 2026-09-24.** This project's remote home moved into the Sufler monorepo, where `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` already holds that number and `tests/test_adr_numbering.py` enforces uniqueness. The commit messages of the work this document describes still say ADR-0025; they were written before the collision was visible and are left as they were, because a commit message is a record of what was known at the time.
 
 ---
 

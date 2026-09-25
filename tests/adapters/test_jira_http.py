@@ -11,7 +11,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from workmate.adapters.outbound.jira_http import request_with_retry
+from sufler.adapters.outbound.jira_http import request_with_retry
 
 _URL = "https://jira.example.com/rest/api/2/myself"
 

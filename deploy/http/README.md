@@ -1,6 +1,6 @@
 # Szkielet wdrożenia HTTP (Bramka 3, ADR 0007)
 
-Ten katalog to **gotowy do użycia szkielet** wdrożenia WorkMate po `streamable-http`
+Ten katalog to **gotowy do użycia szkielet** wdrożenia Sufler po `streamable-http`
 z uwierzytelnianiem per osoba. Kod serwera (`config/server.py`, `adapters/inbound/mcp/auth.py`,
 gałąź HTTP w `server.py`) jest domknięty i przetestowany — tu leżą **narzędzia
 operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
@@ -30,8 +30,8 @@ operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
    uv run --no-sync python deploy/http/manage_tokens.py list
    uv run --no-sync python deploy/http/manage_tokens.py verify
    ```
-   Domyślny magazyn: `C:\ProgramData\WorkMate\tokens.json` (poza repo i poza `data/`).
-   Nadpisz przez `--store` albo `WORKMATE_TOKENS_FILE`. Zabezpiecz ACL-em NTFS
+   Domyślny magazyn: `C:\ProgramData\Sufler\tokens.json` (poza repo i poza `data/`).
+   Nadpisz przez `--store` albo `SUFLER_TOKENS_FILE`. Zabezpiecz ACL-em NTFS
    (patrz runbook §2).
 
 2. **Usługa Windows** (serwer): `install-service.ps1` — podejrzyj dry-runem, potem `-Apply`.
@@ -39,7 +39,7 @@ operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
 3. **IIS reverse proxy** (serwer): skopiuj `web.config.sample` → `web.config` witryny,
    podmień host, odblokuj/ustaw ARR `responseBufferLimit=0`.
 
-4. **Smoke transportu** (po wdrożeniu): `smoke-transport.ps1 -BaseUrl https://workmate.firma.pl`.
+4. **Smoke transportu** (po wdrożeniu): `smoke-transport.ps1 -BaseUrl https://sufler.firma.pl`.
 
 5. **Klient**: skopiuj [`mcp.team.json.sample`](mcp.team.json.sample) → `.mcp.json` LOKALNY
    (poza repo albo w `.gitignore`), podmień `<HOST>`/`<TOKEN>` na własne. Repo-`.mcp.json`
@@ -51,7 +51,7 @@ operacyjne i szablony**, których runbook wcześniej opisywał tylko prozą.
 # rotacja: wydaj nowy (obok starego), dev podmienia, usuń stary po prefiksie hasha
 uv run --no-sync python deploy/http/manage_tokens.py issue  --person anna.kowalska
 uv run --no-sync python deploy/http/manage_tokens.py revoke --hash 1a2b3c
-# po każdej zmianie zrestartuj usługę: nssm restart WorkMate
+# po każdej zmianie zrestartuj usługę: nssm restart Sufler
 ```
 
 Przy podejrzeniu wycieku: `revoke` + restart usługi — token przestaje działać od razu.
@@ -65,5 +65,5 @@ Przy podejrzeniu wycieku: `revoke` + restart usługi — token przestaje działa
 - **Kod odpowiedzi na dobry token.** `smoke-transport.ps1` sprawdza „drzwi wpuściły"
   (status ≠ 401) z nagłówkiem `Accept: text/event-stream`. Zanotuj realny kod (200/SSE),
   jeśli chcesz zaostrzyć asercję po pierwszym udanym wdrożeniu.
-- **Polityka nagłówka `Host`.** `WORKMATE_ALLOWED_HOSTS` MUSI zawierać publiczny host w
+- **Polityka nagłówka `Host`.** `SUFLER_ALLOWED_HOSTS` MUSI zawierać publiczny host w
   OBU formach (bez portu i z `:*`), inaczej realny ruch na 443 dostanie `421`.

@@ -1,31 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Szkielet IIS reverse-proxy dla WorkMate (Bramka 3, ADR 0007).
+  Szkielet IIS reverse-proxy dla Sufler (Bramka 3, ADR 0007).
   Terminuje TLS na 443 i przekazuje /mcp na uvicorn (loopback 127.0.0.1:8000).
 
   Wymagania na serwerze:
     * URL Rewrite  (https://www.iis.net/downloads/microsoft/url-rewrite)
     * Application Request Routing (ARR)  — dostarcza proxy dla akcji Rewrite na URL http://
-    * Certyfikat firmowy powiązany z hostem workmate.firma.pl na porcie 443.
+    * Certyfikat firmowy powiązany z hostem sufler.firma.pl na porcie 443.
 
   KRYTYCZNE dla streamable-http: WYŁĄCZ buforowanie odpowiedzi. SSE/chunked
   strumieniuje — z buforowaniem klient MCP zawiśnie. ARR `responseBufferLimit`
   ustawia się w applicationHost.config (system.webServer/proxy) i domyślnie jest
   zablokowany do nadpisania w web.config — patrz sekcja niżej i notka na końcu.
 
-  Skopiuj do katalogu witryny jako `web.config` i podmień workmate.firma.pl.
+  Skopiuj do katalogu witryny jako `web.config` i podmień sufler.firma.pl.
 -->
 <configuration>
   <system.webServer>
 
-    <!-- Reverse proxy: https://workmate.firma.pl/mcp  ->  http://127.0.0.1:8000/mcp -->
+    <!-- Reverse proxy: https://sufler.firma.pl/mcp  ->  http://127.0.0.1:8000/mcp -->
     <rewrite>
       <rules>
-        <rule name="WorkMate MCP reverse proxy" stopProcessing="true">
+        <rule name="Sufler MCP reverse proxy" stopProcessing="true">
           <match url="^mcp(/.*)?$" />
           <action type="Rewrite" url="http://127.0.0.1:8000/mcp{R:1}" />
           <!--
-            Zachowaj publiczny Host (wtedy podaj go w WORKMATE_ALLOWED_HOSTS w OBU
+            Zachowaj publiczny Host (wtedy podaj go w SUFLER_ALLOWED_HOSTS w OBU
             formach: bez portu i z ":*"). Alternatywa: przepisz Host na 127.0.0.1.
           -->
           <serverVariables>

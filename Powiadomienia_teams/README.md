@@ -10,7 +10,7 @@ a po upływie **terminu kalendarzowego** bez reakcji uprzejmie zamyka temat.
 Pełny zamysł: **[PLAN.md](PLAN.md)**.
 
 > Samodzielny pod-projekt (własny `pyproject.toml`, środowisko `uv`). Reużywa wzorców
-> uwierzytelniania z drzwi `teams_graph` głównego repo WorkMate.
+> uwierzytelniania z drzwi `teams_graph` głównego repo Sufler.
 
 > **Wersja i pochodzenie źródeł.** Ten katalog odpowiada obrazowi **0.2.19** — temu, który
 > działa u klienta. Źródła zostały **odzyskane z obrazu** 2026-09-04, bo build 0.2.19 powstał

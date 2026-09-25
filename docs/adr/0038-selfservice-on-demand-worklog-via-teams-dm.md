@@ -17,7 +17,7 @@ Related to: [[0035-weekly-per-person-worklogpro-sheets-and-teams-dm]],
 > The live 1:1 intake (M5) is unaffected by this update.
 >
 > **Delivery note (A′4, 2026-07-28):** the file-attachment reply is now **built**, gated behind
-> `WORKMATE_WORKLOGI_ENABLE_ATTACHMENT` (default OFF, shared with the batch door ADR 0035). When on,
+> `SUFLER_WORKLOGI_ENABLE_ATTACHMENT` (default OFF, shared with the batch door ADR 0035). When on,
 > `handle_submission(deliver_as_attachment=True)` renders the reply in **attachment mode** (no server
 > path) and the door delivers the `.xlsx` via `UserDocSender.send_document_to_user` (OneDrive upload
 > → `invite` → 1:1 chat → `reference` attachment), passing the rich reply HTML as `caption_html`.
@@ -28,7 +28,7 @@ Related to: [[0035-weekly-per-person-worklogpro-sheets-and-teams-dm]],
 
 ## Context
 
-ADR 0035/0036 built a **batch** timesheet pipeline: on Friday an operator runs `workmate-worklogi`,
+ADR 0035/0036 built a **batch** timesheet pipeline: on Friday an operator runs `sufler-worklogi`,
 it pulls the whole team's Shifts hours + GitHub commits + `claude_summary` output, generates one
 WorklogPRO `.xlsx` per person, and DMs each person a **text pointer** to the file on a share (the
 human imports it — the worklog then has a real author). Two things make that shape heavy for the
@@ -58,9 +58,9 @@ minutes, never estimated (ADR 0036).
 
 ## Decision
 
-Adopt a **new inbound door in the `workmate` package** (`adapters/inbound/worklog_selfservice/`),
+Adopt a **new inbound door in the `sufler` package** (`adapters/inbound/worklog_selfservice/`),
 not an extension of `Powiadomienia_teams`. Rationale: the worklog domain, the xlsx writer, the
-identity bridge, and the inbound-attachment path (ADR 0016) all live in `workmate`; `Powiadomienia_teams`
+identity bridge, and the inbound-attachment path (ADR 0016) all live in `sufler`; `Powiadomienia_teams`
 has no attachment handling, no identity resolver, and no sheet generation, and should stay a narrow
 Shifts-nudge bot (the two share only the MSAL cache / Graph identity). The flow is **deterministic
 and attribution-sensitive** — a handler, not a free-form agent conversation; the LLM plays no role in
@@ -84,17 +84,17 @@ would drop out of both Shifts and the sheet.
 un-built, admin-scoped piece: it needs Graph `Files.ReadWrite.All` (admin consent + one-time
 device-code re-consent) and the outbound-attachment primitive from ADR 0026/0027 (`TeamsFileSender`
 + upload/reference). Until that scope is granted, the door ships the **path/link fallback** (today's
-`workmate-worklogi` behavior, ADR 0035 how-to §7): identical flow, minus the attachment. The file
+`sufler-worklogi` behavior, ADR 0035 how-to §7): identical flow, minus the attachment. The file
 reply is gated behind `enable_user_file_push` (default OFF), promoting ADR 0026/0027 from proposed →
 accepted when it lands.
 
 ## Options considered
 
-- **A1 (chosen).** New inbound door in `workmate`, single-person on-demand handler, reusing the
+- **A1 (chosen).** New inbound door in `sufler`, single-person on-demand handler, reusing the
   worklog domain + identity bridge + Shifts source unchanged; attribution = authenticated sender;
   file reply gated on the ADR 0026/0027 scope with a path/link fallback.
 - **A2 (rejected).** Extend `Powiadomienia_teams`. It has none of the needed machinery (attachments,
-  identity resolver, sheet writer) and would duplicate `workmate`; bloats a deliberately narrow bot.
+  identity resolver, sheet writer) and would duplicate `sufler`; bloats a deliberately narrow bot.
 - **A3 (rejected for this decision).** Fully local CLI that generates the xlsx on the user's machine
   with no bot round-trip. Simplest and zero new scope, but **incompatible with Shifts hours** — only
   the bot (delegated Graph) can authoritatively read published shifts, and a work certificate needs
@@ -111,11 +111,11 @@ accepted when it lands.
 - Tests mirror both (`tests/core/domain/test_submitted_summary.py`, `tests/core/test_selfservice_worklog.py`).
 
 Also built (M3): the operator-pilot door `adapters/inbound/worklog_selfservice/` — a
-`workmate-worklog-selfservice` CLI that takes one submitted JSON + a `source_id`, resolves the
+`sufler-worklog-selfservice` CLI that takes one submitted JSON + a `source_id`, resolves the
 person via the identity bridge, runs `handle_submission` (parse → verify owner → compose sheet →
 render reply), and with `--send` delivers a **path-fallback** DM via the existing `HttpxTeamsNotifier`
 (no new Graph scope). Submission idempotency (`state.py`, keyed `<source_id>:<week>`) marks only on
-success. Reuses `WorklogiSettings`; `--send` is gated on `WORKMATE_WORKLOGI_HEADERS_CONFIRMED`. See
+success. Reuses `WorklogiSettings`; `--send` is gated on `SUFLER_WORKLOGI_HEADERS_CONFIRMED`. See
 `docs/how-to/worklog-selfservice.md` — **plik usunięty razem z modułem przy wycofaniu
 WorklogPRO (ADR 0055); wskazanie zostaje jako zapis tego, co wtedy istniało**.
 

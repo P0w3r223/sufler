@@ -4,7 +4,7 @@ Date: 2026-07-23
 Status: superseded by docs/adr/0055-withdraw-worklogpro-timesheets.md (2026-07-30 scope decision:
   WorklogPRO / timesheets module withdrawn from the project). Formerly: accepted (assembled S1–S5:
   identity, Shifts hours, commit issue-attribution, claude_summary comments, wired into the
-  `workmate-worklogi` door and covered by an end-to-end dry-run test; go-live still gated on operator
+  `sufler-worklogi` door and covered by an end-to-end dry-run test; go-live still gated on operator
   confirming `WORKLOGPRO_HEADERS` — S5 § go-live)
 Author: P0w3r223
 Related to: 0034 (worklog from commits, write path removed), 0035 (WorklogPRO sheets + Teams DM)
@@ -17,9 +17,9 @@ The goal is a weekly, per-person Jira timesheet that combines three signals for 
 (previous Mon–Sun): worked hours/days from the schedule, and what tasks the person did each day, with
 day labels that match Jira's calendar dates exactly. Three tools hold the pieces: `Powiadomienia_teams`
 (Microsoft Shifts schedule), `claude_summary` (per-day task descriptions from Claude Code prompts +
-commits), and WorkMate's Jira bridge.
+commits), and Sufler's Jira bridge.
 
-The existing `workmate-worklogi` door (ADR 0035) already implements the honest output path — one
+The existing `sufler-worklogi` door (ADR 0035) already implements the honest output path — one
 WorklogPRO `.xlsx` per person that the **employee imports** (so the worklog carries a real author) —
 and already solves date correctness (`timesheet_sheet.format_started`: full ISO-8601 + explicit
 offset, DST-safe) and closed-week selection (`week.reported_week`, half-open `[start, end)`). Its
@@ -64,9 +64,9 @@ This is what guarantees the user's requirement that day labels match Jira dates 
 the wrong day across DST.
 
 **Fallback issue is required for `shifts`.** A configured catch-all Jira key
-(`WORKMATE_WORKLOGI_FALLBACK_ISSUE`, validated to the `PROJ-123` shape) receives time on days with no
+(`SUFLER_WORKLOGI_FALLBACK_ISSUE`, validated to the `PROJ-123` shape) receives time on days with no
 issue key in commits, so no sheet row is left without an `issue_key` (WorklogPRO would reject it).
-`WORKMATE_WORKLOGI_SUMMARY_DIR` points at the collected `claude_summary` output.
+`SUFLER_WORKLOGI_SUMMARY_DIR` points at the collected `claude_summary` output.
 
 ## Consequences
 

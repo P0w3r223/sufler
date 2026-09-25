@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_schedule_api import HttpxGraphScheduleClient
-from workmate.core.errors import ScheduleReadError
+from sufler.adapters.outbound.graph_schedule_api import HttpxGraphScheduleClient
+from sufler.core.errors import ScheduleReadError
 
 _START = datetime(2026, 8, 3, tzinfo=UTC)
 _END = datetime(2026, 8, 10, tzinfo=UTC)

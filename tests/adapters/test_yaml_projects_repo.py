@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 import yaml
 
-from workmate.adapters.outbound.yaml_projects_repo import (
+from sufler.adapters.outbound.yaml_projects_repo import (
     ProjectsRegistryError,
     YamlProjectsRepository,
 )
@@ -26,7 +26,7 @@ REGISTRY = """projects:
     last_updated: 2025-06-26
   - key: workmate
     company: biap
-    name: WorkMate
+    name: Sufler
     description: Asystent wiedzy
     status: active
     health: yellow
@@ -106,7 +106,7 @@ def test_all_get_and_status_parse_registry_exactly_once(tmp_path: Path):
     repo = YamlProjectsRepository(_registry(tmp_path))
 
     with mock.patch(
-        "workmate.adapters.outbound.yaml_projects_repo.yaml.safe_load",
+        "sufler.adapters.outbound.yaml_projects_repo.yaml.safe_load",
         wraps=yaml.safe_load,
     ) as spy:
         repo.all()

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from workmate.adapters.inbound.teams_graph.selection import ReplyPolicy, plan_channel
-from workmate.config import TeamsGraphSettings
+from sufler.adapters.inbound.teams_graph.selection import ReplyPolicy, plan_channel
+from sufler.config import TeamsGraphSettings
 
 ME_ID = "bot-aad-id"
 OTHER_ID = "user-aad-id"

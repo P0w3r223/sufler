@@ -1,4 +1,4 @@
-"""Testy komendy ``workmate-extract`` (ADR 0064) — ekstrakcja pliku dla POWŁOKI agenta.
+"""Testy komendy ``sufler-extract`` (ADR 0064) — ekstrakcja pliku dla POWŁOKI agenta.
 
 Ekstraktory mają własne testy (``test_document_text``); tutaj sprawdzamy sam adapter powłoki:
 że wypisuje tekst na STDOUT, że każdy powód niepowodzenia jest ROZRÓŻNIALNY (model widzi tylko
@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.cli.extract import main
-from workmate.adapters.inbound.document_text import extract_html
+from sufler.adapters.inbound.cli.extract import main
+from sufler.adapters.inbound.document_text import extract_html
 
 _HTML = b"<html><body><p>Kwota: 12 300 zl</p><img src='b.png' alt='wykres'></body></html>"
 
@@ -43,7 +43,7 @@ def _sigpipe_nie_wycieka_z_main():
 
 
 def _run(monkeypatch, path: str) -> None:
-    monkeypatch.setattr("sys.argv", ["workmate-extract", path])
+    monkeypatch.setattr("sys.argv", ["sufler-extract", path])
     main()
 
 
@@ -117,7 +117,7 @@ def test_readable_but_empty_file_is_success_with_an_explicit_note(
 
 
 def test_missing_path_argument_is_a_usage_error(monkeypatch):
-    monkeypatch.setattr("sys.argv", ["workmate-extract"])
+    monkeypatch.setattr("sys.argv", ["sufler-extract"])
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 2
@@ -125,7 +125,7 @@ def test_missing_path_argument_is_a_usage_error(monkeypatch):
 
 @pytest.mark.skipif(not hasattr(signal, "SIGPIPE"), reason="brak SIGPIPE (nie-POSIX)")
 def test_piping_into_head_does_not_produce_a_traceback(tmp_path: Path):
-    """`workmate-extract plik | head` to wzorzec, do którego kieruje sam opis narzędzia.
+    """`sufler-extract plik | head` to wzorzec, do którego kieruje sam opis narzędzia.
 
     Bez ustawienia SIGPIPE na domyślną akcję kończył się `BrokenPipeError` na STDERR — potok
     działał, a model, który widzi wyłącznie kod wyjścia i strumienie, dostawał sygnał awarii.
@@ -136,8 +136,8 @@ def test_piping_into_head_does_not_produce_a_traceback(tmp_path: Path):
 
     proces = subprocess.run(
         f"{sys.executable} -c "
-        f'\'import sys; sys.argv=["workmate-extract", "{duzy}"]; '
-        "from workmate.adapters.inbound.cli.extract import main; main()' | head -3",
+        f'\'import sys; sys.argv=["sufler-extract", "{duzy}"]; '
+        "from sufler.adapters.inbound.cli.extract import main; main()' | head -3",
         shell=True,
         capture_output=True,
         text=True,

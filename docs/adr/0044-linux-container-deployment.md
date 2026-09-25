@@ -1,4 +1,4 @@
-# 0044 — Linux container deployment for the WorkMate fleet
+# 0044 — Linux container deployment for the Sufler fleet
 
 Date: 2026-07-28
 Status: accepted
@@ -11,17 +11,17 @@ Related to: ADR 0007 (Gate 3 HTTP auth), ADR 0019 (shared EventStore), ADR 0035 
 
 The application code is already portable and CI-verified on `ubuntu-latest` (`.github/workflows/ci.yml`
 runs the full quality gate on Linux). What was missing was the **operational packaging** for the *main*
-WorkMate fleet on Ubuntu: `deploy/http/` only scaffolded a Windows target (IIS reverse proxy via
+Sufler fleet on Ubuntu: `deploy/http/` only scaffolded a Windows target (IIS reverse proxy via
 `web.config`, a Windows Service via NSSM, PowerShell smoke tests). The `Powiadomienia_teams/` sub-project
 already ships a proven Linux deployment (multi-stage Dockerfile, `docker-compose.yml`, hardened systemd
 unit), so a house pattern exists to mirror.
 
-WorkMate is not one process. It is a fleet:
+Sufler is not one process. It is a fleet:
 
-- `workmate` — MCP server, network mode (`streamable-http`), **read-only by construction** (ADR 0007).
-- `workmate-github`, `workmate-jira`, `workmate-teams-graph` — outbound long-polling doors.
-- `workmate-worklogi` — weekly scheduler (internal loop, single-instance lock, ADR 0035).
-- `workmate-worklog-selfservice` — **on-demand** invocation (`--submission`/`--source-id`, ADR 0038).
+- `sufler` — MCP server, network mode (`streamable-http`), **read-only by construction** (ADR 0007).
+- `sufler-github`, `sufler-jira`, `sufler-teams-graph` — outbound long-polling doors.
+- `sufler-worklogi` — weekly scheduler (internal loop, single-instance lock, ADR 0035).
+- `sufler-worklog-selfservice` — **on-demand** invocation (`--submission`/`--source-id`, ADR 0038).
 
 Two cross-cutting invariants constrain the topology:
 
@@ -36,13 +36,13 @@ Ship a container deployment under `deploy/docker/`, mirroring the `Powiadomienia
 
 - **One image, many entrypoints.** A single multi-stage `Dockerfile` (build context = repo root) with all
   fleet extras (`agent github jira teams-graph worklogi file-reply retrieval`). The image
-  `ENTRYPOINT` is `tini --`; each Compose service sets its own `command:` (`workmate`, `workmate-github`,
+  `ENTRYPOINT` is `tini --`; each Compose service sets its own `command:` (`sufler`, `sufler-github`,
   …). The test stage runs the full pytest gate during build — the runtime image cannot be produced from
   red source (house guarantee, matches the sub-project).
 
-- **Shared state on a named volume.** A `state` volume is mounted at `/var/lib/workmate` in every service;
-  all operational paths point there via env (`WORKMATE_EVENTS_DB`, `WORKMATE_CONVERSATIONS_DB`,
-  `*_STATE`, MSAL token caches, `WORKMATE_TOKENS_FILE`, `WORKMATE_RETRIEVAL_INDEX`). This satisfies the
+- **Shared state on a named volume.** A `state` volume is mounted at `/var/lib/sufler` in every service;
+  all operational paths point there via env (`SUFLER_EVENTS_DB`, `SUFLER_CONVERSATIONS_DB`,
+  `*_STATE`, MSAL token caches, `SUFLER_TOKENS_FILE`, `SUFLER_RETRIEVAL_INDEX`). This satisfies the
   shared-EventStore invariant: separate containers share one inode, so SQLite WAL + `busy_timeout`
   behave exactly as multiple processes on one host.
 
@@ -52,7 +52,7 @@ Ship a container deployment under `deploy/docker/`, mirroring the `Powiadomienia
 
 - **nginx terminates TLS and streams SSE.** An `nginx` service fronts `mcp:8000` on the internal network:
   `proxy_buffering off` + long `proxy_read_timeout` for `streamable-http` (the Linux equivalent of the
-  IIS/ARR `responseBufferLimit=0`). `WORKMATE_ALLOWED_HOSTS` must carry the public host (DNS-rebinding
+  IIS/ARR `responseBufferLimit=0`). `SUFLER_ALLOWED_HOSTS` must carry the public host (DNS-rebinding
   protection), and `proxy_set_header Host` must match it, else the door answers `421`.
 
 - **On-demand and priming stay out of autostart.** `worklog-selfservice` and the one-time MSAL
@@ -89,16 +89,16 @@ Hardening mirrors the sub-project: non-root uid `10001`, `read_only` rootfs with
 
 ## Update (2026-07-30)
 
-The `workmate-telegram` door is removed from the fleet — decided unused, not worth maintaining a
+The `sufler-telegram` door is removed from the fleet — decided unused, not worth maintaining a
 second bot SDK for zero real users. The image no longer ships the `telegram` extra or the
 `telegram` Compose service/profile; every reference above is historical (the topology at the time
 of the original decision), not current.
 
 ## Update (2026-07-30, D1-D3 scope change)
 
-Two more doors named above are gone: `workmate-jira` (the poller/push/write door — ADR 0054
+Two more doors named above are gone: `sufler-jira` (the poller/push/write door — ADR 0054
 reduced Jira to one read-only capability, "my tasks", called directly from `teams-graph`/MCP, no
-separate process) and `workmate-worklogi` + `workmate-worklog-selfservice` (WorklogPRO withdrawn
+separate process) and `sufler-worklogi` + `sufler-worklog-selfservice` (WorklogPRO withdrawn
 in full, ADR 0055). The `bridge` profile now runs only `github` + `teams-graph`; the `worklogi`
 and `tools` Compose profiles no longer exist (no services reference them); the `worklogi-out`
 volume is removed. `propose_worklog` (ADR 0034, read-only commit-time estimator) is unaffected —

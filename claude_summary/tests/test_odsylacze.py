@@ -2,7 +2,7 @@
 
 Bramka rdzenia (`tests/test_adr_numbering.py`) tego drzewa NIE sprawdza, i to jest decyzja,
 nie przeoczenie: ten pod-projekt ma WŁASNĄ numerację ADR, więc pisane prozą `docs/adr/0003_…`
-rozwiązywałoby się od korzenia repozytorium — w dokument WorkMate'a o zupełnie czym innym.
+rozwiązywałoby się od korzenia repozytorium — w dokument Sufler'a o zupełnie czym innym.
 Odsyłacz trafiający w niewłaściwy dokument jest gorszy niż martwy, bo nie widać, że jest zły.
 
 Wykluczenie bez zastępstwa zamienia jednak obserwatora na dobre chęci, a tak ten pod-projekt

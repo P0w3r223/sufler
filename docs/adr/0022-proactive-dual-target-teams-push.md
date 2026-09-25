@@ -56,7 +56,7 @@ to **both** targets, configurably: a 1:1 chat with a person **and** a new post o
 
 ## Consequences
 
-- The GitHub door process (`workmate-github`) runs the poller and the notifier concurrently
+- The GitHub door process (`sufler-github`) runs the poller and the notifier concurrently
   (`asyncio.gather`) over the shared EventStore, closing the GitHub → base → Teams loop.
 - Messages are attributed to the logged-in user (the bot's "voice"), as in ADR 0015.
 - Unattended runs depend on a warm MSAL token cache; a silent-only provider should be used in

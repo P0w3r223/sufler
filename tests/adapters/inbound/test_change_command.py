@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from workmate.adapters.inbound.change_command import ChangeDigestContext, ChangeDigestRouter
+from sufler.adapters.inbound.change_command import ChangeDigestContext, ChangeDigestRouter
 
 _EID = "team-1/chan-1/root-1"
 
@@ -54,13 +54,13 @@ def test_without_mention_returns_none():
 def test_mention_without_directive_returns_none():
     router, _ = _router()
 
-    assert router.dispatch("@WorkMate jak leci?", _ctx()) is None
+    assert router.dispatch("@Sufler jak leci?", _ctx()) is None
 
 
 def test_directive_with_iso_date_returns_digest_text():
     router, service = _router(text="TREŚĆ DIGESTU")
 
-    reply = router.dispatch("@WorkMate co się zmieniło od 2026-07-01", _ctx())
+    reply = router.dispatch("@Sufler co się zmieniło od 2026-07-01", _ctx())
 
     assert reply == "TREŚĆ DIGESTU"
     assert service.asked == [date(2026, 7, 1)]
@@ -69,7 +69,7 @@ def test_directive_with_iso_date_returns_digest_text():
 def test_directive_without_date_returns_usage():
     router, service = _router()
 
-    reply = router.dispatch("@WorkMate co się zmieniło od", _ctx())
+    reply = router.dispatch("@Sufler co się zmieniło od", _ctx())
 
     assert reply is not None and "RRRR-MM-DD" in reply
     assert service.asked == []
@@ -78,7 +78,7 @@ def test_directive_without_date_returns_usage():
 def test_directive_with_bad_date_returns_usage():
     router, service = _router()
 
-    reply = router.dispatch("@WorkMate co się zmieniło od wczoraj", _ctx())
+    reply = router.dispatch("@Sufler co się zmieniło od wczoraj", _ctx())
 
     assert reply is not None and "RRRR-MM-DD" in reply
     assert service.asked == []  # zła data → nie liczymy digestu
@@ -87,7 +87,7 @@ def test_directive_with_bad_date_returns_usage():
 def test_directive_is_case_insensitive():
     router, service = _router()
 
-    assert router.dispatch("@WorkMate Co Się Zmieniło Od 2026-07-01", _ctx()) == "DIGEST"
+    assert router.dispatch("@Sufler Co Się Zmieniło Od 2026-07-01", _ctx()) == "DIGEST"
     assert service.asked == [date(2026, 7, 1)]
 
 
@@ -97,7 +97,7 @@ def test_pdf_flag_delivers_file_and_confirms():
         deliver=lambda ext, name, content: calls.append((ext, name, content)), text="TREŚĆ"
     )
 
-    reply = router.dispatch("@WorkMate co się zmieniło od 2026-07-01 | pdf", _ctx())
+    reply = router.dispatch("@Sufler co się zmieniło od 2026-07-01 | pdf", _ctx())
 
     # BAZA nazwy bez rozszerzenia — pipeline file-reply dokłada ``.pdf``.
     assert calls == [(_EID, "zmiany-od-2026-07-01", "TREŚĆ")]
@@ -107,7 +107,7 @@ def test_pdf_flag_delivers_file_and_confirms():
 def test_pdf_flag_without_delivery_degrades_to_text():
     router, _ = _router(deliver=None, text="TREŚĆ")
 
-    reply = router.dispatch("@WorkMate co się zmieniło od 2026-07-01 | pdf", _ctx())
+    reply = router.dispatch("@Sufler co się zmieniło od 2026-07-01 | pdf", _ctx())
 
     assert reply is not None
     assert reply.startswith("TREŚĆ")
@@ -120,7 +120,7 @@ def test_pdf_delivery_failure_degrades_to_text():
 
     router, _ = _router(deliver=_boom, text="TREŚĆ")
 
-    reply = router.dispatch("@WorkMate co się zmieniło od 2026-07-01 | pdf", _ctx())
+    reply = router.dispatch("@Sufler co się zmieniło od 2026-07-01 | pdf", _ctx())
 
     assert reply is not None
     assert reply.startswith("TREŚĆ")
@@ -137,7 +137,7 @@ class _StubReadAuthz:
         self._allowed = allowed
 
     def authorize(self, requester_aad_id: str) -> None:
-        from workmate.core.errors import NoteAuthorizationError
+        from sufler.core.errors import NoteAuthorizationError
 
         if requester_aad_id not in self._allowed:
             raise NoteAuthorizationError("nierozpoznany nadawca (stub, ADR 0062)")
@@ -161,7 +161,7 @@ def test_digest_is_refused_for_an_unrecognized_sender():
     router, service = _gated_router(allowed=set())
 
     out = router.dispatch(
-        "@WorkMate co się zmieniło od 2026-07-01",
+        "@Sufler co się zmieniło od 2026-07-01",
         ChangeDigestContext(external_id=_EID, mentions_bot=True, sender_id="aad-obcy"),
     )
 
@@ -174,7 +174,7 @@ def test_digest_runs_for_a_recognized_member():
     router, service = _gated_router(allowed={"aad-ok"})
 
     out = router.dispatch(
-        "@WorkMate co się zmieniło od 2026-07-01",
+        "@Sufler co się zmieniło od 2026-07-01",
         ChangeDigestContext(external_id=_EID, mentions_bot=True, sender_id="aad-ok"),
     )
 
@@ -185,7 +185,7 @@ def test_digest_runs_for_a_recognized_member():
 def test_digest_without_authorizer_behaves_as_before():
     router, service = _router()
 
-    out = router.dispatch("@WorkMate co się zmieniło od 2026-07-01", _ctx())
+    out = router.dispatch("@Sufler co się zmieniło od 2026-07-01", _ctx())
 
     assert out == "DIGEST"
     assert service.asked == [date(2026, 7, 1)]

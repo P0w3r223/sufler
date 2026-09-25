@@ -12,48 +12,48 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.env import apply_env_file, configure_logging
+from sufler.adapters.inbound.env import apply_env_file, configure_logging
 
 
 def test_apply_env_file_parses_utf8_with_comments_and_quotes(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("WORKMATE_TEST_UTF8", raising=False)
+    monkeypatch.delenv("SUFLER_TEST_UTF8", raising=False)
     env = tmp_path / ".env"
-    env.write_text('# komentarz\nWORKMATE_TEST_UTF8 = "abc123"\n', encoding="utf-8")
+    env.write_text('# komentarz\nSUFLER_TEST_UTF8 = "abc123"\n', encoding="utf-8")
 
     apply_env_file(env)
 
-    assert os.environ["WORKMATE_TEST_UTF8"] == "abc123"
+    assert os.environ["SUFLER_TEST_UTF8"] == "abc123"
 
 
 def test_apply_env_file_handles_utf16_bom_from_powershell(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("WORKMATE_TEST_UTF16", raising=False)
+    monkeypatch.delenv("SUFLER_TEST_UTF16", raising=False)
     env = tmp_path / ".env"
     # PowerShell (Out-File/Set-Content) domyślnie zapisuje UTF-16 LE z BOM.
-    env.write_text("WORKMATE_TEST_UTF16=xyz789\n", encoding="utf-16")
+    env.write_text("SUFLER_TEST_UTF16=xyz789\n", encoding="utf-16")
 
     apply_env_file(env)
 
-    assert os.environ["WORKMATE_TEST_UTF16"] == "xyz789"
+    assert os.environ["SUFLER_TEST_UTF16"] == "xyz789"
 
 
 def test_apply_env_file_does_not_override_real_env(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEST_PRIO", "z-realnego-env")
+    monkeypatch.setenv("SUFLER_TEST_PRIO", "z-realnego-env")
     env = tmp_path / ".env"
-    env.write_text("WORKMATE_TEST_PRIO=z-pliku\n", encoding="utf-8")
+    env.write_text("SUFLER_TEST_PRIO=z-pliku\n", encoding="utf-8")
 
     apply_env_file(env)
 
-    assert os.environ["WORKMATE_TEST_PRIO"] == "z-realnego-env"  # setdefault: env wygrywa
+    assert os.environ["SUFLER_TEST_PRIO"] == "z-realnego-env"  # setdefault: env wygrywa
 
 
 def test_apply_env_file_skips_blank_and_comment_lines(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("WORKMATE_TEST_KEEP", raising=False)
+    monkeypatch.delenv("SUFLER_TEST_KEEP", raising=False)
     env = tmp_path / ".env"
-    env.write_text("\n# tylko komentarz\n\nWORKMATE_TEST_KEEP=1\n", encoding="utf-8")
+    env.write_text("\n# tylko komentarz\n\nSUFLER_TEST_KEEP=1\n", encoding="utf-8")
 
     apply_env_file(env)
 
-    assert os.environ["WORKMATE_TEST_KEEP"] == "1"
+    assert os.environ["SUFLER_TEST_KEEP"] == "1"
 
 
 def test_apply_env_file_raises_clear_error_on_corrupt_encoding(tmp_path: Path):
@@ -66,12 +66,12 @@ def test_apply_env_file_raises_clear_error_on_corrupt_encoding(tmp_path: Path):
 
 def _configure_logging_from_fresh(monkeypatch, level_env: str | None) -> int:
     """Odtwórz warunek świeżego procesu (bez handlerów root — inaczej basicConfig jest no-op),
-    ustaw WORKMATE_LOG_LEVEL, zawołaj configure_logging i zwróć wynikowy poziom root loggera.
+    ustaw SUFLER_LOG_LEVEL, zawołaj configure_logging i zwróć wynikowy poziom root loggera.
     """
     if level_env is None:
-        monkeypatch.delenv("WORKMATE_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("SUFLER_LOG_LEVEL", raising=False)
     else:
-        monkeypatch.setenv("WORKMATE_LOG_LEVEL", level_env)
+        monkeypatch.setenv("SUFLER_LOG_LEVEL", level_env)
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
@@ -86,7 +86,7 @@ def _configure_logging_from_fresh(monkeypatch, level_env: str | None) -> int:
 
 
 def test_configure_logging_reads_workmate_log_level(monkeypatch):
-    """R3: WORKMATE_LOG_LEVEL=DEBUG realnie obniża próg root loggera (jak settings.log_level)."""
+    """R3: SUFLER_LOG_LEVEL=DEBUG realnie obniża próg root loggera (jak settings.log_level)."""
     assert _configure_logging_from_fresh(monkeypatch, "DEBUG") == logging.DEBUG
 
 

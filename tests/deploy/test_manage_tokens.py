@@ -17,7 +17,7 @@ from types import ModuleType
 
 import pytest
 
-from workmate.adapters.inbound.mcp.auth import TokenVerifier
+from sufler.adapters.inbound.mcp.auth import TokenVerifier
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "deploy" / "http" / "manage_tokens.py"
 
@@ -180,10 +180,10 @@ def test_default_store_is_the_server_constant_not_a_copy() -> None:
     ``config._DEFAULT_TOKENS_FILE`` dostał rozgałęzienie po ``os.name`` (windowsowy literał
     "C:/…" na Linuksie stawał się ścieżką WZGLĘDNĄ pod CWD), ale kopia literału w tym skrypcie
     poprawki nie zobaczyła: na Linuksie ``manage_tokens issue`` pisał do
-    ``./C:/ProgramData/WorkMate/tokens.json`` i meldował sukces, a serwer szukał magazynu
-    w ``/var/lib/workmate/tokens.json`` i nie wpuszczał nikogo.
+    ``./C:/ProgramData/Sufler/tokens.json`` i meldował sukces, a serwer szukał magazynu
+    w ``/var/lib/sufler/tokens.json`` i nie wpuszczał nikogo.
     """
-    from workmate import config
+    from sufler import config
 
     assert mt.DEFAULT_STORE == config._DEFAULT_TOKENS_FILE
     assert mt.DEFAULT_STORE.is_absolute(), "domyślny magazyn nie może być względny wobec CWD"
@@ -204,5 +204,5 @@ def test_default_store_is_not_written_as_a_path_literal() -> None:
     prawa_strona = przypisanie.group(1)
     assert '"' not in prawa_strona and "'" not in prawa_strona, (
         f"DEFAULT_STORE = {prawa_strona} powiela literał ścieżki zamiast brać stałą "
-        "z workmate.config (_DEFAULT_TOKENS_FILE)."
+        "z sufler.config (_DEFAULT_TOKENS_FILE)."
     )

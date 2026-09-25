@@ -54,7 +54,7 @@ Windows DLL-loading issues and is pre-v1.
   it beats lexical-PL by a meaningful margin without recall regression.
 - **Phase B (gated):** local dense embeddings (`multilingual-e5-small` via ONNX/fastembed first;
   escalate to `sdadas/mmlw-retrieval-roberta-base` if quality demands) + **numpy brute-force**
-  cosine (vectors as BLOB in SQLite, `~/.workmate/retrieval_index.db`, outside `data/`) + RRF(k=60).
+  cosine (vectors as BLOB in SQLite, `~/.sufler/retrieval_index.db`, outside `data/`) + RRF(k=60).
   Behind a per-door `enable_dense` flag (default OFF), enabled only on **long-lived doors**
   (Teams/agent — model loaded once), never on short-lived MCP stdio. `reciprocal_rank_fusion` already
   lives in `core/domain/ranking.py` awaiting this layer.

@@ -3,7 +3,7 @@
 Date: 2026-07-07
 Status: accepted
 Author: P0w3r223
-Related to: docs/reference/note-schema.md, roadmap_workmate.pdf (Gate 1)
+Related to: docs/reference/note-schema.md, roadmap_sufler.pdf (Gate 1)
 
 ---
 

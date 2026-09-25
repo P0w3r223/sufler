@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from workmate.core.application.change_digest import ChangeDigestService
-from workmate.core.domain.events import Event
+from sufler.core.application.change_digest import ChangeDigestService
+from sufler.core.domain.events import Event
 
 
 def _event(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.domain.threads import resolve_thread_target
+from sufler.core.domain.threads import resolve_thread_target
 
 
 def test_pull_url_resolves_to_pr_target():

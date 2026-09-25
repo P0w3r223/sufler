@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from workmate.adapters.inbound.teams_graph.app import _build_team_schedule_catalog
-from workmate.config import ScheduleSettings
+from sufler.adapters.inbound.teams_graph.app import _build_team_schedule_catalog
+from sufler.config import ScheduleSettings
 
 
 def test_disabled_by_default_without_cache_file(tmp_path: Path) -> None:

@@ -15,10 +15,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from workmate.core.application.worklog import WorklogService
-from workmate.core.domain.worklog import SessionPolicy
-from workmate.core.errors import InvalidRequestError
-from workmate.core.ports.github import MAX_COMMITS_PER_FETCH
+from sufler.core.application.worklog import WorklogService
+from sufler.core.domain.worklog import SessionPolicy
+from sufler.core.errors import InvalidRequestError
+from sufler.core.ports.github import MAX_COMMITS_PER_FETCH
 
 _WARSAW = ZoneInfo("Europe/Warsaw")
 

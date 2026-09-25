@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.domain.notes import build_note_metadata, notes_of_project
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.domain.notes import build_note_metadata, notes_of_project
 
 
 def _note(note_id: str, project: str) -> Note:

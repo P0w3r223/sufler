@@ -25,18 +25,18 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.github import state
-from workmate.adapters.outbound.filesystem_outbox import FilesystemOutboxRepository
-from workmate.adapters.outbound.filesystem_snapshots import FilesystemNoteSnapshots
-from workmate.adapters.outbound.filesystem_workspace import (
+from sufler.adapters.inbound.github import state
+from sufler.adapters.outbound.filesystem_outbox import FilesystemOutboxRepository
+from sufler.adapters.outbound.filesystem_snapshots import FilesystemNoteSnapshots
+from sufler.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
     prune_stale,
 )
-from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.errors import RepositoryError, WriteError
+from sufler.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.errors import RepositoryError, WriteError
 
 _KATALOG_ROZMOWY = "teams-graph/abc123"
 

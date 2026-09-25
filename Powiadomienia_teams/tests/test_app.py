@@ -2392,11 +2392,11 @@ def test_puls_bije_czesciej_niz_odstep_odpytywania(tmp_path: Path):
 def test_bot_nie_zagaduje_sam_siebie(tmp_path: Path):
     """Konto bota jest pełnoprawnym członkiem zespołu — bez filtra trafia na listę braków.
 
-    Potwierdzone na żywo: „Virtual WorkMate" znalazło się wśród osób bez grafiku. Filtr musi być
+    Potwierdzone na żywo: „Virtual Sufler" znalazło się wśród osób bez grafiku. Filtr musi być
     w KODZIE, nie tylko w `ONLY_USER_IDS` — pusta lista odbiorców oznacza „wszyscy", więc
     konfiguracja niczego wtedy nie chroni.
     """
-    bot = Member("me", "Virtual WorkMate")  # `_FakeClient.get_me()` zwraca "me"
+    bot = Member("me", "Virtual Sufler")  # `_FakeClient.get_me()` zwraca "me"
     czlowiek = Member("u1", "Ala")
     settings = Settings(
         client_id="c",

@@ -1,6 +1,6 @@
 """Testy wspólnych helperów ``config/_env.py`` — parsowanie env, zapisywalność, ścieżki domyślne.
 
-``require_writable`` to fail-fast dla TRWAŁYCH ścieżek: bez niego domyślne ``~/.workmate`` na
+``require_writable`` to fail-fast dla TRWAŁYCH ścieżek: bez niego domyślne ``~/.sufler`` na
 koncie kontenera z ``--no-create-home`` (i rootfs ``read_only``) przyjmuje zapis dopiero „w
 próżnię" — poller odkrywa problem w pętli łapiącej wyjątki, jako cichy crash-loop bez watermarku.
 
@@ -18,9 +18,8 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from tests.conftest import przestrzen_config
-from workmate import config
-from workmate.config import (
+from sufler import config
+from sufler.config import (
     TeamsGraphSettings,
     _bool_from_env,
     _float_from_env,
@@ -31,17 +30,18 @@ from workmate.config import (
     _repo_root_or_none,
     require_writable,
 )
+from tests.conftest import przestrzen_config
 
 
 def test_require_writable_accepts_and_creates_writable_dir(tmp_path):
     """Katalog docelowy nie istnieje ⇒ helper go tworzy i potwierdza zapis; śmieci nie zostają."""
     target = tmp_path / "state" / "github_state.json"
 
-    require_writable(target, "WORKMATE_GITHUB_STATE")
+    require_writable(target, "SUFLER_GITHUB_STATE")
 
     assert target.parent.is_dir()
     # Plik próbny został sprzątnięty — healthcheck/operator nie znajdzie śmiecia.
-    assert list(target.parent.glob(".workmate-writetest-*")) == []
+    assert list(target.parent.glob(".sufler-writetest-*")) == []
 
 
 def test_require_writable_raises_when_ancestor_is_a_file(tmp_path):
@@ -56,8 +56,8 @@ def test_require_writable_raises_when_ancestor_is_a_file(tmp_path):
     target = blocker / "sub" / "state.json"
 
     # Komunikat MUSI wskazywać zmienną do nadpisania — operator ma wiedzieć, co ustawić.
-    with pytest.raises(ValueError, match="WORKMATE_GITHUB_STATE"):
-        require_writable(target, "WORKMATE_GITHUB_STATE")
+    with pytest.raises(ValueError, match="SUFLER_GITHUB_STATE"):
+        require_writable(target, "SUFLER_GITHUB_STATE")
 
 
 def test_require_writable_directory_probes_the_directory_itself(tmp_path):
@@ -69,17 +69,17 @@ def test_require_writable_directory_probes_the_directory_itself(tmp_path):
     """
     notes = tmp_path / "data" / "notes"
 
-    require_writable(notes, "WORKMATE_NOTES_DIR", is_directory=True)
+    require_writable(notes, "SUFLER_NOTES_DIR", is_directory=True)
 
     assert notes.is_dir()
-    assert list(notes.glob(".workmate-writetest-*")) == []
+    assert list(notes.glob(".sufler-writetest-*")) == []
 
 
 def test_require_writable_file_mode_stops_at_parent(tmp_path):
     """Domyślne (plikowe) wywołanie NIE tworzy katalogu o nazwie pliku — kontrast dla powyższego."""
     target = tmp_path / "state" / "github_state.json"
 
-    require_writable(target, "WORKMATE_GITHUB_STATE")
+    require_writable(target, "SUFLER_GITHUB_STATE")
 
     assert target.parent.is_dir()
     assert not target.exists(), "ścieżka pliku nie może stać się katalogiem"
@@ -94,8 +94,8 @@ def test_require_writable_directory_raises_when_path_is_a_file(tmp_path):
     blocker = tmp_path / "notes"
     blocker.write_text("x", encoding="ascii")
 
-    with pytest.raises(ValueError, match="WORKMATE_NOTES_DIR"):
-        require_writable(blocker, "WORKMATE_NOTES_DIR", is_directory=True)
+    with pytest.raises(ValueError, match="SUFLER_NOTES_DIR"):
+        require_writable(blocker, "SUFLER_NOTES_DIR", is_directory=True)
 
 
 # --- domyślne ścieżki stanu: absolutne i POZA repozytorium ------------------
@@ -106,7 +106,7 @@ def test_require_writable_directory_raises_when_path_is_a_file(tmp_path):
 # Testujemy WŁASNOŚĆ, którą opisuje komentarz w kodzie: ścieżka ma być absolutna (windowsowe
 # „C:/…" na Linuksie stawało się katalogiem WZGLĘDNYM pod CWD) i ma leżeć poza bazą wiedzy.
 
-# Nazwy z CAŁEGO pakietu ``workmate.config``, nie tylko z re-eksportu w ``__init__`` — inaczej
+# Nazwy z CAŁEGO pakietu ``sufler.config``, nie tylko z re-eksportu w ``__init__`` — inaczej
 # bramka odkrywania niżej chodziłaby po pustym zbiorze i cichła po każdym nowym module domeny.
 _KONFIG = przestrzen_config()
 
@@ -168,93 +168,93 @@ def test_domyslna_sciezka_stanu_lezy_poza_repozytorium(nazwa: str):
 
 @pytest.mark.parametrize("wartosc", ["true", "TRUE", " True ", "1", "yes", "YES", "on"])
 def test_bool_from_env_uznaje_zgode_w_kazdej_pisowni(monkeypatch, wartosc: str):
-    monkeypatch.setenv("WORKMATE_PROBA", wartosc)
-    assert _bool_from_env("WORKMATE_PROBA", default=False) is True
+    monkeypatch.setenv("SUFLER_PROBA", wartosc)
+    assert _bool_from_env("SUFLER_PROBA", default=False) is True
 
 
 @pytest.mark.parametrize("wartosc", ["false", "0", "no", "off", "", "  ", "prawda", "tak", "yes!"])
 def test_bool_from_env_traktuje_wszystko_inne_jako_brak_zgody(monkeypatch, wartosc: str):
     """Wartość niezrozumiana NIE otwiera bramki — to fundament wszystkich domyślnych „OFF"."""
-    monkeypatch.setenv("WORKMATE_PROBA", wartosc)
-    assert _bool_from_env("WORKMATE_PROBA", default=False) is False
+    monkeypatch.setenv("SUFLER_PROBA", wartosc)
+    assert _bool_from_env("SUFLER_PROBA", default=False) is False
 
 
 def test_bool_from_env_bez_zmiennej_oddaje_domyslna(monkeypatch):
     """Brak zmiennej ≠ „false": domyślna ``True`` (np. kompaktowanie) musi przetrwać."""
-    monkeypatch.delenv("WORKMATE_PROBA", raising=False)
-    assert _bool_from_env("WORKMATE_PROBA", default=True) is True
-    assert _bool_from_env("WORKMATE_PROBA", default=False) is False
+    monkeypatch.delenv("SUFLER_PROBA", raising=False)
+    assert _bool_from_env("SUFLER_PROBA", default=True) is True
+    assert _bool_from_env("SUFLER_PROBA", default=False) is False
 
 
 def test_bool_from_env_pusta_wartosc_wylacza_mimo_domyslnej_wlaczonej(monkeypatch):
-    """``WORKMATE_X=`` w ``.env`` to WARTOŚĆ pusta, nie brak zmiennej — i wygrywa z domyślną.
+    """``SUFLER_X=`` w ``.env`` to WARTOŚĆ pusta, nie brak zmiennej — i wygrywa z domyślną.
 
     Rozróżnienie jest realne: skomentowanie linii w ``.env`` daje brak zmiennej, wyczyszczenie
     jej wartości daje pusty napis. Drugie wyłącza zdolność domyślnie włączoną.
     """
-    monkeypatch.setenv("WORKMATE_PROBA", "")
-    assert _bool_from_env("WORKMATE_PROBA", default=True) is False
+    monkeypatch.setenv("SUFLER_PROBA", "")
+    assert _bool_from_env("SUFLER_PROBA", default=True) is False
 
 
 def test_int_from_env_odrzuca_wartosc_nieliczbowa_z_nazwa_zmiennej(monkeypatch):
     """Komunikat MUSI nieść nazwę zmiennej — operator ma wiedzieć, którą linię ``.env`` poprawić."""
-    monkeypatch.setenv("WORKMATE_PROBA", "dużo")
-    with pytest.raises(ValueError, match="WORKMATE_PROBA"):
-        _int_from_env("WORKMATE_PROBA", 7)
+    monkeypatch.setenv("SUFLER_PROBA", "dużo")
+    with pytest.raises(ValueError, match="SUFLER_PROBA"):
+        _int_from_env("SUFLER_PROBA", 7)
 
 
 @pytest.mark.parametrize("wartosc", ["", "   "])
 def test_int_from_env_pusta_wartosc_oddaje_domyslna(monkeypatch, wartosc: str):
-    """Pusta zmienna z ``.env`` (``WORKMATE_X=``) nie może wywrócić startu ani dać zera."""
-    monkeypatch.setenv("WORKMATE_PROBA", wartosc)
-    assert _int_from_env("WORKMATE_PROBA", 7) == 7
+    """Pusta zmienna z ``.env`` (``SUFLER_X=``) nie może wywrócić startu ani dać zera."""
+    monkeypatch.setenv("SUFLER_PROBA", wartosc)
+    assert _int_from_env("SUFLER_PROBA", 7) == 7
 
 
 def test_int_from_env_czyta_wartosc_ujemna(monkeypatch):
     """Helper NIE waliduje zakresu — od tego są ``validate`` klas ustawień (osobna warstwa)."""
-    monkeypatch.setenv("WORKMATE_PROBA", "-5")
-    assert _int_from_env("WORKMATE_PROBA", 7) == -5
+    monkeypatch.setenv("SUFLER_PROBA", "-5")
+    assert _int_from_env("SUFLER_PROBA", 7) == -5
 
 
 def test_float_from_env_odrzuca_wartosc_nieliczbowa(monkeypatch):
-    monkeypatch.setenv("WORKMATE_PROBA", "8,5")  # przecinek dziesiętny — realna polska literówka
-    with pytest.raises(ValueError, match="WORKMATE_PROBA"):
-        _float_from_env("WORKMATE_PROBA", 8.0)
+    monkeypatch.setenv("SUFLER_PROBA", "8,5")  # przecinek dziesiętny — realna polska literówka
+    with pytest.raises(ValueError, match="SUFLER_PROBA"):
+        _float_from_env("SUFLER_PROBA", 8.0)
 
 
 def test_list_from_env_tnie_przycina_i_odrzuca_puste(monkeypatch):
-    monkeypatch.setenv("WORKMATE_PROBA", " a , b ,, c ")
-    assert _list_from_env("WORKMATE_PROBA", ("x",)) == ("a", "b", "c")
+    monkeypatch.setenv("SUFLER_PROBA", " a , b ,, c ")
+    assert _list_from_env("SUFLER_PROBA", ("x",)) == ("a", "b", "c")
 
 
 @pytest.mark.parametrize("wartosc", ["", " , , "])
 def test_list_from_env_lista_bez_elementow_oddaje_domyslna(monkeypatch, wartosc: str):
-    """Pusta lista cofa do domyślnej — inaczej ``WORKMATE_ALLOWED_HOSTS=`` zdejmowałoby po cichu
+    """Pusta lista cofa do domyślnej — inaczej ``SUFLER_ALLOWED_HOSTS=`` zdejmowałoby po cichu
     ochronę przed DNS-rebinding, zamiast ją zostawić na loopbacku."""
-    monkeypatch.setenv("WORKMATE_PROBA", wartosc)
-    assert _list_from_env("WORKMATE_PROBA", ("127.0.0.1:*",)) == ("127.0.0.1:*",)
+    monkeypatch.setenv("SUFLER_PROBA", wartosc)
+    assert _list_from_env("SUFLER_PROBA", ("127.0.0.1:*",)) == ("127.0.0.1:*",)
 
 
 def test_path_from_env_rozwija_tylde(monkeypatch):
-    monkeypatch.setenv("WORKMATE_PROBA", "~/stan/events.db")
-    wynik = _path_from_env("WORKMATE_PROBA", Path("/domyslna"))
+    monkeypatch.setenv("SUFLER_PROBA", "~/stan/events.db")
+    wynik = _path_from_env("SUFLER_PROBA", Path("/domyslna"))
     assert "~" not in str(wynik)
     assert wynik.name == "events.db"
 
 
 def test_path_from_env_pusta_wartosc_oddaje_domyslna(monkeypatch):
-    """``WORKMATE_X=`` nie może dać ``Path('')`` — to katalog bieżący, czyli cichy zapis do CWD."""
-    monkeypatch.setenv("WORKMATE_PROBA", "")
-    assert _path_from_env("WORKMATE_PROBA", Path("/domyslna")) == Path("/domyslna")
+    """``SUFLER_X=`` nie może dać ``Path('')`` — to katalog bieżący, czyli cichy zapis do CWD."""
+    monkeypatch.setenv("SUFLER_PROBA", "")
+    assert _path_from_env("SUFLER_PROBA", Path("/domyslna")) == Path("/domyslna")
 
 
 def test_nieobslugiwany_transport_wywala_start_z_lista_dozwolonych(monkeypatch):
-    """Literówka w ``WORKMATE_TRANSPORT`` ma zatrzymać START, nie wypłynąć przy pierwszym żądaniu.
+    """Literówka w ``SUFLER_TRANSPORT`` ma zatrzymać START, nie wypłynąć przy pierwszym żądaniu.
 
     To jedyne pole ``Settings``, które ``from_env`` waliduje samo (reszta idzie do ``validate``
     klas per zdolność) — i jedyne, którego zła wartość decyduje, CZY drzwi są sieciowe.
     """
-    monkeypatch.setenv("WORKMATE_TRANSPORT", "https")
+    monkeypatch.setenv("SUFLER_TRANSPORT", "https")
 
     with pytest.raises(ValueError, match="stdio.*streamable-http"):
         config.Settings.from_env()
@@ -262,10 +262,10 @@ def test_nieobslugiwany_transport_wywala_start_z_lista_dozwolonych(monkeypatch):
 
 def test_optional_path_from_env_bez_zmiennej_daje_none(monkeypatch):
     """``None`` to zdolność WYŁĄCZONA (metryki, audyt) — nie wolno jej podmienić na ścieżkę."""
-    monkeypatch.delenv("WORKMATE_PROBA", raising=False)
-    assert _optional_path_from_env("WORKMATE_PROBA") is None
-    monkeypatch.setenv("WORKMATE_PROBA", "")
-    assert _optional_path_from_env("WORKMATE_PROBA") is None
+    monkeypatch.delenv("SUFLER_PROBA", raising=False)
+    assert _optional_path_from_env("SUFLER_PROBA") is None
+    monkeypatch.setenv("SUFLER_PROBA", "")
+    assert _optional_path_from_env("SUFLER_PROBA") is None
 
 
 # --- każda domyślna ścieżka jest ALBO sprawdzana, ALBO jawnie zwolniona ------
@@ -306,23 +306,23 @@ def test_sciezka_tylko_linuksowa_jest_absolutna_po_posixowemu(nazwa: str):
 
 
 def test_settings_validate_odrzuca_nieznany_poziom_logowania(monkeypatch):
-    """``WORKMATE_LOG_LEVEL=verbose`` wywracał start komunikatem, który nie nazywał zmiennej.
+    """``SUFLER_LOG_LEVEL=verbose`` wywracał start komunikatem, który nie nazywał zmiennej.
 
     ``logging.basicConfig`` mówi „Unknown level: 'VERBOSE'", uvicorn swoje — obie wiadomości
     zostawiają operatora bez informacji, KTÓRĄ linię ``.env`` poprawić. Sonda pilnuje, że nazwa
     zmiennej jest w komunikacie.
     """
-    monkeypatch.setenv("WORKMATE_LOG_LEVEL", "verbose")
+    monkeypatch.setenv("SUFLER_LOG_LEVEL", "verbose")
     ustawienia = config.Settings.from_env()
 
-    with pytest.raises(ValueError, match="WORKMATE_LOG_LEVEL"):
+    with pytest.raises(ValueError, match="SUFLER_LOG_LEVEL"):
         ustawienia.validate()
 
 
 @pytest.mark.parametrize("poziom", ["INFO", "info", "  Debug  ", "WARNING", "ERROR", "CRITICAL"])
 def test_settings_validate_przepuszcza_poziomy_kanoniczne(monkeypatch, poziom):
     """Kontrast: kontrola nie może być tak ciasna, żeby odrzucała realną konfigurację."""
-    monkeypatch.setenv("WORKMATE_LOG_LEVEL", poziom)
+    monkeypatch.setenv("SUFLER_LOG_LEVEL", poziom)
     config.Settings.from_env().validate()
 
 
@@ -331,10 +331,10 @@ def test_settings_validate_przepuszcza_aliasy_znane_bibliotece_logging(monkeypat
     """Kontrola miała ZAMIENIĆ niejasny błąd biblioteki, a nie zawęzić zbioru wejść.
 
     ``logging.getLevelName`` zna ``WARN``, ``FATAL`` i ``NOTSET`` — instalacja z
-    ``WORKMATE_LOG_LEVEL=WARN`` wstawała przed dołożeniem ``validate`` i musi wstawać dalej.
+    ``SUFLER_LOG_LEVEL=WARN`` wstawała przed dołożeniem ``validate`` i musi wstawać dalej.
     Odrzucanie ich byłoby regresem wprowadzonym przez bramkę, która miała pomagać.
     """
-    monkeypatch.setenv("WORKMATE_LOG_LEVEL", alias)
+    monkeypatch.setenv("SUFLER_LOG_LEVEL", alias)
     config.Settings.from_env().validate()
 
 
@@ -354,7 +354,7 @@ def test_uvicorn_log_level_tlumaczy_aliasy_na_slownik_uvicorna(monkeypatch, wejs
     Bez tłumaczenia poszerzenie kontroli przeniosłoby tylko awarię: zamiast odmowy startu
     z czytelnym komunikatem, drzwi HTTP wywracałyby się w środku ``uvicorn.Config``.
     """
-    monkeypatch.setenv("WORKMATE_LOG_LEVEL", wejscie)
+    monkeypatch.setenv("SUFLER_LOG_LEVEL", wejscie)
     assert config.Settings.from_env().uvicorn_log_level == oczekiwany
 
 
@@ -367,19 +367,19 @@ def test_uvicorn_zna_kazdy_poziom_ktory_przepuszcza_walidacja(monkeypatch):
     from uvicorn.config import LOG_LEVELS
 
     for poziom in config._ALLOWED_LOG_LEVELS:
-        monkeypatch.setenv("WORKMATE_LOG_LEVEL", poziom)
+        monkeypatch.setenv("SUFLER_LOG_LEVEL", poziom)
         przetlumaczony = config.Settings.from_env().uvicorn_log_level
         assert przetlumaczony in LOG_LEVELS, (
-            f"WORKMATE_LOG_LEVEL={poziom} przechodzi walidację, ale uvicorn nie zna "
+            f"SUFLER_LOG_LEVEL={poziom} przechodzi walidację, ale uvicorn nie zna "
             f"{przetlumaczony!r} — drzwi HTTP padłyby przy starcie."
         )
 
 
 def test_settings_validate_odrzuca_port_poza_zakresem(monkeypatch):
     """Port 0/70000 to literówka operatora — ma zatrzymać start, nie ``uvicorn`` w locie."""
-    monkeypatch.setenv("WORKMATE_BIND_PORT", "70000")
+    monkeypatch.setenv("SUFLER_BIND_PORT", "70000")
 
-    with pytest.raises(ValueError, match="WORKMATE_BIND_PORT"):
+    with pytest.raises(ValueError, match="SUFLER_BIND_PORT"):
         config.Settings.from_env().validate()
 
 
@@ -387,7 +387,7 @@ def test_settings_validate_lapie_zly_transport_takze_po_replace(monkeypatch):
     """``from_env`` waliduje transport przy budowie, ale wiring składa też przez ``replace``."""
     ustawienia = dataclasses.replace(config.Settings.from_env(), transport="https")
 
-    with pytest.raises(ValueError, match="WORKMATE_TRANSPORT"):
+    with pytest.raises(ValueError, match="SUFLER_TRANSPORT"):
         ustawienia.validate()
 
 
@@ -402,21 +402,21 @@ def test_persistent_paths_obejmuje_kazda_trwala_sciezke_settings(monkeypatch, tm
     POLA, a nie wymienia ich z palca — nowa trwała ścieżka w ``Settings`` musi wejść na listę albo
     zapalić ten test.
     """
-    monkeypatch.setenv("WORKMATE_METRICS_DB", str(tmp_path / "metrics.db"))
-    monkeypatch.setenv("WORKMATE_AUDIT_DB", str(tmp_path / "audit.db"))
+    monkeypatch.setenv("SUFLER_METRICS_DB", str(tmp_path / "metrics.db"))
+    monkeypatch.setenv("SUFLER_AUDIT_DB", str(tmp_path / "audit.db"))
     ustawienia = config.Settings.from_env()
 
     zmienne = {env_var for _, env_var, _ in ustawienia.persistent_paths()}
 
     assert zmienne == {
-        "WORKMATE_NOTE_SNAPSHOTS_DIR",
-        "WORKMATE_METRICS_DB",
-        "WORKMATE_AUDIT_DB",
+        "SUFLER_NOTE_SNAPSHOTS_DIR",
+        "SUFLER_METRICS_DB",
+        "SUFLER_AUDIT_DB",
     }
     # Migawki to KATALOG docelowy (jak baza wiedzy), nie plik w katalogu — inaczej sonda badałaby
     # poziom wyżej i przepuszczała ``data/snapshots`` zamontowane read-only wewnątrz ``data/``.
     katalogi = {env_var for _, env_var, is_dir in ustawienia.persistent_paths() if is_dir}
-    assert katalogi == {"WORKMATE_NOTE_SNAPSHOTS_DIR"}
+    assert katalogi == {"SUFLER_NOTE_SNAPSHOTS_DIR"}
 
 
 def test_persistent_paths_pomija_zdolnosci_wylaczone():
@@ -424,14 +424,14 @@ def test_persistent_paths_pomija_zdolnosci_wylaczone():
     ustawienia = config.Settings.from_env()
     assert ustawienia.metrics_db is None and ustawienia.audit_db is None
     assert {env_var for _, env_var, _ in ustawienia.persistent_paths()} == {
-        "WORKMATE_NOTE_SNAPSHOTS_DIR"
+        "SUFLER_NOTE_SNAPSHOTS_DIR"
     }
 
 
 def test_persistent_paths_wskazuja_realnie_sprawdzalne_sciezki(monkeypatch, tmp_path):
     """Kontrakt seamu: każdy zwrócony wpis ma przejść przez ``require_writable`` bez tłumaczenia."""
-    monkeypatch.setenv("WORKMATE_NOTE_SNAPSHOTS_DIR", str(tmp_path / "snap"))
-    monkeypatch.setenv("WORKMATE_AUDIT_DB", str(tmp_path / "audyt" / "audit.db"))
+    monkeypatch.setenv("SUFLER_NOTE_SNAPSHOTS_DIR", str(tmp_path / "snap"))
+    monkeypatch.setenv("SUFLER_AUDIT_DB", str(tmp_path / "audyt" / "audit.db"))
 
     for sciezka, env_var, is_dir in config.Settings.from_env().persistent_paths():
         require_writable(sciezka, env_var, is_directory=is_dir)
@@ -463,7 +463,7 @@ def test_mutacja_notatek_bez_mapy_tozsamosci_wywala_start(tmp_path):
         meeting_note_identities=tmp_path / "nie-ma.yaml",
     )
 
-    with pytest.raises(ValueError, match="WORKMATE_TEAMS_GRAPH_IDENTITIES"):
+    with pytest.raises(ValueError, match="SUFLER_TEAMS_GRAPH_IDENTITIES"):
         ustawienia.validate()
 
 
@@ -498,10 +498,10 @@ def test_komplet_bramek_mutacji_przechodzi_walidacje(tmp_path):
 
 def _menedzer(**kwargs):
     """Menedżer z kompletem stałego szablonu — zostaje sam sprawdzany parametr."""
-    from workmate.config import ExecManagerSettings
+    from sufler.config import ExecManagerSettings
 
     return ExecManagerSettings(
-        image="workmate:1.11.0-deploy",
+        image="sufler:1.11.0-deploy",
         scratchpad_volume="workmate_workmate-scratchpad",
         sock_volume="workmate_workmate-exec-sock",
         data_volume="workmate_workmate-data",
@@ -512,10 +512,10 @@ def _menedzer(**kwargs):
 @pytest.mark.parametrize(
     ("pole", "zmienna"),
     [
-        ("exec_memory_mb", "WORKMATE_EXEC_MEMORY_MB"),
-        ("exec_pids_limit", "WORKMATE_EXEC_PIDS_LIMIT"),
-        ("exec_max_file_mb", "WORKMATE_EXEC_MAX_FILE_MB"),
-        ("exec_max_open_files", "WORKMATE_EXEC_MAX_OPEN_FILES"),
+        ("exec_memory_mb", "SUFLER_EXEC_MEMORY_MB"),
+        ("exec_pids_limit", "SUFLER_EXEC_PIDS_LIMIT"),
+        ("exec_max_file_mb", "SUFLER_EXEC_MAX_FILE_MB"),
+        ("exec_max_open_files", "SUFLER_EXEC_MAX_OPEN_FILES"),
     ],
 )
 def test_zerowa_granica_zuzycia_wywala_start_menedzera(pole, zmienna):
@@ -532,10 +532,10 @@ def test_zerowa_granica_zuzycia_wywala_start_menedzera(pole, zmienna):
 @pytest.mark.parametrize(
     ("pole", "zmienna", "za_duzo"),
     [
-        ("exec_memory_mb", "WORKMATE_EXEC_MEMORY_MB", 99_999),
-        ("exec_pids_limit", "WORKMATE_EXEC_PIDS_LIMIT", 99_999),
-        ("exec_max_file_mb", "WORKMATE_EXEC_MAX_FILE_MB", 99_999),
-        ("exec_max_open_files", "WORKMATE_EXEC_MAX_OPEN_FILES", 9_999_999),
+        ("exec_memory_mb", "SUFLER_EXEC_MEMORY_MB", 99_999),
+        ("exec_pids_limit", "SUFLER_EXEC_PIDS_LIMIT", 99_999),
+        ("exec_max_file_mb", "SUFLER_EXEC_MAX_FILE_MB", 99_999),
+        ("exec_max_open_files", "SUFLER_EXEC_MAX_OPEN_FILES", 9_999_999),
     ],
 )
 def test_absurdalna_granica_zuzycia_tez_wywala_start(pole, zmienna, za_duzo):
@@ -548,13 +548,13 @@ def test_absurdalna_granica_zuzycia_tez_wywala_start(pole, zmienna, za_duzo):
 def test_granica_ponizej_minimum_dockera_wywala_start():
     """1 MB pamięci przechodzi „>= 1", a Docker odbija `create` (minimum 6 MB) — awaria byłaby
     głośna, ale późna i w INNYM PROCESIE niż literówka, więc operator szukałby jej nie tam."""
-    with pytest.raises(ValueError, match="WORKMATE_EXEC_MEMORY_MB"):
+    with pytest.raises(ValueError, match="SUFLER_EXEC_MEMORY_MB"):
         _menedzer(exec_memory_mb=1).validate()
 
 
 @pytest.mark.parametrize("wartosc", [0, 0.001, 64])
 def test_limit_cpu_poza_zakresem_wywala_start(wartosc):
-    with pytest.raises(ValueError, match="WORKMATE_EXEC_CPU_LIMIT"):
+    with pytest.raises(ValueError, match="SUFLER_EXEC_CPU_LIMIT"):
         _menedzer(exec_cpu_limit=wartosc).validate()
 
 

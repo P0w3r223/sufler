@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from workmate.core.domain.worklog import (
+from sufler.core.domain.worklog import (
     Commit,
     SessionPolicy,
     build_proposal,

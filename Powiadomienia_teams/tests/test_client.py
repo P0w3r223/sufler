@@ -600,7 +600,7 @@ def test_get_me_bez_id_jest_bledem_a_nie_pustym_napisem():
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"displayName": "Virtual WorkMate"})  # bez `id`
+        return httpx.Response(200, json={"displayName": "Virtual Sufler"})  # bez `id`
 
     with pytest.raises(RuntimeError, match="id"):
         _graph(handler).get_me()

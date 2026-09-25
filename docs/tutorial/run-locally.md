@@ -1,4 +1,4 @@
-# Tutorial: uruchom WorkMate pierwszy raz
+# Tutorial: uruchom Sufler pierwszy raz
 
 Cel: od zera do momentu, w którym Claude Code odpowiada na podstawie notatek.
 Czas: ~10 minut.
@@ -29,7 +29,7 @@ Powinno przejść na zielono — to potwierdza, że rdzeń i repozytoria działa
 ## Krok 3 — serwer lokalnie
 
 ```bash
-uv run workmate
+uv run sufler
 ```
 
 Serwer startuje na transporcie `stdio` (czeka na klienta MCP). Zatrzymaj `Ctrl+C`.
@@ -37,7 +37,7 @@ Serwer startuje na transporcie `stdio` (czeka na klienta MCP). Zatrzymaj `Ctrl+C
 ## Krok 4 — podgląd narzędzi (MCP Inspector)
 
 ```bash
-uv run mcp dev src/workmate/server.py
+uv run mcp dev src/sufler/server.py
 ```
 
 Inspector pozwala wywołać `search_notes`, `get_note`, `list_projects`,

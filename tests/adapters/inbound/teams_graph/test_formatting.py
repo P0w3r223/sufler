@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 
-from workmate.adapters.inbound.teams_graph.formatting import to_teams_html
+from sufler.adapters.inbound.teams_graph.formatting import to_teams_html
 
 
 def test_bold_becomes_strong():
@@ -139,7 +139,7 @@ def test_conventions_make_the_table_the_default_for_record_lists():
     Poprzednia redakcja brzmiała „bullets for enumerations […] Teams renders dense blocks
     poorly" — więc nawet po włączeniu tabel model dalej sypałby punktorami.
     """
-    from workmate.core.agent.prompt import STATIC_PROMPT, STATIC_PROMPT_SHELL
+    from sufler.core.agent.prompt import STATIC_PROMPT, STATIC_PROMPT_SHELL
 
     for prompt in (STATIC_PROMPT, STATIC_PROMPT_SHELL):
         assert "Markdown table" in prompt

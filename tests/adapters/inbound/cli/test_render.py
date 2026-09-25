@@ -1,4 +1,4 @@
-"""Testy komendy ``workmate-render`` (etap 7, ADR 0011 paczki).
+"""Testy komendy ``sufler-render`` (etap 7, ADR 0011 paczki).
 
 Treść ze STDIN → plik pod ``--output``. ``md``/``txt`` czysto, ``pdf``/``docx`` przez
 ``DefaultDocumentRenderer`` (fpdf2/python-docx). Renderer ma własne testy; tu sprawdzamy sam
@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.cli.render import main
+from sufler.adapters.inbound.cli.render import main
 
 
 def _run(monkeypatch, *, fmt: str, output: str, body: str) -> None:
-    monkeypatch.setattr("sys.argv", ["workmate-render", "--format", fmt, "--output", output])
+    monkeypatch.setattr("sys.argv", ["sufler-render", "--format", fmt, "--output", output])
     monkeypatch.setattr("sys.stdin", io.StringIO(body))
     main()
 
@@ -52,7 +52,7 @@ def test_unknown_format_exits_with_usage_code(monkeypatch, tmp_path, capsys):
     """Format spoza białej listy zatrzymuje argparse kodem 2 — zanim dotknie renderera."""
     monkeypatch.setattr(
         "sys.argv",
-        ["workmate-render", "--format", "xlsx", "--output", str(tmp_path / "x.xlsx")],
+        ["sufler-render", "--format", "xlsx", "--output", str(tmp_path / "x.xlsx")],
     )
     monkeypatch.setattr("sys.stdin", io.StringIO("treść"))
     with pytest.raises(SystemExit) as exc:
@@ -65,7 +65,7 @@ def test_output_directory_that_cannot_be_created_exits_one(tmp_path: Path, monke
     blocker = tmp_path / "plik-nie-katalog"
     blocker.write_text("zajęte")
     out = blocker / "outputs" / "raport.md"  # rodzic to PLIK, mkdir się nie uda
-    monkeypatch.setattr("sys.argv", ["workmate-render", "--format", "md", "--output", str(out)])
+    monkeypatch.setattr("sys.argv", ["sufler-render", "--format", "md", "--output", str(out)])
     monkeypatch.setattr("sys.stdin", io.StringIO("treść"))
     with pytest.raises(SystemExit) as exc:
         main()

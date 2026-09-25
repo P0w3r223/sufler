@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import asyncio
 
-from workmate.adapters.inbound.responder import ConversationalResponder, InboundMessage
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.application.conversations import ConversationService
-from workmate.core.ports.llm import AgentResult, AssistantTurn, UserText
+from sufler.adapters.inbound.responder import ConversationalResponder, InboundMessage
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.application.conversations import ConversationService
+from sufler.core.ports.llm import AgentResult, AssistantTurn, UserText
 
 
 class _HeaderRecordingRuntime:

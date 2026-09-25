@@ -11,7 +11,7 @@ import asyncio
 import httpx
 import pytest
 
-from workmate.adapters.outbound import graph_http
+from sufler.adapters.outbound import graph_http
 
 _URL = "https://graph.microsoft.com/v1.0/probe"
 
@@ -149,7 +149,7 @@ def _no_sleep(monkeypatch) -> None:
     async def instant(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("workmate.adapters.outbound.graph_http.asyncio.sleep", instant)
+    monkeypatch.setattr("sufler.adapters.outbound.graph_http.asyncio.sleep", instant)
 
 
 def test_async_429_honored_then_succeeds(monkeypatch):

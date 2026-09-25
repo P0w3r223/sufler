@@ -10,7 +10,7 @@ potwierdzić lokalnie, bez Azure i bez GUI Emulatora.
    uv sync --extra teams
    ./scripts/run-teams-anon.ps1
    ```
-   (równoważnie ręcznie: `WORKMATE_TEAMS_ANONYMOUS=true` + `uv run workmate-teams`)
+   (równoważnie ręcznie: `SUFLER_TEAMS_ANONYMOUS=true` + `uv run sufler-teams`)
 
 2. **Zweryfikuj round-trip** — mini-emulator: POST aktywności „message" i
    przechwycenie odpowiedzi bota na `serviceUrl`:

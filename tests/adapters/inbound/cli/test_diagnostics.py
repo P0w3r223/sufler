@@ -15,14 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.cli.diagnostics import (
+from sufler.adapters.inbound.cli.diagnostics import (
     TimeSpecError,
     _wpisy,
     main,
     parse_moment,
 )
-from workmate.adapters.outbound.sqlite_audit import SqliteAuditStore
-from workmate.adapters.outbound.sqlite_dead_letters import (
+from sufler.adapters.outbound.sqlite_audit import SqliteAuditStore
+from sufler.adapters.outbound.sqlite_dead_letters import (
     SqliteDeadLetterStore,
     SqliteInboundDeadLetterStore,
 )
@@ -37,8 +37,8 @@ _TERAZ = datetime.now(tz=UTC)
 @pytest.fixture(autouse=True)
 def _bez_zmiennych(monkeypatch: pytest.MonkeyPatch) -> None:
     """Środowisko dewelopera nie może decydować o wyniku — każdy test wskazuje bazę sam."""
-    monkeypatch.delenv("WORKMATE_EVENTS_DB", raising=False)
-    monkeypatch.delenv("WORKMATE_AUDIT_DB", raising=False)
+    monkeypatch.delenv("SUFLER_EVENTS_DB", raising=False)
+    monkeypatch.delenv("SUFLER_AUDIT_DB", raising=False)
 
 
 def _events_db(tmp_path: Path) -> Path:
@@ -154,13 +154,13 @@ def test_pusty_wynik_to_sukces_z_komunikatem(tmp_path, capsys):
 
 
 def test_brak_wskazanej_bazy_konczy_sie_bledem(capsys):
-    """Ścieżka nie jest zaszyta: bez ``--db`` i bez zmiennej narzędzie nie zgaduje ~/.workmate."""
+    """Ścieżka nie jest zaszyta: bez ``--db`` i bez zmiennej narzędzie nie zgaduje ~/.sufler."""
     assert main(["inbound"]) == 1
-    assert "WORKMATE_EVENTS_DB" in capsys.readouterr().err
+    assert "SUFLER_EVENTS_DB" in capsys.readouterr().err
 
 
 def test_audyt_bierze_sciezke_ze_swojej_zmiennej(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("WORKMATE_AUDIT_DB", str(_audit_db(tmp_path)))
+    monkeypatch.setenv("SUFLER_AUDIT_DB", str(_audit_db(tmp_path)))
 
     assert main(["audit"]) == 0
     assert "Project" in capsys.readouterr().out

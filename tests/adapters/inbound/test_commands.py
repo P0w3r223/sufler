@@ -10,19 +10,19 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from workmate.adapters.inbound.commands import (
+from sufler.adapters.inbound.commands import (
     _NEW_THREAD_ACK,
     _NEW_THREAD_ALREADY_FRESH,
     COMMAND_SPECS,
     CommandContext,
     CommandRouter,
 )
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.application.conversations import ConversationService
-from workmate.core.application.tools import ToolSpec
-from workmate.core.domain.conversation import Conversation
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.errors import NoteAuthorizationError
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.application.conversations import ConversationService
+from sufler.core.application.tools import ToolSpec
+from sufler.core.domain.conversation import Conversation
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.errors import NoteAuthorizationError
 
 _CTX = CommandContext("telegram", "chat1")
 _CTX_WITH_SENDER = CommandContext("teams_graph", "chat1", "aad-123")
@@ -102,10 +102,10 @@ def test_dispatch_empty_and_whitespace_return_none():
 
 
 def test_dispatch_strips_bot_suffix_from_first_token():
-    """``/nowa@WorkMateBot`` (konwencja komend grupowych) rozpoznaje się jako ``/nowa``."""
+    """``/nowa@SuflerBot`` (konwencja komend grupowych) rozpoznaje się jako ``/nowa``."""
     router, _ = _router()
     # Świeży wątek → komenda /nowa odpowiada „już pusta rozmowa" (dowód, że trafił handler).
-    assert router.dispatch("/nowa@WorkMateBot", _CTX) == _NEW_THREAD_ALREADY_FRESH
+    assert router.dispatch("/nowa@SuflerBot", _CTX) == _NEW_THREAD_ALREADY_FRESH
 
 
 def test_dispatch_is_case_insensitive_on_token():
@@ -143,7 +143,7 @@ def test_help_includes_intro_and_examples():
     router, _ = _router()
     out = router.dispatch("/pomoc", _CTX)
     assert out is not None
-    assert "WorkMate" in out
+    assert "Sufler" in out
     assert "Przykłady pytań:" in out
     assert out.count("•") >= 3
 
@@ -244,7 +244,7 @@ def test_projects_formats_registry_entries():
             "list_projects": {
                 "count": 2,
                 "projects": [
-                    {"key": "workmate", "name": "WorkMate", "company": "biap"},
+                    {"key": "workmate", "name": "Sufler", "company": "biap"},
                     {"key": "scada", "name": "SCADA", "company": ""},
                 ],
             }
@@ -253,7 +253,7 @@ def test_projects_formats_registry_entries():
     out = router.dispatch("/projekty", _CTX)
     assert out is not None
     assert tools.list_projects_called
-    assert "• workmate (biap) — WorkMate" in out
+    assert "• workmate (biap) — Sufler" in out
     # Bez firmy nawias się nie pojawia.
     assert "• scada — SCADA" in out
 
@@ -413,7 +413,7 @@ def test_status_with_argument_formats_project_status():
         {
             "get_project_status": {
                 "key": "workmate",
-                "name": "WorkMate",
+                "name": "Sufler",
                 "status": "active",
                 "health": "green",
                 "phase": "Faza 2",
@@ -426,7 +426,7 @@ def test_status_with_argument_formats_project_status():
     out = router.dispatch("/status workmate", _CTX)
     assert out is not None
     assert tools.status_project == "workmate"
-    assert "[workmate] WorkMate — active / green / faza: Faza 2" in out
+    assert "[workmate] Sufler — active / green / faza: Faza 2" in out
     assert "Prace w toku" in out
     assert "Notatki: 3" in out
     assert "otwarte action items: 5" in out
@@ -514,7 +514,7 @@ def test_history_is_capped_so_a_long_lived_channel_does_not_flood_the_thread():
 
     Bez sufitu jedna komenda wkleja do wątku Teams historię całego kanału.
     """
-    from workmate.adapters.inbound.commands import _HISTORY_LIMIT
+    from sufler.adapters.inbound.commands import _HISTORY_LIMIT
 
     service = _service()
     store = service._store
@@ -590,8 +590,8 @@ def _jira_spec(tasks=None, history=None, error=None):
     atrapy stały po OBU stronach szwu: router dopasowywał ``get_my_jira_tasks``, a test podawał
     mu ``ToolSpec`` o tej nazwie. Szew był niesprawdzony, choć obie jego strony miały pokrycie.
     """
-    from workmate.core.application.tools import build_jira_catalog
-    from workmate.core.domain.jira_tasks import JiraTask
+    from sufler.core.application.tools import build_jira_catalog
+    from sufler.core.domain.jira_tasks import JiraTask
 
     class _Mine:
         def my_open_tasks(self):
@@ -678,7 +678,7 @@ def test_moje_zadania_bez_narzedzia_jiry_degraduje_do_odmowy():
 
 
 def test_moje_zadania_pokazuje_blad_narzedzia():
-    from workmate.core.errors import JiraReadError
+    from sufler.core.errors import JiraReadError
 
     _, spec = _jira_spec(error=JiraReadError("brak dostępu do Jiry"))
     router, _ = _router(my_jira_tasks=lambda sender_id: [spec])
@@ -748,7 +748,7 @@ def test_history_narrows_by_thread_in_the_query_not_after_it():
     przy odsiewaniu w Pythonie nie zmieściłaby się w oknie i przepadła. Zawężona w zapytaniu
     wychodzi, i to jest cała różnica między „nie masz historii" a „nie doczytałem".
     """
-    from workmate.adapters.inbound.commands import _HISTORY_LIMIT
+    from sufler.adapters.inbound.commands import _HISTORY_LIMIT
 
     nowsze_cudze = [_conversation(f"inny-{i}", minuta=59 - i) for i in range(30)]
     moja = _conversation("moj-watek", minuta=0, tury=4)

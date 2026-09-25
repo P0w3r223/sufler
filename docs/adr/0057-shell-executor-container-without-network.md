@@ -35,7 +35,7 @@ rest of the fleet (ADR 0044 — one image, many entrypoints) with `network_mode:
 
 | Container | Network | Mounts | What the model does there |
 |---|---|---|---|
-| `workmate-exec` | **none** | scratchpad rw, `/mnt/system` **ro**, `/mnt/user` rw, socket | runs arbitrary code |
+| `sufler-exec` | **none** | scratchpad rw, `/mnt/system` **ro**, `/mnt/user` rw, socket | runs arbitrary code |
 | application doors | as today | as today + socket | acts through typed tools with a pre-bound target |
 
 The `Bash` tool starts no local shell. It sends the command over a unix socket to the executor.

@@ -1,6 +1,6 @@
 """Testy konfiguracji proaktywnego push do Teams (TeamsPushSettings, ADR 0022).
 
-Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``),
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``SUFLER_*``),
 więc ręczna lista zmiennych do wyczyszczenia — i ryzyko, że ktoś zapomni jej uzupełnić przy
 nowym polu — są tu zbędne. Test ustawia tylko to, co faktycznie bada.
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.config import TeamsPushSettings
+from sufler.config import TeamsPushSettings
 
 
 def test_defaults_disabled():
@@ -66,7 +66,7 @@ def test_channel_threading_defaults_false():
 
 
 def test_from_env_reads_channel_threading(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_PUSH_ENABLE_CHANNEL_THREADING", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_PUSH_ENABLE_CHANNEL_THREADING", "true")
     assert TeamsPushSettings.from_env().enable_channel_threading is True
 
 

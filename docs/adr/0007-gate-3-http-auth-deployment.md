@@ -9,9 +9,9 @@ Related to: supersedes docs/adr/0004-transport-stdio-then-http.md; builds on doc
 
 ## Context
 
-ADR 0004 fixed the transport switch (`WORKMATE_TRANSPORT=streamable-http`) but
+ADR 0004 fixed the transport switch (`SUFLER_TRANSPORT=streamable-http`) but
 explicitly deferred authentication, per-person identity, and least privilege to
-Gate 3. This ADR is that decision. Week 4 goes live: WorkMate is hosted on a
+Gate 3. This ADR is that decision. Week 4 goes live: Sufler is hosted on a
 Windows Server and reached over HTTP by each developer's Claude Code. The team
 fixed three hard constraints before design: (1) self-managed per-person bearer
 tokens, no external IdP (no Entra/OAuth); (2) Windows host, uvicorn as a Windows
@@ -63,7 +63,7 @@ this respects the `core ↛ adapters` dependency rule.
 - **Pros**: Auth never reaches Python; central Windows-side enforcement.
 - **Cons**: IIS has no native opaque-bearer→person mapping without Windows Auth
   (= AD/Kerberos, an IdP the team excluded) or a custom native module. It cannot
-  feed per-person identity into WorkMate for least-privilege decisions or audit.
+  feed per-person identity into Sufler for least-privilege decisions or audit.
 - **Risk**: High — either smuggles in an IdP or becomes a bespoke IIS module; no
   clean identity handoff.
 
@@ -86,8 +86,8 @@ four read use-cases never see. Concretely:
   returning `{person, scopes}`. Token store schema: a list of
   `{ "person": "...", "token_sha256": "...", "scopes": ["read"] }`.
 - **Where secrets live**: the token store is a file **outside `data/`** and
-  outside the repo working tree — `C:\ProgramData\WorkMate\tokens.json`, path via
-  new `WORKMATE_TOKENS_FILE`, NTFS-restricted to the service account + admins.
+  outside the repo working tree — `C:\ProgramData\Sufler\tokens.json`, path via
+  new `SUFLER_TOKENS_FILE`, NTFS-restricted to the service account + admins.
   Because every read tool is bounded to `notes_dir`/`projects_registry` under
   `data/`, a store outside `data/` is physically unreachable by the tools —
   satisfying the roadmap's "secrets out of the core's reach, not an indexed
@@ -95,7 +95,7 @@ four read use-cases never see. Concretely:
 - **Least privilege per door (enforced in code)**: the HTTP branch builds a
   dedicated server with `enable_write=False` **regardless of the environment**
   (`_build_http_server` in `server.py`) → only the 4 read tools are ever
-  registered on the network door; a forgotten `WORKMATE_ENABLE_WRITE` env cannot
+  registered on the network door; a forgotten `SUFLER_ENABLE_WRITE` env cannot
   expose `save_note`. Write exists only on the local stdio dev door. TLS is
   all-or-nothing (both cert and key, or neither) — a partial config is a hard
   startup error, never a silent downgrade to plaintext HTTP. Logging is configured

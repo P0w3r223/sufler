@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 import retrieval_eval as ev  # z katalogu eval/ (pythonpath w pyproject)
 
-from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-from workmate.config import Settings
-from workmate.core.application.services import NotesService
+from sufler.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+from sufler.config import Settings
+from sufler.core.application.services import NotesService
 
 
 def test_metric_helpers():
@@ -33,7 +33,7 @@ def test_golden_set_ids_exist_in_corpus():
 
 def test_lexical_pl_does_not_regress_vs_baseline():
     pytest.importorskip("simplemma")
-    from workmate.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
+    from sufler.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
 
     golden = ev.load_golden()
     repo = MarkdownNotesRepository(Settings.from_env().notes_dir)

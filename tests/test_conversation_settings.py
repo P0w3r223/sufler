@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate.config import ConversationSettings
+from sufler.config import ConversationSettings
 
 _DB = Path("x.db")
 
@@ -18,12 +18,12 @@ _DB = Path("x.db")
 def test_threshold_is_absolute_and_independent_of_window_size(monkeypatch):
     """Próg nie skaluje się z oknem modelu (ADR 0058).
 
-    Wcześniej liczyliśmy go jako ułamek ``WORKMATE_CONTEXT_WINDOW_TOKENS``, więc podbicie
+    Wcześniej liczyliśmy go jako ułamek ``SUFLER_CONTEXT_WINDOW_TOKENS``, więc podbicie
     okna po cichu przesuwało próg w górę — model dłużej pracował w kontekście, z którego
     gorzej sięga po fakty. Zmienna okna nie ma już wpływu na próg; ten test to przypina.
     """
-    monkeypatch.setenv("WORKMATE_CONTEXT_WINDOW_TOKENS", "1000000")
-    monkeypatch.delenv("WORKMATE_COMPACTION_THRESHOLD_TOKENS", raising=False)
+    monkeypatch.setenv("SUFLER_CONTEXT_WINDOW_TOKENS", "1000000")
+    monkeypatch.delenv("SUFLER_COMPACTION_THRESHOLD_TOKENS", raising=False)
 
     assert ConversationSettings.from_env().compaction_threshold_tokens == 150_000
 
@@ -43,10 +43,10 @@ def test_validate_rejects_nonpositive_threshold():
 
 
 def test_from_env_reads_compaction_settings(monkeypatch):
-    monkeypatch.setenv("WORKMATE_COMPACTION_ENABLED", "false")
-    monkeypatch.setenv("WORKMATE_COMPACTION_THRESHOLD_TOKENS", "100000")
-    monkeypatch.setenv("WORKMATE_COMPACTION_KEEP_TURNS", "6")
-    monkeypatch.setenv("WORKMATE_COMPACTION_MODEL", "claude-haiku-4-5")
+    monkeypatch.setenv("SUFLER_COMPACTION_ENABLED", "false")
+    monkeypatch.setenv("SUFLER_COMPACTION_THRESHOLD_TOKENS", "100000")
+    monkeypatch.setenv("SUFLER_COMPACTION_KEEP_TURNS", "6")
+    monkeypatch.setenv("SUFLER_COMPACTION_MODEL", "claude-haiku-4-5")
 
     s = ConversationSettings.from_env()
 
@@ -58,10 +58,10 @@ def test_from_env_reads_compaction_settings(monkeypatch):
 
 def test_from_env_defaults_enable_compaction(monkeypatch):
     for name in (
-        "WORKMATE_COMPACTION_ENABLED",
-        "WORKMATE_COMPACTION_THRESHOLD_TOKENS",
-        "WORKMATE_COMPACTION_KEEP_TURNS",
-        "WORKMATE_COMPACTION_MODEL",
+        "SUFLER_COMPACTION_ENABLED",
+        "SUFLER_COMPACTION_THRESHOLD_TOKENS",
+        "SUFLER_COMPACTION_KEEP_TURNS",
+        "SUFLER_COMPACTION_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
 

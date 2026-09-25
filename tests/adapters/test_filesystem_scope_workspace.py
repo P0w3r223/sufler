@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-from workmate.adapters.outbound.filesystem_scope_workspace import FilesystemScopeWorkspace
+from sufler.adapters.outbound.filesystem_scope_workspace import FilesystemScopeWorkspace
 
 _SCOPE = f"teams-graph/{'a' * 32}"
 
@@ -83,7 +83,7 @@ def test_cleanup_usuwa_gniazdo_ale_zostawia_brudnopis(tmp_path: Path):
 def test_prepare_odswieza_czas_modyfikacji_katalogu_rozmowy(tmp_path: Path):
     """Sprzątacz TTL mierzy aktywność rozmowy najnowszym mtime w katalogu, a w układzie
     „powłoka ON, workspace OFF" rozmowa potrafi być żywa i niczego nie zapisywać: `cat`, `ls`
-    i `workmate-search` mtime nie ruszają, `mkdir(exist_ok=True)` też nie.
+    i `sufler-search` mtime nie ruszają, `mkdir(exist_ok=True)` też nie.
 
     Bez tego dotknięcia rozmowa używana codziennie, ale wyłącznie do czytania, traciłaby
     brudnopis po `retention_days` — kierunek pomyłki: utrata danych użytkownika.

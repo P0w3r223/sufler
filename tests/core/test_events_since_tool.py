@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from workmate.core.application.events import EventService
-from workmate.core.application.tools import build_events_since_catalog
-from workmate.core.domain.events import NewEvent
-from workmate.core.errors import RepositoryError
+from sufler.core.application.events import EventService
+from sufler.core.application.tools import build_events_since_catalog
+from sufler.core.domain.events import NewEvent
+from sufler.core.errors import RepositoryError
 
 _WHEN = datetime(2026, 7, 27, tzinfo=UTC)
 
@@ -29,7 +29,7 @@ def _service(*sources: str) -> EventService:
 
     ``external_id`` = indeks, więc id rosną 1,2,3… w kolejności podania (kursor deterministyczny).
     """
-    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from sufler.adapters.outbound.sqlite_events import SqliteEventStore
 
     service = EventService(SqliteEventStore(":memory:"))
     for i, source in enumerate(sources, start=1):
@@ -47,7 +47,7 @@ def _service(*sources: str) -> EventService:
 
 def _service_with_projects(*projects: str) -> EventService:
     """``EventService`` in-memory z jednym zdarzeniem per ``project`` z listy (id rosną 1,2,3…)."""
-    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from sufler.adapters.outbound.sqlite_events import SqliteEventStore
 
     service = EventService(SqliteEventStore(":memory:"))
     for i, project in enumerate(projects, start=1):
@@ -207,7 +207,7 @@ def test_bootstrap_source_filter_narrows_and_stays_ascending():
 
 
 def test_limit_is_clamped_to_ceiling_and_floor():
-    from workmate.core.application.tools import _MAX_EVENTS_READ
+    from sufler.core.application.tools import _MAX_EVENTS_READ
 
     # Więcej zdarzeń niż pułap, by udowodnić ścięcie GÓRNE (a nie tylko „mniej niż jest").
     service = _service(*[f"s{i}" for i in range(_MAX_EVENTS_READ + 5)])
@@ -271,7 +271,7 @@ def test_bootstrap_zostaje_na_kolejnosci_ID_take_gdy_backfill_rozjedzie_ja_z_cza
     Sonda ustawia kształt BACKFILLU — najwyższe ``id`` przy najstarszym czasie — bo tylko wtedy
     obie kolejności się rozjeżdżają i widać, którą narzędzie faktycznie oddaje.
     """
-    from workmate.adapters.outbound.sqlite_events import SqliteEventStore
+    from sufler.adapters.outbound.sqlite_events import SqliteEventStore
 
     service = EventService(SqliteEventStore(":memory:"))
     service.ingest(

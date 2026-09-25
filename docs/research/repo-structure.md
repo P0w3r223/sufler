@@ -1,4 +1,4 @@
-# Research: professional repository structure for WorkMate
+# Research: professional repository structure for Sufler
 
 Date: 2026-07-07
 Status: accepted
@@ -7,7 +7,7 @@ Related to: docs/adr/0001-src-layout-and-hexagonal.md
 
 ---
 
-Synthesis of three parallel research passes that informed WorkMate's layout:
+Synthesis of three parallel research passes that informed Sufler's layout:
 (1) Python/MCP repo layout, (2) making a repo navigable for Claude Code,
 (3) onboarding a newcomer who did not build it. Kept in English per the
 knowledge-docs convention.
@@ -22,7 +22,7 @@ knowledge-docs convention.
   `core/{domain,ports,application}` + `adapters/{inbound,outbound}`. The core is
   technology-agnostic; ports are interfaces the core owns; adapters implement
   them. FastMCP's `mount()`/composition and future `[project.optional-
-  dependencies]` extras (`workmate[teams]`) support adding doors later. → adopted.
+  dependencies]` extras (`sufler[teams]`) support adding doors later. → adopted.
 - **`pyproject.toml` is the single source of truth** with `uv`:
   `[project.scripts]` for the console command, `[dependency-groups]` (PEP 735)
   for dev tooling instead of `requirements-dev.txt`, `uv.lock` + `.python-version`

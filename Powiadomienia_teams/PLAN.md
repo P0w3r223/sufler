@@ -23,7 +23,7 @@ tydzień, i wysłać każdej takiej osobie **prywatną wiadomość Teams (czat 1
 
 Projekt mieszka w folderze `Powiadomienia_teams/` jako samodzielny pod-projekt. Reużywa
 wzorców z istniejących drzwi `teams_graph`, ale nie wpina się w zamrożony katalog narzędzi
-WorkMate.
+Sufler.
 
 ### Decyzje użytkownika (przyjęte założenia)
 | Wymiar | Wybór |
@@ -37,9 +37,9 @@ WorkMate.
 
 ## Kluczowe ustalenia z kodu (co już jest, co trzeba dołożyć)
 
-- **Auth do Graph już istnieje jako wzorzec**: `src/workmate/adapters/inbound/teams_graph/auth.py`
+- **Auth do Graph już istnieje jako wzorzec**: `src/sufler/adapters/inbound/teams_graph/auth.py`
   — delegowany **device-code (MSAL `PublicClientApplication`)**, cache refresh-tokenu w pliku
-  `~/.workmate/teams_token_cache.bin` (chmod 600). To skopiujemy/zaadaptujemy.
+  `~/.sufler/teams_token_cache.bin` (chmod 600). To skopiujemy/zaadaptujemy.
 - **Klient Graph po httpx** (`teams_graph/graph.py`, `HttpxGraphChannelClient`) potrafi dziś
   **tylko `post_reply`** (odpowiedź w istniejącym wątku kanału). **Brakuje**: wysyłki 1:1,
   odczytu członków zespołu, całej powierzchni Shifts. To trzeba napisać.
@@ -53,7 +53,7 @@ WorkMate.
 - **Config**: wzorzec to `@dataclass(frozen=True)` + `from_env()` + `validate()` (patrz
   `TeamsGraphSettings` w `config.py:433`). Powtórzymy go w nowym projekcie.
 - **Runtime agenta (Claude)** istnieje (`outbound/anthropic_llm.py`, extra `agent`), klucz z
-  `ANTHROPIC_API_KEY`/`WORKMATE_AGENT_API_KEY`. Wykorzystamy Claude do interpretacji odpowiedzi
+  `ANTHROPIC_API_KEY`/`SUFLER_AGENT_API_KEY`. Wykorzystamy Claude do interpretacji odpowiedzi
   NL → strukturalne zmiany grafiku.
 - **Stack zależności już w repo**: `msal 1.37`, `httpx 0.28`, `anthropic 0.116` (bez
   `msgraph-sdk`/`azure-identity` — Graph wołany wprost po httpx). Nowy projekt użyje tego samego.
@@ -66,7 +66,7 @@ Te punkty są nieoczywiste i **muszą** być zaakceptowane/zweryfikowane, zanim 
 
 1. **Delegowany device-code = działanie JAKO konkretny zalogowany człowiek.** Każde wywołanie
    Graph (wysłanie 1:1, zapis zmiany) wykona się **z konta osoby, która się zalogowała** —
-   nie z anonimowego „bota WorkMate". Wniosek: procesem powinno logować się **konto kierownika
+   nie z anonimowego „bota Sufler". Wniosek: procesem powinno logować się **konto kierownika
    / właściciela zespołu z prawem do grafiku** (scheduling manager). Wiadomości do pracowników
    będą wyglądać, jakby pisał je ten kierownik. To akceptowalne dla wewnętrznego pilotażu; jeśli
    docelowo ma to być tożsamość „bota", trzeba ścieżki Bot Framework / uprawnień aplikacyjnych
@@ -118,11 +118,11 @@ Konto logujące = **kierownik/właściciel zespołu**.
 > (jak ostrzega `config.py:393-394`).
 
 ### Rejestracja aplikacji w Azure AD
-- App registration: **public client** (jak istniejąca WorkMate) z włączonym
+- App registration: **public client** (jak istniejąca Sufler) z włączonym
   „Allow public client flows = Yes" (device-code).
 - API permissions → dodać powyższe **delegated** → **Grant admin consent** (jednorazowo, przez
   administratora tenanta).
-- Można reużyć istniejącej aplikacji WorkMate (dołożyć brakujące scope: `Schedule.*`, `Chat.*`,
+- Można reużyć istniejącej aplikacji Sufler (dołożyć brakujące scope: `Schedule.*`, `Chat.*`,
   `TeamMember.Read.All`) — to jednorazowy re-consent.
 
 ### Sekrety / klucze (poza repo i `data/`)
@@ -183,7 +183,7 @@ tego zespołu (warunek zapisu zmian innym — do sprawdzenia Smoke'iem zapisu).
 
 ## Architektura nowego projektu
 
-Samodzielny pod-projekt uv w `Powiadomienia_teams/`, styl heksagonalny jak WorkMate:
+Samodzielny pod-projekt uv w `Powiadomienia_teams/`, styl heksagonalny jak Sufler:
 
 ```
 Powiadomienia_teams/
@@ -191,8 +191,8 @@ Powiadomienia_teams/
   README.md                 # po polsku (proza), instrukcja uruchomienia + consent
   .env.example              # POWIADOMIENIA_CLIENT_ID / _TENANT_ID / _TEAM_ID / _MANAGER_LOGIN / _RUN_AT / ...
   src/powiadomienia_teams/
-    config.py               # Settings(frozen dataclass)+from_env()+validate()  <- wzor: workmate/config.py:433
-    domain/models.py        # Shift, WeekSchedule, Member, PendingReminder  (model, ktorego WorkMate nie ma)
+    config.py               # Settings(frozen dataclass)+from_env()+validate()  <- wzor: sufler/config.py:433
+    domain/models.py        # Shift, WeekSchedule, Member, PendingReminder  (model, ktorego Sufler nie ma)
     graph/
       auth.py               # device-code MSAL  <- adaptacja teams_graph/auth.py
       client.py             # httpx: list_members, read_shifts(week), write_shift, share_schedule,
@@ -238,7 +238,7 @@ Cała sieć (Graph, Claude) siedzi w `graph/` i `agent/`.
 **Bezpieczniki:**
 - **Tryb `--dry-run`** (domyślny na start): liczy i loguje, kogo/co by powiadomił i zapisał,
   **bez** wysyłki i **bez** zapisu do Shifts. Włączenie realnego działania = jawna flaga/env.
-- Traktuj treść odpowiedzi pracownika jak **dane, nie polecenia** (jak notatki w WorkMate) —
+- Traktuj treść odpowiedzi pracownika jak **dane, nie polecenia** (jak notatki w Sufler) —
   Claude tylko wydobywa intencję grafikową, nie wykonuje instrukcji spoza domeny.
 - Twarda walidacja godzin (0–24, start<koniec, sensowny tydzień) w `domain/models.py`.
 
@@ -352,7 +352,7 @@ refresh-tokenu, logowanie, ADR projektu, README z instrukcją consentu i uruchom
 - **Tożsamość „bota" (Bot Framework / uprawnienia aplikacyjne)** zamiast konta kierownika —
   daje prawdziwie bezobsługowe działanie i neutralnego nadawcę, ale `ChatMessage.Send`
   aplikacyjny jest chronionym API (wymaga zgody Microsoftu/RSC) i to ścieżka odłożona w ADR 0015.
-- **Drzwi wewnątrz `src/workmate/`** (konwencja repo) zamiast osobnego folderu — spójniejsze z
+- **Drzwi wewnątrz `src/sufler/`** (konwencja repo) zamiast osobnego folderu — spójniejsze z
   pakietem/mypy/pytest, ale użytkownik świadomie chce osobny projekt w `Powiadomienia_teams/`.
   Koszt osobnego folderu: własny `pyproject.toml` i ~50 linii zduplikowanego auth.
 

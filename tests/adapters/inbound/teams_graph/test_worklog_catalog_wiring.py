@@ -18,9 +18,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph.app import _worklog_service
-from workmate.config import GithubSettings
-from workmate.core.application.tools import build_activity_catalog
+from sufler.adapters.inbound.teams_graph.app import _worklog_service
+from sufler.config import GithubSettings
+from sufler.core.application.tools import build_activity_catalog
 
 
 class _FakeGithubClient:

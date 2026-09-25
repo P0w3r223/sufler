@@ -9,22 +9,22 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.config import TeamsGraphSettings
+from sufler.config import TeamsGraphSettings
 
 _TEAMS_GRAPH_VARS = (
-    "WORKMATE_TEAMS_GRAPH_CLIENT_ID",
-    "WORKMATE_TEAMS_GRAPH_TENANT_ID",
-    "WORKMATE_TEAMS_GRAPH_SCOPES",
-    "WORKMATE_TEAMS_GRAPH_TOKEN_CACHE",
-    "WORKMATE_TEAMS_GRAPH_STATE",
-    "WORKMATE_TEAMS_GRAPH_WATCH",
-    "WORKMATE_TEAMS_GRAPH_POLL_INTERVAL",
-    "WORKMATE_TEAMS_GRAPH_TOP_ROOTS",
-    "WORKMATE_TEAMS_GRAPH_TOP_REPLIES",
-    "WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS",
-    "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB",
-    "WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS",
-    "WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB",
+    "SUFLER_TEAMS_GRAPH_CLIENT_ID",
+    "SUFLER_TEAMS_GRAPH_TENANT_ID",
+    "SUFLER_TEAMS_GRAPH_SCOPES",
+    "SUFLER_TEAMS_GRAPH_TOKEN_CACHE",
+    "SUFLER_TEAMS_GRAPH_STATE",
+    "SUFLER_TEAMS_GRAPH_WATCH",
+    "SUFLER_TEAMS_GRAPH_POLL_INTERVAL",
+    "SUFLER_TEAMS_GRAPH_TOP_ROOTS",
+    "SUFLER_TEAMS_GRAPH_TOP_REPLIES",
+    "SUFLER_TEAMS_GRAPH_ACTIVE_IDLE_HOURS",
+    "SUFLER_TEAMS_GRAPH_MAX_ATTACHMENT_MB",
+    "SUFLER_TEAMS_GRAPH_MAX_ATTACHMENTS",
+    "SUFLER_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB",
 )
 
 
@@ -47,8 +47,8 @@ def test_validate_rejects_missing_both_identity_fields():
         TeamsGraphSettings().validate()
 
     msg = str(exc.value)
-    assert "WORKMATE_TEAMS_GRAPH_CLIENT_ID" in msg
-    assert "WORKMATE_TEAMS_GRAPH_TENANT_ID" in msg
+    assert "SUFLER_TEAMS_GRAPH_CLIENT_ID" in msg
+    assert "SUFLER_TEAMS_GRAPH_TENANT_ID" in msg
 
 
 def test_validate_names_only_the_missing_client_id():
@@ -57,8 +57,8 @@ def test_validate_names_only_the_missing_client_id():
         TeamsGraphSettings(tenant_id="tenant-1").validate()
 
     msg = str(exc.value)
-    assert "WORKMATE_TEAMS_GRAPH_CLIENT_ID" in msg
-    assert "WORKMATE_TEAMS_GRAPH_TENANT_ID" not in msg
+    assert "SUFLER_TEAMS_GRAPH_CLIENT_ID" in msg
+    assert "SUFLER_TEAMS_GRAPH_TENANT_ID" not in msg
 
 
 def test_validate_names_only_the_missing_tenant_id():
@@ -66,8 +66,8 @@ def test_validate_names_only_the_missing_tenant_id():
         TeamsGraphSettings(client_id="app-1").validate()
 
     msg = str(exc.value)
-    assert "WORKMATE_TEAMS_GRAPH_TENANT_ID" in msg
-    assert "WORKMATE_TEAMS_GRAPH_CLIENT_ID" not in msg
+    assert "SUFLER_TEAMS_GRAPH_TENANT_ID" in msg
+    assert "SUFLER_TEAMS_GRAPH_CLIENT_ID" not in msg
 
 
 # --- validate: sensowność limitów ------------------------------------------
@@ -165,9 +165,9 @@ def test_from_env_defaults_attachment_limits(monkeypatch):
 def test_from_env_reads_attachment_limits(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENT_MB", "16")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_ATTACHMENTS", "3")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", "24")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_MAX_ATTACHMENT_MB", "16")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_MAX_ATTACHMENTS", "3")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_MAX_TOTAL_ATTACHMENT_MB", "24")
 
     settings = TeamsGraphSettings.from_env()
 
@@ -210,7 +210,7 @@ def test_validate_rejects_file_reply_kb_out_of_range(kb):
 def test_from_env_defaults_file_reply_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_FILE_REPLY", raising=False)
 
     settings = TeamsGraphSettings.from_env()
 
@@ -278,8 +278,8 @@ def test_validate_file_reply_and_user_push_gates_are_independent():
 def test_from_env_defaults_user_push_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_MAX_USER_IMAGE_KB", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_MAX_USER_IMAGE_KB", raising=False)
 
     settings = TeamsGraphSettings.from_env()
 
@@ -288,8 +288,8 @@ def test_from_env_defaults_user_push_off(monkeypatch):
 
 
 def test_from_env_reads_user_push_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", "true")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_USER_IMAGE_KB", "2048")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_MAX_USER_IMAGE_KB", "2048")
 
     settings = TeamsGraphSettings.from_env()
 
@@ -364,8 +364,8 @@ def test_validate_doc_push_and_image_push_gates_are_independent():
 def test_from_env_defaults_doc_push_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH", raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_MAX_USER_DOC_KB", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_MAX_USER_DOC_KB", raising=False)
 
     settings = TeamsGraphSettings.from_env()
 
@@ -374,8 +374,8 @@ def test_from_env_defaults_doc_push_off(monkeypatch):
 
 
 def test_from_env_reads_doc_push_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH", "true")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MAX_USER_DOC_KB", "256")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_MAX_USER_DOC_KB", "256")
 
     settings = TeamsGraphSettings.from_env()
 
@@ -420,13 +420,13 @@ def test_validate_meeting_transcript_on_with_scopes_passes():
 def test_from_env_defaults_meeting_transcript_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT", raising=False)
 
     assert TeamsGraphSettings.from_env().enable_meeting_transcript is False
 
 
 def test_from_env_reads_meeting_transcript_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT", "true")
 
     assert TeamsGraphSettings.from_env().enable_meeting_transcript is True
 
@@ -458,7 +458,7 @@ def test_validate_note_write_on_with_transcript_and_scopes_passes(tmp_path):
 
 def test_validate_note_write_on_without_identities_fails():
     # Bramka zapisu ON bez mapy tożsamości = „każdy pisze do wszystkiego" → fail-fast (ADR 0042).
-    with pytest.raises(ValueError, match="WORKMATE_TEAMS_GRAPH_IDENTITIES"):
+    with pytest.raises(ValueError, match="SUFLER_TEAMS_GRAPH_IDENTITIES"):
         _with_meeting_scopes(enable_meeting_note_write=True).validate()
 
 
@@ -482,13 +482,13 @@ def test_validate_note_read_authz_on_with_identities_passes(tmp_path):
 
 
 def test_from_env_reads_note_read_authz_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ", "true")
 
     assert TeamsGraphSettings.from_env().enable_note_read_authz is True
 
 
 def test_from_env_reads_identities_path(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_IDENTITIES", "/etc/workmate/identities.yaml")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_IDENTITIES", "/etc/sufler/identities.yaml")
 
     assert str(TeamsGraphSettings.from_env().meeting_note_identities).endswith("identities.yaml")
 
@@ -496,13 +496,13 @@ def test_from_env_reads_identities_path(monkeypatch):
 def test_from_env_defaults_note_write_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE", raising=False)
 
     assert TeamsGraphSettings.from_env().enable_meeting_note_write is False
 
 
 def test_from_env_reads_note_write_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE", "true")
 
     assert TeamsGraphSettings.from_env().enable_meeting_note_write is True
 
@@ -541,8 +541,8 @@ def test_validate_async_workers_must_be_positive(tmp_path):
 def test_from_env_defaults_async_off_and_workers(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC", raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS", raising=False)
 
     settings = TeamsGraphSettings.from_env()
     assert settings.enable_meeting_note_async is False
@@ -550,8 +550,8 @@ def test_from_env_defaults_async_off_and_workers(monkeypatch):
 
 
 def test_from_env_reads_async_gate_and_workers(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC", "true")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS", "5")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS", "5")
 
     settings = TeamsGraphSettings.from_env()
     assert settings.enable_meeting_note_async is True
@@ -588,13 +588,13 @@ def test_validate_thread_note_capture_on_with_identities_passes_without_transcri
 def test_from_env_defaults_thread_note_capture_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", raising=False)
 
     assert TeamsGraphSettings.from_env().enable_thread_note_capture is False
 
 
 def test_from_env_reads_thread_note_capture_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_THREAD_NOTE_CAPTURE", "true")
 
     assert TeamsGraphSettings.from_env().enable_thread_note_capture is True
 
@@ -611,13 +611,13 @@ def test_validate_project_brief_on_needs_no_identities_or_scopes():
 def test_from_env_defaults_project_brief_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", raising=False)
 
     assert TeamsGraphSettings.from_env().enable_project_brief is False
 
 
 def test_from_env_reads_project_brief_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF", "true")
 
     assert TeamsGraphSettings.from_env().enable_project_brief is True
 
@@ -633,13 +633,13 @@ def test_validate_change_digest_on_needs_no_identities_or_scopes():
 def test_from_env_defaults_change_digest_off(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", raising=False)
+    monkeypatch.delenv("SUFLER_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", raising=False)
 
     assert TeamsGraphSettings.from_env().enable_change_digest is False
 
 
 def test_from_env_reads_change_digest_gate(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST", "true")
 
     assert TeamsGraphSettings.from_env().enable_change_digest is True
 
@@ -666,7 +666,7 @@ def test_from_env_defaults_when_unset(monkeypatch):
 def test_from_env_parses_watch_pairs(monkeypatch):
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_WATCH", "team-a:chan-1, team-b:chan-2")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_WATCH", "team-a:chan-1, team-b:chan-2")
 
     settings = TeamsGraphSettings.from_env()
 
@@ -677,7 +677,7 @@ def test_from_env_skips_incomplete_watch_entries(monkeypatch):
     """Wpis bez ``:channel`` jest pomijany — nie da się z niego zbudować pary."""
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_WATCH", "team-a:chan-1,broken-entry")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_WATCH", "team-a:chan-1,broken-entry")
 
     settings = TeamsGraphSettings.from_env()
 
@@ -685,12 +685,12 @@ def test_from_env_skips_incomplete_watch_entries(monkeypatch):
 
 
 def test_from_env_reads_identity_and_limits(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_CLIENT_ID", "app-xyz")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_TENANT_ID", "tenant-xyz")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_POLL_INTERVAL", "5")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_TOP_ROOTS", "3")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_TOP_REPLIES", "7")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", "48")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_CLIENT_ID", "app-xyz")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_TENANT_ID", "tenant-xyz")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_POLL_INTERVAL", "5")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_TOP_ROOTS", "3")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_TOP_REPLIES", "7")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_ACTIVE_IDLE_HOURS", "48")
 
     settings = TeamsGraphSettings.from_env()
 
@@ -706,8 +706,8 @@ def test_from_env_then_validate_accepts_full_identity(monkeypatch):
     """Ścieżka startowa app.py::main: env z tożsamością daje config, który przechodzi."""
     for var in _TEAMS_GRAPH_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_CLIENT_ID", "app-1")
-    monkeypatch.setenv("WORKMATE_TEAMS_GRAPH_TENANT_ID", "tenant-1")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_CLIENT_ID", "app-1")
+    monkeypatch.setenv("SUFLER_TEAMS_GRAPH_TENANT_ID", "tenant-1")
 
     TeamsGraphSettings.from_env().validate()  # nie rzuca
 

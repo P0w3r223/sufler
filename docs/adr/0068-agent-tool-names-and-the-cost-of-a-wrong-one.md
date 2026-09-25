@@ -43,7 +43,7 @@ tool has exactly one action (`project_status`), because Teams runs with `enable_
 Measured: 468 B of description, of which 217 B (46%) is the paragraph "this tool is not for searching
 or reading notes — those are `search_notes`/`get_note`/`list_projects`." It exists *only* because
 the name promises a note database. Worse, it has two variants selected by `shell_available` (the
-shell variant points at `workmate-search` and `/mnt/system/notes/`), so the correction itself is a
+shell variant points at `sufler-search` and `/mnt/system/notes/`), so the correction itself is a
 second copy of the mount map that ADR 0056 §6 moved into the prompt's `ENVIRONMENT` section.
 
 Around those three findings the review surfaced eight more defects of the same family — a description

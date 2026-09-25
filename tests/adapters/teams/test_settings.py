@@ -11,17 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from workmate.config import TeamsSettings
+from sufler.config import TeamsSettings
 
 _TEAMS_VARS = (
-    "WORKMATE_TEAMS_APP_ID",
-    "WORKMATE_TEAMS_APP_PASSWORD",
-    "WORKMATE_TEAMS_TENANT_ID",
-    "WORKMATE_TEAMS_BIND_HOST",
-    "WORKMATE_TEAMS_PORT",
-    "WORKMATE_TEAMS_ANONYMOUS",
-    "WORKMATE_TEAMS_IDENTITIES",
-    "WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ",
+    "SUFLER_TEAMS_APP_ID",
+    "SUFLER_TEAMS_APP_PASSWORD",
+    "SUFLER_TEAMS_TENANT_ID",
+    "SUFLER_TEAMS_BIND_HOST",
+    "SUFLER_TEAMS_PORT",
+    "SUFLER_TEAMS_ANONYMOUS",
+    "SUFLER_TEAMS_IDENTITIES",
+    "SUFLER_TEAMS_ENABLE_NOTE_READ_AUTHZ",
 )
 
 
@@ -46,9 +46,9 @@ def test_validate_rejects_authenticated_mode_without_identity():
         TeamsSettings().validate()
 
     msg = str(exc.value)
-    assert "WORKMATE_TEAMS_APP_ID" in msg
-    assert "WORKMATE_TEAMS_APP_PASSWORD" in msg
-    assert "WORKMATE_TEAMS_TENANT_ID" in msg
+    assert "SUFLER_TEAMS_APP_ID" in msg
+    assert "SUFLER_TEAMS_APP_PASSWORD" in msg
+    assert "SUFLER_TEAMS_TENANT_ID" in msg
 
 
 def test_validate_names_only_the_missing_tenant_id():
@@ -57,8 +57,8 @@ def test_validate_names_only_the_missing_tenant_id():
         TeamsSettings(app_id="a", app_password="p").validate()
 
     msg = str(exc.value)
-    assert "WORKMATE_TEAMS_TENANT_ID" in msg
-    assert "WORKMATE_TEAMS_APP_ID" not in msg
+    assert "SUFLER_TEAMS_TENANT_ID" in msg
+    assert "SUFLER_TEAMS_APP_ID" not in msg
 
 
 # --- bramka odczytu bazy wiedzy (ADR 0062) ----------------------------------
@@ -71,12 +71,12 @@ def test_validate_rejects_read_authz_without_identity_map():
             anonymous_auth=True, bind_host="localhost", enable_note_read_authz=True
         ).validate()
 
-    assert "WORKMATE_TEAMS_IDENTITIES" in str(exc.value)
+    assert "SUFLER_TEAMS_IDENTITIES" in str(exc.value)
 
 
 def test_validate_rejects_read_authz_also_in_authenticated_mode():
     """Sprawdzenie stoi PRZED gałęzią anonimową, więc obowiązuje w obu trybach transportu."""
-    with pytest.raises(ValueError, match="WORKMATE_TEAMS_IDENTITIES"):
+    with pytest.raises(ValueError, match="SUFLER_TEAMS_IDENTITIES"):
         TeamsSettings(
             app_id="a", app_password="p", tenant_id="t", enable_note_read_authz=True
         ).validate()
@@ -112,12 +112,12 @@ def test_from_env_is_fail_closed_by_default(monkeypatch):
 
 
 def test_from_env_applies_overrides(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_APP_ID", "app-123")
-    monkeypatch.setenv("WORKMATE_TEAMS_TENANT_ID", "tenant-9")
-    monkeypatch.setenv("WORKMATE_TEAMS_PORT", "4000")
-    monkeypatch.setenv("WORKMATE_TEAMS_ANONYMOUS", "true")
-    monkeypatch.setenv("WORKMATE_TEAMS_IDENTITIES", "/etc/workmate/identities.yaml")
-    monkeypatch.setenv("WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_APP_ID", "app-123")
+    monkeypatch.setenv("SUFLER_TEAMS_TENANT_ID", "tenant-9")
+    monkeypatch.setenv("SUFLER_TEAMS_PORT", "4000")
+    monkeypatch.setenv("SUFLER_TEAMS_ANONYMOUS", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_IDENTITIES", "/etc/sufler/identities.yaml")
+    monkeypatch.setenv("SUFLER_TEAMS_ENABLE_NOTE_READ_AUTHZ", "true")
 
     settings = TeamsSettings.from_env()
 
@@ -125,7 +125,7 @@ def test_from_env_applies_overrides(monkeypatch):
     assert settings.tenant_id == "tenant-9"
     assert settings.bind_port == 4000
     assert settings.anonymous_auth is True
-    assert settings.identities == Path("/etc/workmate/identities.yaml")
+    assert settings.identities == Path("/etc/sufler/identities.yaml")
     assert settings.enable_note_read_authz is True
 
 
@@ -133,6 +133,6 @@ def test_from_env_then_validate_accepts_anonymous(monkeypatch):
     """Ścieżka startowa app.py::main: sam ANONYMOUS=true daje config, który przechodzi."""
     for var in _TEAMS_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("WORKMATE_TEAMS_ANONYMOUS", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_ANONYMOUS", "true")
 
     TeamsSettings.from_env().validate()  # nie rzuca

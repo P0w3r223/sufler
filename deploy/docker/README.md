@@ -1,4 +1,4 @@
-# Wdrożenie floty WorkMate na Ubuntu (Docker Compose)
+# Wdrożenie floty Sufler na Ubuntu (Docker Compose)
 
 Kontenerowe wdrożenie serwera MCP i drzwi mostu na Ubuntu (ADR 0044). Jeden obraz, wiele
 entrypointów; segmenty włączane profilami compose. Odpowiednik linuksowy dla
@@ -23,7 +23,7 @@ windowsowego szkieletu z [`../http/`](../http/README.md) (IIS + usługa Windows)
     docker-compose.yml
     env                             # z env.example, chmod 640 — SEKRETY
     nginx.conf                      # podmień host
-    certs/                          # workmate.crt + workmate.key (poza repo, chmod 600)
+    certs/                          # sufler.crt + sufler.key (poza repo, chmod 600)
 ```
 
 ## 1. Konfiguracja
@@ -32,13 +32,13 @@ windowsowego szkieletu z [`../http/`](../http/README.md) (IIS + usługa Windows)
 cd /opt/sufler/deploy/docker
 cp env.example env && chmod 640 env      # uzupełnij sekrety i host
 $EDITOR env
-$EDITOR nginx.conf                        # podmień workmate.firma.pl na realny host
-mkdir -p certs && chmod 700 certs         # wgraj workmate.crt + workmate.key
+$EDITOR nginx.conf                        # podmień sufler.firma.pl na realny host
+mkdir -p certs && chmod 700 certs         # wgraj sufler.crt + sufler.key
 ```
 
 W `env` wybierz segmenty przez `COMPOSE_PROFILES`. Domyślnie startuje sam `mcp`; **`bridge` dokładaj
-DOPIERO po primingu device-code** (krok 3) i ustawieniu `WORKMATE_TEAMS_GRAPH_WATCH` — inaczej
-teams-graph wpadnie w restart-loop. Wszystkie ścieżki stanu CELOWO wskazują wolumen `/var/lib/workmate`
+DOPIERO po primingu device-code** (krok 3) i ustawieniu `SUFLER_TEAMS_GRAPH_WATCH` — inaczej
+teams-graph wpadnie w restart-loop. Wszystkie ścieżki stanu CELOWO wskazują wolumen `/var/lib/sufler`
 — nie zmieniaj ich bez potrzeby: dzięki temu wszystkie drzwi widzą TEN SAM `events.db` (ADR 0019).
 
 > ⚠️ **`docker compose` NIE czyta pliku `env` sam z siebie — tylko plik dosłownie nazwany `.env`.**
@@ -62,29 +62,29 @@ persystuje potem na wolumenie `state`. Każda komenda wypisze URL i kod; otwórz
 
 ```bash
 # Tożsamość kanału teams-graph (odkrycie zespołów/kanałów wyzwala device-code i wypisuje id do WATCH):
-docker compose --env-file env run --rm -e WORKMATE_TEAMS_GRAPH_WATCH= teams-graph
+docker compose --env-file env run --rm -e SUFLER_TEAMS_GRAPH_WATCH= teams-graph
 ```
 
-Po zdobyciu par `team_id:channel_id` wpisz je do `WORKMATE_TEAMS_GRAPH_WATCH` w `env`.
+Po zdobyciu par `team_id:channel_id` wpisz je do `SUFLER_TEAMS_GRAPH_WATCH` w `env`.
 Zmiana zakresów (SCOPES) wymaga ponownego `--login` (usuń odpowiedni `*_token_cache.bin` z wolumenu).
 
 > ⚠️ **Priming tożsamości push (github → Teams, ADR 0022) — DO ZWERYFIKOWANIA na serwerze.**
 > `worklog-selfservice --login` (dawny sposób zakładania `teams_push_token_cache.bin`) zniknął
-> razem z wycofaniem WorklogPRO (ADR 0055). `workmate-github` nie ma dziś osobnego trybu
+> razem z wycofaniem WorklogPRO (ADR 0055). `sufler-github` nie ma dziś osobnego trybu
 > `--login` — device-code dla pushu uruchomi się przy PIERWSZEJ próbie wysyłki zdarzenia, nie
 > przy starcie procesu. Na dzień wdrożenia: uruchom `docker compose --env-file env run --rm github`
 > na pierwszym planie, poczekaj na realne zdarzenie GitHub (albo wywołaj ręcznie) i potwierdź device-code w
-> logach; jeśli to za wolne/nieprzewidywalne, dodaj do `workmate-github` jawny tryb `--login`
-> (mała zmiana, analogiczna do tej w `workmate-teams-digest`) — patrz lista kontrolna niżej.
+> logach; jeśli to za wolne/nieprzewidywalne, dodaj do `sufler-github` jawny tryb `--login`
+> (mała zmiana, analogiczna do tej w `sufler-teams-digest`) — patrz lista kontrolna niżej.
 
 ## 4. Magazyn tokenów HTTP (profil `mcp`)
 
 ```bash
 # Wygeneruj token per osoba (surowy token przekaż bezpiecznym kanałem; magazyn trzyma tylko sha256):
 docker compose --env-file env run --rm mcp python deploy/http/manage_tokens.py \
-    issue --store /var/lib/workmate/tokens.json --person anna.kowalska
+    issue --store /var/lib/sufler/tokens.json --person anna.kowalska
 docker compose --env-file env run --rm mcp python deploy/http/manage_tokens.py \
-    verify --store /var/lib/workmate/tokens.json
+    verify --store /var/lib/sufler/tokens.json
 ```
 
 ## 5. Start
@@ -109,7 +109,7 @@ drzwi `teams-graph` potrzebują tam dostępu RW. Zapewnia go JAWNY override `doc
 docker compose --env-file env -f docker-compose.yml -f docker-compose.notatka.yml --profile bridge up -d
 ```
 
-Wymaga też w `env`: `WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true` (+ `_ENABLE_MEETING_TRANSCRIPT`,
+Wymaga też w `env`: `SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true` (+ `_ENABLE_MEETING_TRANSCRIPT`,
 `_IDENTITIES`). To NIE `docker-compose.override.yml` — nie ładuje się automatycznie, RW włączasz świadomie.
 
 ## Aktualizacja wersji
@@ -137,8 +137,8 @@ docker run --rm -v workmate-state:/s -v "$PWD":/b alpine \
 | Objaw | Przyczyna | Naprawa |
 |-------|-----------|---------|
 | Klient MCP wisi na 1. żądaniu | buforowanie proxy | potwierdź `proxy_buffering off` w `nginx.conf` |
-| `421 Misdirected Request` | Host spoza allowlisty | dodaj host do `WORKMATE_ALLOWED_HOSTS` (bez portu **i** `:*`) |
-| `teams-graph` restartuje się w kółko | brak `WORKMATE_TEAMS_GRAPH_WATCH` | ustaw pary `team:channel` po primingu discovery |
+| `421 Misdirected Request` | Host spoza allowlisty | dodaj host do `SUFLER_ALLOWED_HOSTS` (bez portu **i** `:*`) |
+| `teams-graph` restartuje się w kółko | brak `SUFLER_TEAMS_GRAPH_WATCH` | ustaw pary `team:channel` po primingu discovery |
 | `AuthExpiredError` w logach | wygasł refresh-token | powtórz `--login` dla danej tożsamości |
 
 ## Uwaga: sekrety
@@ -156,8 +156,8 @@ potwierdzić DOPIERO na maszynie docelowej — zaplanuj czas operatora na każdy
   dostępem do zespołu/kanału Teams.
 - [ ] **Priming tożsamości push (github → Teams, ADR 0022)** — patrz uwaga w kroku 3; potwierdź,
   że `docker compose --env-file env run --rm github` na pierwszym planie realnie zakłada
-  `teams_push_token_cache.bin`, albo dodaj jawny tryb `--login` do `workmate-github` przed
-  wdrożeniem (mały patch, wzorem `workmate-teams-digest`).
+  `teams_push_token_cache.bin`, albo dodaj jawny tryb `--login` do `sufler-github` przed
+  wdrożeniem (mały patch, wzorem `sufler-teams-digest`).
 - [x] **`docker compose --env-file env config`** dla profili `mcp`+`bridge` — zweryfikowane lokalnie
   z prawdziwym Docker Compose (nie tylko parserem YAML): rozwiązuje się czysto, 4 usługi
   (`mcp`, `nginx`, `github`, `teams-graph`). **Odkryta i naprawiona w tej sesji pułapka:**
@@ -170,7 +170,7 @@ potwierdzić DOPIERO na maszynie docelowej — zaplanuj czas operatora na każdy
 - [ ] **Zachowanie przy `docker stop` w trakcie zapisu stanu** — potwierdź, że `stop_grace_period:
   45s` realnie wystarcza na dokończenie rundy pollingu i zapis watermarku (R1); przetestuj przez
   `docker compose stop teams-graph` podczas aktywnego ruchu.
-- [ ] **Wariant Jira server vs cloud na realnej instancji** — `WORKMATE_JIRA_DEPLOYMENT` dobrany
+- [ ] **Wariant Jira server vs cloud na realnej instancji** — `SUFLER_JIRA_DEPLOYMENT` dobrany
   zgodnie z instancją; uruchom `deploy/jira/preflight.py --account <konto> --aad <przykładowy_aad>`
   (ADR 0054) przed włączeniem "moich zadań" na produkcji.
 - [ ] **429 pod obciążeniem** — retry/backoff (`jira_http.request_with_retry`,

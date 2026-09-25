@@ -19,7 +19,7 @@ need a small shared substrate that every door can write to and read from.
 
 ## Options considered
 
-1. **A dedicated append-only EventStore (new SQLite file `~/.workmate/events.db`).**
+1. **A dedicated append-only EventStore (new SQLite file `~/.sufler/events.db`).**
    A narrow domain (`source, kind, external_id, actor, title, summary, url, occurred_at`)
    behind an `EventStore` port, mirroring the proven `SqliteConversationStore` concurrency
    pattern (WAL + `busy_timeout` + `Lock`), append-only with `UNIQUE(source, external_id,

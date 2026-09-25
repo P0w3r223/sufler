@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from workmate.adapters.inbound.metrics_report import format_summary, main
-from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
-from workmate.core.domain.metrics import DoorUsage, MetricsSummary
+from sufler.adapters.inbound.metrics_report import format_summary, main
+from sufler.adapters.outbound.sqlite_metrics import SqliteMetricsStore
+from sufler.core.domain.metrics import DoorUsage, MetricsSummary
 
 
 def test_format_summary_empty():
@@ -23,9 +23,9 @@ def test_format_summary_lists_doors():
 
 
 def test_main_without_db_returns_1(capsys, monkeypatch):
-    monkeypatch.delenv("WORKMATE_METRICS_DB", raising=False)
+    monkeypatch.delenv("SUFLER_METRICS_DB", raising=False)
     assert main([]) == 1
-    assert "WORKMATE_METRICS_DB" in capsys.readouterr().out
+    assert "SUFLER_METRICS_DB" in capsys.readouterr().out
 
 
 def test_main_with_missing_db_path_returns_1(tmp_path, capsys):

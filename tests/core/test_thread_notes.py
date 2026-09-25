@@ -15,13 +15,13 @@ from datetime import date
 
 import pytest
 
+from sufler.core.application.services import NotesWriteService
+from sufler.core.application.thread_notes import ThreadNoteService
+from sufler.core.domain.models import MeetingSummary, Note, Project
+from sufler.core.domain.transcript import SpeakerRoster
+from sufler.core.errors import NoteExistsError, WriteError
+from sufler.core.ports.thread import ThreadContent
 from tests.conftest import FakeNotesWriter, FakeProjectsRepository
-from workmate.core.application.services import NotesWriteService
-from workmate.core.application.thread_notes import ThreadNoteService
-from workmate.core.domain.models import MeetingSummary, Note, Project
-from workmate.core.domain.transcript import SpeakerRoster
-from workmate.core.errors import NoteExistsError, WriteError
-from workmate.core.ports.thread import ThreadContent
 
 _EXTERNAL_ID = "team/chan/root"
 _SOURCE_MSG = "msg-abc"

@@ -6,7 +6,7 @@ Dwie zdolności wchodzą ADDYTYWNIE, każda pod własnym warunkiem konfiguracji:
 
 - ``read_events_since`` (ADR 0040) — gdy podłączony jest most zdarzeń (``events.db`` istnieje);
 - ``get_my_jira_tasks`` i ``get_my_jira_history`` (ADR 0054) — gdy operator skonfigurował jedno
-  stałe konto Jira (``WORKMATE_JIRA_MY_ACCOUNT``) obok URL-a i tokenu.
+  stałe konto Jira (``SUFLER_JIRA_MY_ACCOUNT``) obok URL-a i tokenu.
 
 **Baseline obejmuje WSZYSTKIE osiem i test biega w czterech konfiguracjach — to jest poprawka,
 nie kosmetyka.** Wcześniej baseline znał sześć nazw, a para Jiry trafiała na te same drzwi bez
@@ -26,9 +26,9 @@ from typing import Any
 
 import pytest
 
-from workmate.adapters.inbound.mcp import tools as mcp_tools
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.server import build_server
+from sufler.adapters.inbound.mcp import tools as mcp_tools
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.server import build_server
 
 _BASELINE = Path(__file__).parent / "tool_surface_baseline.json"
 _FROZEN = {"search_notes", "get_note", "list_projects", "get_project_status", "save_note"}
@@ -53,25 +53,25 @@ def _baseline() -> dict[str, Any]:
 
 
 def _configure(monkeypatch, tmp_path, *, bridge: bool, jira: bool, write: bool = True) -> None:
-    """Ustaw środowisko DETERMINISTYCZNIE — niezależnie od ambientowego `~/.workmate`."""
+    """Ustaw środowisko DETERMINISTYCZNIE — niezależnie od ambientowego `~/.sufler`."""
     db = tmp_path / "events.db"
     if bridge:
         SqliteEventStore(str(db))  # utwórz plik, by narzędzie zdarzeń się zarejestrowało
-    monkeypatch.setenv("WORKMATE_EVENTS_DB", str(db if bridge else tmp_path / "absent.db"))
+    monkeypatch.setenv("SUFLER_EVENTS_DB", str(db if bridge else tmp_path / "absent.db"))
     # Baseline zamraża powierzchnię PRZY WŁĄCZONYM zapisie (save_note obecne); od amendmentu
     # ADR 0006 (2026-07-31) enable_write jest domyślnie OFF wszędzie, więc test musi go włączyć
     # jawnie — inaczej porównuje z baseline dziurę zamiast kontrakt.
-    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", "true" if write else "false")
+    monkeypatch.setenv("SUFLER_ENABLE_WRITE", "true" if write else "false")
     # Para Jiry jest bramkowana także transportem (`server.py`: znika na streamable-http, bo jeden
     # principal na proces nie obsłuży wielu osób). Bez przypięcia ambientowe
-    # WORKMATE_TRANSPORT=streamable-http wywracałoby dwie konfiguracje — determinizm ma być pełny.
-    monkeypatch.setenv("WORKMATE_TRANSPORT", "stdio")
+    # SUFLER_TRANSPORT=streamable-http wywracałoby dwie konfiguracje — determinizm ma być pełny.
+    monkeypatch.setenv("SUFLER_TRANSPORT", "stdio")
     if jira:
-        monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example.org")
-        monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "pat-secret")
-        monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+        monkeypatch.setenv("SUFLER_JIRA_BASE_URL", "https://jira.example.org")
+        monkeypatch.setenv("SUFLER_JIRA_TOKEN", "pat-secret")
+        monkeypatch.setenv("SUFLER_JIRA_MY_ACCOUNT", "mikolaj@example.org")
     else:
-        monkeypatch.delenv("WORKMATE_JIRA_MY_ACCOUNT", raising=False)
+        monkeypatch.delenv("SUFLER_JIRA_MY_ACCOUNT", raising=False)
 
 
 @pytest.mark.parametrize(
@@ -99,7 +99,7 @@ def test_surface_matches_baseline_in_every_configuration(
 def test_default_surface_without_write_is_frozen_too(monkeypatch, tmp_path):
     """DOMYŚLNA powierzchnia produkcyjna — bez zapisu — też musi być zamrożona.
 
-    Cała macierz wyżej wymusza ``WORKMATE_ENABLE_WRITE=true``, a od amendmentu ADR 0006 zapis
+    Cała macierz wyżej wymusza ``SUFLER_ENABLE_WRITE=true``, a od amendmentu ADR 0006 zapis
     jest domyślnie WYŁĄCZONY WSZĘDZIE. Zamrożony jest więc wariant, którego domyślnie nikt nie
     dostaje, a wariant, który dostają wszyscy, nie był porównywany z baseline w ogóle: regres
     w parsowaniu ``enable_write`` (albo w warunku rejestracji) zmieniłby realne drzwi bez

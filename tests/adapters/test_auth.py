@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from workmate.adapters.inbound.mcp.auth import (
+from sufler.adapters.inbound.mcp.auth import (
     Principal,
     TokenAuthMiddleware,
     TokenStoreError,
@@ -207,7 +207,7 @@ class _Downstream:
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         self.called = True
         state = scope.get("state") or {}
-        self.seen_principal = state.get("workmate_principal")
+        self.seen_principal = state.get("sufler_principal")
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
@@ -309,7 +309,7 @@ def test_middleware_preserves_existing_scope_state(tmp_path: Path):
     )
 
     assert existing["starlette_key"] == "value"
-    assert existing["workmate_principal"] == Principal(person="anna", scopes=("read",))
+    assert existing["sufler_principal"] == Principal(person="anna", scopes=("read",))
 
 
 def test_middleware_passes_non_http_scopes_untouched(tmp_path: Path):

@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from workmate.core.application.exec_manager import ExecManagerService, validate_scope
-from workmate.core.errors import ExecManagerError
-from workmate.core.ports.exec_manager import ContainerSpec, RunningExecutor
+from sufler.core.application.exec_manager import ExecManagerService, validate_scope
+from sufler.core.errors import ExecManagerError
+from sufler.core.ports.exec_manager import ContainerSpec, RunningExecutor
 
 _HASH = "a" * 32
 _SCOPE = f"teams-graph/{_HASH}"
@@ -147,7 +147,7 @@ def test_ensure_stawia_wykonawce_i_zwraca_sciezke_gniazda():
     assert workspace.prepared == [_SCOPE]
     assert [spec.scope for spec in engine.started] == [_SCOPE]
     assert engine.started[0].subpath == _SCOPE
-    assert engine.started[0].labels["workmate.exec.scope"] == _SCOPE
+    assert engine.started[0].labels["sufler.exec.scope"] == _SCOPE
 
 
 def test_ensure_jest_idempotentne_dla_cieplego_wykonawcy():

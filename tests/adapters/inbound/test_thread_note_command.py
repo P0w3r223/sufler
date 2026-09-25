@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from workmate.adapters.inbound.thread_note_command import ThreadNoteContext, ThreadNoteRouter
-from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
-from workmate.core.application.thread_notes import ThreadNoteOutcome
-from workmate.core.domain.identity import Person
-from workmate.core.domain.models import Note, NoteMetadata, Project
-from workmate.core.errors import LLMError, WriteError
+from sufler.adapters.inbound.thread_note_command import ThreadNoteContext, ThreadNoteRouter
+from sufler.core.application.meeting_authz import MeetingNoteAuthorizer
+from sufler.core.application.thread_notes import ThreadNoteOutcome
+from sufler.core.domain.identity import Person
+from sufler.core.domain.models import Note, NoteMetadata, Project
+from sufler.core.errors import LLMError, WriteError
 
 _TS = "2026-07-28T10:00:00Z"  # Graph ``created`` wzmianki → data notatki 2026-07-28.
 
@@ -97,7 +97,7 @@ def test_mention_without_directive_returns_none():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service)
 
-    assert router.dispatch("@WorkMate co słychać w projekcie?", _ctx()) is None
+    assert router.dispatch("@Sufler co słychać w projekcie?", _ctx()) is None
     assert service.calls == []
 
 
@@ -106,7 +106,7 @@ def test_directive_without_project_returns_usage():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to", _ctx())
+    reply = router.dispatch("@Sufler zapisz to", _ctx())
 
     assert reply is not None and "podaj projekt" in reply
     assert service.calls == []
@@ -116,7 +116,7 @@ def test_happy_path_uses_trusted_project_and_graph_timestamp_date():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     # Projekt z JAWNEGO argumentu wzmianki (zaufany), data z Graph timestampu (deterministyczna).
     assert service.calls == [("team/chan/root", "msg-1", "scada-integration", date(2026, 7, 28))]
@@ -142,12 +142,12 @@ def test_data_notatki_liczy_sie_w_STREFIE_DRZWI_nie_w_utc_znacznika():
 
     # 21:30 UTC = 23:30 w Warszawie → nadal 28 lipca.
     router.dispatch(
-        "@WorkMate zapisz to | scada-integration",
+        "@Sufler zapisz to | scada-integration",
         _ctx(source_timestamp="2026-07-28T21:30:00Z"),
     )
     # 22:30 UTC = 00:30 następnego dnia w Warszawie → już 29 lipca.
     router.dispatch(
-        "@WorkMate zapisz to | scada-integration",
+        "@Sufler zapisz to | scada-integration",
         _ctx(source_timestamp="2026-07-28T22:30:00Z"),
     )
 
@@ -163,7 +163,7 @@ def test_bez_strefy_data_zostaje_w_utc_jak_dotad():
     router = ThreadNoteRouter(service)
 
     router.dispatch(
-        "@WorkMate zapisz to | scada-integration",
+        "@Sufler zapisz to | scada-integration",
         _ctx(source_timestamp="2026-07-28T22:30:00Z"),
     )
 
@@ -174,7 +174,7 @@ def test_empty_timestamp_returns_bad_timestamp_message():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(source_timestamp=""))
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx(source_timestamp=""))
 
     assert reply is not None and "Nie udało się ustalić daty wątku" in reply
     assert service.calls == []  # bez daty nie ruszamy serwisu
@@ -185,7 +185,7 @@ def test_bad_timestamp_returns_bad_timestamp_message():
     router = ThreadNoteRouter(service)
 
     reply = router.dispatch(
-        "@WorkMate zapisz to | scada-integration", _ctx(source_timestamp="wczoraj")
+        "@Sufler zapisz to | scada-integration", _ctx(source_timestamp="wczoraj")
     )
 
     assert reply is not None and "Nie udało się ustalić daty wątku" in reply
@@ -201,7 +201,7 @@ def test_already_filed_reports_idempotent_skip():
     service = _FakeThreadService(already_filed=True)
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     assert reply is not None
     assert "był już zapisany" in reply
@@ -212,7 +212,7 @@ def test_write_error_degrades_to_message():
     service = _FakeThreadService(raises=WriteError("nieznany projekt"))
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to | zly-projekt", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | zly-projekt", _ctx())
 
     assert reply is not None and "Nie udało się zapisać notatki z wątku" in reply
 
@@ -221,7 +221,7 @@ def test_llm_error_degrades_to_message():
     service = _FakeThreadService(raises=LLMError("Claude padł"))
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     assert reply is not None and "Nie udało się zapisać notatki z wątku" in reply
 
@@ -231,7 +231,7 @@ def test_thread_fetch_value_error_degrades_to_message():
     service = _FakeThreadService(raises=ValueError("zły external_id wątku"))
     router = ThreadNoteRouter(service)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     assert reply is not None and "Nie udało się pobrać treści wątku" in reply
 
@@ -259,7 +259,7 @@ def test_authorized_member_saves_note():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, authorizer=_AUTHZ)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-anna"))
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx(sender_id="aad-anna"))
 
     assert reply is not None and "Notatka z wątku zapisana" in reply
     assert service.calls  # rozpoznany członek → serwis wywołany
@@ -270,7 +270,7 @@ def test_unknown_sender_refused_before_work():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, authorizer=_AUTHZ)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-obcy"))
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx(sender_id="aad-obcy"))
 
     assert reply is not None and "Brak uprawnień" in reply
     assert service.calls == []
@@ -281,7 +281,7 @@ def test_no_authorizer_skips_gate():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service)
 
-    router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     assert service.calls
 
@@ -316,7 +316,7 @@ def test_async_returns_ack_and_posts_result_to_thread():
     callback = _RecordingCallback()
     router = ThreadNoteRouter(service, scheduler=scheduler, callback=callback)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     # Natychmiastowa odpowiedź to ACK, nie treść notatki.
     assert reply is not None and "Przyjąłem" in reply
@@ -336,7 +336,7 @@ def test_async_posts_error_text_on_failure():
     callback = _RecordingCallback()
     router = ThreadNoteRouter(service, scheduler=scheduler, callback=callback)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     assert reply is not None and "Przyjąłem" in reply
     assert callback.posts[0][1].startswith("Nie udało się zapisać notatki z wątku")
@@ -349,7 +349,7 @@ def test_async_refusal_is_sync_and_schedules_no_background():
     callback = _RecordingCallback()
     router = ThreadNoteRouter(service, authorizer=_AUTHZ, scheduler=scheduler, callback=callback)
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx(sender_id="aad-obcy"))
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx(sender_id="aad-obcy"))
 
     assert reply is not None and "Brak uprawnień" in reply
     assert scheduler.submitted == 0
@@ -388,7 +388,7 @@ def test_usage_lists_real_registry_keys():
     projects = _FakeProjects(("workmate", "biap-www"))
     router = ThreadNoteRouter(_FakeThreadService(), projects=projects)
 
-    reply = router.dispatch("@WorkMate zapisz to", _ctx())
+    reply = router.dispatch("@Sufler zapisz to", _ctx())
 
     assert reply is not None
     assert "biap-www, workmate" in reply  # posortowane, realne
@@ -400,7 +400,7 @@ def test_usage_without_registry_falls_back_to_syntax_only():
     # i BEZ wymyślonego przykładu.
     router = ThreadNoteRouter(_FakeThreadService())
 
-    reply = router.dispatch("@WorkMate zapisz to", _ctx())
+    reply = router.dispatch("@Sufler zapisz to", _ctx())
 
     assert reply is not None and "podaj projekt" in reply
     assert "scada-integration" not in reply
@@ -413,8 +413,8 @@ def test_broken_registry_degrades_usage_instead_of_breaking_the_trigger():
     projects = _FakeProjects((), raises=RuntimeError("YAML padł"))
     router = ThreadNoteRouter(service, projects=projects)
 
-    assert router.dispatch("@WorkMate zapisz to", _ctx()) is not None
-    reply = router.dispatch("@WorkMate zapisz to | workmate", _ctx())
+    assert router.dispatch("@Sufler zapisz to", _ctx()) is not None
+    reply = router.dispatch("@Sufler zapisz to | workmate", _ctx())
 
     assert reply is not None and reply.startswith("✓")
     assert service.calls[0][2] == "workmate"
@@ -426,7 +426,7 @@ def test_natural_phrasing_resolves_the_project_from_the_mention_text():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
 
-    reply = router.dispatch("@WorkMate zapisz to jako notatkę projektu workmate", _ctx())
+    reply = router.dispatch("@Sufler zapisz to jako notatkę projektu workmate", _ctx())
 
     assert reply is not None and reply.startswith("✓")
     assert service.calls[0][2] == "workmate"
@@ -438,7 +438,7 @@ def test_unknown_word_after_directive_gives_usage_instead_of_a_guess():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
 
-    reply = router.dispatch("@WorkMate zapisz to jako notatkę projektu klienta", _ctx())
+    reply = router.dispatch("@Sufler zapisz to jako notatkę projektu klienta", _ctx())
 
     assert reply is not None and "podaj projekt" in reply
     assert service.calls == []
@@ -449,7 +449,7 @@ def test_two_registry_keys_in_one_mention_give_usage():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate", "biap-www")))
 
-    reply = router.dispatch("@WorkMate zapisz to do workmate albo biap-www", _ctx())
+    reply = router.dispatch("@Sufler zapisz to do workmate albo biap-www", _ctx())
 
     assert reply is not None and "podaj projekt" in reply
     assert service.calls == []
@@ -462,7 +462,7 @@ def test_pipe_syntax_keeps_working_for_keys_outside_the_registry():
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
 
-    reply = router.dispatch("@WorkMate zapisz to | scada-integration", _ctx())
+    reply = router.dispatch("@Sufler zapisz to | scada-integration", _ctx())
 
     assert reply is not None and reply.startswith("✓")
     assert service.calls[0][2] == "scada-integration"
@@ -475,7 +475,7 @@ def test_mention_without_directive_never_touches_the_registry():
     projects = _FakeProjects(("workmate",))
     router = ThreadNoteRouter(_FakeThreadService(), projects=projects)
 
-    assert router.dispatch("@WorkMate co słychać w projekcie?", _ctx()) is None
+    assert router.dispatch("@Sufler co słychać w projekcie?", _ctx()) is None
     assert projects.odczyty == 0
 
 
@@ -484,27 +484,27 @@ def test_directive_reads_the_registry_once():
     projects = _FakeProjects(("workmate", "biap-www"))
     router = ThreadNoteRouter(_FakeThreadService(), projects=projects)
 
-    assert router.dispatch("@WorkMate zapisz to", _ctx()) is not None
+    assert router.dispatch("@Sufler zapisz to", _ctx()) is not None
     assert projects.odczyty == 1
 
 
 # --- przegląd kodu 2026-08-21: wzmianka nie jest argumentem -----------------
 
 
-_BOT = ("Virtual WorkMate",)
+_BOT = ("Virtual Sufler",)
 
 
 def test_bot_mention_after_the_directive_is_not_a_project_key():
     """Nazwa bota zawiera klucz rejestru — i po ``_strip_html`` wygląda jak słowo człowieka.
 
-    „Zapisz to, @Virtual WorkMate" zapisywało wątek pod projekt `workmate` PO CICHU: w trybie
+    „Zapisz to, @Virtual Sufler" zapisywało wątek pod projekt `workmate` PO CICHU: w trybie
     async ACK nie nazywa projektu, a notatki `-thr-` są NIEZMIENNE, więc pomyłki nie dało się
     ani zauważyć, ani cofnąć. Wzmianka jest adresatem, nie argumentem.
     """
     service = _FakeThreadService()
     router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
 
-    reply = router.dispatch("Zapisz to, Virtual WorkMate", _ctx(mention_texts=_BOT))
+    reply = router.dispatch("Zapisz to, Virtual Sufler", _ctx(mention_texts=_BOT))
 
     assert reply is not None and "podaj projekt" in reply
     assert service.calls == []
@@ -520,7 +520,7 @@ def test_mention_before_the_directive_still_lets_the_sentence_name_the_project()
     router = ThreadNoteRouter(service, projects=_FakeProjects(("workmate",)))
 
     reply = router.dispatch(
-        "Virtual WorkMate zapisz to jako notatkę projektu workmate", _ctx(mention_texts=_BOT)
+        "Virtual Sufler zapisz to jako notatkę projektu workmate", _ctx(mention_texts=_BOT)
     )
 
     assert reply is not None and reply.startswith("✓")
@@ -584,25 +584,23 @@ def test_registry_key_with_capitals_is_matched_and_returned_canonically():
     człowiek kopiuje go z komunikatu bota i dostaje ten sam komunikat.
     """
     service = _FakeThreadService()
-    router = ThreadNoteRouter(service, projects=_FakeProjects(("WorkMate",)))
+    router = ThreadNoteRouter(service, projects=_FakeProjects(("Sufler",)))
 
-    router.dispatch("zapisz to jako notatkę projektu workmate", _ctx())
+    router.dispatch("zapisz to jako notatkę projektu sufler", _ctx())
 
-    assert service.calls[0][2] == "WorkMate"
+    assert service.calls[0][2] == "Sufler"
 
 
 def test_usage_shows_no_copyable_mention_token():
     """Wyzwalacz stoi na ``mentions[]`` z Graph, nie na tekście — `@Nazwa` jest nie do skopiowania.
 
-    Podpowiedź drukowała `@WorkMate`, gdy bot na produkcji nazywa się `Virtual WorkMate`. Sama
+    Podpowiedź drukowała `@Sufler`, gdy bot na produkcji nazywa się `Virtual Sufler`. Sama
     podmiana nazwy zostawiłaby przykład NIEKOPIOWALNY: wklejone `@cokolwiek` to zwykłe słowo
     i wzmianki nie tworzy. Zdanie mówi teraz, co zrobić, zamiast pokazywać znaki do przepisania.
     """
     router = ThreadNoteRouter(_FakeThreadService(), projects=_FakeProjects(("workmate",)))
 
-    reply = router.dispatch(
-        "@Virtual WorkMate zapisz to", _ctx(mention_texts=("Virtual WorkMate",))
-    )
+    reply = router.dispatch("@Virtual Sufler zapisz to", _ctx(mention_texts=("Virtual Sufler",)))
 
     assert reply is not None
     assert "@" not in reply
@@ -612,15 +610,13 @@ def test_usage_shows_no_copyable_mention_token():
 def test_usage_gives_the_reason_it_refuses():
     """Odmowa bez powodu wygląda jak awaria — sonda 2026-08-21 po migracji 1.13.0.
 
-    Człowiek napisał „Zapisz to, @Virtual WorkMate", dostał podpowiedź i odczytał ją jako
+    Człowiek napisał „Zapisz to, @Virtual Sufler", dostał podpowiedź i odczytał ją jako
     „bot nie zrozumiał". Router zachował się poprawnie (bez tego zapisałby wątek pod `workmate`,
     bo nazwa bota niesie klucz rejestru), ale nie powiedział, DLACZEGO pyta.
     """
     router = ThreadNoteRouter(_FakeThreadService(), projects=_FakeProjects(("workmate",)))
 
-    reply = router.dispatch(
-        "Zapisz to, Virtual WorkMate", _ctx(mention_texts=("Virtual WorkMate",))
-    )
+    reply = router.dispatch("Zapisz to, Virtual Sufler", _ctx(mention_texts=("Virtual Sufler",)))
 
     assert reply is not None
     assert "moja nazwa" in reply and "treść wątku" in reply

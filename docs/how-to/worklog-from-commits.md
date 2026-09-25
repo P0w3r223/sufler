@@ -7,7 +7,7 @@ commity z GitHuba i proponuje godziny w rozbiciu na dni i zgłoszenia Jira.
 > kart czasu WorklogPRO, który wcześniej z tej propozycji korzystał, został **wycofany z projektu
 > w całości** ([ADR 0055](../adr/0055-withdraw-worklogpro-timesheets.md)). `propose_worklog` pozostaje
 > czystym, jednorazowym odczytem estymacji — dalsze wprowadzenie godzin do Jiry, jeśli potrzebne,
-> odbywa się poza WorkMate.
+> odbywa się poza Sufler.
 
 ---
 
@@ -17,15 +17,15 @@ Tylko GitHub — zdolność nie dotyka Jiry (klucze zgłoszeń wyłuskujemy rege
 
 | Zmienna | Rola |
 |---|---|
-| `WORKMATE_GITHUB_TOKEN` | PAT do odczytu repo |
-| `WORKMATE_GITHUB_OWNER` | właściciel repozytorium |
-| `WORKMATE_GITHUB_REPO` | nazwa repozytorium |
+| `SUFLER_GITHUB_TOKEN` | PAT do odczytu repo |
+| `SUFLER_GITHUB_OWNER` | właściciel repozytorium |
+| `SUFLER_GITHUB_REPO` | nazwa repozytorium |
 
 **Bramki nie ma i nie będzie.** Narzędzie niczego nie mutuje, a repo bramkuje zapis, nie odczyt
 (ADR 0006). Wystarczy skonfigurowany GitHub, żeby agent Teams dostał `propose_worklog`; klient jest
-**read-only** i nie zależy od `WORKMATE_GITHUB_ENABLE_WRITE`.
+**read-only** i nie zależy od `SUFLER_GITHUB_ENABLE_WRITE`.
 
-Strojenie estymacji (`WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES`, `…_RAMP_UP_MINUTES`,
+Strojenie estymacji (`SUFLER_GITHUB_WORKLOG_IDLE_GAP_MINUTES`, `…_RAMP_UP_MINUTES`,
 `…_ROUND_MINUTES`, `…_MAX_SESSION_HOURS`, `…_MAX_RANGE_DAYS`, `…_TZ`) opisuje
 [`docs/reference/config.md`](../reference/config.md). Absurdalna wartość = twardy błąd startu, nie
 cichy clamp.
@@ -57,5 +57,5 @@ pracy i nie wejściem do automatycznego importu.
 | Sufit 500 commitów na zapytanie | Wypadają NAJSTARSZE dni okna, godziny zaniżone | Zawęź zakres dat albo podaj `author` (jest o tym nota w `notes`) |
 | Estymacja, nie pomiar | Godziny bywają zaniżone | Traktuj jako punkt wyjścia, nie wynik |
 
-Doba kalendarzowa liczy się w strefie z `WORKMATE_GITHUB_WORKLOG_TZ` (domyślnie `Europe/Warsaw`,
+Doba kalendarzowa liczy się w strefie z `SUFLER_GITHUB_WORKLOG_TZ` (domyślnie `Europe/Warsaw`,
 nazwa IANA), więc zmiana czasu nie przesuwa granic dni — dawny stały offset to robił.

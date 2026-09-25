@@ -13,11 +13,11 @@ Related to: docs/adr/0015-teams-delegated-graph-polling.md,
 
 The delegated Teams door (ADR 0015) has always answered every message from another human posted
 in a `watch`-listed channel — that is the entire selection contract in `selection.plan_channel`.
-This is fine for a small, single-purpose channel where WorkMate is the only thing anyone talks to.
+This is fine for a small, single-purpose channel where Sufler is the only thing anyone talks to.
 It stops being fine the moment a channel is shared with normal human conversation: the bot would
 answer every message in the channel, not just the ones addressed to it.
 
-A skeleton for a future multi-channel rollout of WorkMate needs an opt-in gate: "should this
+A skeleton for a future multi-channel rollout of Sufler needs an opt-in gate: "should this
 channel's bot even engage with this message, or is it none of its business?" Two states matter in
 practice — always engage (today's behavior) and mention-gated (engage only when addressed).
 Nothing about this decision should change behavior for any channel that does not explicitly opt
@@ -48,8 +48,8 @@ in, because the existing single-channel deployment must not observe any differen
   `plan_channel(..., policy=self._policy, channel=(team_id, channel_id))` in `_poll_channel`. Same
   default-`None` compatibility guarantee at the poller layer.
 - `config.TeamsGraphSettings` gains `reply_policy: str = "all"` (env
-  `WORKMATE_TEAMS_GRAPH_REPLY_POLICY`) and `always_reply: tuple[tuple[str, str], ...] = ()` (env
-  `WORKMATE_TEAMS_GRAPH_ALWAYS_REPLY`, same `team:channel,team:channel` format as `watch`, parsed
+  `SUFLER_TEAMS_GRAPH_REPLY_POLICY`) and `always_reply: tuple[tuple[str, str], ...] = ()` (env
+  `SUFLER_TEAMS_GRAPH_ALWAYS_REPLY`, same `team:channel,team:channel` format as `watch`, parsed
   by the existing `_parse_watch_pairs`). `validate()` rejects any `reply_policy` other than
   `all`/`mention`, and rejects any `always_reply` pair that is not also in `watch` — a stray pair
   is almost always a typo, and this repo's convention (ADR 0006 and others) is to fail loudly at
@@ -61,17 +61,17 @@ in, because the existing single-channel deployment must not observe any differen
 
 - **Default deploy is a no-op.** `reply_policy` defaults to `"all"`, `always_reply` defaults to
   empty, and `ReplyPolicy(mode="all")` behaves identically to `policy=None` — a channel that never
-  sets `WORKMATE_TEAMS_GRAPH_REPLY_POLICY` sees zero behavior change from this ADR. This mirrors
+  sets `SUFLER_TEAMS_GRAPH_REPLY_POLICY` sees zero behavior change from this ADR. This mirrors
   the compatibility posture ADR 0006/0026/0027 take with new gated capabilities: ship the gate
   closed (or here, ship the gate's *effect* identical to absent).
 - Opting a channel into `mode="mention"` while listing it in `always_reply` is intentionally a
   no-op escape hatch (channel behaves like `all` regardless of `mode`) — useful for a fleet-wide
-  `WORKMATE_TEAMS_GRAPH_REPLY_POLICY=mention` default with per-channel exceptions, without needing
+  `SUFLER_TEAMS_GRAPH_REPLY_POLICY=mention` default with per-channel exceptions, without needing
   a third policy value.
 - **This ADR and ADR 0059 (extended Jira read + Teams Shifts schedule) do not yet coexist in any
   single built Docker image running in production, as of this writing.** They were developed and
   shipped independently on two different, concurrently-running containers: the
-  `workmate-teams-graph` container currently in production has `reply_policy` (this ADR) but does
+  `sufler-teams-graph` container currently in production has `reply_policy` (this ADR) but does
   NOT have the extended Jira read/Shifts schedule tools (ADR 0059); other containers in the fleet
   have ADR 0059's capabilities but not `reply_policy`. This repository is the **first place** both
   features exist in the same source tree — merging them here (both touching

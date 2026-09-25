@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from datetime import date
 
+from sufler.core.application.meeting_notes import MeetingNoteService
+from sufler.core.application.services import NotesWriteService
+from sufler.core.domain.models import MeetingSummary, Project
+from sufler.core.domain.transcript import SpeakerRoster
 from tests.conftest import FakeNotesWriter, FakeProjectsRepository
-from workmate.core.application.meeting_notes import MeetingNoteService
-from workmate.core.application.services import NotesWriteService
-from workmate.core.domain.models import MeetingSummary, Project
-from workmate.core.domain.transcript import SpeakerRoster
 
 
 class _RecordingTranscripts:
@@ -170,7 +170,7 @@ def test_unknown_project_skips_fetch_and_summary():
     # Claude (w async ten koszt szedłby po cichu w tle). Nic nie pobrano ani nie streszczono.
     import pytest
 
-    from workmate.core.errors import WriteError
+    from sufler.core.errors import WriteError
 
     transcripts = _RecordingTranscripts("tresc")
     summarizer = _RecordingSummarizer(_summary())

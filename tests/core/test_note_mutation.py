@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.application.note_mutation import MutationRefused, NoteMutationService
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.domain.mutation import JudgeVerdict
-from workmate.core.errors import WriteError
+from sufler.core.application.note_mutation import MutationRefused, NoteMutationService
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.domain.mutation import JudgeVerdict
+from sufler.core.errors import WriteError
 
 _METADATA = NoteMetadata(title="Ustalenia", project="mpwik", date="2026-08-01")
 

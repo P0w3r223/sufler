@@ -11,8 +11,8 @@ import io
 
 import pytest
 
-from workmate.adapters.outbound.document_renderer import DefaultDocumentRenderer
-from workmate.core.ports.document import FILE_REPLY_FORMATS, RenderedDocument
+from sufler.adapters.outbound.document_renderer import DefaultDocumentRenderer
+from sufler.core.ports.document import FILE_REPLY_FORMATS, RenderedDocument
 
 _POLISH = "Zażółć gęślą jaźń — koszty i marże wydań."
 

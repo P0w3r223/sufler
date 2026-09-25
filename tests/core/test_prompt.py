@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from workmate.core.agent.prompt import (
+from sufler.core.agent.prompt import (
     STATIC_PROMPT,
     STATIC_PROMPT_SHELL,
     SUMMARY_SYSTEM_PROMPT,
@@ -385,7 +385,7 @@ def test_sprostowanie_o_powloce_podlega_bramce_redakcyjnej():
 
 
 def test_ostatnia_runda_jest_nazwana_wprost():
-    from workmate.core.agent.prompt import budget_notice
+    from sufler.core.agent.prompt import budget_notice
 
     assert "last round" in budget_notice(1)
     assert "2 rounds" in budget_notice(2)
@@ -393,7 +393,7 @@ def test_ostatnia_runda_jest_nazwana_wprost():
 
 def test_zdanie_o_budzecie_podlega_bramce_redakcyjnej():
     """Sygnal jedzie w naglowku sesji, wiec obowiazuja go te same reguly co reszcie."""
-    from workmate.core.agent.prompt import budget_notice
+    from sufler.core.agent.prompt import budget_notice
 
     for rounds in (1, 2, 3):
         tekst = budget_notice(rounds)

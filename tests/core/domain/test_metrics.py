@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from workmate.core.domain.metrics import REPORT_TZ, iso_week, pseudonymize
+from sufler.core.domain.metrics import REPORT_TZ, iso_week, pseudonymize
 
 
 def test_iso_week_format_and_value():

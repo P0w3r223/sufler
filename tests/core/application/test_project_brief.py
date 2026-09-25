@@ -9,16 +9,16 @@ from __future__ import annotations
 
 from datetime import date
 
+from sufler.core.application.project_brief import ProjectBriefService
+from sufler.core.application.services import NotesService, ProjectsService
+from sufler.core.domain.models import Project, ProjectStatusRecord
 from tests.conftest import FakeNotesRepository, FakeProjectsRepository
-from workmate.core.application.project_brief import ProjectBriefService
-from workmate.core.application.services import NotesService, ProjectsService
-from workmate.core.domain.models import Project, ProjectStatusRecord
 
 
 def _projects_service(sample_notes) -> ProjectsService:
     projects = [
         Project(key="scada-integration", company="mpwik", name="Integracja SCADA", description="x"),
-        Project(key="workmate", company="biap", name="WorkMate", description="Asystent wiedzy"),
+        Project(key="workmate", company="biap", name="Sufler", description="Asystent wiedzy"),
     ]
     records = {
         "scada-integration": ProjectStatusRecord(

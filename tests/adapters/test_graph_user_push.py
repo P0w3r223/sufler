@@ -15,8 +15,8 @@ import json
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_user_push import HttpxGraphUserImagePush
-from workmate.core.ports.user_push import UserImageSender
+from sufler.adapters.outbound.graph_user_push import HttpxGraphUserImagePush
+from sufler.core.ports.user_push import UserImageSender
 
 _ME = "bot-me-id"
 _TARGET = "u-anna"

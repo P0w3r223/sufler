@@ -1,11 +1,11 @@
-# Dokumentacja WorkMate
+# Dokumentacja Sufler
 
 Układ wg [Diátaxis](https://diataxis.fr/) — cztery typy dokumentów dla czterech
 różnych potrzeb czytelnika:
 
 | Katalog | Dla kogo / kiedy |
 |---------|------------------|
-| [`tutorial/`](tutorial/) | Uczysz się — „uruchom WorkMate pierwszy raz". |
+| [`tutorial/`](tutorial/) | Uczysz się — „uruchom Sufler pierwszy raz". |
 | [`how-to/`](how-to/) | Masz konkretne zadanie — „dodaj narzędzie", „dodaj drzwi". |
 | [`reference/`](reference/) | Szukasz faktu — katalog narzędzi, klucze konfiguracji, schemat notatki. |
 | [`explanation/`](explanation/) | Chcesz zrozumieć „dlaczego" — architektura. |

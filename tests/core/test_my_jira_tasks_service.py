@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from workmate.core.application.my_jira_tasks import MyJiraTasksService
-from workmate.core.errors import InvalidRequestError, JiraReadError
+from sufler.core.application.my_jira_tasks import MyJiraTasksService
+from sufler.core.errors import InvalidRequestError, JiraReadError
 
 
 class _FakeJiraRead:
@@ -137,7 +137,7 @@ def test_my_history_returns_tasks_and_not_truncated_under_the_cap() -> None:
 
 
 def test_my_history_flags_truncation_beyond_the_cap() -> None:
-    from workmate.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
+    from sufler.core.application.my_jira_tasks import _MAX_HISTORY_RESULTS
 
     issues = [
         {"key": f"WM-{i}", "fields": {"summary": "x", "status": {"name": "Done"}}}

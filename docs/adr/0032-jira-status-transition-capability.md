@@ -93,7 +93,7 @@ any) to commit to — with no knowledge of where each leads beyond one status.
   burning the cap. On a linear workflow (each status has one forward transition) this walks all the
   way to the target; on a branching workflow it advances through the forced segments and stops at the
   first genuine choice — a faithful, honest "best-effort with safeguards." Effort M, risk Low.
-- C2 — operator-declared linear status order (`WORKMATE_JIRA_STATUS_ORDER`) to resolve branches
+- C2 — operator-declared linear status order (`SUFLER_JIRA_STATUS_ORDER`) to resolve branches
   deterministically. At a branch, pick the neighbor whose `to.name` advances furthest toward the
   target's rank in an operator-supplied ordering — deterministic and config-declared, not a model
   guess, so it *would* be defensible and would extend the walk across branching workflows. Rejected
@@ -107,7 +107,7 @@ any) to commit to — with no knowledge of where each leads beyond one status.
 ### Decision 4 — safeguards: hop cap, stop-and-report, and the NO-ROLLBACK property
 
 - D1 (chosen) — bounded, reporting, explicitly non-transactional.
-  - Hop cap. `WORKMATE_JIRA_MAX_TRANSITION_HOPS` (config, **default 1**, floor 1, ceiling to prevent
+  - Hop cap. `SUFLER_JIRA_MAX_TRANSITION_HOPS` (config, **default 1**, floor 1, ceiling to prevent
     runaway) bounds blast radius and is a hard backstop against cycles the visited-set misses. The
     pilot ships with the cap at **1**, which recovers exact single-hop behaviour (zero multi-hop blast
     radius) — the walk logic is fully present, but multi-hop is opt-in: raise the cap only after
@@ -178,7 +178,7 @@ any) to commit to — with no knowledge of where each leads beyond one status.
   to produce a changelog entry, all authored by the PAT, all dropped by the poll's `_from_other_actor`
   self-skip; the per-hop `source="teams"` echoes are inert to the Jira notifier (pushes only
   `source="jira"`). Both halves hold only when the `jira` poller and the `teams_graph` writer share
-  the same `WORKMATE_JIRA_TOKEN` and the poller's `self_account` equals that PAT — so
+  the same `SUFLER_JIRA_TOKEN` and the poller's `self_account` equals that PAT — so
   `JiraSettings.validate()` requires `write_project` + `self_account` when `enable_jira_transition` is
   true, same fail-fast class as write.
 
@@ -187,7 +187,7 @@ any) to commit to — with no knowledge of where each leads beyond one status.
 A1 + B1 + C1 + D1 + E1 + F1 + G1. Add one gated tool, `transition_jira_issue(issue_key,
 target_status)`, as a bounded, forced-advance, best-effort workflow walk behind an independent,
 default-off `enable_jira_transition` gate that shares the Gate-5 plumbing. The pilot ships with
-`WORKMATE_JIRA_MAX_TRANSITION_HOPS=1` (single-hop-equivalent); multi-hop is opt-in by raising the cap.
+`SUFLER_JIRA_MAX_TRANSITION_HOPS=1` (single-hop-equivalent); multi-hop is opt-in by raising the cap.
 
 - Ports. `JiraWritePort` gains `read_transitions(issue_key) -> {current_status, transitions:
   [{id, name, to_status}]}` (one `GET /issue/{key}?fields=status&expand=transitions` — current status
@@ -220,8 +220,8 @@ default-off `enable_jira_transition` gate that shares the Gate-5 plumbing. The p
 
   Core stays clock-free (timestamps from the adapter) and adapter-free. Only pre-flight guards raise;
   walk outcomes return the structured result of Decision 5.
-- Config. `enable_jira_transition` (`WORKMATE_JIRA_ENABLE_TRANSITION`, default false) and
-  `max_transition_hops` (`WORKMATE_JIRA_MAX_TRANSITION_HOPS`, default 1) on `JiraSettings`;
+- Config. `enable_jira_transition` (`SUFLER_JIRA_ENABLE_TRANSITION`, default false) and
+  `max_transition_hops` (`SUFLER_JIRA_MAX_TRANSITION_HOPS`, default 1) on `JiraSettings`;
   `validate()` requires `write_project` + `self_account` when the gate is on, and `1 ≤ hops ≤` a sane
   ceiling.
 - Catalog + wiring. New `build_jira_transition_catalog(write_service)` in `application/tools.py`
@@ -237,7 +237,7 @@ hops we permit are the ones Jira left no choice about, and everything else stops
 
 ## Consequences
 
-- New autonomous multi-step mutation path. This is the first tool in WorkMate where one model
+- New autonomous multi-step mutation path. This is the first tool in Sufler where one model
   invocation can commit *several* irreversible writes without per-hop confirmation. It is constrained
   on every axis we have: gated (independent, default off), bounded (`max_transition_hops`, default 1 —
   ship single-hop, raise to enable multi-hop), conservative (forced-only, no branch guessing),
@@ -255,12 +255,12 @@ hops we permit are the ones Jira left no choice about, and everything else stops
   gates. No new secret and no new `kind`: transition reuses the PAT identity and the existing
   `jira_transition` kind.
 - Cross-process invariant (like ADR 0024/0031): the loop guard holds only when the `jira` poller
-  and the `teams_graph` writer share `WORKMATE_JIRA_TOKEN` and `self_account` = that PAT. Different
+  and the `teams_graph` writer share `SUFLER_JIRA_TOKEN` and `self_account` = that PAT. Different
   PATs → the agent's own hops re-notify (redundant, not looping — EventStore dedup is idempotent per
   `(source, external_id, kind)`, echoes are inert to every notifier, and the walk has no autonomous
   re-trigger).
 - Revisit trigger: if forced-only proves too conservative for the pilot's workflows (walks
-  routinely stop at the first branch), implement C2 (operator-declared `WORKMATE_JIRA_STATUS_ORDER`)
+  routinely stop at the first branch), implement C2 (operator-declared `SUFLER_JIRA_STATUS_ORDER`)
   for deterministic, config-declared branch resolution — a separate change. If a transition needs a
   resolution comment/field on close (Jira transition screens), that reopens the create/update-fields
   governance question and warrants its own ADR.

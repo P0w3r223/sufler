@@ -11,8 +11,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from workmate.adapters.outbound.jira_api import HttpxJiraClient
-from workmate.core.errors import InvalidRequestError, JiraReadError
+from sufler.adapters.outbound.jira_api import HttpxJiraClient
+from sufler.core.errors import InvalidRequestError, JiraReadError
 
 _BASE = "https://jira.example.com"
 
@@ -270,7 +270,7 @@ def test_auth_error_is_translated_to_a_domain_error_at_the_adapter_boundary():
     """Słownik sieci kończy się na adapterze — rdzeń ma dostać ``JiraReadError``, nie ``httpx``.
 
     Tłumaczenie stało dotąd w warstwie aplikacji i wciągało ``import httpx`` do heksagonu.
-    ``lint-imports`` tego nie widzi (reguła zabrania tylko importów z ``workmate.adapters``), więc
+    ``lint-imports`` tego nie widzi (reguła zabrania tylko importów z ``sufler.adapters``), więc
     jedyną bramką jest ta sonda.
     """
 

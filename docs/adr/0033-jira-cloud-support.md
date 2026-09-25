@@ -51,8 +51,8 @@ and configuration. The team wants to **keep Server/DC working** (some projects m
 
 Adopt **A**, dual-provider:
 
-- **Config** — `JiraSettings` gains `deployment` (`WORKMATE_JIRA_DEPLOYMENT`, default `server`) and
-  `email` (`WORKMATE_JIRA_EMAIL`). `validate()` requires `email` when `deployment=cloud`; the Teams
+- **Config** — `JiraSettings` gains `deployment` (`SUFLER_JIRA_DEPLOYMENT`, default `server`) and
+  `email` (`SUFLER_JIRA_EMAIL`). `validate()` requires `email` when `deployment=cloud`; the Teams
   write-gate wiring (`_build_jira_catalog`) adds the same fail-fast so a Cloud write profile can't
   start without it. `token` stays the secret (PAT on DC, API token on Cloud); `self_account` is the
   PAT login on DC and the **`accountId`** on Cloud.

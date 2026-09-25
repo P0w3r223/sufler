@@ -1,7 +1,7 @@
 # 0018 — Agent working directory: create_file on the delegated Teams door (Gate for a second mutating tool)
 
 Date: 2026-07-13
-Status: accepted (implemented — `WorkspaceSettings`/`WORKMATE_ENABLE_WORKSPACE`, `config.py`)
+Status: accepted (implemented — `WorkspaceSettings`/`SUFLER_ENABLE_WORKSPACE`, `config.py`)
 Author: P0w3r223
 Amends: [ADR 0002](0002-read-only-first.md) (read-only default), [ADR 0006](0006-write-capability-gate-2.md)
   (adopts the arbitrary-file Option 2 it rejected; opens write on Teams it pinned `false`),
@@ -53,7 +53,7 @@ Envelope (mirrors the `save_note` safety patterns):
   rejected — files are authored by an untrusted model from an untrusted door.
 - **Quotas (DoS).** Per-file size, per-conversation file count and total bytes; control-char guard
   (`reject_dangerous_content`) on content.
-- **Outside repo and `data/`.** Default `~/.workmate/workspace/` (like the tokens file and
+- **Outside repo and `data/`.** Default `~/.sufler/workspace/` (like the tokens file and
   conversations DB), so a poisoned artifact never pollutes the knowledge base the agent reads.
 - **MCP surface unchanged.** Workspace tools are built by a separate `build_workspace_catalog` used
   ONLY by the agent runtime, never `build_server` — the golden MCP surface test stays green. The
@@ -83,7 +83,7 @@ a text reply (never crashes the poller).
   (ADR 0006 Option 2) is deliberately adopted, confined to non-knowledge-base scratch. Teams-read-only
   (ADR 0015) is amended: `enable_workspace=True` on `teams_graph` while `enable_write` stays `False`.
 - **`enable_workspace` is a second, independent write-gate** distinct from `enable_write`
-  (documented in `CLAUDE.md`). Default off (`WORKMATE_ENABLE_WORKSPACE`, env-gated rollout).
+  (documented in `CLAUDE.md`). Default off (`SUFLER_ENABLE_WORKSPACE`, env-gated rollout).
 - Any **further** mutating capability (edit/delete of workspace files) needs its own ADR — same
   discipline ADR 0006 set.
 - Isolation becomes a real per-conversation boundary in the runtime (`extra_tools`/scope injection),

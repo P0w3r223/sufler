@@ -41,9 +41,9 @@ confidentiality risk and out of proportion for a dozen internal users.
    failure (e.g. a locked SQLite file) logs a warning and the turn proceeds. Metrics must never break
    a user's answer.
 
-5. **OFF by default.** Enabled only by the presence of `WORKMATE_METRICS_DB`; unset → the service is
+5. **OFF by default.** Enabled only by the presence of `SUFLER_METRICS_DB`; unset → the service is
    `None` and doors record nothing. No fail-fast — it is a non-critical side channel. Read-out is a
-   separate console script (`workmate-metrics`) that folds the counter into a per-door table.
+   separate console script (`sufler-metrics`) that folds the counter into a per-door table.
 
 ## Alternatives considered
 

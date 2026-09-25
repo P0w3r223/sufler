@@ -8,7 +8,7 @@ treścią, bo nonce jest losowy na turę.
 
 from __future__ import annotations
 
-from workmate.core.domain.trust import (
+from sufler.core.domain.trust import (
     DATA_CLASSES,
     describe_envelope,
     wrap_untrusted,

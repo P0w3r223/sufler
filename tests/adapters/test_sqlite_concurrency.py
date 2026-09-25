@@ -22,14 +22,14 @@ from pathlib import Path
 
 import pytest
 
+from sufler.adapters.outbound.sqlite_audit import SqliteAuditStore
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.adapters.outbound.sqlite_dead_letters import SqliteDeadLetterStore
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.adapters.outbound.sqlite_metrics import SqliteMetricsStore
+from sufler.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
+from sufler.core.domain.events import NewEvent
 from tests.conftest import make_note
-from workmate.adapters.outbound.sqlite_audit import SqliteAuditStore
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.adapters.outbound.sqlite_dead_letters import SqliteDeadLetterStore
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
-from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
-from workmate.core.domain.events import NewEvent
 
 _WHEN = datetime(2026, 8, 17, 9, 0, tzinfo=UTC)
 
@@ -208,9 +208,9 @@ def test_every_shared_store_expands_a_home_relative_path_before_it_connects(
 ):
     """``~`` w ścieżce bazy rozwijał się WYŁĄCZNIE na potrzeby ``mkdir``.
 
-    Katalog powstawał pod rozwiniętą ścieżką (``~/.workmate``), a plik bazy — pod literalnym
+    Katalog powstawał pod rozwiniętą ścieżką (``~/.sufler``), a plik bazy — pod literalnym
     ``~`` w katalogu roboczym procesu: dwa różne pliki pod jedną nazwą z konfiguracji. Domyślne
-    ścieżki WSZYSTKICH tych magazynów mówią ``~/.workmate/…``, więc to droga produkcyjna.
+    ścieżki WSZYSTKICH tych magazynów mówią ``~/.sufler/…``, więc to droga produkcyjna.
 
     Naprawa poszła do sześciu konstruktorów, a sonda powstała dla JEDNEGO (``SqliteEventStore``,
     ``test_sqlite_events.py``). Pozostałe pięć wracało do defektu bez zrywania czegokolwiek —
@@ -220,10 +220,10 @@ def test_every_shared_store_expands_a_home_relative_path_before_it_connects(
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
-    store = magazyn(f"~/.workmate/{nazwa}.db")
+    store = magazyn(f"~/.sufler/{nazwa}.db")
     zapisz(store)
 
-    assert (tmp_path / ".workmate" / f"{nazwa}.db").is_file()
+    assert (tmp_path / ".sufler" / f"{nazwa}.db").is_file()
     assert not (tmp_path / "~").exists()  # żadnego katalogu o nazwie "~" obok
     assert policz(store) == 1
 
@@ -519,7 +519,7 @@ def test_embedding_cache_written_by_one_process_is_reused_by_another(tmp_path):
     Osadzanie to sekundy pracy modelu; gdyby cache nie przechodził przez plik (albo transakcja
     zostawała otwarta i blokowała drugie połączenie), każde drzwi płaciłyby pełny koszt.
     """
-    from workmate.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
+    from sufler.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
 
     index: Path = tmp_path / "dense" / "vectors.db"
     notatki = [

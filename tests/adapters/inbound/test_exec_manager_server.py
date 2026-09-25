@@ -18,12 +18,12 @@ import pytest
 
 pytest.importorskip("fcntl", reason="menedżer wykonawców jest POSIX-only (gniazda unix)")
 
-from workmate.adapters.inbound.exec_manager_server import (  # noqa: E402
+from sufler.adapters.inbound.exec_manager_server import (  # noqa: E402
     _dispatch,
     _install_stop_flag,
     serve,
 )
-from workmate.core.errors import ExecManagerError  # noqa: E402
+from sufler.core.errors import ExecManagerError  # noqa: E402
 
 _SCOPE = f"teams-graph/{'a' * 32}"
 

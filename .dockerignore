@@ -1,4 +1,4 @@
-# Kontekst budowania obrazu WorkMate (deploy/docker/Dockerfile). Im mniejszy, tym szybszy build.
+# Kontekst budowania obrazu Sufler (deploy/docker/Dockerfile). Im mniejszy, tym szybszy build.
 # SEKRETY: .env wykluczony JAWNIE — konfiguracja wchodzi przez env_file w URUCHOMIENIU, nigdy
 # przez warstwę obrazu (warstwy są nieusuwalne i wędrują razem z obrazem).
 .env
@@ -33,7 +33,7 @@ __pycache__/
 .codegraph/
 .claude/
 
-# Samodzielne pod-projekty uv (własne obrazy/venvy) — NIE są częścią obrazu głównego WorkMate.
+# Samodzielne pod-projekty uv (własne obrazy/venvy) — NIE są częścią obrazu głównego Sufler.
 # `ceidg-tool/` wchodzi tu razem z importem na `Main` (ADR 0074) i nie jest to tylko kwestia
 # rozmiaru kontekstu: wzorce `.env` i `.env.*` wyżej są ROOT-RELATIVE, więc `ceidg-tool/.env`
 # — plik z tokenem, którego payload niesie PESEL — nie łapałby się na żaden z nich.

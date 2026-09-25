@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import inspect
 
-from workmate.core.application.tools import build_my_jira_tasks_catalog
-from workmate.core.domain.jira_tasks import JiraTask
-from workmate.core.errors import JiraReadError
+from sufler.core.application.tools import build_my_jira_tasks_catalog
+from sufler.core.domain.jira_tasks import JiraTask
+from sufler.core.errors import JiraReadError
 
 
 class _FakeMyJiraTasksService:

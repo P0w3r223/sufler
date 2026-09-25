@@ -24,9 +24,7 @@ from pathlib import Path
 
 import pytest
 
-_PAKIET = (
-    Path(__file__).resolve().parents[2] / "src" / "workmate" / "core" / "application" / "tools"
-)
+_PAKIET = Path(__file__).resolve().parents[2] / "src" / "sufler" / "core" / "application" / "tools"
 
 # Odpowiedź dla KAŻDEGO narzędzia budowanego w pakiecie. Dopisanie wpisu jest darmowe; jego brak
 # zrywa bramkę razem ze wskazaniem pliku i linii. ``True`` = wynik niesie treść spoza bramek

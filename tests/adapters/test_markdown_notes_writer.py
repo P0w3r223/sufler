@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound import markdown_notes_writer as writer_module
-from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.errors import NoteExistsError, WriteError
+from sufler.adapters.outbound import markdown_notes_writer as writer_module
+from sufler.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.errors import NoteExistsError, WriteError
 
 
 def _note(note_id: str, *, body: str = "Treść notatki.") -> Note:

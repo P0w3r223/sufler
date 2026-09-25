@@ -27,7 +27,7 @@ MSAL). Do M3 potrzebne są **dwa NOWE zakresy delegowane** (NADANE 2026-07-28), 
 | `OnlineMeetingTranscript.Read.All` | Odczyt TREŚCI transkryptu spotkania | **wymagana** |
 | `OnlineMeetings.Read` | Rozwiązanie spotkania po `joinWebUrl` (`GET /me/onlineMeetings?$filter=JoinWebUrl eq '…'`) | **wymagana** |
 
-Gdzie: **Microsoft Entra admin center → App registrations → (aplikacja WorkMate, ten sam
+Gdzie: **Microsoft Entra admin center → App registrations → (aplikacja Sufler, ten sam
 `client_id` co drzwi Teams) → API permissions → Add a permission → Microsoft Graph → Delegated
 permissions** → zaznacz oba powyższe → **Grant admin consent for <tenant>**.
 
@@ -42,16 +42,16 @@ W lokalnym `.env` drzwi Teams (patrz `.env.example`):
 
 ```dotenv
 # Dopisz oba nowe zakresy do istniejącej listy SCOPES:
-WORKMATE_TEAMS_GRAPH_SCOPES=ChannelMessage.Read.All,ChannelMessage.Send,Team.ReadBasic.All,Channel.ReadBasic.All,User.Read,Files.Read.All,Sites.Read.All,OnlineMeetingTranscript.Read.All,OnlineMeetings.Read
+SUFLER_TEAMS_GRAPH_SCOPES=ChannelMessage.Read.All,ChannelMessage.Send,Team.ReadBasic.All,Channel.ReadBasic.All,User.Read,Files.Read.All,Sites.Read.All,OnlineMeetingTranscript.Read.All,OnlineMeetings.Read
 # Włącz bramkę M3 (domyślnie OFF, ADR 0006):
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
 ```
 
 Po zmianie zakresów **usuń cache tokenu MSAL**, by wymusić ponowną zgodę device-code
 (nowy token musi nieść nowe zakresy):
 
 ```powershell
-Remove-Item $env:USERPROFILE\.workmate\teams_token_cache.bin -ErrorAction SilentlyContinue
+Remove-Item $env:USERPROFILE\.sufler\teams_token_cache.bin -ErrorAction SilentlyContinue
 ```
 
 Fail-fast: przy `ENABLE_MEETING_TRANSCRIPT=true` bez tych zakresów w `SCOPES` konfiguracja
@@ -62,7 +62,7 @@ bramki (403 dopiero przy pobraniu).
 
 ```bash
 uv sync --extra teams-graph --extra agent   # jednorazowo
-uv run workmate-meeting --source graph \
+uv run sufler-meeting --source graph \
   --meeting "<joinWebUrl spotkania albo id spotkania>" \
   --project scada-integration --date 2026-07-28
 ```
@@ -93,11 +93,11 @@ ZAPISU, domyślnie OFF — to decyzja zaufania Gate-2, ADR 0041 `proposed`):
 
 ```dotenv
 # Obie bramki muszą być ON (zapis wymaga źródła transkryptu):
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true
 ```
 
-Użycie na kanale (bot słucha jako zalogowany użytkownik, `workmate-teams-graph`):
+Użycie na kanale (bot słucha jako zalogowany użytkownik, `sufler-teams-graph`):
 
 ```
 /notatka <joinWebUrl|id> | <projekt> | <RRRR-MM-DD>
@@ -114,4 +114,4 @@ Użycie na kanale (bot słucha jako zalogowany użytkownik, `workmate-teams-grap
 
 - **B2** — mapowanie tożsamości Entra/AD → model uprawnień rdzenia (wymaga `@architect`).
 - **B3** — async „wrzuć-i-idź" + callback wyniku do wątku Teams; podpięcie zapisu wprost do drzwi
-  Teams (dziś weryfikacja idzie przez CLI `workmate-meeting`).
+  Teams (dziś weryfikacja idzie przez CLI `sufler-meeting`).

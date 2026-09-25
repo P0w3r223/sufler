@@ -13,11 +13,11 @@ import json
 import httpx
 import pytest
 
-from workmate.adapters.inbound.teams_graph.graph import (
+from sufler.adapters.inbound.teams_graph.graph import (
     HttpxGraphChannelClient,
     _encode_share_id,
 )
-from workmate.core.errors import AttachmentOutsideChannel, ThreadRootGone
+from sufler.core.errors import AttachmentOutsideChannel, ThreadRootGone
 
 
 def test_encode_share_id_uses_u_prefix_urlsafe_base64_without_padding():

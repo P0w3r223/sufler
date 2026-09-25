@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from workmate.core.application.team_schedule import TeamScheduleService
-from workmate.core.errors import InvalidRequestError
+from sufler.core.application.team_schedule import TeamScheduleService
+from sufler.core.errors import InvalidRequestError
 
 _MEMBERS = [
     {"userId": "U1", "displayName": "Jerzy Zastepski"},
@@ -153,7 +153,7 @@ def test_schedule_SIGNALS_that_the_result_was_cut_instead_of_cutting_it_silently
     sufitem nie pojawiała się ani w `shifts`, ani wśród „bez wpisów" — model dostawał wycinek
     bez żadnego znaku, że to wycinek, i przedstawiał go jako całość grafiku.
     """
-    from workmate.core.application.team_schedule import _MAX_ENTRIES
+    from sufler.core.application.team_schedule import _MAX_ENTRIES
 
     result = _service(shifts=_duzo_zmian(_MAX_ENTRIES + 25)).schedule(
         date_from="2026-08-01", date_to="2026-08-28"

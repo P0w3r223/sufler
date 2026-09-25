@@ -13,8 +13,8 @@ import re
 
 import pytest
 
-from workmate.core.application.outbox import DeliveryReport, OutboxDelivery, OutboxLimits
-from workmate.core.ports.outbox import (
+from sufler.core.application.outbox import DeliveryReport, OutboxDelivery, OutboxLimits
+from sufler.core.ports.outbox import (
     Deliverable,
     OutboxEntry,
     OutboxReadError,
@@ -274,7 +274,7 @@ def test_pozycja_GLODZONA_przez_rezerwacje_okna_nie_zostaje_na_zawsze():
     Przy utrzymującej się awarii wysyłki napływ przewyższał wtedy drenaż, a rośnie to na
     wolumenie brudnopisu WSPÓLNYM dla wszystkich rozmów.
     """
-    from workmate.core.application.outbox import _MAX_CARRIED_TURNS
+    from sufler.core.application.outbox import _MAX_CARRIED_TURNS
 
     repo = FakeRepo({})
     delivery = _delivery(repo, max_files=2)
@@ -312,7 +312,7 @@ def test_wiek_nie_wyprzedza_sufitu_prob_w_zwyklej_sciezce():
 
 def test_pozycja_przeterminowana_NIE_obiecuje_juz_ponowienia():
     """Komunikat nie może obiecywać ponowienia pliku, którego przed chwilą nie stało."""
-    from workmate.core.application.outbox import _MAX_CARRIED_TURNS
+    from sufler.core.application.outbox import _MAX_CARRIED_TURNS
 
     repo = FakeRepo({})
     delivery = _delivery(repo, max_files=2, max_seconds=0.0, monotonic=FakeClock(step=1.0))

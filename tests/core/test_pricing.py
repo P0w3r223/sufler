@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from workmate.core.domain.pricing import PRICING_SWITCH_DATE, TokenUsage, cost_usd
+from sufler.core.domain.pricing import PRICING_SWITCH_DATE, TokenUsage, cost_usd
 
 
 def test_token_usage_total_tokens():

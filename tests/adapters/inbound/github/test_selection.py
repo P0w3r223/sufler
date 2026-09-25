@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.adapters.inbound.github import selection
+from sufler.adapters.inbound.github import selection
 
 
 def _bez_echa(external_id: str, echo_kind: str) -> bool:

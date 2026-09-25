@@ -73,7 +73,7 @@ phases (a phase's new behavior is off by default until validated):
 - **New event kinds** enter only through pure mappers and notifier labels: `pr_opened`,
   `pr_comment`, `pr_review`, `ci_success`, `ci_failure`. `_ALLOWED_GITHUB_WATCH_KINDS` grows to
   `issues, comments, pulls, reviews, ci`; the **default** stays `issues, comments` (backward
-  compatible — new kinds are opt-in via `WORKMATE_GITHUB_WATCH_KINDS`).
+  compatible — new kinds are opt-in via `SUFLER_GITHUB_WATCH_KINDS`).
 - **CI de-duplication** keys on `run_id#run_attempt` (a re-run shares `run_id`; keying on the id
   alone would swallow the second failure). CI events carry no human `actor` (no loop vector) and,
   when a PR is attached, canonicalize `url` to the PR page with the run link kept in `summary`.
@@ -99,7 +99,7 @@ operator checks them, since neither can be enforced structurally from our side:
   using a dynamic `run-name:` interpolating external input (e.g. a fork PR title) could place
   Markdown (a link) into an autonomously published public comment. Low risk on an internal repo with
   trusted contributors; review before enabling if dynamic `run-name` with untrusted input is used.
-- **Single writer.** Idempotency (one comment per run×attempt) rests on a single `workmate-github`
+- **Single writer.** Idempotency (one comment per run×attempt) rests on a single `sufler-github`
   process being the only writer of `ci_autocomment` markers (the `exists`→`append` pre-check has a
   race window). Run one instance; a multi-writer setup needs an insert-reporting store method first.
 
@@ -120,7 +120,7 @@ structurally enforced**:
 - **Compensating controls (real, but not a boundary):** `reply_on_thread` pre-binds the target
   number (exfil destination is limited to the *same* linked issue/PR, never an arbitrary one),
   writes are create-only and length-bounded, and — decisively for the pilot — the write gate
-  (`WORKMATE_GITHUB_ENABLE_WRITE`) is **OFF by default**, so these tools do not materialize at all.
+  (`SUFLER_GITHUB_ENABLE_WRITE`) is **OFF by default**, so these tools do not materialize at all.
 - **Enabling condition (operator decision):** turning the write gate ON on this door accepts the
   above residual risk. Do it only for a trusted repo/team; to remove the risk structurally later,
   anchor the confirmation to a verified user turn (a hard draft→"yes" gate) or keep outward writes
@@ -136,7 +136,7 @@ structurally enforced**:
 - The CI auto-comment cursor is persisted by the adapter on the event-loop thread (after the
   offloaded `process_once` returns), never from the worker thread — otherwise it would race the
   poller/notifier writing the same JSON state file. Phase 3 moves consumer cursors toward SQLite.
-- The `workmate-github` process may run up to three concurrent consumers over one EventStore
+- The `sufler-github` process may run up to three concurrent consumers over one EventStore
   (poller, notifier, CI auto-commenter).
 - **New invariant:** the proactive push identity must equal the reactive poller identity (a single
   Teams `me_id`) — otherwise channel threading loops (the notifier's own post/reply would look like

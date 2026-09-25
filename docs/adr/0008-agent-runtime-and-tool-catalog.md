@@ -6,7 +6,7 @@ Author: P0w3r223
 Related to: docs/adr/0001-src-layout-and-hexagonal.md,
   docs/adr/0003-note-schema.md, docs/adr/0006-write-capability-gate-2.md,
   docs/adr/0007-gate-3-http-auth-deployment.md,
-  src/workmate/adapters/inbound/teams/responder.py (M1 seam), roadmap Phase 2 / M1
+  src/sufler/adapters/inbound/teams/responder.py (M1 seam), roadmap Phase 2 / M1
 
 ---
 
@@ -43,7 +43,7 @@ forking descriptions or schemas. The Teams seam already anticipates a
    `core/agent/runtime.py` behind an `LLMClient` port (`core/ports/llm.py`) with
    a domain-shaped request/response vocabulary (anti-corruption); the concrete
    `AnthropicLLMClient` lives in `adapters/outbound/`. A new inbound CLI door
-   (`adapters/inbound/cli/app.py`, console script `workmate-agent`) runs the
+   (`adapters/inbound/cli/app.py`, console script `sufler-agent`) runs the
    runtime locally with the trusted (read+write) catalog; Teams later wraps the
    same runtime in a read-only catalog via a `RuntimeResponder`.
 
@@ -92,13 +92,13 @@ Envelope:
   latency; tool errors return `{"error": ...}` to the model as a tool result;
   unknown exceptions still propagate as defects.
 - **Secret and model config.** A new `AgentSettings` (mirroring `TeamsSettings`)
-  reads `ANTHROPIC_API_KEY` (optional `WORKMATE_AGENT_API_KEY` override),
-  `WORKMATE_AGENT_MODEL`, `WORKMATE_AGENT_MAX_TOKENS`,
-  `WORKMATE_AGENT_MAX_TOOL_ITERATIONS`; `api_key` uses `field(repr=False)` and
+  reads `ANTHROPIC_API_KEY` (optional `SUFLER_AGENT_API_KEY` override),
+  `SUFLER_AGENT_MODEL`, `SUFLER_AGENT_MAX_TOKENS`,
+  `SUFLER_AGENT_MAX_TOOL_ITERATIONS`; `api_key` uses `field(repr=False)` and
   `validate()` fails fast when empty. The key never lands in the repo or under
   `data/` (the tool-indexed folder), consistent with ADR 0007. The default model
   is `claude-sonnet-5` — chosen for the project's stronger synthesis requirements —
-  and is overridable via `WORKMATE_AGENT_MODEL` (e.g. a Haiku id for cheaper
+  and is overridable via `SUFLER_AGENT_MODEL` (e.g. a Haiku id for cheaper
   dispatch, or an Opus id for harder synthesis). The default lives in config, not
   logic. Extended thinking is disabled explicitly in the LLM adapter, because the
   tool-dispatch loop replays assistant turns without `thinking` blocks.
@@ -130,8 +130,8 @@ Envelope:
 - Prompt injection from note content is bounded structurally: the less-trusted
   doors get a read-only catalog, so a successful injection cannot mutate state.
   The system prompt reiterates that note content is data, not commands.
-- New env surface (`ANTHROPIC_API_KEY`, `WORKMATE_AGENT_*`), a new console script
-  (`workmate-agent`), and the `agent` extra are documented in `.env.example` and
+- New env surface (`ANTHROPIC_API_KEY`, `SUFLER_AGENT_*`), a new console script
+  (`sufler-agent`), and the `agent` extra are documented in `.env.example` and
   `pyproject.toml`.
 - Revisit when: a second LLM provider is needed (the port already allows it); the
   agent needs write over Teams (new ADR); or `mcp`/FastMCP changes how schemas

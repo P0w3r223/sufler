@@ -1,6 +1,6 @@
 # How-to: uruchomić delegowane drzwi Teams (Microsoft Graph)
 
-`workmate-teams-graph` to produkcyjny wariant drzwi Teams: bot działa jako **zalogowany użytkownik**
+`sufler-teams-graph` to produkcyjny wariant drzwi Teams: bot działa jako **zalogowany użytkownik**
 (delegowany device-code MSAL), odpytując kanał przez Microsoft Graph — bez publicznego endpointu i
 bez rejestracji bota. Agent odpowiada read-only nad notatkami, czyta wrzucone załączniki
 (multimodalnie) i — po włączeniu bramki — pisze zwrotnie na GitHub. Decyzje:
@@ -8,7 +8,7 @@ bez rejestracji bota. Agent odpowiada read-only nad notatkami, czyta wrzucone za
 Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md).
 
 > Wariant przez Bot Framework (Emulator/Azure Bot) opisuje osobny [`teams-bot.md`](teams-bot.md) —
-> to inne drzwi (`workmate-teams`).
+> to inne drzwi (`sufler-teams`).
 
 ## Wymagania
 
@@ -23,21 +23,21 @@ Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md).
 Bez `WATCH` proces wypisze dostępne zespoły i kanały z ich ID i zakończy działanie:
 
 ```powershell
-$env:WORKMATE_TEAMS_GRAPH_CLIENT_ID = "<client_id>"
-$env:WORKMATE_TEAMS_GRAPH_TENANT_ID = "<tenant_id>"
-Remove-Item Env:WORKMATE_TEAMS_GRAPH_WATCH -ErrorAction SilentlyContinue
-uv run workmate-teams-graph
+$env:SUFLER_TEAMS_GRAPH_CLIENT_ID = "<client_id>"
+$env:SUFLER_TEAMS_GRAPH_TENANT_ID = "<tenant_id>"
+Remove-Item Env:SUFLER_TEAMS_GRAPH_WATCH -ErrorAction SilentlyContinue
+uv run sufler-teams-graph
 ```
 
 Pierwsze uruchomienie: w terminalu pojawi się kod device-code — zaloguj się w przeglądarce jako
-konto „głosu bota". Cache tokenu zapisze się w `~/.workmate/teams_token_cache.bin` (**sekret**,
+konto „głosu bota". Cache tokenu zapisze się w `~/.sufler/teams_token_cache.bin` (**sekret**,
 chmod 600); kolejne uruchomienia odświeżają token cicho. Zapisz `team_id` i `channel_id` kanału.
 
 ## Krok 2 — nasłuch kanału
 
 ```powershell
-$env:WORKMATE_TEAMS_GRAPH_WATCH = "<team_id>:<channel_id>"   # pary po przecinku dla wielu kanałów
-uv run workmate-teams-graph
+$env:SUFLER_TEAMS_GRAPH_WATCH = "<team_id>:<channel_id>"   # pary po przecinku dla wielu kanałów
+uv run sufler-teams-graph
 ```
 
 Agent odpowiada na **każdą** wiadomość na obserwowanym kanale, której autor jest inny niż konto bota
@@ -52,22 +52,22 @@ Bez dodatkowej konfiguracji: wrzucony na kanał plik agent materializuje i czyta
 - Nieobsługiwany typ / przekroczony limit → rzeczowa notka (poller nie pada).
 
 Pobieranie plików z SharePoint wymaga zgody `Files.Read.All`/`Sites.Read.All`; obrazy wklejane inline
-(hostedContents) działają bez tych zakresów. Limity: zmienne `WORKMATE_TEAMS_GRAPH_MAX_*`.
+(hostedContents) działają bez tych zakresów. Limity: zmienne `SUFLER_TEAMS_GRAPH_MAX_*`.
 
 ## Krok 4 (opcjonalnie) — zapis zwrotny na GitHub
 
 Włącz bramkę zapisu, aby agent mógł zakładać issue/komentarze i odpowiadać w wątkach (Bramka 4):
 
 ```powershell
-$env:WORKMATE_GITHUB_ENABLE_WRITE = "true"
-# wymaga skonfigurowanego repo w .env: WORKMATE_GITHUB_TOKEN/OWNER/REPO
-uv run workmate-teams-graph
+$env:SUFLER_GITHUB_ENABLE_WRITE = "true"
+# wymaga skonfigurowanego repo w .env: SUFLER_GITHUB_TOKEN/OWNER/REPO
+uv run sufler-teams-graph
 ```
 
 Agent dostanie akcje `Activity(action='create_issue')` i `Activity(action='comment')` (create-only;
 owner/repo z konfiguracji). W wątku powiązanym z issue/PR `comment` trafia w ten numer BEZ podawania
 go przez model (mapa `ThreadLinkStore`) i **wymaga**, by drzwi
-`workmate-github` biegły z `ENABLE_CHANNEL_THREADING=true` na wspólnym `events.db` i tej samej parze
+`sufler-github` biegły z `ENABLE_CHANNEL_THREADING=true` na wspólnym `events.db` i tej samej parze
 team/channel — patrz [`github-bridge.md`](github-bridge.md).
 
 ## Powrót do echa (bez klucza / bez API)

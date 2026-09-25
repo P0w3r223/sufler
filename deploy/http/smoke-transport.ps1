@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Smoke-test transportu HTTP WorkMate (Bramka 3, ADR 0007) — do wykonania PO wdrożeniu.
+    Smoke-test transportu HTTP Sufler (Bramka 3, ADR 0007) — do wykonania PO wdrożeniu.
 
 .DESCRIPTION
     Automatyzuje weryfikację z deploy-http.md §6. Sprawdza warstwę uwierzytelniania
@@ -19,16 +19,16 @@
                                             musi być ważny, inaczej dostaniesz 401)
 
     Wymaga curl.exe (wbudowany w Windows 10+). Token bierze z -Token albo z
-    $env:WORKMATE_TOKEN. NIE wpisuj tokenu do repo ani do historii powłoki.
+    $env:SUFLER_TOKEN. NIE wpisuj tokenu do repo ani do historii powłoki.
 
 .EXAMPLE
-    $env:WORKMATE_TOKEN = '<surowy token dewelopera>'
-    ./smoke-transport.ps1 -BaseUrl 'https://workmate.firma.pl'
+    $env:SUFLER_TOKEN = '<surowy token dewelopera>'
+    ./smoke-transport.ps1 -BaseUrl 'https://sufler.firma.pl'
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $BaseUrl,
-    [string] $Token = $env:WORKMATE_TOKEN,
+    [string] $Token = $env:SUFLER_TOKEN,
     [string] $ForeignHost = 'obcy.host',
     [int]    $TimeoutSec = 5
 )
@@ -40,7 +40,7 @@ if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
     throw "Brak curl.exe (wbudowany w Windows 10+). Zainstaluj cURL albo użyj innej maszyny."
 }
 if ([string]::IsNullOrWhiteSpace($Token)) {
-    throw "Brak tokenu. Ustaw `$env:WORKMATE_TOKEN albo podaj -Token."
+    throw "Brak tokenu. Ustaw `$env:SUFLER_TOKEN albo podaj -Token."
 }
 
 function Get-Status {
@@ -83,7 +83,7 @@ foreach ($c in $checks) {
 Write-Host ""
 if ($failed -gt 0) {
     Write-Host "$failed z $($checks.Count) sprawdzeń nie przeszło." -ForegroundColor Red
-    Write-Host "Podpowiedzi: 421 na dobrym ruchu => brak publicznego hosta w WORKMATE_ALLOWED_HOSTS"
+    Write-Host "Podpowiedzi: 421 na dobrym ruchu => brak publicznego hosta w SUFLER_ALLOWED_HOSTS"
     Write-Host "             (obie formy!). 000 => proxy buforuje SSE lub usługa nie działa."
     exit 1
 }

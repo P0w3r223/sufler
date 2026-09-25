@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph.selection import (
+from sufler.adapters.inbound.teams_graph.selection import (
     AttachmentRef,
     ChannelMessage,
     _parse_mention_ids,
@@ -168,7 +168,7 @@ def test_normalize_bot_message_has_empty_sender_id():
 
 def test_normalize_sets_mentions_bot_when_me_id_is_mentioned():
     # ``me_id`` (AAD id bota) wśród @wzmiankowanych → sygnał wyzwalacza „zapisz to".
-    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="@WorkMate zapisz to")
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="@Sufler zapisz to")
     raw["mentions"] = [{"mentioned": {"user": {"id": _ME}}}]
 
     msg = normalize(raw, _ME)
@@ -660,18 +660,16 @@ def test_normalize_carries_mention_texts_for_the_save_trigger():
     ``_strip_html`` spłaszcza wzmiankę do gołej nazwy, więc bez tego pola wyzwalacz „zapisz to"
     nie odróżnia adresata od argumentu — a nazwa bota niesie klucz rejestru (`workmate`).
     """
-    raw = _raw_message(
-        msg_id="m", created="2024-01-01T10:00:00Z", text="Zapisz to, Virtual WorkMate"
-    )
+    raw = _raw_message(msg_id="m", created="2024-01-01T10:00:00Z", text="Zapisz to, Virtual Sufler")
     raw["mentions"] = [
-        {"mentionText": "Virtual WorkMate", "mentioned": {"user": {"id": _ME}}},
+        {"mentionText": "Virtual Sufler", "mentioned": {"user": {"id": _ME}}},
         {"mentionText": "Kanał", "mentioned": {}},
     ]
 
     msg = normalize(raw, _ME)
 
     assert msg is not None
-    assert msg.mention_texts == ("Virtual WorkMate", "Kanał")
+    assert msg.mention_texts == ("Virtual Sufler", "Kanał")
 
 
 def test_normalize_without_mentions_leaves_mention_texts_empty():

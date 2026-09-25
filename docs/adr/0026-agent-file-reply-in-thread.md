@@ -63,7 +63,7 @@ no longer inbound-only).
 
 - **New Graph write scope.** Uploading a file to a channel requires `Files.ReadWrite.All` /
   `Sites.ReadWrite.All` — **admin consent + a one-time device-code re-consent** (delete
-  `~/.workmate/teams_token_cache.bin` to force it). This is the single biggest blocker and the reason
+  `~/.sufler/teams_token_cache.bin` to force it). This is the single biggest blocker and the reason
   0018 deferred it. Inline images do not need it, but a rendered document is a SharePoint file and does.
 - **Single writer / idempotency.** A retried turn must not double-post a file; the tool is create-only
   and the reply is one message per successful upload, but the operator runs one door instance.

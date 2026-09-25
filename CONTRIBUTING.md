@@ -1,4 +1,4 @@
-# Współtworzenie WorkMate
+# Współtworzenie Sufler
 
 Krótki przewodnik dla kogoś, kto dołącza do projektu i nie budował go od zera.
 
@@ -14,9 +14,9 @@ uv sync            # instaluje zależności + narzędzia dev do .venv
 uv run pytest      # powinno przejść na zielono
 ```
 
-Serwer uruchomisz przez `uv run workmate` (stdio) lub podejrzysz narzędzia
+Serwer uruchomisz przez `uv run sufler` (stdio) lub podejrzysz narzędzia
 w [MCP Inspectorze](https://github.com/modelcontextprotocol/inspector):
-`uv run mcp dev src/workmate/server.py`.
+`uv run mcp dev src/sufler/server.py`.
 
 ## 2. Architektura w pigułce
 

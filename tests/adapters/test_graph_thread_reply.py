@@ -9,8 +9,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_thread_reply import HttpxGraphThreadReplyPoster
-from workmate.core.errors import ThreadRootGone
+from sufler.adapters.outbound.graph_thread_reply import HttpxGraphThreadReplyPoster
+from sufler.core.errors import ThreadRootGone
 
 
 def _poster(handler, *, sleeps=None):

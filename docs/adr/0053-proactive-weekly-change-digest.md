@@ -33,13 +33,13 @@ real people is outward-facing, so it is gated off-by-default AND ships in dry-ru
 
 ## Decision
 
-1. **A new scheduler door `workmate-teams-digest`**, structurally mirroring `worklogi`: `--once` / `--login` /
+1. **A new scheduler door `sufler-teams-digest`**, structurally mirroring `worklogi`: `--once` / `--login` /
    loop modes; `next_run(weekday=Mon, hour, minute)` + heartbeat + single-instance lock; a missed-deadline
    catch-up bounded by `max_catchup_days`; `_safe_run_once` so one failure never kills the loop. It reuses the
    generic `worklogi.state` dedup store (`(week_label, recipient)` → timestamp, atomic write, tolerant read)
    and `core/domain/week` — no scheduler logic is re-implemented.
 
-2. **Recipients are an explicit env allow-list**, `WORKMATE_TEAMS_DIGEST_RECIPIENTS` (AAD user ids). A proactive
+2. **Recipients are an explicit env allow-list**, `SUFLER_TEAMS_DIGEST_RECIPIENTS` (AAD user ids). A proactive
    DM to a person requires deliberate audience selection, not "everyone in the identity map" — an env list makes
    the audience an explicit operator choice and cannot silently grow. `validate` rejects `enabled` with no
    recipients (a door that can send to nobody is a mistake).

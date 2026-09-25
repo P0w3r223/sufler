@@ -68,9 +68,9 @@ prompt, with participants set deterministically (never by the LLM).**
    `MeetingNoteService(verifier=None)` keeps the ADR 0041 single-pass behavior — additive and reversible,
    exactly like the existing `authorizer=None`/`scheduler=None` seams.
 
-5. **Gating.** The verifier is controlled by `WORKMATE_AGENT_VERIFY_MEETING_NOTE` (`AgentSettings`,
+5. **Gating.** The verifier is controlled by `SUFLER_AGENT_VERIFY_MEETING_NOTE` (`AgentSettings`,
    default OFF, ~2× cost when ON). This is a **quality toggle, not a write-capability gate** — flipping it
-   is an operator decision, not a team-consensus write flip. The `workmate-meeting` harness enables it by
+   is an operator decision, not a team-consensus write flip. The `sufler-meeting` harness enables it by
    default (`--verify`, `--no-verify` to disable), since the harness exists to verify note quality.
 
 **No `NoteMetadata` change.** Uncertainty is represented in existing fields: unrecognized speakers as a
@@ -126,12 +126,12 @@ non-frozen `MeetingSummary` DTO, never `NoteMetadata`.
   the `_extract_json`/`_loads_lenient` robustness layer (pre-existing follow-up from ADR 0009).
 - **Diarization dependency.** Anchoring quality tracks the transcript's diarization; VTT from Graph carries
   clean `<v Name>` cues, raw exports may not. Documented, not a regression.
-- **On acceptance:** flip to `accepted`; decide whether `WORKMATE_AGENT_VERIFY_MEETING_NOTE` defaults ON in
+- **On acceptance:** flip to `accepted`; decide whether `SUFLER_AGENT_VERIFY_MEETING_NOTE` defaults ON in
   production (operator call, given the ~2× cost).
 
 ## Update (2026-07-30)
 
-Status flipped to `accepted`; `WORKMATE_AGENT_VERIFY_MEETING_NOTE=true` set in `deploy/docker/env`
+Status flipped to `accepted`; `SUFLER_AGENT_VERIFY_MEETING_NOTE=true` set in `deploy/docker/env`
 per team decision — the ~2× Claude call cost per meeting note is accepted in exchange for the
 verifier catching unsupported claims. Live-verified only insofar as unit tests on fakes cover it;
 still riding on the same parked live-smoke as ADR 0041 (no real transcript run yet).

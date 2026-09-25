@@ -15,25 +15,25 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound import agent_wiring
-from workmate.adapters.inbound.agent_wiring import (
+from sufler.adapters.inbound import agent_wiring
+from sufler.adapters.inbound.agent_wiring import (
     _build_notes_read_factory,
     build_agent_runtime_or_exit,
     build_conversational_responder,
     build_read_catalog,
     file_support,
 )
-from workmate.adapters.inbound.responder import (
+from sufler.adapters.inbound.responder import (
     ConversationalResponder,
     InboundMessage,
     SafeResponder,
 )
-from workmate.config import AgentSettings, ConversationSettings, Settings
-from workmate.core.application.tools import ToolSpec
-from workmate.core.domain.workspace import WorkspaceScope
-from workmate.core.errors import NoteAuthorizationError
-from workmate.core.ports.llm import AttachmentQueue
-from workmate.core.ports.materialization import MaterializationLimits
+from sufler.config import AgentSettings, ConversationSettings, Settings
+from sufler.core.application.tools import ToolSpec
+from sufler.core.domain.workspace import WorkspaceScope
+from sufler.core.errors import NoteAuthorizationError
+from sufler.core.ports.llm import AttachmentQueue
+from sufler.core.ports.materialization import MaterializationLimits
 
 # Sondy, które budują PRAWDZIWĄ fabrykę powłoki, dotykają klienta wykonawcy — a ten jest
 # POSIX-only (gniazda unix) i na Windows podnosi ``ImportError`` w ciele modułu. Bramką jest
@@ -49,7 +49,7 @@ posix_only = pytest.mark.skipif(
 _REGISTRY = """projects:
   - key: workmate
     company: biap
-    name: WorkMate
+    name: Sufler
     description: Asystent wiedzy
     status: active
     health: green
@@ -187,10 +187,10 @@ def test_build_project_catalog_zwraca_sam_Project(tmp_path: Path):
     Obietnicę z tamtego docstringa egzekwuje dziś
     ``test_bramka_odczytu_nie_wygasa_przy_wlaczonej_powloce`` — na zmontowanej powierzchni.
     """
-    from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-    from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
-    from workmate.core.application.services import ProjectsService
-    from workmate.core.application.tools import build_project_catalog
+    from sufler.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+    from sufler.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+    from sufler.core.application.services import ProjectsService
+    from sufler.core.application.tools import build_project_catalog
 
     settings = _settings(tmp_path)
     projects = ProjectsService(
@@ -285,7 +285,7 @@ def test_built_responder_dispatches_command_without_calling_runtime(tmp_path: Pa
     responder = _build_responder(tmp_path, monkeypatch, safe=True)
 
     reply = asyncio.run(responder.respond(InboundMessage(text="/pomoc", conversation_id="chat1")))
-    # ``_help`` (commands.py) poprzedza listę komend krótkim wprowadzeniem "Jestem WorkMate…".
+    # ``_help`` (commands.py) poprzedza listę komend krótkim wprowadzeniem "Jestem Sufler…".
     assert "Dostępne komendy:" in reply
 
 
@@ -312,8 +312,8 @@ def test_scoped_runner_creates_the_conversation_directory(tmp_path):
     ``/home/scratchpad`` zamiast ``/home/scratchpad/<kanał>/<hash>``, więc pliki jednej rozmowy
     były widoczne dla wszystkich pozostałych.
     """
-    from workmate.adapters.inbound.agent_wiring import _ScopedRunner
-    from workmate.core.ports.command import CommandResult
+    from sufler.adapters.inbound.agent_wiring import _ScopedRunner
+    from sufler.core.ports.command import CommandResult
 
     class Spy:
         def __init__(self):
@@ -334,8 +334,8 @@ def test_scoped_runner_creates_the_conversation_directory(tmp_path):
 
 def test_scoped_runner_reports_a_failed_mkdir_as_a_command_result(tmp_path):
     """Nieudane przygotowanie katalogu wraca WYNIKIEM, nie wyjątkiem — tura ma przeżyć."""
-    from workmate.adapters.inbound.agent_wiring import _ScopedRunner
-    from workmate.core.ports.command import CommandResult
+    from sufler.adapters.inbound.agent_wiring import _ScopedRunner
+    from sufler.core.ports.command import CommandResult
 
     class Unused:
         def run(self, command, *, cwd="", timeout_s=0):  # pragma: no cover — nie powinno paść
@@ -375,7 +375,7 @@ def test_z_powloka_narzedzia_plikowe_nie_wchodza(tmp_path: Path, monkeypatch):
 def test_bez_powloki_narzedzia_plikowe_zostaja(tmp_path: Path, monkeypatch):
     """Cięcie jest WARUNKOWE, nie bezwarunkowe.
 
-    ``WORKMATE_ENABLE_SHELL`` jest domyślnie wyłączona (ADR 0010 dopuszcza powłokę tylko na
+    ``SUFLER_ENABLE_SHELL`` jest domyślnie wyłączona (ADR 0010 dopuszcza powłokę tylko na
     kanałach z wzajemnie zaufanymi uczestnikami), a bez niej narzędzia plikowe są jedyną drogą,
     którą model odzyskuje własny szkic po kompaktowaniu kontekstu.
     """
@@ -400,7 +400,7 @@ class _FakeLookup:
 
 def _shell_factory_with(authorizer, tmp_path: Path):
     """Prawdziwa fabryka powłoki z podanym autoryzatorem (klient wykonawcy jest POSIX-only)."""
-    from workmate.config import ShellSettings, WorkspaceSettings
+    from sufler.config import ShellSettings, WorkspaceSettings
 
     return agent_wiring._build_shell_factory(
         ShellSettings(enabled=True, manager_socket_path=tmp_path / "control.sock"),
@@ -412,9 +412,9 @@ def _shell_factory_with(authorizer, tmp_path: Path):
 @posix_only
 def test_powloka_bramkowana_czlonkostwem(tmp_path: Path):
     """§1 ADR 0063: z autoryzatorem członek dostaje powłokę, obcy/bez-tożsamości — pustą listę."""
-    from workmate.core.application.shell_authz import ShellAuthorizer
-    from workmate.core.domain.identity import Person
-    from workmate.core.domain.workspace import WorkspaceScope
+    from sufler.core.application.shell_authz import ShellAuthorizer
+    from sufler.core.domain.identity import Person
+    from sufler.core.domain.workspace import WorkspaceScope
 
     anna = Person(
         source_id="EMP-1", aad_user_id="aad-anna", jira_user="a@example.org", display_name="Anna"
@@ -431,7 +431,7 @@ def test_powloka_bramkowana_czlonkostwem(tmp_path: Path):
 @posix_only
 def test_powloka_bez_autoryzatora_nie_bramkuje(tmp_path: Path):
     """Drzwi zaufane (CLI): ``authorizer=None`` → powłoka jak przed ADR 0063, bez bramki nadawcy."""
-    from workmate.core.domain.workspace import WorkspaceScope
+    from sufler.core.domain.workspace import WorkspaceScope
 
     factory = _shell_factory_with(None, tmp_path)
     assert factory is not None
@@ -449,7 +449,7 @@ def _responder_z_reply_file(tmp_path: Path, monkeypatch, *, powloka: bool):
     Fabrykę powłoki podmieniamy, bo prawdziwa zwraca ``None`` na Windows (klient wykonawcy
     jest POSIX-only) — bez podmiany ta sonda mierzyłaby platformę, a nie regułę.
     """
-    from workmate.config import ShellSettings, WorkspaceSettings
+    from sufler.config import ShellSettings, WorkspaceSettings
 
     monkeypatch.setattr(
         agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
@@ -505,8 +505,8 @@ class _RecordingLLM:
         self.tools: list = []
 
     def complete(self, *, system, transcript, tools, trust_nonce=""):  # noqa: ANN001, ANN201
-        from workmate.core.domain.pricing import TokenUsage
-        from workmate.core.ports.llm import LLMResponse
+        from sufler.core.domain.pricing import TokenUsage
+        from sufler.core.ports.llm import LLMResponse
 
         self.tools = list(tools)
         self.tool_names = [spec.name for spec in tools]
@@ -527,7 +527,7 @@ def _zmontowany_katalog(
     własne testy; tu mierzymy SKŁADANIE powierzchni i bramkę etapu 7, nie ich budowniki. ``Notes``
     i bramka ``ReplyWithFile`` idą przez PRAWDZIWY kod (``build_agent_runtime`` + gating 7.1).
     """
-    from workmate.config import ShellSettings, WorkspaceSettings
+    from sufler.config import ShellSettings, WorkspaceSettings
 
     def _stub(name: str) -> ToolSpec:
         return ToolSpec(name, "", lambda **_kw: {})
@@ -536,7 +536,7 @@ def _zmontowany_katalog(
     tmp_path.mkdir(parents=True, exist_ok=True)
     recording = _RecordingLLM()
     monkeypatch.setattr(
-        "workmate.adapters.outbound.anthropic_llm.AnthropicLLMClient",
+        "sufler.adapters.outbound.anthropic_llm.AnthropicLLMClient",
         lambda *a, **k: recording,
     )
     monkeypatch.setattr(
@@ -644,7 +644,7 @@ def _shell_available(tmp_path: Path, monkeypatch, *, chciana: bool, fabryka_daje
     Każde wywołanie dostaje własny korzeń — ``_settings`` zakłada katalog notatek, więc trzy
     układy w jednym ``tmp_path`` przewracałyby się na ``FileExistsError``, a nie na regule.
     """
-    from workmate.config import ShellSettings, WorkspaceSettings
+    from sufler.config import ShellSettings, WorkspaceSettings
 
     korzen = tmp_path / f"{int(chciana)}{int(fabryka_daje)}"
     korzen.mkdir()
@@ -679,7 +679,7 @@ def test_shell_available_bierze_sie_z_FABRYKI_a_nie_z_ustawienia(tmp_path: Path,
 
     Rozjazd jest realny: ``_build_shell_factory`` zwraca ``None`` bez ``workspace_settings``
     i na platformie, gdzie klient wykonawcy się nie importuje (POSIX-only). Gdyby flaga szła
-    z ustawienia, konfiguracja z ``WORKMATE_ENABLE_SHELL=true`` odebrałaby narzędzia odczytu
+    z ustawienia, konfiguracja z ``SUFLER_ENABLE_SHELL=true`` odebrałaby narzędzia odczytu
     notatek (bo „powłoka je robi") przy nieistniejącej powłoce — agent bez JAKIEJKOLWIEK drogi
     do bazy wiedzy, bez jednego komunikatu.
 
@@ -700,7 +700,7 @@ def _drzwi_z_powloka(tmp_path: Path, monkeypatch, *, fabryka_daje: bool, skills:
     Fabrykę powłoki podmieniamy z tego samego powodu co wyżej: prawdziwa zwraca ``None``
     na Windows, więc bez podmiany sonda mierzyłaby platformę zamiast reguły.
     """
-    from workmate.config import ShellSettings, SkillsSettings, WorkspaceSettings
+    from sufler.config import ShellSettings, SkillsSettings, WorkspaceSettings
 
     korzen = tmp_path / f"{int(fabryka_daje)}{int(skills is not None)}"
     korzen.mkdir()
@@ -778,7 +778,7 @@ def test_lista_procedur_wchodzi_do_naglowka_dopiero_z_powloka(tmp_path: Path, mo
 
 def test_bez_bramki_katalogu_roboczego_nie_ma_go_nawet_bez_powloki(tmp_path: Path, monkeypatch):
     """Krok 5.5 nie ma prawa WŁĄCZYĆ zdolności tam, gdzie operator jej nie chciał."""
-    from workmate.config import ShellSettings, WorkspaceSettings
+    from sufler.config import ShellSettings, WorkspaceSettings
 
     monkeypatch.setattr(
         agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
@@ -813,11 +813,11 @@ def test_skrzynka_czyta_ten_sam_katalog_w_ktorym_pisze_powloka(tmp_path: Path):
     Dlatego sonda idzie przez PRODUKCYJNE ``build_shell_catalog`` i ``_build_outbox_delivery``,
     zamiast składać ścieżkę w teście — inaczej sprawdzałaby moje założenie, nie kod.
     """
-    from workmate.adapters.inbound.agent_wiring import _build_outbox_delivery, _ScopedRunner
-    from workmate.config import WorkspaceSettings
-    from workmate.core.application.tools import build_shell_catalog
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.command import CommandResult
+    from sufler.adapters.inbound.agent_wiring import _build_outbox_delivery, _ScopedRunner
+    from sufler.config import WorkspaceSettings
+    from sufler.core.application.tools import build_shell_catalog
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.command import CommandResult
 
     scope = WorkspaceScope(channel="teams_graph", conversation="team/channel/root")
     korzen = tmp_path / "ws"
@@ -864,7 +864,7 @@ _PULAPY = MaterializationLimits(max_bytes=10_000_000, max_extract_bytes=10_000_0
 
 
 def _workspace_settings(tmp_path: Path):
-    from workmate.config import WorkspaceSettings
+    from sufler.config import WorkspaceSettings
 
     return WorkspaceSettings(
         enabled=True,
@@ -879,8 +879,8 @@ def _workspace_settings(tmp_path: Path):
 def test_stager_writes_the_users_file_to_the_conversation_directory(tmp_path: Path):
     """Sedno: dotąd załącznik żył WYŁĄCZNIE w blokach rozmowy, na wolumenie, którego wykonawca
     nie montuje — więc ani powłoka, ani ``File(read)`` nie miały czego czytać."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import Attachment
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
         _workspace_settings(tmp_path),
@@ -900,8 +900,8 @@ def test_stager_writes_the_users_file_to_the_conversation_directory(tmp_path: Pa
 def test_stager_skips_the_status_note_that_stands_in_for_a_missing_file(tmp_path: Path):
     """Notka „nie udało się pobrać" to KOMUNIKAT, nie plik — zapisanie jej pod nazwą pliku
     dałoby model, który czyta własny błąd i bierze go za treść dokumentu."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import Attachment
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
         _workspace_settings(tmp_path),
@@ -920,8 +920,8 @@ def test_stager_skips_the_status_note_that_stands_in_for_a_missing_file(tmp_path
 
 def test_stager_skips_a_file_it_cannot_place_without_killing_the_rest(tmp_path: Path):
     """Jeden plik nie do odłożenia (rozszerzenie spoza listy) nie może zabrać pozostałych."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import Attachment
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
         _workspace_settings(tmp_path),
@@ -943,8 +943,8 @@ def test_stager_skips_a_file_it_cannot_place_without_killing_the_rest(tmp_path: 
 
 def test_file_tool_reads_back_exactly_what_the_stager_wrote(tmp_path: Path):
     """Pętla domknięta: drzwi odkładają plik, model prosi o niego ``File(read)`` i go dostaje."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import Attachment, AttachmentQueue
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import Attachment, AttachmentQueue
 
     factory, stage = agent_wiring.build_file_support(
         _workspace_settings(tmp_path),
@@ -970,10 +970,10 @@ def test_extracted_document_is_staged_under_a_name_that_does_not_lie(tmp_path: P
     Drzwi materializują Worda jako tekst (API nie przyjmuje go natywnie), więc oryginalnych
     bajtów już nie ma. Zapisany pod ``raport.docx`` plik kłamałby rozszerzeniem: ``File(read)``
     rozpoznałby ``.docx`` i puścił na niego czytnik Worda, który przewraca się na „to nie jest
-    zip" — a tak samo `workmate-extract` w powłoce.
+    zip" — a tak samo `sufler-extract` w powłoce.
     """
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import Attachment
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import Attachment
 
     _factory, stage = agent_wiring.build_file_support(
         _workspace_settings(tmp_path),
@@ -994,8 +994,8 @@ def test_extracted_document_is_staged_under_a_name_that_does_not_lie(tmp_path: P
 
 def test_staged_document_can_actually_be_read_back_by_the_tool(tmp_path: Path):
     """Pętla domknięta dla dokumentu: co drzwi odłożyły, to model musi umieć odczytać."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import Attachment, AttachmentQueue
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import Attachment, AttachmentQueue
 
     factory, stage = agent_wiring.build_file_support(
         _workspace_settings(tmp_path),
@@ -1017,7 +1017,7 @@ def test_staged_document_can_actually_be_read_back_by_the_tool(tmp_path: Path):
 
 def _responder_z_file(tmp_path: Path, monkeypatch, *, wlaczony: bool):
     """Responder z bramką ``File`` w zadanym stanie (reszta jak w sondach powłoki)."""
-    from workmate.config import WorkspaceSettings
+    from sufler.config import WorkspaceSettings
 
     monkeypatch.setattr(
         agent_wiring, "build_agent_runtime_or_exit", lambda *a, **k: _DummyRuntime()
@@ -1139,8 +1139,8 @@ def _akcje(spec) -> set[str]:  # noqa: ANN001
 def test_without_the_mutation_gate_the_tool_is_read_only(tmp_path: Path):
     """Warunki decydujące, czy baza wiedzy jest w ogóle mutowalna, muszą mieć sondę —
     inaczej ich usunięcie przechodzi zielono, a zauważa się to na produkcji."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import AttachmentQueue
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import AttachmentQueue
 
     factory, _stage = _para_file_z_mutacja(tmp_path, mutations=None)
     (spec,) = factory(
@@ -1152,8 +1152,8 @@ def test_without_the_mutation_gate_the_tool_is_read_only(tmp_path: Path):
 
 def test_mutation_gate_without_an_identity_map_stays_read_only(tmp_path: Path):
     """Bez mapy nie ma komu przypisać zmiany ani kogo zapytać o potwierdzenie — fail-closed."""
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import AttachmentQueue
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import AttachmentQueue
 
     factory, _stage = _para_file_z_mutacja(tmp_path, mutations=_StubMutations(), identities=None)
     (spec,) = factory(
@@ -1164,8 +1164,8 @@ def test_mutation_gate_without_an_identity_map_stays_read_only(tmp_path: Path):
 
 
 def test_unresolvable_sender_stays_read_only(tmp_path: Path):
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import AttachmentQueue
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import AttachmentQueue
 
     factory, _stage = _para_file_z_mutacja(
         tmp_path, mutations=_StubMutations(), identities=_StubIdentities(person=None)
@@ -1181,9 +1181,9 @@ def test_unresolvable_sender_stays_read_only(tmp_path: Path):
 
 
 def test_recognised_member_gets_the_mutating_actions(tmp_path: Path):
-    from workmate.core.domain.identity import Person
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import AttachmentQueue
+    from sufler.core.domain.identity import Person
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import AttachmentQueue
 
     osoba = Person(source_id="anna", display_name="Anna", aad_user_id="aad-1", jira_user="anna.k")
     factory, _stage = _para_file_z_mutacja(
@@ -1202,10 +1202,10 @@ def test_member_without_read_authorization_cannot_mutate(tmp_path: Path):
     Inaczej bramka odczytu (ADR 0062) przestawałaby cokolwiek znaczyć dla ścieżki NISZCZĄCEJ,
     a odmowa sędziego — niosąca fragment treści — byłaby kanałem odczytu wokół niej.
     """
-    from workmate.core.domain.identity import Person
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.errors import NoteAuthorizationError
-    from workmate.core.ports.llm import AttachmentQueue
+    from sufler.core.domain.identity import Person
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.errors import NoteAuthorizationError
+    from sufler.core.ports.llm import AttachmentQueue
 
     class _OdmawiajacyAutoryzator:
         def authorize(self, requester_aad_id: str):  # noqa: ANN201
@@ -1264,9 +1264,9 @@ def test_read_services_key_includes_the_retrieval_configuration(
     po cichu, bo wynik wygląda tak samo, tylko liczy według starej konfiguracji.
     """
     settings = _settings(tmp_path)
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_RRF_K", "60")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_RRF_K", "60")
     przed = agent_wiring._read_services(settings)
-    monkeypatch.setenv("WORKMATE_RETRIEVAL_RRF_K", "17")
+    monkeypatch.setenv("SUFLER_RETRIEVAL_RRF_K", "17")
     po = agent_wiring._read_services(settings)
 
     assert przed[0] is not po[0]
@@ -1280,9 +1280,9 @@ def test_member_without_jira_account_still_gets_the_mutating_actions(tmp_path: P
     powłoka), więc jej zależność od pustego pola nie może zostać bez bramki — a że mutacja
     jest już włączona na flocie, pomyłka byłaby widoczna dopiero na produkcji.
     """
-    from workmate.core.domain.identity import Person
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import AttachmentQueue
+    from sufler.core.domain.identity import Person
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import AttachmentQueue
 
     osoba = Person(source_id="EMP-51", display_name="Tadeusz", aad_user_id="aad-tadek")
     factory, _stage = _para_file_z_mutacja(

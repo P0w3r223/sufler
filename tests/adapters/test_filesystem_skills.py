@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from workmate.adapters.outbound.filesystem_skills import read_skill_catalog
+from sufler.adapters.outbound.filesystem_skills import read_skill_catalog
 
 
 @pytest.fixture()

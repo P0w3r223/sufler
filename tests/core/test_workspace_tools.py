@@ -7,13 +7,13 @@ pojawiły, golden-test by padł). Tu sprawdzamy same narzędzia workspace i kope
 
 from __future__ import annotations
 
-from workmate.core.application.tools import build_workspace_catalog
-from workmate.core.application.workspace import (
+from sufler.core.application.tools import build_workspace_catalog
+from sufler.core.application.workspace import (
     WorkspaceLimits,
     WorkspaceService,
     WorkspaceWriteService,
 )
-from workmate.core.domain.workspace import WorkspaceFile, WorkspaceScope
+from sufler.core.domain.workspace import WorkspaceFile, WorkspaceScope
 
 _SCOPE = WorkspaceScope("teams_graph", "team/chan/root")
 

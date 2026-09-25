@@ -8,16 +8,16 @@ from unittest import mock
 
 import pytest
 
-from workmate.adapters.outbound.markdown_notes_repo import (
+from sufler.adapters.outbound.markdown_notes_repo import (
     MarkdownNotesRepository,
     NoteParseError,
 )
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
-from workmate.core.application.services import NotesService, NotesWriteService
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.domain.notes import build_note_metadata
-from workmate.core.errors import RepositoryError
+from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from sufler.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+from sufler.core.application.services import NotesService, NotesWriteService
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.domain.notes import build_note_metadata
+from sufler.core.errors import RepositoryError
 
 VALID_NOTE = """---
 title: Przykładowa notatka
@@ -224,7 +224,7 @@ def test_save_note_then_search_sees_fresh_note_on_same_dir(tmp_path: Path):
         "projects:\n"
         "  - key: workmate\n"
         "    company: biap\n"
-        "    name: WorkMate\n"
+        "    name: Sufler\n"
         "    description: Asystent\n"
         "    status: active\n"
         "    health: green\n"

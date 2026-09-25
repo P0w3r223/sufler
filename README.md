@@ -1,4 +1,4 @@
-# WorkMate
+# Sufler
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml/badge.svg)](https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/actions/workflows/ci.yml)
@@ -30,7 +30,7 @@ Karty czasu (WorklogPRO) zostały wycofane z projektu w całości, nie wstrzyman
 ([ADR 0055](docs/adr/0055-withdraw-worklogpro-timesheets.md)).
 
 Stan bramek jakości pokazuje badge CI na górze — biegają na `Main`, `Dev`, PR-ach do tych dwóch
-gałęzi oraz nocą. Na **PR-ze** zakres jest zawężony do tego, czego zmiana dotyczy: wpis `workmate`
+gałęzi oraz nocą. Na **PR-ze** zakres jest zawężony do tego, czego zmiana dotyczy: wpis `sufler`
 biegnie zawsze, bo to on niesie bramki chodzące po całym drzewie (martwe odsyłacze, numeracja ADR,
 spójność wersji), a pozostałe wpisy macierzy i obie budowy obrazów — tylko gdy zmiana sięga ich
 katalogów. Na `Main`, nocą i przy `workflow_dispatch` biegnie **komplet**, bo tam pytanie brzmi
@@ -48,7 +48,7 @@ wiedziała, który program sprawdza). Tamta matryca niesie wyłącznie osie, kt�
 drugi system i drugą wersję Pythona. Opis każdej jednostki mieszka u niej — tutaj jest tylko
 wskazówka, dokąd iść.
 
-**Rdzeń `workmate`** (`src/`, `tests/`, `docs/`, `deploy/`, `eval/`, `scripts/`) — to, co opisuje
+**Rdzeń `sufler`** (`src/`, `tests/`, `docs/`, `deploy/`, `eval/`, `scripts/`) — to, co opisuje
 reszta tego pliku: serwer MCP, runtime agenta, drzwi i most zdarzeń.
 
 **[`Powiadomienia_teams/`](Powiadomienia_teams/README.md)** — cotygodniowy asystent uzupełniania
@@ -117,7 +117,7 @@ jedna bramka: `tests/core/test_tool_descriptions.py`.
 
 Pełna specyfikacja parametrów i wyników narzędzi: [`docs/reference/tools.md`](docs/reference/tools.md).
 
-### Czego WorkMate nie robi
+### Czego Sufler nie robi
 
 Kilka z tych granic jest wynikiem świadomego wycofania, a nie braku czasu:
 
@@ -144,7 +144,7 @@ Kilka z tych granic jest wynikiem świadomego wycofania, a nie braku czasu:
 
 ## Architektura w skrócie
 
-WorkMate realizuje zasadę **„jeden rdzeń, wiele drzwi"**: cała logika i cała wartość mieszkają
+Sufler realizuje zasadę **„jeden rdzeń, wiele drzwi"**: cała logika i cała wartość mieszkają
 w jednym, niezależnym od interfejsu rdzeniu (`core/`), a każdy kanał dostępu — Claude Code przez
 MCP, Teams, CLI, GitHub — jest cienkim adapterem nad tym samym katalogiem narzędzi. Dzięki temu
 nowa zdolność (narzędzie, drzwi, integracja) powstaje raz i jest dostępna wszędzie, zamiast być
@@ -154,7 +154,7 @@ duplikowana per kanał.
 rdzeń, nigdy odwrotnie. Egzekwuje ją import-linter jako osobny krok CI.
 
 ```
-src/workmate/
+src/sufler/
 ├── core/                  # RDZEŃ — bez I/O, bez SDK
 │   ├── domain/             # modele + czysta logika
 │   ├── ports/               # interfejsy (repozytoria, LLM, GitHub, Jira, notyfikacje…)
@@ -164,7 +164,7 @@ src/workmate/
 │   ├── inbound/    # DRZWI: mcp, teams, teams_graph, cli, github…
 │   └── outbound/  # KLIENCI zewnętrznych API
 ├── server.py               # wiring serwera MCP
-└── config/                 # ustawienia WORKMATE_* — moduł na domenę, re-eksport w __init__
+└── config/                 # ustawienia SUFLER_* — moduł na domenę, re-eksport w __init__
 ```
 
 ```mermaid
@@ -172,8 +172,8 @@ flowchart TB
     subgraph D["DRZWI · adapters/inbound"]
         MCP["MCP<br/>Claude Code"]
         TG["Teams<br/>Graph / Bot"]
-        CLI["CLI<br/>workmate-agent"]
-        GHD["GitHub<br/>workmate-github"]
+        CLI["CLI<br/>sufler-agent"]
+        GHD["GitHub<br/>sufler-github"]
     end
     subgraph C["RDZEŃ · core"]
         CAT["Jedno źródło narzędzi<br/>5–8 MCP (zamrożone) + katalog agenta"]
@@ -231,12 +231,12 @@ bazowym z `deploy/docker/Dockerfile`. CI nie jest osobnym dowodem — bierze wer
 uv sync
 
 # Serwer MCP lokalnie (transport stdio) + podgląd narzędzi
-uv run workmate
-uv run mcp dev src/workmate/server.py
+uv run sufler
+uv run mcp dev src/sufler/server.py
 ```
 
 **Podłączenie do Claude Code** — repozytorium zawiera [`.mcp.json`](.mcp.json) (scope `project`),
-więc po otwarciu Claude Code w tym katalogu serwer `workmate` pojawia się automatycznie; ten sam
+więc po otwarciu Claude Code w tym katalogu serwer `sufler` pojawia się automatycznie; ten sam
 plik podłącza pomocniczy serwer `code-review-graph` do nawigacji po kodzie. Narzędzie zapisu
 `save_note` jest domyślnie WYŁĄCZONE (Bramka 2, [ADR 0006](docs/adr/0006-write-capability-gate-2.md))
 — skopiuj [`.env.example`](.env.example) do `.env`, żeby je włączyć lokalnie.
@@ -262,26 +262,26 @@ Każde drzwi i każde narzędzie operatorskie to osobny console-script. Część
 
 | Polecenie | Co uruchamia |
 |-----------|--------------|
-| `workmate` | Serwer MCP (stdio) — baza wiedzy i narzędzia dla Claude Code. |
-| `workmate-agent` | Lokalny runtime agenta z linii komend. |
-| `workmate-meeting` | Harness notatki ze spotkania poza Teams ([ADR 0009](docs/adr/0009-meeting-note-flow-and-write-surface.md)). |
-| `workmate-teams` | Drzwi Teams w trybie Bot Framework. |
-| `workmate-teams-graph` | Drzwi Teams w trybie delegowanego Microsoft Graph. |
-| `workmate-github` | Most GitHub — polling zdarzeń PAT. |
-| `workmate-teams-digest` | Proaktywny cotygodniowy digest zmian ([ADR 0053](docs/adr/0053-proactive-weekly-change-digest.md)). |
-| `workmate-search` | Wyszukiwarka notatek dla powłoki agenta — ten sam ranker co narzędzie, nie `grep`. |
-| `workmate-render` | Renderer pliku (`pdf`/`docx`) do skrzynki wyjściowej powłoki. |
-| `workmate-extract` | Ekstraktor tekstu z PDF/docx/xlsx/pptx/HTML dla powłoki ([ADR 0064](docs/adr/0064-file-tool-and-model-initiated-materialization.md)). |
-| `workmate-exec` | Kontener-wykonawca poleceń powłoki — osobny proces bez sieci ([ADR 0057](docs/adr/0057-shell-executor-container-without-network.md)). |
-| `workmate-exec-manager` | Menedżer wykonawców: stawia i gasi wykonawcę na rozmowę, montując mu wyłącznie jej brudnopis ([ADR 0063](docs/adr/0063-shell-membership-gate-and-conversation-isolation.md)). |
-| `workmate-heartbeat-check` | Healthcheck pulsu pollerów (używany przez `docker compose`). |
-| `workmate-metrics` | Raport metryk użycia (licznik SQLite, pseudonimizowany). |
-| `workmate-diagnostics` | Odczyt dziennika audytu i obu kwarantann ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md)) — patrz „Wdrożenie". |
-| `workmate-seed-corpus` | Import korpusu początkowego notatek — dry-run domyślnie. |
+| `sufler` | Serwer MCP (stdio) — baza wiedzy i narzędzia dla Claude Code. |
+| `sufler-agent` | Lokalny runtime agenta z linii komend. |
+| `sufler-meeting` | Harness notatki ze spotkania poza Teams ([ADR 0009](docs/adr/0009-meeting-note-flow-and-write-surface.md)). |
+| `sufler-teams` | Drzwi Teams w trybie Bot Framework. |
+| `sufler-teams-graph` | Drzwi Teams w trybie delegowanego Microsoft Graph. |
+| `sufler-github` | Most GitHub — polling zdarzeń PAT. |
+| `sufler-teams-digest` | Proaktywny cotygodniowy digest zmian ([ADR 0053](docs/adr/0053-proactive-weekly-change-digest.md)). |
+| `sufler-search` | Wyszukiwarka notatek dla powłoki agenta — ten sam ranker co narzędzie, nie `grep`. |
+| `sufler-render` | Renderer pliku (`pdf`/`docx`) do skrzynki wyjściowej powłoki. |
+| `sufler-extract` | Ekstraktor tekstu z PDF/docx/xlsx/pptx/HTML dla powłoki ([ADR 0064](docs/adr/0064-file-tool-and-model-initiated-materialization.md)). |
+| `sufler-exec` | Kontener-wykonawca poleceń powłoki — osobny proces bez sieci ([ADR 0057](docs/adr/0057-shell-executor-container-without-network.md)). |
+| `sufler-exec-manager` | Menedżer wykonawców: stawia i gasi wykonawcę na rozmowę, montując mu wyłącznie jej brudnopis ([ADR 0063](docs/adr/0063-shell-membership-gate-and-conversation-isolation.md)). |
+| `sufler-heartbeat-check` | Healthcheck pulsu pollerów (używany przez `docker compose`). |
+| `sufler-metrics` | Raport metryk użycia (licznik SQLite, pseudonimizowany). |
+| `sufler-diagnostics` | Odczyt dziennika audytu i obu kwarantann ([ADR 0069](docs/adr/0069-inbound-message-dead-letter-and-bounded-handling.md)) — patrz „Wdrożenie". |
+| `sufler-seed-corpus` | Import korpusu początkowego notatek — dry-run domyślnie. |
 
 ## Konfiguracja
 
-Pełna macierz zmiennych `WORKMATE_*` (co każda bramka włącza i czego wymaga):
+Pełna macierz zmiennych `SUFLER_*` (co każda bramka włącza i czego wymaga):
 [`docs/how-to/gate-matrix.md`](docs/how-to/gate-matrix.md). Wzorzec pliku środowiskowego:
 [`.env.example`](.env.example) — wartości sekretów i identyfikatorów tenanta trzymamy wyłącznie
 w `.env` (gitignorowany), nigdy w dokumentacji czy kodzie.
@@ -345,14 +345,14 @@ lub brakujący plik daje pusty stan i ostrzeżenie, nie zatrzymanie usługi.
 
 Trzy magazyny obserwowalności czyta jedno polecenie — dziennik audytu (`audit`), kwarantannę
 zdarzeń niewysłanych (`dead-letters`) i kwarantannę wiadomości porzuconych przez drzwi
-(`inbound`). Ścieżka bazy nie jest zaszyta: `--db` albo zmienna (`WORKMATE_EVENTS_DB` dla obu
-kwarantann, `WORKMATE_AUDIT_DB` dla audytu). Połączenie jest tylko do odczytu — bazę w tej samej
+(`inbound`). Ścieżka bazy nie jest zaszyta: `--db` albo zmienna (`SUFLER_EVENTS_DB` dla obu
+kwarantann, `SUFLER_AUDIT_DB` dla audytu). Połączenie jest tylko do odczytu — bazę w tej samej
 chwili piszą procesy drzwi.
 
 ```bash
-workmate-diagnostics inbound --since 24h                 # kto nie dostał odpowiedzi
-workmate-diagnostics dead-letters --source github --since 7d
-workmate-diagnostics audit --source teams_graph --limit 100 --json
+sufler-diagnostics inbound --since 24h                 # kto nie dostał odpowiedzi
+sufler-diagnostics dead-letters --source github --since 7d
+sufler-diagnostics audit --source teams_graph --limit 100 --json
 ```
 
 Wpis niesie identyfikatory (kanał, wątek, id wiadomości, nadawca po AAD id), powód i czas —

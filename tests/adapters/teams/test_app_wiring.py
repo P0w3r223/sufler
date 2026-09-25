@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.teams import app as teams_app
-from workmate.config import TeamsSettings
-from workmate.core.errors import NoteAuthorizationError
+from sufler.adapters.inbound.teams import app as teams_app
+from sufler.config import TeamsSettings
+from sufler.core.errors import NoteAuthorizationError
 
 _IDENTITIES = "EMP-042:\n  aad_user_id: aad-anna\n  jira_user: anna@example.org\n"
 

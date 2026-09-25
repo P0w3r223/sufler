@@ -10,8 +10,8 @@ import asyncio
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_teams_notifier import HttpxTeamsNotifier
-from workmate.core.errors import ThreadRootGone
+from sufler.adapters.outbound.graph_teams_notifier import HttpxTeamsNotifier
+from sufler.core.errors import ThreadRootGone
 
 
 def _notifier(handler) -> HttpxTeamsNotifier:
@@ -210,7 +210,7 @@ def _no_sleep(monkeypatch) -> None:
     async def instant(_seconds: float) -> None:
         return None
 
-    monkeypatch.setattr("workmate.adapters.outbound.graph_teams_notifier.asyncio.sleep", instant)
+    monkeypatch.setattr("sufler.adapters.outbound.graph_teams_notifier.asyncio.sleep", instant)
 
 
 def _stage_handler(on_post_message, chat_responses=None):

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from workmate.adapters.inbound.commands import CommandContext
-from workmate.adapters.inbound.meeting_command import MeetingNoteRouter
-from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
-from workmate.core.application.meeting_notes import MeetingNoteOutcome
-from workmate.core.domain.identity import Person
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.errors import LLMError, WriteError
+from sufler.adapters.inbound.commands import CommandContext
+from sufler.adapters.inbound.meeting_command import MeetingNoteRouter
+from sufler.core.application.meeting_authz import MeetingNoteAuthorizer
+from sufler.core.application.meeting_notes import MeetingNoteOutcome
+from sufler.core.domain.identity import Person
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.errors import LLMError, WriteError
 
 
 class _FakeMeetingService:

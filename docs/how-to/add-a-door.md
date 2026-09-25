@@ -18,13 +18,13 @@ dopieszczenia kontraktu narzędzi.
 ## Szkic (Faza 2, Teams)
 
 ```
-src/workmate/adapters/
+src/sufler/adapters/
   inbound/
     responder/   # WSPÓLNY SZEW: Responder(Protocol) w protocols; RuntimeResponder, EchoResponder w simple
     mcp/          # Faza 1 (jest)
     teams/        # Faza 2 — runtime agenta read-only (jest)
       bot.py        # handler wiadomości (SDK-free) + build_agent_app (Agents SDK, leniwie)
-      app.py        # osobny proces bota (workmate-teams): aiohttp na /api/messages
+      app.py        # osobny proces bota (sufler-teams): aiohttp na /api/messages
   agent/          # NOWE w Fazie 2 (M1): runtime agenta w rdzeniu
     runtime.py    # model w pętli: czyta zapytanie → woła te same narzędzia → składa odpowiedź
 ```

@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from workmate.core.domain.models import NoteSummary, ProjectStatus
-from workmate.core.domain.project_brief import ProjectBrief
+from sufler.core.domain.models import NoteSummary, ProjectStatus
+from sufler.core.domain.project_brief import ProjectBrief
 
 
 def _status(**over: object) -> ProjectStatus:
     base: dict[str, object] = dict(
         key="workmate",
         company="biap",
-        name="WorkMate",
+        name="Sufler",
         status="w toku",
         health="zielony",
         phase="budowa",
@@ -54,7 +54,7 @@ def test_to_text_includes_header_status_summary_and_counts():
 
     text = brief.to_text()
 
-    assert "One-pager: WorkMate (biap/workmate)" in text
+    assert "One-pager: Sufler (biap/workmate)" in text
     assert "w toku" in text and "zielony" in text and "budowa" in text
     assert "Zaktualizowano:** 2026-07-20" in text
     assert "Wspólna baza wiedzy pionu." in text

@@ -9,9 +9,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from workmate.core.application.events import EventService
-from workmate.core.domain.events import Event, NewEvent
-from workmate.core.errors import WriteError
+from sufler.core.application.events import EventService
+from sufler.core.domain.events import Event, NewEvent
+from sufler.core.errors import WriteError
 
 _WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
 

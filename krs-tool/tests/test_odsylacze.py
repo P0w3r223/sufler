@@ -2,7 +2,7 @@
 
 Bramka rdzenia (`tests/test_adr_numbering.py`) tego drzewa NIE sprawdza, i to jest decyzja,
 nie przeoczenie: pisane prozą `docs/adr/0001_…` rozwiązywałaby od korzenia repozytorium, gdzie
-numeracja ADR należy do WorkMate'a i mówi o czym innym. Wykluczenie bez zastępstwa zamieniłoby
+numeracja ADR należy do Sufler'a i mówi o czym innym. Wykluczenie bez zastępstwa zamieniłoby
 jednak obserwatora na dobre chęci, więc ten sam warunek stoi tutaj — z korzeniem przesuniętym
 o jeden katalog.
 

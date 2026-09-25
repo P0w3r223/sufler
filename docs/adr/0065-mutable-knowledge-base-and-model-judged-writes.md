@@ -173,7 +173,7 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 | # | Risk introduced | Mitigation |
 |---|---|---|
 | R1 | The judge becomes the *only* real boundary, and it is probabilistic — the exact failure mode ADR 0057 avoids. | The judge is defense-in-depth **on top of** AAD authz (hard, pre-judge), path/schema confinement, and pre-mutation backup. It can only narrow, never widen. |
-| R2 | `edit`/overwrite **and now `delete`** kill the create-only invariant (`os.link`); reversibility stops being structural and becomes procedural. | Per-operation snapshot before every destructive write, written *first* and fail-closed; **nightly full-volume backup already shipped** (infra `systemd/workmate-backup.timer`, 03:00, `WORKMATE_BACKUP_DEST` mandatory, keep 30). Worst case is one restore, not a lost note. |
+| R2 | `edit`/overwrite **and now `delete`** kill the create-only invariant (`os.link`); reversibility stops being structural and becomes procedural. | Per-operation snapshot before every destructive write, written *first* and fail-closed; **nightly full-volume backup already shipped** (infra `systemd/sufler-backup.timer`, 03:00, `SUFLER_BACKUP_DEST` mandatory, keep 30). Worst case is one restore, not a lost note. |
 | R3 | The **chosen** generic `File(write/edit/delete)` channel bypasses the note schema/provenance/id derivation and could break the `company/project` layout that authz and retrieval depend on. | The owner chose the generic channel over the typed one, so the mitigation must be structural rather than a smaller surface: every mutating `File` call is **rewritten into a validated note operation** by the `NotesWriteService` validator before it reaches the port — company/project resolved against the registry, path through `_resolve_within`, id derivation unchanged, body free. A `File` path that does not resolve to an existing note under `notes_dir` is refused, not created ad hoc. The tool argument is a *request*, never a filesystem path taken at face value. |
 | R4 | Prompt-injection drives a destructive write; the second model can be injected too. | Structural, not just the judge: AAD authz before the judge, content-as-data boundaries on both the agent and the judge, backups, single-file ops. |
 | R8 | Probabilistic judge + write-new+swap collide with create-only-as-race-guard on deterministic ids (ADR 0043/0048). | Mutation only on `save_note`; `-mtg-`/`-thr-` stay create-only. |
@@ -206,7 +206,7 @@ This ADR records that reversal with its risks stated as conscious consent, and s
     tool") becomes false the moment the code merges. It changes in that same PR — this ADR is the
     "own ADR" its escape clause requires.
 - **The nightly volume backup is shipped but NOT installed on prod (verified 2026-08-14:
-  `systemctl is-enabled workmate-backup.timer` → `not-found`, no `/etc/workmate/backup.env`).** R2 and
+  `systemctl is-enabled sufler-backup.timer` → `not-found`, no `/etc/sufler/backup.env`).** R2 and
   R11 rest their entire case on procedural reversibility, so this is a **precondition, not a
   follow-up**: `delete` does not ship until the timer is installed, enabled, **proven by one
   restore**, and has one successful run to show. Per-operation snapshots alone protect a single
@@ -238,7 +238,7 @@ This ADR records that reversal with its risks stated as conscious consent, and s
 - **Does `delete` exist?** → **Yes** (Decision 5), single-file and snapshot-first. Consented risk
   **R11**.
 - **Backup cadence** → per-operation snapshot **always**, plus the **nightly full-volume backup that
-  already exists** (infra `systemd/workmate-backup.timer`, 03:00 daily, destination outside the
+  already exists** (infra `systemd/sufler-backup.timer`, 03:00 daily, destination outside the
   Docker volume, 365 kept). No new cadence is invented here; the question was answered by shipped
   infra — which is also why the destination requirement needed amending later, see the precondition
   note above and infra ADR 0014.

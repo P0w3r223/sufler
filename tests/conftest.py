@@ -7,7 +7,7 @@ w pamięci, bez dotykania dysku.
 Izolacja środowiska (``_srodowisko_bez_konfiguracji_maszyny``) jest tu, bo wynik pakietu nie
 może zależeć od maszyny. ``config/`` czyta WYŁĄCZNIE ``os.environ`` (``.env`` wczytują dopiero
 wejścia drzwi przez ``env.load_dotenv``), więc pod pytestem plik ``.env`` z repo nie działa —
-ale realna powłoka operatora działa. Empirycznie: z ``WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true``
+ale realna powłoka operatora działa. Empirycznie: z ``SUFLER_GITHUB_ENABLE_CI_AUTO_COMMENT=true``
 w środowisku ``test_enable_ci_auto_comment_defaults_false`` przewracał się na maszynie, na której
 nikt nie tknął kodu. Testy, które chcą zmiennej, ustawiają ją same przez ``monkeypatch``.
 """
@@ -19,14 +19,14 @@ from datetime import date
 
 import pytest
 
-from workmate.core.domain.models import (
+from sufler.core.domain.models import (
     Note,
     NoteMetadata,
     Project,
     ProjectStatusRecord,
 )
 
-# Zmienne spoza przestrzeni ``WORKMATE_*``, które i tak sterują naszym kodem: klucz SDK czytany
+# Zmienne spoza przestrzeni ``SUFLER_*``, które i tak sterują naszym kodem: klucz SDK czytany
 # awaryjnie przez ``AgentSettings.from_env`` (obecny na maszynie dewelopera) oraz zmienne, przez
 # które SDK/biblioteki wychodzą do sieci — pakiet ma biegać bez sieci, także gdy ktoś je ustawił.
 _OBCE_ZMIENNE = (
@@ -38,14 +38,14 @@ _OBCE_ZMIENNE = (
 
 @pytest.fixture(autouse=True)
 def _srodowisko_bez_konfiguracji_maszyny(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Zdejmij KAŻDĄ zmienną ``WORKMATE_*`` (i klucze SDK) na czas testu.
+    """Zdejmij KAŻDĄ zmienną ``SUFLER_*`` (i klucze SDK) na czas testu.
 
     ``monkeypatch`` przywraca stan po teście, więc uruchomienie pakietu nie zmienia środowiska
     powłoki. Fixture jest ``autouse`` i funkcyjny: biegnie PRZED ciałem testu, a ustawienia
     robione w teście (``monkeypatch.setenv``) mają pierwszeństwo, bo są późniejsze.
     """
     for name in list(os.environ):
-        if name.startswith("WORKMATE_"):
+        if name.startswith("SUFLER_"):
             monkeypatch.delenv(name, raising=False)
     for name in _OBCE_ZMIENNE:
         monkeypatch.delenv(name, raising=False)
@@ -169,11 +169,11 @@ def sample_notes() -> list[Note]:
 
 
 def przestrzen_config() -> dict[str, object]:
-    """Nazwy najwyższego poziomu CAŁEGO pakietu ``workmate.config`` — z każdego modułu domeny."""
+    """Nazwy najwyższego poziomu CAŁEGO pakietu ``sufler.config`` — z każdego modułu domeny."""
     import importlib
     import pkgutil
 
-    from workmate import config
+    from sufler import config
 
     # ``walk_packages``, nie ``iter_modules``: gdy któraś domena urośnie kiedyś w PODPAKIET
     # (``config/<x>/``), nazwy z jego modułów wymknęłyby się bramkom tak samo cicho, jak
@@ -185,6 +185,6 @@ def przestrzen_config() -> dict[str, object]:
 
 
 def pochodzi_z_config(obj: object) -> bool:
-    """Czy obiekt jest ZDEFINIOWANY w ``workmate.config`` (a nie tylko tam zaimportowany)."""
+    """Czy obiekt jest ZDEFINIOWANY w ``sufler.config`` (a nie tylko tam zaimportowany)."""
     modul = getattr(obj, "__module__", "")
-    return modul == "workmate.config" or modul.startswith("workmate.config.")
+    return modul == "sufler.config" or modul.startswith("sufler.config.")

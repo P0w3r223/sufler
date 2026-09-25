@@ -7,9 +7,9 @@ POMINIĘTA, build-time), nie wyjątek. Rozpoznany członek → ``Actor``; niezna
 
 from __future__ import annotations
 
-from workmate.core.application.shell_authz import ShellAuthorizer
-from workmate.core.domain.authorization import Actor, can_use_shell
-from workmate.core.domain.identity import Person
+from sufler.core.application.shell_authz import ShellAuthorizer
+from sufler.core.domain.authorization import Actor, can_use_shell
+from sufler.core.domain.identity import Person
 
 
 class _FakeLookup:
@@ -72,7 +72,7 @@ _TADEUSZ = Person(
 def test_member_without_jira_account_gets_the_shell():
     """Najcięższa konsekwencja z ADR 0070 §3 — i jedyna, która URUCHAMIA KOD.
 
-    ``WORKMATE_ENABLE_SHELL=true`` na flocie, więc dopisanie wiersza do pliku YAML wręcza tej
+    ``SUFLER_ENABLE_SHELL=true`` na flocie, więc dopisanie wiersza do pliku YAML wręcza tej
     osobie wykonawcę. To jest świadoma decyzja właściciela z 2026-09-04, nie skutek uboczny
     odblokowania bramki odczytu — i dlatego ma tu stać test, a nie samo zdanie w dokumencie.
     """

@@ -15,9 +15,9 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
-from workmate.adapters.outbound.anthropic_llm import _to_tool_def
-from workmate.core.application.tools import build_activity_catalog
-from workmate.core.domain.events import Event
+from sufler.adapters.outbound.anthropic_llm import _to_tool_def
+from sufler.core.application.tools import build_activity_catalog
+from sufler.core.domain.events import Event
 
 
 class _FakeEvents:
@@ -351,7 +351,7 @@ def test_zlozona_notka_mowi_klauzule_ostroznosci_DOKLADNIE_raz() -> None:
     który można przeskoczyć. Klauzula jest więc wspólna i idzie na końcu raz, a każda z notek
     wnosi tylko własny POWÓD ostrożności.
     """
-    from workmate.core.application.tools.spec import _EVENTS_CAUTION_NOTE
+    from sufler.core.application.tools.spec import _EVENTS_CAUTION_NOTE
 
     notka = build_activity_catalog(events=_FakeEvents())[0].fn(action="events", source="github")[
         "note"

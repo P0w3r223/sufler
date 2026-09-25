@@ -3,5 +3,5 @@
 # Po starcie: podłącz Bot Framework Emulator do http://localhost:3978/api/messages
 # (App ID / hasło puste) albo uruchom scripts/teams_smoke.py (round-trip bez GUI).
 $ErrorActionPreference = "Stop"
-$env:WORKMATE_TEAMS_ANONYMOUS = "true"
-uv run workmate-teams
+$env:SUFLER_TEAMS_ANONYMOUS = "true"
+uv run sufler-teams

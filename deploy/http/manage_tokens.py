@@ -1,4 +1,4 @@
-"""Zarządzanie magazynem tokenów drzwi HTTP WorkMate (Bramka 3, ADR 0007).
+"""Zarządzanie magazynem tokenów drzwi HTTP Sufler (Bramka 3, ADR 0007).
 
 Wydawanie, rotacja, unieważnianie, listowanie i walidacja tokenów per osoba dla
 wdrożenia ``streamable-http``. Zastępuje kruche inline'owe ``python -c`` z
@@ -17,7 +17,7 @@ Reguły bezpieczeństwa (te same, co w runbooku):
 * Po każdej mutacji plik jest rewalidowany regułami weryfikatora drzwi, więc
   narzędzie nigdy nie zostawi magazynu, którego serwer HTTP by nie przyjął.
 
-Użycie (w środowisku projektu, żeby ``workmate`` był importowalny)::
+Użycie (w środowisku projektu, żeby ``sufler`` był importowalny)::
 
     uv run --no-sync python deploy/http/manage_tokens.py issue --person anna.kowalska
     uv run --no-sync python deploy/http/manage_tokens.py list
@@ -36,15 +36,15 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from workmate.adapters.inbound.mcp.auth import TokenStoreError, TokenVerifier
-from workmate.config import _DEFAULT_TOKENS_FILE
+from sufler.adapters.inbound.mcp.auth import TokenStoreError, TokenVerifier
+from sufler.config import _DEFAULT_TOKENS_FILE
 
 # Domyślny magazyn — TA SAMA stała co u serwera (poza data/, poza repo), nie jej kopia.
 # Powielony literał windowsowy przeżył tu poprawkę ``config/server.py`` (rozgałęzienie
 # po ``os.name``),
-# więc na Linuksie narzędzie pisało do WZGLĘDNEGO ``./C:/ProgramData/WorkMate/tokens.json``
-# i meldowało sukces, a serwer szukał magazynu w ``/var/lib/workmate/tokens.json``.
-# Nadpisywalny przez ``--store`` albo ``WORKMATE_TOKENS_FILE`` (jak serwer przy starcie).
+# więc na Linuksie narzędzie pisało do WZGLĘDNEGO ``./C:/ProgramData/Sufler/tokens.json``
+# i meldowało sukces, a serwer szukał magazynu w ``/var/lib/sufler/tokens.json``.
+# Nadpisywalny przez ``--store`` albo ``SUFLER_TOKENS_FILE`` (jak serwer przy starcie).
 DEFAULT_STORE = _DEFAULT_TOKENS_FILE
 
 Entry = dict[str, object]
@@ -58,10 +58,10 @@ def _hash_token(token: str) -> str:
 def _repo_data_dir() -> Path:
     """Katalog danych do guardu „magazyn poza data/".
 
-    Honoruje ``WORKMATE_DATA_DIR`` tak jak serwer (``config``), żeby guard narzędzia
+    Honoruje ``SUFLER_DATA_DIR`` tak jak serwer (``config``), żeby guard narzędzia
     nie rozjechał się z faktycznym data-dir wdrożenia; inaczej ``data/`` repozytorium.
     """
-    env = os.environ.get("WORKMATE_DATA_DIR")
+    env = os.environ.get("SUFLER_DATA_DIR")
     if env:
         return Path(env)
     # deploy/http/manage_tokens.py → parents[2] == korzeń repozytorium.
@@ -216,14 +216,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def _default_store() -> Path:
-    env = os.environ.get("WORKMATE_TOKENS_FILE")
+    env = os.environ.get("SUFLER_TOKENS_FILE")
     return Path(env) if env else DEFAULT_STORE
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="manage_tokens",
-        description="Zarządzanie magazynem tokenów drzwi HTTP WorkMate (Bramka 3, ADR 0007).",
+        description="Zarządzanie magazynem tokenów drzwi HTTP Sufler (Bramka 3, ADR 0007).",
     )
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(

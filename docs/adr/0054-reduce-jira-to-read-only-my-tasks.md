@@ -41,7 +41,7 @@ the team decided the mutation surface and event-push surface are not worth maint
 Adopt **A1**. Concretely:
 
 - **Removed:** `adapters/inbound/jira/{poller,selection,state,app}.py` (poller + entrypoint
-  `workmate-jira`), `core/application/jira.py` (`JiraWriteService`), `JiraWritePort`
+  `sufler-jira`), `core/application/jira.py` (`JiraWriteService`), `JiraWritePort`
   (`core/ports/jira.py`), `build_jira_write_catalog` / `build_jira_transition_catalog`
   (`application/tools.py`), the Jira wiring in `teams_graph/app.py` (`_build_jira_catalog`, the
   `source="jira"` notifier), the `jira_*` entries in `notifier._KIND_LABELS`, the `jira` service from
@@ -68,11 +68,11 @@ Adopt **A1**. Concretely:
 
 ## Consequences
 
-- Jira can no longer post to Teams, and nothing in WorkMate can create, comment on, or transition a
+- Jira can no longer post to Teams, and nothing in Sufler can create, comment on, or transition a
   Jira issue. The only Jira-shaped effect on the system is a read query scoped to the caller.
 - The `bridge` compose profile now runs `github` + `teams-graph` only; `docker compose config` must
   still resolve cleanly for that profile.
-- `WORKMATE_JIRA_TOKEN` can be issued with browse/read-only grants going forward — the write/transition
+- `SUFLER_JIRA_TOKEN` can be issued with browse/read-only grants going forward — the write/transition
   scope requirement from ADR 0031/0032 no longer applies.
 - Re-adding push, ingest or mutation later means re-implementing against this ADR's baseline, not
   reverting it — the code is recoverable from git history but this ADR's removal is treated as a

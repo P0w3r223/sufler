@@ -6,7 +6,7 @@ dopasowanie jest dozwolone WYŁĄCZNIE na zaufanym zbiorze kandydatów (nigdy zg
 
 from __future__ import annotations
 
-from workmate.core.domain.names import match_name, normalize_name
+from sufler.core.domain.names import match_name, normalize_name
 
 
 def test_normalize_name_folds_polish_diacritics_and_case() -> None:

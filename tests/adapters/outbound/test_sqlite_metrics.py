@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
+from sufler.adapters.outbound.sqlite_metrics import SqliteMetricsStore
 
 
 def _at(day: int) -> datetime:

@@ -17,29 +17,29 @@ pytest.importorskip("fcntl", reason="silnik Docker jest POSIX-only (gniazdo unix
 
 from urllib.parse import unquote
 
-from workmate.adapters.outbound import docker_engine  # noqa: E402
-from workmate.adapters.outbound.docker_engine import (  # noqa: E402
+from sufler.adapters.outbound import docker_engine  # noqa: E402
+from sufler.adapters.outbound.docker_engine import (  # noqa: E402
     DockerHttpEngine,
     DockerRunTemplate,
 )
-from workmate.core.errors import ExecManagerError  # noqa: E402
-from workmate.core.ports.exec_manager import ContainerSpec  # noqa: E402
+from sufler.core.errors import ExecManagerError  # noqa: E402
+from sufler.core.ports.exec_manager import ContainerSpec  # noqa: E402
 
 _SCOPE = f"teams-graph/{'a' * 32}"
 
 
 def _spec() -> ContainerSpec:
     return ContainerSpec(
-        name=f"workmate-exec-teams-graph-{'a' * 32}",
+        name=f"sufler-exec-teams-graph-{'a' * 32}",
         scope=_SCOPE,
         subpath=_SCOPE,
-        labels={"workmate.exec.managed": "1", "workmate.exec.scope": _SCOPE},
+        labels={"sufler.exec.managed": "1", "sufler.exec.scope": _SCOPE},
     )
 
 
 def _engine(**template_kwargs) -> DockerHttpEngine:
     template = DockerRunTemplate(
-        image="workmate:1.9.0-deploy",
+        image="sufler:1.9.0-deploy",
         scratchpad_volume="workmate-scratchpad",
         sock_volume="workmate-exec-sock",
         data_volume="workmate-data",
@@ -52,8 +52,8 @@ def test_body_niesie_utwardzenia_i_stały_szablon():
     """Brak sieci, read-only, no-new-privileges, uid 10001 i obraz są STAŁE — nie od modelu."""
     body = _engine()._create_body(_spec())  # noqa: SLF001 — sonda kształtu żądania od środka
 
-    assert body["Image"] == "workmate:1.9.0-deploy"
-    assert body["Cmd"] == ["workmate-exec"]
+    assert body["Image"] == "sufler:1.9.0-deploy"
+    assert body["Cmd"] == ["sufler-exec"]
     assert body["User"] == "10001:10001"
     host = body["HostConfig"]
     assert host["NetworkMode"] == "none"
@@ -97,7 +97,7 @@ def test_sufit_pliku_jedzie_do_wykonawcy_takze_zmienna_srodowiskowa():
     """
     body = _engine(max_file_mb=7)._create_body(_spec())  # noqa: SLF001
 
-    assert "WORKMATE_EXEC_MAX_FILE_MB=7" in body["Env"]
+    assert "SUFLER_EXEC_MAX_FILE_MB=7" in body["Env"]
     ulimity = {u["Name"]: u for u in body["HostConfig"]["Ulimits"]}
     assert ulimity["fsize"]["Soft"] == 7 * 1024 * 1024
 
@@ -111,7 +111,7 @@ def test_subpath_scope_ląduje_w_montazu_a_nie_w_poleceniu():
     assert scratch["Source"] == "workmate-scratchpad"
     assert scratch["VolumeOptions"]["Subpath"] == _SCOPE
 
-    sock = mounts["/var/run/workmate"]
+    sock = mounts["/var/run/sufler"]
     assert sock["VolumeOptions"]["Subpath"] == _SCOPE
 
     system = mounts["/mnt/system"]
@@ -141,11 +141,11 @@ def test_skills_montowane_tylko_gdy_podano_zrodlo():
 
 
 def test_notes_dir_jest_w_env_wykonawcy():
-    """``workmate-search`` w powłoce czyta korzeń bazy wiedzy z env — bez niego kończy się
+    """``sufler-search`` w powłoce czyta korzeń bazy wiedzy z env — bez niego kończy się
     błędem."""
     body = _engine()._create_body(_spec())  # noqa: SLF001
 
-    assert "WORKMATE_NOTES_DIR=/mnt/system/notes" in body["Env"]
+    assert "SUFLER_NOTES_DIR=/mnt/system/notes" in body["Env"]
 
 
 class _FakeResponse:
@@ -251,7 +251,7 @@ def test_filtry_list_managed_przechodza_walidacje_sciezki_http(monkeypatch):
     )
     assert not zakazane.search(sciezka), f"http.client odrzuci tę ścieżkę: {sciezka!r}"
     # Filtr ma nadal DZIAŁAĆ, nie tylko przechodzić walidację — etykieta musi w nim być.
-    assert "workmate.exec.managed" in unquote(sciezka), sciezka
+    assert "sufler.exec.managed" in unquote(sciezka), sciezka
 
 
 def test_list_managed_pyta_takze_o_ZATRZYMANE_i_niesie_obraz(monkeypatch):
@@ -268,8 +268,8 @@ def test_list_managed_pyta_takze_o_ZATRZYMANE_i_niesie_obraz(monkeypatch):
     """
     polaczenie = _FakeConnection(
         raw=(
-            b'[{"Id": "cid-1", "Image": "workmate:1.9.0-deploy", "State": "running",'
-            b' "Labels": {"workmate.exec.scope": "teams-graph/' + b"a" * 32 + b'"}},'
+            b'[{"Id": "cid-1", "Image": "sufler:1.9.0-deploy", "State": "running",'
+            b' "Labels": {"sufler.exec.scope": "teams-graph/' + b"a" * 32 + b'"}},'
             b' {"Id": "cid-2", "Image": "workmate:stary", "State": "exited", "Labels": {}}]'
         )
     )
@@ -279,11 +279,11 @@ def test_list_managed_pyta_takze_o_ZATRZYMANE_i_niesie_obraz(monkeypatch):
 
     assert "all=true" in polaczenie.ostatnia_sciezka
     assert [(w.container_id, w.image, w.running) for w in wykonawcy] == [
-        ("cid-1", "workmate:1.9.0-deploy", True),
+        ("cid-1", "sufler:1.9.0-deploy", True),
         ("cid-2", "workmate:stary", False),
     ]
 
 
 def test_silnik_wystawia_swoj_obraz_do_porownania():
     """`reconcile` porównuje zastane kontenery z obrazem szablonu — musi mieć z czym."""
-    assert _engine().image == "workmate:1.9.0-deploy"
+    assert _engine().image == "sufler:1.9.0-deploy"

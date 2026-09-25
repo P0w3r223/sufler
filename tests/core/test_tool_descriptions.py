@@ -52,15 +52,14 @@ from typing import Annotated, Literal, get_args, get_origin
 
 import pytest
 
-from tests.conftest import FakeNotesRepository, FakeNotesWriter, FakeProjectsRepository
-from workmate.core.agent.prompt import (
+from sufler.core.agent.prompt import (
     STATIC_PROMPT,
     STATIC_PROMPT_SHELL,
     SUMMARY_SYSTEM_PROMPT,
     build_session_header,
 )
-from workmate.core.application.services import NotesService, NotesWriteService, ProjectsService
-from workmate.core.application.tools import (
+from sufler.core.application.services import NotesService, NotesWriteService, ProjectsService
+from sufler.core.application.tools import (
     ToolSpec,
     build_activity_catalog,
     build_agent_notes_read_catalog,
@@ -74,10 +73,11 @@ from workmate.core.application.tools import (
     build_user_image_push_catalog,
     build_workspace_catalog,
 )
-from workmate.core.domain.models import Project
-from workmate.core.domain.workspace import WorkspaceScope
-from workmate.core.ports.llm import AttachmentQueue
-from workmate.core.ports.materialization import MaterializationLimits
+from sufler.core.domain.models import Project
+from sufler.core.domain.workspace import WorkspaceScope
+from sufler.core.ports.llm import AttachmentQueue
+from sufler.core.ports.materialization import MaterializationLimits
+from tests.conftest import FakeNotesRepository, FakeNotesWriter, FakeProjectsRepository
 
 # Sufit per narzędzie. Konwencja z CLAUDE.md mówi „~2 KB" i jest to fakt o KLIENCIE (skraca
 # opis), a nie nasze upodobanie — stąd twardy 2048 B zamiast progu z marginesem.
@@ -327,7 +327,7 @@ class _FakeDocSender:
 
 
 def _projects() -> ProjectsService:
-    projekty = [Project(key="workmate", company="biap", name="WorkMate", description="asystent")]
+    projekty = [Project(key="workmate", company="biap", name="Sufler", description="asystent")]
     return ProjectsService(FakeProjectsRepository(projekty, {}), FakeNotesRepository([]))
 
 
@@ -352,12 +352,12 @@ def _powierzchnia_agenta(
 
     Trzy ostatnie bramki dopisano po pomiarze ``adapters/inbound``: pierwsza wersja wiązała
     katalog roboczy, ``ReplyWithFile`` i dostawę 1:1 z SAMĄ powłoką, a drzwi wiążą je z trzema
-    NIEZALEŻNYMI zmiennymi środowiska. ``WORKMATE_ENABLE_WORKSPACE`` (katalog roboczy, ADR 0018),
-    ``WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY`` (``ReplyWithFile``, ADR 0026) i para bramek pushu
+    NIEZALEŻNYMI zmiennymi środowiska. ``SUFLER_ENABLE_WORKSPACE`` (katalog roboczy, ADR 0018),
+    ``SUFLER_TEAMS_GRAPH_ENABLE_FILE_REPLY`` (``ReplyWithFile``, ADR 0026) i para bramek pushu
     (``SendImage``/``SendDocument``, ADR 0027) są DOMYŚLNIE WYŁĄCZONE, więc bez tych argumentów
     bramka nie mierzyła konfiguracji, którą operator dostaje bez ustawienia czegokolwiek.
     """
-    from workmate.core.application.workspace import (
+    from sufler.core.application.workspace import (
         WorkspaceLimits,
         WorkspaceService,
         WorkspaceWriteService,
@@ -381,7 +381,7 @@ def _powierzchnia_agenta(
         *build_jira_catalog(_FakeMyJira(), _FakeJiraRead(), lambda name: "konto"),
         *build_schedule_catalog(_FakeSchedule()),
     ]
-    # ``File`` ma WŁASNĄ bramkę (`WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL`) i nie wchodzi na dwoje
+    # ``File`` ma WŁASNĄ bramkę (`SUFLER_TEAMS_GRAPH_ENABLE_FILE_TOOL`) i nie wchodzi na dwoje
     # z trojga drzwi: `cli/app.py` i `teams/app.py` nie podają ani `enable_file_tool`, ani
     # `supports_attachments`, ani `workspace_settings`, więc warunek w `agent_wiring/__init__.py`
     # nie zachodzi. Bez tej bramki KAŻDY profil miał `File`, a wtedy odesłanie do NIEOBECNEGO
@@ -479,7 +479,7 @@ def test_wersaliki_nacisku_maja_budzet(powierzchnia: list[ToolSpec]) -> None:
 def test_opis_nie_odsyla_do_narzedzia_spoza_tej_konfiguracji(powierzchnia: list[ToolSpec]) -> None:
     """Odesłanie do narzędzia, którego w TEJ konfiguracji nie ma, to obietnica bez pokrycia.
 
-    Ta klasa defektu wracała pięć razy: `/mnt/user/outputs` w opisie ``Bash``, `workmate-search`
+    Ta klasa defektu wracała pięć razy: `/mnt/user/outputs` w opisie ``Bash``, `sufler-search`
     w ``Notes`` na drzwiach bez powłoki, `search_notes` w ``File`` na drzwiach Z powłoką,
     `search_notes` w ``GetNote`` na CAŁEJ powierzchni agenta oraz `GitHub(action='comment')`
     w nagłówku sesji po przemianowaniu narzędzia.
@@ -628,7 +628,7 @@ _PROFILE_DRZWI: tuple[tuple[str, dict[str, object]], ...] = (
     ("hipotetyczny: zapis notatek ON, mutacje OFF", {"shell": True, "mutacje": "brak"}),
     # Cztery profile BEZ powłoki dopisane po pomiarze bramek w ``adapters/inbound``. Pierwsza
     # wersja tabeli miała ``shell=False`` wyłącznie w wariancie z pełnymi mutacjami, więc cały
-    # świat bez powłoki — ten DOMYŚLNY, bo ``WORKMATE_ENABLE_SHELL`` jest domyślnie wyłączona —
+    # świat bez powłoki — ten DOMYŚLNY, bo ``SUFLER_ENABLE_SHELL`` jest domyślnie wyłączona —
     # jechał przez bramkę jednym złożeniem. To nie jest symetria dla ozdoby: opis ``File`` bierze
     # z braku powłoki INNY akapit (`ReadFile`/`ListFiles` zamiast `cat`), więc każda para
     # „bramka × brak powłoki" to inny tekst, nie ten sam tekst w innej konfiguracji.
@@ -940,13 +940,13 @@ _PROFILE_ODESLAN = [
                     "plików tekstowych, które wystarczy przeczytać (md, txt, csv, json), użyj "
                     "``ReadFile`` — taniej. Nazwę pliku bierz z ``ListFiles``”. Wariant zależy "
                     "WYŁĄCZNIE od ``shell_available``, a ``CreateFile``/``ReadFile``/``ListFiles`` "
-                    "wchodzą na powierzchnię z osobnej bramki ``WORKMATE_ENABLE_WORKSPACE`` "
+                    "wchodzą na powierzchnię z osobnej bramki ``SUFLER_ENABLE_WORKSPACE`` "
                     "(domyślnie False, ``config/workspace.py:54``); ``File`` ma jeszcze jedną "
-                    "własną (``WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL``) i NIE wymaga tamtej — "
+                    "własną (``SUFLER_TEAMS_GRAPH_ENABLE_FILE_TOOL``) i NIE wymaga tamtej — "
                     "``agent_wiring/__init__.py`` warunkuje go na ``workspace_settings is not "
                     "None``, nie na ``.enabled``. Złożenie FILE_TOOL=true + WORKSPACE=false + "
                     "SHELL=false jest więc budowalne i daje dokładnie klasę defektu, dla której "
-                    "ta bramka istnieje (``/mnt/user/outputs``, ``workmate-search`` w ``Notes``). "
+                    "ta bramka istnieje (``/mnt/user/outputs``, ``sufler-search`` w ``Notes``). "
                     "Domknięcie wymaga TRZECIEGO wariantu akapitu i nowego argumentu "
                     "``build_file_catalog`` — czyli zmiany w ``src/``, nie w teście."
                 ),
@@ -992,7 +992,7 @@ def test_profile_drzwi_pokrywaja_kazda_bramke_powierzchni() -> None:
     ręczny spis rozjeżdżał się z kodem i wyciszał sondę (``_NAZWY_NARZEDZI``, spis akcji
     w komunikatach ``Jira``). Tu rozjazd jest cichszy niż gdziekolwiek indziej: nowa bramka
     zdolności bez profilu nie psuje ŻADNEJ asercji — sondy akcyjne po prostu jej nie odwiedzają,
-    tak jak przed tą serią nie odwiedzały ``WORKMATE_ENABLE_WORKSPACE``, ``ENABLE_FILE_REPLY``
+    tak jak przed tą serią nie odwiedzały ``SUFLER_ENABLE_WORKSPACE``, ``ENABLE_FILE_REPLY``
     ani pary bramek pushu 1:1.
 
     Sonda pilnuje dwóch rzeczy naraz: że spis ``_WARTOSCI_BRAM`` zna dokładnie te bramki, które

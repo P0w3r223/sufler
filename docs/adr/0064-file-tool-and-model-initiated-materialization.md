@@ -32,7 +32,7 @@ Per-action analysis against the criterion:
 | action | can the executor shell do it? | verdict |
 |---|---|---|
 | `read` a binary **into the model's context** as a native `image`/`document` block | **no** — `Bash` returns text, capped at 64 KB (ADR 0057), and cannot emit a multimodal block | **crosses the barrier — this ADR builds it** |
-| `read` → **extracted text** (HTML→text, PDF→text, docx) | yes — `cat`/python in the shell | a shell command (`workmate-extract`), not a typed tool — see below |
+| `read` → **extracted text** (HTML→text, PDF→text, docx) | yes — `cat`/python in the shell | a shell command (`sufler-extract`), not a typed tool — see below |
 | `write`/`edit` in the **scratchpad** | yes — the scratchpad is rw in the executor | a use case of `Bash` — not built here |
 | `write`/`edit` targeting the **knowledge base** (notes are `ro` to the shell) | **no** | crosses the barrier, but reopens the mutation vector ADR 0057 closed → **deferred to ADR 0065** |
 
@@ -51,7 +51,7 @@ separate security decision and lives in ADR 0065.
   sees. With per-conversation executors (infra ADR 0012, merged), the application can stage the file
   into the conversation's scope subdirectory of the scratchpad volume before `ensure(scope)`, and the
   executor mounts exactly that subpath under `/home/scratchpad/<scope>`. **This requires the compose
-  wiring that mounts the shared scratchpad volume into the application** (`WORKMATE_WORKSPACE_DIR` =
+  wiring that mounts the shared scratchpad volume into the application** (`SUFLER_WORKSPACE_DIR` =
   the scratchpad root) — an infra change tracked with the ADR 0012 deployment.
 
 - **A tool result cannot carry the binary, and would not survive if it could.** The Anthropic
@@ -92,8 +92,8 @@ separate security decision and lives in ADR 0065.
    never commands** ([CLAUDE.md](../../CLAUDE.md), ADR 0016) — anti-masking is an extraction-quality
    concern, not a gate.
 
-4. **Text extraction that the shell *can* do stays a shell command.** A `workmate-extract` command in
-   the image (patterned on `workmate-search`/`workmate-render`) exposes HTML→text and the existing
+4. **Text extraction that the shell *can* do stays a shell command.** A `sufler-extract` command in
+   the image (patterned on `sufler-search`/`sufler-render`) exposes HTML→text and the existing
    `extract_pdf`/`extract_text_from_path` (today wired only for the seed corpus, ADR 0050) to
    model-initiated extraction from the shell. This keeps text extraction off the typed surface
    (criterion, ADR 0061) while spanning the gap the owner named.
@@ -181,7 +181,7 @@ evidence for removal. A tool cannot be falsified by an absence of users.
 - **Return the binary through the tool result** (rejected): the `document` block is illegal there and
   the content is cleared by ADR 0058 — non-durable by construction (this ADR's Context, fact 2).
 - **Materialize text via the typed tool** (rejected): text extraction is a `Bash` use case under the
-  ADR 0061 criterion; a `workmate-extract` command carries it without a typed-surface cost.
+  ADR 0061 criterion; a `sufler-extract` command carries it without a typed-surface cost.
 - **A generic `File` covering scratchpad write/edit** (rejected here): scratchpad writes are `Bash`;
   only notes-targeted mutation crosses the barrier, and that is the security reversal deferred to 0065.
 
@@ -198,15 +198,15 @@ evidence for removal. A tool cannot be falsified by an absence of users.
   turn. `selection.py` and the core stay provider-neutral; the Anthropic block schema stays in the
   outbound adapter (ADR 0016).
 - **Infra dependency — satisfied since the 1.10.0 compose (verified 2026-08-14).** `File(read)`
-  end-to-end needs the shared scratchpad volume mounted into the application; the `x-workmate` anchor
-  now sets `WORKMATE_WORKSPACE_DIR: /home/scratchpad` and mounts `workmate-scratchpad` there, and the
+  end-to-end needs the shared scratchpad volume mounted into the application; the `x-sufler` anchor
+  now sets `SUFLER_WORKSPACE_DIR: /home/scratchpad` and mounts `workmate-scratchpad` there, and the
   `teams-graph` service repeats both in its own `environment`/`volumes` (YAML merge replaces the map,
   it does not merge it). No separate infra ADR is needed for the mount; what remains is deploying the
   1.10.0 image, which is where ADR 0012 lands anyway.
 - **Limits reuse `AttachmentLimits`** (ADR 0016): `max_bytes`, `max_total_bytes`, `max_image_edge`,
   `_MAX_IMAGE_PIXELS`, plus a format allowlist. HTML adds `html.parser` only (stdlib).
 - **Gates.** Negative probes as in this series (a gate that passes everything looks like one that
-  works, ADR 0009): `File` absent from the MCP golden; `workmate-extract` yields the same bytes as the
+  works, ADR 0009): `File` absent from the MCP golden; `sufler-extract` yields the same bytes as the
   in-process extractor; a materialized `File(read)` block survives a compaction round (ADR 0014) and is
   re-materializable; over-limit degrades to an in-band note, never a crash.
 

@@ -1,7 +1,7 @@
 """Testy ``SafeResponder`` (odporność drzwi async) — łagodna degradacja przy błędach.
 
 Owija dowolny ``Responder``: przy sukcesie przepuszcza odpowiedź, przy błędzie
-domenowym (``WorkMateError``, np. ``LLMError``) lub nieoczekiwanym wyjątku zwraca
+domenowym (``SuflerError``, np. ``LLMError``) lub nieoczekiwanym wyjątku zwraca
 przyjazny komunikat zamiast wywracać turę. Błąd trafia do logu (nie jest połykany).
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from workmate.adapters.inbound.responder import InboundMessage, SafeResponder
-from workmate.core.errors import LLMError
+from sufler.adapters.inbound.responder import InboundMessage, SafeResponder
+from sufler.core.errors import LLMError
 
 
 class _OkResponder:

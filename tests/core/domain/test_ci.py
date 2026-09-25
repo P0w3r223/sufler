@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from workmate.core.domain.ci import pr_number_from_url, render_ci_failure_comment
+from sufler.core.domain.ci import pr_number_from_url, render_ci_failure_comment
 
 
 def test_pr_number_from_pull_url():

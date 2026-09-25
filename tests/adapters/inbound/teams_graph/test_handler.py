@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import asyncio
 
-from workmate.adapters.inbound.responder import EchoResponder, InboundMessage
-from workmate.adapters.inbound.teams_graph.handler import make_handle_message
-from workmate.adapters.inbound.teams_graph.selection import ChannelMessage
+from sufler.adapters.inbound.responder import EchoResponder, InboundMessage
+from sufler.adapters.inbound.teams_graph.handler import make_handle_message
+from sufler.adapters.inbound.teams_graph.selection import ChannelMessage
 
 
 def _msg(**overrides: object) -> ChannelMessage:

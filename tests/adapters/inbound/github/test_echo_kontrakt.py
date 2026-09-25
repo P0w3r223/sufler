@@ -20,12 +20,12 @@ import ast
 from pathlib import Path
 from typing import Any
 
-from workmate.adapters.inbound.github import selection
-from workmate.core.application.events import EventService
-from workmate.core.application.github import GithubWriteService
+from sufler.adapters.inbound.github import selection
+from sufler.core.application.events import EventService
+from sufler.core.application.github import GithubWriteService
 
 _ZAPIS = (
-    Path(__file__).resolve().parents[4] / "src" / "workmate" / "core" / "application" / "github.py"
+    Path(__file__).resolve().parents[4] / "src" / "sufler" / "core" / "application" / "github.py"
 )
 
 

@@ -51,7 +51,7 @@ What this ADR does own:
    that lets everything through looks identical to a working one.
 
 3. **The MCP surface was deliberately left alone.** A Claude Code session has no access to our
-   executor, so `Bash` and `workmate-search` are unreachable from it. Consolidating there would
+   executor, so `Bash` and `sufler-search` are unreachable from it. Consolidating there would
    not *move* a capability, it would *delete* it. The golden test freezes that surface in four
    configurations.
 

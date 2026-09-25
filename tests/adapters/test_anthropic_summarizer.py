@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from workmate.adapters.outbound.anthropic_summarizer import (
+from sufler.adapters.outbound.anthropic_summarizer import (
     _SUMMARY_MAX_TOKENS,
     _SUMMARY_TOOL_NAME,
     AnthropicMeetingSummarizer,
@@ -29,10 +29,10 @@ from workmate.adapters.outbound.anthropic_summarizer import (
     _summary_tool,
     _verify_system,
 )
-from workmate.config import AgentSettings
-from workmate.core.domain.models import MeetingSummary
-from workmate.core.domain.transcript import SpeakerRoster
-from workmate.core.errors import LLMError
+from sufler.config import AgentSettings
+from sufler.core.domain.models import MeetingSummary
+from sufler.core.domain.transcript import SpeakerRoster
+from sufler.core.errors import LLMError
 
 # --- czyste funkcje: sufit tokenów --------------------------------------------
 

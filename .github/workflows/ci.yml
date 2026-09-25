@@ -113,7 +113,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: workmate
+          - name: sufler
             dir: "."
             # `seed` jest tu, bo `tests/adapters/inbound/test_document_text.py` ekstrahuje tekst
             # z PDF — a `pypdf` mieszka w TYM extra, nie w `file-reply` (tam jest sam `fpdf2`,
@@ -133,7 +133,7 @@ jobs:
             dir: "Powiadomienia_teams"
             # TA SAMA lista extras co etap `test` w `Powiadomienia_teams/Dockerfile` — jedno
             # źródło prawdy o tym, czego wymaga pełny przebieg testów, tak jak we wpisie
-            # `workmate` wyżej. Do 2026-09-07 stało tu `""`, więc ten sam zestaw testów biegał
+            # `sufler` wyżej. Do 2026-09-07 stało tu `""`, więc ten sam zestaw testów biegał
             # w CI i w obrazie w DWÓCH różnych środowiskach; zgodności pilnuje teraz
             # `tests/test_srodowiska_bramki.py`.
             sync_args: "--extra agent"
@@ -186,7 +186,7 @@ jobs:
         with:
           enable-cache: true
 
-      # Czy TEN wpis macierzy ma co sprawdzać. Wpis `workmate` biegnie ZAWSZE i to jest
+      # Czy TEN wpis macierzy ma co sprawdzać. Wpis `sufler` biegnie ZAWSZE i to jest
       # decyzja, nie niedopatrzenie: to on niesie bramki dokumentacji (martwe odsyłacze,
       # numeracja ADR, spójność wersji), które chodzą po CAŁYM drzewie. Zawężenie go po
       # katalogach wyłączyłoby strażnika dokładnie przy zmianie, której ten strażnik dotyczy —
@@ -199,7 +199,7 @@ jobs:
           ZMIENIONE: ${{ needs.zmiany.outputs.podprojekty }}
         run: |
           set -euo pipefail
-          if [ "$WPIS" = "workmate" ] || [ "$ZMIENIONE" = "ALL" ] \
+          if [ "$WPIS" = "sufler" ] || [ "$ZMIENIONE" = "ALL" ] \
              || printf '%s' "$ZMIENIONE" | tr ' ' '\n' | grep -qx "$WPIS"; then
             echo "biegnie=true" >> "$GITHUB_OUTPUT"
             echo "Wpis $WPIS: biegnie."
@@ -232,9 +232,9 @@ jobs:
         run: uv run mypy
 
       # import-linter (pyproject.toml [tool.importlinter]) egzekwuje granice tylko rdzenia
-      # workmate (core ↛ adapters, outbound ↛ inbound) — pod-projekty go nie mają.
+      # sufler (core ↛ adapters, outbound ↛ inbound) — pod-projekty go nie mają.
       - name: Granice architektoniczne (import-linter)
-        if: ${{ !cancelled() && matrix.name == 'workmate' }}
+        if: ${{ !cancelled() && matrix.name == 'sufler' }}
         run: uv run lint-imports
 
       - name: Testy

@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from workmate.adapters.inbound.responder import EchoResponder, InboundMessage
-from workmate.adapters.inbound.teams.bot import make_on_message
+from sufler.adapters.inbound.responder import EchoResponder, InboundMessage
+from sufler.adapters.inbound.teams.bot import make_on_message
 
 
 @dataclass
@@ -199,7 +199,7 @@ def test_mentions_bot_is_true_when_entity_points_at_recipient():
     seen, capture = _capture_message()
     ctx = _FakeContext(
         _FakeActivity(
-            text="<at>WorkMate</at> ogarnij mnie na mpwik",
+            text="<at>Sufler</at> ogarnij mnie na mpwik",
             recipient=_FakeAccount(id="28:bot-app-id"),
             entities=[_FakeMention(mentioned=_FakeAccount(id="28:bot-app-id"))],
         )
@@ -241,7 +241,7 @@ def test_mentions_bot_reads_entities_deserialized_as_dicts():
     seen, capture = _capture_message()
     ctx = _FakeContext(
         _FakeActivity(
-            text="<at>WorkMate</at> co słychać",
+            text="<at>Sufler</at> co słychać",
             recipient=_FakeAccount(id="28:bot-app-id"),
             entities=[{"type": "mention", "mentioned": {"id": "28:bot-app-id"}}],
         )
@@ -264,7 +264,7 @@ def test_mentions_bot_reads_entities_from_additional_properties():
     seen, capture = _capture_message()
     ctx = _FakeContext(
         _FakeActivity(
-            text="<at>WorkMate</at> co słychać",
+            text="<at>Sufler</at> co słychać",
             recipient=_FakeAccount(id="28:bot-app-id"),
             entities=[_RawEntity()],
         )

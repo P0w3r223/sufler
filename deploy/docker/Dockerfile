@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.7
 #
-# Obraz floty WorkMate (serwer MCP + drzwi-pollery). JEDEN obraz, wiele entrypointów:
+# Obraz floty Sufler (serwer MCP + drzwi-pollery). JEDEN obraz, wiele entrypointów:
 # ENTRYPOINT to `tini --`, a każda usługa docker-compose podaje własną komendę
-# (`workmate`, `workmate-github`, `workmate-teams-graph`, …). ADR 0044.
+# (`sufler`, `sufler-github`, `sufler-teams-graph`, …). ADR 0044.
 #
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
 # Budowanie ręczne — OBIE flagi są częścią komendy, nie dobrą wolą:
 #   docker build -f deploy/docker/Dockerfile --no-cache-filter test \
-#     --build-arg REWIZJA=$(git rev-parse HEAD) -t workmate:1.15.0 .
+#     --build-arg REWIZJA=$(git rev-parse HEAD) -t sufler:1.15.0 .
 #
 # `--build-arg REWIZJA` wypełnia `org.opencontainers.image.revision`; bez niej obraz mówi
 # `nieznana` i łańcuch kontener→commit jest zerwany (U10 audytu 2026-09-08).
@@ -97,13 +97,13 @@ ENV LANG=C.UTF-8 \
 #   bash     — powłoka narzędzia `Bash`; `python:3.11-slim` niesie tylko dash, a ten nie zna
 #              konstrukcji, których model używa odruchowo (tablice, `[[ ]]`, podstawianie procesu)
 #   git      — praca z repozytoriami z powłoki agenta. Komentarz mówił tu wcześniej
-#              o `workmate-note`, które miało commitować każdy zapis notatki — tej komendy
+#              o `sufler-note`, które miało commitować każdy zapis notatki — tej komendy
 #              NIE MA i nie powstanie w tym kształcie (ADR 0008 paczki wdrożeniowej:
 #              dziennik w kontenerze nie widziałby zdarzeń, które ma odwracać, a `git restore`
 #              wprowadziłby pierwsze w systemie nadpisanie notatki). Odwracalność bazy wiedzy
 #              zapewnia kopia wolumenu po stronie operatora.
 #   ripgrep  — przeszukiwanie plików; dla POLSKIEGO korpusu i tak pierwszy wybór to
-#              `workmate-search` (BM25 nad lematami), bo grep gubi fleksję
+#              `sufler-search` (BM25 nad lematami), bo grep gubi fleksję
 #
 # ``curl`` świadomie POMINIĘTY (ADR 0057). Kod od modelu biegnie w kontenerze-wykonawcy, który
 # ma ``network_mode: none``, więc klient HTTP nie miałby tam dokąd pójść; w kontenerze aplikacji
@@ -116,10 +116,10 @@ RUN apt-get update \
         ca-certificates tini bash git ripgrep \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 workmate \
-    && useradd --uid 10001 --gid 10001 --no-create-home --shell /bin/bash workmate \
-    && mkdir -p /var/lib/workmate /app/data \
-    && chown 10001:10001 /var/lib/workmate \
+    && groupadd --gid 10001 sufler \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /bin/bash sufler \
+    && mkdir -p /var/lib/sufler /app/data \
+    && chown 10001:10001 /var/lib/sufler \
     # Punkty montażu workspace'u (ADR 0005/0006). Powstają PUSTE i należą do roota poza
     # scratchpadem — compose montuje w nie realne wolumeny. Katalogi istnieją w obrazie, żeby
     # uruchomienie BEZ montaży dawało puste katalogi (czytelne „brak danych") zamiast błędu
@@ -129,13 +129,13 @@ RUN apt-get update \
     # Katalog gniazda wykonawcy (ADR 0057) — dzielony wolumenem między aplikacją a wykonawcą.
     # Uprawnienia pliku gniazda są JEDYNĄ kontrolą dostępu do powłoki, więc katalog należy do
     # uid procesu, a wolumen montują wyłącznie te dwie usługi.
-    && mkdir -p /var/run/workmate \
-    && chown 10001:10001 /var/run/workmate \
+    && mkdir -p /var/run/sufler \
+    && chown 10001:10001 /var/run/sufler \
     # Notatki przyjeżdżają wolumenem, więc ich właściciel bywa inny niż uid procesu; bez tego
     # git odmawia operacji w „cudzym" drzewie (`detected dubious ownership`). Dziś nic w obrazie
     # z tego nie korzysta (ADR 0008) — zostaje jako warunek wstępny dziennika atrybucji, gdyby
     # kiedyś powstał, i dlatego, że koszt jest zerowy. Zawężone do katalogu notatek, nie `*`.
-    && git config --system --add safe.directory /var/lib/workmate/notes \
+    && git config --system --add safe.directory /var/lib/sufler/notes \
     && git config --system --add safe.directory /app/data/notes
 
 WORKDIR /app
@@ -151,13 +151,13 @@ COPY --from=deps --chown=root:root /app/src /app/src
 # python deploy/http/manage_tokens.py …`. Bez tego COPY krok 4 runbooka nie miałby czego wykonać.
 COPY --chown=root:root deploy/http/manage_tokens.py /app/deploy/http/manage_tokens.py
 
-# Kod należy do root, proces biegnie jako workmate — skompromitowany proces nie podmieni własnego
-# kodu. Zapisywalne są tylko wolumeny stanu (/var/lib/workmate, /var/lib/workmate-out).
+# Kod należy do root, proces biegnie jako sufler — skompromitowany proces nie podmieni własnego
+# kodu. Zapisywalne są tylko wolumeny stanu (/var/lib/sufler, /var/lib/sufler-out).
 USER 10001:10001
 
 # tini jako PID 1; domyślna komenda = serwer MCP. Każda usługa compose podaje własną `command`.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["workmate"]
+CMD ["sufler"]
 
 ARG WERSJA=1.15.0
 # Commit, z którego powstał obraz. BEZ tego jedyną kotwicą wersji obrazu była PROZA CHANGELOG-a:
@@ -165,7 +165,7 @@ ARG WERSJA=1.15.0
 # dojść do kodu inaczej niż przez wiarę w dokumentację (U10 audytu 2026-09-08). Budowanie bez
 # `--build-arg REWIZJA=...` zostawia `nieznana` — jawnie, zamiast udawać, że łańcuch jest cały.
 ARG REWIZJA=nieznana
-LABEL org.opencontainers.image.title="workmate" \
+LABEL org.opencontainers.image.title="sufler" \
       org.opencontainers.image.revision="${REWIZJA}" \
       org.opencontainers.image.description="Serwer MCP pionu + drzwi mostu GitHub/Jira/Teams (flota)" \
       org.opencontainers.image.version="${WERSJA}" \

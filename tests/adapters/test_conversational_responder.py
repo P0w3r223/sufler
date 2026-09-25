@@ -12,27 +12,26 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from tests.conftest import FakeNotesRepository, FakeProjectsRepository
-from workmate.adapters.inbound.commands import (
+from sufler.adapters.inbound.commands import (
     _NEW_THREAD_ACK,
     _NEW_THREAD_ALREADY_FRESH,
     CommandRouter,
 )
-from workmate.adapters.inbound.responder import (
+from sufler.adapters.inbound.responder import (
     ConversationalResponder,
     InboundMessage,
     _to_transcript,
     _to_transcript_with_summary,
     _with_notices,
 )
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.application.compaction import CompactionService
-from workmate.core.application.conversations import ConversationService, _row_of
-from workmate.core.application.services import ProjectsService
-from workmate.core.application.tools import ToolSpec
-from workmate.core.domain.conversation import ConversationMessage, ConversationSummary
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import (
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.application.compaction import CompactionService
+from sufler.core.application.conversations import ConversationService, _row_of
+from sufler.core.application.services import ProjectsService
+from sufler.core.application.tools import ToolSpec
+from sufler.core.domain.conversation import ConversationMessage, ConversationSummary
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.ports.llm import (
     AgentResult,
     AssistantTurn,
     Attachment,
@@ -44,6 +43,7 @@ from workmate.core.ports.llm import (
     UserText,
     attachment_to_row,
 )
+from tests.conftest import FakeNotesRepository, FakeProjectsRepository
 
 _TS = datetime(2025, 1, 1, 12, 0, 0)
 
@@ -642,8 +642,8 @@ def test_no_compaction_keeps_full_history_in_replay():
 
 def test_metrics_records_call_per_turn():
     """Metryka (Tor A): tura na drzwiach zapisuje wywołanie z pseudonimem nadawcy."""
-    from workmate.adapters.outbound.sqlite_metrics import SqliteMetricsStore
-    from workmate.core.application.metrics import MetricsService
+    from sufler.adapters.outbound.sqlite_metrics import SqliteMetricsStore
+    from sufler.core.application.metrics import MetricsService
 
     convs = ConversationService(SqliteConversationStore(":memory:"), max_context_tokens=1000)
     metrics_store = SqliteMetricsStore(":memory:")
@@ -940,21 +940,21 @@ def _specy_realnych_builderow() -> dict[str, ToolSpec]:
     produkcja. Atrapa z własnoręcznie ustawioną flagą sprawdzałaby wyłącznie własną fiksturę —
     dokładnie ta wada kazała 2026-09-07 przepisać ``_ToolCallingRuntime``, żeby wołał ``audit``.
     """
-    from workmate.core.application.tools import (
+    from sufler.core.application.tools import (
         build_activity_catalog,
         build_file_catalog,
         build_project_catalog,
         build_shell_catalog,
         build_workspace_catalog,
     )
-    from workmate.core.application.workspace import (
+    from sufler.core.application.workspace import (
         WorkspaceLimits,
         WorkspaceService,
         WorkspaceWriteService,
     )
-    from workmate.core.domain.workspace import WorkspaceScope
-    from workmate.core.ports.llm import AttachmentQueue
-    from workmate.core.ports.materialization import MaterializationLimits
+    from sufler.core.domain.workspace import WorkspaceScope
+    from sufler.core.ports.llm import AttachmentQueue
+    from sufler.core.ports.materialization import MaterializationLimits
 
     class _PustyWorkspace:
         def list(self, scope_dir):
@@ -1090,7 +1090,7 @@ class _NaglowkoweRuntime(_FakeRuntime):
 
 
 def _stub_bash():
-    from workmate.core.application.tools import ToolSpec
+    from sufler.core.application.tools import ToolSpec
 
     return [ToolSpec("Bash", "opis", lambda command="", timeout_s=0: {})]
 

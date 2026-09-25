@@ -1,7 +1,7 @@
 # claude_summary — plan i status
 
-Samodzielny pod-projekt uv wewnątrz WorkMate. Cel: dostarczyć większemu agentowi
-(ścieżka worklog/Jira WorkMate — ADR 0034/0035) dzienny materiał o pracy osoby, łącząc
+Samodzielny pod-projekt uv wewnątrz Sufler. Cel: dostarczyć większemu agentowi
+(ścieżka worklog/Jira Sufler — ADR 0034/0035) dzienny materiał o pracy osoby, łącząc
 historię promptów Claude Code z historią commitów.
 
 ## Status (v0.1.0 — pierwsza działająca wersja)
@@ -26,6 +26,6 @@ Zrobione:
 
 ## Następne kroki (poza v0.1.0)
 
-- Integracja wyniku z propozycją czasu WorkMate (`propose_worklog`, ADR 0034).
+- Integracja wyniku z propozycją czasu Sufler (`propose_worklog`, ADR 0034).
 - Wsparcie wielu osób i mapa tożsamości (git author ↔ konto Jira) — dziś jedna osoba.
 - Ewentualne źródło `~/.claude/history.jsonl` jako uzupełnienie (dziś: transkrypty projektowe).

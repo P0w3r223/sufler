@@ -3,12 +3,12 @@
 Date: 2026-07-08
 Status: accepted
 Author: P0w3r223
-Related to: roadmap_workmate.pdf (Phase 2 — Teams + agent runtime), docs/adr (future Teams-door ADR)
+Related to: roadmap_sufler.pdf (Phase 2 — Teams + agent runtime), docs/adr (future Teams-door ADR)
 
 ---
 
 Research synthesis for standing up a Microsoft Teams bot (Python) hosted via Azure
-Bot Service, for WorkMate Phase 2. Two angles: current SDK state, and the concrete
+Bot Service, for Sufler Phase 2. Two angles: current SDK state, and the concrete
 Azure→Teams setup path. Sources are Microsoft Learn + GitHub repo states, verified
 mid-2026.
 

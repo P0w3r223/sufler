@@ -14,7 +14,7 @@ Related to: docs/adr/0015-teams-delegated-graph-polling.md, docs/adr/0006-write-
 
 Phase 3 adds GitHub as another door on the same core. GitHub must feed events (new issues,
 comments) into the shared EventStore (ADR 0019) so they can reach Teams and be read by any
-door's agent. The question is how GitHub talks to WorkMate. The user chose **polling with a
+door's agent. The question is how GitHub talks to Sufler. The user chose **polling with a
 Personal Access Token (PAT)**, mirroring the existing `teams_graph` door that polls Microsoft
 Graph — no public endpoint, no tunnel, no inbound server.
 
@@ -50,7 +50,7 @@ Graph — no public endpoint, no tunnel, no inbound server.
 
 ## Consequences
 
-- A new process `workmate-github` (extra `github`) runs alongside the MCP server, like the
+- A new process `sufler-github` (extra `github`) runs alongside the MCP server, like the
   other doors. First-run needs only a PAT — no Azure/tunnel.
 - The empty `adapters/github/` stub is retired; the real door lives under `adapters/inbound/`
   with the other doors.

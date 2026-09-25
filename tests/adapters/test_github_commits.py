@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from workmate.adapters.outbound.github_api import HttpxGithubClient
-from workmate.core.ports.github import MAX_COMMITS_PER_FETCH
+from sufler.adapters.outbound.github_api import HttpxGithubClient
+from sufler.core.ports.github import MAX_COMMITS_PER_FETCH
 
 _API = "https://api.github.com"
 _OWNER, _REPO = "BIAP-Inteligentne-Technologie", "PIWorkmate"
