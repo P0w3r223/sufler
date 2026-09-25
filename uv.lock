@@ -2946,6 +2946,125 @@ wheels = [
 ]
 
 [[package]]
+name = "sufler"
+version = "1.16.0"
+source = { editable = "." }
+dependencies = [
+    { name = "mcp", extra = ["cli"] },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+agent = [
+    { name = "anthropic" },
+]
+file-reply = [
+    { name = "fpdf2" },
+]
+github = [
+    { name = "httpx" },
+    { name = "python-dotenv" },
+]
+jira = [
+    { name = "httpx" },
+    { name = "python-dotenv" },
+]
+retrieval = [
+    { name = "simplemma" },
+]
+retrieval-dense = [
+    { name = "fastembed" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+seed = [
+    { name = "openpyxl" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+]
+teams = [
+    { name = "microsoft-agents-activity" },
+    { name = "microsoft-agents-authentication-msal" },
+    { name = "microsoft-agents-hosting-aiohttp" },
+    { name = "microsoft-agents-hosting-core" },
+]
+teams-graph = [
+    { name = "httpx" },
+    { name = "markdown-it-py" },
+    { name = "msal" },
+    { name = "openpyxl" },
+    { name = "pillow" },
+    { name = "pillow-heif" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+    { name = "python-pptx" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "import-linter" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-testmon" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "types-pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.116" },
+    { name = "fastembed", marker = "extra == 'retrieval-dense'", specifier = ">=0.4" },
+    { name = "fpdf2", marker = "extra == 'file-reply'", specifier = ">=2.8" },
+    { name = "httpx", marker = "extra == 'github'", specifier = ">=0.28.1" },
+    { name = "httpx", marker = "extra == 'jira'", specifier = ">=0.28.1" },
+    { name = "httpx", marker = "extra == 'teams-graph'", specifier = ">=0.28.1" },
+    { name = "markdown-it-py", marker = "extra == 'teams-graph'", specifier = ">=3.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
+    { name = "microsoft-agents-activity", marker = "extra == 'teams'", specifier = ">=1.1.0" },
+    { name = "microsoft-agents-authentication-msal", marker = "extra == 'teams'", specifier = ">=1.1.0" },
+    { name = "microsoft-agents-hosting-aiohttp", marker = "extra == 'teams'", specifier = ">=1.1.0" },
+    { name = "microsoft-agents-hosting-core", marker = "extra == 'teams'", specifier = ">=1.1.0" },
+    { name = "msal", marker = "extra == 'teams-graph'", specifier = ">=1.37.0" },
+    { name = "numpy", marker = "extra == 'retrieval-dense'", specifier = ">=1.26" },
+    { name = "openpyxl", marker = "extra == 'seed'", specifier = ">=3.1" },
+    { name = "openpyxl", marker = "extra == 'teams-graph'", specifier = ">=3.1" },
+    { name = "pillow", marker = "extra == 'teams-graph'", specifier = ">=10" },
+    { name = "pillow-heif", marker = "extra == 'teams-graph'", specifier = ">=0.16" },
+    { name = "pydantic", specifier = ">=2.6" },
+    { name = "pypdf", marker = "extra == 'seed'", specifier = ">=4.0" },
+    { name = "pypdf", marker = "extra == 'teams-graph'", specifier = ">=4.0" },
+    { name = "python-docx", marker = "extra == 'seed'", specifier = ">=1.1" },
+    { name = "python-docx", marker = "extra == 'teams-graph'", specifier = ">=1.1" },
+    { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0" },
+    { name = "python-dotenv", marker = "extra == 'jira'", specifier = ">=1.0" },
+    { name = "python-dotenv", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
+    { name = "python-pptx", marker = "extra == 'seed'", specifier = ">=1.0" },
+    { name = "python-pptx", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "simplemma", marker = "extra == 'retrieval'", specifier = ">=1.0" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
+provides-extras = ["teams", "agent", "teams-graph", "github", "jira", "retrieval", "retrieval-dense", "file-reply", "seed"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "import-linter", specifier = ">=2.0" },
+    { name = "mypy", specifier = ">=1.10" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-testmon", specifier = ">=2.1" },
+    { name = "pytest-xdist", specifier = ">=3.5" },
+    { name = "ruff", specifier = ">=0.5" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
 name = "tokenizers"
 version = "0.23.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3067,125 +3186,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b3/8f/705086c9d734d3b663af0e9bb3d4de6578d08f46b1b101c2442fd9aecaa2/win32_setctime-1.2.0.tar.gz", hash = "sha256:ae1fdf948f5640aae05c511ade119313fb6a30d7eabe25fef9764dca5873c4c0", size = 4867, upload-time = "2024-12-07T15:28:28.314Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/07/c6fe3ad3e685340704d314d765b7912993bcb8dc198f0e7a89382d37974b/win32_setctime-1.2.0-py3-none-any.whl", hash = "sha256:95d644c4e708aba81dc3704a116d8cbc974d70b3bdb8be1d150e36be6e9d1390", size = 4083, upload-time = "2024-12-07T15:28:26.465Z" },
-]
-
-[[package]]
-name = "sufler"
-version = "1.15.0"
-source = { editable = "." }
-dependencies = [
-    { name = "mcp", extra = ["cli"] },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-    { name = "uvicorn" },
-]
-
-[package.optional-dependencies]
-agent = [
-    { name = "anthropic" },
-]
-file-reply = [
-    { name = "fpdf2" },
-]
-github = [
-    { name = "httpx" },
-    { name = "python-dotenv" },
-]
-jira = [
-    { name = "httpx" },
-    { name = "python-dotenv" },
-]
-retrieval = [
-    { name = "simplemma" },
-]
-retrieval-dense = [
-    { name = "fastembed" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-seed = [
-    { name = "openpyxl" },
-    { name = "pypdf" },
-    { name = "python-docx" },
-    { name = "python-pptx" },
-]
-teams = [
-    { name = "microsoft-agents-activity" },
-    { name = "microsoft-agents-authentication-msal" },
-    { name = "microsoft-agents-hosting-aiohttp" },
-    { name = "microsoft-agents-hosting-core" },
-]
-teams-graph = [
-    { name = "httpx" },
-    { name = "markdown-it-py" },
-    { name = "msal" },
-    { name = "openpyxl" },
-    { name = "pillow" },
-    { name = "pillow-heif" },
-    { name = "pypdf" },
-    { name = "python-docx" },
-    { name = "python-dotenv" },
-    { name = "python-pptx" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "import-linter" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-testmon" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "types-pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.116" },
-    { name = "fastembed", marker = "extra == 'retrieval-dense'", specifier = ">=0.4" },
-    { name = "fpdf2", marker = "extra == 'file-reply'", specifier = ">=2.8" },
-    { name = "httpx", marker = "extra == 'github'", specifier = ">=0.28.1" },
-    { name = "httpx", marker = "extra == 'jira'", specifier = ">=0.28.1" },
-    { name = "httpx", marker = "extra == 'teams-graph'", specifier = ">=0.28.1" },
-    { name = "markdown-it-py", marker = "extra == 'teams-graph'", specifier = ">=3.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
-    { name = "microsoft-agents-activity", marker = "extra == 'teams'", specifier = ">=1.1.0" },
-    { name = "microsoft-agents-authentication-msal", marker = "extra == 'teams'", specifier = ">=1.1.0" },
-    { name = "microsoft-agents-hosting-aiohttp", marker = "extra == 'teams'", specifier = ">=1.1.0" },
-    { name = "microsoft-agents-hosting-core", marker = "extra == 'teams'", specifier = ">=1.1.0" },
-    { name = "msal", marker = "extra == 'teams-graph'", specifier = ">=1.37.0" },
-    { name = "numpy", marker = "extra == 'retrieval-dense'", specifier = ">=1.26" },
-    { name = "openpyxl", marker = "extra == 'seed'", specifier = ">=3.1" },
-    { name = "openpyxl", marker = "extra == 'teams-graph'", specifier = ">=3.1" },
-    { name = "pillow", marker = "extra == 'teams-graph'", specifier = ">=10" },
-    { name = "pillow-heif", marker = "extra == 'teams-graph'", specifier = ">=0.16" },
-    { name = "pydantic", specifier = ">=2.6" },
-    { name = "pypdf", marker = "extra == 'seed'", specifier = ">=4.0" },
-    { name = "pypdf", marker = "extra == 'teams-graph'", specifier = ">=4.0" },
-    { name = "python-docx", marker = "extra == 'seed'", specifier = ">=1.1" },
-    { name = "python-docx", marker = "extra == 'teams-graph'", specifier = ">=1.1" },
-    { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0" },
-    { name = "python-dotenv", marker = "extra == 'jira'", specifier = ">=1.0" },
-    { name = "python-dotenv", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
-    { name = "python-pptx", marker = "extra == 'seed'", specifier = ">=1.0" },
-    { name = "python-pptx", marker = "extra == 'teams-graph'", specifier = ">=1.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "simplemma", marker = "extra == 'retrieval'", specifier = ">=1.0" },
-    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
-    { name = "uvicorn", specifier = ">=0.30" },
-]
-provides-extras = ["teams", "agent", "teams-graph", "github", "jira", "retrieval", "retrieval-dense", "file-reply", "seed"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "import-linter", specifier = ">=2.0" },
-    { name = "mypy", specifier = ">=1.10" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-testmon", specifier = ">=2.1" },
-    { name = "pytest-xdist", specifier = ">=3.5" },
-    { name = "ruff", specifier = ">=0.5" },
-    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]

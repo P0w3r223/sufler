@@ -7,7 +7,7 @@
 # Kontekst budowania = KORZEŃ repo (patrz docker-compose.yml: build.context: ../..).
 # Budowanie ręczne — OBIE flagi są częścią komendy, nie dobrą wolą:
 #   docker build -f deploy/docker/Dockerfile --no-cache-filter test \
-#     --build-arg REWIZJA=$(git rev-parse HEAD) -t sufler:1.15.0 .
+#     --build-arg REWIZJA=$(git rev-parse HEAD) -t sufler:1.16.0 .
 #
 # `--build-arg REWIZJA` wypełnia `org.opencontainers.image.revision`; bez niej obraz mówi
 # `nieznana` i łańcuch kontener→commit jest zerwany (U10 audytu 2026-09-08).
@@ -159,7 +159,7 @@ USER 10001:10001
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sufler"]
 
-ARG WERSJA=1.15.0
+ARG WERSJA=1.16.0
 # Commit, z którego powstał obraz. BEZ tego jedyną kotwicą wersji obrazu była PROZA CHANGELOG-a:
 # tagi gita stały na `v1.3.0` przy pakiecie 1.14.0, więc z biegnącego kontenera nie dawało się
 # dojść do kodu inaczej niż przez wiarę w dokumentację (U10 audytu 2026-09-08). Budowanie bez
