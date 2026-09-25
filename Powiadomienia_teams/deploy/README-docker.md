@@ -164,19 +164,25 @@ Dwa zastrzeżenia, bez których ten krok wprowadza w błąd:
    kopii wolumenu:
 
    ```bash
+   # Tag WYCZYTANY z compose'a, a nie wpisany tutaj: próba ma biec na tym obrazie, który stoi
+   # na produkcji. Wpisany na sztywno starzał się po cichu — do 0.2.26 stało tu `0.2.19`, obraz
+   # sprzed siedmiu wydań, którego na hoście dawno mogło już nie być. `tr -d` zdejmuje CR:
+   # produkcyjny plik ma zakończenia linii Windows.
+   OBRAZ="$(awk '/^[[:space:]]*image:/{print $2; exit}' \
+     /opt/teams-shifts-reminder/docker-compose.yml | tr -d '\r')"
    docker volume create proba-stan-tmp
    docker run --rm -v powiadomienia-teams-stan:/src:ro -v proba-stan-tmp:/dst alpine \
      sh -c 'cp -a /src/. /dst/ && rm -f /dst/powiadomienia_state.json.lock'
    docker run --rm --env-file /opt/teams-shifts-reminder/env \
      -v proba-stan-tmp:/var/lib/powiadomienia-teams \
-     powiadomienia-teams:0.2.19 --proba-nasluchu
+     "$OBRAZ" --proba-nasluchu
    docker volume rm proba-stan-tmp
    ```
 
 2. **Brak otwartych rozmów = próba niczego nie dowodzi.** Kończy się wtedy bez ani jednego
    zapytania do Graph i mówi to wprost. Sesję Graph sprawdza wtedy osobno czysty odczyt:
    `docker run --rm --env-file /opt/teams-shifts-reminder/env -v powiadomienia-teams-stan:/var/lib/powiadomienia-teams \
-   --entrypoint python powiadomienia-teams:0.2.19 /app/scripts/lista_czlonkow.py`
+   --entrypoint python "$OBRAZ" /app/scripts/lista_czlonkow.py` (`$OBRAZ` jak wyżej)
 
 ### 5d. Test pełnego obiegu
 

@@ -4,9 +4,13 @@ Wszystkie istotne zmiany w projekcie `powiadomienia-teams`. Format oparty na
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/); wersjonowanie
 [SemVer](https://semver.org/lang/pl/). Decyzje projektowe: [`docs/adr/`](docs/adr/).
 
-Numeracja wersji śledzi **tagi obrazu Dockera** (`powiadomienia-teams:X.Y.Z`) — to jedyne źródło
-prawdy o iteracji na produkcji; metadane wewnątrz obrazu (`pyproject.toml`) bywały z nimi
-rozjechane.
+Numeracja wersji śledzi **tagi obrazu Dockera** (`powiadomienia-teams:X.Y.Z`) — to one rozstrzygają
+o iteracji na produkcji; metadane wewnątrz obrazu (`pyproject.toml`) bywały z nimi rozjechane.
+
+**Od 0.2.26 każde wydanie dostaje też tag w gicie**: `powiadomienia-X.Y.Z` na commicie, z którego
+zbudowano obraz. Własna przestrzeń nazw, bo tagi `vX.Y.Z` w tym repozytorium należą do Suflera.
+Powód jest prozaiczny: obrazy żyją na JEDNYM hoście i są tam sprzątane, więc bez tagu odpowiedź na
+pytanie „z czego zbudowano 0.2.24" wymagała szukania po datach commitów.
 
 **Numery linii w sekcji [0.2.19] opisują ODZYSKANE DRZEWO z obrazu, nie bieżący `HEAD`.** Od fali 1
 repozytorium nie jest już tożsame z obrazem, więc te wskaźniki rozjeżdżają się z każdą naprawą — są
