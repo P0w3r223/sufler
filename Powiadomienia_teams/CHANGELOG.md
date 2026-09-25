@@ -14,6 +14,72 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
+## [0.2.26] — 2026-09-25
+
+Trzy rzeczy w jednym wydaniu: **nowa propozycja grafiku** (z ostatnich czterech tygodni),
+**nowy wygląd wszystkich wiadomości** (HTML z tabelami) i **poprawki z symulacji tygodnia**
+przeprowadzonej na kodzie 0.2.25 — każda z nich odtworzona, zanim została naprawiona.
+
+**Widoczne dla pracowników:** propozycja to typowy tydzień z ostatnich tygodni; każda wiadomość
+ma tabelę z dniami, datami, godzinami i trybem pracy; potwierdzenie mówi, którego tygodnia
+dotyczy; „dzięki" po odmowie nie otwiera już tematu od nowa; wiadomość po zamkniętym tygodniu
+dostaje odpowiedź zamiast ciszy.
+
+Kontrakt stanu: jedno nowe pole opcjonalne (`po_tygodniu_odpisano_at`) z bezpieczną wartością
+domyślną; 0.2.25 wczytuje stan zapisany przez 0.2.26 (nieznane pole jest pomijane), więc wycofanie
+to podmiana tagu.
+
+### Dodane
+
+- **Propozycja z ostatnich czterech tygodni zamiast „jak w zeszłym tygodniu"**
+  (`reminders.propose.proposal_from_history`, decyzja klienta — nota w `docs/plan-rozwoju.md`
+  przy D1). Niuanse, każdy pod własnym testem (`tests/test_propozycja_z_historii.py`):
+  - **urlop nie głosuje** — dzień wolny wypada z liczenia swojego dnia tygodnia; tydzień urlopu
+    przed tygodniem docelowym nie robi już z propozycji pustego tygodnia (dawniej robił);
+  - **tydzień bez żadnego wpisu nie głosuje** — to najczęściej nieuzupełniony grafik, nie brak pracy;
+  - **dzień wchodzi, gdy był pracujący w co najmniej połowie tygodni**, remis na korzyść pracy —
+    okres mniejszej aktywności nie kasuje od razu reszty tygodnia, a trwała zmiana rytmu
+    przebija się po kilku tygodniach;
+  - **powtarzające się godziny wygrywają w całości**; mediana (co kwadrans) tylko przy rozrzucie;
+  - tryb pracy 🟢/🔵 większościowo, nocki przez północ, zmiana czasu w środku historii.
+  Prośba mówi, skąd propozycja się wzięła („typowy grafik z 4 ostatnich tygodni (dni urlopu
+  pominąłem)"). Koszt: zero dodatkowych żądań — historia mieści się w tych samych dwóch
+  pobraniach (zmiany, czas wolny), które przebieg robił już wcześniej.
+- **Wszystkie wiadomości jako HTML z tabelą** (`messages.Tresc`). Tabela `Dzień | Data | Godziny |
+  Tryb pracy` w prośbie, potwierdzeniu i po zapisie; karta „etykieta → wartość" w komunikatach
+  bez dni (odmowa, domknięcie, przypomnienie); tabela przykładów przy prośbie o doprecyzowanie;
+  podsumowanie dla administratora jako jedna tabela (pozycje × tygodnie). Zwykłe `<table>` bez
+  stylów — tym znacznikiem Teams renderuje tabele poprawnie (zmierzone przy tabelach Suflera).
+  Strażnik: `tests/test_wyglad_wiadomosci.py` iteruje po builderach.
+- **Odpowiedź „ten tydzień jest już zamknięty"** na wiadomość, która przyszła po końcu tygodnia —
+  jedna na wpis, bez zapisu. Do 0.2.25 taka wiadomość nie była nawet czytana.
+
+### Naprawione
+
+- **Wznowienie kończyło się w piątek o 16:00 zamiast w niedzielę.** Piątkowy przebieg sprzątał
+  wpisy tygodnia, który jeszcze trwał (`prune_terminal` znał tylko tydzień NOWY), więc wiadomość
+  z weekendu od osoby bez prośby o kolejny tydzień trafiała w próżnię. Teraz wpis żyje do końca
+  swojego tygodnia.
+- **„Dzięki" po odmowie wznawiało temat** i model brał je za zgodę — bot wysyłał „Zapiszę
+  grafik… Potwierdź »tak«" komuś, kto odmówił, a w poniedziałek „Nie doczekałem się
+  potwierdzenia" (żywy model, 3/3). Sama grzeczność po domknięciu nie wznawia; „ok" po odmowie
+  też nie, po wygaśnięciu — nadal tak, bo przypomnienie uczy „wystarczy odpisać »ok«".
+- **Potwierdzenie nie mówiło, którego tygodnia dotyczy.** Po nowej prośbie odpowiedź o mijającym
+  tygodniu szła do grafiku następnego bez żadnej wskazówki (żywy model). Teraz tydzień i data
+  każdego dnia stoją w treści, a dni, które już minęły, są oznaczone przed „tak".
+- **Audyt 2026-09-08, pkt 3** — potwierdzone wolne, które już było w grafiku, dostawało
+  nieprawdziwe „Tydzień już się zaczął" i `EXPIRED`. Teraz: „te dni są już w grafiku" i `SELF_FILLED`.
+- **Audyt 2026-09-08, pkt 4** — przekierowanie webhooka alertów (307/308) powtarzało POST z pełną
+  treścią alertu pod dowolny adres. Przekierowania są obsługiwane ręcznie i tylko w obrębie tego
+  samego hosta po HTTPS; inne kończą się ostrzeżeniem. (Notatki z 2026-09-09 błędnie podawały
+  ten punkt jako naprawiony.)
+- **Token webhooka w logach kontenera** (znana usterka od 0.2.19) — httpx logował pełny URL.
+  Filtr logu maskuje ścieżkę adresów na hoście webhooka; logi żądań do Graph zostają w całości.
+- Przypomnienie podawało tydzień jako pon–pt, prośba jako pon–nd — ten sam tydzień miał w jednej
+  rozmowie dwie etykiety. Teraz obie mówią pon–nd.
+- `deploy/README-serwer.md`, „Znane ograniczenia": tabela wymieniała sześć dawno naprawionych
+  ograniczeń; zastąpiona aktualną.
+
 ## [0.2.25] — 2026-09-25
 
 Wydanie jednej poprawki, która nie zdążyła do 0.2.24 — scalona (PR #142) 40 minut po zbudowaniu
