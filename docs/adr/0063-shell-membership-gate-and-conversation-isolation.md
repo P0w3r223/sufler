@@ -20,11 +20,11 @@ Every **typed** path that reaches the division's data enforces a **membership ga
 inbound `sender_id` (AAD object id) resolved against `identities.yaml`, fail-closed on an unknown
 sender: note write (ADR 0042), Jira `/moje-zadania` (ADR 0054), note read (ADR 0062). **The shell
 tool has no such gate.** `build_shell_catalog` (`core/application/tools.py:573`) is attached in the
-responder whenever the shell factory is present — i.e. whenever `WORKMATE_ENABLE_SHELL=true`
+responder whenever the shell factory is present — i.e. whenever `SUFLER_ENABLE_SHELL=true`
 (`adapters/inbound/responder.py:389-390`, `if self._shell_catalog_factory is not None`) — for
 **any** sender the bot answers on a watched channel. There is no `sender_id` in that path.
 
-Two structural facts, **confirmed empirically on production** (image `workmate:1.8.0-deploy`,
+Two structural facts, **confirmed empirically on production** (image `sufler:1.8.0-deploy`,
 trusted channel, shell temporarily enabled, 2026-08-12):
 
 1. **No membership gate on the shell.** A sender **not** in `identities.yaml` (a second account
@@ -90,8 +90,8 @@ member-to-member cross-read, and is handed to a new infra ADR.
    string stays available if a later measurement shows omission confuses the model.)
 
 4. **The gate is intrinsic to the shell flag — no second toggle.** Unlike read authorization (ADR
-   0062 needed its own `WORKMATE_ENABLE_NOTE_READ_AUTHZ` because reading is default-on), the shell is
-   already opt-in OFF (ADR 0057, `WORKMATE_ENABLE_SHELL`). So membership gating is baked into "shell
+   0062 needed its own `SUFLER_ENABLE_NOTE_READ_AUTHZ` because reading is default-on), the shell is
+   already opt-in OFF (ADR 0057, `SUFLER_ENABLE_SHELL`). So membership gating is baked into "shell
    on" exactly as ADR 0042 baked authorization into the write capability — there is no window in
    which the shell is on **and** ungated. When `enable_shell` is true, startup **requires** an
    identity map and validates it fail-fast (symmetric to the write fail-fast at `config.py:930-938`
@@ -111,7 +111,7 @@ what the container can **see**, never from filtering shell strings.
 
 ### §3 — Production stance
 
-The shell is **OFF** on production as of 2026-08-12 (`WORKMATE_ENABLE_SHELL` removed from `.env`,
+The shell is **OFF** on production as of 2026-08-12 (`SUFLER_ENABLE_SHELL` removed from `.env`,
 `teams-graph` recreated). Re-enable only after §1 ships. §2 is required before the shell is offered
 on any channel whose members should not see each other's scratch.
 
@@ -121,7 +121,7 @@ on any channel whose members should not see each other's scratch.
   watched channel admits non-members, so the boundary the shell actually rides is looser than every
   typed data gate. Recording a residual risk is not the same as leaving the **widest-capability**
   tool ungated while the **narrow** typed tools are gated.
-- **Own toggle `WORKMATE_ENABLE_SHELL_AUTHZ` (mirror 0062).** Rejected: the shell is already
+- **Own toggle `SUFLER_ENABLE_SHELL_AUTHZ` (mirror 0062).** Rejected: the shell is already
   default-OFF, so the gate is intrinsic to the shell flag — a second switch would only re-create a
   shell-on-but-ungated window.
 - **Runtime refusal (offer the shell, refuse on use).** Rejected as default per ADR 0054 — omit

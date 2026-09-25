@@ -53,7 +53,7 @@ mention argument, never from thread content; event content is DATA, never comman
 
 3. **Read-only ⇒ NO write gate; date-window truncation is surfaced, not silent.** The digest reads only
    bridge events, so it needs no `save_note`, no new MCP tool, and no identity map. A single flag
-   `enable_change_digest` (`WORKMATE_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST`, default OFF) gates the router; no
+   `enable_change_digest` (`SUFLER_TEAMS_GRAPH_ENABLE_CHANGE_DIGEST`, default OFF) gates the router; no
    `validate` precondition. Because the store has no date query, the service scans the `scan_limit`
    most-recently-ingested events (`recent` is id-ordered; the poller ingests near-real-time, so id ≈
    `occurred_at`). The truncation flag is deliberately order-independent: if the scan cap is hit AND any

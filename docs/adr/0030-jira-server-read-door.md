@@ -14,7 +14,7 @@ Related to: docs/adr/0019-shared-event-store.md, docs/adr/0020-github-delegated-
 ## Context
 
 Roadmap step **B1**: surface Jira activity (issue created, status transitions, comments) on Teams and
-map a Jira project to a WorkMate project. Jira here is **Server / Data Center** (self-hosted),
+map a Jira project to a Sufler project. Jira here is **Server / Data Center** (self-hosted),
 REST API **v2**, authenticated with a **Personal Access Token (Bearer)**. No "tracker" abstraction
 exists — GitHub is wired directly; the registry now carries `jira_project_key` (ADR 0028). This is
 the read-only half; a bidirectional GitHub↔Jira sync (with write gates and loop guards) is a later
@@ -52,7 +52,7 @@ Adopt **A1**, read-only:
 
 - A new `source="jira"` flows through the existing `EventStore` + notifier → Teams with no schema
   change (ADR 0019/0028). Read-only → **no new mutating gate** (like ADR 0020). Secret
-  `WORKMATE_JIRA_TOKEN`; new entry point `workmate-jira`, extra `jira`.
+  `SUFLER_JIRA_TOKEN`; new entry point `sufler-jira`, extra `jira`.
 - Read-only ingest cannot loop, so the third loop-guard dimension (bidirectional sync) is deferred to
   the sync step; only the standard self-skip (own PAT changes) applies here.
 - **Rolled out in increments** (each green before the next): (B1.1) config + port + client;

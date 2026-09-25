@@ -7,7 +7,7 @@ Related to: ADR-0011 (phase-4 assistant, decision 9 "no key is a normal state", 
             ADR-0017 (reason codes over guessed sentences), ADR-0014 (demo), ADR-0024 (a machine
             caller never reaches the assistant), run B6 in docs/test-runs-phase4.md
 
-**Renumbered from ADR-0024 on 2026-09-24.** This project's remote home moved into the WorkMate monorepo, where `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` already holds that number and `tests/test_adr_numbering.py` enforces uniqueness. The commit messages of the work this document describes still say ADR-0024; they were written before the collision was visible and are left as they were, because a commit message is a record of what was known at the time.
+**Renumbered from ADR-0024 on 2026-09-24.** This project's remote home moved into the Sufler monorepo, where `ceidg-tool/docs/adr/0023_krs_company_risk_assessment.md` already holds that number and `tests/test_adr_numbering.py` enforces uniqueness. The commit messages of the work this document describes still say ADR-0024; they were written before the collision was visible and are left as they were, because a commit message is a record of what was known at the time.
 
 ---
 

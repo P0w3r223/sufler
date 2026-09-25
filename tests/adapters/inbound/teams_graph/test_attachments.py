@@ -21,13 +21,13 @@ from PIL import Image
 from pptx import Presentation
 from pptx.util import Inches
 
-from workmate.adapters.inbound.teams_graph.attachments import (
+from sufler.adapters.inbound.teams_graph.attachments import (
     AttachmentLimits,
     AttachmentMaterializer,
     FileBytesMaterializer,
 )
-from workmate.adapters.inbound.teams_graph.selection import AttachmentRef, ChannelMessage
-from workmate.core.errors import AttachmentOutsideChannel
+from sufler.adapters.inbound.teams_graph.selection import AttachmentRef, ChannelMessage
+from sufler.core.errors import AttachmentOutsideChannel
 
 # Atrapy: prefiks magic + zera. Pillow ich nie otworzy → fallback na sniff magicznych bajtów
 # (rozpoznaje typ, bez downscalingu) — dokładnie ścieżka dla obrazów inline z Teams.
@@ -302,7 +302,7 @@ def test_ensure_heif_registered_missing_plugin_is_silent(monkeypatch):
     """Brak extra pillow-heif → helper NIE rzuca (poller nie może paść) i zapamiętuje False."""
     import builtins
 
-    from workmate.adapters.inbound.teams_graph import attachments as att_mod
+    from sufler.adapters.inbound.teams_graph import attachments as att_mod
 
     real_import = builtins.__import__
 
@@ -323,7 +323,7 @@ def test_ensure_heif_registered_is_idempotent(monkeypatch):
     """Rejestracja opener'a HEIF wykonuje się co najwyżej RAZ na proces."""
     pillow_heif = pytest.importorskip("pillow_heif")
 
-    from workmate.adapters.inbound.teams_graph import attachments as att_mod
+    from sufler.adapters.inbound.teams_graph import attachments as att_mod
 
     calls = {"n": 0}
 
@@ -478,7 +478,7 @@ def test_url_ref_fetched_via_public_download_and_sniffed():
 
 def test_oversized_pixel_image_not_decoded_locally(monkeypatch):
     """Obraz ponad sufit PIKSELI nie jest dekodowany lokalnie (ochrona pamięci)."""
-    from workmate.adapters.inbound.teams_graph import attachments as attachments_mod
+    from sufler.adapters.inbound.teams_graph import attachments as attachments_mod
 
     monkeypatch.setattr(attachments_mod, "_MAX_IMAGE_PIXELS", 1000)  # 320×240 = 76800 > 1000
     data = _image_bytes(size=(320, 240), fmt="PNG")
@@ -761,7 +761,7 @@ def test_mixed_refs_materialize_independently():
 def test_file_materializer_degrades_a_broken_document_instead_of_raising():
     """Uszkodzony plik NIE MOŻE wyjść wyjątkiem — rdzeń woła narzędzie poza ``try``.
 
-    ``DocumentExtractionError`` nie dziedziczy z ``WorkMateError``, więc bez osłony TUTAJ
+    ``DocumentExtractionError`` nie dziedziczy z ``SuflerError``, więc bez osłony TUTAJ
     przelatywał kopertę narzędzia i zabijał całą turę: użytkownik dostawał „chwilowy błąd",
     a tura nie trafiała do pamięci rozmowy. ADR 0064 obiecuje degradację do notki, nigdy crash.
     """
@@ -788,7 +788,7 @@ def test_laczny_sufit_tekstu_jest_ZWIAZANY_z_sufitem_pojedynczego_pliku():
     cicha utrata zdolności, nie błąd. Wiążemy obie liczby sondą, bo import stałej z modułu
     ekstrakcji zrobiłby z sufitu wiadomości pochodną cudzej decyzji.
     """
-    from workmate.adapters.inbound.document_text import _MAX_TEXT_CHARS
+    from sufler.adapters.inbound.document_text import _MAX_TEXT_CHARS
 
     limity = AttachmentLimits(max_bytes=1, max_count=1, max_total_bytes=1)
 

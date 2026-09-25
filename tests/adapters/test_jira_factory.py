@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import httpx
 
-from workmate.adapters.outbound.jira_api import HttpxJiraClient, build_jira_client
-from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
-from workmate.config import JiraSettings
+from sufler.adapters.outbound.jira_api import HttpxJiraClient, build_jira_client
+from sufler.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
+from sufler.config import JiraSettings
 
 
 def _settings(**kw) -> JiraSettings:
@@ -52,7 +52,7 @@ def test_factory_tolerates_surrounding_whitespace_in_deployment():
 
 
 def test_factory_falls_back_to_server_on_an_unknown_deployment_value():
-    """Literówka w ``WORKMATE_JIRA_DEPLOYMENT`` daje Server/DC — świadomy fallback, nie wyjątek
+    """Literówka w ``SUFLER_JIRA_DEPLOYMENT`` daje Server/DC — świadomy fallback, nie wyjątek
     przy starcie. Test pinuje KTÓRA to gałąź: „nieznane → cloud" byłoby wysłaniem PAT-u Basic-iem.
     """
     client = build_jira_client(httpx.Client(), _settings(deployment="clod"))

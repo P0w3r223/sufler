@@ -39,7 +39,7 @@ authorization is a pure core decision over a port (ADR 0042); thread content is 
    gains additive extraction of `mentions` (bot AAD id) into `ChannelMessage`; a new `ThreadNoteRouter`
    (`adapters/inbound/thread_note_command.py`) handles messages whose mention targets the bot AND whose text
    matches the capture directive. The read-only `CommandRouter` (ADR 0017) is untouched. Syntax:
-   `@WorkMate zapisz to | <projekt>` — the project is the trusted arg.
+   `@Sufler zapisz to | <projekt>` — the project is the trusted arg.
 
 2. **Consulted next to (not inside) the read-only router.** `ConversationalResponder` gains an additive
    `thread_note: ThreadNoteRouter | None = None` (default `None` → every existing caller unchanged), checked
@@ -74,7 +74,7 @@ authorization is a pure core decision over a port (ADR 0042); thread content is 
    is untouched; `save_note` stays absent from HTTP doors (ADR 0007).
 
 8. **Gated OFF by default** — new `TeamsGraphSettings.enable_thread_note_capture`, which **requires**
-   `WORKMATE_TEAMS_GRAPH_IDENTITIES` (authorization is intrinsic to the write gate, not a second toggle —
+   `SUFLER_TEAMS_GRAPH_IDENTITIES` (authorization is intrinsic to the write gate, not a second toggle —
    ADR 0042) and the RW mount of `data/notes` (same as `/notatka`). It does **not** require
    `enable_meeting_transcript` — the source material is thread text, not a WebVTT transcript, so no
    transcript scopes are needed. The **inline** router is self-sufficient; the **async** mode reuses the
@@ -108,7 +108,7 @@ authorization is a pure core decision over a port (ADR 0042); thread content is 
 
 ## Follow-ups
 
-- On acceptance: flip to `accepted`; populate `WORKMATE_TEAMS_GRAPH_IDENTITIES`; live-smoke an allowed and a
+- On acceptance: flip to `accepted`; populate `SUFLER_TEAMS_GRAPH_IDENTITIES`; live-smoke an allowed and a
   refused sender, plus a forced-retry idempotency check on the same source message.
 - Optional, additive: a `/zapisz` command alias; per-project capture policy (ADR 0042 B2-B seam); async
   execution reusing the ADR 0043 scheduler/callback if summary latency stalls the door.

@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from workmate.adapters.inbound.responder import (
+from sufler.adapters.inbound.responder import (
     InboundMessage,
     RuntimeResponder,
     SaveNoteResponder,

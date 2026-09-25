@@ -12,7 +12,7 @@ którą wykonuje **operator/admin** dopiero **gdy uprawnienia są już nadane**.
 bramki: (A) **odczyt** transkryptu, (B) **zapis** notatki z komendy Teams. B wymaga A.
 
 > **STATUS 2026-07-28:** Krok 0 (zgoda admina) WYKONANY — zakresy nadane, device-code przeszło, blok
-> `WORKMATE_TEAMS_GRAPH_*` przygotowany w `.env` (flaga OFF). Dokończenie A (live-smoke) ZAPARKOWANE:
+> `SUFLER_TEAMS_GRAPH_*` przygotowany w `.env` (flaga OFF). Dokończenie A (live-smoke) ZAPARKOWANE:
 > brak realnego joinWebUrl/id spotkania z transkryptem. Kroki niżej zostają jako procedura na później.
 >
 > **STATUS 2026-07-30 — ODCHYLENIE OD PROCEDURY:** Kroki 4–6 (akceptacja ADR 0041/0042/0043 + WŁĄCZENIE
@@ -35,7 +35,7 @@ z **wymaganą zgodą admina**:
 | `OnlineMeetingTranscript.Read.All` | odczyt TREŚCI transkryptu |
 | `OnlineMeetings.Read` | rozwiązanie spotkania po `joinWebUrl` |
 
-Gdzie: **Entra admin center → App registrations → (WorkMate) → API permissions →
+Gdzie: **Entra admin center → App registrations → (Sufler) → API permissions →
 Add a permission → Microsoft Graph → Delegated** → oba → **Grant admin consent**.
 
 > Jeśli tenant ma restrykcyjną politykę online meetings, admin może potrzebować
@@ -45,11 +45,11 @@ Add a permission → Microsoft Graph → Delegated** → oba → **Grant admin c
 
 ## Krok 1 — dopisz zakresy do `.env` drzwi Teams
 
-Do istniejącej listy `WORKMATE_TEAMS_GRAPH_SCOPES` **dopisz oba** nowe zakresy
+Do istniejącej listy `SUFLER_TEAMS_GRAPH_SCOPES` **dopisz oba** nowe zakresy
 (nie usuwaj dotychczasowych):
 
 ```dotenv
-WORKMATE_TEAMS_GRAPH_SCOPES=...,OnlineMeetingTranscript.Read.All,OnlineMeetings.Read
+SUFLER_TEAMS_GRAPH_SCOPES=...,OnlineMeetingTranscript.Read.All,OnlineMeetings.Read
 ```
 
 ## Krok 2 — usuń cache tokenu MSAL
@@ -57,20 +57,20 @@ WORKMATE_TEAMS_GRAPH_SCOPES=...,OnlineMeetingTranscript.Read.All,OnlineMeetings.
 Nowy token musi nieść nowe zakresy → wymuś ponowną zgodę device-code:
 
 ```powershell
-Remove-Item $env:USERPROFILE\.workmate\teams_token_cache.bin -ErrorAction SilentlyContinue
+Remove-Item $env:USERPROFILE\.sufler\teams_token_cache.bin -ErrorAction SilentlyContinue
 ```
 
 ## Krok 3 — włącz bramkę ODCZYTU (A) i zweryfikuj CLI
 
 ```dotenv
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
 ```
 
 Weryfikacja jednym poleceniem (bez zapisu do bazy — idzie do katalogu tymczasowego):
 
 ```bash
 uv sync --extra teams-graph --extra agent    # jednorazowo
-uv run workmate-meeting --source graph \
+uv run sufler-meeting --source graph \
   --meeting "<joinWebUrl albo id spotkania>" \
   --project scada-integration --date 2026-07-28
 ```
@@ -97,10 +97,10 @@ Bramka zapisu wymaga (fail-fast): źródła transkryptu (Krok 3) **oraz** mapy t
 (**B2 / ADR 0042** — bez niej „każdy pisze do wszystkiego"). Zaakceptuj też **ADR 0042**.
 
 ```dotenv
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_TRANSCRIPT=true
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true
 # Mapa AAD id -> członek pionu:
-WORKMATE_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
+SUFLER_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
 ```
 
 **Flota Docker:** bazowy `docker-compose.yml` montuje `data/` RO — bez override `save_note` padnie w
@@ -108,7 +108,7 @@ runtime na „Read-only file system". Odpal z narzuconym wąskim montażem RW:
 `docker compose -f docker-compose.yml -f docker-compose.notatka.yml --profile bridge up -d`
 (`deploy/docker/docker-compose.notatka.yml`, ADR 0041). Sam flip flagi w `env` to NIE wystarcza.
 
-Restart drzwi (`workmate-teams-graph`). Użycie na kanale:
+Restart drzwi (`sufler-teams-graph`). Użycie na kanale:
 
 ```
 /notatka <joinWebUrl|id> | <projekt> | <RRRR-MM-DD>
@@ -127,8 +127,8 @@ Domyślnie `/notatka` liczy inline (blokuje poller na czas transkrypt+Claude). A
 natychmiast**, liczy w tle i wrzuca wynik do wątku. Zaakceptuj **ADR 0043**, potem:
 
 ```dotenv
-WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC=true    # wymaga bramki zapisu (Krok 5)
-WORKMATE_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS=2       # sufit równoległych łańcuchów
+SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_ASYNC=true    # wymaga bramki zapisu (Krok 5)
+SUFLER_TEAMS_GRAPH_MEETING_NOTE_ASYNC_WORKERS=2       # sufit równoległych łańcuchów
 ```
 
 Idempotencja (wyżej) czyni ewentualne ponowienie po zgubionym zadaniu bezpiecznym.
@@ -138,7 +138,7 @@ Idempotencja (wyżej) czyni ewentualne ponowienie po zgubionym zadaniu bezpieczn
 ## Rollback
 
 Ustaw bramki (`ENABLE_MEETING_TRANSCRIPT`, `..._NOTE_WRITE`, `..._NOTE_ASYNC`) na `false` i zrestartuj
-drzwi — zapis, async i odczyt transkryptu znikają, reszta WorkMate działa bez zmian (wszystkie seams
+drzwi — zapis, async i odczyt transkryptu znikają, reszta Sufler działa bez zmian (wszystkie seams
 addytywne, domyślnie None/OFF).
 
 ## Poza B (kolejny etap)

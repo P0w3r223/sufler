@@ -12,7 +12,7 @@ import logging
 import types
 from typing import Any
 
-from workmate.adapters.outbound.anthropic_llm import (
+from sufler.adapters.outbound.anthropic_llm import (
     _attachment_block,
     _context_management,
     _from_message,
@@ -23,9 +23,9 @@ from workmate.adapters.outbound.anthropic_llm import (
     _to_messages,
     _user_message,
 )
-from workmate.config import AgentSettings
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import (
+from sufler.config import AgentSettings
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.ports.llm import (
     AssistantTurn,
     Attachment,
     RawTurn,
@@ -372,9 +372,9 @@ def test_from_message_defaults_missing_stop_reason_to_empty_string():
 
 
 def test_system_blocks_carries_ephemeral_cache_control():
-    blocks = _system_blocks("jesteś WorkMate")
+    blocks = _system_blocks("jesteś Sufler")
     assert blocks == [
-        {"type": "text", "text": "jesteś WorkMate", "cache_control": {"type": "ephemeral"}}
+        {"type": "text", "text": "jesteś Sufler", "cache_control": {"type": "ephemeral"}}
     ]
 
 
@@ -536,7 +536,7 @@ class _RecordingMessages:
 
 def _client_with_recorders(settings: AgentSettings) -> tuple[Any, Any, Any]:
     """Zbuduj adapter z podmienionym klientem; zwróć (adapter, rejestrator beta, zwykły)."""
-    from workmate.adapters.outbound.anthropic_llm import AnthropicLLMClient
+    from sufler.adapters.outbound.anthropic_llm import AnthropicLLMClient
 
     client = AnthropicLLMClient(settings)
     beta, plain = _RecordingMessages(), _RecordingMessages()

@@ -14,8 +14,8 @@ from typing import Any
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_thread_source import HttpxGraphThreadSource
-from workmate.core.errors import ThreadRootGone
+from sufler.adapters.outbound.graph_thread_source import HttpxGraphThreadSource
+from sufler.core.errors import ThreadRootGone
 
 _EXTERNAL_ID = "team-1/chan-1/root-1"
 
@@ -159,7 +159,7 @@ def test_fetch_paginates_replies_via_next_link():
 @pytest.mark.parametrize("status", [403, 401, 500])
 def test_fetch_maps_http_error_to_value_error_with_scope_hint(status: int):
     # 403 (brak zakresu odczytu kanału), 401 (wygasły token), 5xx (awaria Graph) NIE mogą uciec
-    # jako surowy HTTPStatusError — router łapie tylko WorkMateError/ValueError/KeyError, więc
+    # jako surowy HTTPStatusError — router łapie tylko SuflerError/ValueError/KeyError, więc
     # bez mapowania degradacja by go ominęła (defekt kodu zamiast czytelnej odmowy). Lustro
     # ``HttpxGraphTranscriptSource``: mapujemy na ValueError z podpowiedzią o zakresach.
     def handler(request: httpx.Request) -> httpx.Response:

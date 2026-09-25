@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from workmate.core.domain.jira_time import parse_jira_timestamp
+from sufler.core.domain.jira_time import parse_jira_timestamp
 
 _CEST = timezone(timedelta(hours=2))
 

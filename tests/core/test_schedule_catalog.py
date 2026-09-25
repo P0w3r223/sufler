@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from workmate.adapters.outbound.anthropic_llm import _to_tool_def
-from workmate.core.application.tools import build_schedule_catalog
-from workmate.core.errors import ScheduleReadError
+from sufler.adapters.outbound.anthropic_llm import _to_tool_def
+from sufler.core.application.tools import build_schedule_catalog
+from sufler.core.errors import ScheduleReadError
 
 
 class _FakeSchedule:

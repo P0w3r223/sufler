@@ -15,8 +15,8 @@ import json
 
 import pytest
 
-from workmate.core.application.tools import build_user_image_push_catalog
-from workmate.core.ports.user_push import IMAGE_CONTENT_TYPES, sniff_image_format
+from sufler.core.application.tools import build_user_image_push_catalog
+from sufler.core.ports.user_push import IMAGE_CONTENT_TYPES, sniff_image_format
 
 _TARGET = "u-anna-aad-id"
 

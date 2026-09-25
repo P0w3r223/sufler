@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-_SRC = Path(__file__).resolve().parents[2] / "src" / "workmate"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "sufler"
 _MAPPER = _SRC / "adapters" / "inbound" / "github" / "selection.py"
 
 # ROSZCZENIE — sprawdzane na WARTOŚCI, nie na źródle: w ``spec.py`` napis jest sklejony z dwóch
@@ -206,7 +206,7 @@ def test_kazdy_rodzaj_mappera_ma_odpowiedz_czy_jest_zamknieciem_zgloszenia() -> 
 def test_notka_warstwy_mowi_prawde_o_zamknieciach() -> None:
     """RÓWNOWAŻNOŚĆ, nie warunek — zrywa się w obie strony, więc nie jest pusta ani dziś, ani po
     dołożeniu zamknięć. Notka zawyżająca zdolność i notka ją zaniżająca to ta sama klasa wady."""
-    from workmate.core.application.tools.spec import _EVENTS_LAYER_NOTE
+    from sufler.core.application.tools.spec import _EVENTS_LAYER_NOTE
 
     assert _mowi_ze_nie_zapisuje(_EVENTS_LAYER_NOTE) != _zamkniecia_sa_zapisywane()
 
@@ -221,7 +221,7 @@ def test_drzwi_MCP_niosa_to_samo_roszczenie_co_drzwi_agenta() -> None:
     (Zgodność docstringa z baseline pilnuje osobno golden ``test_mcp_tool_surface`` — tu pytamy
     o PRAWDZIWOŚĆ, tam o zamrożenie.)
     """
-    from workmate.core.application.tools.events import build_events_since_catalog
+    from sufler.core.application.tools.events import build_events_since_catalog
 
     class _PusteZdarzenia:
         def read_since(self, after_id, *, source=None, limit=50):

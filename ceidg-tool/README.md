@@ -57,7 +57,7 @@ Do 2026-09-10 kod żył na osobnej gałęzi `ceidg-tool`, bez wspólnego przodka
 została usunięta 2026-09-11. Kto ma stamtąd klon, niech sklonuje repozytorium na nowo — historia jest ta sama,
 ale numery commitów są nowe (autorstwo ujednolicono przy imporcie).
 
-W korzeniu repozytorium mieszka inny produkt (WorkMate). Zmiany w tym pod-projekcie idą
+W korzeniu repozytorium mieszka inny produkt (Sufler). Zmiany w tym pod-projekcie idą
 zwykłą drogą repozytorium — gałąź robocza i PR do `Main`; obowiązuje tu zakaz `--force`
 z `CLAUDE.md` korzenia.
 

@@ -1,19 +1,19 @@
 """Testy punktu składania serwera — profil drzwi sieciowych (Bramka 3 / ADR 0007).
 
 Krytyczny invariant bezpieczeństwa: drzwi HTTP są tylko-do-odczytu KONSTRUKCYJNIE,
-niezależnie od środowiska. Nawet gdy ``WORKMATE_ENABLE_WRITE`` jest włączone,
+niezależnie od środowiska. Nawet gdy ``SUFLER_ENABLE_WRITE`` jest włączone,
 mutujące ``save_note`` nie może się pojawić na drzwiach sieciowych.
 
-``bez_mostu`` wskazuje ``WORKMATE_EVENTS_DB`` na NIEISTNIEJĄCY plik. Bez tego powierzchnia
-zależała od tego, czy deweloper ma u siebie ``~/.workmate/events.db`` (a ma, jeśli kiedykolwiek
+``bez_mostu`` wskazuje ``SUFLER_EVENTS_DB`` na NIEISTNIEJĄCY plik. Bez tego powierzchnia
+zależała od tego, czy deweloper ma u siebie ``~/.sufler/events.db`` (a ma, jeśli kiedykolwiek
 uruchomił most): na jego maszynie testy oglądały pięć narzędzi, na świeżym runnerze cztery.
 Asercje ``not in``/``>=`` przechodziły w obu przypadkach — czyli sonda milczała o tym, że mierzy
 co innego niż myśli, i nie mogła zauważyć narzędzia, które wyciekło na drzwi sieciowe.
 
 Ten fixture ZOSTAJE po uleniwieniu obiektu modułowego (przegląd kompozycji 2026-08-17): nie był
 obejściem na efekt uboczny importu, tylko na REALNY plik w katalogu domowym dewelopera. Globalny
-fixture z ``conftest.py`` zdejmuje ``WORKMATE_*``, więc bez ``bez_mostu``
-``EventsSettings.from_env()`` wraca do domyślnego ``~/.workmate/events.db`` — który u dewelopera
+fixture z ``conftest.py`` zdejmuje ``SUFLER_*``, więc bez ``bez_mostu``
+``EventsSettings.from_env()`` wraca do domyślnego ``~/.sufler/events.db`` — który u dewelopera
 istnieje, a na runnerze nie. Import modułu ma osobną sondę niżej.
 """
 
@@ -24,10 +24,10 @@ from dataclasses import replace
 
 import pytest
 
-import workmate.server as server_module
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.config import Settings
-from workmate.server import _build_http_server, build_server
+import sufler.server as server_module
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.config import Settings
+from sufler.server import _build_http_server, build_server
 
 _READ_TOOLS = {"search_notes", "get_note", "list_projects", "get_project_status"}
 # Kursorowy odczyt EventStore (ADR 0040) — dokłada się na drzwiach HTTP, gdy most jest w użyciu.
@@ -38,8 +38,8 @@ _MY_JIRA_TASKS_TOOL = "get_my_jira_tasks"
 
 @pytest.fixture
 def bez_mostu(monkeypatch, tmp_path):
-    """Most zdarzeń NIEOBECNY — deterministycznie, niezależnie od ``~/.workmate`` operatora."""
-    monkeypatch.setenv("WORKMATE_EVENTS_DB", str(tmp_path / "nie-ma-events.db"))
+    """Most zdarzeń NIEOBECNY — deterministycznie, niezależnie od ``~/.sufler`` operatora."""
+    monkeypatch.setenv("SUFLER_EVENTS_DB", str(tmp_path / "nie-ma-events.db"))
 
 
 def test_my_jira_tasks_absent_without_configured_account(bez_mostu):
@@ -49,9 +49,9 @@ def test_my_jira_tasks_absent_without_configured_account(bez_mostu):
 
 
 def test_my_jira_tasks_present_when_account_and_read_configured(monkeypatch, bez_mostu):
-    monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example.org")
-    monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "pat-secret")
-    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+    monkeypatch.setenv("SUFLER_JIRA_BASE_URL", "https://jira.example.org")
+    monkeypatch.setenv("SUFLER_JIRA_TOKEN", "pat-secret")
+    monkeypatch.setenv("SUFLER_JIRA_MY_ACCOUNT", "mikolaj@example.org")
     server = build_server(Settings.from_env())
     names = {t.name for t in server._tool_manager.list_tools()}
     assert _MY_JIRA_TASKS_TOOL in names
@@ -60,7 +60,7 @@ def test_my_jira_tasks_present_when_account_and_read_configured(monkeypatch, bez
 def test_my_jira_tasks_absent_when_account_set_but_base_url_missing(monkeypatch, bez_mostu):
     """Konto bez URL-a/tokenu Jiry to niekompletny cel — narzędzie NIE wchodzi (fail-quiet, nie
     fail-fast: to zdolność addytywna serwera MCP, jak kursor zdarzeń)."""
-    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+    monkeypatch.setenv("SUFLER_JIRA_MY_ACCOUNT", "mikolaj@example.org")
     server = build_server(Settings.from_env())
     names = {t.name for t in server._tool_manager.list_tools()}
     assert _MY_JIRA_TASKS_TOOL not in names
@@ -68,10 +68,10 @@ def test_my_jira_tasks_absent_when_account_set_but_base_url_missing(monkeypatch,
 
 def test_my_jira_tasks_absent_from_http_even_when_account_configured(monkeypatch, bez_mostu):
     """KONSTRUKCYJNE (jak `save_note`): jeden principal na proces nie może obsłużyć wielu osób
-    na współdzielonym HTTP — narzędzie znika niezależnie od `WORKMATE_JIRA_MY_ACCOUNT` w env."""
-    monkeypatch.setenv("WORKMATE_JIRA_BASE_URL", "https://jira.example.org")
-    monkeypatch.setenv("WORKMATE_JIRA_TOKEN", "pat-secret")
-    monkeypatch.setenv("WORKMATE_JIRA_MY_ACCOUNT", "mikolaj@example.org")
+    na współdzielonym HTTP — narzędzie znika niezależnie od `SUFLER_JIRA_MY_ACCOUNT` w env."""
+    monkeypatch.setenv("SUFLER_JIRA_BASE_URL", "https://jira.example.org")
+    monkeypatch.setenv("SUFLER_JIRA_TOKEN", "pat-secret")
+    monkeypatch.setenv("SUFLER_JIRA_MY_ACCOUNT", "mikolaj@example.org")
 
     server = _build_http_server(replace(Settings.from_env(), enable_write=True))
     names = {t.name for t in server._tool_manager.list_tools()}
@@ -105,7 +105,7 @@ def test_http_deployment_surface_is_reads_plus_event_cursor(monkeypatch, tmp_pat
     """
     db = tmp_path / "events.db"
     SqliteEventStore(str(db))  # utwórz plik — most obecny, narzędzie zdarzeń się rejestruje
-    monkeypatch.setenv("WORKMATE_EVENTS_DB", str(db))
+    monkeypatch.setenv("SUFLER_EVENTS_DB", str(db))
 
     # Profil wdrożeniowy: nawet z ``enable_write=True`` w env drzwi HTTP wycinają zapis (ADR 0007).
     server = _build_http_server(replace(Settings.from_env(), enable_write=True))
@@ -120,7 +120,7 @@ def test_http_deployment_surface_is_reads_plus_event_cursor(monkeypatch, tmp_pat
 
 @pytest.fixture
 def swiezy_import():
-    """Przeładowuje ``workmate.server`` i przywraca czysty stan po teście.
+    """Przeładowuje ``sufler.server`` i przywraca czysty stan po teście.
 
     Testy w tym pliku trzymają referencje do ``build_server``/``_build_http_server`` sprzed
     przeładowania — to w porządku, bo funkcje są bezstanowe. Przywracamy jednak moduł na czysto,
@@ -133,13 +133,13 @@ def swiezy_import():
 def test_import_serwera_nie_czyta_srodowiska(monkeypatch, swiezy_import):
     """Import modułu NIE MOŻE budować serwera — ``mcp = build_server()`` robił to na kolekcji.
 
-    Zła wartość ``WORKMATE_TRANSPORT`` jest tu sondą, bo ``Settings.from_env()`` rzuca na niej
+    Zła wartość ``SUFLER_TRANSPORT`` jest tu sondą, bo ``Settings.from_env()`` rzuca na niej
     ``ValueError``: dopóki obiekt powstawał w treści modułu, sam import (a więc CAŁA kolekcja
-    pytest, jeszcze przed fixturem czyszczącym ``WORKMATE_*``) wywracał się na konfiguracji
+    pytest, jeszcze przed fixturem czyszczącym ``SUFLER_*``) wywracał się na konfiguracji
     maszyny. Przy okazji import przestaje budować lematyzator, sondować ``events.db``
     i alokować ``httpx.Client`` z ``atexit`` przy skonfigurowanej Jirze.
     """
-    monkeypatch.setenv("WORKMATE_TRANSPORT", "nieznany-transport")
+    monkeypatch.setenv("SUFLER_TRANSPORT", "nieznany-transport")
 
     przeladowany = importlib.reload(server_module)
 

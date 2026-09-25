@@ -3,7 +3,7 @@
 Date: 2026-07-07
 Status: superseded by ADR 0007
 Author: P0w3r223
-Related to: docs/reference/config.md, roadmap_workmate.pdf (Gate 3), docs/adr/0007-gate-3-http-auth-deployment.md
+Related to: docs/reference/config.md, roadmap_sufler.pdf (Gate 3), docs/adr/0007-gate-3-http-auth-deployment.md
 
 ---
 
@@ -22,12 +22,12 @@ local option.
 2. **http only.** Forces deployment and auth concerns from day one, before Gate
    2/3 are designed; heavier local dev loop.
 3. **stdio default, http via config.** One code path, transport chosen by
-   `WORKMATE_TRANSPORT`. Matches the roadmap's staged rollout.
+   `SUFLER_TRANSPORT`. Matches the roadmap's staged rollout.
 
 ## Decision
 
 **Option 3.** `Settings.transport` defaults to `stdio`; setting
-`WORKMATE_TRANSPORT=streamable-http` switches transport at run time via
+`SUFLER_TRANSPORT=streamable-http` switches transport at run time via
 `FastMCP.run(transport=...)`. No code change is needed to deploy over HTTP.
 
 ## Consequences

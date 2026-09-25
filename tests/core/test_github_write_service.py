@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.application.github import GithubWriteService
-from workmate.core.domain.events import NewEvent
-from workmate.core.errors import WriteError
+from sufler.core.application.github import GithubWriteService
+from sufler.core.domain.events import NewEvent
+from sufler.core.errors import WriteError
 
 
 class _FakeWriter:

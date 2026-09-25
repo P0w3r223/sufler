@@ -7,14 +7,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from workmate.core.application import notifier as notifier_module
-from workmate.core.application.notifier import (
+from sufler.core.application import notifier as notifier_module
+from sufler.core.application.notifier import (
     EventNotifier,
     NotifyTargets,
     default_event_render,
 )
-from workmate.core.domain.events import Event
-from workmate.core.errors import ThreadRootGone
+from sufler.core.domain.events import Event
+from sufler.core.errors import ThreadRootGone
 
 _WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
 

@@ -137,7 +137,7 @@ defect.
 
 **Rejected:** keeping the account filter with a per-kind exception list (that writes the false
 premise down again, in smaller print); a second PAT for the poller (breaks rule 7 and needs a
-secrets change on the fleet); and clearing `WORKMATE_GITHUB_SELF_LOGIN` — which
+secrets change on the fleet); and clearing `SUFLER_GITHUB_SELF_LOGIN` — which
 **does not do what it looks like it does**: an empty value makes `GithubPoller._resolve_self_login`
 (`adapters/inbound/github/poller.py:307-310`) fetch the login from `GET /user` instead, so the
 filter stays on with an auto-detected account. That is worth recording precisely, because it is the
@@ -286,7 +286,7 @@ intuition.
    Two operational traps belong in the runbook, not in a commit message. The watermark must be set
    to the **empty string, not deleted**: a deleted key falls into `_seed`'s `setdefault`
    (`poller.py:325`) and is seeded to "now", so the backfill does nothing while the operator sees a
-   green round and concludes it worked. And `WORKMATE_GITHUB_WATCH_KINDS` should be checked first —
+   green round and concludes it worked. And `SUFLER_GITHUB_WATCH_KINDS` should be checked first —
    if `pulls` is enabled on the fleet, the same round also emits the historical `pr_opened` events.
 
 10. **The false sentence is removed from BOTH surfaces, and the truth moves to the envelope.** The

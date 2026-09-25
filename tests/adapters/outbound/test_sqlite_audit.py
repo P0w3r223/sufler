@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound.sqlite_audit import SqliteAuditReader, SqliteAuditStore
-from workmate.adapters.outbound.sqlite_readonly import MissingTableError
+from sufler.adapters.outbound.sqlite_audit import SqliteAuditReader, SqliteAuditStore
+from sufler.adapters.outbound.sqlite_readonly import MissingTableError
 
 
 def _at(minute: int) -> datetime:

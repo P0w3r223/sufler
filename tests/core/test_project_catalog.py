@@ -19,18 +19,18 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from tests.conftest import FakeNotesRepository, FakeNotesWriter, FakeProjectsRepository
-from workmate.adapters.outbound.anthropic_llm import _to_tool_def
-from workmate.core.application.services import (
+from sufler.adapters.outbound.anthropic_llm import _to_tool_def
+from sufler.core.application.services import (
     NotesWriteService,
     ProjectsService,
 )
-from workmate.core.application.tools import ToolSpec, build_project_catalog
-from workmate.core.domain.models import Project, ProjectStatusRecord
+from sufler.core.application.tools import ToolSpec, build_project_catalog
+from sufler.core.domain.models import Project, ProjectStatusRecord
+from tests.conftest import FakeNotesRepository, FakeNotesWriter, FakeProjectsRepository
 
 
 def _projects_service() -> ProjectsService:
-    projects = [Project(key="workmate", company="biap", name="WorkMate", description="asystent")]
+    projects = [Project(key="workmate", company="biap", name="Sufler", description="asystent")]
     records = {
         "workmate": ProjectStatusRecord(
             key="workmate",
@@ -45,7 +45,7 @@ def _projects_service() -> ProjectsService:
 
 
 def _write_service() -> NotesWriteService:
-    projects = [Project(key="workmate", company="biap", name="WorkMate", description="asystent")]
+    projects = [Project(key="workmate", company="biap", name="Sufler", description="asystent")]
     return NotesWriteService(FakeNotesWriter(), FakeProjectsRepository(projects, {}))
 
 
@@ -117,12 +117,12 @@ def test_opis_nie_mowi_czego_narzedzie_nie_robi() -> None:
 
     Akapit istniał tylko dlatego, że nazwa obiecywała bazę notatek, a narzędzie dawało stan
     jednego projektu. Nazwa zgodna z zawartością kasuje potrzebę prostowania — a przy okazji
-    zależność opisu od tego, czy TE drzwi mają powłokę (odesłanie do `workmate-search` albo
+    zależność opisu od tego, czy TE drzwi mają powłokę (odesłanie do `sufler-search` albo
     do `search_notes` bywało fałszywe po każdej stronie).
     """
     for opis in (_spec(write=False).description, _spec(write=True).description):
         assert "nie służy" not in opis
-        assert "workmate-search" not in opis
+        assert "sufler-search" not in opis
         assert "search_notes" not in opis
 
 

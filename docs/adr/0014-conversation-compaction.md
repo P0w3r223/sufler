@@ -79,10 +79,10 @@ next user message).
    after compaction, the seam **merges** the summary into that first user message rather than
    prepending a separate one — avoiding two consecutive `user` turns.
 
-7. **Configuration.** `WORKMATE_COMPACTION_ENABLED` (default true),
-   `WORKMATE_COMPACTION_THRESHOLD_TOKENS` (default 150,000 — *ADR 0058; replaced
-   `WORKMATE_CONTEXT_WINDOW_TOKENS` × `WORKMATE_COMPACTION_THRESHOLD_FRACTION`, neither of
-   which is read any more*), `WORKMATE_COMPACTION_KEEP_TURNS` (default 4), `WORKMATE_COMPACTION_MODEL`
+7. **Configuration.** `SUFLER_COMPACTION_ENABLED` (default true),
+   `SUFLER_COMPACTION_THRESHOLD_TOKENS` (default 150,000 — *ADR 0058; replaced
+   `SUFLER_CONTEXT_WINDOW_TOKENS` × `SUFLER_COMPACTION_THRESHOLD_FRACTION`, neither of
+   which is read any more*), `SUFLER_COMPACTION_KEEP_TURNS` (default 4), `SUFLER_COMPACTION_MODEL`
    (empty → agent model). The summarizer reuses the agent's `AgentSettings` with the model
    swapped, sharing the same SQLite store.
 

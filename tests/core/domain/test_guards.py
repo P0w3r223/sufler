@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.domain.guards import (
+from sufler.core.domain.guards import (
     CrossPersonLeak,
     assert_single_person,
     bounded,
     require_jira_key,
 )
-from workmate.core.errors import WriteError
+from sufler.core.errors import WriteError
 
 # --- assert_single_person ----------------------------------------------------------------
 

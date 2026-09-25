@@ -65,7 +65,7 @@ Grafik istnieje, jest włączony, ma poprawną strefę i tydzień od poniedział
 Id grupy harmonogramowania — wartość w `deploy/env.example` i w lokalnym `.env`.
 Wybrana grupa **aktywna** — druga w tym grafiku ma `isActive=false` i zapisy trafiałyby donikąd.
 
-### 3. Zalogować się jako Virtual WorkMate  ▸ człowiek z dostępem do tego konta
+### 3. Zalogować się jako Virtual Sufler  ▸ człowiek z dostępem do tego konta
 
 ```bash
 cd /opt/teams-shifts-reminder
@@ -74,8 +74,8 @@ docker run --rm -v powiadomienia-teams-stan:/s alpine rm -f /s/teams_token_cache
 docker compose run --rm -it powiadomienia --login
 ```
 
-> **Ten `rm -f` wyłącza też WorkMate'owi dostęp do grafiku.** Wolumen `powiadomienia-teams-stan`
-> jest zamontowany **read-only** do kontenera `workmate-teams-graph`, który czyta stąd cache MSAL
+> **Ten `rm -f` wyłącza też Sufler'owi dostęp do grafiku.** Wolumen `powiadomienia-teams-stan`
+> jest zamontowany **read-only** do kontenera `sufler-teams-graph`, który czyta stąd cache MSAL
 > (decyzja 0004 paczki `infra-docker-workmate`). Od skasowania pliku do zakończenia device-code
 > drugi produkt nie ma jak sięgnąć do Shifts — i szuka wtedy przyczyny u siebie.
 
@@ -138,7 +138,7 @@ Team.ReadBasic.All                                  Sites.Read.All
 ```
 
 **Co dokładnie zostało przyjęte.** Cache tokenu (`teams_token_cache.bin`) leży w wolumenie stanu
-i jest montowany read-only także do kontenera `workmate-teams-graph`. Jego wyciek daje dziś nie
+i jest montowany read-only także do kontenera `sufler-teams-graph`. Jego wyciek daje dziś nie
 tylko dostęp do grafiku i czatów 1:1, ale też **zapis do plików SharePoint/OneDrive**
 (`Files.ReadWrite.All`), **kasowanie kanałów Teams** (`Channel.Delete.All`) i **odczyt transkrypcji
 spotkań** — czyli powierzchnię wielokrotnie szerszą niż to, do czego usługa jest zbudowana.
@@ -170,7 +170,7 @@ w nim nie zepsuje.
 
 | Rzecz | Uwaga |
 |---|---|
-| `POWIADOMIENIA_TOKEN_CACHE` | Lokalnie przestawiony na plik Virtual WorkMate. **Na serwerze nieistotne** — ścieżkę narzuca `Dockerfile` (`/var/lib/powiadomienia-teams/…`), a `env` ją tylko powtarza dla czytelności |
+| `POWIADOMIENIA_TOKEN_CACHE` | Lokalnie przestawiony na plik Virtual Sufler. **Na serwerze nieistotne** — ścieżkę narzuca `Dockerfile` (`/var/lib/powiadomienia-teams/…`), a `env` ją tylko powtarza dla czytelności |
 | Wolumen `powiadomienia-teams-stan` | Trzyma cache tokenu i stan. Bez niego każdy restart wysyła prośby **drugi raz** — idempotencja opiera się wyłącznie na tym pliku |
 | Konto bota w składzie zespołu | Jest pełnoprawnym członkiem, więc bez filtra trafiało na listę „bez grafiku". `run_once` odfiltrowuje je po `get_me()`, niezależnie od `ONLY_USER_IDS` |
 | Rozmiar grafiku | 1990 zmian, 2 strony po ~995. Limit `_MAX_PAGES=50` ≈ **49 750 zmian** — przy ~2000/rok zapas na ok. 25 lat. Odczyt całości: ~3,5 s |
@@ -180,7 +180,7 @@ w nim nie zepsuje.
 ## Stan lokalnej konfiguracji (`Powiadomienia_teams/.env`)
 
 Aktualne na 2026-07-21: `TEAM_ID` → `3ffd0e1a-…`, `SCHEDULING_GROUP_ID` → `TAG_bb093836-…`,
-`ONLY_USER_IDS` → 8 osób, `TOKEN_CACHE` → osobny plik Virtual WorkMate (sesja Piotra Cząstkiewicza
+`ONLY_USER_IDS` → 8 osób, `TOKEN_CACHE` → osobny plik Virtual Sufler (sesja Piotra Cząstkiewicza
 zaparkowana, plik nietknięty, przywracana odkomentowaniem jednej linii).
 
 **Przebieg próbny działa**: 5 osób do powiadomienia, w tym trzy z odtworzonym grafikiem

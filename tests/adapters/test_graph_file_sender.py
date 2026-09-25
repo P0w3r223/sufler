@@ -13,9 +13,9 @@ import json
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_file_sender import HttpxGraphFileSender
-from workmate.core.errors import ThreadRootGone
-from workmate.core.ports.file_output import TeamsFileSender, UploadedFile
+from sufler.adapters.outbound.graph_file_sender import HttpxGraphFileSender
+from sufler.core.errors import ThreadRootGone
+from sufler.core.ports.file_output import TeamsFileSender, UploadedFile
 
 _ETAG = '"{2318B4D5-1111-2222-3333-444455556666},1"'
 _GUID = "2318B4D5-1111-2222-3333-444455556666"

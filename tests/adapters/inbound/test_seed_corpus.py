@@ -1,4 +1,4 @@
-"""Testy importera seed korpusu (W0, ``workmate-seed-corpus``).
+"""Testy importera seed korpusu (W0, ``sufler-seed-corpus``).
 
 Czysta część (``derive_note``, ``apply_seed``, ``format_report``) na atrapach w pamięci
 (``FakeNotesWriter`` / ``FakeProjectsRepository``) — bez sieci i FS. Kluczowe niezmienniki:
@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from tests.conftest import FakeNotesWriter, FakeProjectsRepository
-from workmate.adapters.inbound.seed_corpus import (
+from sufler.adapters.inbound.seed_corpus import (
     ACTION_COLLISION,
     ACTION_CREATED,
     ACTION_SKIP,
@@ -20,15 +19,16 @@ from workmate.adapters.inbound.seed_corpus import (
     derive_note,
     format_report,
 )
-from workmate.core.application.services import NotesWriteService
-from workmate.core.domain.models import Project
+from sufler.core.application.services import NotesWriteService
+from sufler.core.domain.models import Project
+from tests.conftest import FakeNotesWriter, FakeProjectsRepository
 
 _FALLBACK = date(2025, 1, 1)
 
 
 def _projects() -> FakeProjectsRepository:
     return FakeProjectsRepository(
-        [Project(key="workmate", company="biap", name="WorkMate", description="Asystent")],
+        [Project(key="workmate", company="biap", name="Sufler", description="Asystent")],
         records={},
     )
 
@@ -73,7 +73,7 @@ def test_derive_note_records_provenance_in_tags_not_metadata_fields():
 
 def _docs() -> list[tuple[str, str]]:
     return [
-        ("README.md", "# WorkMate\n\nOpis systemu."),
+        ("README.md", "# Sufler\n\nOpis systemu."),
         ("docs/adr/0006-gate.md", "# 0006. Bramka\n\nDate: 2026-07-07\n\nTreść."),
     ]
 
@@ -105,7 +105,7 @@ def test_write_creates_notes_at_deterministic_ids():
         write=True,
     )
     ids = {r.note_id for r in results}
-    assert "biap/workmate/2025-01-01-workmate" in ids
+    assert "biap/workmate/2025-01-01-sufler" in ids
     assert "biap/workmate/2026-07-07-0006-bramka" in ids
     assert all(r.action == ACTION_CREATED for r in results)
     assert set(writer.saved) == ids

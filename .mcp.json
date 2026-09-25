@@ -3,7 +3,7 @@
     "workmate": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--directory", "${CLAUDE_PROJECT_DIR:-.}", "workmate"]
+      "args": ["run", "--directory", "${CLAUDE_PROJECT_DIR:-.}", "sufler"]
     },
     "code-review-graph": {
       "type": "stdio",

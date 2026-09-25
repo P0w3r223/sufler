@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Instaluje WorkMate (streamable-http) jako usługę Windows na loopbacku (Bramka 3, ADR 0007).
+    Instaluje Sufler (streamable-http) jako usługę Windows na loopbacku (Bramka 3, ADR 0007).
 
 .DESCRIPTION
     Szkielet do wdrożenia PÓŹNIEJ, gdy serwer będzie gotowy. Rejestruje uvicorn
@@ -13,7 +13,7 @@
 
 .EXAMPLE
     ./install-service.ps1 -UvExe 'C:\Path\uv.exe' -ProjectDir 'C:\Path\PROJEKT' `
-        -PublicHost 'workmate.firma.pl'
+        -PublicHost 'sufler.firma.pl'
     # podgląd; dodaj -Apply, by faktycznie zainstalować usługę
 #>
 [CmdletBinding()]
@@ -21,8 +21,8 @@ param(
     [Parameter(Mandatory)] [string] $UvExe,
     [Parameter(Mandatory)] [string] $ProjectDir,
     [Parameter(Mandatory)] [string] $PublicHost,
-    [string] $ServiceName = 'WorkMate',
-    [string] $TokensFile  = 'C:\ProgramData\WorkMate\tokens.json',
+    [string] $ServiceName = 'Sufler',
+    [string] $TokensFile  = 'C:\ProgramData\Sufler\tokens.json',
     [string] $BindHost    = '127.0.0.1',
     [int]    $BindPort    = 8000,
     [switch] $Apply
@@ -35,12 +35,12 @@ $ErrorActionPreference = 'Stop'
 $allowedHosts = "$PublicHost,${PublicHost}:*,127.0.0.1:*"
 
 $envPairs = [ordered]@{
-    'WORKMATE_TRANSPORT'     = 'streamable-http'
-    'WORKMATE_ENABLE_WRITE'  = 'false'          # drzwi HTTP tylko do odczytu (4 narzędzia)
-    'WORKMATE_TOKENS_FILE'   = $TokensFile
-    'WORKMATE_BIND_HOST'     = $BindHost
-    'WORKMATE_BIND_PORT'     = "$BindPort"
-    'WORKMATE_ALLOWED_HOSTS' = $allowedHosts
+    'SUFLER_TRANSPORT'     = 'streamable-http'
+    'SUFLER_ENABLE_WRITE'  = 'false'          # drzwi HTTP tylko do odczytu (4 narzędzia)
+    'SUFLER_TOKENS_FILE'   = $TokensFile
+    'SUFLER_BIND_HOST'     = $BindHost
+    'SUFLER_BIND_PORT'     = "$BindPort"
+    'SUFLER_ALLOWED_HOSTS' = $allowedHosts
 }
 
 function Test-Prereqs {
@@ -62,7 +62,7 @@ $envArgs = @($envPairs.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)
 
 if (-not $Apply) {
     Write-Host "== DRY-RUN (dodaj -Apply, by wykonać) ==" -ForegroundColor Yellow
-    Write-Host "nssm install $ServiceName `"$UvExe`" `"run --no-sync workmate`""
+    Write-Host "nssm install $ServiceName `"$UvExe`" `"run --no-sync sufler`""
     Write-Host "nssm set $ServiceName AppDirectory `"$ProjectDir`""
     Write-Host "nssm set $ServiceName AppEnvironmentExtra ``"
     $envArgs | ForEach-Object { Write-Host "    $_" }
@@ -73,7 +73,7 @@ if (-not $Apply) {
 }
 
 Test-Prereqs
-& nssm install $ServiceName $UvExe 'run --no-sync workmate'
+& nssm install $ServiceName $UvExe 'run --no-sync sufler'
 & nssm set $ServiceName AppDirectory $ProjectDir
 & nssm set $ServiceName AppEnvironmentExtra @envArgs
 & nssm start $ServiceName

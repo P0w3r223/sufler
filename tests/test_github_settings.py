@@ -1,9 +1,9 @@
 """Testy konfiguracji drzwi GitHub (GithubSettings, ADR 0020) — from_env + walidacja.
 
-Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``).
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``SUFLER_*``).
 Wcześniej stała tu ręczna lista siedemnastu zmiennych i pomocnik ``_clear`` — dwa testy
 zapomniały go zawołać i ``test_enable_ci_auto_comment_defaults_false`` przewracał się na maszynie
-z ``WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT=true`` w powłoce. Lista, którą trzeba pamiętać
+z ``SUFLER_GITHUB_ENABLE_CI_AUTO_COMMENT=true`` w powłoce. Lista, którą trzeba pamiętać
 o uzupełnieniu przy każdej nowej zmiennej, jest gorszą izolacją niż brak listy.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.config import GithubSettings
+from sufler.config import GithubSettings
 
 
 def _valid(**kw) -> GithubSettings:
@@ -30,11 +30,11 @@ def test_from_env_defaults():
 
 
 def test_from_env_reads_values(monkeypatch):
-    monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "secret")
-    monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "biap")
-    monkeypatch.setenv("WORKMATE_GITHUB_REPO", "workmate")
-    monkeypatch.setenv("WORKMATE_GITHUB_POLL_INTERVAL", "45")
-    monkeypatch.setenv("WORKMATE_GITHUB_ENABLE_WRITE", "true")
+    monkeypatch.setenv("SUFLER_GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("SUFLER_GITHUB_OWNER", "biap")
+    monkeypatch.setenv("SUFLER_GITHUB_REPO", "workmate")
+    monkeypatch.setenv("SUFLER_GITHUB_POLL_INTERVAL", "45")
+    monkeypatch.setenv("SUFLER_GITHUB_ENABLE_WRITE", "true")
     settings = GithubSettings.from_env()
     assert settings.token == "secret"
     assert settings.owner == "biap"
@@ -104,11 +104,11 @@ def test_enable_ci_auto_comment_defaults_false():
 
 
 def test_from_env_reads_ci_auto_comment(monkeypatch):
-    monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "secret")
-    monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "biap")
-    monkeypatch.setenv("WORKMATE_GITHUB_REPO", "workmate")
-    monkeypatch.setenv("WORKMATE_GITHUB_ENABLE_WRITE", "true")
-    monkeypatch.setenv("WORKMATE_GITHUB_ENABLE_CI_AUTO_COMMENT", "true")
+    monkeypatch.setenv("SUFLER_GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("SUFLER_GITHUB_OWNER", "biap")
+    monkeypatch.setenv("SUFLER_GITHUB_REPO", "workmate")
+    monkeypatch.setenv("SUFLER_GITHUB_ENABLE_WRITE", "true")
+    monkeypatch.setenv("SUFLER_GITHUB_ENABLE_CI_AUTO_COMMENT", "true")
     assert GithubSettings.from_env().enable_ci_auto_comment is True
 
 
@@ -180,10 +180,10 @@ def test_validate_worklog_limits_needs_no_token_or_repo():
 
 
 def test_from_env_reads_worklog_tuning(monkeypatch):
-    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_IDLE_GAP_MINUTES", "45")
-    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_ROUND_MINUTES", "30")
-    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_MAX_SESSION_HOURS", "6.5")
-    monkeypatch.setenv("WORKMATE_GITHUB_WORKLOG_TZ", "  Europe/London  ")
+    monkeypatch.setenv("SUFLER_GITHUB_WORKLOG_IDLE_GAP_MINUTES", "45")
+    monkeypatch.setenv("SUFLER_GITHUB_WORKLOG_ROUND_MINUTES", "30")
+    monkeypatch.setenv("SUFLER_GITHUB_WORKLOG_MAX_SESSION_HOURS", "6.5")
+    monkeypatch.setenv("SUFLER_GITHUB_WORKLOG_TZ", "  Europe/London  ")
     settings = GithubSettings.from_env()
     assert settings.worklog_idle_gap_minutes == 45
     assert settings.worklog_round_minutes == 30

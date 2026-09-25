@@ -34,7 +34,7 @@ import traceback
 import httpx
 import pytest
 
-from workmate.adapters.outbound import graph_http, jira_http
+from sufler.adapters.outbound import graph_http, jira_http
 
 _TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.SEKRETNA-WARTOSC-TOKENU.podpis"
 _NAGLOWKI = {"Authorization": f"Bearer {_TOKEN}", "Content-Type": "application/json"}

@@ -4,7 +4,7 @@ Date: 2026-07-07
 Status: accepted
 Author: P0w3r223
 Related to: docs/adr/0002-read-only-first.md (amends), docs/adr/0005-company-project-note-layout.md,
-  roadmap_workmate.pdf (Gate 2)
+  roadmap_sufler.pdf (Gate 2)
 
 ---
 
@@ -42,7 +42,7 @@ posture; write is an explicit, gated exception.
   use case (`NotesWriteService`) depends only on ports, preserving the
   `core ↛ adapters` dependency rule.
 - **Per-door gating.** `save_note` is registered only when a write service is
-  injected. `Settings.enable_write` (env `WORKMATE_ENABLE_WRITE`) controls this;
+  injected. `Settings.enable_write` (env `SUFLER_ENABLE_WRITE`) controls this;
   see **Amendment (2026-07-31)** below for the current default.
 - **Untrusted content / path-traversal safety.** The caller-supplied `title`
   reaches a file path, so it is slugified to a `[a-z0-9-]` whitelist; `/`, `..`
@@ -72,9 +72,9 @@ resulting drift: `README.md`/`docs/how-to/gate-matrix.md` already claimed every 
 included) was off by default, and `tests/test_gates_closed_by_default.py` covered every *other*
 gate but pinned this one as the sole exception rather than closing it.
 
-**Decision: drop the exception.** `WORKMATE_ENABLE_WRITE` now defaults to `false` everywhere,
+**Decision: drop the exception.** `SUFLER_ENABLE_WRITE` now defaults to `false` everywhere,
 including the local stdio door. `save_note` requires an explicit opt-in
-(`WORKMATE_ENABLE_WRITE=true` in `.env`, or `enable_write=True` passed by a door's own wiring) —
+(`SUFLER_ENABLE_WRITE=true` in `.env`, or `enable_write=True` passed by a door's own wiring) —
 same as every other mutating/outward capability. This is a one-line local dev-flow change (add the
 env var once) in exchange for a config surface with no silent exceptions; `tests/test_gates_closed_by_default.py`
 now asserts it reflectively alongside the rest.

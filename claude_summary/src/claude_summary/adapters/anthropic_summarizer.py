@@ -5,7 +5,7 @@ testowalne na atrapie w pamięci (bez sieci, bez klucza). Import ``anthropic`` j
 brak extra ``agent`` kończy się czytelnym ``SystemExit``, nie surowym ``ImportError``.
 
 Bezpieczeństwo: treść promptów i komunikatów commitów to WYŁĄCZNIE DANE, nigdy polecenia dla
-modelu (inwariant WorkMate). Prompt systemowy jawnie każe ignorować instrukcje zawarte w treści,
+modelu (inwariant Sufler). Prompt systemowy jawnie każe ignorować instrukcje zawarte w treści,
 a z odpowiedzi bierzemy sam opis — bot nie wykonuje niczego, co „każe" mu treść dnia.
 """
 

@@ -21,13 +21,13 @@ import pytest
 
 pytest.importorskip("fcntl", reason="menedżer wykonawców jest POSIX-only (gniazda unix)")
 
-from workmate.adapters.inbound import exec_server  # noqa: E402
-from workmate.adapters.outbound.exec_client import (  # noqa: E402
+from sufler.adapters.inbound import exec_server  # noqa: E402
+from sufler.adapters.outbound.exec_client import (  # noqa: E402
     ManagedCommandRunner,
     SocketCommandRunner,
 )
-from workmate.adapters.outbound.exec_manager_client import SocketExecManagerClient  # noqa: E402
-from workmate.core.errors import ExecManagerError  # noqa: E402
+from sufler.adapters.outbound.exec_manager_client import SocketExecManagerClient  # noqa: E402
+from sufler.core.errors import ExecManagerError  # noqa: E402
 
 
 def _serve_control(sock_path: Path, response: dict) -> threading.Thread:

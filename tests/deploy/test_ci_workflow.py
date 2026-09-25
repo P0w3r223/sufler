@@ -100,7 +100,7 @@ def katalogi_lintera() -> str:
     """Zakres lintera rdzenia — z matrycy, czyli z jedynego miejsca, które CI naprawdę czyta."""
     workflow = yaml.safe_load(_CI.read_text(encoding="utf-8"))
     wpisy = workflow["jobs"]["quality-gate"]["strategy"]["matrix"]["include"]
-    (rdzen,) = [wpis for wpis in wpisy if wpis["name"] == "workmate"]
+    (rdzen,) = [wpis for wpis in wpisy if wpis["name"] == "sufler"]
     return str(rdzen["lint_paths"])
 
 

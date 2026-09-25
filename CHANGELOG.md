@@ -1,10 +1,45 @@
 # Changelog
 
-Wszystkie istotne zmiany w projekcie WorkMate. Format oparty na
+Wszystkie istotne zmiany w projekcie Sufler (do 2026-09-25: WorkMate). Format oparty na
 [Keep a Changelog](https://keepachangelog.com/pl/1.1.0/); wersjonowanie
 [SemVer](https://semver.org/lang/pl/). Decyzje projektowe: [`docs/adr/`](docs/adr/).
 
 ## [Unreleased]
+
+### Zmienione
+
+- **Produkt nazywa się Sufler (2026-09-25).** Zmiana obejmuje wszystko, co identyfikuje kod:
+  pakiet (`src/workmate/` → `src/sufler/`, 231 modułów), 15 komend console-scripts
+  (`workmate-*` → `sufler-*`, w tym `sufler-search`/`sufler-extract`/`sufler-render`, które model
+  woła Z POWŁOKI — ich nazwy stoją w opisie narzędzia `Bash`), **172 zmienne środowiskowe**
+  (`WORKMATE_*` → `SUFLER_*`), klasa błędu rdzenia (`WorkMateError` → `SuflerError`), tytuł obrazu,
+  nazwa konta w kontenerze, wpis matrycy CI oraz ścieżki wewnątrz kontenera
+  (`/var/lib/workmate` → `/var/lib/sufler`, `/var/run/workmate-*` → `/var/run/sufler-*`,
+  `/etc/workmate` → `/etc/sufler`). Zmienia się też to, co widzi człowiek i model: tożsamość
+  w prompcie systemowym, prompt modelu podsumowującego, pierwsze zdanie `/pomoc`.
+
+  **Czego ta zmiana ŚWIADOMIE nie rusza — i dlaczego każde z osobna:**
+
+  - **Nazwy repozytoriów** (`PIWorkmate`, `infra-docker-workmate`) — decyzja właściciela z dnia
+    zmiany: nazwy repo zostają, zmieniamy zawartość plików.
+  - **Klucz projektu `workmate` w bazie wiedzy** (rejestr, ścieżki `biap/workmate/`, pole
+    `project:` we frontmatterze). To IDENTYFIKATOR DANYCH, a dane produkcji leżą w wolumenie
+    `workmate_workmate-data`, nie w tym repozytorium — zmiana tutaj rozjechałaby repo z flotą.
+    Zmieniona została wyłącznie nazwa WYŚWIETLANA projektu w rejestrze.
+  - **Nazwy wolumenów Dockera i ścieżka wdrożenia `/opt/sufler`** — trzymają stan floty
+    (rozmowy, notatki, cache tokenów MSAL); ich zmiana to migracja danych, nie zmiana nazwy.
+  - **Nazwa zespołu i kanału w Microsoft Teams** (`Workmate-Teams`) — byt w tenancie, nie w repo.
+  - **Historia: ten `CHANGELOG` poniżej tego wpisu oraz `.claude/sessions/`.** Wydania 1.0–1.15
+    naprawdę nazywały się WorkMate i naprawdę czytały zmienne `WORKMATE_*`; przepisanie tych zapisów
+    uczyniłoby je bezużytecznymi przy diagnozie starszego wdrożenia.
+
+  **Uwagi wdrożeniowe.** Wydanie jest ŁAMIĄCE dla konfiguracji: plik `.env` floty trzeba przepisać
+  w całości (`WORKMATE_` → `SUFLER_`), bo kod nie czyta starych nazw i nie ma dla nich warstwy
+  zgodności — zmienna pominięta przy przepisywaniu wraca do wartości DOMYŚLNEJ, a domyślną każdej
+  bramki zdolności jest `False`. Compose z paczki wdrożeniowej podbija się w tym samym wydaniu
+  (nowe `command:`, nowe ścieżki montażu, nowy tag obrazu). Kontenery-wykonawcy pozostałe z
+  poprzedniej wersji noszą etykiety `workmate.exec.*` i nowy menedżer ich nie rozpozna: należy je
+  zgasić przed migracją (`docker ps --filter label=workmate.exec.managed=true`).
 
 ### Uwagi wdrożeniowe
 

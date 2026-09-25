@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("fcntl", reason="wykonawca jest POSIX-only (gniazda unix, grupy procesów)")
 
-from workmate.adapters.inbound import exec_server  # noqa: E402
+from sufler.adapters.inbound import exec_server  # noqa: E402
 
 
 def test_negative_timeout_from_the_model_does_not_kill_the_command_instantly():

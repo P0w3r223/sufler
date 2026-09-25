@@ -4,7 +4,7 @@ Date: 2026-09-10
 Status: accepted (2026-09-10 — option A, decided by the owner; carried out in the same pull request)
 Author: P0w3r223
 Related to: [ADR 0044](0044-linux-container-deployment.md) (the deployment shape this repository
-assumes), [ADR 0046](0046-workmate-powiadomienia-teams-coexistence.md) (the precedent for a second
+assumes), [ADR 0046](0046-sufler-powiadomienia-teams-coexistence.md) (the precedent for a second
 product living in this tree). The branch itself is `ceidg-tool`; nothing about it is reachable from
 `Main`.
 
@@ -23,7 +23,7 @@ Four facts about the address, all checkable:
    `no merge base`. This is not a long-lived feature branch that drifted; it is an unrelated history
    that happens to share a remote.
 2. **It is invisible to this repository's quality gate.** The matrix in `.github/workflows/ci.yml`
-   has three entries — `workmate`, `powiadomienia-teams`, `claude-summary` — and the branch filters
+   has three entries — `sufler`, `powiadomienia-teams`, `claude-summary` — and the branch filters
    in `on:` are `Main` and `Dev`. The project is not ungated: it carries its own workflow, scoped by
    `branches: [ceidg-tool]`. But nothing in the root's gate can see it, and nothing in its gate can
    see the root.

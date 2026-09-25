@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from workmate.core.domain.week import (
+from sufler.core.domain.week import (
     FRIDAY,
     next_run,
     previous_run,

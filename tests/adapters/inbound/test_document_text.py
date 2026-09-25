@@ -13,7 +13,7 @@ import zipfile
 
 import pytest
 
-from workmate.adapters.inbound.document_text import (
+from sufler.adapters.inbound.document_text import (
     BINARY_EXTS,
     TEXT_EXTS,
     DocumentExtractionError,
@@ -452,7 +452,7 @@ def test_chunk_that_fills_the_budget_exactly_still_marks_the_truncation():
     wtedy pętlę na ``full`` i nigdy nie wracał po kolejny ``add`` — reszta dokumentu znikała
     po cichu, czyli w trybie awarii nieodróżnialnym od dokumentu, który naprawdę się skończył.
     """
-    from workmate.adapters.inbound.document_text import _TextBudget
+    from sufler.adapters.inbound.document_text import _TextBudget
 
     budzet = _TextBudget(limit=10)
     budzet.add("x" * 10)  # co do znaku, ani bajtu za dużo
@@ -463,7 +463,7 @@ def test_chunk_that_fills_the_budget_exactly_still_marks_the_truncation():
 
 def test_a_document_below_the_budget_is_not_marked_as_truncated():
     """Znacznik nie może pojawiać się na dokumentach, którym niczego nie zabrano."""
-    from workmate.adapters.inbound.document_text import _TextBudget
+    from sufler.adapters.inbound.document_text import _TextBudget
 
     budzet = _TextBudget(limit=10)
     budzet.add("krotki")

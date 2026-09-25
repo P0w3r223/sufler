@@ -8,7 +8,7 @@ zmyślona liczba/rola). Funkcje czyste — bez I/O, bez Claude.
 
 from __future__ import annotations
 
-from workmate.core.domain.transcript import (
+from sufler.core.domain.transcript import (
     _NONE,
     _UNRECOGNIZED,
     parse_speaker_roster,

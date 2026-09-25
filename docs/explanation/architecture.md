@@ -2,7 +2,7 @@
 
 ## Idea
 
-WorkMate ma jeden „mózg" i wiele „drzwi". **Rdzeń** (`core/`) zawiera całą wartość i całą
+Sufler ma jeden „mózg" i wiele „drzwi". **Rdzeń** (`core/`) zawiera całą wartość i całą
 trudność: modele danych, logikę wyszukiwania i rankingu, syntezę statusu, runtime agenta,
 warstwę zdarzeń i notyfikacji. **Drzwi** (`adapters/`) to cienkie adaptery — kanały, którymi
 wchodzi zapytanie i wychodzi odpowiedź. Ponieważ kontrakt rdzenia jest stabilny, dołożenie
@@ -14,8 +14,8 @@ flowchart TB
     subgraph IN["adapters/inbound — DRZWI"]
         MCP["mcp<br/>(Claude Code)"]
         TG["teams · teams_graph<br/>(+ /moje-zadania Jira)"]
-        CLI["cli · workmate-agent"]
-        GHD["github · workmate-github"]
+        CLI["cli · sufler-agent"]
+        GHD["github · sufler-github"]
         SEAM["Responder (wspólny szew)"]
     end
     subgraph CORE["core — RDZEŃ (bez I/O, bez SDK)"]
@@ -73,11 +73,11 @@ flowchart TB
   `filesystem_workspace`.
 - **`server.py`** — **punkt składania**: tworzy adaptery, wstrzykuje je do serwisów, podpina
   serwisy do drzwi. `config/` — typowana konfiguracja ze zmiennych
-  środowiskowych, moduł na domenę; importuj z `workmate.config`, nie z modułów wewnętrznych.
+  środowiskowych, moduł na domenę; importuj z `sufler.config`, nie z modułów wewnętrznych.
 
 ## Reguła zależności (najważniejsza konwencja)
 
-**`core/` nigdy nie importuje z `workmate.adapters`.** Zależność jest jednokierunkowa: adaptery
+**`core/` nigdy nie importuje z `sufler.adapters`.** Zależność jest jednokierunkowa: adaptery
 znają rdzeń, rdzeń nie zna adapterów. Dlatego:
 
 - logikę testujemy na atrapach w pamięci, bez dysku, sieci i SDK;
@@ -90,7 +90,7 @@ Claude Code **sam jest agentem** — potrzebuje tylko narzędzi, i do tego słu�
 wystawiają katalog wprost). Teams i CLI własnego agenta nie mają, więc dla nich rdzeń
 dostarcza **runtime agenta**: model, który prowadzi rozmowę (z pamięcią i kompaktowaniem historii),
 woła te same narzędzia i składa odpowiedź. Kluczowe: **katalog narzędzi jest jednoźródłowy**
-(`application/tools/`, moduł na katalog, jedno wejście `workmate.core.application.tools`) —
+(`application/tools/`, moduł na katalog, jedno wejście `sufler.core.application.tools`) —
 drzwi MCP i runtime agenta dostają je z tego samego miejsca
 ([ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)). Powierzchnia MCP (4+1) jest zamrożona
 i pilnowana golden-testem; narzędzia warstwy roboczej i mostu wchodzą per drzwi przez
@@ -101,7 +101,7 @@ i pilnowana golden-testem; narzędzia warstwy roboczej i mostu wchodzą per drzw
 Niezależne procesy spotykają się na jednym pliku SQLite (`EventStore`, append-only z
 deduplikacją). Nikt nie woła nikogo bezpośrednio:
 
-- **GitHub → EventStore** — drzwi `github` (`workmate-github`) odpytują repo tokenem PAT i mapują
+- **GitHub → EventStore** — drzwi `github` (`sufler-github`) odpytują repo tokenem PAT i mapują
   białą listą pól zdarzenia issue/PR/komentarzy/recenzji/CI ([ADR 0020](../adr/0020-github-delegated-polling-door.md), [ADR 0024](../adr/0024-github-pr-ci-review-ingest-and-bidirectional-teams-threads.md)).
 - **EventStore → Teams** — notifier wypycha zdarzenia na kanał i czat 1:1; wątkowanie dokłada
   zdarzenia jednego issue/PR do wspólnego wątku ([ADR 0022](../adr/0022-proactive-dual-target-teams-push.md)).
@@ -124,8 +124,8 @@ Jest jedno narzędzie, `get_my_jira_tasks` (`core/application/my_jira_tasks.py`,
 woła `JiraReadPort.search_issues` synchronicznie, w ramach tej samej tury agenta, i zwraca TYLKO
 otwarte zadania przypisane PYTAJĄCEMU. Tożsamość pytającego (nigdy parametr narzędzia) wyznacza
 zakres: na drzwiach Teams (komenda `/moje-zadania`, alias `/zadania`) z mapy AAD→Jira
-(`WORKMATE_TEAMS_GRAPH_IDENTITIES`, pole `jira_user`); na drzwiach MCP stdio (Claude Code/CLI) z
-jednego z góry skonfigurowanego principala (`WORKMATE_JIRA_MY_ACCOUNT`) — dlatego to narzędzie
+(`SUFLER_TEAMS_GRAPH_IDENTITIES`, pole `jira_user`); na drzwiach MCP stdio (Claude Code/CLI) z
+jednego z góry skonfigurowanego principala (`SUFLER_JIRA_MY_ACCOUNT`) — dlatego to narzędzie
 nie nadaje się na współdzielony serwer HTTP z wieloma osobami, tylko na lokalne stdio jednej osoby.
 
 ## Retrieval leksykalny

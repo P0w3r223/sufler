@@ -99,7 +99,7 @@ The mounts landed, and the section was rewritten against the deployment package'
 `docker-compose.yml`. Three statements above turned out narrower than reality:
 
 - **The seam has two variants, not one rewrite.** This decision assumed the mounts would replace
-  the tools description outright. They coexist instead: `WORKMATE_ENABLE_SHELL` is off by default
+  the tools description outright. They coexist instead: `SUFLER_ENABLE_SHELL` is off by default
   and [ADR 0010 of the deployment package] admits the shell only on channels whose participants
   trust each other, so both worlds are live configurations. A single corpus would therefore have
   to lie in one of them — and until this change it lied in the one *with* a shell, where the

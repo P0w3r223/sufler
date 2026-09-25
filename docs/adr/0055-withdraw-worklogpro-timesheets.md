@@ -13,12 +13,12 @@ Related to: docs/adr/0034-jira-worklog-from-github-commits.md,
 
 ## Context
 
-ADR 0035 and 0036 built a weekly, per-person WorklogPRO timesheet: a Friday scheduler (`workmate-worklogi`)
+ADR 0035 and 0036 built a weekly, per-person WorklogPRO timesheet: a Friday scheduler (`sufler-worklogi`)
 that reads a closed week's hours (Microsoft Shifts) and commit-derived issue attribution, produces one
 `.xlsx` sheet per person, and DMs it (or, since A′4, attaches it) so the employee can review and import
 their own hours into Jira. ADR 0038 added an on-demand self-service variant of the same pipeline. All of
 it is implemented, tested (unit + integration on fakes) and code-reviewed; the batch scheduler has never
-gone live (`WORKMATE_WORKLOGI_HEADERS_CONFIRMED` — the "Step 0" UI comparison against WorklogPRO's real
+gone live (`SUFLER_WORKLOGI_HEADERS_CONFIRMED` — the "Step 0" UI comparison against WorklogPRO's real
 import template — was never completed).
 
 A binding scope decision (2026-07-30): the project will not log work on anyone's behalf, in any form —
@@ -38,7 +38,7 @@ from the list of open items.
   claude_summary_store,json_hours_source,openpyxl_sheet_writer}.py`, the `adapters/inbound/worklogi/`
   door (`app.py`, `attachment_delivery.py`) and the whole `adapters/inbound/worklog_selfservice/` door.
 - Config: `WorklogiSettings` and its env vars off `config.py`.
-- Packaging/deploy: the `worklogi` extra and the `workmate-worklogi` / `workmate-worklog-selfservice`
+- Packaging/deploy: the `worklogi` extra and the `sufler-worklogi` / `sufler-worklog-selfservice`
   entry points from `pyproject.toml`; the `worklogi` and `worklog-selfservice` services, the
   `worklogi-out` volume and the `worklogi` compose profile from `deploy/docker/docker-compose.yml`;
   `deploy/worklogi/`; the worklog how-tos.
@@ -67,7 +67,7 @@ surviving half (`propose_worklog`) is explicitly out of this ADR's scope and con
 
 ## Consequences
 
-- No code path in WorkMate can produce, deliver or otherwise log a timesheet on behalf of another
+- No code path in Sufler can produce, deliver or otherwise log a timesheet on behalf of another
   person. `propose_worklog` remains as a read-only, self-service estimate the caller reviews themselves.
 - The Docker fleet loses the `worklogi` service, its `worklogi-out` volume and the `worklogi` profile;
   `docker compose config` must still resolve cleanly for the remaining profiles (`mcp`, `bridge`, `tools`

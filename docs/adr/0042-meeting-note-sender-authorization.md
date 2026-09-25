@@ -58,12 +58,12 @@ Hard constraints (hexagonal + governance):
    (the read-only `CommandRouter` ignores it). `dispatch` reads `ctx.sender_id`; when an authorizer is
    present the router authorizes **before** the slow transcript+summary chain and, on
    `NoteAuthorizationError`, returns a readable refusal. The `MeetingNoteService` stays **pure** (compose
-   note); the operator CLI (`workmate-meeting`, OS-authenticated, single trusted user) keeps calling the
+   note); the operator CLI (`sufler-meeting`, OS-authenticated, single trusted user) keeps calling the
    service directly with no authorizer.
 
 4. **Authorization is intrinsic to the write gate — not a second toggle.** Enabling
    `enable_meeting_note_write` now **requires** an identity list: new
-   `WORKMATE_TEAMS_GRAPH_IDENTITIES` (may reuse the worklog `identities.yaml`), validated fail-fast —
+   `SUFLER_TEAMS_GRAPH_IDENTITIES` (may reuse the worklog `identities.yaml`), validated fail-fast —
    the write cannot be turned on without an authorization source. A membership gate that defaulted OFF
    would mean "anyone writes" by default, which is exactly the CRITICAL risk; so the *capability* stays
    OFF by default (ADR 0006), but once on, membership is mandatory. This ADR stays `proposed` until the
@@ -102,13 +102,13 @@ Hard constraints (hexagonal + governance):
 
 ## Follow-ups
 
-- On acceptance: flip to `accepted`; populate `WORKMATE_TEAMS_GRAPH_IDENTITIES`; live-smoke an allowed
+- On acceptance: flip to `accepted`; populate `SUFLER_TEAMS_GRAPH_IDENTITIES`; live-smoke an allowed
   and a refused sender.
 - B2-B (later, additive): per-project/company policy behind the same `Actor` seam, its own ADR.
 - Optional hardening: switch the wired directory to `GraphIdentityDirectory` for team-membership currency.
 
 ## Update (2026-07-30)
 
-`WORKMATE_TEAMS_GRAPH_IDENTITIES` populated (reuses the worklogi identities file) and the write gate
+`SUFLER_TEAMS_GRAPH_IDENTITIES` populated (reuses the worklogi identities file) and the write gate
 flipped `true` in `deploy/docker/env`. Live-smoke of an allowed/refused sender is still pending —
 blocked on the same parked meeting live-smoke as ADR 0041 (no real transcript to authorize against yet).

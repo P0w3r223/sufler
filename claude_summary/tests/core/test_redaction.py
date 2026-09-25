@@ -27,7 +27,7 @@ def test_redacts_prefixed_secret_assignment() -> None:
     assert "Zaq12wsx" not in redact_text("DB_PASSWORD=Zaq12wsx")
     assert "[SEKRET]" in redact_text("DB_PASSWORD=Zaq12wsx")
     assert "Qr7~8vLpXk2Zt5Mn" not in redact_text("ustaw client_secret=Qr7~8vLpXk2Zt5Mn")
-    assert "ATATT3xFfGF0abcdefgh" not in redact_text("WORKMATE_JIRA_TOKEN=ATATT3xFfGF0abcdefgh")
+    assert "ATATT3xFfGF0abcdefgh" not in redact_text("SUFLER_JIRA_TOKEN=ATATT3xFfGF0abcdefgh")
 
 
 def test_redacts_quoted_secret_value_without_tail_leak() -> None:

@@ -16,13 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.github import app
-from workmate.config import EventsSettings, GithubSettings, TeamsPushSettings
+from sufler.adapters.inbound.github import app
+from sufler.config import EventsSettings, GithubSettings, TeamsPushSettings
 
 _REJESTR = """projects:
   - key: workmate
     company: biap
-    name: WorkMate
+    name: Sufler
     description: Asystent wiedzy
     github_repos:
       - BIAP-Inteligentne-Technologie/PIWorkmate
@@ -241,12 +241,12 @@ def test_main_karmi_bramke_zdarzen_katalogiem_danych(tmp_path: Path, monkeypatch
     nie broni niczego. Sonda jedzie przez ``main``, bo to ono podaje argument; sonda na samej
     ``EventsSettings.validate`` zostałaby zielona przy z powrotem pominiętym argumencie.
     """
-    monkeypatch.setenv("WORKMATE_GITHUB_TOKEN", "t")
-    monkeypatch.setenv("WORKMATE_GITHUB_OWNER", "o")
-    monkeypatch.setenv("WORKMATE_GITHUB_REPO", "r")
-    monkeypatch.setenv("WORKMATE_GITHUB_STATE", str(tmp_path / "state.json"))
-    monkeypatch.setenv("WORKMATE_EVENTS_DB", str(tmp_path / "events.db"))
-    monkeypatch.setenv("WORKMATE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SUFLER_GITHUB_TOKEN", "t")
+    monkeypatch.setenv("SUFLER_GITHUB_OWNER", "o")
+    monkeypatch.setenv("SUFLER_GITHUB_REPO", "r")
+    monkeypatch.setenv("SUFLER_GITHUB_STATE", str(tmp_path / "state.json"))
+    monkeypatch.setenv("SUFLER_EVENTS_DB", str(tmp_path / "events.db"))
+    monkeypatch.setenv("SUFLER_DATA_DIR", str(tmp_path / "data"))
 
     widziane: dict[str, object] = {}
     prawdziwe = EventsSettings.validate

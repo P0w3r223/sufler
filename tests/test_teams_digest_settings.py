@@ -3,7 +3,7 @@
 Ustawienia są czyste, testujemy je bez sieci: parsowanie env (odbiorcy z listy), dwustopniowa
 bramka (``enabled``/``dry_run``), fail-fast gdy ON bez odbiorców, oraz zakresy harmonogramu.
 
-Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``),
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``SUFLER_*``),
 więc ręczna lista zmiennych do wyczyszczenia — i ryzyko, że ktoś zapomni jej uzupełnić przy
 nowym polu — są tu zbędne. Test ustawia tylko to, co faktycznie bada.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.config import TeamsDigestSettings
+from sufler.config import TeamsDigestSettings
 
 # --- validate: bramka odbiorców --------------------------------------------
 
@@ -85,7 +85,7 @@ def test_from_env_defaults_when_unset():
 
 
 def test_from_env_parses_recipient_list(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_RECIPIENTS", "aad-1, aad-2 ,,aad-3")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_RECIPIENTS", "aad-1, aad-2 ,,aad-3")
 
     settings = TeamsDigestSettings.from_env()
 
@@ -94,11 +94,11 @@ def test_from_env_parses_recipient_list(monkeypatch):
 
 
 def test_from_env_reads_gate_and_schedule(monkeypatch):
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_ENABLED", "true")
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_DRY_RUN", "false")
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_RUN_WEEKDAY", "0")
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_RUN_HOUR", "9")
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_WINDOW_DAYS", "14")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_ENABLED", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_DRY_RUN", "false")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_RUN_WEEKDAY", "0")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_RUN_HOUR", "9")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_WINDOW_DAYS", "14")
 
     settings = TeamsDigestSettings.from_env()
 
@@ -117,15 +117,15 @@ def test_literowka_w_DRY_RUN_wywala_start_zamiast_uzbrajac_wysylke(monkeypatch, 
     jest próba", więc ``DRY_RUN=ture`` przy ``ENABLED=true`` puszczało DM do CAŁEJ listy odbiorców.
     Pole nie nazywa się ``enable_*``, więc golden-test bramek go nie obejmuje.
     """
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_DRY_RUN", literowka)
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_DRY_RUN", literowka)
 
-    with pytest.raises(ValueError, match="WORKMATE_TEAMS_DIGEST_DRY_RUN"):
+    with pytest.raises(ValueError, match="SUFLER_TEAMS_DIGEST_DRY_RUN"):
         TeamsDigestSettings.from_env()
 
 
 @pytest.mark.parametrize(("wartosc", "oczekiwane"), [("off", False), ("0", False), ("on", True)])
 def test_rozpoznane_wartosci_DRY_RUN_dzialaja_jak_dotad(monkeypatch, wartosc, oczekiwane):
     """Kontrast: ścisły parser ZAWĘŻA wejście, nie zmienia znaczenia wartości poprawnych."""
-    monkeypatch.setenv("WORKMATE_TEAMS_DIGEST_DRY_RUN", wartosc)
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_DRY_RUN", wartosc)
 
     assert TeamsDigestSettings.from_env().dry_run is oczekiwane

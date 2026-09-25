@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound import filesystem_workspace
-from workmate.adapters.outbound.filesystem_workspace import (
+from sufler.adapters.outbound import filesystem_workspace
+from sufler.adapters.outbound.filesystem_workspace import (
     FilesystemWorkspaceRepository,
     FilesystemWorkspaceWriter,
     prune_stale,
 )
-from workmate.core.errors import WriteError
+from sufler.core.errors import WriteError
 
 # Ta sama bramka co w ``test_filesystem_outbox`` (siostrzana sonda tej samej granicy): założenie
 # dowiązania na Windows wymaga uprawnień administratora albo trybu dewelopera, więc bez niej sonda

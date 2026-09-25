@@ -1,6 +1,6 @@
 """Ustawienia projektu — frozen dataclass + from_env() + validate().
 
-Wzorzec jak w WorkMate (`src/workmate/config.py`). Prefiks zmiennych: `POWIADOMIENIA_`.
+Wzorzec jak w Sufler (`src/sufler/config.py`). Prefiks zmiennych: `POWIADOMIENIA_`.
 Sekrety (klucz Claude) mają `repr=False`. Domyślnie `dry_run=True` — nic nie wysyła ani
 nie zapisuje, dopóki nie zostanie jawnie wyłączone.
 """

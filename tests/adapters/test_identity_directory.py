@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+from sufler.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
 
 _YAML = """
 EMP-042:

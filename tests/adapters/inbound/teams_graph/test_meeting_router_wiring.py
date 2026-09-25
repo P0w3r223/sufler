@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph.app import _build_meeting_note_router
-from workmate.config import AgentSettings, Settings, TeamsGraphSettings
+from sufler.adapters.inbound.teams_graph.app import _build_meeting_note_router
+from sufler.config import AgentSettings, Settings, TeamsGraphSettings
 
 
 def test_wiring_returns_none_when_gate_off():
@@ -79,7 +79,7 @@ def test_oba_routery_dostaja_te_sama_pule_i_poster(tmp_path):
     a różnicy nie widać w niczym poza ``ps``.
     """
     pytest.importorskip("anthropic")
-    from workmate.adapters.inbound.teams_graph.wiring_routers import _build_async_note_dispatch
+    from sufler.adapters.inbound.teams_graph.wiring_routers import _build_async_note_dispatch
 
     identities = tmp_path / "identities.yaml"
     identities.write_text("", encoding="utf-8")

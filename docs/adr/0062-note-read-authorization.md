@@ -24,7 +24,7 @@ division knowledge base with no filter on the sender, channel, or membership:
   `get_note` returns the full body of any note by id;
 - the `/szukaj` command (`adapters/inbound/commands.py:149-152`) — has `ctx.sender_id` in scope but
   ignores it;
-- the `workmate-search` CLI (`adapters/inbound/cli/search.py:117-145`) and shell `cat` over the
+- the `sufler-search` CLI (`adapters/inbound/cli/search.py:117-145`) and shell `cat` over the
   read-only mount `/mnt/system/notes` (`core/agent/prompt.py:72-88`).
 
 They converge on one `NotesService` (`core/application/services.py:50`) over one
@@ -51,7 +51,7 @@ Two structural differences from ADR 0042 must be stated up front, because they c
    (`enable_write`, ADR 0006), so ADR 0042 could make authorization *intrinsic to that flag* — "not a
    second toggle". **Reading is the default behavior**; there is no `enable_read` to attach to.
    Introducing read authorization therefore *needs its own toggle*. Per the owner's decision
-   (2026-08-11) it is **opt-in, default OFF** (`WORKMATE_ENABLE_NOTE_READ_AUTHZ`): a safe rollout that
+   (2026-08-11) it is **opt-in, default OFF** (`SUFLER_ENABLE_NOTE_READ_AUTHZ`): a safe rollout that
    does not risk cutting off legitimate readers while `identities.yaml` is still incomplete. The gap
    stays open by default — but consciously, and closed the moment the operator populates identities
    and flips the flag.
@@ -62,7 +62,7 @@ Two structural differences from ADR 0042 must be stated up front, because they c
    `NotesService` is enforceable on the *typed* paths, where the sender identity is known — which is
    **exactly today's production configuration** (układ A, shell OFF: the agent reads only through the
    typed `search_notes`/`get_note`). **[Sprostowanie 2026-09-09: to zdanie przestało być prawdziwe.
-   Powłoka jest WŁĄCZONA na flocie (`WORKMATE_ENABLE_SHELL=true`, zmierzone `docker inspect`), więc
+   Powłoka jest WŁĄCZONA na flocie (`SUFLER_ENABLE_SHELL=true`, zmierzone `docker inspect`), więc
    obowiązuje wariant opisany zaraz niżej — ścieżka powłoki jest otwarta i bramka jej nie zamyka.
    Zdanie zostaje jako zapis stanu z dnia decyzji; stanem dzisiejszym jest akapit następny.]** It is **not** enforceable on the shell/CLI path: the executor
    mounts the whole base `ro` and `cat` reads it directly, with no sender identity (infra ADR
@@ -112,16 +112,16 @@ Hard constraints (unchanged from ADR 0042):
      authorizer before calling `search_notes`; on denial it returns the refusal string. The
      `CommandRouter` stays read-only in shape — the authorizer is injected, not decided inline.
 
-4. **Shell / CLI path is explicitly out of scope for this gate.** `workmate-search` and `cat` over
+4. **Shell / CLI path is explicitly out of scope for this gate.** `sufler-search` and `cat` over
    `/mnt/system/notes` run inside the network-less executor with **no** sender identity (ADR 0057); the
-   whole base is mounted `ro`. Under `WORKMATE_ENABLE_SHELL=true` (trusted channels only, infra ADR
+   whole base is mounted `ro`. Under `SUFLER_ENABLE_SHELL=true` (trusted channels only, infra ADR
    0010) the membership gate is **not** enforced on this path — recorded as residual risk, closed only
    by the per-conversation mount that infra ADR 0010 defers. This is acceptable precisely because the
    shell is already restricted to mutually-trusting channels.
 
-5. **Own capability toggle, fail-fast on identities.** New `WORKMATE_ENABLE_NOTE_READ_AUTHZ`
+5. **Own capability toggle, fail-fast on identities.** New `SUFLER_ENABLE_NOTE_READ_AUTHZ`
    (default `False`). When `True`, startup **requires** an identity map (reusing
-   `WORKMATE_TEAMS_GRAPH_IDENTITIES` / `meeting_note_identities`), validated fail-fast — symmetric to
+   `SUFLER_TEAMS_GRAPH_IDENTITIES` / `meeting_note_identities`), validated fail-fast — symmetric to
    the write fail-fast at `config.py:930-938`. Turning read authorization **on** without an
    authorization source is a startup error, not a silent open door. Unlike ADR 0042 (authorization
    intrinsic to the write capability), this is a standalone toggle because reading has no capability
@@ -158,7 +158,7 @@ Hard constraints (unchanged from ADR 0042):
 - **Gap closed for production układ A (shell OFF) once enabled:** with the flag on and identities
   populated, an unrecognized sender's turn can no longer read the base through the typed tools or
   `/szukaj`. This is today's production configuration (powłoka OFF).
-- **Residual risk, unchanged and now documented in code:** under `WORKMATE_ENABLE_SHELL=true` the shell
+- **Residual risk, unchanged and now documented in code:** under `SUFLER_ENABLE_SHELL=true` the shell
   reads the `ro` mount directly, unauthorized — the infra ADR 0010 residual risk, lifted only by a
   per-conversation mount. Enabling read authz does **not** justify enabling the shell on untrusted
   channels.
@@ -171,14 +171,14 @@ Hard constraints (unchanged from ADR 0042):
 ## Follow-ups
 
 - On acceptance: flip to `accepted`; decide the operator rollout (populate/verify `identities.yaml`,
-  then flip `WORKMATE_ENABLE_NOTE_READ_AUTHZ=true` in the deploy env); live-smoke an allowed and a
+  then flip `SUFLER_ENABLE_NOTE_READ_AUTHZ=true` in the deploy env); live-smoke an allowed and a
   refused sender through `search_notes` and `/szukaj`.
 - Per-company/project read scoping (later, additive): behind the same `project`/`company` seam, its own
   ADR — only when a real need to restrict specific people to specific clients appears.
 - Shell-path closure: per-conversation / per-sender mount, tracked with the container rebuild in infra
   ADR 0010; only then is the membership gate enforced under the shell.
 - Once `identities.yaml` is complete and stable: consider promoting read authz from opt-in to intrinsic
-  (default-on fail-closed), retiring `WORKMATE_ENABLE_NOTE_READ_AUTHZ`.
+  (default-on fail-closed), retiring `SUFLER_ENABLE_NOTE_READ_AUTHZ`.
 
 ## Update (2026-08-11) — enforcement plumbing, before implementation
 

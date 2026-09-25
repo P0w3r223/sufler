@@ -3,7 +3,7 @@
 Date: 2026-07-23
 Status: accepted
 Author: P0w3r223
-Related to: WorkMate ADR 0034/0035 (worklog/Jira), Powiadomienia_teams (subproject template)
+Related to: Sufler ADR 0034/0035 (worklog/Jira), Powiadomienia_teams (subproject template)
 
 ---
 
@@ -19,7 +19,7 @@ records a weekly schedule/worklog in Jira. Two problems dominate the design: rel
 **Self-contained uv subproject**, hexagonal split: `core/` is pure, I/O-free logic (models,
 discriminator, day grouping, rendering) — fully unit-testable; `adapters/` do I/O (read
 `~/.claude/projects` transcripts, shell out to `git log`, optional Claude API). Mirrors the
-`Powiadomienia_teams` template and WorkMate conventions (uv, hatchling, src-layout, ruff/mypy/pytest).
+`Powiadomienia_teams` template and Sufler conventions (uv, hatchling, src-layout, ruff/mypy/pytest).
 
 **Prompt discriminator.** A `type:"user"` line is not automatically a human prompt. We keep a line
 only when ALL hold: `promptSource ∈ {typed, suggestion_accepted, queued}`, `origin.kind == "human"`,

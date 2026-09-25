@@ -3,7 +3,7 @@
 Date: 2026-07-07
 Status: accepted (amended by ADR 0006 — the save_note write tool passed Gate 2)
 Author: P0w3r223
-Related to: roadmap_workmate.pdf (cross-cutting principles, Gate 2), docs/adr/0006-write-capability-gate-2.md
+Related to: roadmap_sufler.pdf (cross-cutting principles, Gate 2), docs/adr/0006-write-capability-gate-2.md
 
 ---
 

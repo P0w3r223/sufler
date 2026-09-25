@@ -11,8 +11,8 @@ from datetime import UTC
 import httpx
 import pytest
 
-from workmate.adapters.outbound.github_api import GithubReadError, HttpxGithubClient
-from workmate.core.errors import WorkMateError
+from sufler.adapters.outbound.github_api import GithubReadError, HttpxGithubClient
+from sufler.core.errors import SuflerError
 
 _BASE = "https://api.github.com"
 
@@ -136,7 +136,7 @@ def test_create_comment_posts_to_issue():
 def test_server_error_on_the_read_path_comes_back_as_a_domain_error():
     """5xx na ODCZYCIE wracał surowym ``httpx.HTTPStatusError`` i kasował całą turę agenta.
 
-    Koperta narzędzia łapie ``WorkMateError`` — dopiero wtedy model dostaje ``{"error": ...}``
+    Koperta narzędzia łapie ``SuflerError`` — dopiero wtedy model dostaje ``{"error": ...}``
     i może spróbować inaczej. ``_as_write_error`` obejmował wyłącznie zapisy, więc odczyt (a to
     on jest domyślną drogą) nie miał żadnego opakowania. Wzorzec: ``MyJiraTasksService``.
     """
@@ -147,7 +147,7 @@ def test_server_error_on_the_read_path_comes_back_as_a_domain_error():
     with pytest.raises(GithubReadError) as exc:
         _client(handler).list_issues("o", "r")
 
-    assert isinstance(exc.value, WorkMateError)
+    assert isinstance(exc.value, SuflerError)
     assert "500" in str(exc.value)
 
 

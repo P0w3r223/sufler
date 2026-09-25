@@ -12,7 +12,7 @@ from datetime import date
 
 import pytest
 
-from workmate.core.domain.paths import meeting_note_id, note_id, slugify, thread_note_id
+from sufler.core.domain.paths import meeting_note_id, note_id, slugify, thread_note_id
 
 # Musi być spójne z _SLUG_MAX_LENGTH w paths.py (górny limit długości sluga).
 _SLUG_MAX_LENGTH = 80

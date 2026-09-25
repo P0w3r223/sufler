@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-import workmate
+import sufler
 
 _KORZEN = Path(__file__).resolve().parents[1]
 _PYPROJECT = _KORZEN / "pyproject.toml"
@@ -49,7 +49,7 @@ def _wersja_pakietu() -> str:
 
 def test_pyproject_zgodny_z_dunder_version() -> None:
     """Jedyna para dostępna także w obrazie — dlatego bez pominięcia."""
-    assert workmate.__version__ == _wersja_pakietu()
+    assert sufler.__version__ == _wersja_pakietu()
 
 
 @pytest.mark.skipif(not _DOCKERFILE.is_file(), reason="deploy/ nie wjeżdża do obrazu")

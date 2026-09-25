@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import types
 
-from workmate.adapters.outbound.anthropic_judge import AnthropicMutationJudge, _user_block
-from workmate.config import AgentSettings
-from workmate.core.domain.mutation import MutationRequest
+from sufler.adapters.outbound.anthropic_judge import AnthropicMutationJudge, _user_block
+from sufler.config import AgentSettings
+from sufler.core.domain.mutation import MutationRequest
 
 
 def _request(kind: str = "edit") -> MutationRequest:

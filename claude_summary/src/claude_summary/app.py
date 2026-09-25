@@ -2,7 +2,7 @@
 
 Orkiestracja: bramka zgody → rozwiąż zakres i źródła → sparsuj prompty (+ opcjonalnie commity)
 → pogrupuj po dniu → (opcjonalnie) opis prozą z LLM → wypisz Markdown/JSON i zapisz do pliku.
-Parsowanie argumentów jest ręczne (konwencja WorkMate — bez argparse/click). Wejście/wyjście
+Parsowanie argumentów jest ręczne (konwencja Sufler — bez argparse/click). Wejście/wyjście
 wymuszamy na UTF-8, żeby polskie znaki nie psuły się w konsoli Windows.
 """
 

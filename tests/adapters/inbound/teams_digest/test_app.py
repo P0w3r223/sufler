@@ -6,7 +6,7 @@ ludzi: druga bramka (``dry_run``), nadrabianie pominiętego terminu i przycinani
 
 Sieci nie ma: ``_send_chat`` podmieniamy przechwytującym zamknięciem (to jedyne miejsce, w którym
 drzwi dotykają Graph), a zdarzenia idą przez PRAWDZIWY ``SqliteEventStore`` w ``tmp_path``, wskazany
-``WORKMATE_EVENTS_DB`` — dzięki temu sonda przechodzi też przez ``_events_service`` i realne
+``SUFLER_EVENTS_DB`` — dzięki temu sonda przechodzi też przez ``_events_service`` i realne
 składanie digestu, zamiast zakładać jego kształt.
 """
 
@@ -18,12 +18,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from workmate.adapters.inbound.teams_digest import app
-from workmate.adapters.inbound.teams_digest import state as state_store
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.config import TeamsDigestSettings, TeamsPushSettings
-from workmate.core.application.events import EventService
-from workmate.core.domain.events import NewEvent
+from sufler.adapters.inbound.teams_digest import app
+from sufler.adapters.inbound.teams_digest import state as state_store
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.config import TeamsDigestSettings, TeamsPushSettings
+from sufler.core.application.events import EventService
+from sufler.core.domain.events import NewEvent
 
 _TZ = ZoneInfo("Europe/Warsaw")
 # Poniedziałek 2026-07-20, 08:00 lokalnie — dokładnie domyślny termin przebiegu.
@@ -46,7 +46,7 @@ def zdarzenia(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             project="scada-integration",
         )
     )
-    monkeypatch.setenv("WORKMATE_EVENTS_DB", str(db))
+    monkeypatch.setenv("SUFLER_EVENTS_DB", str(db))
     return db
 
 
@@ -258,8 +258,8 @@ def test_require_teams_names_every_missing_identity_field():
         app._require_teams(TeamsPushSettings())
 
     komunikat = str(exc.value)
-    assert "WORKMATE_TEAMS_PUSH_CLIENT_ID" in komunikat
-    assert "WORKMATE_TEAMS_PUSH_TENANT_ID" in komunikat
+    assert "SUFLER_TEAMS_PUSH_CLIENT_ID" in komunikat
+    assert "SUFLER_TEAMS_PUSH_TENANT_ID" in komunikat
 
 
 def test_require_teams_names_only_what_is_missing():
@@ -267,8 +267,8 @@ def test_require_teams_names_only_what_is_missing():
         app._require_teams(TeamsPushSettings(client_id="app-1"))
 
     komunikat = str(exc.value)
-    assert "WORKMATE_TEAMS_PUSH_TENANT_ID" in komunikat
-    assert "WORKMATE_TEAMS_PUSH_CLIENT_ID" not in komunikat
+    assert "SUFLER_TEAMS_PUSH_TENANT_ID" in komunikat
+    assert "SUFLER_TEAMS_PUSH_CLIENT_ID" not in komunikat
 
 
 def test_require_teams_passes_with_full_identity():

@@ -14,7 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-# Wynik może zawierać prywatną treść promptów → domyślnie POZA repo (jak dane operacyjne WorkMate).
+# Wynik może zawierać prywatną treść promptów → domyślnie POZA repo (jak dane operacyjne Sufler).
 _DEFAULT_OUTPUT_DIR = Path.home() / ".claude-summary"
 _DEFAULT_TZ = "Europe/Warsaw"
 _DEFAULT_MODEL = "claude-sonnet-5"

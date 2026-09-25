@@ -35,7 +35,7 @@ GitHub — Gate 4 — and it deliberately mirrors ADR 0006's envelope.
 
 - **Separate write port.** `GithubWritePort` distinct from `GithubReadPort` — the read side
   stays visibly read-only; `GithubWriteService` depends only on ports (`core ↛ adapters`).
-- **Per-door gating (default off).** `WORKMATE_GITHUB_ENABLE_WRITE` controls whether
+- **Per-door gating (default off).** `SUFLER_GITHUB_ENABLE_WRITE` controls whether
   `build_github_write_catalog` is built and injected (via `extra_catalog`) into a door's
   agent. When off, the write client is `None`, so the model never sees a mutating tool —
   a structural guarantee, exactly like `save_note`. Wired into the `teams_graph` door.

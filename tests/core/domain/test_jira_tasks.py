@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.domain.jira_tasks import (
+from sufler.core.domain.jira_tasks import (
     JiraComment,
     build_history_jql,
     build_my_tasks_jql,
@@ -14,7 +14,7 @@ from workmate.core.domain.jira_tasks import (
     map_task_details,
     split_by_assignment,
 )
-from workmate.core.errors import InvalidRequestError
+from sufler.core.errors import InvalidRequestError
 
 
 def test_build_my_tasks_jql_scopes_to_assignee_or_reported_unassigned() -> None:

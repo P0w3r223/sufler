@@ -10,7 +10,7 @@ Uruchomienie (w środowisku projektu, z wypełnionym ``.env``)::
     uv run --no-sync python deploy/jira/preflight.py --account mikolaj@example.org
     uv run --no-sync python deploy/jira/preflight.py --account mikolaj@example.org --aad <aad-user-id>
 
-Bez ``--account`` używane jest ``WORKMATE_JIRA_MY_ACCOUNT`` (principal serwera MCP, ADR 0054).
+Bez ``--account`` używane jest ``SUFLER_JIRA_MY_ACCOUNT`` (principal serwera MCP, ADR 0054).
 Kody wyjścia: ``0`` = auth + odczyt OK; ``1`` = konfiguracja/auth/odczyt odrzucone (stderr).
 
 Zakres sprawdzenia ``--aad`` jest węższy, niż bywał opisywany: rozwiązuje AAD id przez plik mapy
@@ -27,11 +27,11 @@ from typing import Any
 
 import httpx
 
-from workmate.adapters.inbound import env
-from workmate.adapters.outbound.jira_api import build_jira_client
-from workmate.config import JiraSettings, TeamsGraphSettings
-from workmate.core.application.my_jira_tasks import MyJiraTasksService
-from workmate.core.errors import JiraReadError
+from sufler.adapters.inbound import env
+from sufler.adapters.outbound.jira_api import build_jira_client
+from sufler.config import JiraSettings, TeamsGraphSettings
+from sufler.core.application.my_jira_tasks import MyJiraTasksService
+from sufler.core.errors import JiraReadError
 
 
 def _log(msg: str = "") -> None:
@@ -84,7 +84,7 @@ def _check_identity(aad_user_id: str, identities_path: Any) -> bool:
     if not identities_path.is_file():
         _log(f"  !! Mapa tożsamości nie istnieje: {identities_path}.")
         return False
-    from workmate.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
+    from sufler.adapters.outbound.graph_identity_directory import YamlIdentityDirectory
 
     try:
         directory = YamlIdentityDirectory(identities_path)
@@ -120,11 +120,11 @@ def _run(*, account: str, aad_user_id: str, limit: int) -> int:
     settings = JiraSettings.from_env()
     _log(f"[cfg] deployment={settings.deployment} base_url={settings.base_url}")
     if not (settings.base_url and settings.token):
-        _log("!! Brak WORKMATE_JIRA_BASE_URL/WORKMATE_JIRA_TOKEN w środowisku/.env.")
+        _log("!! Brak SUFLER_JIRA_BASE_URL/SUFLER_JIRA_TOKEN w środowisku/.env.")
         return 1
     assignee = account or settings.my_account
     if not assignee:
-        _log("!! Podaj --account albo ustaw WORKMATE_JIRA_MY_ACCOUNT (konto do testu odczytu).")
+        _log("!! Podaj --account albo ustaw SUFLER_JIRA_MY_ACCOUNT (konto do testu odczytu).")
         return 1
 
     with httpx.Client(timeout=30) as http:
@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--account",
         default="",
-        help="Konto Jira (login/e-mail/accountId) do testu; domyślnie WORKMATE_JIRA_MY_ACCOUNT.",
+        help="Konto Jira (login/e-mail/accountId) do testu; domyślnie SUFLER_JIRA_MY_ACCOUNT.",
     )
     parser.add_argument(
         "--aad", default="", help="Opcjonalnie: aad_user_id do sprawdzenia mapy tożsamości."

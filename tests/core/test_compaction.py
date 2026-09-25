@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.application.compaction import CompactionService, _describe_attachment
-from workmate.core.domain.conversation import ConversationMessage
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import Attachment, LLMResponse, UserText, attachment_to_row
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.application.compaction import CompactionService, _describe_attachment
+from sufler.core.domain.conversation import ConversationMessage
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.ports.llm import Attachment, LLMResponse, UserText, attachment_to_row
 
 _TS = datetime(2025, 1, 1, 12, 0, 0)
 

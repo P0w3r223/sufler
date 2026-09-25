@@ -15,9 +15,9 @@ import json
 import httpx
 import pytest
 
-from workmate.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
-from workmate.core.domain.adf import text_to_adf
-from workmate.core.errors import JiraReadError
+from sufler.adapters.outbound.jira_cloud_api import HttpxJiraCloudClient
+from sufler.core.domain.adf import text_to_adf
+from sufler.core.errors import JiraReadError
 
 _BASE = "https://acme.atlassian.net"
 

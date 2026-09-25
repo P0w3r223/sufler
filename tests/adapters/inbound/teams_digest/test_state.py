@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.teams_digest import state
+from sufler.adapters.inbound.teams_digest import state
 
 _W30 = "2026-W30"
 _W31 = "2026-W31"

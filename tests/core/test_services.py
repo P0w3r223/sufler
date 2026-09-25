@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 
+from sufler.core.application.services import NotesService, ProjectsService
+from sufler.core.domain.models import Project, ProjectStatusRecord
 from tests.conftest import FakeNotesRepository, FakeProjectsRepository
-from workmate.core.application.services import NotesService, ProjectsService
-from workmate.core.domain.models import Project, ProjectStatusRecord
 
 
 def test_search_finds_by_query_in_body(sample_notes):
@@ -103,7 +103,7 @@ def _projects_service(sample_notes) -> ProjectsService:
         Project(
             key="workmate",
             company="biap",
-            name="WorkMate",
+            name="Sufler",
             description="Asystent wiedzy",
         ),
     ]

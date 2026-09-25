@@ -9,9 +9,9 @@ Related to: [ADR 0040](../adr/0040-eventstore-to-mcp-session-cursor-read.md), [A
 
 ## Question
 
-WorkMate holds a shared append-only `EventStore` of cross-system events (GitHub/Jira/CI/Teams,
+Sufler holds a shared append-only `EventStore` of cross-system events (GitHub/Jira/CI/Teams,
 ADR 0019). For Roadmap V1 Phase 3 gap **A3** we need those events to reach a **Claude Code session**
-that has WorkMate connected as an MCP server. The load-bearing unknown: **does the Claude Code MCP
+that has Sufler connected as an MCP server. The load-bearing unknown: **does the Claude Code MCP
 client receive server-initiated push (resource subscriptions / notifications), or must we fall back
 to a pollable resource/tool over the `EventStore`?**
 
@@ -65,7 +65,7 @@ recognized anti-pattern (client timeouts, freezes the agent). The MCP-native asy
 SEP-1686, 2025-11-25) is itself **poll-based**, not push. A standardized push future (Triggers &
 Events WG, chartered 2026-03-24) exists but is pre-spec — track, don't build on it.
 
-### 4. WorkMate already owns ~80% of the fallback
+### 4. Sufler already owns ~80% of the fallback
 The `EventStore` (ADR 0019) already provides `read_since(after_id)` over a monotonic DB `id` cursor,
 `UNIQUE(source, external_id, kind)` dedup, and ingest-time `reject_dangerous_content`. An out-of-band
 human nudge (notifier → Teams, ADR 0022) already exists. The only missing piece was exposing a cursor

@@ -14,18 +14,18 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from sufler.adapters.inbound.mcp.tools import register_tools
+from sufler.core.application.services import (
+    NotesService,
+    NotesWriteService,
+    ProjectsService,
+)
+from sufler.core.domain.models import Project
 from tests.conftest import (
     FakeNotesRepository,
     FakeNotesWriter,
     FakeProjectsRepository,
 )
-from workmate.adapters.inbound.mcp.tools import register_tools
-from workmate.core.application.services import (
-    NotesService,
-    NotesWriteService,
-    ProjectsService,
-)
-from workmate.core.domain.models import Project
 
 _READ_TOOLS = {"search_notes", "get_note", "list_projects", "get_project_status"}
 

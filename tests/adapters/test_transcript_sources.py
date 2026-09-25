@@ -10,7 +10,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from workmate.adapters.outbound.transcript_sources import (
+from sufler.adapters.outbound.transcript_sources import (
     HttpxGraphTranscriptSource,
     InMemoryTranscriptSource,
     vtt_to_text,

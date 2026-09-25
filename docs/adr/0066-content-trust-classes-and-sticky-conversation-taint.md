@@ -222,10 +222,10 @@ restart-surviving conversation taint that escalates — never blocks — consequ
     changes the bytes of every request and adds a sentence to every session header, so an operator
     who cannot switch it off cannot compare the model's behaviour before and after — and this is
     precisely the change whose effect on a cooperative model nobody can predict from the code.
-    It therefore ships behind `WORKMATE_TEAMS_GRAPH_ENABLE_TRUST_LABELS`, default OFF, with the
+    It therefore ships behind `SUFLER_TEAMS_GRAPH_ENABLE_TRUST_LABELS`, default OFF, with the
     *off* path asserted byte-identical to the previous request. What "default-ON" was reaching for —
     enabling it must not require a new image — holds: it is one `.env` line and a recreate.
-  - **T1/T2 sender split: opt-in, riding ADR 0062's flag** (`WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ`).
+  - **T1/T2 sender split: opt-in, riding ADR 0062's flag** (`SUFLER_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ`).
     It depends on `identities.yaml` being complete, which today it is not (~2 of the division mapped —
     the same reason 0062's rollout is held). Turning it on early would demote real members' requests to
     data. One flag, not two: both halves gate on the same fact (is the map trustworthy?), and a second

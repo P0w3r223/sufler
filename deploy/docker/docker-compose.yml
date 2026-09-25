@@ -1,4 +1,4 @@
-# Flota WorkMate na Ubuntu — serwer MCP + drzwi mostu (ADR 0044).
+# Flota Sufler na Ubuntu — serwer MCP + drzwi mostu (ADR 0044).
 #
 # Docelowa lokalizacja: /opt/sufler/deploy/docker/  (obok: env, nginx.conf, certs/)
 # Konfiguracja przez ./env (chmod 640 — zawiera sekrety: klucz Claude, PAT-y, tokeny).
@@ -9,9 +9,9 @@
 #               zredukowana do odczytu "moje zadania", wołanego wprost z teams-graph/MCP).
 #               Karty czasu (WorklogPRO, ADR 0035) wycofane z projektu (ADR 0055) — brak profilu.
 #   digest    → proaktywny digest tygodniowy Teams (ADR 0053). WYMAGA jawnego
-#               WORKMATE_TEAMS_DIGEST_ENABLED=true (inaczej proces kończy się SystemExit przy
+#               SUFLER_TEAMS_DIGEST_ENABLED=true (inaczej proces kończy się SystemExit przy
 #               starcie i restart: unless-stopped wejdzie w pętlę restartów) oraz
-#               WORKMATE_TEAMS_DIGEST_DRY_RUN=false dla realnej wysyłki (domyślnie DRY-RUN).
+#               SUFLER_TEAMS_DIGEST_DRY_RUN=false dla realnej wysyłki (domyślnie DRY-RUN).
 #
 #   docker compose --profile mcp --profile bridge up -d     # most + serwer wiedzy
 #   docker compose logs -f
@@ -26,7 +26,7 @@ x-logging: &logging
     max-file: "5"
 
 # Wspólne czasy healthchecku pulsu pollerów (R5). Puls (plik na wolumenie state) odświeża się PO
-# każdej udanej rundzie; checker `workmate-heartbeat-check` porównuje jego wiek z `--max-age` (interwał
+# każdej udanej rundzie; checker `sufler-heartbeat-check` porównuje jego wiek z `--max-age` (interwał
 # pollingu + zapas). Wykrywa zawieszony poller i jałową pętlę (np. token nie do odnowienia): brak
 # świeżego pulsu ⇒ `unhealthy` w `docker compose ps`. `--file`/`--max-age` per usługa niżej.
 x-poller-health: &poller-health
@@ -37,8 +37,8 @@ x-poller-health: &poller-health
 
 # Wspólny szkielet drzwi/serwera: jeden obraz (wiele entrypointów przez `command`), wspólny wolumen
 # stanu (współdzielony events.db — ADR 0019), baza wiedzy montowana RO, utwardzenie jak w podprojekcie.
-x-workmate-common: &workmate-common
-  image: workmate:1.15.0
+x-sufler-common: &workmate-common
+  image: sufler:1.15.0
   build:
     context: ../..
     dockerfile: deploy/docker/Dockerfile
@@ -61,7 +61,7 @@ x-workmate-common: &workmate-common
   tmpfs:
     - /tmp:size=64m         # pliki tymczasowe SQLite (VACUUM/sort) i tempfile — rootfs jest RO
   volumes:
-    - state:/var/lib/workmate           # events.db, conversations.db, *_state.json, cache MSAL, tokens.json
+    - state:/var/lib/sufler           # events.db, conversations.db, *_state.json, cache MSAL, tokens.json
     - ../../data:/app/data:ro           # baza wiedzy (notatki) — zarządzana na hoście przez `git pull`
   logging: *logging
 
@@ -70,11 +70,11 @@ services:
   mcp:
     <<: *workmate-common
     profiles: [mcp]
-    command: ["workmate"]
+    command: ["sufler"]
     environment:
-      WORKMATE_TRANSPORT: streamable-http
-      WORKMATE_BIND_HOST: 0.0.0.0        # tylko sieć wewnętrzna compose; publiczny wjazd przez nginx
-      WORKMATE_BIND_PORT: "8000"
+      SUFLER_TRANSPORT: streamable-http
+      SUFLER_BIND_HOST: 0.0.0.0        # tylko sieć wewnętrzna compose; publiczny wjazd przez nginx
+      SUFLER_BIND_PORT: "8000"
     expose:
       - "8000"
     healthcheck:
@@ -99,15 +99,15 @@ services:
       - "443:443"
       - "80:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/workmate.conf:ro
-      - ./certs:/etc/nginx/certs:ro     # workmate.crt + workmate.key (poza repo)
+      - ./nginx.conf:/etc/nginx/conf.d/sufler.conf:ro
+      - ./certs:/etc/nginx/certs:ro     # sufler.crt + sufler.key (poza repo)
     logging: *logging
 
   # --- Drzwi GitHub (polling PAT → events.db → push Teams) — ADR 0020 ----------------------------
   github:
     <<: *workmate-common
     profiles: [bridge]
-    command: ["workmate-github"]
+    command: ["sufler-github"]
     healthcheck:
       <<: *poller-health
       # Healthcheck po pulsie POLLERA (github_state.heartbeat, 180 s = interwał 60 s + zapas) — JEDNA
@@ -116,36 +116,36 @@ services:
       # enable_channel). Gdy push OFF, github chodzi ingest-only i .notify.heartbeat NIGDY nie powstaje
       # — druga sonda utrzymałaby github trwale unhealthy (znalezisko z review Fazy 0). DRUGĄ SONDĘ
       # dodać dopiero przy włączonym pushu (wtedy notifier i pętla dead-letter §2 działają), CMD-SHELL:
-      #   test: ["CMD-SHELL", "workmate-heartbeat-check --file …/github_state.heartbeat --max-age 180
-      #           && workmate-heartbeat-check --file …/github_state.notify.heartbeat --max-age 600"]
+      #   test: ["CMD-SHELL", "sufler-heartbeat-check --file …/github_state.heartbeat --max-age 180
+      #           && sufler-heartbeat-check --file …/github_state.notify.heartbeat --max-age 600"]
       # Próg notifiera ~600, nie 420: cisza = 5×(poll_interval 60 + timeout httpx 30) ≈ 450 s.
-      test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/github_state.heartbeat", "--max-age", "180"]
+      test: ["CMD", "sufler-heartbeat-check", "--file", "/var/lib/sufler/github_state.heartbeat", "--max-age", "180"]
 
   # --- Drzwi Teams (delegowany Graph) + runtime agenta — ADR 0015/0016 ---------------------------
   # Czyta events.db (github), odpowiada na kanale, pcha zdarzenia do Teams; odczyt "moje zadania"
   # Jiry (ADR 0054) woła bezpośrednio przez ten sam proces, bez osobnych drzwi/pollera. WYMAGA
-  # WORKMATE_TEAMS_GRAPH_WATCH i primingu device-code (inaczej tryb odkrywania kończy proces).
+  # SUFLER_TEAMS_GRAPH_WATCH i primingu device-code (inaczej tryb odkrywania kończy proces).
   teams-graph:
     <<: *workmate-common
     profiles: [bridge]
-    command: ["workmate-teams-graph"]
+    command: ["sufler-teams-graph"]
     healthcheck:
       <<: *poller-health
       # Puls raz na rundę WSZYSTKICH kanałów; przy bardzo wielu kanałach runda trwa dłużej —
       # podnieś --max-age (wartość operatorska, jak stop_grace_period).
-      test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/teams_graph_state.heartbeat", "--max-age", "180"]
+      test: ["CMD", "sufler-heartbeat-check", "--file", "/var/lib/sufler/teams_graph_state.heartbeat", "--max-age", "180"]
 
   # --- Digest tygodniowy Teams (proaktywny DM w poniedziałek) — ADR 0053 -------------------------
-  # OFF domyślnie (WORKMATE_TEAMS_DIGEST_ENABLED=false w env.example): włączenie bez tej flagi
+  # OFF domyślnie (SUFLER_TEAMS_DIGEST_ENABLED=false w env.example): włączenie bez tej flagi
   # kończy proces SystemExit-em przy starcie. Puls raz na cykl (pętla śpi do _MAX_SLEEP_S=900s
   # między sprawdzeniami harmonogramu) ⇒ --max-age z dużym zapasem.
   teams-digest:
     <<: *workmate-common
     profiles: [digest]
-    command: ["workmate-teams-digest"]
+    command: ["sufler-teams-digest"]
     healthcheck:
       <<: *poller-health
-      test: ["CMD", "workmate-heartbeat-check", "--file", "/var/lib/workmate/teams_digest_state.heartbeat", "--max-age", "2000"]
+      test: ["CMD", "sufler-heartbeat-check", "--file", "/var/lib/sufler/teams_digest_state.heartbeat", "--max-age", "2000"]
 
 volumes:
   state:

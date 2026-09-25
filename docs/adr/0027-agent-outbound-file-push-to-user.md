@@ -23,7 +23,7 @@ Related to: docs/adr/0026-agent-file-reply-in-thread.md, docs/adr/0016-user-mult
 >    channel-poller token does **not** carry (it holds only `ChannelMessage.Send`). Those scopes are
 >    **already admin-consented** (used by `Powiadomienia_teams`/TeamsPush) and share the MSAL cache,
 >    so enabling the gate needs **no new admin consent** — only adding them to
->    `WORKMATE_TEAMS_GRAPH_SCOPES` + a device-code re-consent. `config.validate` now fails fast on the
+>    `SUFLER_TEAMS_GRAPH_SCOPES` + a device-code re-consent. `config.validate` now fails fast on the
 >    gate without those scopes (mirrors `enable_file_reply` → `Files.ReadWrite.All`).
 > 2. **Sync port, not an async-notifier method.** This ADR said the async `TeamsNotifier` would gain
 >    an attachment method, but agent tools dispatch **synchronously** (thread pool). Consistent with
@@ -62,7 +62,7 @@ Related to: docs/adr/0026-agent-file-reply-in-thread.md, docs/adr/0016-user-mult
 >   delegated `Files.ReadWrite` suffices; validation accepts **either** `Files.ReadWrite` or the
 >   broader `Files.ReadWrite.All` (the latter is already consented for ADR 0026's channel upload). The
 >   narrow scope's sufficiency for `invite` is a live-smoke confirmation item.
-> - **Artifact retention.** Pushed docs go to a dedicated OneDrive subfolder (`WorkMate-push/`, not
+> - **Artifact retention.** Pushed docs go to a dedicated OneDrive subfolder (`Sufler-push/`, not
 >   the drive root), created idempotently. **TTL cleanup is deferred to the pilot** — rendered files
 >   linger with a standing per-user `read` grant (info-disclosure boundary unchanged: only the bound
 >   sender can open them). A hard message-POST failure after the `invite` leaves an orphaned grant;

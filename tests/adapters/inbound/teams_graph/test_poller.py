@@ -16,10 +16,10 @@ from typing import Any
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph import poller as poller_module
-from workmate.adapters.inbound.teams_graph.poller import ChannelPoller
-from workmate.core.errors import ThreadRootGone
-from workmate.core.ports.llm import Attachment
+from sufler.adapters.inbound.teams_graph import poller as poller_module
+from sufler.adapters.inbound.teams_graph.poller import ChannelPoller
+from sufler.core.errors import ThreadRootGone
+from sufler.core.ports.llm import Attachment
 
 _ME = "me-bot"
 _STARTUP = "2024-01-01T11:00:00Z"

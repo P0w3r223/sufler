@@ -1,4 +1,4 @@
-"""Wczytywanie ``.env`` bez zależności zewnętrznej (wzorzec z WorkMate ``inbound/env.py``).
+"""Wczytywanie ``.env`` bez zależności zewnętrznej (wzorzec z Sufler ``inbound/env.py``).
 
 Realne zmienne środowiskowe zawsze mają priorytet (``setdefault``). PowerShell domyślnie
 zapisuje UTF-16 LE z BOM — obsługujemy oba warianty, żeby ``.env`` z Windowsa działał tak

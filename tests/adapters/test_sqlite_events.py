@@ -10,8 +10,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.core.domain.events import NewEvent, composite_external_id
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.core.domain.events import NewEvent, composite_external_id
 
 _WHEN = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
 
@@ -200,7 +200,7 @@ def test_pre_0028_db_gains_repo_and_project_columns_keeping_old_rows(tmp_path):
     """``CREATE TABLE IF NOT EXISTS`` nie rusza istniejącej tabeli, więc plik sprzed ADR 0028
     nie ma kolumn ``repo``/``project`` — a indeks po ``project`` by się na nim wywrócił.
 
-    Ten plik żyje w ``~/.workmate/events.db`` i przeżywa aktualizacje, więc ścieżka migracji
+    Ten plik żyje w ``~/.sufler/events.db`` i przeżywa aktualizacje, więc ścieżka migracji
     jest realna, nie hipotetyczna.
     """
     path = tmp_path / "events.db"
@@ -247,7 +247,7 @@ def test_reopening_a_migrated_db_is_idempotent(tmp_path):
 
 
 def test_store_creates_missing_parent_directory(tmp_path):
-    """Most startuje z ``~/.workmate/events.db`` na świeżej maszynie — brak katalogu nie może
+    """Most startuje z ``~/.sufler/events.db`` na świeżej maszynie — brak katalogu nie może
     być błędem startu."""
     store = SqliteEventStore(tmp_path / "brak" / "takiego" / "events.db")
 
@@ -259,17 +259,17 @@ def test_home_relative_path_opens_the_expanded_file_not_a_literal_tilde(tmp_path
     """``~`` w ścieżce bazy było rozwijane WYŁĄCZNIE na potrzeby ``mkdir``.
 
     ``connect`` dostawał napis z ``~``, więc katalog powstawał pod rozwiniętą ścieżką
-    (``~/.workmate``), a baza — pod literalnym ``~`` w katalogu roboczym procesu. Domyślna
-    konfiguracja mówi ``~/.workmate/events.db``, więc to jest droga produkcyjna, nie egzotyczna.
+    (``~/.sufler``), a baza — pod literalnym ``~`` w katalogu roboczym procesu. Domyślna
+    konfiguracja mówi ``~/.sufler/events.db``, więc to jest droga produkcyjna, nie egzotyczna.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
-    store = SqliteEventStore("~/.workmate/events.db")
+    store = SqliteEventStore("~/.sufler/events.db")
     store.append(_event("issue-1"))
 
-    assert (tmp_path / ".workmate" / "events.db").is_file()
+    assert (tmp_path / ".sufler" / "events.db").is_file()
     assert not (tmp_path / "~").exists()  # żadnego katalogu o nazwie "~" obok
 
 

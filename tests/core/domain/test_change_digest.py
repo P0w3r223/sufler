@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from workmate.core.domain.change_digest import ChangeDigest, ProjectChanges
+from sufler.core.domain.change_digest import ChangeDigest, ProjectChanges
 
 
 def _dt(day: int, hour: int = 12) -> datetime:

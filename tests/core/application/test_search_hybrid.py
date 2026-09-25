@@ -13,8 +13,8 @@ from datetime import date
 
 import pytest
 
+from sufler.core.application.services import NotesService
 from tests.conftest import FakeNotesRepository, make_note
-from workmate.core.application.services import NotesService
 
 # Atrapa lematyzatora: mapuje kilka form fleksyjnych na lemat, resztę zostawia (jak OOV simplemma).
 _LEMMAS = {
@@ -108,7 +108,7 @@ def test_score_is_float():
 
 def test_real_simplemma_matches_polish_inflection():
     pytest.importorskip("simplemma")
-    from workmate.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
+    from sufler.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
 
     notes = [
         make_note(

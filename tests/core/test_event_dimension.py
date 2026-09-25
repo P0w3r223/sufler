@@ -10,11 +10,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
-from workmate.adapters.outbound.sqlite_events import SqliteEventStore
-from workmate.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
-from workmate.core.application.services import ProjectsService
-from workmate.core.domain.events import NewEvent, composite_external_id
-from workmate.core.domain.models import Project
+from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.adapters.outbound.yaml_projects_repo import YamlProjectsRepository
+from sufler.core.application.services import ProjectsService
+from sufler.core.domain.events import NewEvent, composite_external_id
+from sufler.core.domain.models import Project
 
 
 def _bez_echa(external_id: str, echo_kind: str) -> bool:
@@ -151,7 +151,7 @@ def test_registry_reads_external_mapping_and_is_backward_compatible(tmp_path) ->
 
 
 def test_github_selection_stamps_repo_and_project() -> None:
-    from workmate.adapters.inbound.github import selection
+    from sufler.adapters.inbound.github import selection
 
     raw = {
         "number": 5,
@@ -169,7 +169,7 @@ def test_github_selection_stamps_repo_and_project() -> None:
 
 
 def test_map_pull_state_merged_closed_open() -> None:
-    from workmate.adapters.inbound.github import selection
+    from sufler.adapters.inbound.github import selection
 
     merged = selection.map_pull_state(
         {
@@ -200,7 +200,7 @@ def test_map_pull_state_merged_closed_open() -> None:
 
 
 def test_select_events_maps_pull_state_transitions() -> None:
-    from workmate.adapters.inbound.github import selection
+    from sufler.adapters.inbound.github import selection
 
     events = selection.select_events(
         [],
@@ -222,8 +222,8 @@ def test_select_events_maps_pull_state_transitions() -> None:
 
 def test_akcja_summary_zwija_zdarzenia_po_rodzaju(tmp_path) -> None:
     """Krok 5.2 (ADR 0009 paczki): ``get_project_activity`` to ``GitHub(action='activity')``."""
-    from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_activity_catalog
+    from sufler.core.application.events import EventService
+    from sufler.core.application.tools import build_activity_catalog
 
     store = SqliteEventStore(tmp_path / "events.db")
     for e in [
@@ -245,8 +245,8 @@ def test_akcja_summary_zwija_zdarzenia_po_rodzaju(tmp_path) -> None:
 def test_project_status_enriched_with_event_activity(tmp_path) -> None:
     from datetime import date
 
-    from workmate.core.application.events import EventService
-    from workmate.core.domain.models import ProjectStatusRecord
+    from sufler.core.application.events import EventService
+    from sufler.core.domain.models import ProjectStatusRecord
 
     store = SqliteEventStore(tmp_path / "events.db")
     store.append(_ev("o/r#1", kind="pr_opened", repo="o/r", project="wm"))
@@ -303,9 +303,9 @@ def test_ostatnia_aktywnosc_to_najpozniejsze_ZAJSCIE_nie_ostatnie_przyjecie(tmp_
     """
     from datetime import date
 
-    from workmate.core.application.events import EventService
-    from workmate.core.application.tools import build_activity_catalog
-    from workmate.core.domain.models import ProjectStatusRecord
+    from sufler.core.application.events import EventService
+    from sufler.core.application.tools import build_activity_catalog
+    from sufler.core.domain.models import ProjectStatusRecord
 
     pozniej = datetime(2026, 7, 1, 10, 5, tzinfo=UTC)
     wczesniej = datetime(2026, 7, 1, 10, 0, tzinfo=UTC)
@@ -341,7 +341,7 @@ def test_ostatnia_aktywnosc_to_najpozniejsze_ZAJSCIE_nie_ostatnie_przyjecie(tmp_
 
 
 def test_diff_branches_seeds_then_detects_push_and_delete() -> None:
-    from workmate.adapters.inbound.github import selection
+    from sufler.adapters.inbound.github import selection
 
     raw1 = [{"name": "main", "commit": {"sha": "aaa"}}, {"name": "feat", "commit": {"sha": "bbb"}}]
     # Pierwsza runda: SEED — zero zdarzeń, mapa zapisana.
@@ -380,9 +380,9 @@ def test_backfill_nie_wypycha_swiezych_zdarzen_z_okna_Project_status(tmp_path) -
     """
     from datetime import date
 
-    from workmate.core.application.events import EventService
-    from workmate.core.application.services import ProjectsService
-    from workmate.core.domain.models import ProjectStatusRecord
+    from sufler.core.application.events import EventService
+    from sufler.core.application.services import ProjectsService
+    from sufler.core.domain.models import ProjectStatusRecord
 
     swieze = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
     store = SqliteEventStore(tmp_path / "events.db")

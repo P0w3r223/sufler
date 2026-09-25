@@ -11,11 +11,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from workmate.adapters.inbound.responder import ConversationalResponder, InboundMessage
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.application.conversations import ConversationService
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import AgentResult, AssistantTurn, Attachment, UserText
+from sufler.adapters.inbound.responder import ConversationalResponder, InboundMessage
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.application.conversations import ConversationService
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.ports.llm import AgentResult, AssistantTurn, Attachment, UserText
 
 
 class _FakeRuntime:
@@ -87,7 +87,7 @@ def test_brief_router_receives_the_sender_identity():
     _reply(
         responder,
         InboundMessage(
-            text="@WorkMate ogarnij mnie na workmate",
+            text="@Sufler ogarnij mnie na workmate",
             conversation_id="team/chan/root",
             sender_id="aad-123",
             mentions_bot=True,
@@ -104,7 +104,7 @@ def test_change_digest_router_receives_the_sender_identity():
     _reply(
         responder,
         InboundMessage(
-            text="@WorkMate co się zmieniło od 2026-07-01",
+            text="@Sufler co się zmieniło od 2026-07-01",
             conversation_id="team/chan/root",
             sender_id="aad-123",
             mentions_bot=True,

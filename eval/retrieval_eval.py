@@ -23,7 +23,7 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from workmate.core.application.services import NotesService
+    from sufler.core.application.services import NotesService
 
 _GOLDEN = Path(__file__).resolve().parent / "golden_queries.yaml"
 # Próg bramki Fazy B: dense wchodzi tylko, gdy podnosi nDCG@5 o co najmniej tyle nad lexical-PL.
@@ -81,16 +81,16 @@ def evaluate(service: NotesService, golden: list[dict[str, Any]]) -> dict[str, f
 
 def _build_services() -> dict[str, NotesService]:
     """Zbuduj konfiguracje nad REALNYM korpusem data/. ``lexical-PL`` wymaga extra ``retrieval``."""
-    from workmate.adapters.inbound import env
-    from workmate.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
-    from workmate.config import Settings
-    from workmate.core.application.services import NotesService
+    from sufler.adapters.inbound import env
+    from sufler.adapters.outbound.markdown_notes_repo import MarkdownNotesRepository
+    from sufler.config import Settings
+    from sufler.core.application.services import NotesService
 
     env.load_dotenv()
     repo = MarkdownNotesRepository(Settings.from_env().notes_dir)
     services: dict[str, NotesService] = {"baseline": NotesService(repo)}
     try:
-        from workmate.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
+        from sufler.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
 
         services["lexical-PL"] = NotesService(repo, lemmatizer=SimplemmaLemmatizer())
     except ImportError:
@@ -99,9 +99,9 @@ def _build_services() -> dict[str, NotesService]:
     # 'retrieval-dense'; brak któregokolwiek → pomijamy 'hybrid' (eval liczy pozostałe).
     if "lexical-PL" in services:
         try:
-            from workmate.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
-            from workmate.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
-            from workmate.config import RetrievalSettings
+            from sufler.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
+            from sufler.adapters.outbound.simplemma_lemmatizer import SimplemmaLemmatizer
+            from sufler.config import RetrievalSettings
 
             rset = RetrievalSettings.from_env()
             ranker = OnnxSemanticRanker(
@@ -154,7 +154,7 @@ def main() -> None:
             f"Bramka Fazy B (hybrid vs lexical-PL): ΔnDCG@5 = {d5:+.3f} "
             f"(próg ≥ {_DENSE_GATE_NDCG5:.2f}), Δrecall@10 = {dr:+.3f} → "
             + (
-                "PRZECHODZI — włącz dense (WORKMATE_RETRIEVAL_ENABLE_DENSE=true)."
+                "PRZECHODZI — włącz dense (SUFLER_RETRIEVAL_ENABLE_DENSE=true)."
                 if passed
                 else "NIE przechodzi — zostań przy lexical-PL (dense za flagą OFF)."
             )

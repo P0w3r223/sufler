@@ -1,7 +1,7 @@
 # Override: RW dostęp do notatek dla drzwi teams-graph (produkcyjny zapis /notatka, ADR 0041).
 #
 # Bazowy compose montuje ../../data:/app/data RO (secure-by-default, ADR 0007). Ścieżka /notatka
-# (WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true) woła save_note → pisze do data/notes/, więc
+# (SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true) woła save_note → pisze do data/notes/, więc
 # na RO padłaby w runtime na „Read-only file system". Ten override nakłada WĄSKI montaż RW TYLKO na
 # data/notes — rejestr projektów (data/projects/registry.yaml) i reszta bazy wiedzy zostają RO.
 # Least-privilege: zapisywalne jest wyłącznie to, co /notatka faktycznie tworzy (nowe pliki .md).
@@ -14,7 +14,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.notatka.yml --profile bridge up -d
 #
 # Wymaga też w ./env (inaczej drzwi startują w trybie tylko-odczytu, a RW jest bez efektu):
-#   WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true   (+ _ENABLE_MEETING_TRANSCRIPT, _IDENTITIES)
+#   SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE=true   (+ _ENABLE_MEETING_TRANSCRIPT, _IDENTITIES)
 
 services:
   teams-graph:

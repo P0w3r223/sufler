@@ -1,4 +1,4 @@
-"""Testy lokalnego harnessu M3 (``workmate.adapters.inbound.cli.meeting``, ADR 0009).
+"""Testy lokalnego harnessu M3 (``sufler.adapters.inbound.cli.meeting``, ADR 0009).
 
 Harness spina wklejony transkrypt → streszczenie → bramkowany, dopisujący zapis. Klucz:
 całe okablowanie testujemy BEZ Claude (atrapa ``MeetingSummarizer``) i BEZ zaśmiecania
@@ -14,9 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import FakeProjectsRepository
-from workmate.adapters.inbound.cli import meeting
-from workmate.adapters.inbound.cli.meeting import (
+from sufler.adapters.inbound.cli import meeting
+from sufler.adapters.inbound.cli.meeting import (
     _build_summarizer_or_exit,
     _default_out_dir,
     _format_result,
@@ -25,12 +24,13 @@ from workmate.adapters.inbound.cli.meeting import (
     main,
     run_harness,
 )
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.config import AgentSettings
-from workmate.core.application.services import NotesWriteService
-from workmate.core.domain.models import MeetingSummary, Project
-from workmate.core.domain.transcript import SpeakerRoster
-from workmate.core.errors import LLMError, WriteError
+from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from sufler.config import AgentSettings
+from sufler.core.application.services import NotesWriteService
+from sufler.core.domain.models import MeetingSummary, Project
+from sufler.core.domain.transcript import SpeakerRoster
+from sufler.core.errors import LLMError, WriteError
+from tests.conftest import FakeProjectsRepository
 
 
 class _FakeSummarizer:
@@ -191,7 +191,7 @@ def test_default_out_dir_is_under_system_temp():
     import tempfile
 
     out = _default_out_dir()
-    assert out.name == "workmate-m3-harness"
+    assert out.name == "sufler-m3-harness"
     # Katalog tymczasowy (poza repo i poza data/notes/) — harness domyślnie nie zaśmieca bazy.
     assert out.parent == Path(tempfile.gettempdir())
 
@@ -202,7 +202,7 @@ def test_default_out_dir_is_under_system_temp():
 def test_main_fail_fast_without_api_key(monkeypatch: pytest.MonkeyPatch):
     # Brak klucza → validate() rzuca ValueError; main() zamienia go na czytelny SystemExit
     # (NIE traceback) — tak jak obiecuje docstring modułu.
-    monkeypatch.setattr("sys.argv", ["workmate-meeting", "--project", "x", "--date", "2026-07-20"])
+    monkeypatch.setattr("sys.argv", ["sufler-meeting", "--project", "x", "--date", "2026-07-20"])
     monkeypatch.setattr(AgentSettings, "from_env", staticmethod(lambda: AgentSettings(api_key="")))
 
     with pytest.raises(SystemExit) as exc:
@@ -218,7 +218,7 @@ def test_main_maps_llm_error_to_clean_exit(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr(
         "sys.argv",
         [
-            "workmate-meeting",
+            "sufler-meeting",
             "--project",
             "scada-integration",
             "--date",
@@ -248,7 +248,7 @@ def test_build_summarizer_missing_extra_exits(monkeypatch: pytest.MonkeyPatch):
         raise ImportError("No module named 'anthropic'")
 
     monkeypatch.setattr(
-        "workmate.adapters.outbound.anthropic_summarizer.AnthropicMeetingSummarizer", _no_extra
+        "sufler.adapters.outbound.anthropic_summarizer.AnthropicMeetingSummarizer", _no_extra
     )
 
     with pytest.raises(SystemExit) as exc:

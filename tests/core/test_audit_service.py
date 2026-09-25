@@ -8,8 +8,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from workmate.core.application.audit import AuditService
-from workmate.core.domain.metrics import pseudonymize
+from sufler.core.application.audit import AuditService
+from sufler.core.domain.metrics import pseudonymize
 
 
 class _FakeStore:

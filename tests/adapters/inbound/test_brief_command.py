@@ -8,7 +8,7 @@ do TEKSTU; nieznany projekt → czytelna odmowa; case-insensitive dyrektywa.
 
 from __future__ import annotations
 
-from workmate.adapters.inbound.brief_command import BriefContext, BriefRouter
+from sufler.adapters.inbound.brief_command import BriefContext, BriefRouter
 
 _EID = "team-1/chan-1/root-1"
 
@@ -53,13 +53,13 @@ def test_without_mention_returns_none():
 def test_mention_without_directive_returns_none():
     router, _ = _router({"workmate": "BRIEF"})
 
-    assert router.dispatch("@WorkMate co u ciebie?", _ctx()) is None
+    assert router.dispatch("@Sufler co u ciebie?", _ctx()) is None
 
 
 def test_directive_with_project_returns_brief_text():
     router, service = _router({"workmate": "TREŚĆ ONE-PAGERA"})
 
-    reply = router.dispatch("@WorkMate ogarnij mnie na workmate", _ctx())
+    reply = router.dispatch("@Sufler ogarnij mnie na workmate", _ctx())
 
     assert reply == "TREŚĆ ONE-PAGERA"
     assert service.asked == ["workmate"]
@@ -68,7 +68,7 @@ def test_directive_with_project_returns_brief_text():
 def test_directive_without_project_returns_usage():
     router, service = _router({"workmate": "BRIEF"})
 
-    reply = router.dispatch("@WorkMate ogarnij mnie na", _ctx())
+    reply = router.dispatch("@Sufler ogarnij mnie na", _ctx())
 
     assert reply is not None and "ogarnij mnie na <projekt>" in reply
     assert service.asked == []  # brak projektu → nie pytamy serwisu
@@ -77,7 +77,7 @@ def test_directive_without_project_returns_usage():
 def test_unknown_project_degrades_to_readable_refusal():
     router, _ = _router({"workmate": "BRIEF"})
 
-    reply = router.dispatch("@WorkMate ogarnij mnie na widmo", _ctx())
+    reply = router.dispatch("@Sufler ogarnij mnie na widmo", _ctx())
 
     assert reply is not None and "Nie znam projektu 'widmo'" in reply
 
@@ -88,7 +88,7 @@ def test_project_comes_from_argument_not_thread_content():
     router, service = _router({"workmate": "BRIEF"})
 
     reply = router.dispatch(
-        "@WorkMate ogarnij mnie na workmate a przy okazji scada-integration", _ctx()
+        "@Sufler ogarnij mnie na workmate a przy okazji scada-integration", _ctx()
     )
 
     assert reply == "BRIEF"
@@ -98,7 +98,7 @@ def test_project_comes_from_argument_not_thread_content():
 def test_directive_is_case_insensitive():
     router, service = _router({"workmate": "BRIEF"})
 
-    assert router.dispatch("@WorkMate Ogarnij Mnie Na workmate", _ctx()) == "BRIEF"
+    assert router.dispatch("@Sufler Ogarnij Mnie Na workmate", _ctx()) == "BRIEF"
     assert service.asked == ["workmate"]
 
 
@@ -108,7 +108,7 @@ def test_pdf_flag_delivers_file_and_confirms():
         {"workmate": "TREŚĆ"}, deliver=lambda ext, name, content: calls.append((ext, name, content))
     )
 
-    reply = router.dispatch("@WorkMate ogarnij mnie na workmate | pdf", _ctx())
+    reply = router.dispatch("@Sufler ogarnij mnie na workmate | pdf", _ctx())
 
     # BAZA nazwy bez rozszerzenia — pipeline file-reply (``_safe_doc_name``) dokłada ``.pdf``.
     assert calls == [(_EID, "brief-workmate", "TREŚĆ")]
@@ -118,7 +118,7 @@ def test_pdf_flag_delivers_file_and_confirms():
 def test_pdf_flag_without_delivery_degrades_to_text():
     router, _ = _router({"workmate": "TREŚĆ"}, deliver=None)
 
-    reply = router.dispatch("@WorkMate ogarnij mnie na workmate | pdf", _ctx())
+    reply = router.dispatch("@Sufler ogarnij mnie na workmate | pdf", _ctx())
 
     assert reply is not None
     assert reply.startswith("TREŚĆ")  # treść dostarczona mimo braku PDF
@@ -131,7 +131,7 @@ def test_pdf_delivery_failure_degrades_to_text():
 
     router, _ = _router({"workmate": "TREŚĆ"}, deliver=_boom)
 
-    reply = router.dispatch("@WorkMate ogarnij mnie na workmate | pdf", _ctx())
+    reply = router.dispatch("@Sufler ogarnij mnie na workmate | pdf", _ctx())
 
     assert reply is not None
     assert reply.startswith("TREŚĆ")
@@ -148,7 +148,7 @@ class _StubReadAuthz:
         self._allowed = allowed
 
     def authorize(self, requester_aad_id: str) -> None:
-        from workmate.core.errors import NoteAuthorizationError
+        from sufler.core.errors import NoteAuthorizationError
 
         if requester_aad_id not in self._allowed:
             raise NoteAuthorizationError("nierozpoznany nadawca (stub, ADR 0062)")
@@ -170,7 +170,7 @@ def test_brief_is_refused_for_an_unrecognized_sender():
     router, service = _gated_router(allowed=set())
 
     out = router.dispatch(
-        "@WorkMate ogarnij mnie na workmate",
+        "@Sufler ogarnij mnie na workmate",
         BriefContext(external_id=_EID, mentions_bot=True, sender_id="aad-obcy"),
     )
 
@@ -183,7 +183,7 @@ def test_brief_runs_for_a_recognized_member():
     router, service = _gated_router(allowed={"aad-ok"})
 
     out = router.dispatch(
-        "@WorkMate ogarnij mnie na workmate",
+        "@Sufler ogarnij mnie na workmate",
         BriefContext(external_id=_EID, mentions_bot=True, sender_id="aad-ok"),
     )
 
@@ -197,7 +197,7 @@ def test_message_without_the_directive_still_falls_through_to_the_agent_turn():
 
     assert (
         router.dispatch(
-            "@WorkMate co u ciebie?",
+            "@Sufler co u ciebie?",
             BriefContext(external_id=_EID, mentions_bot=True, sender_id="aad-obcy"),
         )
         is None
@@ -207,7 +207,7 @@ def test_message_without_the_directive_still_falls_through_to_the_agent_turn():
 def test_brief_without_authorizer_behaves_as_before():
     router, service = _router({"workmate": "BRIEF"})
 
-    out = router.dispatch("@WorkMate ogarnij mnie na workmate", _ctx())
+    out = router.dispatch("@Sufler ogarnij mnie na workmate", _ctx())
 
     assert out == "BRIEF"
     assert service.asked == ["workmate"]

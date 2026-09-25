@@ -6,9 +6,9 @@ import asyncio
 import contextlib
 from datetime import UTC, datetime
 
-from workmate.adapters.inbound.github.poller import GithubPoller, _iso_z
-from workmate.core.application.events import EventService
-from workmate.core.domain.events import Event, NewEvent
+from sufler.adapters.inbound.github.poller import GithubPoller, _iso_z
+from sufler.core.application.events import EventService
+from sufler.core.domain.events import Event, NewEvent
 
 _WHEN = datetime(2026, 7, 15, tzinfo=UTC)
 
@@ -322,7 +322,7 @@ def test_poll_once_isolates_poisoned_event():
 def test_poller_nie_pyta_juz_o_konto_PAT():
     """``GET /user`` znika razem z filtrem po koncie (ADR 0071 decyzja 6).
 
-    Warto zapisać, bo pusta wartość `WORKMATE_GITHUB_SELF_LOGIN` NIE wyłączała dawniej filtru —
+    Warto zapisać, bo pusta wartość `SUFLER_GITHUB_SELF_LOGIN` NIE wyłączała dawniej filtru —
     kazała ustalić konto z `GET /user`, więc filtr zostawał włączony z kontem wykrytym
     automatycznie. To jest powód, dla którego incydent zdarzył się na flocie, na której tej
     zmiennej nie ustawiono w ogóle: „wyłączenie" jej nie wyłączało niczego.
@@ -371,7 +371,7 @@ def test_fetch_reviews_only_queries_open_pull_requests():
 
 def test_fetch_reviews_respects_cap():
     # Więcej otwartych PR niż cap — odpytujemy najwyżej _MAX_REVIEW_PRS.
-    from workmate.adapters.inbound.github.poller import _MAX_REVIEW_PRS
+    from sufler.adapters.inbound.github.poller import _MAX_REVIEW_PRS
 
     prs = [_pr(n, state="open") for n in range(1, _MAX_REVIEW_PRS + 6)]
     client = _FakeClient(issues=prs)
@@ -509,7 +509,7 @@ def test_page_budget_of_the_poller_matches_the_client_it_describes():
     WYJŚCIOWEGO byłby sprzęgnięciem, którego port dziś nie ma; asercja wiąże obie kopie
     bez sprzęgania kodu.
     """
-    from workmate.adapters.inbound.github import poller as poller_module
-    from workmate.adapters.outbound.github_api import _MAX_PAGES
+    from sufler.adapters.inbound.github import poller as poller_module
+    from sufler.adapters.outbound.github_api import _MAX_PAGES
 
     assert poller_module._CLIENT_MAX_PAGES == _MAX_PAGES

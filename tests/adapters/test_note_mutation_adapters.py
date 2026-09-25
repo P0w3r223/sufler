@@ -11,11 +11,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from workmate.adapters.outbound.filesystem_snapshots import FilesystemNoteSnapshots
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.adapters.outbound.memory_confirmations import InMemoryConfirmations
-from workmate.core.domain.models import Note, NoteMetadata
-from workmate.core.errors import WriteError
+from sufler.adapters.outbound.filesystem_snapshots import FilesystemNoteSnapshots
+from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from sufler.adapters.outbound.memory_confirmations import InMemoryConfirmations
+from sufler.core.domain.models import Note, NoteMetadata
+from sufler.core.errors import WriteError
 
 _META = NoteMetadata(title="Ustalenia", project="mpwik", date="2026-08-01")
 
@@ -47,7 +47,7 @@ def test_overwrite_refuses_to_create_a_note_that_does_not_exist(tmp_path):
 def test_write_still_refuses_to_overwrite(tmp_path):
     """REGRESJA: create-only ``write`` zostaje nietknięte — na nim stoi idempotencja notatek
     ze spotkań i wątków."""
-    from workmate.core.errors import NoteExistsError
+    from sufler.core.errors import NoteExistsError
 
     writer = MarkdownNotesWriter(tmp_path)
     writer.write(_note("pierwsza"))

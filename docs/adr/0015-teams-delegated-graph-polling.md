@@ -10,7 +10,7 @@ Amended by: [ADR 0016](0016-user-multimodal-attachments.md) — adds `Files.Read
 
 ## Context
 
-WorkMate must answer inside Microsoft Teams **channels**, reusing the existing
+Sufler must answer inside Microsoft Teams **channels**, reusing the existing
 `Responder` seam and the read-only agent runtime (ADR 0006/0008). There are two ways to
 reach a Teams channel: a registered **Bot Framework** app (push via webhook, its own bot
 identity) or **delegated Microsoft Graph** access (the assistant acts as a signed-in
@@ -76,7 +76,7 @@ swap a door-level change, not a core rewrite.
   (lazy MSAL), `graph.py` (lazy httpx implementing the `GraphChannelClient` port), pure
   `selection.py`, SDK-free `handler.py`, thin `poller.py`, `state.py`, `app.py` wiring.
   New `TeamsGraphSettings` in `config.py`, extra `teams-graph` (`msal`+`httpx` moved out
-  of core deps), script `workmate-teams-graph`. The two root spike scripts are removed
+  of core deps), script `sufler-teams-graph`. The two root spike scripts are removed
   after migration.
 - **Identity = the signed-in user account.** Channel replies are attributed to that
   person; the self-message skip (`from.user.id == me_id`) is load-bearing to prevent the
@@ -96,7 +96,7 @@ swap a door-level change, not a core rewrite.
   a cap on active threads (`top_roots`/`top_replies`), eviction of idle threads, and the
   existing 429/Retry-After handling.
 - **Secret**: the MSAL token cache stays outside repo/`data/` (default
-  `~/.workmate/teams_token_cache.bin`); the watermark state file is not a secret.
+  `~/.sufler/teams_token_cache.bin`); the watermark state file is not a secret.
 - **Revisit when** a public HTTPS endpoint + bot registration become available, or when
   the door must serve more than one user/tenant — then migrate to Option A (Bot Framework),
   swapping the Graph client behind the same `Responder` seam.

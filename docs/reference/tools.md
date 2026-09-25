@@ -1,7 +1,7 @@
 # Reference: katalog narzędzi
 
-WorkMate ma **jednoźródłowy katalog narzędzi** (`core/application/tools/`, moduł na katalog,
-jedno wejście `workmate.core.application.tools`) — te same definicje
+Sufler ma **jednoźródłowy katalog narzędzi** (`core/application/tools/`, moduł na katalog,
+jedno wejście `sufler.core.application.tools`) — te same definicje
 (funkcja + docstring + schemat) napędzają drzwi MCP oraz runtime agenta ([ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
 
 - **Powierzchnia MCP** jest zamrożona golden-testem `tests/adapters/test_mcp_tool_surface.py`
@@ -11,7 +11,7 @@ jedno wejście `workmate.core.application.tools`) — te same definicje
   Daje to **5 do 8 nazw** zależnie od konfiguracji. Poprzedni zapis mówił „zamrożone 4 + 1"
   i był o trzy nazwy w tyle.
 - **Powierzchnia MCP nie została skonsolidowana i to jest decyzja, nie zaległość.** Sesja Claude
-  Code nie ma dostępu do naszego kontenera-wykonawcy, więc `Bash` i `workmate-search` są dla niej
+  Code nie ma dostępu do naszego kontenera-wykonawcy, więc `Bash` i `sufler-search` są dla niej
   nieosiągalne: zdjęcie tych narzędzi nie PRZENIOSŁOBY zdolności, tylko ją SKASOWAŁO.
 - **Runtime agenta** (drzwi Teams/CLI) widzi zupełnie inną powierzchnię — pięć narzędzi
   skonsolidowanych, wstrzykiwanych **per drzwi** przez `extra_catalog`. Sekcja niżej.
@@ -62,7 +62,7 @@ Zwraca część **zadeklarowaną** z rejestru (`company`, `status`, `health`, `p
 
 ### `save_note`
 
-Dodaje nową notatkę ze spotkania. Wystawiane tylko przy włączonym zapisie (`WORKMATE_ENABLE_WRITE`,
+Dodaje nową notatkę ze spotkania. Wystawiane tylko przy włączonym zapisie (`SUFLER_ENABLE_WRITE`,
 profil per drzwi — [ADR 0006](../adr/0006-write-capability-gate-2.md)).
 
 | Parametr | Typ | Domyślnie | Opis |
@@ -96,11 +96,11 @@ narzędzie typowane powstaje wyłącznie tam, gdzie powłoka w kontenerze-wykona
 
 | Narzędzie | Parametry | Kiedy wchodzi do katalogu |
 |-----------|-----------|---------------------------|
-| `Bash` | `command: str`, `timeout_s: int = 0` | `WORKMATE_ENABLE_SHELL=true` **i** działająca usługa `exec` (gniazdo `WORKMATE_EXEC_SOCKET`) |
+| `Bash` | `command: str`, `timeout_s: int = 0` | `SUFLER_ENABLE_SHELL=true` **i** działająca usługa `exec` (gniazdo `SUFLER_EXEC_SOCKET`) |
 | `Project` | `action: status \| save`, pola akcji | zawsze; `save` **tylko** na drzwiach z `enable_write=True` (na Teams i MCP jest `False`) |
-| `Activity` | `action: events \| summary \| worklog \| create_issue \| comment`, pola akcji | zawsze; `create_issue`/`comment` wchodzą **do `Literal`** dopiero przy `WORKMATE_GITHUB_ENABLE_WRITE=true` |
+| `Activity` | `action: events \| summary \| worklog \| create_issue \| comment`, pola akcji | zawsze; `create_issue`/`comment` wchodzą **do `Literal`** dopiero przy `SUFLER_GITHUB_ENABLE_WRITE=true` |
 | `Jira` | `action: my_tasks \| my_history \| member_tasks \| member_history \| task \| search`, pola akcji | tylko gdy nadawcę da się związać z kontem Jira (fail-closed w fabryce — bez konta narzędzia NIE MA) |
-| `Schedule` | `week: current \| previous \| next` albo `date_from`/`date_to` | `WORKMATE_SCHEDULE_ENABLED` (`auto` = gdy grafik jest skonfigurowany) |
+| `Schedule` | `week: current \| previous \| next` albo `date_from`/`date_to` | `SUFLER_SCHEDULE_ENABLED` (`auto` = gdy grafik jest skonfigurowany) |
 
 **Bramka zapisu wchodzi do `Literal`, nie do ciała funkcji.** Przy wyłączonym zapisie akcja nie
 istnieje w schemacie, więc model jej nie widzi i nie ma czego odmawiać. Sonda negatywna w
@@ -110,7 +110,7 @@ wygląda identycznie jak działająca.
 **Czego tu nie ma i dlaczego.** `Skill(name)` nie powstaje: procedury leżą w `/mnt/skills`, więc
 `ls` i `cat` przez `Bash` załatwiają je bez nowego narzędzia. Pliki robocze (`CreateFile`,
 `ListFiles`) też są przypadkiem użycia `Bash` — brudnopis rozmowy jest w wykonawcy zapisywalny.
-Odczyt notatek przez powłokę robi komenda `workmate-search` (ranker BM25 nad lematami PL).
+Odczyt notatek przez powłokę robi komenda `sufler-search` (ranker BM25 nad lematami PL).
 
 ### `File` — jedyne narzędzie mutujące bazę wiedzy
 
@@ -120,7 +120,7 @@ jest rejestrowane). Trzy akcje, każda za innym warunkiem:
 
 | Akcja | Co robi | Wchodzi do `Literal`, gdy |
 |-------|---------|---------------------------|
-| `read` | Podaje plik `name` z katalogu roboczego rozmowy **do wglądu modelu** — obraz jako obraz, PDF jako dokument, resztę jako wyciągnięty tekst. Wynik narzędzia to sama notka potwierdzająca; plik jedzie OSOBNYM blokiem w tej samej turze, bo `tool_result` nie unosi bloku `document` i bywa czyszczony przez edycję kontekstu ([ADR 0064](../adr/0064-file-tool-and-model-initiated-materialization.md)). | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL=true` |
+| `read` | Podaje plik `name` z katalogu roboczego rozmowy **do wglądu modelu** — obraz jako obraz, PDF jako dokument, resztę jako wyciągnięty tekst. Wynik narzędzia to sama notka potwierdzająca; plik jedzie OSOBNYM blokiem w tej samej turze, bo `tool_result` nie unosi bloku `document` i bywa czyszczony przez edycję kontekstu ([ADR 0064](../adr/0064-file-tool-and-model-initiated-materialization.md)). | `SUFLER_TEAMS_GRAPH_ENABLE_FILE_TOOL=true` |
 | `edit` | Podmienia treść **notatki** `name` (IDENTYFIKATOR notatki, nie nazwa pliku) na `content`; `reason` to powód zmiany. Pierwsza w historii tego systemu droga NADPISANIA notatki ([ADR 0065](../adr/0065-mutable-knowledge-base-and-model-judged-writes.md)). | dodatkowo `_ENABLE_NOTE_MUTATION=true` |
 | `delete` | Usuwa notatkę `name`; `reason` to powód. | dodatkowo `_ENABLE_NOTE_DELETE=true` |
 
@@ -149,11 +149,11 @@ ostrożnością.
 
 | Narzędzie | Bramka | Uwaga |
 |-----------|--------|-------|
-| `File` | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_TOOL` (+ `_ENABLE_NOTE_MUTATION` / `_ENABLE_NOTE_DELETE` na akcje mutujące) | sekcja wyżej; ta sama bramka włącza odkładanie załączników użytkownika na dysk rozmowy |
-| `ReplyWithFile` | `WORKMATE_TEAMS_GRAPH_ENABLE_FILE_REPLY` | ta sama bramka włącza skrzynkę `outputs/` w katalogu roboczym rozmowy |
-| `SendImage` | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH` | push 1:1, wymaga zakresów czatu |
-| `SendDocument` | `WORKMATE_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH` | jw. + zapis na własnym dysku bota |
-| `CreateFile` / `ReadFile` / `ListFiles` | `WORKMATE_ENABLE_WORKSPACE` | katalog roboczy **w procesie drzwi**; przy włączonej powłoce zbędne (ADR 0018) |
+| `File` | `SUFLER_TEAMS_GRAPH_ENABLE_FILE_TOOL` (+ `_ENABLE_NOTE_MUTATION` / `_ENABLE_NOTE_DELETE` na akcje mutujące) | sekcja wyżej; ta sama bramka włącza odkładanie załączników użytkownika na dysk rozmowy |
+| `ReplyWithFile` | `SUFLER_TEAMS_GRAPH_ENABLE_FILE_REPLY` | ta sama bramka włącza skrzynkę `outputs/` w katalogu roboczym rozmowy |
+| `SendImage` | `SUFLER_TEAMS_GRAPH_ENABLE_USER_FILE_PUSH` | push 1:1, wymaga zakresów czatu |
+| `SendDocument` | `SUFLER_TEAMS_GRAPH_ENABLE_USER_DOC_PUSH` | jw. + zapis na własnym dysku bota |
+| `CreateFile` / `ReadFile` / `ListFiles` | `SUFLER_ENABLE_WORKSPACE` | katalog roboczy **w procesie drzwi**; przy włączonej powłoce zbędne (ADR 0018) |
 | `SearchNotes` / `GetNote` / `ListProjects` | brak powłoki | wchodzą **zastępczo**, gdy `Bash` nie istnieje — inaczej baza wiedzy byłaby nieosiągalna |
 
 Ostatni wiersz jest powodem, dla którego produkcja bez powłoki widzi **siedem** narzędzi, a nie

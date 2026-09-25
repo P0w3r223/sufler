@@ -14,9 +14,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from workmate.core.application.tools import build_activity_catalog
-from workmate.core.domain.worklog import SessionPolicy, build_proposal
-from workmate.core.errors import InvalidRequestError
+from sufler.core.application.tools import build_activity_catalog
+from sufler.core.domain.worklog import SessionPolicy, build_proposal
+from sufler.core.errors import InvalidRequestError
 
 
 class _FakeEvents:

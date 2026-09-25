@@ -10,10 +10,10 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, field
 
-from workmate.core.application.tools import build_shell_catalog
-from workmate.core.domain.workspace import WorkspaceScope
-from workmate.core.errors import WorkMateError
-from workmate.core.ports.command import CommandResult
+from sufler.core.application.tools import build_shell_catalog
+from sufler.core.domain.workspace import WorkspaceScope
+from sufler.core.errors import SuflerError
+from sufler.core.ports.command import CommandResult
 
 
 @dataclass
@@ -163,7 +163,7 @@ def test_runner_failure_is_wrapped_into_an_error_envelope():
 
     class ExplodingRunner:
         def run(self, command: str, *, cwd: str = "", timeout_s: float = 0) -> CommandResult:
-            raise WorkMateError("gniazdo zniknęło")
+            raise SuflerError("gniazdo zniknęło")
 
     result = build_shell_catalog(
         WorkspaceScope("cli", "x"), ExplodingRunner(), workspace_root="/home/scratchpad"
@@ -183,7 +183,7 @@ def test_description_carries_running_facts_and_leaves_the_map_to_the_prompt():
     description = _tool(FakeRunner()).description
 
     assert "/home/scratchpad" in description, "katalog startowy to fakt o URUCHOMIENIU polecenia"
-    assert "workmate-search" in description
+    assert "sufler-search" in description
     assert "64 KB" in description
 
     # Mapa wyprowadzona: gdyby wróciła tutaj, prompt i opis rozjechałyby się przy następnym montażu.

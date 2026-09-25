@@ -1,4 +1,4 @@
-"""Testy dispatchu trybu w drzwiach CLI (``workmate-agent``) — bez sieci, bez klucza.
+"""Testy dispatchu trybu w drzwiach CLI (``sufler-agent``) — bez sieci, bez klucza.
 
 Sprawdzamy WYBÓR trybu (argv jednorazowo / potok jednorazowo / TTY → czat), nie samo
 wywołanie API: ``build_agent_runtime_or_exit`` i ``_run_chat`` podmieniamy atrapami. Klucz
@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.cli import app
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.domain.pricing import PRICING_SWITCH_DATE, TokenUsage
+from sufler.adapters.inbound.cli import app
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.domain.pricing import PRICING_SWITCH_DATE, TokenUsage
 
 
 def _fake_build(reply: str):
@@ -32,7 +32,7 @@ def _no_runtime(*args, **kwargs):
 
 def test_argv_query_runs_once_and_prints(monkeypatch, capsys):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    monkeypatch.setattr(sys, "argv", ["workmate-agent", "co", "z", "mpwik?"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent", "co", "z", "mpwik?"])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", _fake_build("ODP"))
 
     app.main()
@@ -42,7 +42,7 @@ def test_argv_query_runs_once_and_prints(monkeypatch, capsys):
 
 def test_empty_piped_input_raises_usage(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    monkeypatch.setattr(sys, "argv", ["workmate-agent"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent"])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", lambda *a, **k: object())
     monkeypatch.setattr("sys.stdin", io.StringIO("   "))  # potok (nie-TTY), puste
 
@@ -52,7 +52,7 @@ def test_empty_piped_input_raises_usage(monkeypatch):
 
 def test_interactive_tty_enters_chat(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    monkeypatch.setattr(sys, "argv", ["workmate-agent"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent"])
     monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(isatty=lambda: True))
     # Runtime buduje dopiero ``_run_chat`` (przez wspólny builder), nie ``main``; więc
     # atrapujemy sam ``_run_chat`` i sprawdzamy, że TTY-bez-argumentu wybiera tryb czatu.
@@ -72,8 +72,8 @@ def test_history_flag_dispatches_to_preview_without_api_key(monkeypatch, flag):
     # Klucz CELOWO nieustawiony: gdyby dispatch szedł zwykłą ścieżką, walidacja
     # sekretu/budowa runtime by wybuchła. Podgląd musi zadziałać bez klucza.
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("WORKMATE_AGENT_API_KEY", raising=False)
-    monkeypatch.setattr(sys, "argv", ["workmate-agent", flag])
+    monkeypatch.delenv("SUFLER_AGENT_API_KEY", raising=False)
+    monkeypatch.setattr(sys, "argv", ["sufler-agent", flag])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
     captured: list[str | None] = []
     monkeypatch.setattr(app, "_print_history", lambda *, channel=None: captured.append(channel))
@@ -85,7 +85,7 @@ def test_history_flag_dispatches_to_preview_without_api_key(monkeypatch, flag):
 
 def test_history_flag_passes_channel_filter(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history", "telegram"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent", "--history", "telegram"])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
     captured: list[str | None] = []
     monkeypatch.setattr(app, "_print_history", lambda *, channel=None: captured.append(channel))
@@ -97,9 +97,9 @@ def test_history_flag_passes_channel_filter(monkeypatch):
 
 def test_history_empty_db_reports_no_conversations(monkeypatch, capsys, tmp_path):
     db = tmp_path / "conv.db"
-    monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(db))
+    monkeypatch.setenv("SUFLER_CONVERSATIONS_DB", str(db))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent", "--history"])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
 
     app.main()
@@ -140,9 +140,9 @@ def test_history_renders_conversations_from_shared_db(monkeypatch, capsys, tmp_p
     db = tmp_path / "conv.db"
     _rozmowa_z_kosztem(db, utworzona=_DZIEN_CENNIKA_WPROWADZAJACEGO)
 
-    monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(db))
+    monkeypatch.setenv("SUFLER_CONVERSATIONS_DB", str(db))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent", "--history"])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
 
     app.main()
@@ -178,9 +178,9 @@ def test_history_liczy_koszt_cennikiem_z_dnia_rozmowy(
     db = tmp_path / "conv.db"
     _rozmowa_z_kosztem(db, utworzona=utworzona)
 
-    monkeypatch.setenv("WORKMATE_CONVERSATIONS_DB", str(db))
+    monkeypatch.setenv("SUFLER_CONVERSATIONS_DB", str(db))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(sys, "argv", ["workmate-agent", "--history"])
+    monkeypatch.setattr(sys, "argv", ["sufler-agent", "--history"])
     monkeypatch.setattr(app, "build_agent_runtime_or_exit", _no_runtime)
 
     app.main()

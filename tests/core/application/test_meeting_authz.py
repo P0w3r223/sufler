@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.application.meeting_authz import MeetingNoteAuthorizer
-from workmate.core.domain.authorization import Actor, can_write_meeting_note
-from workmate.core.domain.identity import Person
-from workmate.core.errors import NoteAuthorizationError
+from sufler.core.application.meeting_authz import MeetingNoteAuthorizer
+from sufler.core.domain.authorization import Actor, can_write_meeting_note
+from sufler.core.domain.identity import Person
+from sufler.core.errors import NoteAuthorizationError
 
 
 class _FakeLookup:

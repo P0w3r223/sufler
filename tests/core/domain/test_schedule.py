@@ -7,13 +7,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from workmate.core.domain.schedule import (
+from sufler.core.domain.schedule import (
     ShiftEntry,
     map_shifts,
     map_times_off,
     resolve_schedule_range,
 )
-from workmate.core.errors import InvalidRequestError
+from sufler.core.errors import InvalidRequestError
 
 _TZ = ZoneInfo("Europe/Warsaw")
 _MONDAY = datetime(2026, 8, 3, 10, 0, tzinfo=UTC)  # poniedziałek

@@ -88,7 +88,7 @@ smaller ask than standing up a new one.
   pass through as the raw `theme` rather than a guessed label.
 - **Authentication is the load-bearing decision here.** `ScheduleSettings` deliberately does NOT
   provision a new identity. It borrows the **existing** `powiadomienia-teams` bot's MSAL token
-  cache — mounted **read-only** into the workmate container — and exchanges the cached
+  cache — mounted **read-only** into the sufler container — and exchanges the cached
   refresh-token for a Graph access token via `acquire_token_silent`
   (`adapters/outbound/msal_silent_token.py`). Three invariants enforced in that module and worth
   restating because they are the entire safety argument:
@@ -103,7 +103,7 @@ smaller ask than standing up a new one.
   `client_id`/`tenant_id` are set AND the cache file actually exists on disk
   (`is_enabled()`) — so a host without the `powiadomienia-teams` volume mounted silently gets no
   `get_team_schedule` tool rather than a startup failure. `client_id`/`tenant_id` themselves fall
-  back to `WORKMATE_TEAMS_PUSH_*` (the same app registration `TeamsPushSettings` already uses) so
+  back to `SUFLER_TEAMS_PUSH_*` (the same app registration `TeamsPushSettings` already uses) so
   the operator does not have to duplicate the app registration into a third set of env vars.
 - `tools.build_team_schedule_catalog` exposes exactly one tool, `get_team_schedule` — no gate,
   because after the above there is nothing to mutate; the tool degrades to `{"error": ...}` on any
@@ -120,10 +120,10 @@ smaller ask than standing up a new one.
   `ScheduleReadError` (no schedule shown) or `is_enabled()` staying `False` (tool absent) — there is
   no code path where a broken mount or expired consent surfaces as anything other than a readable
   degradation.
-- `workmate-teams-graph` now depends at runtime on the `powiadomienia-teams` bot's token cache
+- `sufler-teams-graph` now depends at runtime on the `powiadomienia-teams` bot's token cache
   volume being mounted read-only when the schedule feature is desired; `docker compose config` must
   keep that volume mapping consistent between the two services. Losing that mount does not break
-  `workmate-teams-graph` (auto-disable), but does silently remove the schedule tool — this is
+  `sufler-teams-graph` (auto-disable), but does silently remove the schedule tool — this is
   intentional (fail-closed on a nice-to-have) and documented here for anyone chasing "why did the
   grafik tool disappear".
 - `JiraReadService`'s new caller-controlled inputs (search text, project key, status category, ISO

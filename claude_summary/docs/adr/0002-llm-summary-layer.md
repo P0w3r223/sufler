@@ -29,7 +29,7 @@ report. Empty days short-circuit to a fixed message without calling the model.
 
 **Content is data, not instructions.** Prompt and commit text are passed to the model strictly as
 data. The system prompt instructs the model to ignore any instructions embedded in that text, and the
-tool uses only the returned prose — mirroring the WorkMate/Powiadomienia_teams invariant against
+tool uses only the returned prose — mirroring the Sufler/Powiadomienia_teams invariant against
 prompt injection.
 
 ## Consequences

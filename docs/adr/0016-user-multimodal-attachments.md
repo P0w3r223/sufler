@@ -12,7 +12,7 @@ Amends: ADR 0011 (user rows may carry neutral attachment blocks), ADR 0015 (adds
 
 Users need to drop files into a Teams channel thread — PDFs, Word documents, and images
 (PNG/JPG/JPEG) — and have the agent read, summarize, and answer from them, including across
-follow-up turns in the same thread. Today the whole WorkMate stack is **text-only**:
+follow-up turns in the same thread. Today the whole Sufler stack is **text-only**:
 `UserText` carries a bare `str`, every door discards everything but `.text`, and the Teams
 Graph door strips the HTML `body.content` (losing `<attachment>`/`<img>` markers) before
 anything downstream sees it.

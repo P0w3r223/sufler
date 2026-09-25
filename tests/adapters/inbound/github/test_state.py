@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.github import state
+from sufler.adapters.inbound.github import state
 
 
 def test_load_missing_file_returns_empty_state(tmp_path: Path):

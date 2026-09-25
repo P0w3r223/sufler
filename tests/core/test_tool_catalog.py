@@ -7,22 +7,22 @@ przy ``write_service`` — dokładnie jak ``register_tools(write_service=None)``
 
 from __future__ import annotations
 
+from sufler.core.application.services import (
+    NotesService,
+    NotesWriteService,
+    ProjectsService,
+)
+from sufler.core.application.tools import (
+    build_agent_notes_read_catalog,
+    build_tool_catalog,
+    przemianuj_na_konwencje_agenta,
+)
+from sufler.core.domain.models import Project
 from tests.conftest import (
     FakeNotesRepository,
     FakeNotesWriter,
     FakeProjectsRepository,
 )
-from workmate.core.application.services import (
-    NotesService,
-    NotesWriteService,
-    ProjectsService,
-)
-from workmate.core.application.tools import (
-    build_agent_notes_read_catalog,
-    build_tool_catalog,
-    przemianuj_na_konwencje_agenta,
-)
-from workmate.core.domain.models import Project
 
 _READ_TOOLS = {"search_notes", "get_note", "list_projects", "get_project_status"}
 
@@ -165,7 +165,7 @@ def test_przemianowanie_degraduje_do_nazwy_mcp_zamiast_kłaść_drzwi():
     na ``KeyError`` — z powodu kosmetycznego. Degradacja zostawia model z nazwą spoza konwencji:
     to widać i da się poprawić, w przeciwieństwie do drzwi, które się nie podniosły.
     """
-    from workmate.core.application.tools import ToolSpec
+    from sufler.core.application.tools import ToolSpec
 
     nowe = ToolSpec("get_project_status", "Opis czwartego narzędzia odczytu.", lambda: {})
 

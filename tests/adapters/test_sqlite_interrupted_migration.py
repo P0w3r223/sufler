@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound import sqlite_conversations
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.adapters.outbound import sqlite_conversations
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
 
 # Punkty przerwania — cała sekwencja przebudowy, po kolei.
 _PUNKTY_PRZERWANIA = (
@@ -97,7 +97,7 @@ def _przerwij_migracje(path: Path, fragment: str) -> None:
 
     Podmiana ``sqlite3.connect`` idzie ręcznie, a nie przez ``monkeypatch``: fixture jest
     współdzielona z autouse'owym czyszczeniem środowiska w ``conftest``, więc ``undo`` w połowie
-    testu przywróciłby też zmienne ``WORKMATE_*`` maszyny.
+    testu przywróciłby też zmienne ``SUFLER_*`` maszyny.
     """
     prawdziwy_connect = sqlite3.connect
     okaleczone: list[_PolaczenieKtorePada] = []

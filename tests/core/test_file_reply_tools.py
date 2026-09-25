@@ -13,10 +13,10 @@ import json
 
 import pytest
 
-from workmate.core.application.tools import build_file_reply_catalog
-from workmate.core.errors import ThreadRootGone
-from workmate.core.ports.document import RenderedDocument
-from workmate.core.ports.file_output import UploadedFile
+from sufler.core.application.tools import build_file_reply_catalog
+from sufler.core.errors import ThreadRootGone
+from sufler.core.ports.document import RenderedDocument
+from sufler.core.ports.file_output import UploadedFile
 
 _GUID = "2318B4D5-1111-2222-3333-444455556666"
 

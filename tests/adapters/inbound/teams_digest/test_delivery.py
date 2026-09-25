@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from workmate.adapters.inbound.teams_digest.delivery import deliver_weekly_digest
+from sufler.adapters.inbound.teams_digest.delivery import deliver_weekly_digest
 
 _SINCE = date(2026, 7, 20)
 _LABEL = "2026-W30"

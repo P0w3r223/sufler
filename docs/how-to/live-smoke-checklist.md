@@ -8,26 +8,26 @@ sesji, w których zapisano „live-smoke do zrobienia".
 
 Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanale Teams ·
 ☁️ wymaga infrastruktury (Azure/M365 lub serwer Windows/IIS) · 🐙 wymaga PAT GitHub + repo ·
-🟪 wymaga PAT Jira + instancji Jira Server/Data Center (`WORKMATE_JIRA_*`).
+🟪 wymaga PAT Jira + instancji Jira Server/Data Center (`SUFLER_JIRA_*`).
 
 ---
 
 ## 1. Realne `usage` / koszty — 🔑 (ADR 0013)
 
 - **Krok:** zadaj agentowi realne pytanie przez harness CLI:
-  `uv run workmate-agent "Jaki jest status projektu scada-integration w MPWiK?"`
+  `uv run sufler-agent "Jaki jest status projektu scada-integration w MPWiK?"`
 - **Oczekiwane:** zwrócone przez API liczby `usage` (input/output/thinking tokens) są realne
   (atrapy ich nie generują), a koszt USD z `core/domain/pricing.py::cost_usd` zgadza się z
   cennikiem użytego modelu.
 
 ## 1b. Prompt caching — 🔑 (#10, przegląd kodu 2026-07-31)
 
-- **Krok:** prowadź DWIE tury w tej samej rozmowie przez harness CLI (`uv run workmate-agent
+- **Krok:** prowadź DWIE tury w tej samej rozmowie przez harness CLI (`uv run sufler-agent
   --history`, albo drzwi Teams) — pierwsza tura buduje cache (breakpoint na system+tools),
   druga powinna go trafić.
 - **Oczekiwane:** w `conversations.db` (tabela `messages`, `sqlite_conversations.py`, kolumny
   już zapisywane) `cache_read_input_tokens > 0` dla DRUGIEJ tury asystenta: `sqlite3
-  ~/.workmate/conversations.db "select role, cache_read_input_tokens,
+  ~/.sufler/conversations.db "select role, cache_read_input_tokens,
   cache_creation_input_tokens from messages where role='assistant' order by id desc limit 2;"`.
   Pierwsza tura ma `cache_creation_input_tokens > 0` (zapis do cache), zero odczytu.
 - **Uwaga:** skład `extra_tools` może się zmienić między turami (kanał, różni nadawcy —
@@ -46,7 +46,7 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 ## 3. Wdrożenie HTTP / Bramka 3 — ☁️ (ADR 0007)
 
 - **Krok:** wg [`deploy-http.md`](deploy-http.md) — wygeneruj `tokens.json` z ACL, skonfiguruj
-  IIS (response buffering **off**) + usługę Windows, potwierdź ekspansję `${WORKMATE_TOKEN}`.
+  IIS (response buffering **off**) + usługę Windows, potwierdź ekspansję `${SUFLER_TOKEN}`.
   Smoke transportu: żądanie bez tokenu, ze złym tokenem, z dobrym tokenem, z obcym `Host`.
 - **Oczekiwane:** `401` bez/na zły token (z nagłówkiem `WWW-Authenticate: Bearer`), `200` na
   dobry token, `421` na obcy `Host`; drzwi HTTP tylko do odczytu (`enable_write=False`).
@@ -76,7 +76,7 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 
 - **Krok:** uruchom **lokalny harness M3** na realnym transkrypcie (patrz
   [`meeting-note-harness.md`](meeting-note-harness.md)):
-  `echo "…transkrypt…" | uv run workmate-meeting --project scada-integration --date 2026-07-20`
+  `echo "…transkrypt…" | uv run sufler-meeting --project scada-integration --date 2026-07-20`
   (albo `--transcript spotkanie.txt`). Harness spina cały przepływ M3 wobec Claude:
   `InMemoryTranscriptSource` → `AnthropicMeetingSummarizer` → złożenie `NoteMetadata` → zapis. Realny
   fetch z Graph jest ☁️ Azure-gated i pozostaje odłożony; czysta obróbka otoku JSON (`_extract_json`)
@@ -88,8 +88,8 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 
 ## 8. GitHub → EventStore (ingest) — 🐙 (ADR 0019/0020)
 
-- **Krok:** ustaw `WORKMATE_GITHUB_TOKEN`/`_OWNER`/`_REPO`, uruchom `uv run workmate-github`;
-  utwórz ręcznie issue w repo. Podejrzyj `~/.workmate/events.db` (np. przez agenta akcją
+- **Krok:** ustaw `SUFLER_GITHUB_TOKEN`/`_OWNER`/`_REPO`, uruchom `uv run sufler-github`;
+  utwórz ręcznie issue w repo. Podejrzyj `~/.sufler/events.db` (np. przez agenta akcją
   `Activity(action='events')` na drzwiach Teams).
 - **Oczekiwane:** issue pojawia się jako zdarzenie `source="github", kind="issue_opened"`;
   ponowny poll go NIE dubluje (dedup). Issue utworzone **kontem PAT, ale poza narzędziem**
@@ -98,14 +98,14 @@ Legenda warunku: 🔑 wymaga `ANTHROPIC_API_KEY` · 👥 wymaga 2. konta w kanal
 
 ## 9. EventStore → Teams (notifier dual-target) — 🔑 👥 🐙 (ADR 0022)
 
-- **Krok:** skonfiguruj `WORKMATE_TEAMS_PUSH_*` (włącz `ENABLE_CHAT` i/lub `ENABLE_CHANNEL`),
+- **Krok:** skonfiguruj `SUFLER_TEAMS_PUSH_*` (włącz `ENABLE_CHAT` i/lub `ENABLE_CHANNEL`),
   zaloguj się raz device-code; wywołaj zdarzenie GitHub (nowe issue).
 - **Oczekiwane:** powiadomienie ląduje w **czacie 1:1 ORAZ na kanale** (wg włączonych celów),
   treść zescapowana (bez żywego HTML). Restart procesu nie gubi ani nie dubluje (kursor).
 
 ## 10. Teams → GitHub (bramkowany zapis) — 🔑 👥 🐙 (ADR 0021)
 
-- **Krok:** ustaw `WORKMATE_GITHUB_ENABLE_WRITE=true`; przez agenta na kanale Teams poproś
+- **Krok:** ustaw `SUFLER_GITHUB_ENABLE_WRITE=true`; przez agenta na kanale Teams poproś
   „utwórz issue: …". 
 - **Oczekiwane:** issue powstaje w skonfigurowanym repo (nie w cudzym); agent zwraca numer i URL;
   **potwierdź, że NIE wraca jako powiadomienie** — dwoma niezależnymi drogami: poller pomija je,
@@ -122,13 +122,13 @@ Procedura pełna: [`jira-my-tasks.md`](jira-my-tasks.md).
 
 ## 11. Jira → „moje zadania" (preflight + realne pytanie) — 🟪 (ADR 0054)
 
-- **Krok (preflight):** ustaw `WORKMATE_JIRA_BASE_URL`/`_TOKEN` (Cloud: + `_EMAIL`), uruchom
+- **Krok (preflight):** ustaw `SUFLER_JIRA_BASE_URL`/`_TOKEN` (Cloud: + `_EMAIL`), uruchom
   `uv run --no-sync python deploy/jira/preflight.py`.
 - **Oczekiwane (preflight):** auth OK (`authenticated_account`), próbne `search_issues` zwraca listę
   bez błędu. Kod wyjścia `0`.
 - **Krok (tożsamość) — OSOBNE uruchomienie, bo bez `--aad` sprawdzenia NIE MA:**
   `uv run --no-sync python deploy/jira/preflight.py --aad <aad-user-id>`.
-  Wyzwalaczem jest flaga, nie zmienna `WORKMATE_TEAMS_GRAPH_IDENTITIES` (`preflight.py`:
+  Wyzwalaczem jest flaga, nie zmienna `SUFLER_TEAMS_GRAPH_IDENTITIES` (`preflight.py`:
   `if aad_user_id:`). Komenda bez `--aad` kończy się `Preflight OK` i kodem `0`, **nie zajrzawszy
   do mapy ani razu** — a operator odczyta to jako „tożsamość zweryfikowana".
 - **Oczekiwane (tożsamość):** AAD id rozwiązuje się w mapie do osoby z niepustym `jira_user`,
@@ -138,12 +138,12 @@ Procedura pełna: [`jira-my-tasks.md`](jira-my-tasks.md).
   kodem `1` i mówi, dlaczego. To nie jest usterka konfiguracji i **nie wolno tego „naprawiać"
   dopisaniem `jira_user`** — cudze konto pokazałoby tej osobie cudze zadania. Osoba pozostaje
   pełnym członkiem pionu; traci wyłącznie narzędzie `Jira`.
-- **Krok (realne pytanie, Teams):** ustaw `WORKMATE_TEAMS_GRAPH_IDENTITIES` z wpisem nadawcy
+- **Krok (realne pytanie, Teams):** ustaw `SUFLER_TEAMS_GRAPH_IDENTITIES` z wpisem nadawcy
   (`jira_user`), na kanale/w czacie napisz `/moje-zadania`.
 - **Oczekiwane:** lista TYLKO otwartych zadań PYTAJĄCEGO (nie kolegi); nadawca spoza mapy tożsamości
   dostaje odmowę, nie pustą listę cudzych zadań. Zero parametrów — nie da się poprosić o `assignee`
   innej osoby.
-- **Krok (realne pytanie, MCP stdio):** ustaw `WORKMATE_JIRA_MY_ACCOUNT`, w Claude Code/CLI zapytaj
+- **Krok (realne pytanie, MCP stdio):** ustaw `SUFLER_JIRA_MY_ACCOUNT`, w Claude Code/CLI zapytaj
   o własne zadania Jira.
 - **Oczekiwane:** narzędzie `get_my_jira_tasks` wchodzi na katalog TYLKO gdy zmienna ustawiona;
   zwraca zadania skonfigurowanego principala. Na drzwiach `streamable-http` (wielu osób) narzędzie
@@ -163,7 +163,7 @@ Procedura pełna: [`jira-my-tasks.md`](jira-my-tasks.md).
 - **Oczekiwane:** jeśli commitów było ≥500, w `notes` pojawia się ostrzeżenie o UCIĘTEJ historii
   (wypadają NAJSTARSZE dni, więc godziny są zaniżone) — a nie cicha, kompletnie wyglądająca suma.
 - **Krok (strefa):** propozycja obejmująca commity z okolic północy przy aktywnej zmianie czasu.
-- **Oczekiwane:** doba liczona wg `WORKMATE_GITHUB_WORKLOG_TZ` (`ZoneInfo`), więc commit z 23:30
+- **Oczekiwane:** doba liczona wg `SUFLER_GITHUB_WORKLOG_TZ` (`ZoneInfo`), więc commit z 23:30
   lokalnego czasu zostaje w swoim dniu po obu stronach przejścia DST.
 
 ---

@@ -142,7 +142,7 @@ the only trace is the log line, and the log says which of the two it is.
 | # | Risk | Mitigation |
 |---|------|------------|
 | R1 | "Dead-letter" reads as permission to drop messages more freely. | The bound is 2 and lives in one constant with its rationale; quarantine is what makes the existing bound honest, not a licence to widen it. Nothing else about the loop's retry behavior changed. |
-| R2 | Quarantine is write-only — nobody opens the table. | **Closed 2026-08-17** by `workmate-diagnostics`, one command over all three stores — see "Follow-up delivered" below. *(Originally accepted as deliberate: `recent()` had no caller in `src/`, exactly like `DeadLetterStore.recent` since ADR 0067, and the ERROR log was the practical fallback.)* |
+| R2 | Quarantine is write-only — nobody opens the table. | **Closed 2026-08-17** by `sufler-diagnostics`, one command over all three stores — see "Follow-up delivered" below. *(Originally accepted as deliberate: `recent()` had no caller in `src/`, exactly like `DeadLetterStore.recent` since ADR 0067, and the ERROR log was the practical fallback.)* |
 | R3 | The reason is missing exactly in the worst case (process killed). | Accepted and made explicit in the row (`_NO_REASON` text). The identifiers are complete regardless, so the message is still findable; the log holds whatever the dying process managed to emit. |
 | R4 | Quarantine writes fail on the same volume trouble that caused the abandonment. | The store error is caught: the entry degrades to an ERROR log carrying every field, and the channel keeps serving everyone else. Blocking the channel to protect the *trace* was measured to cost more than the trace is worth — see "Review correction". |
 | R5 | `inbound_dead_letters` grows unbounded. | Small by construction (a row only on abandonment); retention deferred to the same Faza 7 pass as `audit.db` and `dead_letters`. |
@@ -177,7 +177,7 @@ the only trace is the log line, and the log says which of the two it is.
 - **An infrastructure failure no longer costs a message.** A read-only or full state volume stops
   progress loudly (channel errors, stale heartbeat via a dying process) instead of quietly eating
   the stream, and the log distinguishes "cannot persist the attempt" from "handling failed".
-- **The operator gets a list of what was dropped** (`workmate-diagnostics inbound`), with enough to
+- **The operator gets a list of what was dropped** (`sufler-diagnostics inbound`), with enough to
   open the thread in Teams and answer by hand. Nothing in that list is message content.
 - **Symmetry with ADR 0067 §2**: both sides of the bridge now quarantine what they cannot process,
   with the same ordering rule, the same idempotency stance, and the same file.
@@ -226,12 +226,12 @@ the only trace is the log line, and the log says which of the two it is.
 
 ## Follow-up delivered (2026-08-17) — one read surface for three stores (R2)
 
-`workmate-diagnostics {audit|dead-letters|inbound}` (`adapters/inbound/cli/diagnostics.py`) is the
+`sufler-diagnostics {audit|dead-letters|inbound}` (`adapters/inbound/cli/diagnostics.py`) is the
 reader R2 deferred. One command, three surfaces, because the operator reaches for them in one pass
 and for one reason: somebody went unanswered. Each entry prints identifiers, the reason and the
 time; `--source` narrows by door (or by event source on the notifier table), `--since`/`--until`
 take either a relative span (`24h`, `7d`, `30m`) or an ISO timestamp, and `--json` hands the same
-fields to a script — the neighbouring `workmate-search` sets that convention.
+fields to a script — the neighbouring `sufler-search` sets that convention.
 
 Four properties are worth recording, because each is a decision and not an implementation detail:
 
@@ -245,10 +245,10 @@ Four properties are worth recording, because each is a decision and not an imple
   (`MissingTableError`): "this store has never written anything" is a different answer from "wrong
   path". The one fallback to a read-write connection covers WAL's `-shm` requirement when no writer
   is running; failing to open would be the worse answer.
-- **No default path, ever.** `events.db` lives outside the repo (`~/.workmate/`), and the default
+- **No default path, ever.** `events.db` lives outside the repo (`~/.sufler/`), and the default
   belongs to configuration, not to a diagnostic tool. The path comes from `--db` or from the
-  variable that *enables the writing side* (`WORKMATE_EVENTS_DB` for both quarantines,
-  `WORKMATE_AUDIT_DB` for the journal); with neither, the command errors instead of guessing.
+  variable that *enables the writing side* (`SUFLER_EVENTS_DB` for both quarantines,
+  `SUFLER_AUDIT_DB` for the journal); with neither, the command errors instead of guessing.
 - **Filters run in SQL, before `LIMIT`.** A limit must trim what the operator asked for, not cut
   rows a filter would have dropped anyway. Time columns are TEXT, and the comparison is
   lexicographic — sound precisely because every writer stores `datetime.now(tz=UTC).isoformat()`;

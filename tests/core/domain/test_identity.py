@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from workmate.core.domain.identity import Person
+from sufler.core.domain.identity import Person
 
 
 def test_person_display_name_is_optional() -> None:

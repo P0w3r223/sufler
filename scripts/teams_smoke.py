@@ -59,7 +59,7 @@ async def main() -> int:
         "serviceUrl": f"http://{SINK_HOST}:{SINK_PORT}",
         "from": {"id": "user1", "name": "Tester"},
         "conversation": {"id": "conv1"},
-        "recipient": {"id": "bot1", "name": "WorkMate"},
+        "recipient": {"id": "bot1", "name": "Sufler"},
         "text": NOTE_TEXT,
         "locale": "pl-PL",
     }

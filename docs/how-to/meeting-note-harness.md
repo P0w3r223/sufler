@@ -1,6 +1,6 @@
 # How-to: lokalny harness „notatka ze spotkania" (M3)
 
-Harness `workmate-meeting` uruchamia CAŁY przepływ M3 (Faza 2 / [ADR 0009](../adr/0009-meeting-note-flow-and-write-surface.md))
+Harness `sufler-meeting` uruchamia CAŁY przepływ M3 (Faza 2 / [ADR 0009](../adr/0009-meeting-note-flow-and-write-surface.md))
 end-to-end LOKALNIE, bez Azure/Graph: **wklejony transkrypt → streszczenie przez Claude
 (`AnthropicMeetingSummarizer`) → złożenie `NoteMetadata` (zamrożony schemat) → zapis przez
 bramkowany, dopisujący `NotesWriteService`**. Źródłem transkryptu jest `InMemoryTranscriptSource`;
@@ -10,7 +10,7 @@ follow-up z ADR 0009 — możliwość przejścia M3 wobec Claude na wklejonym tr
 
 ## Wymagania
 
-- 🔑 klucz Claude API w środowisku/`.env`: `ANTHROPIC_API_KEY` (lub `WORKMATE_AGENT_API_KEY`).
+- 🔑 klucz Claude API w środowisku/`.env`: `ANTHROPIC_API_KEY` (lub `SUFLER_AGENT_API_KEY`).
 - extra `agent`: `uv sync --extra agent` (import `anthropic` jest leniwy — bez extra harness kończy
   czytelnym komunikatem, nie tracebackiem).
 - Projekt istnieje w rejestrze (`data/projects/registry.yaml`) — z niego brana jest firma do ścieżki.
@@ -20,13 +20,13 @@ follow-up z ADR 0009 — możliwość przejścia M3 wobec Claude na wklejonym tr
 Transkrypt z pliku:
 
 ```
-uv run workmate-meeting --project scada-integration --date 2026-07-20 --transcript spotkanie.txt
+uv run sufler-meeting --project scada-integration --date 2026-07-20 --transcript spotkanie.txt
 ```
 
 Transkrypt z potoku (stdin):
 
 ```
-echo "…treść transkryptu…" | uv run workmate-meeting --project scada-integration --date 2026-07-20
+echo "…treść transkryptu…" | uv run sufler-meeting --project scada-integration --date 2026-07-20
 ```
 
 Flagi:

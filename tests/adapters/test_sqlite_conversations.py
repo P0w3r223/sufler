@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound.sqlite_conversations import SqliteConversationStore
-from workmate.core.domain.pricing import TokenUsage
+from sufler.adapters.outbound.sqlite_conversations import SqliteConversationStore
+from sufler.core.domain.pricing import TokenUsage
 
 # Schemat sprzed 0012 (ADR 0011): messages BEZ FK conversation_id → conversations(id).
 # Używany w testach migracji, by odtworzyć bazę, którą rebuild ma uszczelnić.

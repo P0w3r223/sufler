@@ -22,10 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from workmate.adapters.outbound.anthropic_llm import _to_tool_def
-from workmate.core.application.tools import build_jira_catalog
-from workmate.core.domain.jira_tasks import JiraTask, JiraTaskDetails
-from workmate.core.errors import InvalidRequestError, JiraReadError
+from sufler.adapters.outbound.anthropic_llm import _to_tool_def
+from sufler.core.application.tools import build_jira_catalog
+from sufler.core.domain.jira_tasks import JiraTask, JiraTaskDetails
+from sufler.core.errors import InvalidRequestError, JiraReadError
 
 
 class _FakeMyJiraTasks:

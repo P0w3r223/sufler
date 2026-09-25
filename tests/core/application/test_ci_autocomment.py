@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from workmate.core.application.ci_autocomment import CiAutoCommentService
-from workmate.core.application.events import EventService
-from workmate.core.application.github import GithubWriteService
-from workmate.core.domain.events import Event, NewEvent
-from workmate.core.errors import WriteError
+from sufler.core.application.ci_autocomment import CiAutoCommentService
+from sufler.core.application.events import EventService
+from sufler.core.application.github import GithubWriteService
+from sufler.core.domain.events import Event, NewEvent
+from sufler.core.errors import WriteError
 
 _WHEN = datetime(2026, 7, 15, 13, 0, tzinfo=UTC)
 _REPO = "https://github.com/o/r"

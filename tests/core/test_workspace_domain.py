@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.domain.workspace import (
+from sufler.core.domain.workspace import (
     WorkspaceScope,
     relpath_in_scope,
     safe_filename,
 )
-from workmate.core.errors import WriteError
+from sufler.core.errors import WriteError
 
 _ALLOWED = frozenset({"md", "txt", "csv", "json"})
 

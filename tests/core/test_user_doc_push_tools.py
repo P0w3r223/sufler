@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from workmate.core.application.tools import build_user_doc_push_catalog
-from workmate.core.ports.document import FILE_REPLY_FORMATS, RenderedDocument
+from sufler.core.application.tools import build_user_doc_push_catalog
+from sufler.core.ports.document import FILE_REPLY_FORMATS, RenderedDocument
 
 _TARGET = "u-anna-aad-id"
 
@@ -117,7 +117,7 @@ def test_document_at_the_size_limit_is_sent():
 
 
 def test_hard_sender_failure_propagates_not_enveloped():
-    """Twarda awaria Graph (nie WorkMateError/ValidationError) WYPŁYWA wyżej — świadomie.
+    """Twarda awaria Graph (nie SuflerError/ValidationError) WYPŁYWA wyżej — świadomie.
 
     Koperta łapie tylko przewidywalne błędy dziedziny; twardą awarię infrastruktury ma zobaczyć
     ``SafeResponder`` (zaloguje i zdegraduje), nie połknąć narzędzie (jak obraz/plik w wątku)."""

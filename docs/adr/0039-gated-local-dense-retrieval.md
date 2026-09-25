@@ -33,7 +33,7 @@ quality gated by `eval/`.
 ### Option A — Lean gated hybrid: multilingual-small (ONNX) + numpy/SQLite brute-force + RRF *(chosen)*
 A `SemanticRanker` port in the core; an outbound adapter that embeds notes/queries with a small
 multilingual model served through **ONNX Runtime (fastembed), no PyTorch**, persists float vectors
-as BLOBs in `~/.workmate/retrieval_index.db` (outside `data/`), and ranks candidates by **numpy
+as BLOBs in `~/.sufler/retrieval_index.db` (outside `data/`), and ranks candidates by **numpy
 brute-force cosine**. `NotesService` fuses the BM25 id-list and the dense id-list through the
 existing `reciprocal_rank_fusion(k=60)`. New extra `retrieval-dense`; per-door `enable_dense` flag
 (default OFF); enabled only on long-lived doors, never MCP stdio.
@@ -78,7 +78,7 @@ by measured quality, not assumed.
   The adapter still encodes E5 `query:`/`passage:` (and mmlw `zapytanie:`) prefixes by model name, so
   selecting such a model works — omitting the prefixes measurably degrades quality.
 - **A2 — Vector storage & search (Important):** numpy brute-force cosine + vectors as SQLite BLOB at
-  `~/.workmate/retrieval_index.db` (operational store, like `events.db`). Schema
+  `~/.sufler/retrieval_index.db` (operational store, like `events.db`). Schema
   `(note_id PK, model, dim, vector BLOB, content_hash, updated_at)`; **incremental re-embed by
   `content_hash`**. No `sqlite-vec` / `faiss` / `chromadb` (ANN pointless below ~10⁴ vectors,
   native-DLL risk on Windows). Reindex is a CLI/adapter concern — **no MCP tool**.

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate.config import WorkspaceSettings
+from sufler.config import WorkspaceSettings
 
 
 def test_validate_rejects_workspace_inside_data_dir(tmp_path):
@@ -84,7 +84,7 @@ def test_zwykly_brudnopis_obok_bazy_wiedzy_przechodzi(tmp_path: Path):
 def _stan(tmp_path: Path) -> tuple[Path, tuple[tuple[Path, str, bool], ...]]:
     """Układ floty: brudnopis i migawki notatek jako RODZEŃSTWO na wolumenie stanu."""
     wolumen = tmp_path / "var-lib-workmate"
-    return wolumen, ((wolumen / "snapshots" / "notes", "WORKMATE_NOTE_SNAPSHOTS_DIR", True),)
+    return wolumen, ((wolumen / "snapshots" / "notes", "SUFLER_NOTE_SNAPSHOTS_DIR", True),)
 
 
 def test_brudnopis_na_korzeniu_wolumenu_stanu_wywala_start(tmp_path: Path):
@@ -93,7 +93,7 @@ def test_brudnopis_na_korzeniu_wolumenu_stanu_wywala_start(tmp_path: Path):
     wolumen, trwale = _stan(tmp_path)
     ustawienia = WorkspaceSettings(enabled=True, workspace_dir=wolumen)
 
-    with pytest.raises(ValueError, match="WORKMATE_NOTE_SNAPSHOTS_DIR"):
+    with pytest.raises(ValueError, match="SUFLER_NOTE_SNAPSHOTS_DIR"):
         ustawienia.validate(data_dir=tmp_path / "data", persistent_paths=trwale)
 
 
@@ -101,7 +101,7 @@ def test_brudnopis_rowny_katalogowi_migawek_wywala_start(tmp_path: Path):
     wolumen, trwale = _stan(tmp_path)
     ustawienia = WorkspaceSettings(enabled=True, workspace_dir=wolumen / "snapshots" / "notes")
 
-    with pytest.raises(ValueError, match="WORKMATE_NOTE_SNAPSHOTS_DIR"):
+    with pytest.raises(ValueError, match="SUFLER_NOTE_SNAPSHOTS_DIR"):
         ustawienia.validate(data_dir=tmp_path / "data", persistent_paths=trwale)
 
 

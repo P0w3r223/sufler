@@ -12,10 +12,10 @@ from datetime import date
 
 import pytest
 
+from sufler.core.application.services import NotesWriteService
+from sufler.core.domain.models import NoteMetadata, Project
+from sufler.core.errors import WriteError
 from tests.conftest import FakeNotesWriter, FakeProjectsRepository
-from workmate.core.application.services import NotesWriteService
-from workmate.core.domain.models import NoteMetadata, Project
-from workmate.core.errors import WriteError
 
 
 def _projects_repo() -> FakeProjectsRepository:
@@ -145,7 +145,7 @@ def test_meeting_note_id_unknown_project_returns_none():
 def test_save_meeting_note_is_create_only_on_repeat(tmp_path):
     # Z REALNYM create-only writerem: ponowny zapis tego samego spotkania rzuca (kolizja),
     # zamiast tworzyć duplikat -2 — to jest gwarancja idempotencji na poziomie FS (ADR 0043).
-    from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+    from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
 
     service = NotesWriteService(MarkdownNotesWriter(tmp_path), _projects_repo())
     service.save_meeting_note(_metadata(), body="pierwsza", meeting_ref="join-abc")
@@ -281,8 +281,8 @@ def test_thread_note_id_unknown_project_returns_none():
 def test_save_thread_note_is_create_only_on_repeat(tmp_path):
     # Z REALNYM create-only writerem: ponowny zapis tej samej wzmianki rzuca NoteExistsError
     # (kolizja), zamiast tworzyć duplikat -2 — gwarancja idempotencji na poziomie FS (ADR 0048).
-    from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-    from workmate.core.errors import NoteExistsError
+    from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+    from sufler.core.errors import NoteExistsError
 
     service = NotesWriteService(MarkdownNotesWriter(tmp_path), _projects_repo())
     service.save_thread_note(_metadata(), body="pierwsza", source_message_id="msg-abc")

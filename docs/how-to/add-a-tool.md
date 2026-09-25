@@ -11,7 +11,7 @@ Przykład: `count_notes` — zwraca liczbę notatek w projekcie.
 
 ## 1. Logika w rdzeniu (przypadek użycia)
 
-W `src/workmate/core/application/services.py` dodaj metodę do właściwego serwisu:
+W `src/sufler/core/application/services.py` dodaj metodę do właściwego serwisu:
 
 ```python
 class NotesService:
@@ -48,8 +48,8 @@ def test_count_notes_filters_by_project(sample_notes):
 > (ADR 0009 paczki wdrożeniowej), więc **nowe narzędzie agenta to prawie zawsze nowa AKCJA
 > w istniejącym**, nie nowy `ToolSpec`.
 
-Narzędzia MCP definiuje się w `src/workmate/core/application/tools/mcp.py`
-(funkcja `build_tool_catalog`, re-eksportowana z `workmate.core.application.tools`, [ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
+Narzędzia MCP definiuje się w `src/sufler/core/application/tools/mcp.py`
+(funkcja `build_tool_catalog`, re-eksportowana z `sufler.core.application.tools`, [ADR 0008](../adr/0008-agent-runtime-and-tool-catalog.md)).
 Adapter MCP jest cienki i sam się nie zmienia (`mcp/tools.py` tylko rejestruje `spec.fn`
 na FastMCP).
 
@@ -162,7 +162,7 @@ schemat (`_to_tool_def`), nie przez `__annotations__`.
 
 ```bash
 uv run pytest
-uv run mcp dev src/workmate/server.py   # wywołaj count_notes ręcznie
+uv run mcp dev src/sufler/server.py   # wywołaj count_notes ręcznie
 ```
 
 ## 5. Udokumentuj

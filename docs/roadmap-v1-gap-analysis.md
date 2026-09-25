@@ -1,9 +1,9 @@
-# Analiza luk wobec Roadmapy WorkMate V1 — plan na sesje
+# Analiza luk wobec Roadmapy Sufler V1 — plan na sesje
 
 Data: 2026-07-27
 Status: proposed
 Autor: P0w3r223
-Related to: [`roadmap.md`](roadmap.md), `roadmap_workmate.pdf` (Roadmap V1)
+Related to: [`roadmap.md`](roadmap.md), `roadmap_sufler.pdf` (Roadmap V1)
 
 ---
 
@@ -49,7 +49,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
 
 ### 🟢 Grupa A — możliwe od zaraz
 - [x] **A1. RAG semantyczny** — kod gotowy (ADR-0039, Opcja A) + **bramka uruchomiona (2026-07-27): dense NIE przechodzi** (ΔnDCG@5 = −0.095 przy progu +0.03; lexical-PL na suficie — mrr/recall@10 = 1.0). Dense zostaje za flagą `enable_dense=False`; cel Fazy 3 „embeddings" **domknięty DOWODEM**. Rewizja, gdy korpus urośnie/zróżnicuje się.
-- [x] **A2. Lokalny harness M3** — ZROBIONE (sesja 2, 2026-07-27): komenda `workmate-meeting`
+- [x] **A2. Lokalny harness M3** — ZROBIONE (sesja 2, 2026-07-27): komenda `sufler-meeting`
   (`adapters/inbound/cli/meeting.py`) spina `InMemoryTranscriptSource` + `AnthropicMeetingSummarizer`
   + `MeetingNoteService` e2e na wklejonym transkrypcie. Domyślnie pisze do katalogu tymczasowego (nie
   `data/notes/`); firmę bierze z realnego rejestru; zapis create-only. Pokrywa poz. 7 live-smoke
@@ -123,7 +123,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   oba drzwi worklogów opisane niżej ZOSTAŁY WYCOFANE z projektu w całości — pozycja dokumentuje
   historyczny build (2026-07-28), nie stan bieżący. ZROBIONE (2026-07-28): oba drzwi worklogów
   (wsadowe ADR 0035 + self-service ADR 0038) odsyłają arkusz `.xlsx` realnym ZAŁĄCZNIKIEM zamiast
-  ścieżki tekstem, bramka `WORKMATE_WORKLOGI_ENABLE_ATTACHMENT` (OFF). Reużywa `UserDocSender`
+  ścieżki tekstem, bramka `SUFLER_WORKLOGI_ENABLE_ATTACHMENT` (OFF). Reużywa `UserDocSender`
   (ADR 0027, wariant plikowy — NIE `TeamsFileSender`, bo czat 1:1 nie ma dysku kanału → OneDrive
   bota); port dostał opcjonalny `caption_html`, więc bogata treść `render_timesheet_message` jedzie
   RAZEM z kartą pliku. Rdzeń bez I/O (wstrzykiwany `send_document`/`deliver_as_attachment`; bajta
@@ -145,11 +145,11 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
     konsultowany przez respondera OBOK read-only `CommandRouter` (ADR 0017 zostaje read-only). Zapis
     przez create-only `save_note` do `data/notes/`; `project`/`data`/`ref` z ZAUFANYCH argumentów, nie
     z transkryptu (ADR 0009 §3). OSOBNA bramka `enable_meeting_note_write` (OFF), wymaga transkryptu.
-  - Weryfikacja operatorska = jedno polecenie `workmate-meeting --source graph --meeting <ref>` (CLI)
+  - Weryfikacja operatorska = jedno polecenie `sufler-meeting --source graph --meeting <ref>` (CLI)
     albo komenda `/notatka` na kanale (po włączeniu bramek). Testy: `httpx.MockTransport` + router na
     atrapach + gating (pytest **323**). ruff/mypy czyste; golden MCP nietknięty.
   - **Zakresy `OnlineMeetingTranscript.Read.All` + `OnlineMeetings.Read` NADANE przez admina (2026-07-28).**
-    Blok `WORKMATE_TEAMS_GRAPH_*` przygotowany w `.env` (flaga OFF), device-code przeszło (token niesie nowe
+    Blok `SUFLER_TEAMS_GRAPH_*` przygotowany w `.env` (flaga OFF), device-code przeszło (token niesie nowe
     zakresy). Live-smoke NIEDOKOŃCZONY: brak realnego joinWebUrl/id spotkania z transkryptem — próba na
     placeholderze dała Graph HTTP 400 (NIE dowód braku uprawnień). Procedura:
     [`how-to/meeting-transcript-live-smoke.md`](how-to/meeting-transcript-live-smoke.md).
@@ -160,7 +160,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   katalogu tożsamości worklogów, fail-closed) autoryzowany PRZED pobraniem transkryptu; nieznany → odmowa.
   Czysta decyzja w rdzeniu (`core/domain/authorization.py`), serwis `MeetingNoteAuthorizer`, `Actor`
   z szwem `project` pod B2-B. **Autoryzacja wbudowana w bramkę zapisu:** `enable_meeting_note_write=true`
-  wymaga `WORKMATE_TEAMS_GRAPH_IDENTITIES` (fail-fast). Testy: authz rdzenia + router + gating (pytest **332**).
+  wymaga `SUFLER_TEAMS_GRAPH_IDENTITIES` (fail-fast). Testy: authz rdzenia + router + gating (pytest **332**).
 - [x] **B3. M4 — async + idempotencja** (ADR 0043 `proposed`) — **KOMPLETNE w kodzie, gated OFF.** **Część 1 (idempotencja) zielona:**
   deterministyczny `note_id` = `<firma>/<projekt>/<data>-mtg-<hash(meeting_ref)>` (`core/domain/paths.py`),
   `NotesWriteService.save_meeting_note` (create-only na stałym id) + `meeting_note_id` (pre-check bez
@@ -192,7 +192,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   [`live-smoke-checklist.md`](how-to/live-smoke-checklist.md)). „Do zrobienia (operator)" niżej jest
   NIEAKTUALNE — nie ma już czego dokańczać, poller i push nie istnieją. Reszta akapitu (do
   2026-07-28) dokumentuje historyczny build/walidację PRZED wycofaniem.
-  Żywa instancja `example.atlassian.net`, projekt **WT** („WorkMate Test"), wariant `cloud` (Basic
+  Żywa instancja `example.atlassian.net`, projekt **WT** („Sufler Test"), wariant `cloud` (Basic
   `email:api_token`, REST v3/ADF, `search/jql`). Potwierdzone read-only wobec Jiry (do TYMCZASOWEGO
   `events.db`, bez zapisów): (a) łączność + auth; (b) **fail-fast strażnika pętli** — `SELF_ACCOUNT`
   = realny `accountId` tokenu (`712020:…`); (c) pełny pipeline `search → ADF-flatten → select_events
@@ -200,7 +200,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   z atrybucją `project=workmate`; (d) **self-skip** — wszystkie 10 autorstwa konta tokenu → 0 przyjętych
   (poprawnie); (e) **dedup** — drugi poll 0. Przy okazji naprawiono lukę atrybucji: `registry.yaml`
   miał placeholder `jira_project_key: WM`, a `.env` nasłuchuje `WT` → ustawiono `WT` na projekcie
-  `workmate` (bramka zielona, pytest **358**). **Blokada początkowa (rozwiązana):** stary token dawał
+  `sufler` (bramka zielona, pytest **358**). **Blokada początkowa (rozwiązana):** stary token dawał
   `401 AUTHENTICATED_FAILED` — operator odświeżył API token w `.env`. **Do zrobienia (operator):**
   niepominięty ingest (zmiana w WT z INNEGO konta Jira niż token) oraz push do Teams — OBA
   usunięte razem z poller-em/mostem (D1, patrz adnotacja SUPERSEDED wyżej); nowe „moje zadania" to
@@ -208,18 +208,18 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   **Narzędzie (historyczne):** promowano skrypty smoke do repo — dawny `deploy/jira/preflight.py`
   (read-only preflight poz. 11 SPRZED D1: łączność+auth+`SELF_ACCOUNT`+pipeline do temp-db) +
   `deploy/jira/README.md`; oba zastąpione nową, czysto odczytową wersją (ADR 0054). Config push do
-  Teams wpisany do nadrzędnego `.env` (`WORKMATE_TEAMS_PUSH_*`: client/tenant/team z Powiadomienia,
+  Teams wpisany do nadrzędnego `.env` (`SUFLER_TEAMS_PUSH_*`: client/tenant/team z Powiadomienia,
   **cele OFF** — nic nie wychodzi). Blokada poz. 13: `CHANNEL_ID` nieznany (Powiadomienia używa
   Shifts+DM, nie kanału) — do odkrycia `GET /teams/{team}/channels`. Bramka: ruff+mypy czyste, pytest **358**.
   **Poz. 12 (zewnętrzna noga push) ZWALIDOWANA NA ŻYWO (2026-07-28):** jednorazowy kontrolowany send
   przeszedł całą ścieżkę Graph — MSAL **silent-refresh z cache** (`teams_token_cache.bin`, konto
   `piotr.czastkiewicz@…onmicrosoft.com`, BEZ device-code) → `/me` → `create_or_get_chat` (1:1) →
   `send_chat` → **DM do Mikołaja** (`1b3fa85a…`), treść jednoznacznie testowa. Cel czatu uzbrojony w
-  `.env` (`ENABLE_CHAT=true`). Nadawca = Piotr (nie bot Virtual WorkMate — to inny cache). **Pozostała
+  `.env` (`ENABLE_CHAT=true`). Nadawca = Piotr (nie bot Virtual Sufler — to inny cache). **Pozostała
   luka do w pełni organicznej poz. 12:** niepominięte zdarzenie WT (zmiana z 2. konta Jira) → poller →
   auto-DM; formatowanie `[Jira]`/escaping jest pokryte testem `test_notifier.py`.
-  **Nadawca przełączony na głos bota** (`WORKMATE_TEAMS_PUSH_TOKEN_CACHE` → `virtual_workmate`,
-  `Virtual.WorkMate@…onmicrosoft.com`) — silent-refresh pobiera token push ze scope'ami czatu, więc
+  **Nadawca przełączony na głos bota** (`SUFLER_TEAMS_PUSH_TOKEN_CACHE` → `virtual_sufler`,
+  `Virtual.Sufler@…onmicrosoft.com`) — silent-refresh pobiera token push ze scope'ami czatu, więc
   uzbrojony DM zadziała od bota bez device-code. **Cel kanałowy poz. 13 odkryty:** zespół
   „Workmate-Teams" (`27fefc2f…`) / kanał „ogólny" (`19:7xExC…`), przez `/me/joinedTeams` +
   `/teams/{team}/channels`; wpisany do `.env`, `ENABLE_CHANNEL=false` (odkryty, nie włączony).
@@ -239,7 +239,7 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
   Start Date & Time·Comment`, czas `3h 30m`, offset ISO `+0200`). `.env` dostał INERTNY,
   zakomentowany szkielet worklogów (reużywa tożsamości push). **Genuinnie operatorskie:** Krok 0
   w UI Jiry (pobór szablonu, ręczny import, test duplikatów/admin → `HEADERS_CONFIRMED=true`);
-  przebieg próbny `uv run workmate-worklogi --login/--once` (dotyka Graph `fetch_team_members`,
+  przebieg próbny `uv run sufler-worklogi --login/--once` (dotyka Graph `fetch_team_members`,
   device-code); pilotaż bojowy `DRY_RUN=false` (prywatne DM). Bramka: ruff ✓ · mypy ✓ · pytest 358.
 
 ## Plan na sesje
@@ -247,12 +247,12 @@ pojedyncze elementy M3/M4 zależne od Azure, RAG semantyczny oraz push zdarzeń 
 | Sesja | Zakres | Złożoność | Start od |
 |---|---|---|---|
 | **1** | RAG semantyczny (A1) | MEDIUM/LARGE | `@architect` → ADR embeddings → zgoda → implementacja |
-| **2** | Harness M3 lokalnie (A2) — ✅ zrobione 2026-07-27. Push do sesji MCP (A3) wydzielony do osobnej sesji (Research → ADR → build). | MEDIUM | A2: klocki gotowe → harness `workmate-meeting` |
+| **2** | Harness M3 lokalnie (A2) — ✅ zrobione 2026-07-27. Push do sesji MCP (A3) wydzielony do osobnej sesji (Research → ADR → build). | MEDIUM | A2: klocki gotowe → harness `sufler-meeting` |
 | **3** | Zapis plików na Teams: `TeamsFileSender` + ADR 0026/0027 (A′). ~~Worklog załącznikiem~~ SUPERSEDED (D2, ADR 0055, 2026-07-30) | MEDIUM/LARGE | odblokowane; build + live-smoke |
 | **4** | Go-live operacyjne (C1 + C2). ~~C3~~ SUPERSEDED (D2, ADR 0055, 2026-07-30) | operacyjna | konfiguracja + weryfikacja na żywo |
 | **5** | Przygotowanie M4: `@architect` (tożsamość Entra/AD + async) + potwierdzenie scope `OnlineMeetingTranscript.Read.All` dla M3 | LARGE | ADR-y + lista scope'ów admina |
 | **6** | M3/M4 produkcyjnie (B1 + B2 + B3) | LARGE | po odblokowaniu pozostałych scope'ów Azure |
 
 **Uwaga:** „braki" M3-Graph/M4 to nie zaległości, lecz świadomie odłożona praca zależna od dostępu do
-Azure/M365 (ADR 0009 §6). Wobec wszystkiego, co dało się zbudować bez tej infrastruktury, WorkMate jest
+Azure/M365 (ADR 0009 §6). Wobec wszystkiego, co dało się zbudować bez tej infrastruktury, Sufler jest
 względem Roadmapy V1 domknięty.

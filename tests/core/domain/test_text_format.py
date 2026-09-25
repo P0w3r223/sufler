@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from workmate.core.domain.text_format import fmt_counts, fmt_date, fmt_seconds
+from sufler.core.domain.text_format import fmt_counts, fmt_date, fmt_seconds
 
 _MISSING = "—"
 

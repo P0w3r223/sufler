@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound import filesystem_outbox
-from workmate.adapters.outbound.filesystem_outbox import FilesystemOutboxRepository
-from workmate.core.errors import WriteError
-from workmate.core.ports.outbox import OutboxReadError
+from sufler.adapters.outbound import filesystem_outbox
+from sufler.adapters.outbound.filesystem_outbox import FilesystemOutboxRepository
+from sufler.core.errors import WriteError
+from sufler.core.ports.outbox import OutboxReadError
 
 _DIR = "teams-graph/abc123"
 

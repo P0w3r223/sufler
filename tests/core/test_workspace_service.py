@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.application.workspace import (
+from sufler.core.application.workspace import (
     WorkspaceLimits,
     WorkspaceService,
     WorkspaceWriteService,
 )
-from workmate.core.domain.workspace import WorkspaceFile, WorkspaceScope
-from workmate.core.errors import WriteError
+from sufler.core.domain.workspace import WorkspaceFile, WorkspaceScope
+from sufler.core.errors import WriteError
 
 _SCOPE = WorkspaceScope("teams_graph", "team/chan/root")
 

@@ -14,11 +14,11 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from sufler.adapters.inbound.mcp.tools import register_tools
+from sufler.core.application.services import NotesService, ProjectsService
+from sufler.core.domain.models import Note, Project, ProjectStatusRecord
+from sufler.core.errors import RepositoryError
 from tests.conftest import FakeNotesRepository, FakeProjectsRepository
-from workmate.adapters.inbound.mcp.tools import register_tools
-from workmate.core.application.services import NotesService, ProjectsService
-from workmate.core.domain.models import Note, Project, ProjectStatusRecord
-from workmate.core.errors import RepositoryError
 
 
 class _RaisingNotesRepository:

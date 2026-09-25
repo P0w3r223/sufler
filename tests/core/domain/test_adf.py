@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.domain.adf import adf_to_text, text_to_adf
+from sufler.core.domain.adf import adf_to_text, text_to_adf
 
 
 def test_text_to_adf_single_line():

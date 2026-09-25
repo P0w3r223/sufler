@@ -14,8 +14,8 @@ from datetime import date
 
 import pytest
 
+from sufler.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
 from tests.conftest import make_note
-from workmate.adapters.outbound.onnx_semantic_ranker import OnnxSemanticRanker
 
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("numpy") is None,

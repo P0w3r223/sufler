@@ -4,7 +4,7 @@ Rozproszone `default=False` w ``config/`` łatwo przestawić — przy dopisywani
 scalaniu, przy „tymczasowym" włączeniu do testów. Ten test zbiera je REFLEKSYJNIE, i to na DWÓCH
 poziomach:
 
-1. KLASY odkrywamy z modułu ``workmate.config`` (każda dataklasa ``*Settings``), a nie z ręcznej
+1. KLASY odkrywamy z modułu ``sufler.config`` (każda dataklasa ``*Settings``), a nie z ręcznej
    listy. Poprzednia wersja miała krotkę ośmiu klas wpisanych z palca — nowa klasa ustawień
    z własną bramką (``ExecManagerSettings`` i ``SkillsSettings`` weszły już po tamtym przeglądzie)
    wymykała się bramce w całości, bo refleksja po polach nigdy jej nie oglądała.
@@ -16,18 +16,18 @@ poziomach:
 
 Inwariant (CLAUDE.md, ADR 0006/0021/0034/0065): odczyt jest domyślny, każdy zapis wchodzi przez
 własną bramkę wyłączoną z fabryki, a operator włącza ją świadomie — BEZ WYJĄTKU (od 2026-07-31
-obejmuje też ``save_note``/``WORKMATE_ENABLE_WRITE``, amendment ADR 0006; od ADR 0065 także
+obejmuje też ``save_note``/``SUFLER_ENABLE_WRITE``, amendment ADR 0006; od ADR 0065 także
 mutację i kasowanie notatek). Jeśli ten test padnie, NIE „naprawiaj" go zmianą oczekiwanej
 wartości — to sygnał, że ktoś otworzył bramkę domyślnie.
 
-Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje ``WORKMATE_*``): sprawdzamy
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje ``SUFLER_*``): sprawdzamy
 domyślne wartości KODU, nie bieżącą konfigurację maszyny ani repozytoryjnego ``.env``.
 
 Od przeglądu kompozycji 2026-08-17 mierzymy też TRZECIĄ drogę otwarcia bramki: SZABLONY
 (``.env.example``, ``deploy/docker/env.example``). Oba pliki mają w nagłówku polecenie „skopiuj do
 ``.env``/``env``", więc aktywna (nieskomentowana) linia włączająca bramkę jest równoważna
 domyślnemu ``True`` w kodzie — z tą różnicą, że dwie pierwsze drogi miały bramkę testową, a ta
-nie miała żadnej. Zastane naruszenia: ``WORKMATE_ENABLE_WRITE=true`` w ``.env.example`` (trzy
+nie miała żadnej. Zastane naruszenia: ``SUFLER_ENABLE_WRITE=true`` w ``.env.example`` (trzy
 linie pod komentarzem „odkomentuj, żeby…") i cztery bramki zapisu notatek w szablonie floty.
 """
 
@@ -40,8 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from sufler.config import ScheduleSettings, Settings
 from tests.conftest import pochodzi_z_config, przestrzen_config
-from workmate.config import ScheduleSettings, Settings
 
 # Klasy ustawień znane z przeglądu 2026-08-17. Refleksja MUSI je wszystkie znaleźć — inaczej
 # odkrywanie przestało działać (np. ktoś zmienił konwencję nazw) i cały test cichnie.
@@ -72,7 +72,7 @@ _BRAMKI_TROJSTANOWE = {"ScheduleSettings.enabled"}
 
 
 def _klasy_ustawien() -> dict[str, type]:
-    """Wszystkie dataklasy ``*Settings`` zdefiniowane w ``workmate.config``."""
+    """Wszystkie dataklasy ``*Settings`` zdefiniowane w ``sufler.config``."""
     return {
         name: obj
         for name, obj in przestrzen_config().items()
@@ -120,7 +120,7 @@ def test_kazda_klasa_ustawien_ma_validate() -> None:
     """Konwencja: klasa ustawień sama orzeka o bezsensownych wartościach, przy STARCIE.
 
     Wypadnięcie z niej jest ciche i kosztowne. ``RetrievalSettings`` nie miało ``validate``, więc
-    ``WORKMATE_RETRIEVAL_RRF_K=0`` przechodziło konfigurację i wywracało się dopiero w środku
+    ``SUFLER_RETRIEVAL_RRF_K=0`` przechodziło konfigurację i wywracało się dopiero w środku
     wyszukiwania (``1.0 / (k + rank)``, ``rank`` od zera) — surowym ``ZeroDivisionError``, nie
     błędem narzędzia. ``SkillsSettings`` po cichu ucinało listę procedur do zera.
 
@@ -268,14 +268,14 @@ def test_bramki_nie_otwiera_wartosc_inna_niz_zgoda(monkeypatch, wartosc: str) ->
     i sklejka z ``yes`` to najbliższe realne pomyłki operatora, jakie mogłyby przypadkiem otworzyć
     zapis do bazy wiedzy.
     """
-    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", wartosc)
+    monkeypatch.setenv("SUFLER_ENABLE_WRITE", wartosc)
     assert Settings.from_env().enable_write is False
 
 
 @pytest.mark.parametrize("wartosc", ["true", "TRUE", "  True  ", "1", "yes", "on"])
 def test_bramke_otwiera_jawna_zgoda_operatora(monkeypatch, wartosc: str) -> None:
     """Kontrast: bramka MUSI dać się otworzyć — inaczej byłaby martwa, a nie bezpieczna."""
-    monkeypatch.setenv("WORKMATE_ENABLE_WRITE", wartosc)
+    monkeypatch.setenv("SUFLER_ENABLE_WRITE", wartosc)
     assert Settings.from_env().enable_write is True
 
 
@@ -296,8 +296,8 @@ def _nazwa_wyglada_na_bramke(klucz: str) -> bool:
     """Heurystyka po NAZWIE — szablon to tekst, nie ma z czego wziąć typu pola.
 
     Konwencja projektu jest jednolita: bramka to ``*_ENABLE_*`` albo ``*_ENABLED``
-    (``WORKMATE_ENABLE_WRITE``, ``WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE``,
-    ``WORKMATE_TEAMS_DIGEST_ENABLED``). Fałszywe trafienie jest tanie (wystarczy zakomentować
+    (``SUFLER_ENABLE_WRITE``, ``SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE``,
+    ``SUFLER_TEAMS_DIGEST_ENABLED``). Fałszywe trafienie jest tanie (wystarczy zakomentować
     linię w szablonie), pominięcie byłoby dziurą — dlatego łapiemy szeroko.
     """
     return "_ENABLE" in klucz
@@ -351,15 +351,15 @@ def test_heurystyka_nazwy_bramki_widzi_realne_klucze() -> None:
     Gdyby konwencja nazw się zmieniła (albo ktoś przepisał ``_nazwa_wyglada_na_bramke``), test
     wyżej milczałby o pustym zbiorze zamiast zapalić się na otwartej bramce.
     """
-    assert _nazwa_wyglada_na_bramke("WORKMATE_ENABLE_WRITE")
-    assert _nazwa_wyglada_na_bramke("WORKMATE_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE")
-    assert _nazwa_wyglada_na_bramke("WORKMATE_TEAMS_DIGEST_ENABLED")
-    assert not _nazwa_wyglada_na_bramke("WORKMATE_EVENTS_DB")
-    assert not _nazwa_wyglada_na_bramke("WORKMATE_TEAMS_GRAPH_WATCH")
+    assert _nazwa_wyglada_na_bramke("SUFLER_ENABLE_WRITE")
+    assert _nazwa_wyglada_na_bramke("SUFLER_TEAMS_GRAPH_ENABLE_MEETING_NOTE_WRITE")
+    assert _nazwa_wyglada_na_bramke("SUFLER_TEAMS_DIGEST_ENABLED")
+    assert not _nazwa_wyglada_na_bramke("SUFLER_EVENTS_DB")
+    assert not _nazwa_wyglada_na_bramke("SUFLER_TEAMS_GRAPH_WATCH")
 
 
 def test_dotenv_z_repozytorium_nie_otwiera_bramki_pod_pytestem() -> None:
-    """Lokalny ``.env`` (bywa w nim ``WORKMATE_ENABLE_WRITE=true``) nie może sterować testami.
+    """Lokalny ``.env`` (bywa w nim ``SUFLER_ENABLE_WRITE=true``) nie może sterować testami.
 
     ``config/`` czyta wyłącznie ``os.environ``; ``.env`` wczytują dopiero wejścia drzwi
     (``env.load_dotenv``). Gdyby kiedyś ktoś przeniósł wczytywanie do ``config/`` „dla wygody",
@@ -371,7 +371,7 @@ def test_dotenv_z_repozytorium_nie_otwiera_bramki_pod_pytestem() -> None:
     wlaczony_zapis = [
         wiersz
         for wiersz in dotenv.read_text(encoding="utf-8", errors="replace").splitlines()
-        if wiersz.strip().startswith("WORKMATE_ENABLE_WRITE=")
+        if wiersz.strip().startswith("SUFLER_ENABLE_WRITE=")
         and wiersz.split("=", 1)[1].strip().strip("\"'").lower() in ("1", "true", "yes", "on")
     ]
     if not wlaczony_zapis:

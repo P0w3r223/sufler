@@ -67,7 +67,7 @@ _POZA_BRAMKA = frozenset(
         # się względem ich korzeni, nie tego. `ceidg-tool` dołączył 2026-09-10 (ADR 0074) i jest
         # tego najostrzejszym przykładem: cytuje własne `docs/adr/0003_rate_limiter.md`, a bramka
         # rozwiązywała tę ścieżkę od korzenia repozytorium — czyli w miejsce, gdzie leży ADR 0003
-        # WorkMate'a o zupełnie czym innym. Odsyłacz trafiający w niewłaściwy dokument jest gorszy
+        # Sufler'a o zupełnie czym innym. Odsyłacz trafiający w niewłaściwy dokument jest gorszy
         # niż martwy, bo nie widać, że jest zły.
         "Powiadomienia_teams",
         "claude_summary",

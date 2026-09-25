@@ -11,7 +11,7 @@ Related to: docs/adr/0006-write-capability-gate-2.md, docs/adr/0015-teams-delega
 > **Stan zmierzony 2026-09-09 — decyzja właściciela do podjęcia, `proposed` od 2026-07-17 (54 dni).**
 >
 > Mechanizm z tego ADR-u **nie powstał**: `teams_graph/app.py:378` nadal podaje `enable_write=False`
-> na sztywno, a flagi `WORKMATE_TEAMS_GRAPH_ENABLE_NOTES_WRITE` nie ma w `TeamsGraphSettings`.
+> na sztywno, a flagi `SUFLER_TEAMS_GRAPH_ENABLE_NOTES_WRITE` nie ma w `TeamsGraphSettings`.
 >
 > **Czego ten ADR NIE stracił na rzecz ADR 0065**, choć wygląda, jakby stracił, i sprawdzenie tego
 > jest tu zapisane, żeby nikt nie zamykał go drugi raz na skróty: ADR 0065 uczynił bazę wiedzy
@@ -57,7 +57,7 @@ a note; note content is data, not instructions.
 
 ## Options considered
 
-- **A1 (chosen).** A dedicated per-door flag `WORKMATE_TEAMS_GRAPH_ENABLE_NOTES_WRITE` (default OFF) on
+- **A1 (chosen).** A dedicated per-door flag `SUFLER_TEAMS_GRAPH_ENABLE_NOTES_WRITE` (default OFF) on
   `TeamsGraphSettings`, passed into `build_conversational_responder(enable_write=…)` in place of the
   hardcoded `False`. Reuses `save_note` / `NotesWriteService` 1:1. This is the `enable_workspace` pattern
   from ADR 0018 applied to notes: every mutating gate in this repo is its own env flag, default OFF.

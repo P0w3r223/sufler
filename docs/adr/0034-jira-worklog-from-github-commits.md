@@ -23,7 +23,7 @@ A `grep` over `src/` confirmed ADR 0035 used none of it: ~870 lines of core had 
 
 Removed: `log_jira_worklog`, `core/application/worklog_author.py`, `JiraWorklogPort` and the
 `add_worklog`/`read_worklogs` adapter methods, the `enable_jira_worklog` and
-`worklog_allow_on_behalf` gates, and every `WORKMATE_JIRA_WORKLOG_*` variable.
+`worklog_allow_on_behalf` gates, and every `SUFLER_JIRA_WORKLOG_*` variable.
 
 Kept: `propose_worklog` and the pure estimation domain (`core/domain/worklog.py`) — read-only, now
 wired under `GithubSettings` **without a gate**, because nothing it does mutates anything and this
@@ -46,7 +46,7 @@ outlived them.
 ## Context
 
 We want to record an employee's work in Jira based on evidence that already exists: their GitHub
-commit history. Two capabilities are missing today — WorkMate has no worklog port at all, and the
+commit history. Two capabilities are missing today — Sufler has no worklog port at all, and the
 GitHub client has no commit reader (only `list_branches`, which returns HEAD SHAs for push
 detection, ADR 0029).
 
@@ -142,7 +142,7 @@ remainder to the first key.
 - **Cross-settings coupling.** `enable_jira_worklog` lived in `JiraSettings` but functionally needed
   `GithubSettings`; `JiraSettings.validate()` cannot see them, so the check landed at door wiring.
   **Resolved 2026-07-21:** with the write path gone the capability is GitHub-only, so the knobs moved
-  to `GithubSettings` (`WORKMATE_GITHUB_WORKLOG_*`) and the coupling disappeared.
+  to `GithubSettings` (`SUFLER_GITHUB_WORKLOG_*`) and the coupling disappeared.
 
 ## Rejected alternatives
 

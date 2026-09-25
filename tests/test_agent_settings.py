@@ -3,7 +3,7 @@
 ``validate`` to granica startu runtime'u (klucz + sensowne limity), a ``from_env``
 ma poprawnie wybierać źródło klucza. Oba czyste — testujemy bez SDK i bez sieci.
 
-Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``WORKMATE_*``
+Środowisko czyści globalny fixture z ``tests/conftest.py`` (zdejmuje wszystkie ``SUFLER_*``
 i klucze SDK), więc ręczna lista zmiennych do wyczyszczenia jest tu zbędna — test ustawia
 tylko to, co faktycznie bada.
 """
@@ -14,7 +14,7 @@ import dataclasses
 
 import pytest
 
-from workmate.config import AgentSettings
+from sufler.config import AgentSettings
 
 
 def test_validate_rejects_empty_key():
@@ -46,7 +46,7 @@ def test_validate_accepts_disabled_thinking():
 
 
 def test_from_env_reads_thinking_type(monkeypatch):
-    monkeypatch.setenv("WORKMATE_AGENT_THINKING", "disabled")
+    monkeypatch.setenv("SUFLER_AGENT_THINKING", "disabled")
 
     assert AgentSettings.from_env().thinking_type == "disabled"
 
@@ -56,7 +56,7 @@ def test_from_env_prefers_workmate_key_then_anthropic(monkeypatch):
 
     assert AgentSettings.from_env().api_key == "a-key"
 
-    monkeypatch.setenv("WORKMATE_AGENT_API_KEY", "w-key")
+    monkeypatch.setenv("SUFLER_AGENT_API_KEY", "w-key")
     assert AgentSettings.from_env().api_key == "w-key"  # WORKMATE ma priorytet
 
 

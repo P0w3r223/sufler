@@ -6,7 +6,7 @@ Baza ``:memory:``: link + odczyt dwukierunkowy (root po celu, cel po roocie), NA
 
 from __future__ import annotations
 
-from workmate.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
+from sufler.adapters.outbound.sqlite_thread_links import SqliteThreadLinkStore
 
 
 def _store() -> SqliteThreadLinkStore:

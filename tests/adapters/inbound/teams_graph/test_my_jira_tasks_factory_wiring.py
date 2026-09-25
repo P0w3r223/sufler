@@ -8,8 +8,8 @@ Sieci tu nie ma — sprawdzamy wyłącznie strukturę wiringu, nie realny odczyt
 
 from __future__ import annotations
 
-from workmate.adapters.inbound.teams_graph.app import _build_my_jira_tasks_factory
-from workmate.config import JiraSettings, TeamsGraphSettings
+from sufler.adapters.inbound.teams_graph.app import _build_my_jira_tasks_factory
+from sufler.config import JiraSettings, TeamsGraphSettings
 
 _JIRA = JiraSettings(base_url="https://jira.example.org", token="pat-secret")
 

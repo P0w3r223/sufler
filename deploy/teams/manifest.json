@@ -10,11 +10,11 @@
     "termsOfUseUrl": "https://example.com/tos"
   },
   "name": {
-    "short": "WorkMate",
-    "full": "WorkMate (spike)"
+    "short": "Sufler",
+    "full": "Sufler (spike)"
   },
   "description": {
-    "short": "Bot echo WorkMate",
+    "short": "Bot echo Sufler",
     "full": "Spike M2: potwierdzenie odbioru notatki."
   },
   "icons": {

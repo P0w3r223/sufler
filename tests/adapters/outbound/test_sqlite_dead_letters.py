@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.outbound.sqlite_dead_letters import (
+from sufler.adapters.outbound.sqlite_dead_letters import (
     SqliteDeadLetterReader,
     SqliteDeadLetterStore,
     SqliteInboundDeadLetterStore,
 )
-from workmate.adapters.outbound.sqlite_readonly import MissingTableError
+from sufler.adapters.outbound.sqlite_readonly import MissingTableError
 
 _CHWILA = datetime(2026, 8, 13, 10, 0, tzinfo=UTC)
 

@@ -55,7 +55,7 @@ change: usage must be captured and threaded through the port, runtime, and stora
 4. **`max_context_tokens` default raised 6000 → 128000.** Real `input_tokens` are orders
    of magnitude larger than the old flat-text estimate (system prompt + tool schemas +
    full resent history), so `6000` would roll over after ~1 turn. `128000` (well under the
-   1M window) bounds per-turn context/cost; tunable via `WORKMATE_CONV_MAX_TOKENS`.
+   1M window) bounds per-turn context/cost; tunable via `SUFLER_CONV_MAX_TOKENS`.
 
 5. **Cost as configuration constants (`core/domain/pricing.py`).** Rates and the
    switch date (`PRICING_SWITCH_DATE = 2026-09-01`) are module-level constants — one place
@@ -84,7 +84,7 @@ change: usage must be captured and threaded through the port, runtime, and stora
 
 - Rollover semantics change: the threshold now counts *real* tokens, so the number means
   something different (and larger) than before — hence the 6000 → 128000 default. Operators
-  tuning `WORKMATE_CONV_MAX_TOKENS` must think in real tokens.
+  tuning `SUFLER_CONV_MAX_TOKENS` must think in real tokens.
 - `usage` is only populated on the real agent path (`record_run`); `record_turn` (text-only
   fallback) stores no usage → those turns show `$0` and don't drive rollover.
 - Legacy conversations (pre-0013 rows without usage) show `0 tok`/`$0` — real figures apply

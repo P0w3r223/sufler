@@ -1,4 +1,4 @@
-# Właściciele kodu WorkMate — automatyczni recenzenci PR.
+# Właściciele kodu Sufler — automatyczni recenzenci PR.
 # Składnia: <wzorzec ścieżki> <@użytkownik lub @org/zespół>
 # Zmień na właściwy zespół organizacji, jeśli istnieje (np. @BIAP-Inteligentne-Technologie/core).
 
@@ -6,5 +6,5 @@
 *                       @P0w3r223
 
 # Rdzeń i decyzje architektoniczne — wymagają szczególnej uwagi:
-/src/workmate/core/     @P0w3r223
+/src/sufler/core/     @P0w3r223
 /docs/adr/              @P0w3r223

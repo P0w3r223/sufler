@@ -1,6 +1,6 @@
 # How-to: zasilić korpus notatek z lokalnych dokumentów (W0)
 
-`workmate-seed-corpus` importuje lokalne dokumenty do korpusu notatek
+`sufler-seed-corpus` importuje lokalne dokumenty do korpusu notatek
 `data/notes/<firma>/<projekt>/`, żeby świeży bot miał czego przeszukać (zimny start — zasila
 wyszukiwanie, one-pager i „co się zmieniło"). Reużywa sankcjonowanej ścieżki zapisu
 `save_note` — **nie** dokłada narzędzia mutującego, więc powierzchnia MCP i `NoteMetadata`
@@ -40,13 +40,13 @@ lokalnie (OneDrive → „Synchronizuj") albo pobierz folder, po czym wskaż ten
 Domyślnie **dry-run** — pokazuje, co powstałoby (i co pominięto), nic nie zapisuje:
 
 ```powershell
-uv run workmate-seed-corpus --source "C:/Users/…/SharePoint-sync/Notatki" --project workmate --recursive
+uv run sufler-seed-corpus --source "C:/Users/…/SharePoint-sync/Notatki" --project workmate --recursive
 ```
 
 Zapis dopiero z `--write`:
 
 ```powershell
-uv run workmate-seed-corpus --source docs/adr --project workmate --write
+uv run sufler-seed-corpus --source docs/adr --project workmate --write
 ```
 
 Argumenty: `--source <katalog>` (wymagany), `--project <klucz z rejestru>` (wymagany, cel importu

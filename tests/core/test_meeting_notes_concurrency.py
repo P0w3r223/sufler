@@ -13,12 +13,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
+from sufler.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
+from sufler.core.application.meeting_notes import MeetingNoteService
+from sufler.core.application.services import NotesWriteService
+from sufler.core.domain.models import MeetingSummary, Project
+from sufler.core.domain.transcript import SpeakerRoster
 from tests.conftest import FakeProjectsRepository
-from workmate.adapters.outbound.markdown_notes_writer import MarkdownNotesWriter
-from workmate.core.application.meeting_notes import MeetingNoteService
-from workmate.core.application.services import NotesWriteService
-from workmate.core.domain.models import MeetingSummary, Project
-from workmate.core.domain.transcript import SpeakerRoster
 
 
 class _FixedTranscripts:

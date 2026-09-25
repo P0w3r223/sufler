@@ -13,7 +13,7 @@ Related to: docs/adr/0027-agent-outbound-file-push-to-user.md (file variant, A�
 
 What is the exact Graph v1.0 REST sequence for a delegated user/bot to post a **downloadable
 file card** (e.g. `.xlsx`/`.pdf`, not an inline image) into a `oneOnOne` chat — upload location,
-sharing, message body, scopes, and gotchas? Needed to implement the WorkMate `UserDocSender`
+sharing, message body, scopes, and gotchas? Needed to implement the Sufler `UserDocSender`
 adapter (ADR 0027 file variant).
 
 ## Sequence (4 calls)
@@ -56,7 +56,7 @@ Via Graph you replicate **both** the upload and the sharing step yourself.
 `Files.ReadWrite.All` (upload + share) + `Chat.Create` (create the 1:1 if absent) +
 `ChatMessage.Send` (post). All already admin-consented for this app (Files.* since 2026-07-27;
 chat scopes via `Powiadomienia_teams`) — missing only on the channel-poller token, so enabling the
-gate needs them added to `WORKMATE_TEAMS_GRAPH_SCOPES` + a device-code re-consent (no new admin
+gate needs them added to `SUFLER_TEAMS_GRAPH_SCOPES` + a device-code re-consent (no new admin
 consent).
 
 ## Gotchas / decisions taken

@@ -20,8 +20,8 @@ import pytest
 
 pytest.importorskip("fcntl", reason="wykonawca jest POSIX-only (gniazda unix, grupy procesów)")
 
-from workmate.adapters.inbound import exec_server  # noqa: E402
-from workmate.adapters.outbound.exec_client import SocketCommandRunner  # noqa: E402
+from sufler.adapters.inbound import exec_server  # noqa: E402
+from sufler.adapters.outbound.exec_client import SocketCommandRunner  # noqa: E402
 
 
 @pytest.fixture

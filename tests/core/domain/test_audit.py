@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from workmate.core.domain.audit import project_arguments, project_verdict
+from sufler.core.domain.audit import project_arguments, project_verdict
 
 
 def test_keeps_structural_fields_verbatim():

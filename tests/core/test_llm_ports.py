@@ -8,7 +8,7 @@ między narzędziem ``File`` a runtime'em. Bez SDK, bez sieci: sprawdzamy neutra
 
 from __future__ import annotations
 
-from workmate.core.ports.llm import (
+from sufler.core.ports.llm import (
     Attachment,
     AttachmentQueue,
     UserText,

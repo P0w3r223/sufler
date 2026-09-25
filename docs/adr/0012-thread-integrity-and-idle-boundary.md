@@ -56,7 +56,7 @@ public methods, domain models) must not break; existing data must migrate in pla
    `CURRENT_TIMESTAMP` so `now - updated_at` is a valid same-kind subtraction). Injection
    keeps idle rollover testable without a real clock.
 
-4. **Configurable, off-able boundary.** `WORKMATE_CONV_IDLE_MINUTES` (default **30**)
+4. **Configurable, off-able boundary.** `SUFLER_CONV_IDLE_MINUTES` (default **30**)
    feeds `ConversationSettings.idle_timeout()`, which maps `0 → None` (criterion disabled,
    token limit only) in one place so the three door wirings don't repeat the `> 0` guard.
 

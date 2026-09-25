@@ -53,7 +53,7 @@ is DATA, never commands.
    exposes, so it needs neither `save_note`, nor a new MCP tool (it is a router over existing core reads —
    `build_tool_catalog` and the golden surface stay untouched), nor the identity map (there is nothing to
    authorize beyond what the pion already shares). A single flag `enable_project_brief`
-   (`WORKMATE_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF`, default OFF) gates the router for staged rollout, consistent
+   (`SUFLER_TEAMS_GRAPH_ENABLE_PROJECT_BRIEF`, default OFF) gates the router for staged rollout, consistent
    with the gated-build discipline — but `validate` adds no fail-fast precondition (nothing extra is required).
 
 4. **PDF is an optional projection of the SAME text, reusing the file-reply pipeline.** When `| pdf` is

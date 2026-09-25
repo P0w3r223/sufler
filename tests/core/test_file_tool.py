@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.core.application.tools import build_file_catalog
-from workmate.core.application.workspace import WorkspaceService
-from workmate.core.domain.workspace import WorkspaceFile, WorkspaceScope
-from workmate.core.ports.llm import Attachment, AttachmentQueue
-from workmate.core.ports.materialization import MaterializationLimits
+from sufler.core.application.tools import build_file_catalog
+from sufler.core.application.workspace import WorkspaceService
+from sufler.core.domain.workspace import WorkspaceFile, WorkspaceScope
+from sufler.core.ports.llm import Attachment, AttachmentQueue
+from sufler.core.ports.materialization import MaterializationLimits
 
 _SCOPE = WorkspaceScope("teams_graph", "team/chan/root")
 _PDF = b"%PDF-1.7 udawany dokument"
@@ -114,7 +114,7 @@ def test_unsupported_format_points_at_the_shell_extractor():
     result = spec.fn(action="read", name="dane.nieznany")
 
     assert "nieobsługiwany format" in result["error"]
-    assert "workmate-extract" in result["error"]
+    assert "sufler-extract" in result["error"]
 
 
 def test_exhausted_budget_refuses_with_the_remaining_amount():
@@ -164,7 +164,7 @@ def test_path_in_the_name_is_rejected_before_touching_the_disk():
 def test_extractor_failure_comes_back_as_a_refusal_not_a_dead_turn():
     """Uszkodzony plik NIE MOŻE zabić tury — ADR 0064 obiecuje degradację do notki.
 
-    Błąd ekstraktora nie dziedziczy z ``WorkMateError``, a rdzeń woła narzędzie poza ``try``
+    Błąd ekstraktora nie dziedziczy z ``SuflerError``, a rdzeń woła narzędzie poza ``try``
     (nieznany wyjątek = defekt kodu), więc bez osłony w materializerze jeden zepsuty dokument
     kończył turę komunikatem „chwilowy błąd" i nie zapisywał jej w pamięci.
     """
@@ -272,8 +272,8 @@ class _FakeMutations:
         czyli dokładnie ten defekt, przed którym ujście ma bronić.
         """
         if self.refuse:
-            from workmate.core.application.note_mutation import MutationOutcome, MutationRefused
-            from workmate.core.domain.mutation import JudgeVerdict
+            from sufler.core.application.note_mutation import MutationOutcome, MutationRefused
+            from sufler.core.domain.mutation import JudgeVerdict
 
             if verdict_sink is not None:
                 verdict_sink("confirm", self.refuse)
@@ -292,8 +292,8 @@ class _FakeMutations:
         tainted=True,
         verdict_sink=None,
     ):
-        from workmate.core.application.note_mutation import MutationOutcome
-        from workmate.core.domain.mutation import JudgeVerdict
+        from sufler.core.application.note_mutation import MutationOutcome
+        from sufler.core.domain.mutation import JudgeVerdict
 
         self._maybe_refuse(verdict_sink)
         self.edits.append((note_id, body, requester, intent))
@@ -317,8 +317,8 @@ class _FakeMutations:
         tainted=True,
         verdict_sink=None,
     ):
-        from workmate.core.application.note_mutation import MutationOutcome
-        from workmate.core.domain.mutation import JudgeVerdict
+        from sufler.core.application.note_mutation import MutationOutcome
+        from sufler.core.domain.mutation import JudgeVerdict
 
         self._maybe_refuse(verdict_sink)
         self.deletes.append((note_id, requester, intent))
@@ -673,8 +673,8 @@ def test_zrodlo_identyfikatora_notatki_zalezy_od_powloki():
     z_powloka = _opis(shell=True, mutacje=True)
     bez_powloki = _opis(shell=False, mutacje=True)
 
-    assert "workmate-search" in z_powloka and "SearchNotes" not in z_powloka
-    assert "SearchNotes" in bez_powloki and "workmate-search" not in bez_powloki
+    assert "sufler-search" in z_powloka and "SearchNotes" not in z_powloka
+    assert "SearchNotes" in bez_powloki and "sufler-search" not in bez_powloki
 
 
 def test_opis_nie_obiecuje_tworzenia_notatki_przy_niezmiennych():

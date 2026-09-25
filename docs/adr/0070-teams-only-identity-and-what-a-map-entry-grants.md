@@ -50,7 +50,7 @@ is the division's membership roster**, and six separate places read it:
 | Jira catalog | 0054 | the whole `Jira` tool — see §3 for what its absence costs |
 | `sender_trust` | 0066 | classifies the turn as T1 rather than unknown |
 
-`WORKMATE_ENABLE_SHELL=true` on the fleet. Adding a third row to a YAML file therefore hands that
+`SUFLER_ENABLE_SHELL=true` on the fleet. Adding a third row to a YAML file therefore hands that
 person a shell and the ability to mutate institutional memory. Whether or not that is desirable, it
 must not happen as a **side effect** of unblocking a read gate. A capability granted without a
 recorded reason rots exactly the way a flag disabled without a recorded reason rots — the project has
@@ -128,7 +128,7 @@ account.
 
 ### 5. Ordering
 
-ADR → code → map entry → flag. The flag (`WORKMATE_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ=true`) is an
+ADR → code → map entry → flag. The flag (`SUFLER_TEAMS_GRAPH_ENABLE_NOTE_READ_AUTHZ=true`) is an
 operator action after the image ships, not part of the code change, and it must not precede the map
 entry: the gate is fail-closed, so turning it on against an incomplete map removes reads from a
 person who should have them.
@@ -139,8 +139,8 @@ authorizer all read the map directly and do not wait for `ENABLE_NOTE_READ_AUTHZ
 is already on across the fleet. The flag only closes the read gap and starts the T1/T2 split. An
 operator who reads §5 alone would have it backwards, which is why §3 is where the grant is stated.
 
-The Bot Framework door carries a twin flag (`WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ`) over its own map
-path (`WORKMATE_TEAMS_IDENTITIES`). It is out of fleet scope (`docs/how-to/gate-matrix.md`), so this
+The Bot Framework door carries a twin flag (`SUFLER_TEAMS_ENABLE_NOTE_READ_AUTHZ`) over its own map
+path (`SUFLER_TEAMS_IDENTITIES`). It is out of fleet scope (`docs/how-to/gate-matrix.md`), so this
 ADR does not cover it — said here so the omission is deliberate rather than missed.
 
 **Prose that must change together with the code**, because it freezes the rule being reversed:

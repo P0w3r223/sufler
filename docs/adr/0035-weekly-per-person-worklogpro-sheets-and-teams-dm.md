@@ -17,7 +17,7 @@ Related to: docs/adr/0006-write-capability-gate-2.md,
 > imports their own sheet) remains the default.
 >
 > **Delivery note (A′4, 2026-07-28):** attachment delivery is now **built**, gated behind
-> `WORKMATE_WORKLOGI_ENABLE_ATTACHMENT` (default OFF). When on, the weekly run delivers the `.xlsx`
+> `SUFLER_WORKLOGI_ENABLE_ATTACHMENT` (default OFF). When on, the weekly run delivers the `.xlsx`
 > as a **real Teams attachment** instead of naming a server path. Design points:
 >
 > 1. **Not `TeamsFileSender` — reuses `UserDocSender` (ADR 0027 file variant).** `TeamsFileSender`
@@ -30,7 +30,7 @@ Related to: docs/adr/0006-write-capability-gate-2.md,
 >    disk (core only passes the path). Dry-run still writes the sheet and sends nothing — unchanged.
 >    `render_timesheet_message(attached=True)` drops the server-path line (recipient can't reach it).
 > 3. **Least-privilege, fail-fast.** Attachment upload needs `Files.ReadWrite` (narrow — own drive) or
->    `Files.ReadWrite.All` in `WORKMATE_TEAMS_PUSH_SCOPES`; the door wiring fails fast on the gate
+>    `Files.ReadWrite.All` in `SUFLER_TEAMS_PUSH_SCOPES`; the door wiring fails fast on the gate
 >    without it. The batch and self-service (ADR 0038) doors share the **same gate and one delivery
 >    module** (`adapters/inbound/worklogi/attachment_delivery.py`: `send_worklog_document` +
 >    `require_attachment_scopes`) — extracted after code review so a change can't drift between the two
@@ -62,7 +62,7 @@ Hours will come from an external system, not from commit history. That source is
 
 ## Decision
 
-A new inbound door, `workmate-worklogi`, runs every Friday: it reads the past week's hours, builds
+A new inbound door, `sufler-worklogi`, runs every Friday: it reads the past week's hours, builds
 one WorklogPRO import sheet per person, and sends that person a private Teams message containing a
 table of their hours and the path to their file. Only people who actually worked are messaged.
 
@@ -95,9 +95,9 @@ still escapes raw HTML.
 ### Identity: Graph for Teams, explicit config for Jira
 
 Three systems, three identifiers, none derivable from the others. `TeamMember.Read.All` was added to
-`_DEFAULT_TEAMS_PUSH_SCOPES` — **no new admin consent**, because WorkMate shares the app
+`_DEFAULT_TEAMS_PUSH_SCOPES` — **no new admin consent**, because Sufler shares the app
 registration, tenant and MSAL cache with `Powiadomienia_teams`, where the scope has been consented
-since 2026-07-14. WorkMate simply was not asking for it.
+since 2026-07-14. Sufler simply was not asking for it.
 
 Graph supplies `aad_user_id`, the display name, and validates current team membership. It cannot
 supply the Jira account: on this instance Jira identities include private addresses outside the
@@ -146,7 +146,7 @@ of twenty does not re-message the first six.
 - **The schema is a hypothesis.** `WORKLOGPRO_HEADERS` comes from vendor documentation whose exact
   casing could not be confirmed; matching is by column name, so a typo invalidates every file. The
   authoritative source is the template downloaded from the import wizard **on this instance**.
-  **Since 2026-07-21 a live run refuses to start** without `WORKMATE_WORKLOGI_HEADERS_CONFIRMED=true`
+  **Since 2026-07-21 a live run refuses to start** without `SUFLER_WORKLOGI_HEADERS_CONFIRMED=true`
   — the hypothesis is now a deliberate operator decision instead of a comment nobody reads. Dry runs
   are unaffected, because a dry run is exactly how you produce the file to compare. The test that
   pins the tuple is a *change detector*, not a correctness gate: it cannot know what the real
@@ -186,7 +186,7 @@ of twenty does not re-message the first six.
 - **WorklogPRO GraphQL API.** Removes the human review step that motivated the Excel path.
 - **A third uv package for shared date math.** Three lockfiles and three CI jobs to own 150 lines.
 - **Main project depending on `Powiadomienia_teams`.** Inverts the dependency and drags
-  `Schedule.ReadWrite.All`, MSAL and Anthropic into WorkMate's resolution.
+  `Schedule.ReadWrite.All`, MSAL and Anthropic into Sufler's resolution.
 - **Deriving Jira identity from display name.** Cheap and wrong; see fail-closed above.
 - **Living in `Powiadomienia_teams`.** Would have reused more, but the user chose the main project
   for one core and one set of conventions.

@@ -11,10 +11,10 @@ from datetime import date
 
 import pytest
 
-from workmate.core.agent.runtime import AgentRuntime
-from workmate.core.application.tools import ToolSpec
-from workmate.core.domain.pricing import TokenUsage
-from workmate.core.ports.llm import (
+from sufler.core.agent.runtime import AgentRuntime
+from sufler.core.application.tools import ToolSpec
+from sufler.core.domain.pricing import TokenUsage
+from sufler.core.ports.llm import (
     AssistantTurn,
     Attachment,
     AttachmentQueue,

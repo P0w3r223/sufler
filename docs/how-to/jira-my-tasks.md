@@ -1,13 +1,13 @@
 # How-to: Jira — „moje zadania" (odczyt)
 
-Jak skonfigurować i użyć jedynej zdolności Jiry w WorkMate: `get_my_jira_tasks` — zwraca TYLKO
+Jak skonfigurować i użyć jedynej zdolności Jiry w Sufler: `get_my_jira_tasks` — zwraca TYLKO
 otwarte zadania przypisane PYTAJĄCEMU, zero parametrów (nie da się podejrzeć cudzych zadań).
 Decyzja: [ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md) (supersedes
 [0031](../adr/0031-jira-write-capability-gate-5.md) — zapis, [0032](../adr/0032-jira-status-transition-capability.md)
 — tranzycja; amends [0028](../adr/0028-project-repo-jira-mapping-and-event-dimension.md),
 [0030](../adr/0030-jira-server-read-door.md)).
 
-> **Nie ma już** pollera (`workmate-jira`), pushu zdarzeń Jira→Teams, mostu Teams↔Jira ani żadnego
+> **Nie ma już** pollera (`sufler-jira`), pushu zdarzeń Jira→Teams, mostu Teams↔Jira ani żadnego
 > narzędzia zapisu (`create_jira_issue`/`comment_jira_issue`/`transition_jira_issue`). Jira nie
 > wchodzi wzorcem `EventStore` jak GitHub — wywołanie jest synchroniczne, w ramach tury agenta.
 
@@ -21,15 +21,15 @@ Decyzja: [ADR 0054](../adr/0054-reduce-jira-to-read-only-my-tasks.md) (supersede
   (gitignorowany), nigdy w repo.
 - **Extras**: `uv sync --extra jira`.
 - **Rejestr projektów** nie jest wymagany dla tej zdolności (nie ma atrybucji zdarzeń do projektu
-  WorkMate — `get_my_jira_tasks` nie dotyka `EventStore`).
+  Sufler — `get_my_jira_tasks` nie dotyka `EventStore`).
 
 ## Wariant wdrożenia: Server/DC vs Cloud (ADR 0033)
 
-`WORKMATE_JIRA_DEPLOYMENT` wybiera wariant (domyślnie `server` — wstecznie zgodne):
+`SUFLER_JIRA_DEPLOYMENT` wybiera wariant (domyślnie `server` — wstecznie zgodne):
 
 | | `server` (Server/Data Center) | `cloud` (Jira Cloud) |
 |---|---|---|
-| Auth | PAT **Bearer** (`WORKMATE_JIRA_TOKEN`) | **Basic** `email:api_token` (`WORKMATE_JIRA_EMAIL` + `WORKMATE_JIRA_TOKEN`) |
+| Auth | PAT **Bearer** (`SUFLER_JIRA_TOKEN`) | **Basic** `email:api_token` (`SUFLER_JIRA_EMAIL` + `SUFLER_JIRA_TOKEN`) |
 | REST | v2 | v3 |
 | Wyszukiwanie | `/search` | `/search/jql` |
 | URL | własny host `https://jira.firma.pl` | `https://<site>.atlassian.net` |
@@ -40,10 +40,10 @@ token** (widoczny raz).
 ## Konfiguracja
 
 ```bash
-WORKMATE_JIRA_DEPLOYMENT=server
-WORKMATE_JIRA_BASE_URL=https://jira.firma.pl
-WORKMATE_JIRA_TOKEN=<PAT lub API token>
-# WORKMATE_JIRA_EMAIL=me@firma.pl   # tylko Cloud
+SUFLER_JIRA_DEPLOYMENT=server
+SUFLER_JIRA_BASE_URL=https://jira.firma.pl
+SUFLER_JIRA_TOKEN=<PAT lub API token>
+# SUFLER_JIRA_EMAIL=me@firma.pl   # tylko Cloud
 ```
 
 Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md).
@@ -54,11 +54,11 @@ Pełny wykaz zmiennych: [`reference/config.md`](../reference/config.md).
 
 Działa na drzwiach `teams-graph`, przez wspólny router komend read-only
 (`adapters/inbound/commands.py`) — ten sam plik, który autoryzuje `/notatka`. Tożsamość nadawcy
-(AAD id wiadomości) mapowana jest na konto Jiry przez `WORKMATE_TEAMS_GRAPH_IDENTITIES` (pole
+(AAD id wiadomości) mapowana jest na konto Jiry przez `SUFLER_TEAMS_GRAPH_IDENTITIES` (pole
 `jira_user`, ten sam plik co autoryzacja notatek, [ADR 0042](../adr/0042-meeting-note-sender-authorization.md)):
 
 ```dotenv
-WORKMATE_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
+SUFLER_TEAMS_GRAPH_IDENTITIES=/opt/sufler/identities.yaml
 ```
 
 ```yaml
@@ -86,17 +86,17 @@ agent nie może podać `assignee` z treści wiadomości, więc nie da się popro
 
 ## Powierzchnia 2 — narzędzie MCP na serwerze stdio (Claude Code/CLI)
 
-Wchodzi na katalog narzędzi **TYLKO** gdy ustawiono `WORKMATE_JIRA_MY_ACCOUNT` — jeden, z góry
+Wchodzi na katalog narzędzi **TYLKO** gdy ustawiono `SUFLER_JIRA_MY_ACCOUNT` — jeden, z góry
 skonfigurowany principal (login/`accountId`), NIE tożsamość nadawcy (na stdio nie ma pojęcia
 „nadawcy" — jedna sesja, jedna osoba):
 
 ```dotenv
-WORKMATE_JIRA_MY_ACCOUNT=mikolaj@example.org
+SUFLER_JIRA_MY_ACCOUNT=mikolaj@example.org
 ```
 
 > **Nie na współdzielony serwer HTTP.** To narzędzie jest dla lokalnych drzwi stdio jednej osoby
 > (Claude Code/CLI). Na drzwiach `streamable-http` z wieloma osobami na wspólnym tokenie
-> `WORKMATE_JIRA_MY_ACCOUNT` zwracałoby zadania JEDNEJ, zaszytej osoby wszystkim pytającym — dlatego
+> `SUFLER_JIRA_MY_ACCOUNT` zwracałoby zadania JEDNEJ, zaszytej osoby wszystkim pytającym — dlatego
 > narzędzie nie jest wystawiane na tym transporcie.
 
 ## Preflight (`deploy/jira/preflight.py`)
@@ -113,7 +113,7 @@ Sprawdza:
 1. **Auth** — połączenie i ważność tokenu (`authenticated_account` / `GET /myself`).
 2. **Próbne `search_issues`** — realne zapytanie JQL o otwarte zadania, bez zapisu.
 3. **Opcjonalna weryfikacja tożsamości AAD** — **wyłącznie gdy podasz `--aad <aad-user-id>`**;
-   sama zmienna `WORKMATE_TEAMS_GRAPH_IDENTITIES` tego nie uruchamia, więc wywołanie bez flagi
+   sama zmienna `SUFLER_TEAMS_GRAPH_IDENTITIES` tego nie uruchamia, więc wywołanie bez flagi
    kończy się kodem `0`, nie zajrzawszy do mapy. Sprawdza, że AAD id rozwiązuje się w MAPIE
    do osoby z niepustym `jira_user`. Preflight
    **nie pyta o to konto Jiry** — to sprostowanie, nie zmiana: nigdy tego nie robił, a zdanie

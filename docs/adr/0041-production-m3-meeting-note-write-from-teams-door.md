@@ -16,8 +16,8 @@ ADR 0009 built the M3 core (`MeetingNoteService`: transcript → summary → gat
 **deferred** two things to "when Azure lands": the real `GraphTranscriptSource`, and *"wire the
 write-enabled flow into the Teams door"* — the latter explicitly named the **Gate-2 trust decision**
 (§4). B1 delivered the real transcript adapter (`HttpxGraphTranscriptSource`) plus an operator
-live-smoke path (`workmate-meeting --source graph`). What remains is the production trigger: how a
-person in a Teams channel asks WorkMate to file a meeting note.
+live-smoke path (`sufler-meeting --source graph`). What remains is the production trigger: how a
+person in a Teams channel asks Sufler to file a meeting note.
 
 Two hard constraints from the existing design:
 

@@ -1,8 +1,8 @@
 # How-to: bot Teams przez Bot Framework (Emulator / Azure Bot)
 
 > **To jeden z dwóch wariantów drzwi Teams.** Ten przewodnik dotyczy wariantu **Bot Framework**
-> (`workmate-teams`, rejestracja bota + endpoint). Produkcyjnie zwykle używamy **delegowanych drzwi
-> Graph** (`workmate-teams-graph`, bez publicznego endpointu, z załącznikami i wątkami) — patrz
+> (`sufler-teams`, rejestracja bota + endpoint). Produkcyjnie zwykle używamy **delegowanych drzwi
+> Graph** (`sufler-teams-graph`, bez publicznego endpointu, z załącznikami i wątkami) — patrz
 > [`teams-graph.md`](teams-graph.md). Oba napędza ten sam runtime agenta rdzenia.
 
 Ten przewodnik prowadzi od zera do bota w Microsoft Teams. Stos: Microsoft 365
@@ -41,8 +41,8 @@ Najszybszy dowód, że kod działa. Nie potrzeba Azure ani internetu.
 2. Uruchom bota w trybie anonimowym (tylko loopback — bota bez auth nie wolno
    wystawić na sieć; kod tego pilnuje):
    ```powershell
-   $env:WORKMATE_TEAMS_ANONYMOUS = "true"
-   uv run workmate-teams
+   $env:SUFLER_TEAMS_ANONYMOUS = "true"
+   uv run sufler-teams
    ```
    W logu zobaczysz `Drzwi Teams nasłuchują na http://localhost:3978/api/messages (anonymous=True)`.
 3. Pobierz i uruchom **Bot Framework Emulator** (repo zarchiwizowane, ale działa).
@@ -63,15 +63,15 @@ Emulator nie obsługuje single-tenant — auth zweryfikujesz dopiero w Teams. Tu
 tworzymy tożsamość i zasób.
 
 1. **App Registration (single-tenant).** W portalu Azure → *Microsoft Entra ID* →
-   *App registrations* → *New registration*: nazwa np. `workmate-teams`, typ konta
+   *App registrations* → *New registration*: nazwa np. `sufler-teams`, typ konta
    **„Accounts in this organizational directory only" (single-tenant)** → Register.
    Zapisz **Application (client) ID** i **Directory (tenant) ID**.
    *(Multi-tenant jest wycofany dla nowych botów — używamy single-tenant.)*
 2. **Client secret.** W tej App Registration → *Certificates & secrets* → *New
    client secret* → skopiuj **Value** od razu (potem nie zobaczysz). To
-   `WORKMATE_TEAMS_APP_PASSWORD`.
+   `SUFLER_TEAMS_APP_PASSWORD`.
 3. **Zasób Azure Bot.** *Create a resource* → szukaj „Azure Bot" → Create:
-   - Bot handle: np. `workmate-bot`; warstwa cenowa **F0 (darmowa)**.
+   - Bot handle: np. `sufler-bot`; warstwa cenowa **F0 (darmowa)**.
    - *Type of App*: **Single Tenant**; wskaż istniejące **App ID** z kroku 1.
 4. **Messaging endpoint** (na razie placeholder — uzupełnisz w Etapie C): w zasobie
    Azure Bot → *Configuration* → *Messaging endpoint*.
@@ -109,11 +109,11 @@ Bot → *Configuration* → **Messaging endpoint** jako:
 Zatrzymaj instancję anonimową z Etapu A. Ustaw tożsamość single-tenant i wystartuj:
 
 ```powershell
-$env:WORKMATE_TEAMS_ANONYMOUS  = "false"
-$env:WORKMATE_TEAMS_APP_ID     = "<Application (client) ID>"
-$env:WORKMATE_TEAMS_APP_PASSWORD = "<client secret Value>"
-$env:WORKMATE_TEAMS_TENANT_ID  = "<Directory (tenant) ID>"
-uv run workmate-teams
+$env:SUFLER_TEAMS_ANONYMOUS  = "false"
+$env:SUFLER_TEAMS_APP_ID     = "<Application (client) ID>"
+$env:SUFLER_TEAMS_APP_PASSWORD = "<client secret Value>"
+$env:SUFLER_TEAMS_TENANT_ID  = "<Directory (tenant) ID>"
+uv run sufler-teams
 ```
 
 Brak któregokolwiek z trzech pól → proces świadomie NIE wystartuje (twardy błąd),
@@ -137,8 +137,8 @@ bo pominięty `TENANT_ID` przy single-tenant to klasyczna przyczyna 401 w Teams.
        "name": "BIAP", "websiteUrl": "https://example.com",
        "privacyUrl": "https://example.com/privacy", "termsOfUseUrl": "https://example.com/tos"
      },
-     "name": { "short": "WorkMate", "full": "WorkMate (spike)" },
-     "description": { "short": "Bot echo WorkMate", "full": "Spike M2: potwierdzenie odbioru notatki." },
+     "name": { "short": "Sufler", "full": "Sufler (spike)" },
+     "description": { "short": "Bot echo Sufler", "full": "Spike M2: potwierdzenie odbioru notatki." },
      "icons": { "color": "color.png", "outline": "outline.png" },
      "accentColor": "#2A6FF3",
      "bots": [ { "botId": "<Application (client) ID>", "scopes": ["personal", "team"] } ],
@@ -159,13 +159,13 @@ bo pominięty `TENANT_ID` przy single-tenant to klasyczna przyczyna 401 w Teams.
 > „Upload custom apps" = On* (propagacja do 24 h); (b) użyj darmowego tenanta
 > **Microsoft 365 Developer Program** (custom upload domyślnie włączony).
 
-**Gotowe, gdy:** aplikacja WorkMate instaluje się w Teams bez błędu manifestu.
+**Gotowe, gdy:** aplikacja Sufler instaluje się w Teams bez błędu manifestu.
 
 ---
 
 ## Etap F — test w Teams
 
-Otwórz czat z botem (lub dodaj do zespołu i użyj `@WorkMate`), napisz dowolną
+Otwórz czat z botem (lub dodaj do zespołu i użyj `@Sufler`), napisz dowolną
 wiadomość.
 
 **Gotowe, gdy:** bot odpisuje `Odebrałem notatkę: <Twój tekst>` w wątku. To finish
@@ -187,12 +187,12 @@ podstawiany: gość, konto spoza tenantu i aktywność systemowa nie mają `aadO
 nadawcą **nierozpoznanym** i bramka odmawia (fail-closed).
 
 ```powershell
-$env:WORKMATE_TEAMS_IDENTITIES = "C:\workmate\identities.yaml"
-$env:WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ = "true"
-uv run workmate-teams
+$env:SUFLER_TEAMS_IDENTITIES = "C:\sufler\identities.yaml"
+$env:SUFLER_TEAMS_ENABLE_NOTE_READ_AUTHZ = "true"
+uv run sufler-teams
 ```
 
-Plik mapy ma **ten sam format** co `WORKMATE_TEAMS_GRAPH_IDENTITIES` i zwykle jest tym samym
+Plik mapy ma **ten sam format** co `SUFLER_TEAMS_GRAPH_IDENTITIES` i zwykle jest tym samym
 plikiem. Włączona bramka bez istniejącego pliku → proces świadomie nie wystartuje.
 
 **Gotowe, gdy:** w logu jest `Autoryzacja ODCZYTU bazy wiedzy WŁĄCZONA (ADR 0062)`, nadawca z mapy
@@ -215,12 +215,12 @@ dyrektywy działają dziś ([`teams-graph.md`](teams-graph.md)).
 
 | Objaw | Najczęstsza przyczyna | Co zrobić |
 |-------|----------------------|-----------|
-| **401** przy odpowiedzi (endpoint dostaje request, bot milczy) | Niedopasowanie tożsamości | Sprawdź `WORKMATE_TEAMS_TENANT_ID` (single-tenant bez niego → 401); zregeneruj client secret, jeśli ma znaki specjalne; upewnij się, że secret jest aktualny. |
+| **401** przy odpowiedzi (endpoint dostaje request, bot milczy) | Niedopasowanie tożsamości | Sprawdź `SUFLER_TEAMS_TENANT_ID` (single-tenant bez niego → 401); zregeneruj client secret, jeśli ma znaki specjalne; upewnij się, że secret jest aktualny. |
 | **Instaluje się, ale milczy** | `botId` ≠ App ID; brak `/api/messages`; tunel padł | Zrównaj `botId` w manifeście z App ID; sprawdź messaging endpoint; sprawdź, czy `devtunnel` żyje i URL się nie zmienił. |
 | **Endpoint nie dostaje requestów** | Kanał Teams niewłączony; `http` zamiast `https` | Włącz kanał Teams (Etap B.5); użyj URL tunelu (HTTPS). |
 | **„Upload a custom app" wyszarzone** | Sideload wyłączony w tenancie | Admin włącza custom app upload albo użyj tenanta M365 Developer Program (Etap E). |
-| **Proces nie startuje, „brakuje WORKMATE_TEAMS_…"** | Tryb uwierzytelniony bez pełnej tożsamości | Uzupełnij App ID + secret + Tenant ID, albo do testu lokalnego ustaw `WORKMATE_TEAMS_ANONYMOUS=true`. |
-| **Proces nie startuje, „wymaga WORKMATE_TEAMS_IDENTITIES"** | Bramka odczytu włączona bez mapy tożsamości | Wskaż istniejący plik mapy (może być ten sam co `WORKMATE_TEAMS_GRAPH_IDENTITIES`) albo wyłącz `WORKMATE_TEAMS_ENABLE_NOTE_READ_AUTHZ`. |
+| **Proces nie startuje, „brakuje SUFLER_TEAMS_…"** | Tryb uwierzytelniony bez pełnej tożsamości | Uzupełnij App ID + secret + Tenant ID, albo do testu lokalnego ustaw `SUFLER_TEAMS_ANONYMOUS=true`. |
+| **Proces nie startuje, „wymaga SUFLER_TEAMS_IDENTITIES"** | Bramka odczytu włączona bez mapy tożsamości | Wskaż istniejący plik mapy (może być ten sam co `SUFLER_TEAMS_GRAPH_IDENTITIES`) albo wyłącz `SUFLER_TEAMS_ENABLE_NOTE_READ_AUTHZ`. |
 | **Bot odmawia odczytu notatek znanemu koledze** | Kanał nie podał `aadObjectId` albo brak wpisu w mapie | Sprawdź, czy nadawca ma wpis `aad_user_id` w mapie; goście i konta spoza tenantu nie mają AAD id i są nierozpoznani z założenia (fail-closed, ADR 0062). |
 
 ---
@@ -228,14 +228,14 @@ dyrektywy działają dziś ([`teams-graph.md`](teams-graph.md)).
 ## Co dalej (po M2)
 
 Wpięcie rdzenia jest **zrobione**:
-[`app.py`](../../src/workmate/adapters/inbound/teams/app.py) buduje runtime agenta
+[`app.py`](../../src/sufler/adapters/inbound/teams/app.py) buduje runtime agenta
 na katalogu READ-ONLY (`build_responder`, `enable_write=False`) i podaje go jako responder —
 handler i `bot.py` bez zmian. Profil uprawnień per drzwi (Teams = mniej zaufane, ADR 0006)
 wchodzi przez `enable_write=False`, a bramka odczytu (ADR 0062) przez `note_read_authorizer`
 (Etap G). Powrót do echa to nadal jedna linia (`EchoResponder()`).
 
 Te drzwi **nie jeżdżą we flocie** (`deploy/docker/docker-compose.yml` wozi
-`workmate-teams-graph`) i nie mają CI na żywym Bot Framework — testy stoją na atrapach
+`sufler-teams-graph`) i nie mają CI na żywym Bot Framework — testy stoją na atrapach
 aktywności. Zdolności, które drzwi delegowane mają, a te nie: załączniki, wątki kanału,
 zapis notatek (`/notatka`, „zapisz to"), brief, digest, powłoka, `File`.
 

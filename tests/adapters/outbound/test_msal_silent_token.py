@@ -18,9 +18,9 @@ from typing import Any
 import msal
 import pytest
 
-from workmate.adapters.outbound.msal_silent_token import build_silent_token_provider
-from workmate.config import ScheduleSettings
-from workmate.core.errors import ScheduleReadError
+from sufler.adapters.outbound.msal_silent_token import build_silent_token_provider
+from sufler.config import ScheduleSettings
+from sufler.core.errors import ScheduleReadError
 
 # Cache bota powiadomienia-teams w miniaturze: jedno konto, tyle ile czyta ``get_accounts``.
 _KONTO_KLUCZ = "uid.utid-login.microsoftonline.com-contoso.onmicrosoft.com"

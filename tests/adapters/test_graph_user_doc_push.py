@@ -16,8 +16,8 @@ import json
 import httpx
 import pytest
 
-from workmate.adapters.outbound.graph_user_doc_push import HttpxGraphUserDocPush
-from workmate.core.ports.user_doc_push import UserDocSender
+from sufler.adapters.outbound.graph_user_doc_push import HttpxGraphUserDocPush
+from sufler.core.ports.user_doc_push import UserDocSender
 
 _ME = "bot-me-id"
 _TARGET = "u-anna"
@@ -42,7 +42,7 @@ def _upload_response() -> httpx.Response:
     )
 
 
-_CONTENT_PATH = "/v1.0/me/drive/root:/WorkMate-push/raport-ab12cd34.md:/content"
+_CONTENT_PATH = "/v1.0/me/drive/root:/Sufler-push/raport-ab12cd34.md:/content"
 
 
 def _happy(request: httpx.Request) -> httpx.Response:

@@ -1,4 +1,4 @@
-"""CLI ``workmate-search``: formaty wyjścia, ścieżki plików i odporność na polską fleksję.
+"""CLI ``sufler-search``: formaty wyjścia, ścieżki plików i odporność na polską fleksję.
 
 Wyjście tej komendy trafia do kontekstu modelu przez narzędzie ``Bash`` i jedzie ponownie
 w każdej kolejnej turze (ADR 0057/0058), więc jego rozmiar i kształt są kontraktem, nie
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from workmate.adapters.inbound.cli.search import (
+from sufler.adapters.inbound.cli.search import (
     _parse_args,
     format_json,
     format_paths,
@@ -27,7 +27,7 @@ _NOTES_DIR = Path("/mnt/system/notes")
 
 def _summary(note_id: str, *, title: str, snippet: str = "fragment"):
     """Wynik wyszukiwania o kształcie, jaki oddaje ``NotesService`` (bez uruchamiania rankera)."""
-    from workmate.core.domain.models import NoteSummary
+    from sufler.core.domain.models import NoteSummary
 
     return NoteSummary(
         id=note_id,
@@ -139,8 +139,8 @@ def test_search_finds_an_inflected_form(tmp_path: Path, monkeypatch, capsys):
         title="Plan wdrożenia",
         body="Ustalono, że migracja bazy pójdzie etapami.",
     )
-    monkeypatch.setenv("WORKMATE_NOTES_DIR", str(notes))
-    monkeypatch.setattr("sys.argv", ["workmate-search", "migracji"])
+    monkeypatch.setenv("SUFLER_NOTES_DIR", str(notes))
+    monkeypatch.setattr("sys.argv", ["sufler-search", "migracji"])
 
     main()
 
@@ -151,7 +151,7 @@ def test_search_finds_an_inflected_form(tmp_path: Path, monkeypatch, capsys):
 
 def test_missing_query_exits_with_usage_code(monkeypatch, capsys):
     """Brak frazy to błąd UŻYCIA (kod 2), rozróżnialny od awarii odczytu (kod 1)."""
-    monkeypatch.setattr("sys.argv", ["workmate-search"])
+    monkeypatch.setattr("sys.argv", ["sufler-search"])
 
     with pytest.raises(SystemExit) as exc:
         main()
@@ -164,8 +164,8 @@ def test_no_results_still_exits_zero(tmp_path: Path, monkeypatch, capsys):
     """Brak trafień kończy się kodem 0: model czyta kod ≠ 0 jako „popraw polecenie" (ADR 0057)."""
     notes = tmp_path / "notes"
     _write_note(notes, "mpwik/scada/2025-06-12-a.md", title="A", body="zupełnie inna treść")
-    monkeypatch.setenv("WORKMATE_NOTES_DIR", str(notes))
-    monkeypatch.setattr("sys.argv", ["workmate-search", "kwantowa teleportacja"])
+    monkeypatch.setenv("SUFLER_NOTES_DIR", str(notes))
+    monkeypatch.setattr("sys.argv", ["sufler-search", "kwantowa teleportacja"])
 
     main()
 

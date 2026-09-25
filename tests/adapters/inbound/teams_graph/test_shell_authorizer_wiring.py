@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from workmate.adapters.inbound.teams_graph.app import _build_shell_authorizer
-from workmate.config import ShellSettings, TeamsGraphSettings
+from sufler.adapters.inbound.teams_graph.app import _build_shell_authorizer
+from sufler.config import ShellSettings, TeamsGraphSettings
 
 
 def test_wiring_returns_none_when_shell_off(tmp_path):
@@ -40,5 +40,5 @@ def test_wiring_failfast_when_shell_on_without_identities(tmp_path):
     settings = TeamsGraphSettings(client_id="a", tenant_id="t")  # meeting_note_identities = brak
     shell = ShellSettings(enabled=True, manager_socket_path=tmp_path / "control.sock")
 
-    with pytest.raises(SystemExit, match="WORKMATE_ENABLE_SHELL"):
+    with pytest.raises(SystemExit, match="SUFLER_ENABLE_SHELL"):
         _build_shell_authorizer(settings, shell)

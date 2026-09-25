@@ -157,7 +157,7 @@ def run_once(  # noqa: PLR0915
     me_id = client.get_me()
     # Konto bota NIGDY nie jest kandydatem do zagadnięcia. Bez tego bot pisze sam do siebie:
     # jest pełnoprawnym członkiem zespołu, więc `members_without_shifts` widzi je jak każdego
-    # innego (potwierdzone na żywo — „Virtual WorkMate" trafiło na listę braków). Filtr w KODZIE,
+    # innego (potwierdzone na żywo — „Virtual Sufler" trafiło na listę braków). Filtr w KODZIE,
     # nie tylko w `ONLY_USER_IDS`, bo pusta lista odbiorców oznacza „wszyscy" i wtedy konfiguracja
     # nie chroni przed niczym.
     members = [m for m in client.list_members(ctx.team_id) if not ten_sam(m.user_id, me_id)]
