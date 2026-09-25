@@ -38,12 +38,12 @@ x-poller-health: &poller-health
 # Wspólny szkielet drzwi/serwera: jeden obraz (wiele entrypointów przez `command`), wspólny wolumen
 # stanu (współdzielony events.db — ADR 0019), baza wiedzy montowana RO, utwardzenie jak w podprojekcie.
 x-sufler-common: &workmate-common
-  image: sufler:1.15.0
+  image: sufler:1.16.0
   build:
     context: ../..
     dockerfile: deploy/docker/Dockerfile
     args:
-      WERSJA: "1.15.0"
+      WERSJA: "1.16.0"
       # Bez tego KAŻDE `docker compose build` daje `revision=nieznana` — etykieta istniałaby
       # w `Dockerfile` i nie niosłaby niczego. Domyślne `nieznana` jest jawne: obraz, który nie
       # wie, z czego powstał, ma to mówić, a nie udawać, że łańcuch jest cały.
