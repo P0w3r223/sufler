@@ -494,3 +494,45 @@ def test_wznowienie_nie_jest_jednorazowe():
     juz_wznawiany = _domkniety(EXPIRED)
     juz_wznawiany.wznowiono_at = _iso(NOW)
     assert mozna_wznowic(juz_wznawiany, NOW, OKNO) is True
+
+
+def test_prune_z_tz_trzyma_wpis_do_KONCA_jego_tygodnia():
+    """0.2.26: piątkowy przebieg tygodnia W nie może usunąć wpisu W przed niedzielą."""
+    tz = ZoneInfo("Europe/Warsaw")
+    wpis = PendingReminder(
+        member_id="u1",
+        member_name="Ala",
+        chat_id="c",
+        week_start="2026-07-20",
+        status=EXPIRED,
+        nudged_at="2026-07-17T14:00:00Z",
+        watermark="2026-07-17T14:00:00Z",
+    )
+    piatek = datetime(2026, 7, 24, 14, tzinfo=timezone.utc)
+    assert "u1" in prune_terminal({"u1": wpis}, piatek, 48, biezacy_tydzien="2026-07-27", tz=tz)
+    # Bez `tz` — zachowanie sprzed 0.2.26 (zgodność wsteczna wywołań).
+    assert "u1" not in prune_terminal({"u1": wpis}, piatek, 48, biezacy_tydzien="2026-07-27")
+    # Po końcu tygodnia retencja działa normalnie.
+    kolejny_piatek = piatek + timedelta(days=7)
+    assert "u1" not in prune_terminal(
+        {"u1": wpis}, kolejny_piatek, 48, biezacy_tydzien="2026-08-03", tz=tz
+    )
+
+
+def test_czeka_na_odpowiedz_po_tygodniu_tylko_raz_i_tylko_po_koncu_tygodnia():
+    from dataclasses import replace
+
+    from powiadomienia_teams.reminders.lifecycle import czeka_na_odpowiedz_po_tygodniu
+
+    okno = OknoOdpowiedzi(offset_h=5, min_h=24, tz=ZoneInfo("Europe/Warsaw"))
+    wpis = PendingReminder(
+        member_id="u1", member_name="A", chat_id="c", week_start="2026-07-20", status=EXPIRED
+    )
+    w_tygodniu = datetime(2026, 7, 26, 20, tzinfo=timezone.utc)  # niedziela 22:00
+    po_tygodniu = datetime(2026, 7, 27, 6, tzinfo=timezone.utc)  # poniedziałek 08:00
+    assert not czeka_na_odpowiedz_po_tygodniu(wpis, w_tygodniu, okno)
+    assert czeka_na_odpowiedz_po_tygodniu(wpis, po_tygodniu, okno)
+    assert not czeka_na_odpowiedz_po_tygodniu(
+        replace(wpis, po_tygodniu_odpisano_at="2026-07-27T06:00:00Z"), po_tygodniu, okno
+    )
+    assert not czeka_na_odpowiedz_po_tygodniu(replace(wpis, status="applied"), po_tygodniu, okno)

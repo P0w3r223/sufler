@@ -185,6 +185,52 @@ def is_pure_affirmation(text: str) -> bool:
     return all(t in allowed for t in tokens)
 
 
+# Słowa, które po DOMKNIĘCIU tematu są grzecznością, a nie nową sprawą. Szerzej niż ``_FILLER``,
+# bo tu błąd w drugą stronę jest tani: wiadomość uznana za uprzejmość zostaje po prostu
+# przeczytana i odłożona — nic nie jest zapisywane ani wysyłane.
+_UPRZEJMOSCI = _FILLER | {
+    "dzięks",
+    "dzieks",
+    "thx",
+    "thanks",
+    "bardzo",
+    "serdecznie",
+    "pozdrawiam",
+    "pozdro",
+    "pozdr",
+    "miłego",
+    "milego",
+    "dnia",
+    "weekendu",
+    "wieczoru",
+    "również",
+    "rowniez",
+    "nawzajem",
+    "wzajemnie",
+}
+# Potwierdzenia, które po ODMOWIE są przyjęciem jej do wiadomości („ok", „jasne"). Po wygaśnięciu
+# już nie: przypomnienie mówi wprost „wystarczy odpisać »ok«, żeby zapisać propozycję".
+_POTWIERDZENIA_ODMOWY = _AFFIRM | {"dobrze", "rozumiem", "przyjąłem", "przyjęłam", "okk"}
+
+
+def jest_uprzejmoscia(text: str, *, z_potwierdzeniami: bool) -> bool:
+    """Czy wiadomość to WYŁĄCZNIE grzeczność („dzięki", „👍", przy ``z_potwierdzeniami`` też „ok").
+
+    Po domknięciu tematu taka wiadomość NIE może go wznowić. Zmierzone na żywym modelu
+    (2026-09-25, 3/3): odmowa, a po niej „dzięki" → wznowienie → model czyta „dzięki" jako
+    ``confirm`` → bot wysyła „Zapiszę grafik… Potwierdź »tak«" komuś, kto właśnie odmówił,
+    a w poniedziałek dokłada „Nie doczekałem się potwierdzenia". Nic się nie zapisuje (bramka
+    „tak"), ale rozmowa wygląda, jakby bot nie słuchał.
+
+    Token bez żadnej litery ani cyfry (emotka, „!!!") też jest grzecznością. Pusta treść
+    (np. sama naklejka albo załącznik) — również: nie ma w niej niczego do interpretacji.
+    Cokolwiek poza tym (godziny, dzień, „jednak", „zapisz") → nie grzeczność, temat się wznawia.
+    """
+    dozwolone = _UPRZEJMOSCI | (_POTWIERDZENIA_ODMOWY if z_potwierdzeniami else set())
+    tokens = [t.strip(_STRIP) for t in text.lower().split()]
+    return all(t in dozwolone or not any(z.isalnum() for z in t) for t in tokens)
+
+
 def _window_reset(started_at: str, current_at: str, window: timedelta) -> bool:
     """Czy STAŁE okno pamięci minęło: bieżąca wiadomość jest >= ``window`` po kotwicy.
 

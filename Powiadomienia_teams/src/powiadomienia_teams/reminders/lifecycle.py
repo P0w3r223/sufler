@@ -377,6 +377,35 @@ def mozna_wznowic(pending: PendingReminder, now: datetime, okno: OknoOdpowiedzi)
     return poczatek is not None and now < poczatek + timedelta(days=7)
 
 
+def tydzien_minal(pending: PendingReminder, now: datetime, tz: tzinfo) -> bool:
+    """Czy tydzień docelowy wpisu się SKOŃCZYŁ (niedziela 24:00 lokalnie). Nieczytelny → nie."""
+    poczatek = _poczatek_tygodnia(pending.week_start, tz)
+    return poczatek is not None and now >= poczatek + timedelta(days=7)
+
+
+def czeka_na_odpowiedz_po_tygodniu(
+    pending: PendingReminder, now: datetime, okno: OknoOdpowiedzi
+) -> bool:
+    """Czy zajrzeć do czatu tematu, którego tydzień już minął — żeby nie zostawić nikogo w ciszy.
+
+    Wpis ``DECLINED``/``EXPIRED`` po końcu tygodnia nie ma już czego zapisać (``mozna_wznowic``
+    go odrzuca), ale pracownik wciąż może napisać — przeprosić, podać godziny za miniony tydzień.
+    Do 0.2.25 taka wiadomość nie była nawet czytana: zero reakcji. Teraz dostaje JEDNĄ odpowiedź
+    „ten tydzień jest już zamknięty — napisz do przełożonego" (``po_tygodniu_odpisano_at``), po
+    której czat tego wpisu przestajemy czytać.
+
+    Okno kończy się samo: najbliższy piątkowy przebieg albo nadpisze wpis nową prośbą (klucz stanu
+    to osoba), albo usunie go retencją (``prune_terminal``) — więc koszt to jeden odczyt czatu na
+    obieg przez najwyżej kilka dni.
+    """
+    return (
+        pending.status in WZNAWIALNE
+        and bool(pending.chat_id)
+        and not pending.po_tygodniu_odpisano_at
+        and tydzien_minal(pending, now, okno.tz)
+    )
+
+
 class _MaZakonczenie(Protocol):
     """Cokolwiek, co ma koniec w czasie — ``Shift`` i ``TimeOff`` spełniają to strukturalnie."""
 
@@ -409,6 +438,7 @@ def prune_terminal(
     retain_hours: int,
     *,
     biezacy_tydzien: str = "",
+    tz: tzinfo | None = None,
 ) -> dict[str, PendingReminder]:
     """Usuń wpisy TERMINALNE starsze niż ``retain_hours``, ale NIGDY strażnika bieżącego tygodnia.
 
@@ -443,6 +473,14 @@ def prune_terminal(
         if pending.status in _TERMINAL:
             if biezacy_tydzien and pending.week_start >= biezacy_tydzien:
                 kept[key] = pending  # strażnik wciąż chroni bieżący tydzień
+                continue
+            if tz is not None and not tydzien_minal(pending, now, tz):
+                # Tydzień wpisu jeszcze TRWA (piątkowy przebieg w tygodniu W sprząta wpisy W,
+                # a ten kończy się dopiero w niedzielę). Bez tego warunku wznowienie obiecane
+                # przez `mozna_wznowic` „do końca tygodnia" kończyło się w piątek o 16:00:
+                # wiadomość z weekendu trafiała w próżnię u każdego, kto nie dostał prośby
+                # o kolejny tydzień.
+                kept[key] = pending
                 continue
             anchor = _anchor(pending)
             if anchor is not None and now >= anchor + timedelta(hours=retain_hours):

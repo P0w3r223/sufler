@@ -1,10 +1,23 @@
-"""Treść powiadomienia 1:1 (czysta logika) + minimalny render do HTML dla Graph."""
+"""Treść wiadomości do pracowników i administratora (czysta logika) + ich wersja HTML dla Teams.
+
+Każda wiadomość istnieje w DWÓCH postaciach naraz — dlatego builderzy zwracają ``Tresc``:
+
+- **tekst** (sama ``Tresc`` jest napisem) — to czytają testy, log trybu diagnostycznego
+  i każdy, kto sprawdza treść „na oko";
+- **HTML** (``Tresc.html``) — to dostaje Teams: tabela dla wszystkiego, co ma dni, godziny albo
+  liczby, a przy wiadomościach bez danych — pogrubiony tytuł i karta „etykieta → wartość".
+
+Tabele są zwykłym ``<table>`` z ``<thead>``/``<tbody>``, bez stylów: dokładnie tym znacznikiem
+Teams renderuje tabele w czacie poprawnie (zmierzone na żywo 2026-08-21 przy tabelach Suflera),
+a style w linii klient Teams w dużej części odrzuca — na nich wygląd by się rozjechał.
+Treść dynamiczna (imię, nazwa powodu z Shifts) jest ZAWSZE escapowana.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -39,15 +52,142 @@ def _do_nastepnego_dnia(start: datetime, end: datetime) -> str:
     return f" (do {_DNI_DOPELNIACZ[end.weekday()]})"
 
 
-DECLINED_TEXT = (
+class Tresc(str):
+    """Wiadomość: tekst (sam obiekt jest napisem) + gotowy HTML dla Teams (``html``).
+
+    Podklasa ``str``, a nie osobna struktura, z rozmysłem: tekst był dotąd JEDYNĄ postacią
+    wiadomości i czyta go kilkaset asercji oraz każde miejsce, które sprawdza treść. HTML dokłada
+    się obok, a jedyne miejsce, które go potrzebuje — ``to_html`` tuż przed wysyłką — rozpoznaje
+    go po typie. Sklejenie ``Tresc`` z innym napisem daje zwykły ``str`` i wtedy ``to_html``
+    wraca do bezpiecznego renderu tekstu, więc nie da się przez przypadek wysłać HTML-a, który
+    nie odpowiada tekstowi.
+    """
+
+    html: str
+
+    def __new__(cls, tekst: str, html: str) -> Tresc:
+        obj = super().__new__(cls, tekst)
+        obj.html = html
+        return obj
+
+
+def _p(tresc_html: str) -> str:
+    return f"<p>{tresc_html}</p>"
+
+
+def _b(tekst: str) -> str:
+    return f"<b>{escape(tekst)}</b>"
+
+
+def _tabela(naglowki: Sequence[str], wiersze: Iterable[Sequence[str]]) -> str:
+    """Tabela z nagłówkiem. Komórki to TEKST — escapowany tutaj, w jednym miejscu."""
+    glowa = "".join(f"<th>{escape(h)}</th>" for h in naglowki)
+    cialo = "".join(
+        "<tr>" + "".join(f"<td>{escape(k)}</td>" for k in wiersz) + "</tr>" for wiersz in wiersze
+    )
+    return f"<table><thead><tr>{glowa}</tr></thead><tbody>{cialo}</tbody></table>"
+
+
+def _karta(pola: Iterable[tuple[str, str]]) -> str:
+    """Tabela „etykieta → wartość" dla wiadomości bez dni i godzin. Puste wartości pomija."""
+    wiersze = "".join(
+        f"<tr><td><b>{escape(etykieta)}</b></td><td>{escape(wartosc)}</td></tr>"
+        for etykieta, wartosc in pola
+        if wartosc
+    )
+    return f"<table><tbody>{wiersze}</tbody></table>" if wiersze else ""
+
+
+def etykieta_tygodnia(week_start: date) -> str:
+    """„05.10–11.10" — ta sama postać, której używa prośba (`runtime.nudge`)."""
+    return f"{week_start:%d.%m}–{week_start + timedelta(days=6):%d.%m}"
+
+
+def etykieta_tygodnia_iso(week_start_iso: str) -> str:
+    """Jak ``etykieta_tygodnia``, dla ``week_start`` ze stanu; nieczytelny → pusty napis."""
+    try:
+        return etykieta_tygodnia(date.fromisoformat(week_start_iso))
+    except (TypeError, ValueError):
+        return ""
+
+
+_NAGLOWKI_GRAFIKU = ("Dzień", "Data", "Godziny", "Tryb pracy")
+
+
+def _tryb(theme: str | None) -> str:
+    return "🔵 zdalnie" if theme == "blue" else "🟢 stacjonarnie"
+
+
+def _wiersze_zmian(schedule: WeekSchedule, tz: ZoneInfo) -> list[tuple[str, ...]]:
+    wiersze: list[tuple[str, ...]] = []
+    for sh in schedule.shifts:
+        start = sh.start.astimezone(tz)
+        end = sh.end.astimezone(tz)
+        wiersze.append(
+            (
+                _DNI[start.weekday()].capitalize(),
+                f"{start:%d.%m}",
+                f"{start:%H:%M}–{end:%H:%M}{_do_nastepnego_dnia(start, end)}",
+                _tryb(sh.theme),
+            )
+        )
+    return wiersze
+
+
+def _kolejnosc_dnia(wiersz: Sequence[str]) -> int:
+    """Klucz sortowania wierszy tabeli grafiku: dzień tygodnia (nie data — przełom roku)."""
+    return _DNI.index(wiersz[0].lower())
+
+
+def _wiersz_dnia(week_start: date, weekday: int, godziny: str, tryb: str) -> tuple[str, ...]:
+    dzien = week_start + timedelta(days=weekday)
+    return (_DNI[weekday].capitalize(), f"{dzien:%d.%m}", godziny, tryb)
+
+
+def _komunikat(tekst: str, tytul: str, pola: Iterable[tuple[str, str]] = ()) -> Tresc:
+    """Wiadomość bez dni i godzin: pogrubiony tytuł + karta z tym, co ważne."""
+    return Tresc(tekst, _p(_b(tytul)) + _karta(pola))
+
+
+_TEKST_ODMOWY = (
     "OK, nie wprowadzam żadnych zmian w Twoim grafiku na ten tydzień i kończę przypominanie. "
     "Odezwę się ponownie przy kolejnym grafiku."
 )
+
+
+def build_declined_text(week_label: str = "") -> Tresc:
+    return _komunikat(
+        _TEKST_ODMOWY,
+        "OK, nie wprowadzam zmian 👍",
+        (
+            ("Tydzień", week_label),
+            ("Status", "bez zmian w grafiku — kończę przypominanie"),
+            ("Co dalej", "Odezwę się ponownie przy kolejnym grafiku."),
+        ),
+    )
+
+
+DECLINED_TEXT = build_declined_text()
 APPLIED_TEXT = "Gotowe ✅ Zapisałem Twoje zmiany na przyszły tydzień. Dzięki!"
-WRITE_FAILED_TEXT = (
+_TEKST_BLEDU_ZAPISU = (
     "Nie udało mi się zapisać wszystkiego 😕 Zajrzyj proszę do zakładki »Zmiany« w Teams i "
     "sprawdź, czego brakuje — część mogła się już zapisać. Uzupełnij tylko brakujące dni."
 )
+
+
+def build_write_failed_text(week_label: str = "") -> Tresc:
+    return _komunikat(
+        _TEKST_BLEDU_ZAPISU,
+        "Nie udało mi się zapisać wszystkiego 😕",
+        (
+            ("Tydzień", week_label),
+            ("Status", "część zmian mogła się już zapisać"),
+            ("Co dalej", "Zajrzyj do zakładki »Zmiany« w Teams i uzupełnij tylko brakujące dni."),
+        ),
+    )
+
+
+WRITE_FAILED_TEXT = build_write_failed_text()
 UNCLEAR_TEXT = (
     "Nie do końca zrozumiałem 🙂 Napisz proszę np. „pon–pt 8–16” "
     "albo „w piątek 10–20, reszta bez zmian”."
@@ -102,34 +242,114 @@ _POWODY_POMINIECIA: dict[str, str] = {
     "poza_tygodniem": "inny tydzień",
     "brak_powodu_wolnego": "brak takiego powodu w Shifts",
 }
-EXPIRED_TEXT = (
+_TEKST_WYGASNIECIA = (
     "Nie dostałem odpowiedzi, więc na razie nic nie zapisuję. Kiedy będziesz gotowy/gotowa, "
     "napisz, kiedy pracujesz — wrócę do tego przy kolejnym przypomnieniu."
 )
+
+
+def build_expired_text(week_label: str = "") -> Tresc:
+    return _komunikat(
+        _TEKST_WYGASNIECIA,
+        "Nie dostałem odpowiedzi",
+        (
+            ("Tydzień", week_label),
+            ("Status", "nic nie zapisałem"),
+            ("Co dalej", "Napisz, kiedy pracujesz (np. „pon–pt 8–16”) — wrócę do tego."),
+        ),
+    )
+
+
+EXPIRED_TEXT = build_expired_text()
 # Osobny komunikat, bo EXPIRED_TEXT twierdziłby NIEPRAWDĘ: tutaj odpowiedź mogła przyjść (albo
 # właśnie przyszła), tylko tydzień docelowy zdążył się zacząć i nie ma już czego zapisać.
-STALE_WEEK_TEXT = (
+_TEKST_MINIONEGO_TYGODNIA = (
     "Tydzień, którego dotyczyło przypomnienie, już się zaczął — nie zapisuję go automatycznie. "
     "Jeśli grafik nadal wymaga uzupełnienia, napisz proszę do przełożonego."
 )
+
+
+def build_stale_week_text(week_label: str = "") -> Tresc:
+    return _komunikat(
+        _TEKST_MINIONEGO_TYGODNIA,
+        "Ten tydzień już się zaczął",
+        (
+            ("Tydzień", week_label),
+            ("Status", "nie zapisuję go automatycznie"),
+            ("Co dalej", "Jeśli grafik wymaga uzupełnienia, napisz proszę do przełożonego."),
+        ),
+    )
+
+
+STALE_WEEK_TEXT = build_stale_week_text()
 # Trzeci powód domknięcia. Pracownik ODPISAŁ (czasem minutę po prośbie), zabrakło tylko „tak" —
 # EXPIRED_TEXT zarzucałby mu milczenie, którego nie było.
-NO_CONFIRM_TEXT = (
+_TEKST_BRAKU_POTWIERDZENIA = (
     "Nie doczekałem się potwierdzenia, więc nic nie zapisuję. Kiedy będziesz gotowy/gotowa, "
     "napisz, kiedy pracujesz — wrócę do tego przy kolejnym przypomnieniu."
 )
 
 
-def build_self_filled_text(week_label: str) -> str:
+def build_no_confirm_text(week_label: str = "") -> Tresc:
+    return _komunikat(
+        _TEKST_BRAKU_POTWIERDZENIA,
+        "Nie doczekałem się potwierdzenia",
+        (
+            ("Tydzień", week_label),
+            ("Status", "nic nie zapisałem"),
+            ("Co dalej", "Napisz, kiedy pracujesz — pokażę grafik do potwierdzenia jeszcze raz."),
+        ),
+    )
+
+
+NO_CONFIRM_TEXT = build_no_confirm_text()
+
+
+def build_tydzien_zamkniety_text(week_label: str) -> Tresc:
+    """Odpowiedź na wiadomość, która przyszła PO końcu tygodnia, o który pytaliśmy.
+
+    Do 0.2.25 taka wiadomość nie dostawała NIC — temat był domknięty, tydzień minął, więc nikt
+    jej nawet nie czytał. Pracownik, który przeprasza i podaje godziny, widział ciszę. Nie
+    zapisujemy (grafiku wstecz nie uzupełniamy — menedżer czyta go jak stan faktyczny), ale
+    mówimy to wprost i wskazujemy, kto może to zrobić.
+    """
+    tekst = (
+        f"Tydzień {week_label} jest już zamknięty — nie zapisuję go automatycznie. "
+        "Jeśli grafik za ten tydzień wymaga poprawki, napisz proszę do przełożonego. "
+        "O kolejny tydzień zapytam jak zwykle w piątek."
+    )
+    return _komunikat(
+        tekst,
+        "Ten tydzień jest już zamknięty",
+        (
+            ("Tydzień", week_label),
+            ("Status", "nie zapisuję go automatycznie"),
+            ("Co dalej", "Poprawkę za ten tydzień zgłoś przełożonemu."),
+            ("Następny grafik", "zapytam jak zwykle w piątek"),
+        ),
+    )
+
+
+def build_self_filled_text(week_label: str) -> Tresc:
     """Podziękowanie, gdy pracownik SAM uzupełnił grafik w Shifts, zanim odpisał na czacie.
 
     Forma neutralna („jest już uzupełniony", nie „uzupełniłeś"), bo grafik mógł wypełnić także
     przełożony. Wysyłane bezwarunkowo — reaguje na działanie pracownika, więc milczenie byłoby
     gorsze.
     """
-    return (
+    return _komunikat(
         f"Widzę, że Twój grafik na tydzień {week_label} jest już uzupełniony ✅ "
-        "Dziękuję! W takim razie kończę przypominanie."
+        "Dziękuję! W takim razie kończę przypominanie.",
+        "Grafik jest już uzupełniony ✅ Dziękuję!",
+        (("Tydzień", week_label), ("Status", "uzupełniony — kończę przypominanie")),
+    )
+
+
+def _zdanie_terminu(termin: datetime, tz: ZoneInfo) -> str:
+    lokalnie = termin.astimezone(tz)
+    return (
+        f"{_DNI_DOPELNIACZ[lokalnie.weekday()]} {lokalnie:%d.%m}, "
+        f"godz. {lokalnie.hour}:{lokalnie:%M}"
     )
 
 
@@ -140,12 +360,17 @@ def build_nudge_text(
     tz: ZoneInfo,
     off_weekdays: Iterable[int] = (),
     termin: datetime | None = None,
-) -> str:
+    podstawa: str = "",
+) -> Tresc:
     """Zbuduj tekst przypomnienia (czysto). Godziny propozycji renderowane w strefie `tz`.
 
     `off_weekdays` to znane dni urlopu w docelowym tygodniu (0=pon…6=nd). Wspominamy o nich
     („o te dni nie pytam”), żeby prośba dotyczyła wyłącznie pozostałych dni i żeby pracownik nie
-    zgłaszał ponownie urlopu, który już jest w grafiku.
+    zgłaszał ponownie urlopu, który już jest w grafiku. W tabeli stoją jako osobne wiersze.
+
+    `podstawa` to zdanie „skąd ta propozycja" (`propose.Propozycja.opis_podstawy`) — od 0.2.26
+    propozycja jest typowym tygodniem z kilku ostatnich, a nie kopią zeszłego, więc pracownik
+    musi wiedzieć, co właściwie ogląda.
 
     `termin` to TERMIN ODPOWIEDZI policzony przez kod (`lifecycle.termin_dla_nowej_prosby`), nie
     liczba wpisana w tę stałą. Nazwa jest tu istotna, nie kosmetyczna: `termin_dla_nowej_prosby`
@@ -161,11 +386,17 @@ def build_nudge_text(
     """
     parts = member.display_name.split()
     first_name = parts[0] if parts else member.display_name
-    lines = [
-        f"Cześć {first_name}! 👋",
-        f"Nie masz jeszcze uzupełnionych zmian na przyszły tydzień ({week_label}).",
+    powitanie = f"Cześć {first_name}! 👋"
+    wstep = f"Nie masz jeszcze uzupełnionych zmian na przyszły tydzień ({week_label})."
+    lines = [powitanie, wstep]
+    html = [
+        _p(escape(powitanie)),
+        _p(f"Nie masz jeszcze uzupełnionych zmian na przyszły tydzień ({_b(week_label)})."),
     ]
     off = sorted(off_weekdays)
+    wiersze_wolne = [
+        _wiersz_dnia(proposal.week_start, d, "🏖️ wolne (już w grafiku)", "—") for d in off
+    ]
     if off:
         dni = ", ".join(_DNI[d] for d in off)
         lines.append(f"Widzę, że masz wtedy wolne: {dni} — o te dni nie pytam.")
@@ -175,9 +406,15 @@ def build_nudge_text(
             if off
             else "napisz proszę, kiedy pracujesz (np. „pon–pt 8–16”)."
         )
-        lines.append(f"Nie znalazłem Twojego grafiku z zeszłego tygodnia — {prosba}")
+        zdanie = f"Nie znalazłem Twojego grafiku z ostatnich tygodni — {prosba}"
+        lines.append(zdanie)
+        if wiersze_wolne:
+            html.append(_p("Widzę, że w tym tygodniu masz już wolne — o te dni nie pytam:"))
+            html.append(_tabela(_NAGLOWKI_GRAFIKU, wiersze_wolne))
+        html.append(_p(escape(zdanie)))
     else:
-        lines.append("W zeszłym tygodniu Twój grafik wyglądał tak:")
+        naglowek = f"Proponuję grafik — {podstawa}:" if podstawa else "Proponuję taki grafik:"
+        lines.append(naglowek)
         for sh in proposal.shifts:
             start = sh.start.astimezone(tz)
             end = sh.end.astimezone(tz)
@@ -185,25 +422,44 @@ def build_nudge_text(
                 f"• {_DNI[start.weekday()]} {start:%H:%M}–{end:%H:%M}"
                 f"{_do_nastepnego_dnia(start, end)}"
             )
-        lines.append(
-            "Odpisz „ok”, żeby powtórzyć to samo, albo napisz, co zmienić "
+        instrukcja = (
+            "Odpisz „ok”, żeby zapisać tę propozycję, albo napisz, co zmienić "
             "(np. „w piątek 10–20, reszta bez zmian” lub „w piątek mnie nie będzie”)."
+        )
+        lines.append(instrukcja)
+        wiersze = sorted(
+            [*_wiersze_zmian(proposal, tz), *wiersze_wolne],
+            key=_kolejnosc_dnia,
+        )
+        tytul = f"Proponowany grafik — {podstawa}:" if podstawa else "Proponowany grafik:"
+        html.append(_p(_b(tytul)))
+        html.append(_tabela(_NAGLOWKI_GRAFIKU, wiersze))
+        html.append(
+            _p(
+                f"Odpisz {_b('„ok”')}, żeby zapisać tę propozycję, albo napisz, co zmienić "
+                "(np. „w piątek 10–20, reszta bez zmian” lub „w piątek mnie nie będzie”)."
+            )
         )
     if termin is not None:
         # Zdanie o terminie stoi NA KOŃCU, po propozycji: pracownik ma najpierw zobaczyć, o co
         # jest pytany, a termin przeczytać jako ramę. Wartość liczy kod, tekst jest stałą (N13).
-        lokalnie = termin.astimezone(tz)
+        kiedy = _zdanie_terminu(termin, tz)
         lines.append(
-            f"Czekam na odpowiedź do {_DNI_DOPELNIACZ[lokalnie.weekday()]} "
-            f"{lokalnie:%d.%m}, godz. {lokalnie.hour}:{lokalnie:%M} — potem kończę przypominanie "
+            f"Czekam na odpowiedź do {kiedy} — potem kończę przypominanie "
             f"o tym tygodniu i odezwę się przy kolejnym grafiku."
         )
-    return "\n".join(lines)
+        html.append(
+            _p(
+                f"⏰ Czekam na odpowiedź do {_b(kiedy)} — potem kończę przypominanie "
+                "o tym tygodniu i odezwę się przy kolejnym grafiku."
+            )
+        )
+    return Tresc("\n".join(lines), "".join(html))
 
 
 def build_przypomnienie_text(
     week_label: str, termin: datetime | None, tz: ZoneInfo, *, ma_propozycje: bool
-) -> str:
+) -> Tresc:
     """Jedno przypomnienie dla pracownika, który po prośbie nie napisał ani słowa (pozycja D5).
 
     KRÓTKIE z rozmysłem. Pierwsza wiadomość niosła gotowiec i pełne instrukcje, i została
@@ -211,8 +467,8 @@ def build_przypomnienie_text(
     Ta ma przypomnieć o sprawie i pokazać najkrótszą drogę do jej zamknięcia.
 
     ``ma_propozycje`` rozstrzyga, czy ta najkrótsza droga w ogóle istnieje: przy pustym gotowcu
-    (brak grafiku z zeszłego tygodnia) nie ma czego potwierdzić, więc zdanie „odpisz »ok«, żeby
-    powtórzyć" byłoby nieprawdziwe — ten sam podział, który robi ``build_nudge_text``.
+    (brak grafiku z ostatnich tygodni) nie ma czego potwierdzić, więc zdanie „odpisz »ok«, żeby
+    zapisać" byłoby nieprawdziwe — ten sam podział, który robi ``build_nudge_text``.
 
     ``termin`` liczy KOD (**B7**), a ``None`` znaczy „nie da się wyznaczyć" i wtedy zdania o nim
     po prostu nie ma: lepiej nie obiecać nic, niż obiecać datę wziętą z niczego. Zgodność z **N13**
@@ -222,20 +478,28 @@ def build_przypomnienie_text(
         f"Przypominam o grafiku na tydzień {week_label} — nie mam jeszcze Twojej odpowiedzi 🙂"
     ]
     if ma_propozycje:
-        lines.append(
+        co_zrobic = (
             "Wystarczy odpisać „ok”, żeby zapisać propozycję z poprzedniej wiadomości, "
             "albo napisz, co zmienić (np. „w piątek 10–20, reszta bez zmian”)."
         )
     else:
-        lines.append("Napisz proszę, kiedy pracujesz (np. „pon–pt 8–16”).")
-    if termin is not None:
-        lokalnie = termin.astimezone(tz)
-        lines.append(
-            f"Czekam do {_DNI_DOPELNIACZ[lokalnie.weekday()]} "
-            f"{lokalnie:%d.%m}, godz. {lokalnie.hour}:{lokalnie:%M} — "
-            "potem kończę przypominanie o tym tygodniu."
+        co_zrobic = "Napisz proszę, kiedy pracujesz (np. „pon–pt 8–16”)."
+    lines.append(co_zrobic)
+    kiedy = _zdanie_terminu(termin, tz) if termin is not None else ""
+    if kiedy:
+        lines.append(f"Czekam do {kiedy} — potem kończę przypominanie o tym tygodniu.")
+    html = (
+        _p(_b("Przypominam o grafiku 🙂"))
+        + _karta(
+            (
+                ("Tydzień", week_label),
+                ("Status", "czekam na Twoją odpowiedź"),
+                ("Czekam do", kiedy),
+            )
         )
-    return "\n".join(lines)
+        + _p(escape(co_zrobic))
+    )
+    return Tresc("\n".join(lines), html)
 
 
 def describe_schedule(schedule: WeekSchedule, tz: ZoneInfo) -> str:
@@ -277,22 +541,60 @@ def build_confirm_text(
     time_off: Iterable[dict[str, Any]],
     tz: ZoneInfo,
     pominiete: Iterable[dict[str, Any]] = (),
-) -> str:
+    teraz: datetime | None = None,
+) -> Tresc:
     """Prośba o potwierdzenie przed zapisem (spirit ADR 0006 — zapis tylko po »tak«).
 
     ``pominiete`` to dni, o których pracownik napisał, ale których NIE zapisujemy (np. sprzeczne
     godziny). Dopisujemy je do treści, bo bez tego potwierdzenie wyglądałoby na komplet: pracownik
     odpowiadał o pięciu dniach, potwierdza cztery i nie ma jak zauważyć, że jeden wypadł.
+
+    ``teraz`` (od 0.2.26) oznacza w tabeli dni, które już MINĘŁY — zapis i tak je pominie
+    (``lifecycle.still_writable``), a pracownik ma to widzieć, ZANIM odpowie „tak", nie po fakcie.
+
+    **Tydzień i daty stoją w treści zawsze** (od 0.2.26). Wcześniej potwierdzenie mówiło „pon
+    08:00–16:00" bez dat, a klucz stanu to osoba, nie tydzień — kto po nowej piątkowej prośbie
+    pisał o tygodniu właśnie mijającym, dostawał potwierdzenie bez żadnej wskazówki, że jego
+    godziny pójdą do grafiku NASTĘPNEGO tygodnia.
     """
     time_off = list(time_off)
+    pominiete = list(pominiete)
+    tydzien = etykieta_tygodnia(schedule.week_start)
     segments = []
     if not schedule.is_empty:
         segments.append(f"grafik: {describe_schedule(schedule, tz)}")
     if time_off:
         segments.append(f"czas wolny: {describe_time_off(time_off)}")
-    prosba = f"Zapiszę {'; '.join(segments)}. Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
+    prosba = (
+        f"Zapiszę {'; '.join(segments)} (tydzień {tydzien}). "
+        "Potwierdź „tak”, żeby zapisać, albo napisz poprawkę."
+    )
     ostrzezenie = describe_pominiete(pominiete)
-    return f"{prosba}\n{ostrzezenie}" if ostrzezenie else prosba
+    tekst = f"{prosba}\n{ostrzezenie}" if ostrzezenie else prosba
+
+    wiersze = _wiersze_zmian(schedule, tz)
+    if teraz is not None:
+        wiersze = [
+            (w[0], w[1], f"{w[2]} ⏪ już minął — nie zapiszę", w[3]) if sh.end <= teraz else w
+            for w, sh in zip(wiersze, schedule.shifts, strict=True)
+        ]
+    for item in time_off:
+        wd = int(item["weekday"])
+        nazwa = str(item.get("reason_name") or "Nieobecność")
+        wiersze.append(_wiersz_dnia(schedule.week_start, wd, f"🏖️ wolne: {nazwa}", "—"))
+    for wpis in pominiete:
+        dzien = wpis.get("weekday")
+        if isinstance(dzien, int) and 0 <= dzien <= 6:
+            powod = _POWODY_POMINIECIA.get(str(wpis.get("powod")), "nie udało się odczytać")
+            wiersze.append(_wiersz_dnia(schedule.week_start, dzien, "⚠️ nie zapisuję", powod))
+    wiersze.sort(key=_kolejnosc_dnia)
+    html = (
+        _p(_b(f"Zapiszę grafik na tydzień {tydzien}:"))
+        + _tabela(_NAGLOWKI_GRAFIKU, wiersze)
+        + (_p(escape(ostrzezenie)) if ostrzezenie else "")
+        + _p(f"Potwierdź {_b('„tak”')}, żeby zapisać, albo napisz poprawkę.")
+    )
+    return Tresc(tekst, html)
 
 
 def describe_pominiete(pominiete: Iterable[dict[str, Any]]) -> str:
@@ -317,7 +619,7 @@ def describe_pominiete(pominiete: Iterable[dict[str, Any]]) -> str:
     )
 
 
-def build_nic_do_zapisania_text(juz_w_grafiku: Iterable[int]) -> str:
+def build_nic_do_zapisania_text(juz_w_grafiku: Iterable[int], week_label: str = "") -> Tresc:
     """Cały potwierdzony komplet był już w grafiku — nie zapisano NIC i trzeba to powiedzieć wprost.
 
     Kuszące jest użycie tu podziękowania ze ścieżki samouzupełnienia („grafik jest już uzupełniony,
@@ -328,14 +630,27 @@ def build_nic_do_zapisania_text(juz_w_grafiku: Iterable[int]) -> str:
     """
     dni = ", ".join(_DNI_SKROT[d] for d in sorted(juz_w_grafiku) if 0 <= d <= 6)
     wykaz = f" ({dni})" if dni else ""
-    return (
+    return _komunikat(
         f"Te dni miałeś/miałaś już uzupełnione w grafiku{wykaz}, więc niczego nie zmieniałem — "
         "nie chcę dopisywać ich drugi raz. Jeśli zapisane godziny się nie zgadzają, napisz proszę "
-        "do przełożonego. Kończę przypominanie o tym tygodniu."
+        "do przełożonego. Kończę przypominanie o tym tygodniu.",
+        "Te dni są już w grafiku — niczego nie zmieniałem",
+        (
+            ("Tydzień", week_label),
+            ("Dni już w grafiku", dni),
+            ("Co dalej", "Jeśli coś się nie zgadza, napisz proszę do przełożonego."),
+        ),
     )
 
 
-def build_applied_text(*, minione: int = 0, juz_w_grafiku: Iterable[int] = ()) -> str:
+def build_applied_text(
+    *,
+    minione: int = 0,
+    juz_w_grafiku: Iterable[int] = (),
+    zapisane: WeekSchedule | None = None,
+    wolne: Iterable[tuple[int, str]] = (),
+    tz: ZoneInfo | None = None,
+) -> Tresc:
     """Potwierdzenie zapisu, wymieniające dni, które do grafiku NIE trafiły — i dlaczego.
 
     Pracownik potwierdził konkretny komplet dni, a zapisać można było mniej. Powody są DWA i mówią
@@ -351,33 +666,72 @@ def build_applied_text(*, minione: int = 0, juz_w_grafiku: Iterable[int] = ()) -
 
     Puste oba → zwykłe ``APPLIED_TEXT``: obietnica „zapisałem Twoje zmiany" jest wtedy w całości
     prawdziwa i nie ma po co jej rozwadniać.
+
+    ``zapisane``/``wolne``/``tz`` (od 0.2.26) to to, co FAKTYCZNIE poszło do Shifts — w HTML
+    stoi z tego tabela, żeby pracownik widział dokładnie, co trafiło do grafiku.
     """
     juz = sorted(d for d in juz_w_grafiku if isinstance(d, int) and 0 <= d <= 6)
     if not minione and not juz:
-        return APPLIED_TEXT
-    lines = ["Gotowe ✅ Zapisałem to, czego jeszcze nie było w Twoim grafiku."]
+        lines = [APPLIED_TEXT]
+    else:
+        lines = ["Gotowe ✅ Zapisałem to, czego jeszcze nie było w Twoim grafiku."]
+    uwagi = []
     if juz:
-        lines.append(
+        uwagi.append(
             f"Te dni były już uzupełnione, więc ich nie zmieniałem: "
             f"{', '.join(_DNI_SKROT[d] for d in juz)}. Jeśli coś się w nich nie zgadza, "
             "napisz proszę do przełożonego."
         )
     if minione:
-        lines.append(
+        uwagi.append(
             "Dni, które zdążyły już minąć, nie trafiły do grafiku — jeśli mają tam być, "
             "napisz proszę do przełożonego."
         )
-    return "\n".join(lines)
+    lines += uwagi
+    html = _p(_b(lines[0]))
+    if zapisane is not None and tz is not None:
+        wiersze = _wiersze_zmian(zapisane, tz)
+        for wd, nazwa in wolne:
+            wiersze.append(_wiersz_dnia(zapisane.week_start, wd, f"🏖️ wolne: {nazwa}", "—"))
+        if wiersze:
+            wiersze.sort(key=_kolejnosc_dnia)
+            html += _p(f"Tydzień {_b(etykieta_tygodnia(zapisane.week_start))} — zapisane:")
+            html += _tabela(_NAGLOWKI_GRAFIKU, wiersze)
+    html += "".join(_p(escape(u)) for u in uwagi)
+    return Tresc("\n".join(lines), html)
 
 
-def build_unclear_text(powod: str = "") -> str:
+_PRZYKLADY = (
+    ("„pon–pt 8–16”", "zapiszę cały tydzień w tych godzinach"),
+    ("„w piątek 10–20, reszta bez zmian”", "zmienię jeden dzień"),
+    ("„w piątek mnie nie będzie”", "wpiszę dzień wolny"),
+    ("„we wtorek zdalnie”", "zmienię tryb pracy 🔵"),
+)
+# Powody, przy których pracownik ma POPRAWIĆ odpowiedź — tylko tam tabela przykładów pomaga.
+_Z_PRZYKLADAMI = {
+    "",
+    "brak_godzin",
+    "nieznany_dzien",
+    "godziny_sprzeczne",
+    "poza_zakresem",
+    "przerwana_interpretacja",
+}
+
+
+def build_unclear_text(powod: str = "") -> Tresc:
     """Prośba o doprecyzowanie — możliwie KONKRETNA, zamiast ogólnego „nie zrozumiałem".
 
     ``powod`` to enum z ``agent.schema`` (nie tekst od modelu), więc wybór komunikatu nie jest
     kanałem, którym cokolwiek z odpowiedzi pracownika mogłoby do niego wrócić. Nieznana wartość
-    degraduje się do komunikatu ogólnego.
+    degraduje się do komunikatu ogólnego. Tam, gdzie pracownik ma poprawić odpowiedź, HTML
+    dokłada tabelę gotowych przykładów — to one realnie skracają drugą próbę.
     """
-    return _TEKSTY_NIEJASNOSCI.get(powod, UNCLEAR_TEXT)
+    tekst = _TEKSTY_NIEJASNOSCI.get(powod, UNCLEAR_TEXT)
+    klucz = powod if powod in _TEKSTY_NIEJASNOSCI else ""
+    html = _p(escape(tekst))
+    if klucz in _Z_PRZYKLADAMI:
+        html += _tabela(("Napisz na przykład", "Co zrobię"), _PRZYKLADY)
+    return Tresc(tekst, html)
 
 
 # Sufit bloków w jednej wiadomości. Tygodni w stanie przybywa monotonicznie: retencja sprząta
@@ -444,7 +798,7 @@ class LiczbyTygodnia:
         )
 
 
-def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg: str) -> str:
+def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg: str) -> Tresc:
     """Podsumowanie przebiegu dla administratora — jednocześnie sygnał życia usługi.
 
     Wysyłane po KAŻDYM przebiegu, także gdy nikogo nie trzeba było zagadnąć: „zero próśb" jest
@@ -523,9 +877,87 @@ def build_summary_text(*, tygodnie: Iterable[LiczbyTygodnia], nastepny_przebieg:
         )
     lines.append("")
     lines.append(f"Następny przebieg: {nastepny_przebieg}")
-    return "\n".join(lines)
+    return Tresc("\n".join(lines), _podsumowanie_html(bloki, pominiete, nastepny_przebieg))
+
+
+def _podsumowanie_html(
+    bloki: Sequence[LiczbyTygodnia], pominiete: Sequence[LiczbyTygodnia], nastepny: str
+) -> str:
+    """Podsumowanie jako JEDNA tabela: wiersze to pozycje raportu, kolumny to tygodnie.
+
+    Transpozycja celowa: tygodni jest zwykle jeden–dwa, pozycji dziesięć. Kolumna na pozycję
+    dawałaby tabelę szerszą niż okno czatu; kolumna na tydzień czyta się jak porównanie
+    „ten tydzień kontra poprzedni". Wiersze opcjonalne (przypomnienia, wznowienia, niejasności,
+    ⚠️) pojawiają się tylko wtedy, gdy w KTÓRYMKOLWIEK tygodniu jest co w nich pokazać.
+    """
+    html = _p(_b("Podsumowanie przebiegu powiadomień"))
+    if not bloki:
+        html += _p("Brak spraw w toku — nikogo nie trzeba było zagadnąć.")
+    else:
+
+        def wiersz(nazwa: str, wartosci: Iterable[object]) -> tuple[str, ...]:
+            return (nazwa, *(str(w) for w in wartosci))
+
+        def procent(t: LiczbyTygodnia) -> str:
+            if not t.interpretacje:
+                return "—"
+            return (
+                f"{t.interpretacje} (niejasne {t.niejasnosci}, "
+                f"{round(100 * t.niejasnosci / t.interpretacje)}%)"
+            )
+
+        wiersze = [
+            wiersz("Stan", ("✅ domknięty" if t.domkniety else "⏳ w toku" for t in bloki)),
+            wiersz("Oczekuje na odpowiedź", (t.oczekuje for t in bloki)),
+            wiersz("Czeka na potwierdzenie", (t.do_potwierdzenia for t in bloki)),
+        ]
+        if any(t.niepotwierdzone for t in bloki):
+            wiersze.append(
+                wiersz("⚠️ Potwierdzone, NIEZAPISANE", (t.niepotwierdzone for t in bloki))
+            )
+        wiersze += [
+            wiersz("Zapisane grafiki", (t.zapisane for t in bloki)),
+            wiersz("Odmowy", (t.odmowy for t in bloki)),
+            wiersz("Zamknięte bez zapisu", (t.wygasle for t in bloki)),
+            wiersz("Uzupełnione samodzielnie", (t.samodzielne for t in bloki)),
+        ]
+        if any(t.przypomnienia for t in bloki):
+            wiersze.append(
+                wiersz(
+                    "Przypomnienia (skuteczne)",
+                    (f"{t.przypomnienia} ({t.przypomnienia_skuteczne})" for t in bloki),
+                )
+            )
+        if any(t.wznowione for t in bloki):
+            wiersze.append(
+                wiersz(
+                    "Wznowione po terminie (skuteczne)",
+                    (f"{t.wznowione} ({t.wznowione_skuteczne})" for t in bloki),
+                )
+            )
+        if any(t.interpretacje for t in bloki):
+            wiersze.append(wiersz("Odpowiedzi zinterpretowane", (procent(t) for t in bloki)))
+        if any(t.nierozpoznane for t in bloki):
+            wiersze.append(wiersz("⚠️ Wpisy nierozpoznane", (t.nierozpoznane for t in bloki)))
+        naglowki = ("", *(f"Tydzień od {t.week_start}" for t in bloki))
+        html += _tabela(naglowki, wiersze)
+    if pominiete:
+        html += _p(
+            escape(
+                f"…oraz {len(pominiete)} starszych tygodni z wpisami w stanie "
+                f"(najstarszy od {min(t.week_start for t in pominiete)})."
+            )
+        )
+    html += _p(f"Następny przebieg: {_b(nastepny)}")
+    return html
 
 
 def to_html(text: str) -> str:
-    """Zamień tekst z podziałami linii na bezpieczny HTML dla wiadomości Teams."""
+    """HTML wiadomości dla Teams: gotowy z ``Tresc``, a dla zwykłego tekstu — bezpieczny render.
+
+    Zwykły ``str`` to dziś wyłącznie ścieżka awaryjna (np. tekst sklejony z ``Tresc``): każda
+    linia escapowana, podziały jako ``<br>``.
+    """
+    if isinstance(text, Tresc):
+        return text.html
     return "<br>".join(escape(line) for line in text.split("\n"))

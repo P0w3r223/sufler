@@ -159,6 +159,20 @@ przedmiotu. Przy zmianie składu zespołu (praca zmianowa) obie rzeczy wskrzesza
 gita: `git show b3188e9~1` po ścieżkach reminders/wzorzec.py i scripts/zbierz_historie.py, razem
 z testami bucketowania historii. Dopiero praca zmianowa czyni tę pozycję opłacalną.
 
+### Aktualizacja 2026-09-25 — propozycja z czterech tygodni (0.2.26, decyzja klienta)
+
+Klient poprosił o propozycję liczoną z ostatniego miesiąca zamiast „jak w zeszłym tygodniu",
+z zastrzeżeniem, że **urlop nie ma priorytetu** — pracownik zwykle pracuje, a okresy mniejszej
+aktywności się zdarzają. To NIE jest wskrzeszenie D1: tamto miało zastąpić gotowiec tylko przy
+pewności WYSOKIEJ i dlatego nie weszło; nowa propozycja zastępuje gotowiec zawsze i z założenia
+zbiega do „zeszłego tygodnia" u osób o stałym rytmie (czyli u sześciu z ośmiu z tabeli wyżej).
+
+Reguła alfabetu z D1 („proponować wyłącznie grafiki zaobserwowane") została zachowana tam, gdzie
+jest do zachowania: godziny, które się POWTARZAJĄ, wygrywają w całości. Mediana (zaokrąglona do
+kwadransa) wchodzi dopiero wtedy, gdy żaden zestaw godzin nie wystąpił dwa razy — czyli dokładnie
+u osób z rozrzutem, u których „zeszły tydzień" też był zgadywaniem. Szczegóły i uzasadnienie
+każdego niuansu: `reminders/propose.py`, `proposal_from_history`.
+
 ## Pozycje otwarte, nieprzypisane do litery
 
 - **Nocka wchodząca w dzień oznaczony jako wolny nie jest uzgadniana.** `interpreter._zdecyduj`

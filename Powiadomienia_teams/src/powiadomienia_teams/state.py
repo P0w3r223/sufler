@@ -168,6 +168,11 @@ class PendingReminder:
     #
     # Pole opcjonalne — stare pliki stanu bez niego dostają pusty napis („nie wznawiano").
     wznowiono_at: str = ""
+    # createdDateTime wiadomości, na którą bot odpowiedział „ten tydzień jest już zamknięty"
+    # (`messages.build_tydzien_zamkniety_text`). Odpowiadamy JEDEN raz na wpis: kolejne wiadomości
+    # o minionym tygodniu nie dostają już nic nowego do powiedzenia, a każda następna odpowiedź
+    # byłaby tym samym zdaniem. Pole opcjonalne — stare pliki stanu dostają pusty napis.
+    po_tygodniu_odpisano_at: str = ""
 
 
 _FIELDS = {f.name for f in fields(PendingReminder)}

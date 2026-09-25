@@ -258,3 +258,15 @@ def test_incoming_after_rozpoznaje_wlasna_wiadomosc_niezaleznie_od_wielkosci_lit
     assert incoming_after(messages, guid, nadawca="u1") == []
     # To NASZA wiadomość, nie cudza — nie wolno jej zgłaszać jako obcego nadawcy.
     assert obcy_nadawcy(messages, guid, nadawca="u1") == []
+
+
+def test_jest_uprzejmoscia_odroznia_grzecznosc_od_nowej_sprawy():
+    from powiadomienia_teams.reminders.replies import jest_uprzejmoscia
+
+    for tekst in ("dzięki", "Dziękuję bardzo!", "👍", "🙂🙂", "miłego weekendu", ""):
+        assert jest_uprzejmoscia(tekst, z_potwierdzeniami=False), tekst
+    # „ok" po wygaśnięciu to ZGODA na propozycję (tak uczy przypomnienie), po odmowie — grzeczność.
+    assert not jest_uprzejmoscia("ok", z_potwierdzeniami=False)
+    assert jest_uprzejmoscia("ok, dzięki", z_potwierdzeniami=True)
+    for tekst in ("jednak pon-pt 8-16", "dzięki, w piątek 10-18", "ok zapisz", "8-16"):
+        assert not jest_uprzejmoscia(tekst, z_potwierdzeniami=True), tekst

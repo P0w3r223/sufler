@@ -24,7 +24,7 @@ from powiadomienia_teams.graph.client import GraphClient
 from powiadomienia_teams.messages import build_nudge_text, to_html
 from powiadomienia_teams.reminders.detect import members_without_shifts, off_weekdays_by_member
 from powiadomienia_teams.reminders.lifecycle import prune_terminal, termin_dla_nowej_prosby
-from powiadomienia_teams.reminders.propose import proposal_from_last_week
+from powiadomienia_teams.reminders.propose import TYGODNIE_HISTORII, proposal_from_history
 from powiadomienia_teams.runtime import etykiety, operator
 from powiadomienia_teams.runtime.budzet import PrzebiegPrzekroczylCzasError
 from powiadomienia_teams.runtime.cisza import (
@@ -162,21 +162,29 @@ def run_once(  # noqa: PLR0915
     # nie chroni przed niczym.
     members = [m for m in client.list_members(ctx.team_id) if not ten_sam(m.user_id, me_id)]
 
-    prior_monday, target_monday, target_end = week_windows(now, tz)
+    _, target_monday, target_end = week_windows(now, tz)
 
     # JEDNO pobranie na oba okna. `read_shifts` ściąga całą kolekcję zespołu i filtruje po stronie
     # klienta (`$filter` odpada — powody w jego docstringu), więc dwa wywołania znaczyły dwa pełne
     # przejścia przez `_MAX_PAGES` po te same ~2000 wpisów. Przy okazji oba okna widzą teraz TEN SAM
     # stan grafiku: gotowiec nie może już pochodzić z innej chwili niż wykrycie luk.
-    next_shifts, prior_shifts = client.read_shifts_w_oknach(
+    #
+    # Okno historii to TYGODNIE_HISTORII tygodni przed docelowym — z nich liczona jest propozycja
+    # (`propose.proposal_from_history`). Liczone od poniedziałku LOKALNEGO, więc zmiana czasu
+    # w środku okna nie ucina pierwszego dnia.
+    historia_od = (target_monday.date() - timedelta(weeks=TYGODNIE_HISTORII)).isoformat()
+    historia_start = datetime.fromisoformat(historia_od).replace(tzinfo=tz).astimezone(_UTC)
+    next_shifts, history_shifts = client.read_shifts_w_oknach(
         ctx.team_id,
         (
             (target_monday.astimezone(_UTC), target_end.astimezone(_UTC)),
-            (prior_monday.astimezone(_UTC), target_monday.astimezone(_UTC)),
+            (historia_start, target_monday.astimezone(_UTC)),
         ),
     )
-    next_time_off = client.read_time_off(
-        ctx.team_id, target_monday.astimezone(_UTC), target_end.astimezone(_UTC)
+    # JEDNO pobranie czasu wolnego na oba okna — ten sam powód co przy zmianach wyżej.
+    wszystkie_wolne = client.read_time_off(ctx.team_id, historia_start, target_end.astimezone(_UTC))
+    next_time_off = tuple(
+        t for t in wszystkie_wolne if t.start < target_end and t.end > target_monday
     )
     # Dni urlopu per osoba w docelowym tygodniu (liczone w strefie zespołu, target_monday lokalne).
     # Jedno źródło prawdy dla: detekcji (pełny tydzień wolny → pomiń), propozycji (nie proponuj
@@ -212,7 +220,7 @@ def run_once(  # noqa: PLR0915
     # Retencja ma WŁASNĄ zmienną (`TERMINAL_RETAIN_HOURS`), niezależną od terminu odpowiedzi:
     # zwinięte w jedną liczbę robiły z przestawienia terminu ciche przestawienie strażnika N15.
     state = prune_terminal(
-        state, now, settings.terminal_retain_hours, biezacy_tydzien=week_start_iso
+        state, now, settings.terminal_retain_hours, biezacy_tydzien=week_start_iso, tz=tz
     )
     # DOWÓD ZAPISYWALNOŚCI, zanim ktokolwiek dostanie wiadomość.
     #
@@ -276,15 +284,22 @@ def run_once(  # noqa: PLR0915
                 week_start_iso,
             )
         member_off = off_by_member.get(znormalizuj(member.user_id), frozenset())
-        proposal = proposal_from_last_week(
-            member.user_id, prior_shifts, target_monday.date(), tz=tz, skip_weekdays=member_off
+        propozycja = proposal_from_history(
+            member.user_id,
+            history_shifts,
+            wszystkie_wolne,
+            target_monday.date(),
+            tz=tz,
+            skip_weekdays=member_off,
         )
+        proposal = propozycja.grafik
         text = build_nudge_text(
             member,
             proposal,
             week_label,
             tz,
             off_weekdays=member_off,
+            podstawa=propozycja.opis_podstawy,
             # Termin liczony TĄ SAMĄ funkcją, którą wygasza `runtime.listener` — inaczej treść
             # obiecywałaby co innego, niż robi runtime, a rozjazd wychodzi dopiero w chwili,
             # w której ktoś traci tydzień grafiku (pozycja B7 planu).

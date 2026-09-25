@@ -23,13 +23,19 @@ i propaguje dalej.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from collections.abc import Callable
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from powiadomienia_teams import state as st
 from powiadomienia_teams.config import OknoCiszy, Settings
 from powiadomienia_teams.graph.client import GraphClient
-from powiadomienia_teams.messages import WRITE_FAILED_TEXT, build_self_filled_text, to_html
+from powiadomienia_teams.messages import (
+    build_self_filled_text,
+    build_write_failed_text,
+    etykieta_tygodnia_iso,
+    to_html,
+)
 from powiadomienia_teams.runtime import etykiety
 from powiadomienia_teams.runtime.cisza import najblizsza_dozwolona, wolno_pisac
 from powiadomienia_teams.runtime.wysylka import NIE_POLYKAJ, do_pracownika
@@ -86,13 +92,17 @@ def zamknij_bez_zapisu(
     client: GraphClient,
     state: dict[str, st.PendingReminder],
     closed: list[st.PendingReminder],
-    text: str,
+    tresc: Callable[[str], str],
     teraz: datetime,
     powod: str,
     *,
     okno_domkniec: OknoCiszy,
 ) -> None:
-    """Zamknij tematy terminalnie: status EXPIRED utrwalony PRZED wysyłką (»co najwyżej raz«)."""
+    """Zamknij tematy terminalnie: status EXPIRED utrwalony PRZED wysyłką (»co najwyżej raz«).
+
+    ``tresc`` buduje wiadomość z etykiety tygodnia TEGO wpisu (np. ``messages.build_expired_text``)
+    — domknięcie ma mówić, którego tygodnia dotyczy, a porcja może obejmować różne tygodnie.
+    """
     closed = do_domkniecia(closed, teraz, okno_domkniec, "wygaszeń")
     if not closed:
         return
@@ -105,7 +115,7 @@ def zamknij_bez_zapisu(
         pending.awaiting_yes = False
     st.save_state(settings.state_path, state)
     if settings.send_expiry_message:
-        _powiadom_o_zamknieciu(settings, client, closed, text, teraz, powod)
+        _powiadom_o_zamknieciu(settings, client, closed, tresc, teraz, powod)
 
 
 def zamknij_cicho_nierozstrzygniete(
@@ -146,7 +156,7 @@ def _powiadom_o_zamknieciu(
     settings: Settings,
     client: GraphClient,
     closed: list[st.PendingReminder],
-    text: str,
+    tresc: Callable[[str], str],
     teraz: datetime,
     powod: str,
 ) -> None:
@@ -159,6 +169,7 @@ def _powiadom_o_zamknieciu(
     """
     for pending in closed:
         try:
+            text = tresc(etykieta_tygodnia_iso(pending.week_start))
             do_pracownika(settings, client, pending.chat_id, to_html(text), teraz=teraz)
             logger.info("Zamknięto temat dla %s (%s)", etykiety.osoba(pending, settings), powod)
         # Patrz `wysylka.NIE_POLYKAJ`. Tutaj utrata sesji kosztuje najwięcej: przebieg, w którym
@@ -230,8 +241,7 @@ def podziekuj_za_samodzielne_uzupelnienie(
     stąd zostałby wyżej zaraportowany jako „nie udało się obsłużyć odpowiedzi", która została
     obsłużona (ta sama pułapka, którą zamyka ``_powiadom_o_nieudanym_zapisie``).
     """
-    monday = datetime.fromisoformat(pending.week_start).replace(tzinfo=tz)
-    week_label = f"{monday:%d.%m}–{(monday + timedelta(days=6)):%d.%m}"
+    week_label = etykieta_tygodnia_iso(pending.week_start)
     try:
         do_pracownika(
             settings,
@@ -264,7 +274,8 @@ def powiadom_o_nieudanym_zapisie(
     odpowiedzi" dla odpowiedzi, która została obsłużona.
     """
     try:
-        do_pracownika(settings, client, pending.chat_id, to_html(WRITE_FAILED_TEXT), teraz=teraz)
+        tresc = build_write_failed_text(etykieta_tygodnia_iso(pending.week_start))
+        do_pracownika(settings, client, pending.chat_id, to_html(tresc), teraz=teraz)
     # Utrata sesji i wysyłka z pominiętą bramką ciszy propagują — patrz `wysylka.NIE_POLYKAJ`.
     except NIE_POLYKAJ:
         raise

@@ -264,13 +264,16 @@ sudo journalctl -u powiadomienia-teams -p err --since today
 
 ## Znane ograniczenia
 
-Świadomie pozostawione, udokumentowane zamiast naprawiane:
+Stan na 0.2.26. Świadomie pozostawione, udokumentowane zamiast naprawiane. (Do 0.2.25 ta tabela
+wymieniała sześć ograniczeń, które od dawna były naprawione — m.in. brak timeoutu modelu, stan
+bez `fsync` i nieponawianą prośbę o potwierdzenie; historia napraw jest w `CHANGELOG.md`.)
 
 | Objaw | Przyczyna | Obejście |
 |---|---|---|
-| Pętla stoi kilkanaście minut | Brak timeoutu klienta Anthropic (domyślnie 10 min × 2 próby) | Zwykle mija samo; przy nawrotach `systemctl restart` |
-| Bardzo długa cisza przy throttlingu | `Retry-After` z Graph bez górnego limitu (może wynieść 3600 s) | Jak wyżej |
-| Stan zniknął po awarii zasilania | Uszkodzony plik jest nadpisywany bez kopii i bez `fsync` | Kopiuj `powiadomienia_state.json` przed każdą aktualizacją |
-| Pracownik nie dostał prośby o potwierdzenie | Nieudana wysyłka nie jest ponawiana; status już zmieniony | Napisz do niego ręcznie |
-| Odpowiedź zignorowana bez komunikatu | Model zwrócił JSON poprawny składniowo, ale złego kształtu | Poproś pracownika o prostszą odpowiedź |
-| Fałszywe prośby po ~roku pracy | Paginacja odczytu zmian ucięta na 50 stronach, po cichu | Wymaga poprawki kodu, gdy zespół urośnie |
+| Po zapisie grafiku bot nie przyjmuje poprawek („jednak w piątek zdalnie") | Klient Graph umie tylko TWORZYĆ zmiany — bez kasowania i edycji, więc poprawka byłaby drugą, nakładającą się zmianą | Poprawkę robi przełożony w Shifts |
+| Odpowiedź napisana między 20:00 a 7:00 dostaje reakcję dopiero o 7:00 | Godziny ciszy obejmują całą pracę nasłuchu, nie tylko wysyłkę | — (wiadomość nie ginie) |
+| Brak piątkowego przebiegu, a kontener „healthy" | Host był uśpiony lub zamrożony — zegar kontenera stał razem z nim | Wyłącz usypianie hosta; dziurę widać w `docker logs` i w `journalctl` („Clock change detected") |
+| Logi poprzedniej wersji znikają po wdrożeniu | `docker compose up -d` z nowym obrazem tworzy nowy kontener | Przed wdrożeniem: `docker logs powiadomienia-teams > plik` (plik `chmod 600`) |
+| `--proba-nasluchu` kończy się „Inna instancja już działa" | Próba bierze blokadę na PRODUKCYJNYM pliku stanu | Uruchom ją na kopii wolumenu w osobnym kontenerze |
+| Najstarsze wiadomości przepadają, gdy między dwoma odczytami przyjdzie ich ponad 50 | Odczyt czatu bez stronicowania; ucięcie jest tylko logowane | Praktycznie nieosiągalne przy rozmowie 1:1 |
+| „Nie chcę nic zmieniać w tym tygodniu" bywa rozumiane jako zgoda na propozycję | Dwuznaczność języka („zostaw jak jest" kontra „nie wprowadzaj zmian") | Zapis i tak wymaga jawnego „tak" |

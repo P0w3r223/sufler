@@ -565,6 +565,8 @@ def main() -> None:  # noqa: PLR0915
         # Kod 2 odróżnia „źle skonfigurowane" od „padło w trakcie pracy" (1).
         logger.critical("Błąd konfiguracji: %s", blad)
         raise SystemExit(2) from None
+    # Zanim padnie PIERWSZE żądanie HTTP — patrz `alerts.ukryj_adres_w_logach`.
+    alerts.ukryj_adres_w_logach(settings.alert_webhook_url)
 
     if args.login:
         login_interactive(settings)

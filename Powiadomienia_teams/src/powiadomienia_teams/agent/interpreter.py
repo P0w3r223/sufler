@@ -203,7 +203,7 @@ _SYSTEM_KONIEC = (
     "„stacjonarnie”/„biuro”/„zielony”/„na zielono”/🟢 = stacjonarnie; "
     "„zdalnie”/„z domu”/„niebieski”/„na niebiesko”/🔵 = zdalnie. "
     'Pole "tryb" ustaw tylko gdy pracownik wskazał tryb dla danego dnia; inaczej zostaw je puste '
-    "(kolor zostanie z zeszłego tygodnia). "
+    "(kolor zostanie z proponowanego grafiku). "
     # --- Wynik CZĘŚCIOWY jest normalnym wynikiem, nie porażką ---
     "Odpowiedź bywa zrozumiała tylko CZĘŚCIOWO i to jest zwykły przypadek: zapisz wszystko, co da "
     'się odczytać, a resztę wymień w "pominiete". Dzień z godzinami sprzecznymi lub bezsensownymi '
@@ -221,20 +221,20 @@ _SYSTEM_KONIEC = (
     "(„22-6”, „z piątku na sobotę 22 do 6”): zapisz ją w „shifts” jak każdą inną, "
     "wpisując w „dzien” "
     "dzień jej ROZPOCZĘCIA. "
-    # --- Pusty gotowiec: grafik OD ZERA (pracownik nie miał zmian w zeszłym tygodniu) ---
+    # --- Pusty gotowiec: grafik OD ZERA (pracownik nie miał zmian w ostatnich tygodniach) ---
     # Klucz „proponowany_grafik" niesie BAZĘ, nie zawsze pierwotny gotowiec — od pierwszej poprawki
     # jest nią grafik już uzgodniony (patrz `propose.baza_interpretacji`). Definiujemy go tutaj
     # jednym zdaniem zamiast przemianowywać klucz: nazwa występuje w promptcie kilkanaście razy,
     # a znaczenie i tak jest jedno — „to zapiszę, jeśli nie poprosisz o zmianę".
     "„proponowany_grafik” to grafik, który zapiszę, jeśli pracownik nie poprosi o zmianę: na "
-    "początku rozmowy jest to jego grafik z zeszłego tygodnia, a po wcześniejszych poprawkach — "
-    "to, co już z nim ustalono. Kolejne poprawki nanoś właśnie na niego. "
+    "początku rozmowy jest to jego typowy grafik z ostatnich tygodni, a po wcześniejszych "
+    "poprawkach — to, co już z nim ustalono. Kolejne poprawki nanoś właśnie na niego. "
     "„uzgodniony_czas_wolny” (jeśli występuje) to dni WOLNE ustalone wcześniej w tej rozmowie. "
     "Powtórz je w „time_off”, chyba że pracownik właśnie je odwołuje — inaczej znikną z grafiku, "
     "mimo że już się na nie umówiliście. „proponowany_grafik” niesie wyłącznie dni PRACY. "
     "PROPONOWANY GRAFIK MOŻE BYĆ PUSTY ([]) — to NORMALNE, gdy pracownik nie miał zmian w "
-    "zeszłym tygodniu i nic jeszcze nie ustalono. Wtedy pracownik podaje grafik OD ZERA: potraktuj "
-    "podane przez niego "
+    "ostatnich tygodniach i nic jeszcze nie ustalono. Wtedy pracownik podaje grafik OD ZERA: "
+    "potraktuj podane przez niego "
     'godziny jako docelowy grafik i zwróć action="modify". NIE zwracaj "unclear" tylko '
     "dlatego, że proponowany grafik jest pusty ani że pracownik nie wymienił wszystkich dni. "
     "NIE wymagaj kompletu 5 dni — zapisz DOKŁADNIE te dni i godziny, które podał; dni "
