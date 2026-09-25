@@ -13,4 +13,4 @@ Do 2026-09-07 stało tu zdanie, że `pyproject.toml` czyta wersję stąd przez `
 i że pilnuje tego skrypt check_versions — nieprawdziwe podwójnie i przez to rozjazd żył latami.
 """
 
-__version__ = "0.2.24"
+__version__ = "0.2.25"

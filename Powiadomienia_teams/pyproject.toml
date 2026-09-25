@@ -1,6 +1,6 @@
 [project]
 name = "powiadomienia-teams"
-version = "0.2.24"
+version = "0.2.25"
 description = "Cotygodniowe przypomnienia o uzupełnianiu zmian w Microsoft Shifts (Teams)."
 requires-python = ">=3.10"
 dependencies = [

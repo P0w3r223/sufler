@@ -14,44 +14,29 @@ zapisem stanu, w którym usterkę znaleziono, i celowo nie są odświeżane. Wsk
 prowadzić do KODU (`reason` przy `xfail`, komentarze w testach), są aktualizowane razem ze zmianą,
 która je przesuwa.
 
-## [Nieopublikowane] — dwie decyzje klienta: E1 odrzucone, uprawnienia jako przyjęte ryzyko
+## [0.2.25] — 2026-09-25
 
-Bez zmian w kodzie. Dwie otwarte pozycje przestają być otwarte — obie przez DECYZJĘ, nie przez
-wykonanie pracy, i obie zapisane tak, żeby było widać, która jest która.
+Wydanie jednej poprawki, która nie zdążyła do 0.2.24 — scalona (PR #142) 40 minut po zbudowaniu
+tamtego obrazu, więc przez dwa tygodnie była w repozytorium, a nie na serwerze.
 
-### Odrzucone
+**Zmiana widoczna dla pracowników jest JEDNA:** kto po domknięciu tematu („Nie dostałem
+odpowiedzi…") uzupełni grafik sam, dostaje podziękowanie — dokładnie raz — i przestaje być liczony
+w podsumowaniu jako milczący. Dotyczy tematów `EXPIRED` i `DECLINED`, i tylko dopóki trwa tydzień
+docelowy. Nie dotyczy tematów z zapisanym już grafikiem (`APPLIED`, `SELF_FILLED`).
 
-- **E1 (sufit kosztu modelu) — `odrzucone` po pomiarze.** Zmierzone na żywym modelu: **$0,0060 za
-  wiadomość, ~$0,03–0,06 tygodniowo, ~$2–3 rocznie**. Zweryfikowano też wykonaniem, że koszt zależy
-  od LICZBY WIADOMOŚCI, a nie od czasu (20 obiegów nasłuchu bez wiadomości → zero wywołań modelu),
-  więc nie istnieje scenariusz rozbiegowy, którego sufit miałby pilnować. Ta sama procedura co przy
-  D1: zmierzyć, zapisać wynik, dopiero potem skasować.
+Kontrakt stanu: bez zmian — żadnego nowego pola, żadnej zmiany statusów. Obraz 0.2.24 zostaje
+na hoście, więc wycofanie to podmiana tagu w compose.
 
-  **Co ZOSTAJE i nie jest częścią tego odrzucenia:** sufity wobec NIEZAUFANEGO wejścia
-  (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, `_MAX_ZNAKOW_ODPOWIEDZI`, `_MAX_ZNAKOW_HISTORII`).
-  Bronią przed spreparowaną wiadomością, nie przed rachunkiem, i to one trzymają najgorszy
-  przypadek jednej wiadomości na ~$0,024. Skasowanie ich pod hasłem „E1 odrzucone" byłoby
-  nieporozumieniem — dlatego stoi to w planie wprost.
+Poza tym bez zmian w działaniu usługi: dwie decyzje klienta (tylko dokumenty), zmiana nazwy
+WorkMate → Sufler (wyłącznie dwa komentarze w `src/`), poprawka sondy w `tests/test_auth.py`
+i wyrównanie ustawień `mypy`/`ruff` z resztą repozytorium.
 
-### Zamknięte jako przyjęte ryzyko
-
-- **Zawężenie uprawnień rejestracji aplikacji (`deploy/DO-WYKONANIA.md` §7).** Pozycja przestaje
-  być zadaniem, ale **nie dlatego, że praca została zrobiona** — ryzyko zostało świadomie przyjęte.
-  Zapis zostaje w dokumencie, bo skasowanie prawdziwego ustalenia zamieniłoby go w źródło
-  nieprawdy; zmienia się jego STATUS, nie jego treść.
-
-  Przy okazji sprostowana liczba: token niesie **27 uprawnień**, nie 25 jak mówił zapis z lipca —
-  zmierzone odczytem cache na produkcji. Kod prosi o 8. Czternaście nadmiarowych wypisano
-  imiennie, razem z tym, co konkretnie daje ich obecność przy wycieku cache tokenu (zapis do
-  plików SharePoint/OneDrive, kasowanie kanałów Teams, odczyt transkrypcji spotkań) oraz
-  z instrukcją odwrócenia decyzji, gdyby się zmieniła.
-
-## [Nieopublikowane] — samouzupełnienie zauważane także PO domknięciu tematu
+### Samouzupełnienie zauważane także PO domknięciu tematu
 
 Domknięcie luki znalezionej przy weryfikacji dwóch przypadków zgłoszonych z produkcji. Pierwszy
 (odpowiedź po terminie) naprawiło 0.2.24; drugi okazał się naprawiony **tylko w połowie**.
 
-### Naprawione
+#### Naprawione
 
 - **Pracownik, który uzupełnił grafik SAM już PO wygaśnięciu tematu, przestaje być liczony jako
   milczący.** Krok 1.5 nasłuchu patrzył wyłącznie na wpisy otwarte, a to jest najrzadsza z realnych
@@ -78,10 +63,42 @@ Domknięcie luki znalezionej przy weryfikacji dwóch przypadków zgłoszonych z 
   Pracownik widzi wtedy sekwencję samokorygującą: „Nie dostałem odpowiedzi…", a po uzupełnieniu
   „Widzę, że Twój grafik … jest już uzupełniony ✅ Dziękuję!". Druga wiadomość prostuje pierwszą.
 
-### Testy
+#### Testy
 
 Trzy nowe sondy (551 → 554), każda sprawdzona jako strażnik — wobec kodu sprzed poprawki padają
 na `assert 'expired' == 'self_filled'` i na braku podziękowania.
+
+### Dwie decyzje klienta: E1 odrzucone, uprawnienia jako przyjęte ryzyko
+
+Bez zmian w kodzie. Dwie otwarte pozycje przestają być otwarte — obie przez DECYZJĘ, nie przez
+wykonanie pracy, i obie zapisane tak, żeby było widać, która jest która.
+
+#### Odrzucone
+
+- **E1 (sufit kosztu modelu) — `odrzucone` po pomiarze.** Zmierzone na żywym modelu: **$0,0060 za
+  wiadomość, ~$0,03–0,06 tygodniowo, ~$2–3 rocznie**. Zweryfikowano też wykonaniem, że koszt zależy
+  od LICZBY WIADOMOŚCI, a nie od czasu (20 obiegów nasłuchu bez wiadomości → zero wywołań modelu),
+  więc nie istnieje scenariusz rozbiegowy, którego sufit miałby pilnować. Ta sama procedura co przy
+  D1: zmierzyć, zapisać wynik, dopiero potem skasować.
+
+  **Co ZOSTAJE i nie jest częścią tego odrzucenia:** sufity wobec NIEZAUFANEGO wejścia
+  (`_MAX_OBIEGOW`, `_MAX_NARZEDZI_NA_TURE`, `_MAX_ZNAKOW_ODPOWIEDZI`, `_MAX_ZNAKOW_HISTORII`).
+  Bronią przed spreparowaną wiadomością, nie przed rachunkiem, i to one trzymają najgorszy
+  przypadek jednej wiadomości na ~$0,024. Skasowanie ich pod hasłem „E1 odrzucone" byłoby
+  nieporozumieniem — dlatego stoi to w planie wprost.
+
+#### Zamknięte jako przyjęte ryzyko
+
+- **Zawężenie uprawnień rejestracji aplikacji (`deploy/DO-WYKONANIA.md` §7).** Pozycja przestaje
+  być zadaniem, ale **nie dlatego, że praca została zrobiona** — ryzyko zostało świadomie przyjęte.
+  Zapis zostaje w dokumencie, bo skasowanie prawdziwego ustalenia zamieniłoby go w źródło
+  nieprawdy; zmienia się jego STATUS, nie jego treść.
+
+  Przy okazji sprostowana liczba: token niesie **27 uprawnień**, nie 25 jak mówił zapis z lipca —
+  zmierzone odczytem cache na produkcji. Kod prosi o 8. Czternaście nadmiarowych wypisano
+  imiennie, razem z tym, co konkretnie daje ich obecność przy wycieku cache tokenu (zapis do
+  plików SharePoint/OneDrive, kasowanie kanałów Teams, odczyt transkrypcji spotkań) oraz
+  z instrukcją odwrócenia decyzji, gdyby się zmieniła.
 
 ## [0.2.24] — 2026-09-09
 

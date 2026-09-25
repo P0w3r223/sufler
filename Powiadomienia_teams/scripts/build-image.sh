@@ -16,7 +16,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-WERSJA="${WERSJA:-0.2.24}"
+WERSJA="${WERSJA:-0.2.25}"
 OBRAZ="powiadomienia-teams:${WERSJA}"
 EKSPORT="${EKSPORT:-0}"
 # Serwer to linux/amd64. Przy budowaniu na miejscu platforma i tak się zgadza; zmienna ma znaczenie
