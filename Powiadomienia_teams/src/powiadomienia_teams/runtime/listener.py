@@ -560,6 +560,11 @@ def poll_replies(  # noqa: C901, PLR0915
         p
         for p in [*open_items, *wznawialne]
         if p.status in (st.AWAITING_REPLY, st.AWAITING_CONFIRM, *WZNAWIALNE)
+        # Wpis z tygodnia, który już MINĄŁ, jest na liście `wznawialne` wyłącznie po to, żeby
+        # odpowiedzieć na wiadomość (0.2.26). Podziękowanie „grafik jest już uzupełniony" za
+        # zamknięty tydzień byłoby spóźnione o dni, a każdy taki tydzień kosztowałby osobne
+        # pełne pobranie grafiku.
+        and not (p.status in WZNAWIALNE and tydzien_minal(p, now, tz))
         and outcomes.get(p.member_id) is ReadOutcome.NOTHING_NEW
         and ready_for_self_fill_check(p, now, settings.self_fill_check_min_idle_s)
     ]
@@ -964,7 +969,7 @@ def _po_domknieciu_bez_wznowienia(
     minal = tydzien_minal(pending, now, settings.tz)
     uprzejmosc = jest_uprzejmoscia(
         " ".join(tresc for _iso, tresc in wiadomosci),
-        z_potwierdzeniami=pending.status == st.DECLINED or minal,
+        szeroko=pending.status == st.DECLINED or minal,
     )
     if uprzejmosc:
         _commit(settings, state, pending, wiadomosci)

@@ -138,3 +138,13 @@ def test_potwierdzenie_oznacza_dni_ktore_juz_minely():
     html = m.build_confirm_text(GRAFIK, [], WAW, teraz=sroda).html
     assert html.count("już minął") == 2
     assert "<td>07.10</td><td>08:00–16:00</td>" in html  # środa trwa — zostanie zapisana
+
+
+def test_tresc_da_sie_skopiowac():
+    """`dataclasses.asdict` robi deepcopy — `Tresc` nie może wtedy rzucać."""
+    import copy
+    import pickle
+
+    t = m.build_expired_text(ETYKIETA)
+    for kopia in (copy.copy(t), copy.deepcopy(t), pickle.loads(pickle.dumps(t))):
+        assert kopia == t and kopia.html == t.html

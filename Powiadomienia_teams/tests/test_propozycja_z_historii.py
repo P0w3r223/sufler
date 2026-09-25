@@ -160,3 +160,32 @@ def test_brak_historii_to_pusta_propozycja_bez_opisu():
     p = proposal_from_history("u1", [], [], CEL, tz=WAW)
     assert p.grafik.is_empty
     assert p.opis_podstawy == ""
+
+
+def test_nocka_w_noc_zmiany_czasu_nie_wydluza_propozycji():
+    """Przegląd 0.2.26: długość liczona upływem czasu dawała 22:00–06:30 z nocy 24/25.10."""
+    cel = date(2026, 11, 2)
+    historia = [
+        _zmiana(date(2026, 10, 24), "22:00", "06:00"),  # przez zmianę czasu — 9 h upływu
+        _zmiana(date(2026, 10, 17), "22:00", "06:00"),
+    ]
+    p = proposal_from_history("u1", historia, [], cel, tz=WAW)
+    (s,) = p.grafik.shifts
+    assert f"{s.start.astimezone(WAW):%H:%M}–{s.end.astimezone(WAW):%H:%M}" == "22:00–06:00"
+
+
+def test_tryb_glosuje_tryb_nie_kolor():
+    """green (najnowszy), blue, blue, None → remis 2:2 trybów, wygrywa najnowszy: stacjonarnie."""
+    motywy = ["green", "blue", "blue", None]  # od najnowszego tygodnia
+    historia = [
+        _zmiana(t + timedelta(days=1), "08:00", "16:00", theme=m)  # type: ignore[arg-type]
+        for t, m in zip(reversed(TYGODNIE), motywy, strict=True)
+    ]
+    p = proposal_from_history("u1", historia, [], CEL, tz=WAW)
+    assert _plan(p) == [(1, "08:00", "16:00", "green")]
+
+
+def test_urlop_z_identyfikatorem_w_innej_wielkosci_liter_nadal_nie_glosuje():
+    historia = [z for t in TYGODNIE[:3] for z in _tydzien(t)]
+    p = proposal_from_history("u1", historia, [_wolne(TYGODNIE[3], 7, uid="U1")], CEL, tz=WAW)
+    assert p.tygodnie_z_urlopem == 1

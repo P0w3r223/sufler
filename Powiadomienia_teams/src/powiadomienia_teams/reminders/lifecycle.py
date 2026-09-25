@@ -474,7 +474,11 @@ def prune_terminal(
             if biezacy_tydzien and pending.week_start >= biezacy_tydzien:
                 kept[key] = pending  # strażnik wciąż chroni bieżący tydzień
                 continue
-            if tz is not None and not tydzien_minal(pending, now, tz):
+            if (
+                tz is not None
+                and _poczatek_tygodnia(pending.week_start, tz) is not None
+                and not tydzien_minal(pending, now, tz)
+            ):
                 # Tydzień wpisu jeszcze TRWA (piątkowy przebieg w tygodniu W sprząta wpisy W,
                 # a ten kończy się dopiero w niedzielę). Bez tego warunku wznowienie obiecane
                 # przez `mozna_wznowic` „do końca tygodnia" kończyło się w piątek o 16:00:

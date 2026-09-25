@@ -940,7 +940,7 @@ def test_dzien_juz_wolny_w_grafiku_nie_jest_obiecywany_ani_falszywie_domykany(tm
     # w tym, co ostatecznie trafia do grafiku: podwójnego urlopu nie powstaje w żadnym wariancie.
     assert "Zapiszę" in tresc
     assert "Urlop" in tresc
-    assert "Tydzień, którego dotyczyło przypomnienie" not in tresc  # tydzień DOPIERO nadchodzi
+    assert "już się zaczął" not in tresc  # tydzień DOPIERO nadchodzi (tytuł i tekst STALE)
     assert client.time_off == []  # nic nie dopisujemy — stan świata już jest właściwy
     assert load_state(state_path)["u1"].status == AWAITING_CONFIRM  # domknięcie POMYŚLNE
 
@@ -1454,7 +1454,8 @@ def test_late_reply_within_window_is_processed_not_expired(tmp_path: Path):
     poll_replies(settings, client, llm, now=now)  # type: ignore[arg-type]
     after = load_state(state_path)["u1"]
     assert after.status == AWAITING_CONFIRM  # odczytana, NIE wygaszona
-    assert all("nic nie zapisuję" not in html for _c, html in client.sent)  # brak EXPIRED_TEXT
+    # Tytuł domknięć jest wspólny dla tekstu i HTML-a (`messages.Tresc`) — to po nim szukamy.
+    assert all("Nie dostałem odpowiedzi" not in html for _c, html in client.sent)
 
 
 def _po_przestoju(state_path: Path) -> None:
@@ -1512,7 +1513,7 @@ def test_reply_read_after_window_is_honoured_not_expired(tmp_path: Path):
 
     assert load_state(state_path)["u1"].status == AWAITING_CONFIRM  # obsłużona, nie wygaszona
     assert len(client.sent) == 1  # WYŁĄCZNIE prośba o potwierdzenie
-    assert all("nic nie zapisuję" not in html for _c, html in client.sent)
+    assert all("Nie dostałem odpowiedzi" not in html for _c, html in client.sent)
 
 
 def test_failed_chat_read_does_not_expire(tmp_path: Path):
@@ -4655,7 +4656,10 @@ _WT_21 = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)  # wtorek tygodnia do
 _WT_28 = datetime(2026, 7, 28, 10, 0, tzinfo=timezone.utc)  # wtorek PO tygodniu docelowym
 
 
-@pytest.mark.parametrize("tresc", ["dzięki", "Dzięki 🙂", "ok", "ok, dzięki!", "👍", "tak"])
+@pytest.mark.parametrize(
+    "tresc",
+    ["dzięki", "Dzięki 🙂", "ok", "ok, dzięki!", "👍", "tak", "Dzięki za info", "dobra, cześć", ""],
+)
 def test_grzecznosc_po_ODMOWIE_nie_wznawia_tematu(tmp_path: Path, tresc: str):
     """Żywy model: „dzięki" po odmowie → confirm → „Zapiszę grafik…" do kogoś, kto odmówił."""
     state_path = tmp_path / "state.json"
@@ -4710,7 +4714,7 @@ def test_wiadomosc_PO_KONCU_tygodnia_dostaje_JEDNA_odpowiedz_zamiast_ciszy(tmp_p
 
     assert len(client.sent) == 1
     html = client.sent[0][1]
-    assert "już zamknięty" in html
+    assert "Nie mam teraz otwartej sprawy" in html
     assert "20.07–26.07" in html
     assert "<table>" in html
     po = load_state(state_path)["u1"]
@@ -4800,3 +4804,38 @@ def test_piatkowy_przebieg_NIE_kasuje_wpisu_tygodnia_ktory_jeszcze_trwa(tmp_path
     sobota = datetime(2026, 7, 25, 9, 0, tzinfo=timezone.utc)
     poll_replies(_settings_calodobowe(state_path), client, llm, now=sobota)  # type: ignore[arg-type]
     assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+
+
+def test_kciuk_po_WYGASNIECIU_wznawia_temat(tmp_path: Path):
+    """Przegląd 0.2.26: „👍" po wygaśnięciu bywa zgodą na propozycję — nie wolno go przemilczeć."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, EXPIRED)
+    client = _FakeClient({"chat1": [_msg("u1", "2026-07-21T09:00:00Z", "👍")]})
+    llm = _FakeLlm('{"action":"confirm","shifts":[{"weekday":4,"start":"08:00","end":"16:00"}]}')
+
+    poll_replies(_settings_calodobowe(state_path), client, llm, now=_WT_21)  # type: ignore[arg-type]
+
+    assert load_state(state_path)["u1"].status == AWAITING_CONFIRM
+
+
+@pytest.mark.parametrize("status", [EXPIRED, DECLINED])
+def test_uzupelniony_PO_KONCU_tygodnia_nie_dostaje_spoznionego_podziekowania(
+    tmp_path: Path, status: str
+):
+    """Przegląd 0.2.26: wpis z minionego tygodnia wpadał do kroku 1.5 i dostawał „dziękuję"."""
+    state_path = tmp_path / "state.json"
+    _domkniety(state_path, status)
+    zmiany = tuple(
+        Shift(
+            "u1",
+            datetime(2026, 7, 20 + d, 6, tzinfo=timezone.utc),
+            datetime(2026, 7, 20 + d, 14, tzinfo=timezone.utc),
+        )
+        for d in range(5)
+    )
+    client = _FakeClient({"chat1": []}, shifts=zmiany)
+
+    poll_replies(_settings_calodobowe(state_path), client, _RaisingLlm(), now=_WT_28)  # type: ignore[arg-type]
+
+    assert client.sent == []
+    assert load_state(state_path)["u1"].status == status

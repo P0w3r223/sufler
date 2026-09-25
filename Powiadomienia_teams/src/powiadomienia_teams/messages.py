@@ -7,6 +7,10 @@ Każda wiadomość istnieje w DWÓCH postaciach naraz — dlatego builderzy zwra
 - **HTML** (``Tresc.html``) — to dostaje Teams: tabela dla wszystkiego, co ma dni, godziny albo
   liczby, a przy wiadomościach bez danych — pogrubiony tytuł i karta „etykieta → wartość".
 
+Obie postaci niosą TĘ SAMĄ informację, ale nie te same zdania: HTML rozkłada ją na tytuł i wiersze
+karty. Wspólny jest tytuł/pierwsze zdanie (np. „Nie dostałem odpowiedzi") — testy, które pytają
+o to, CO wysłano, sprawdzają właśnie ten fragment albo porównują z ``to_html(builder(...))``.
+
 Tabele są zwykłym ``<table>`` z ``<thead>``/``<tbody>``, bez stylów: dokładnie tym znacznikiem
 Teams renderuje tabele w czacie poprawnie (zmierzone na żywo 2026-08-21 przy tabelach Suflera),
 a style w linii klient Teams w dużej części odrzuca — na nich wygląd by się rozjechał.
@@ -69,6 +73,11 @@ class Tresc(str):
         obj = super().__new__(cls, tekst)
         obj.html = html
         return obj
+
+    def __getnewargs__(self) -> tuple[str, str]:  # type: ignore[override]
+        # `copy`/`deepcopy`/`pickle` (np. `dataclasses.asdict`) odtwarzają obiekt przez `__new__`
+        # z tymi argumentami — bez tego rzucały TypeError.
+        return (str(self), self.html)
 
 
 def _p(tresc_html: str) -> str:
@@ -309,23 +318,26 @@ def build_tydzien_zamkniety_text(week_label: str) -> Tresc:
     """Odpowiedź na wiadomość, która przyszła PO końcu tygodnia, o który pytaliśmy.
 
     Do 0.2.25 taka wiadomość nie dostawała NIC — temat był domknięty, tydzień minął, więc nikt
-    jej nawet nie czytał. Pracownik, który przeprasza i podaje godziny, widział ciszę. Nie
-    zapisujemy (grafiku wstecz nie uzupełniamy — menedżer czyta go jak stan faktyczny), ale
-    mówimy to wprost i wskazujemy, kto może to zrobić.
+    jej nawet nie czytał. Nie zapisujemy (grafiku wstecz nie uzupełniamy — menedżer czyta go jak
+    stan faktyczny), ale mówimy to wprost i wskazujemy, kto może pomóc.
+
+    Sformułowanie jest celowo NEUTRALNE wobec tego, o czym pracownik pisał: wiadomość może
+    dotyczyć minionego tygodnia albo bieżącego (jeśli ktoś uzupełnił go za tę osobę, nowej prośby
+    nie było). Dlatego „nie mam otwartej sprawy", a nie „ten tydzień jest zamknięty" — i bez
+    obietnicy kolejnego pytania, bo osoba z uzupełnionym grafikiem go nie dostanie.
     """
     tekst = (
-        f"Tydzień {week_label} jest już zamknięty — nie zapisuję go automatycznie. "
-        "Jeśli grafik za ten tydzień wymaga poprawki, napisz proszę do przełożonego. "
-        "O kolejny tydzień zapytam jak zwykle w piątek."
+        f"Nie mam teraz otwartej sprawy Twojego grafiku — ostatnia dotyczyła tygodnia {week_label} "
+        "i jest już zamknięta, więc niczego nie zapisuję. Zmiany w grafiku zgłoś proszę "
+        "przełożonemu."
     )
     return _komunikat(
         tekst,
-        "Ten tydzień jest już zamknięty",
+        "Nie mam teraz otwartej sprawy Twojego grafiku",
         (
-            ("Tydzień", week_label),
-            ("Status", "nie zapisuję go automatycznie"),
-            ("Co dalej", "Poprawkę za ten tydzień zgłoś przełożonemu."),
-            ("Następny grafik", "zapytam jak zwykle w piątek"),
+            ("Ostatnia sprawa", f"tydzień {week_label} — zamknięta"),
+            ("Status", "niczego nie zapisuję"),
+            ("Co dalej", "Zmiany w grafiku zgłoś proszę przełożonemu."),
         ),
     )
 

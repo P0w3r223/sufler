@@ -25,6 +25,9 @@ ma tabelę z dniami, datami, godzinami i trybem pracy; potwierdzenie mówi, któ
 dotyczy; „dzięki" po odmowie nie otwiera już tematu od nowa; wiadomość po zamkniętym tygodniu
 dostaje odpowiedź zamiast ciszy.
 
+Przed scaleniem wydanie przeszło niezależny przegląd kodu; jego uwagi są naniesione (niżej
+oznaczone „przegląd").
+
 Kontrakt stanu: jedno nowe pole opcjonalne (`po_tygodniu_odpisano_at`) z bezpieczną wartością
 domyślną; 0.2.25 wczytuje stan zapisany przez 0.2.26 (nieznane pole jest pomijane), więc wycofanie
 to podmiana tagu.
@@ -51,8 +54,10 @@ to podmiana tagu.
   podsumowanie dla administratora jako jedna tabela (pozycje × tygodnie). Zwykłe `<table>` bez
   stylów — tym znacznikiem Teams renderuje tabele poprawnie (zmierzone przy tabelach Suflera).
   Strażnik: `tests/test_wyglad_wiadomosci.py` iteruje po builderach.
-- **Odpowiedź „ten tydzień jest już zamknięty"** na wiadomość, która przyszła po końcu tygodnia —
-  jedna na wpis, bez zapisu. Do 0.2.25 taka wiadomość nie była nawet czytana.
+- **Odpowiedź na wiadomość po końcu tygodnia** („Nie mam teraz otwartej sprawy Twojego grafiku —
+  ostatnia dotyczyła tygodnia X i jest zamknięta… zmiany zgłoś przełożonemu") — jedna na wpis,
+  bez zapisu. Do 0.2.25 taka wiadomość nie była nawet czytana. Sformułowanie neutralne, bo
+  wiadomość może dotyczyć także bieżącego tygodnia (przegląd).
 
 ### Naprawione
 
@@ -62,8 +67,11 @@ to podmiana tagu.
   swojego tygodnia.
 - **„Dzięki" po odmowie wznawiało temat** i model brał je za zgodę — bot wysyłał „Zapiszę
   grafik… Potwierdź »tak«" komuś, kto odmówił, a w poniedziałek „Nie doczekałem się
-  potwierdzenia" (żywy model, 3/3). Sama grzeczność po domknięciu nie wznawia; „ok" po odmowie
-  też nie, po wygaśnięciu — nadal tak, bo przypomnienie uczy „wystarczy odpisać »ok«".
+  potwierdzenia" (żywy model, 3/3). Po odmowie i po końcu tygodnia temat wznawia WYŁĄCZNIE
+  wiadomość niosąca treść grafiku (godzina, dzień, „jednak", urlop, tryb pracy…) — słownika
+  grzeczności nie da się domknąć, „Dzięki za info" czy „dobra, cześć" przechodziły (przegląd).
+  Po wygaśnięciu w trakcie tygodnia „ok", „👍" i pusta wiadomość nadal wznawiają, bo
+  przypomnienie uczy „wystarczy odpisać »ok«"; nie wznawiają tylko podziękowania i pozdrowienia.
 - **Potwierdzenie nie mówiło, którego tygodnia dotyczy.** Po nowej prośbie odpowiedź o mijającym
   tygodniu szła do grafiku następnego bez żadnej wskazówki (żywy model). Teraz tydzień i data
   każdego dnia stoją w treści, a dni, które już minęły, są oznaczone przed „tak".
@@ -79,6 +87,11 @@ to podmiana tagu.
   rozmowie dwie etykiety. Teraz obie mówią pon–nd.
 - `deploy/README-serwer.md`, „Znane ograniczenia": tabela wymieniała sześć dawno naprawionych
   ograniczeń; zastąpiona aktualną.
+- Przegląd, drobne: wpis po końcu tygodnia nie trafia do sprawdzania samouzupełnienia (spóźnione
+  „dziękuję" i pełne pobranie grafiku na obieg); propozycja liczy długość nocki na zegarze
+  ściennym (noc zmiany czasu dawała 22:00–06:30) i głosuje TRYB pracy, nie kolor; tożsamość przez
+  `ten_sam`; `Tresc` da się kopiować; nieparsowalny adres webhooka nie blokuje `--login`/`--stan`;
+  wpis z nieczytelnym `week_start` nadal podlega retencji.
 
 ## [0.2.25] — 2026-09-25
 

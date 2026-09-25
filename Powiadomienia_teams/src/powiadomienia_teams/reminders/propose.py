@@ -11,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from powiadomienia_teams.domain.models import Shift, TimeOff, WeekSchedule
+from powiadomienia_teams.domain.tozsamosc import ten_sam
 
 #: Ile tygodni wstecz liczy się do propozycji („średnia z ostatniego miesiąca").
 TYGODNIE_HISTORII = 4
@@ -149,7 +150,7 @@ def _dni_wolne(
     """Lokalne daty z przedziału ``[od, do)`` objęte czasem wolnym danej osoby."""
     wolne: set[date] = set()
     for t in time_off:
-        if t.user_id != member_id:
+        if not ten_sam(t.user_id, member_id):
             continue
         dzien = max(t.start.astimezone(tz).date(), od)
         koniec = t.end.astimezone(tz)
@@ -178,9 +179,20 @@ def _typowy_dzien(
     3. **Brak powtórzeń i dzielone zmiany** — najnowszy dzień w całości. Uśrednianie dwóch
        różnych podziałów dnia nie ma sensownego wyniku.
     """
+    # Długość na ZEGARZE ŚCIENNYM, nie upływem czasu: nocka 22:00–06:00 w noc zmiany czasu trwa
+    # 9 h, a jej powtórzenie w zwykłym tygodniu ma dać znowu 22:00–06:00, nie 22:00–07:00.
     wzorce = [
         tuple(
-            (_minuty(s.start.astimezone(tz)), int((s.end - s.start).total_seconds() // 60))
+            (
+                _minuty(s.start.astimezone(tz)),
+                int(
+                    (
+                        s.end.astimezone(tz).replace(tzinfo=None)
+                        - s.start.astimezone(tz).replace(tzinfo=None)
+                    ).total_seconds()
+                    // 60
+                ),
+            )
             for s in dzien
         )
         for dzien in dni
@@ -195,9 +207,13 @@ def _typowy_dzien(
         godziny = ((start, dlugosc),)
     else:
         godziny = wzorce[0]
-    motywy = [dzien[0].theme for dzien in dni]
-    motyw_licznik = Counter(motywy)
-    motyw = max(motyw_licznik, key=lambda m: (motyw_licznik[m], -motywy.index(m)))
+    # Głosuje TRYB (zdalnie / na miejscu), nie kolor: `None`, `green` i inne kolory znaczą to samo
+    # „stacjonarnie" (`messages._tryb`), więc liczone osobno przegrywałyby z jednym `blue`.
+    # Wygrywa częstszy tryb, remis — najnowszy; kolor bierzemy z najnowszego dnia w tym trybie.
+    tryby = ["blue" if dzien[0].theme == "blue" else "inny" for dzien in dni]
+    tryb_licznik = Counter(tryby)
+    tryb = max(tryb_licznik, key=lambda t: (tryb_licznik[t], -tryby.index(t)))
+    motyw = dni[tryby.index(tryb)][0].theme
     return godziny, motyw, dni[0][0].scheduling_group_id
 
 
@@ -235,7 +251,7 @@ def proposal_from_history(
     wolne = _dni_wolne(member_id, history_time_off, tz, od=od, do=do)
     zmiany_dnia: dict[date, list[Shift]] = {}
     for s in history_shifts:
-        if s.user_id != member_id:
+        if not ten_sam(s.user_id, member_id):
             continue
         dzien = s.start.astimezone(tz).date()
         if od <= dzien < do:

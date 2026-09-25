@@ -566,7 +566,12 @@ def main() -> None:  # noqa: PLR0915
         logger.critical("Błąd konfiguracji: %s", blad)
         raise SystemExit(2) from None
     # Zanim padnie PIERWSZE żądanie HTTP — patrz `alerts.ukryj_adres_w_logach`.
-    alerts.ukryj_adres_w_logach(settings.alert_webhook_url)
+    try:
+        alerts.ukryj_adres_w_logach(settings.alert_webhook_url)
+    except Exception:  # noqa: BLE001 — maskowanie logu nie może zablokować startu
+        # Nieparsowalny adres (`--login`/`--stan` nie walidują webhooka): wysyłka i tak padnie
+        # z własnym ostrzeżeniem, a diagnostyka ma działać właśnie wtedy, gdy konfiguracja kuleje.
+        logger.warning("ALERT_WEBHOOK_URL nie jest poprawnym adresem — nie maskuję go w logach")
 
     if args.login:
         login_interactive(settings)
