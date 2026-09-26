@@ -169,4 +169,4 @@ LABEL org.opencontainers.image.title="sufler" \
       org.opencontainers.image.revision="${REWIZJA}" \
       org.opencontainers.image.description="Serwer MCP pionu + drzwi mostu GitHub/Jira/Teams (flota)" \
       org.opencontainers.image.version="${WERSJA}" \
-      org.opencontainers.image.source="https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate"
+      org.opencontainers.image.source="https://github.com/P0w3r223/sufler"

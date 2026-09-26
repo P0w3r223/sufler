@@ -121,4 +121,4 @@ ARG WERSJA=0.2.26
 LABEL org.opencontainers.image.title="powiadomienia-teams" \
       org.opencontainers.image.description="Cotygodniowe przypomnienia o zmianach (Microsoft Shifts)" \
       org.opencontainers.image.version="${WERSJA}" \
-      org.opencontainers.image.source="https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate"
+      org.opencontainers.image.source="https://github.com/P0w3r223/sufler"

@@ -1865,11 +1865,11 @@ Pierwsze wydanie produkcyjne — Fazy 1–4 domknięte, most trójstronny zweryf
   pliki/zdjęcia do użytkownika (ADR 0027) — bramki domyślnie OFF; ADR 0026/0027 wymagają
   zgody admina na zakres zapisu Microsoft Graph.
 
-[Unreleased]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/compare/v1.15.0...HEAD
-[1.15.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.15.0
-[1.3.2]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.2
-[1.3.1]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.1
-[1.3.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.3.0
-[1.2.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.2.0
-[1.1.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.1.0
-[1.0.0]: https://github.com/BIAP-Inteligentne-Technologie/PIWorkmate/releases/tag/v1.0.0
+[Unreleased]: https://github.com/P0w3r223/sufler/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/P0w3r223/sufler/releases/tag/v1.15.0
+[1.3.2]: https://github.com/P0w3r223/sufler/releases/tag/v1.3.2
+[1.3.1]: https://github.com/P0w3r223/sufler/releases/tag/v1.3.1
+[1.3.0]: https://github.com/P0w3r223/sufler/releases/tag/v1.3.0
+[1.2.0]: https://github.com/P0w3r223/sufler/releases/tag/v1.2.0
+[1.1.0]: https://github.com/P0w3r223/sufler/releases/tag/v1.1.0
+[1.0.0]: https://github.com/P0w3r223/sufler/releases/tag/v1.0.0
