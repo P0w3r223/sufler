@@ -31,9 +31,10 @@ def match_name(candidates: Sequence[tuple[str, _T]], query: str) -> tuple[_T | N
     """Dopasuj ``query`` do listy ``(display_name, wartość)``; zwróć ``(wartość | None, niejasne)``.
 
     Najpierw dokładne dopasowanie znormalizowanego nazwiska; przy braku — dopasowanie po wszystkich
-    tokenach zapytania (np. „zastepski" trafia „jerzy zastepski"), ale tylko gdy jest DOKŁADNIE jeden taki
-    kandydat. Zero trafień → ``(None, [])``; wiele → ``(None, [oryginalne display_name])``, żeby
-    wołający mógł poprosić o doprecyzowanie. Dopasowanie działa na zaufanym zbiorze kandydatów.
+    tokenach zapytania (np. „zastepski" trafia „jerzy zastepski"), ale tylko gdy jest DOKŁADNIE
+    jeden taki kandydat. Zero trafień → ``(None, [])``; wiele →
+    ``(None, [oryginalne display_name])``, żeby wołający mógł poprosić o doprecyzowanie.
+    Dopasowanie działa na zaufanym zbiorze kandydatów.
     """
     norm_query = normalize_name(query)
     if not norm_query:

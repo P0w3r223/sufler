@@ -40,7 +40,8 @@ def test_scopes_jql_to_configured_assignee() -> None:
     service = MyJiraTasksService(client, assignee="mikolaj@example.org")
     service.my_open_tasks()
     assert client.jql_calls == [
-        '(assignee = "mikolaj@example.org" OR (reporter = "mikolaj@example.org" AND assignee IS EMPTY)) '
+        '(assignee = "mikolaj@example.org" OR '
+        '(reporter = "mikolaj@example.org" AND assignee IS EMPTY)) '
         "AND resolution = EMPTY ORDER BY priority DESC, duedate ASC"
     ]
 
@@ -49,7 +50,9 @@ def test_maps_returned_issues() -> None:
     client = _FakeJiraRead(
         issues=[{"key": "WM-1", "fields": {"summary": "Coś", "status": {"name": "To Do"}}}]
     )
-    service = MyJiraTasksService(client, assignee="mikolaj@example.org", base_url="https://jira.example.org")
+    service = MyJiraTasksService(
+        client, assignee="mikolaj@example.org", base_url="https://jira.example.org"
+    )
     tasks, truncated = service.my_open_tasks()
     assert not truncated
     assert len(tasks) == 1

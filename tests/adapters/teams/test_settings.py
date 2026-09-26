@@ -84,7 +84,9 @@ def test_validate_rejects_read_authz_also_in_authenticated_mode():
 
 def test_validate_passes_with_read_authz_and_existing_map(tmp_path: Path):
     identities = tmp_path / "identities.yaml"
-    identities.write_text("EMP-1:\n  aad_user_id: aad-anna\n  jira_user: anna@example.org\n", "utf-8")
+    identities.write_text(
+        "EMP-1:\n  aad_user_id: aad-anna\n  jira_user: anna@example.org\n", "utf-8"
+    )
 
     TeamsSettings(
         anonymous_auth=True,
