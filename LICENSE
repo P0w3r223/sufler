@@ -1,24 +1,21 @@
-Sufler — Licencja własnościowa (Proprietary)
+MIT License
 
-Copyright © 2026 BIAP – Pion Inteligentnych Technologii. Wszelkie prawa zastrzeżone.
-All Rights Reserved.
+Copyright (c) 2026 Piotr Cząstkiewicz
 
-Niniejsze oprogramowanie wraz z kodem źródłowym, dokumentacją i materiałami
-towarzyszącymi ("Oprogramowanie") stanowi poufną i zastrzeżoną własność
-BIAP – Pion Inteligentnych Technologii ("BIAP").
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. Bez uprzedniej, wyraźnej, pisemnej zgody BIAP zabrania się kopiowania,
-   modyfikowania, rozpowszechniania, publikowania, udostępniania, dekompilacji,
-   inżynierii wstecznej ani wykorzystywania Oprogramowania w całości lub w części,
-   w jakimkolwiek celu.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-2. Oprogramowanie jest udostępniane wyłącznie upoważnionym odbiorcom na podstawie
-   odrębnej umowy. Wszelkie prawa nieudzielone wprost w takiej umowie pozostają
-   zastrzeżone przez BIAP.
-
-3. OPROGRAMOWANIE JEST DOSTARCZANE „TAK JAK JEST" (AS IS), BEZ JAKICHKOLWIEK
-   GWARANCJI, WYRAŹNYCH ANI DOROZUMIANYCH. W MAKSYMALNYM ZAKRESIE DOZWOLONYM PRZEZ
-   PRAWO BIAP NIE PONOSI ODPOWIEDZIALNOŚCI ZA JAKIEKOLWIEK SZKODY WYNIKŁE Z
-   UŻYCIA LUB NIEMOŻNOŚCI UŻYCIA OPROGRAMOWANIA.
-
-W sprawach licencyjnych kontakt: BIAP – Pion Inteligentnych Technologii.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
