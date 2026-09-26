@@ -15,7 +15,7 @@ readme = "README.md"
 # tylko po to, żeby nie wywrócić kolekcji na wersji, której nikt nie uruchamiał. Deklaracja
 # nadąża więc za faktami; poszerzenie z powrotem = nowa oś w macierzy CI, nie sama liczba.
 requires-python = ">=3.11"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 dependencies = [
     "mcp[cli]>=1.2.0",
     "pydantic>=2.6",
