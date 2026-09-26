@@ -20,7 +20,8 @@ from sufler.core.errors import InvalidRequestError
 def test_build_my_tasks_jql_scopes_to_assignee_or_reported_unassigned() -> None:
     jql = build_my_tasks_jql("mikolaj@example.org")
     assert jql == (
-        '(assignee = "mikolaj@example.org" OR (reporter = "mikolaj@example.org" AND assignee IS EMPTY)) '
+        '(assignee = "mikolaj@example.org" OR '
+        '(reporter = "mikolaj@example.org" AND assignee IS EMPTY)) '
         "AND resolution = EMPTY ORDER BY priority DESC, duedate ASC"
     )
 

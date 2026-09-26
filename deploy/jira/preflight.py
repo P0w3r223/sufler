@@ -8,7 +8,8 @@ Jira) z tej samej mapy co autoryzacja notatek (ADR 0042). Nic nie tworzy/zmienia
 Uruchomienie (w środowisku projektu, z wypełnionym ``.env``)::
 
     uv run --no-sync python deploy/jira/preflight.py --account mikolaj@example.org
-    uv run --no-sync python deploy/jira/preflight.py --account mikolaj@example.org --aad <aad-user-id>
+    uv run --no-sync python deploy/jira/preflight.py --account mikolaj@example.org \
+        --aad <aad-user-id>
 
 Bez ``--account`` używane jest ``SUFLER_JIRA_MY_ACCOUNT`` (principal serwera MCP, ADR 0054).
 Kody wyjścia: ``0`` = auth + odczyt OK; ``1`` = konfiguracja/auth/odczyt odrzucone (stderr).

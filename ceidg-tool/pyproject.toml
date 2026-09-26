@@ -9,7 +9,7 @@ description = "Pobieranie danych JDG z API v3 Hurtowni Danych CEIDG do skoroszyt
 readme = "README.md"
 requires-python = ">=3.11"
 # Bez własnego pola `license`: licencję całego drzewa niesie `LICENSE` w korzeniu
-# (Proprietary), tak samo jak w pozostałych pod-projektach. Deklaracja MIT pochodziła
+# (MIT), tak samo jak w pozostałych pod-projektach. Deklaracja MIT pochodziła
 # z czasu, gdy ten projekt żył na osobnej gałęzi — decyzja o wyrównaniu: ADR 0074.
 dependencies = [
     # Górna granica, bo gwarancja wyjścia z §B opiera się na **wewnętrznym** zachowaniu httpx
