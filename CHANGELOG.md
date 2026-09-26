@@ -488,8 +488,7 @@ właśnie ten rozjazd wydanie zamyka.
 
   Reguła żyła dotąd wyłącznie w komentarzu w `tools/project.py`, czyli dokładnie w tym stanie,
   w którym była, gdy `File` obiecywał „poprawki zapisuj jako nową notatkę" przy wyłączonym
-  `Project(save)`. Tamto zdanie zdjął `515e140` (przed przepisaniem historii 2026-09-10:
-  `d989a64`) razem z sondą na TO JEDNO zdanie; ta bramka
+  `Project(save)`. Tamto zdanie zdjął `76b039e` razem z sondą na TO JEDNO zdanie; ta bramka
   uogólnia ją na repertuar akcji wszystkich narzędzi.
 
 - **Nocny bieg CI (`schedule` 04:17 UTC) i ręczne uruchomienie (`workflow_dispatch`).** CI biegało
