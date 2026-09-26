@@ -1,7 +1,7 @@
 [project]
 name = "sufler"
 version = "1.16.0"
-description = "Wewnętrzny serwer MCP pionu Inteligentnych Technologii — wspólna baza wiedzy (notatki, status projektów) dla Claude Code, runtime agenta na drzwiach Teams/CLI, most GitHub ↔ EventStore ↔ Teams (z bramkowanym zapisem), odczyt Jira 'moje zadania' oraz lokalny retrieval leksykalny notatek."
+description = "MCP server and agent runtime for one team: shared notes for Claude Code, Teams, CLI and GitHub, with gated writes."
 readme = "README.md"
 # 3.11 to jedyna wersja, na której cokolwiek tu biega: `.python-version` mówi 3.11, a oba etapy
 # obrazu (`deploy/docker/Dockerfile`) stoją na `python:3.11-slim`. Macierz w `ci.yml` nie ma osi
