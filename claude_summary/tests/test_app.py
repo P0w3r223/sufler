@@ -199,3 +199,56 @@ def test_main_help_works_despite_broken_config(
         main()
     assert exc.value.code == 0
     assert "Użycie:" in capsys.readouterr().out
+
+
+# Sekret w treści promptu — realistyczny kształt (przypisanie klucza), łapany przez
+# `_SECRET_ASSIGN`. Reszta zdania niesie dość słów, żeby prompt NIE został odrzucony jako wklejka.
+_SECRET_LITERAL = "sk-tajne-haslo-123"
+_PROMPT_WITH_SECRET = f"naprawiłem logowanie, ustawiłem API_KEY={_SECRET_LITERAL} w konfiguracji"
+
+
+def test_secret_never_leaves_the_pipeline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Redakcja MUSI działać na ścieżce end-to-end, nie tylko w teście jednostkowym.
+
+    `test_redaction.py` sprawdza funkcje redakcji bezpośrednio, ale nic nie pilnowało ich
+    WYWOŁANIA w `transcripts.parse_prompt`: po wyłączeniu redakcji w tym miejscu cały pakiet
+    zostawał zielony, a narzędzie wypisywało surową treść promptów (sprawdzone mutacją 2026-10-01).
+    Ten test wiąże jednostkę z granicą: sekret nie może pojawić się na stdout. To samo dotyczy
+    drugiej redakcji w tej funkcji — nazwy folderu projektu, która niesie nazwę użytkownika.
+    """
+    projects = tmp_path / "projects"
+    folder = "C--Users-jkowalski-proj"  # Claude Code koduje w nazwie folderu ścieżkę z kontem
+    _write_prompt(projects, folder, _PROMPT_WITH_SECRET, "C:\\x", "2026-07-20T09:00:00.000Z")
+    args = _Args(since=date(2026, 7, 20), until=date(2026, 7, 20), fmt="json")
+
+    code = run(args, _settings(tmp_path, consent=True))
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    prompts = [p for day in payload["days"] for p in day["prompts"]]
+    assert prompts, "prompt zniknął z raportu — test nie sprawdza już redakcji"
+
+    text = prompts[0]["text"]
+    assert _SECRET_LITERAL not in text
+    assert "[SEKRET]" in text
+    # Kategoria zapisana do audytu; sama wartość nigdy.
+    assert "secret" in prompts[0]["redactions"]
+    assert _SECRET_LITERAL not in json.dumps(payload, ensure_ascii=False)
+    assert "jkowalski" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_secret_absent_from_written_output_file(tmp_path: Path) -> None:
+    """Ta sama granica po stronie ARTEFAKTU — plik w `output_dir` też nie może nieść sekretu."""
+    projects = tmp_path / "projects"
+    _write_prompt(projects, "C--proj", _PROMPT_WITH_SECRET, "C:\\x", "2026-07-20T09:00:00.000Z")
+    settings = _settings(tmp_path, consent=True)
+    args = _Args(since=date(2026, 7, 20), until=date(2026, 7, 20), fmt="both")
+
+    assert run(args, settings) == 0
+
+    written = list(settings.output_dir.glob("summary_*"))
+    assert written, "nie powstał żaden plik wyniku — test nie sprawdza już artefaktu"
+    for path in written:
+        assert _SECRET_LITERAL not in path.read_text(encoding="utf-8")

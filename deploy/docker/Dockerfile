@@ -70,8 +70,11 @@ COPY data/ ./data/
 # `tests/deploy/test_manage_tokens.py` ładuje moduł z deploy/http/manage_tokens.py przy kolekcji —
 # bez tego COPY pytest przerywa się na `FileNotFoundError` (etap `runtime` kopiuje go osobno, niżej).
 COPY deploy/http/ ./deploy/http/
-# Bieg NA TYM Pythonie i TEJ architekturze, na której obraz pojedzie — w szczególności
-# potwierdza gałąź POSIX `fcntl` w single_instance.py, nieuruchamialną na maszynie deweloperskiej.
+# Bieg NA TYM Pythonie i TEJ architekturze, na której obraz pojedzie — w szczególności wykonuje
+# gałąź POSIX `fcntl` w single_instance.py, nieuruchamialną na maszynie deweloperskiej z Windows
+# (`tests/adapters/inbound/test_single_instance.py::test_posix_branch_uses_fcntl`, tam `skipif`).
+# Do 2026-10-01 to zdanie było fałszem dla tego obrazu: kopia `single_instance.py` w Suflerze
+# nie miała ani jednego testu, więc ta gałąź nie była tu wykonywana.
 RUN uv run --no-sync pytest -q && touch /app/.tests-passed
 
 # ---------------------------------------------------------------------------

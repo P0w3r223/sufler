@@ -102,6 +102,21 @@ Wszystkie istotne zmiany w projekcie Sufler (do 2026-09-25: WorkMate). Format op
   komendy bez `--no-cache-filter test`. Marker `/app/.tests-passed` jest PUSTYM plikiem, więc
   BuildKit podstawia warstwę z cache'u i etap `test` nie biegnie wcale — CHANGELOG 1.15.0 mówi to
   wprost, a komentarz obok twierdził przeciwnie.
+- **Serwer MCP (`sufler`) wczytuje `.env` jak pozostałe drzwi.** `.mcp.json` startuje go bez
+  `--env-file`, a `main()` jako jedyne wejście nie wołało `env.load_dotenv()`, więc
+  `SUFLER_ENABLE_WRITE=true` odkomentowane w `.env` — jak każe `.env.example` — nie docierało do
+  serwera i `save_note` nie pojawiało się w Claude Code. Realne środowisko nadal wygrywa z plikiem.
+  Działa CAŁY plik, nie tylko ta flaga: także Jira „moje zadania", `SUFLER_EVENTS_DB`,
+  `SUFLER_NOTES_DIR` i `SUFLER_TRANSPORT` — `streamable-http` w `.env` uruchomi teraz uvicorn
+  zamiast stdio i Claude Code się nie połączy. `uv run mcp dev` (leniwy `mcp`) pliku nie czyta.
+- **Cztery zabezpieczenia, których wyłączenie nie zapalało żadnego testu.** Każde sprawdzone
+  mutacją (2026-10-01) przed dopisaniem testu i po nim: redakcja promptów w
+  `claude_summary` (`parse_prompt` oddające surową treść — 94/94 zielone), zamrożony zestaw pól
+  `NoteMetadata` (nowe pole — 3245/3245 zielone; CLAUDE.md reguła 3 mówiła wprost, że bramki nie
+  ma), blokada jednej instancji drzwi digestu (bez blokady — cały pakiet zielony, a komentarz
+  `Dockerfile` twierdził, że etap `test` sprawdza gałąź `fcntl`) oraz poziom jakości retrievalu
+  (osłabione BM25 schodziło z MRR 1,0 na 0,975 przy zielonej bramce względnej — doszły
+  zacommitowane progi bezwzględne). Przeniesione z niescalonej gałęzi audytu 2026-08.
 
 
 ## [1.16.0] — 2026-09-25

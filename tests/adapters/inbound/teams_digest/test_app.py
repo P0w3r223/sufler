@@ -12,12 +12,14 @@ składanie digestu, zamiast zakładać jego kształt.
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from sufler.adapters.inbound.single_instance import acquire_single_instance_lock
 from sufler.adapters.inbound.teams_digest import app
 from sufler.adapters.inbound.teams_digest import state as state_store
 from sufler.adapters.outbound.sqlite_events import SqliteEventStore
@@ -334,3 +336,37 @@ def test_sigterm_during_the_wait_stops_within_the_grace_period(
 
     assert czekania  # czekaliśmy na Event, a nie na time.sleep…
     assert czekania[0] <= 900  # …z tym samym sufitem długości drzemki co dotąd
+
+
+def test_druga_instancja_drzwi_digestu_odmawia_startu_i_nie_wysyla(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Blokada jednej instancji ma być ZAŁOŻONA przez drzwi, nie tylko istnieć w module.
+
+    Testy ``test_single_instance.py`` pilnują samej blokady; podmiana ``with
+    acquire_single_instance_lock(...)`` na ``nullcontext()`` w ``main()`` zostawiała pakiet
+    zielony (sprawdzone mutacją 2026-10-01), a dwa procesy na jednym stanie wysłałyby ludziom
+    dwa digesty w tym samym tygodniu. Tu blokadę trzyma „pierwsza instancja", a druga musi
+    odmówić startu, zanim dotknie przebiegu.
+    """
+    stan = tmp_path / "digest-state.json"
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_ENABLED", "true")
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_STATE", str(stan))
+    monkeypatch.setenv("SUFLER_TEAMS_DIGEST_RECIPIENTS", "aad-odbiorca-1")
+    # Prawdziwe `load_dotenv` pisze do `os.environ` przez `setdefault` — monkeypatch tego nie cofa.
+    monkeypatch.setattr(app.env, "load_dotenv", lambda: None)
+    monkeypatch.setattr(app.env, "configure_logging", lambda *_a, **_k: None)
+    monkeypatch.setattr(app, "_require_teams", lambda _push: None)
+    monkeypatch.setattr(app, "_build_token_provider", lambda _push: lambda: "token")
+    przebiegi: list[object] = []
+    monkeypatch.setattr(app, "_safe_run_once", lambda *a, **_k: przebiegi.append(a))
+    monkeypatch.setattr(sys, "argv", ["sufler-teams-digest", "--once"])
+
+    pierwsza = acquire_single_instance_lock(stan)
+    try:
+        with pytest.raises(SystemExit, match="Inna instancja"):
+            app.main()
+    finally:
+        pierwsza.close()
+
+    assert przebiegi == []
