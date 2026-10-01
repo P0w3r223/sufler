@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ import pytest
 
 from sufler.adapters.inbound.mcp import tools as mcp_tools
 from sufler.adapters.outbound.sqlite_events import SqliteEventStore
+from sufler.core.domain.models import NoteMetadata
 from sufler.server import build_server
 
 _BASELINE = Path(__file__).parent / "tool_surface_baseline.json"
@@ -129,6 +131,51 @@ def test_write_gate_is_the_only_difference_between_the_two_default_profiles(monk
 
     assert set(z_zapisem) - set(bez_zapisu) == {"save_note"}
     assert {k: v for k, v in z_zapisem.items() if k != "save_note"} == bez_zapisu
+
+
+def test_note_metadata_contract_is_frozen():
+    """Zamrożony jest MODEL, nie tylko sygnatura narzędzia (CLAUDE.md reguła 3).
+
+    Golden-test powierzchni zamraża parametry ``save_note`` (``core/application/tools/mcp.py``),
+    a te są RĘCZNĄ kopią pól ``NoteMetadata`` — więc dopisanie pola do modelu nie ruszało żadnego
+    schematu. Nowe pole brało wartość domyślną w ``build_note_metadata`` i lądowało we
+    frontmatterze każdej nowej notatki w wersjonowanym korpusie, a cały pakiet zostawał zielony
+    (sprawdzone mutacją 2026-10-01). Usunięcie pola psuło testy ubocznie, dodanie było darmowe.
+
+    Jeśli ten test pada — zmieniłeś kontrakt danych. To wymaga ADR-a (Bramka 1), a nie
+    dopisania pola do listy poniżej.
+    """
+    # Typ i wymagalność, nie tylko nazwy: `project: str = ""` rozluźniało kontrakt przy zielonym
+    # pakiecie — notatka bez projektu przestawała być błędem walidacji.
+    kontrakt = {
+        nazwa: (pole.annotation, pole.is_required())
+        for nazwa, pole in NoteMetadata.model_fields.items()
+    }
+    assert kontrakt == {
+        "title": (str, True),
+        "project": (str, True),
+        "date": (date, True),
+        "participants": (list[str], False),
+        "decisions": (list[str], False),
+        "action_items": (list[str], False),
+        "open_questions": (list[str], False),
+        "tags": (list[str], False),
+    }
+
+
+def test_save_note_parameters_match_the_note_metadata_contract():
+    """Zamrożona sygnatura ``save_note`` i pola ``NoteMetadata`` nie mogą się rozjechać.
+
+    Ręczna kopia pól w narzędziu ma pokrywać CAŁY kontrakt. Rozjazd w którąkolwiek stronę — pole
+    w modelu bez parametru albo parametr bez pola — znaczy, że zapis przez narzędzie przestał
+    odwzorowywać schemat notatki. Porównujemy z baseline (a nie z żywym katalogiem), bo to
+    dokładnie ten kształt, który widzi model.
+
+    ``body`` jest świadomym wyjątkiem: treść notatki nie należy do frontmatteru.
+    """
+    params = set(_baseline()["save_note"]["parameters"]["properties"])
+
+    assert params - {"body"} == set(NoteMetadata.model_fields)
 
 
 def test_baseline_holds_every_tool_the_surface_can_expose():

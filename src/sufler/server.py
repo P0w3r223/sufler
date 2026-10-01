@@ -26,6 +26,7 @@ from mcp.server.fastmcp import FastMCP
 if TYPE_CHECKING:
     from sufler.core.application.my_jira_tasks import MyJiraTasksService
 
+from sufler.adapters.inbound import env
 from sufler.adapters.inbound.mcp.tools import (
     register_event_tools,
     register_my_jira_tasks_tool,
@@ -242,6 +243,13 @@ def _run_http(settings: Settings) -> None:
 
 def main() -> None:
     """Uruchom serwer z transportem z konfiguracji (domyślnie stdio)."""
+    # `.env` wczytują wejścia drzwi, nie `config/` — tak robią drzwi Teams, Teams-Graph, GitHub,
+    # digestu i harnessy CLI. `.mcp.json` startuje te drzwi bez `--env-file`, a `.env.example`
+    # obiecuje, że odkomentowanie `SUFLER_ENABLE_WRITE` uwidoczni `save_note` w Claude Code; bez
+    # tego wywołania plik był dla nich niewidoczny. Realne środowisko nadal wygrywa z plikiem
+    # (`setdefault`). Leniwy `mcp` (niżej, dla `mcp dev`) pliku NIE wczytuje — import modułu ma
+    # zostać bez efektów ubocznych, więc tam działa wyłącznie środowisko procesu.
+    env.load_dotenv()
     settings = Settings.from_env()
     settings.validate()
     if settings.transport == "streamable-http":

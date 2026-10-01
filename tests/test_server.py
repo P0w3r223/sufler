@@ -166,3 +166,43 @@ def test_nieznany_atrybut_modulu_dalej_jest_bledem(swiezy_import):
     nazwa = "nie_ma_takiego_atrybutu"
     with pytest.raises(AttributeError):
         getattr(swiezy_import, nazwa)
+
+
+# --- wejście `main()` widzi `.env` jak pozostałe drzwi -------------------------
+
+
+def test_main_wczytuje_dotenv_przed_odczytem_ustawien(monkeypatch, bez_mostu):
+    """``.mcp.json`` startuje te drzwi bez ``--env-file``, więc ``.env`` musi wczytać ``main()``.
+
+    Bez tego ``SUFLER_ENABLE_WRITE=true`` odkomentowane w ``.env`` (jak każe ``.env.example``)
+    nie docierało do serwera stdio i ``save_note`` w Claude Code się nie pojawiało, choć każde
+    inne ``main()`` drzwi plik wczytuje. Atrapa ``load_dotenv`` ustawia zmienną tak, jak zrobiłby
+    to plik — liczy się KOLEJNOŚĆ: ustawienia muszą powstać po wczytaniu, nie przed.
+    """
+
+    def falszywy_load_dotenv() -> None:
+        monkeypatch.setenv("SUFLER_ENABLE_WRITE", "true")
+
+    zbudowane: list[Settings] = []
+
+    class _SerwerBezUruchomienia:
+        def run(self, transport: str) -> None:
+            assert transport == "stdio"
+
+    def falszywy_build_server(settings: Settings) -> _SerwerBezUruchomienia:
+        zbudowane.append(settings)
+        return _SerwerBezUruchomienia()
+
+    def prawdziwy_plik_zakazany(*_args: object) -> None:
+        # Gdyby `main()` sięgało po `load_dotenv` inną drogą (np. `from … import load_dotenv`),
+        # atrapa wyżej by nie zadziałała, a prawdziwy `.env` dewelopera wpisałby się do
+        # `os.environ` na resztę sesji — lepiej głośna porażka niż wynik zależny od maszyny.
+        raise AssertionError("main() wczytało prawdziwy plik .env z pominięciem atrapy")
+
+    monkeypatch.setattr(server_module.env, "apply_env_file", prawdziwy_plik_zakazany)
+    monkeypatch.setattr(server_module.env, "load_dotenv", falszywy_load_dotenv)
+    monkeypatch.setattr(server_module, "build_server", falszywy_build_server)
+
+    server_module.main()
+
+    assert [s.enable_write for s in zbudowane] == [True]
