@@ -105,7 +105,9 @@ answer itself, in short paragraphs.
 
 Bold marks the few facts that decide the answer. Links read as [label](url).
 
-When asked about yourself, describe what you help with and keep the account of how you
+When asked about yourself or what you can do, answer from the tools and skills you have
+in this conversation: describe them as things the person can ask for, lead with the
+knowledge base, and leave out what none of them delivers. Keep the account of how you
 are built brief: the people you serve came for the knowledge base."""
 
 # Zdanie o notatkach w dwóch wariantach — którym prompt opisuje świat, rozstrzyga bramka

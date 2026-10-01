@@ -25,6 +25,30 @@ def configure_logging(level: str | None = None) -> None:
     """
     resolved = (level or os.environ.get("SUFLER_LOG_LEVEL", "INFO")).upper()
     logging.basicConfig(level=resolved)
+    httpx_logger = logging.getLogger("httpx")
+    if not any(isinstance(f, _RedactUrlQuery) for f in httpx_logger.filters):
+        httpx_logger.addFilter(_RedactUrlQuery())
+
+
+class _RedactUrlQuery(logging.Filter):
+    """Wycina query string z adresów w logu ``httpx`` („HTTP Request: GET <url> …”).
+
+    Adres pobrania pliku z SharePointa niesie w query token ``tempauth`` (ważny ok. godziny),
+    a ``httpx`` loguje każde żądanie na INFO — token lądował w ``docker logs``. Metoda, host,
+    ścieżka i status zostają, więc log dalej pokazuje, że drzwi pracują.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(_without_query(arg) for arg in record.args)
+        return True
+
+
+def _without_query(arg: object) -> object:
+    text = str(arg)
+    if text.startswith(("http://", "https://")) and "?" in text:
+        return text.split("?", 1)[0] + "?[ukryte]"
+    return arg
 
 
 def force_utf8_io() -> None:

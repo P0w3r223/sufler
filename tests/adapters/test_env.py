@@ -10,8 +10,10 @@ import logging
 import os
 from pathlib import Path
 
+import httpx
 import pytest
 
+from sufler.adapters.inbound import env as env_module
 from sufler.adapters.inbound.env import apply_env_file, configure_logging
 
 
@@ -93,3 +95,59 @@ def test_configure_logging_reads_workmate_log_level(monkeypatch):
 def test_configure_logging_defaults_to_info(monkeypatch):
     """R3: bez zmiennej domyślny poziom to INFO (kontrakt bez zmian)."""
     assert _configure_logging_from_fresh(monkeypatch, None) == logging.INFO
+
+
+_SHAREPOINT_URL = (
+    "https://contoso.sharepoint.com/sites/x/_layouts/15/download.aspx"
+    "?UniqueId=abc&tempauth=eyJ0eXAiOiJKV1QifQ.sekret"
+)
+
+
+def _httpx_log_lines(url: str, caplog) -> list[str]:
+    """Wyślij żądanie przez prawdziwy klient ``httpx`` (bez sieci) i zwróć linie jego logu."""
+    httpx_logger = logging.getLogger("httpx")
+    saved_filters = httpx_logger.filters[:]
+    try:
+        configure_logging("INFO")
+        with caplog.at_level(logging.INFO, logger="httpx"):
+            transport = httpx.MockTransport(lambda request: httpx.Response(200))
+            with httpx.Client(transport=transport) as client:
+                client.get(url)
+        return [r.getMessage() for r in caplog.records if r.name == "httpx"]
+    finally:
+        httpx_logger.filters[:] = saved_filters
+
+
+def test_httpx_log_hides_the_query_string_with_the_sharepoint_token(caplog):
+    """Adres pobrania z SharePointa niesie w query token ``tempauth`` (ok. 1 h) — nie do logu."""
+    lines = _httpx_log_lines(_SHAREPOINT_URL, caplog)
+    assert len(lines) == 1, lines
+    assert "tempauth" not in lines[0]
+    assert "sekret" not in lines[0]
+    assert "GET https://contoso.sharepoint.com/sites/x/_layouts/15/download.aspx?[ukryte]" in lines[0]
+    assert "200" in lines[0]  # status zostaje: log dalej pokazuje, że drzwi pracują
+
+
+def test_httpx_log_keeps_urls_without_a_query_string(caplog):
+    lines = _httpx_log_lines("https://graph.microsoft.com/v1.0/teams/t1/channels", caplog)
+    assert len(lines) == 1, lines
+    assert "GET https://graph.microsoft.com/v1.0/teams/t1/channels " in lines[0]
+    assert "[ukryte]" not in lines[0]
+
+
+def test_url_filter_leaves_other_arguments_untouched():
+    record = logging.LogRecord("httpx", logging.INFO, "", 0, "%s %s %d", ("GET", "a?b", 7), None)
+    env_module._RedactUrlQuery().filter(record)
+    assert record.getMessage() == "GET a?b 7"
+
+
+def test_configure_logging_twice_installs_one_url_filter():
+    httpx_logger = logging.getLogger("httpx")
+    saved_filters = httpx_logger.filters[:]
+    try:
+        configure_logging("INFO")
+        configure_logging("INFO")
+        filters = [f for f in httpx_logger.filters if isinstance(f, env_module._RedactUrlQuery)]
+        assert len(filters) == 1
+    finally:
+        httpx_logger.filters[:] = saved_filters

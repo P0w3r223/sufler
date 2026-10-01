@@ -147,12 +147,15 @@ class CommandRouter:
         lines += [
             "",
             "Przykłady pytań:",
-            "• czy robiliśmy już integrację SCADA?",
-            "• jaki jest status projektu smart-metering?",
-            "• co ustaliliśmy na ostatnim spotkaniu w omnichannel?",
+            "• jaki jest aktualny stan projektu Sufler?",
+            "• dlaczego wykonawca poleceń nie ma dostępu do sieci?",
+            "• jakie decyzje zapadły w sprawie izolacji rozmów?",
         ]
         if self._supports_attachments:
-            lines.append("• wrzuć zrzut ekranu HMI lub PDF specyfikacji i zapytaj o jego treść")
+            lines += [
+                "• wrzuć zrzut ekranu lub PDF i zapytaj o jego treść",
+                "• wrzuć transkrypcję spotkania (docx, pdf, txt) i poproś o notatkę ze spotkania",
+            ]
         return "\n".join(lines)
 
     def _new_thread(self, args: str, ctx: CommandContext) -> str:
@@ -176,7 +179,7 @@ class CommandRouter:
 
     def _search(self, args: str, ctx: CommandContext) -> str:
         if not args:
-            return "Użycie: /szukaj <fraza> — np. /szukaj integracja SCADA"
+            return "Użycie: /szukaj <fraza> — np. /szukaj wykonawca poleceń"
         refusal = self._read_authz_refusal(ctx)
         if refusal is not None:
             return refusal

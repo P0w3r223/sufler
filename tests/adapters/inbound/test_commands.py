@@ -163,6 +163,28 @@ def test_help_surfaces_attachment_capability_only_when_supported():
     assert "wrzuć" not in out_off.lower()  # drzwi tekstowe nie obiecują załączników
 
 
+def test_help_examples_name_only_what_the_knowledge_base_holds():
+    """Przykłady w ``/pomoc`` wskazują tematy z bazy wiedzy produkcji, nie projekty z makiety.
+
+    Do 2026-09-30 pomoc pytała o SCADA, smart-metering i omnichannel, których w bazie nie ma,
+    więc pytanie przepisane z pomocy kończyło się odpowiedzią „nie mam wiedzy".
+    """
+    for attachments in (False, True):
+        router, _ = _router(supports_attachments=attachments)
+        out = router.dispatch("/pomoc", _CTX)
+        assert out is not None
+        for name in ("SCADA", "smart-metering", "omnichannel", "HMI"):
+            assert name not in out, (attachments, name)
+        assert "projektu Sufler" in out
+
+
+def test_help_offers_meeting_transcript_only_with_attachments():
+    on, _ = _router(supports_attachments=True)
+    off, _ = _router(supports_attachments=False)
+    assert "transkrypcję spotkania" in (on.dispatch("/pomoc", _CTX) or "")
+    assert "transkrypcję spotkania" not in (off.dispatch("/pomoc", _CTX) or "")
+
+
 # --- /nowa (start_new_thread) ---------------------------------------------------
 
 
@@ -220,6 +242,7 @@ def test_search_empty_argument_shows_usage_hint_without_calling_tool():
     out = router.dispatch("/szukaj", _CTX)
     assert out is not None
     assert out.startswith("Użycie: /szukaj")
+    assert "wykonawca poleceń" in out  # podpowiedź trafia w temat obecny w bazie wiedzy
     assert tools.search_query is None  # narzędzie NIE wołane dla pustego zapytania
 
 

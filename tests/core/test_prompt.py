@@ -399,3 +399,18 @@ def test_zdanie_o_budzecie_podlega_bramce_redakcyjnej():
         tekst = budget_notice(rounds)
         assert not _NEGATIONS.search(tekst), tekst
         assert not [word for word in _PUSHY if word in tekst]
+
+
+def test_prompt_answers_what_can_you_do_from_the_tools_at_hand():
+    """Na „co potrafisz" agent odpowiada z narzędzi i procedur, które ma w tej rozmowie.
+
+    Na próbie 2026-09-30 opisywał tylko bazę wiedzy (bez powłoki i edycji notatek), za to
+    obiecywał wysyłkę plików, która była wyłączona. Zdanie celowo nie wymienia narzędzi z nazwy:
+    zestaw zależy od flag drzwi, a lista w prompcie kłamałaby w każdej innej konfiguracji.
+    """
+    for attachments in (False, True):
+        for shell in (False, True):
+            for mutation in (False, True):
+                text = static_prompt_for(attachments=attachments, shell=shell, mutation=mutation)
+                assert "When asked about yourself or what you can do" in text
+                assert "leave out what none of them delivers" in text
