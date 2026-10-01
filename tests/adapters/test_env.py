@@ -124,7 +124,9 @@ def test_httpx_log_hides_the_query_string_with_the_sharepoint_token(caplog):
     assert len(lines) == 1, lines
     assert "tempauth" not in lines[0]
     assert "sekret" not in lines[0]
-    assert "GET https://contoso.sharepoint.com/sites/x/_layouts/15/download.aspx?[ukryte]" in lines[0]
+    assert (
+        "GET https://contoso.sharepoint.com/sites/x/_layouts/15/download.aspx?[ukryte]" in lines[0]
+    )
     assert "200" in lines[0]  # status zostaje: log dalej pokazuje, że drzwi pracują
 
 
